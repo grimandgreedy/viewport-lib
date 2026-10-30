@@ -698,7 +698,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 // ---------------------------------------------------------------------------
 
 fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
-    if light.point_shadow_slot < 0 {
+    if light.shadow_layer < 0 {
         return 1.0;
     }
     // The cube stores linear distance-to-light over range, one value per
@@ -740,7 +740,7 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec
         point_shadow_cube_tex,
         shadow_sampler,
         dir,
-        light.point_shadow_slot,
+        light.shadow_layer,
         normalised,
     );
     // ALT(NO_CUBE_ARRAY): return 1.0;
@@ -1278,7 +1278,7 @@ fn compute_lit(
                 } else if i == 0u && lights_storage[0].light_type != 1u {
                     last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
                     shadow_factor = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
+                } else if l.light_type == 1u && l.shadow_layer >= 0 {
                     shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
@@ -1411,7 +1411,7 @@ fn compute_lit(
                 } else if i == 0u && lights_storage[0].light_type != 1u {
                     last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
                     shadow = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
+                } else if l.light_type == 1u && l.shadow_layer >= 0 {
                     shadow = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }

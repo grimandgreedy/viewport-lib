@@ -60,7 +60,7 @@ impl ViewportRenderer {
         );
         *last_frustum_culled_lights = ranked.frustum_culled;
         *last_lights_dropped = ranked.dropped;
-        let combined_lights = ranked.lights;
+        let combined_lights = &ranked.lights;
 
         let light_count = combined_lights.len() as u32;
 
@@ -68,13 +68,15 @@ impl ViewportRenderer {
         let mut lights_packed: Vec<SingleLightUniform> = combined_lights
             .iter()
             .enumerate()
-            .map(|(i, src)| build_single_light_uniform(src, shadow_center, shadow_extent, i == 0))
+            .map(|(i, (_, src))| {
+                build_single_light_uniform(src, shadow_center, shadow_extent, i == 0)
+            })
             .collect();
 
         // ---------------------------------------------------------------
         // Point-light shadow pool: allocate a cubemap slot per shadow-casting
         // Point light, build the six per-face view-projection matrices, and
-        // mutate each light's `point_shadow_slot`/`near` so the lit pass can
+        // mutate each light's `shadow_layer`/`near` so the lit pass can
         // sample the cubemap. Faces are rendered later in this function once
         // the cascade pass has finished.
         // ---------------------------------------------------------------
@@ -101,8 +103,8 @@ impl ViewportRenderer {
             let mut point_casters: Vec<(usize, glam::Vec3, f32, f32)> = combined_lights
                 .iter()
                 .enumerate()
-                .filter(|(_, src)| src.cast_shadows)
-                .filter_map(|(i, src)| match src.kind {
+                .filter(|(_, (_, src))| src.cast_shadows)
+                .filter_map(|(i, (_, src))| match src.kind {
                     LightKind::Point {
                         position, range, ..
                     } => {
@@ -121,7 +123,8 @@ impl ViewportRenderer {
                 let Some(slot) = shadow.point_shadow_pool.acquire(key) else {
                     continue;
                 };
-                lights_packed[i].point_shadow_slot = slot as i32;
+                lights_packed[i].shadow_layer = slot as i32;
+                lights_packed[i].shadow_kind = 2;
                 lights_packed[i].point_shadow_near = POINT_SHADOW_NEAR;
                 // Six standard cubemap face directions (forward, up). Order:
                 //   0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z.
@@ -214,7 +217,7 @@ impl ViewportRenderer {
             compute_cascade_splits(shadow_near, shadow_far, cascade_count as u32, 0.75);
 
         let light_dir_for_csm = if light_count > 0 {
-            match &combined_lights[0].kind {
+            match &combined_lights[0].1.kind {
                 LightKind::Directional { direction } => glam::Vec3::from(*direction).normalize(),
                 LightKind::Point { position, .. } => {
                     (glam::Vec3::from(*position) - shadow_center).normalize()
@@ -239,7 +242,7 @@ impl ViewportRenderer {
 
         // Determine if we should use CSM (directional light + valid camera data).
         let use_csm = light_count > 0
-            && matches!(combined_lights[0].kind, LightKind::Directional { .. })
+            && matches!(combined_lights[0].1.kind, LightKind::Directional { .. })
             && frame.camera.render_camera.view != glam::Mat4::IDENTITY;
 
         if use_csm {
@@ -264,7 +267,7 @@ impl ViewportRenderer {
         } else {
             // Fallback: single shadow map covering the whole scene (legacy behavior).
             let primary_shadow_mat = if light_count > 0 {
-                compute_shadow_matrix(&combined_lights[0].kind, shadow_center, shadow_extent)
+                compute_shadow_matrix(&combined_lights[0].1.kind, shadow_center, shadow_extent)
             } else {
                 glam::Mat4::IDENTITY
             };
@@ -275,7 +278,7 @@ impl ViewportRenderer {
         // no cascades are rendered and the shader's CSM sample short-circuits
         // on `cascade_count == 0`. Point lights manage their own cubemap slots
         // and are unaffected.
-        let primary_casts_shadows = light_count > 0 && combined_lights[0].cast_shadows;
+        let primary_casts_shadows = light_count > 0 && combined_lights[0].1.cast_shadows;
         let effective_cascade_count = if !primary_casts_shadows {
             0
         } else if use_csm {
@@ -283,6 +286,12 @@ impl ViewportRenderer {
         } else {
             1
         };
+        if light_count > 0 {
+            let kind = primary_shadow_kind(combined_lights[0].1, lighting.shadows.enabled);
+            if kind != 0 {
+                lights_packed[0].shadow_kind = kind;
+            }
+        }
 
         // Cache shadow stats and log when cascade splits change.
         {
@@ -502,7 +511,7 @@ impl ViewportRenderer {
             // that distance, so shading is unchanged; only the list
             // tightness improves.
             let mut light_far = 0.0f32;
-            for l in combined_lights.iter() {
+            for (_, l) in combined_lights.iter() {
                 let (position, range) = match l.kind {
                     LightKind::Point {
                         position, range, ..
@@ -598,7 +607,7 @@ impl ViewportRenderer {
             // the build pass is a valid index into lights_storage too.
             let active_lights: Vec<ActiveLightView> = combined_lights
                 .iter()
-                .map(|l| {
+                .map(|(_, l)| {
                     let (view_pos, range, light_type, view_dir, cos_outer) = match l.kind {
                         LightKind::Directional { direction } => {
                             let world_dir = glam::Vec3::from(direction).normalize_or_zero();
@@ -770,6 +779,21 @@ fn compute_shadow_matrix(
     }
 }
 
+/// The `shadow_kind` the first ranked light takes from the cascade atlas: 1
+/// for a directional light (cascades), 3 for a spot (the single fallback
+/// map), 0 when it casts nothing there. A point light's cube is assigned
+/// separately, with its slot.
+pub(super) fn primary_shadow_kind(light: &LightSource, shadows_enabled: bool) -> u32 {
+    if !shadows_enabled || !light.cast_shadows {
+        return 0;
+    }
+    match light.kind {
+        LightKind::Directional { .. } => 1,
+        LightKind::Spot { .. } => 3,
+        _ => 0,
+    }
+}
+
 /// Convert a `LightSource` to `SingleLightUniform`, computing shadow matrix for lights[0].
 pub(super) fn build_single_light_uniform(
     src: &LightSource,
@@ -793,9 +817,9 @@ pub(super) fn build_single_light_uniform(
             range: 0.0,
             inner_angle: 0.0,
             outer_angle: 0.0,
-            _pad_align: 0,
+            shadow_kind: 0,
             spot_direction: [0.0, -1.0, 0.0],
-            point_shadow_slot: -1,
+            shadow_layer: -1,
             point_shadow_near: 0.1,
             radius: 0.0,
             channel_mask: src.channel_mask,
@@ -814,9 +838,9 @@ pub(super) fn build_single_light_uniform(
             range: *range,
             inner_angle: 0.0,
             outer_angle: 0.0,
-            _pad_align: 0,
+            shadow_kind: 0,
             spot_direction: [0.0, -1.0, 0.0],
-            point_shadow_slot: -1,
+            shadow_layer: -1,
             point_shadow_near: 0.1,
             radius: *radius,
             channel_mask: src.channel_mask,
@@ -838,9 +862,9 @@ pub(super) fn build_single_light_uniform(
             range: *range,
             inner_angle: *inner_angle,
             outer_angle: *outer_angle,
-            _pad_align: 0,
+            shadow_kind: 0,
             spot_direction: *direction,
-            point_shadow_slot: -1,
+            shadow_layer: -1,
             point_shadow_near: 0.1,
             radius: *radius,
             channel_mask: src.channel_mask,
@@ -880,7 +904,9 @@ pub(super) fn collect_plugin_lights(
 
 /// A frame's lights after the frustum cull and the cap, in upload order.
 pub(super) struct RankedLights<'a> {
-    pub(super) lights: Vec<&'a LightSource>,
+    /// Each light with its index in the iterator `rank_lights` was given,
+    /// which stays put when the ranking reorders the list.
+    pub(super) lights: Vec<(usize, &'a LightSource)>,
     /// Point and spot lights the frustum cull removed.
     pub(super) frustum_culled: u32,
     /// Lights that survived the cull but fell past the cap.
@@ -888,7 +914,7 @@ pub(super) struct RankedLights<'a> {
 }
 
 /// Cull `lights` against the camera frustum and rank what is left, keeping at
-/// most `cap`.
+/// most `cap`. Each survivor comes back with its index in `lights`.
 pub(super) fn rank_lights<'a>(
     lights: impl Iterator<Item = &'a LightSource>,
     frame: &FrameData,
@@ -902,8 +928,9 @@ pub(super) fn rank_lights<'a>(
     let cull_frustum =
         crate::camera::frustum::Frustum::from_view_proj(&frame.camera.render_camera.view_proj());
     let mut frustum_culled = 0u32;
-    let raw_lights: Vec<&LightSource> = lights
-        .filter(|l| match l.kind {
+    let raw_lights: Vec<(usize, &LightSource)> = lights
+        .enumerate()
+        .filter(|(_, l)| match l.kind {
             LightKind::Directional { .. } => true,
             LightKind::Point {
                 position, range, ..
@@ -948,16 +975,16 @@ pub(super) fn rank_lights<'a>(
     let camera_pos = frame.camera.render_camera.eye_position();
     let directional_first = raw_lights
         .iter()
-        .position(|l| matches!(l.kind, LightKind::Directional { .. }));
-    let mut out: Vec<&LightSource> = Vec::with_capacity(cap.min(raw_lights.len()));
+        .position(|(_, l)| matches!(l.kind, LightKind::Directional { .. }));
+    let mut out: Vec<(usize, &LightSource)> = Vec::with_capacity(cap.min(raw_lights.len()));
     if let Some(i) = directional_first {
         out.push(raw_lights[i]);
     }
-    let mut rest: Vec<(f32, &LightSource)> = raw_lights
+    let mut rest: Vec<(f32, (usize, &LightSource))> = raw_lights
         .iter()
         .enumerate()
         .filter(|(i, _)| Some(*i) != directional_first)
-        .map(|(_, l)| {
+        .map(|(_, &(source, l))| {
             let proximity = match l.kind {
                 LightKind::Directional { .. } => 1.0,
                 LightKind::Point {
@@ -972,7 +999,7 @@ pub(super) fn rank_lights<'a>(
                 }
                 _ => 1.0,
             };
-            (l.importance.max(0.0) * proximity, *l)
+            (l.importance.max(0.0) * proximity, (source, l))
         })
         .collect();
     rest.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -1044,5 +1071,56 @@ pub(super) fn lights_header(
         env_zone_count: extras.env_zone_count,
         ibl_specular_scale: extras.ibl_specular_scale,
         custom_data_base: extras.custom_data_base,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::renderer::{CameraFrame, RenderCamera, SceneFrame, SurfaceSubmission};
+
+    fn frame() -> FrameData {
+        let cf = CameraFrame::new(RenderCamera::default(), [256.0, 256.0]);
+        let sf = SceneFrame::new(SurfaceSubmission::Flat(std::sync::Arc::from(Vec::new())));
+        FrameData::new(cf, sf)
+    }
+
+    fn point(importance: f32) -> LightSource {
+        let mut l = LightSource::point_candela([0.0, 0.0, 0.0], Candela(10.0), 1.0e6, 0.0);
+        l.importance = importance;
+        l
+    }
+
+    #[test]
+    fn ranked_lights_keep_their_source_index() {
+        let lights = [point(1.0), LightSource::default(), point(5.0), point(2.0)];
+        let ranked = rank_lights(lights.iter(), &frame(), 16);
+        let order: Vec<usize> = ranked.lights.iter().map(|(i, _)| *i).collect();
+        // The directional light is pinned first, the points follow by importance.
+        assert_eq!(order, vec![1, 2, 3, 0]);
+        for (i, l) in &ranked.lights {
+            assert!(std::ptr::eq(*l, &lights[*i]));
+        }
+    }
+
+    #[test]
+    fn primary_shadow_kind_follows_the_light_type() {
+        let sun = LightSource::default();
+        let spot = LightSource::spot_candela(
+            [0.0, 0.0, 5.0],
+            [0.0, 0.0, -1.0],
+            Candela(10.0),
+            20.0,
+            0.3,
+            0.5,
+            0.0,
+        );
+        assert_eq!(primary_shadow_kind(&sun, true), 1);
+        assert_eq!(primary_shadow_kind(&spot, true), 3);
+        assert_eq!(primary_shadow_kind(&point(1.0), true), 0);
+        assert_eq!(primary_shadow_kind(&sun, false), 0);
+        let mut quiet = LightSource::default();
+        quiet.cast_shadows = false;
+        assert_eq!(primary_shadow_kind(&quiet, true), 0);
     }
 }

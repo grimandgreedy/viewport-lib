@@ -47,8 +47,11 @@ struct SingleLight {
     range:             f32,
     inner_angle:       f32,
     outer_angle:       f32,
+    // 0 none, 1 cascade atlas, 2 point cube, 3 spot map.
+    shadow_kind:       u32,
     spot_direction:    vec3<f32>,
-    point_shadow_slot: i32,
+    // Base shadow layer, -1 none. A point light's cube slot today.
+    shadow_layer:      i32,
     point_shadow_near: f32,
     radius:            f32,
     channel_mask:      u32,

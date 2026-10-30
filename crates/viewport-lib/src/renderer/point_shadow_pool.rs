@@ -1,6 +1,6 @@
 //! Cubemap shadow slot pool for point lights.
 //!
-//! A bounded pool maps light indices (from the per-frame `combined_lights`
+//! A bounded pool maps light indices (positions in the frame's ranked light
 //! list) to cubemap shadow slots. Each slot owns six faces in the shared
 //! `point_shadow_cube` texture array. When more lights request shadows than
 //! the pool can hold, the slot with the oldest `last_frame_used` is evicted.
@@ -14,11 +14,12 @@
 
 use crate::renderer::types::MAX_POINT_SHADOW_LIGHTS;
 
-/// Stable identity of a point light across frames.
+/// Identity of a point light across frames.
 ///
-/// Today this is the light's index in `LightingSettings::lights`. If light
-/// identity ever needs to be more robust (e.g. through reordering), this
-/// can become a fully opaque newtype without changing the pool API.
+/// The light's position in the frame's ranked light list, after the frustum
+/// cull and the importance ranking, not its index in
+/// `LightingSettings::lights`. A light whose rank changes between frames gets
+/// a new key, so it can land in a different slot and re-render its faces.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LightKey(pub u32);
 

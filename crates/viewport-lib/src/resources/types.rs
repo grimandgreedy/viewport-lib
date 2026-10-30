@@ -193,14 +193,17 @@ pub struct CameraUniform {
 /// - range:             f32        =  4 bytes
 /// - inner_angle:       f32        =  4 bytes
 /// - outer_angle:       f32        =  4 bytes
-/// - _pad_align:        u32        =  4 bytes  (bridge to 16-byte boundary for spot_direction)
+/// - shadow_kind:       u32        =  4 bytes  (0 none, 1 cascades, 2 cube, 3 spot)
 /// - spot_direction:    `[f32; 3]` = 12 bytes  (spot only; at offset 112 to match WGSL vec3 align)
+/// - shadow_layer:      i32        =  4 bytes  (base shadow layer, -1 none)
+/// - point_shadow_near: f32        =  4 bytes
+/// - radius:            f32        =  4 bytes
 /// - channel_mask:      u32        =  4 bytes  (layer mask; AND-tested per object)
 /// - _reserved:         u32        =  4 bytes  (reserved tail to 144; see the field)
 /// Total: 64+12+4+12+4+4+4+4+4+12+20 = 144 bytes
 ///
 /// Note: WGSL `vec3<f32>` has AlignOf=16, so `spot_direction` must start at offset 112.
-/// The `_pad_align` field bridges the 4-byte gap between offset 108 and 112.
+/// `shadow_kind` fills the 4 bytes between offset 108 and 112.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SingleLightUniform {
@@ -220,14 +223,16 @@ pub struct SingleLightUniform {
     pub inner_angle: f32, //  4 bytes, offset 100
     /// Cosine of the outer cone half-angle (spot lights; smooth falloff edge).
     pub outer_angle: f32, //  4 bytes, offset 104
-    /// Alignment padding : bridges 4-byte gap to align `spot_direction` to offset 112.
-    pub _pad_align: u32, //  4 bytes, offset 108 (aligns spot_direction to 112)
+    /// Which shadow this light samples: 0 none, 1 the cascade atlas, 2 a
+    /// point-light cube, 3 the single spot map. Also keeps `spot_direction`
+    /// at offset 112.
+    pub shadow_kind: u32, //  4 bytes, offset 108
     /// World-space unit direction the spot cone points toward.
     pub spot_direction: [f32; 3], // 12 bytes, offset 112
-    /// Cubemap slot index for point-shadow sampling, or -1 if this light
-    /// does not have a slot allocated this frame. Only meaningful when
-    /// `light_type == 1` (point).
-    pub point_shadow_slot: i32, //  4 bytes, offset 124
+    /// Base shadow layer for this light, or -1 when it has none this frame.
+    /// Today only point lights set it: the cubemap slot whose six faces start
+    /// at layer `6 * shadow_layer` of the point-shadow cube array.
+    pub shadow_layer: i32, //  4 bytes, offset 124
     /// Near plane for the point-shadow perspective projection (world units).
     /// Used by the lit pass to map fragment distance back into the
     /// normalised [0, 1] depth that was written into the cubemap.
@@ -247,6 +252,13 @@ pub struct SingleLightUniform {
     /// uploaded as 0.
     pub _reserved: u32, //  4 bytes, offset 140 : total 144
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<SingleLightUniform>() == 144);
+    assert!(std::mem::offset_of!(SingleLightUniform, shadow_kind) == 108);
+    assert!(std::mem::offset_of!(SingleLightUniform, spot_direction) == 112);
+    assert!(std::mem::offset_of!(SingleLightUniform, shadow_layer) == 124);
+};
 
 /// GPU-side lights header uniform (binding 3 of group 0).
 ///
