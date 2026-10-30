@@ -86,7 +86,7 @@ impl ViewportRenderer {
 
             // Upload grid uniform (full-screen analytical shader : no vertex buffers needed).
             if frame.viewport.show_grid {
-                let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+                let eye = frame.camera.render_camera.eye_position();
                 if !eye.is_finite() {
                     tracing::warn!(
                         eye_x = eye.x,
@@ -102,7 +102,7 @@ impl ViewportRenderer {
                     } else {
                         let vertical_depth = (eye.z - frame.viewport.grid_z).abs().max(1.0);
                         let world_per_pixel =
-                            2.0 * (frame.camera.render_camera.fov / 2.0).tan() * vertical_depth
+                            2.0 * (frame.camera.render_camera.fov_y() / 2.0).tan() * vertical_depth
                                 / frame.camera.viewport_size[1].max(1.0);
                         let target = (world_per_pixel * 60.0).max(1e-9_f32);
                         let mut s = 1.0_f32;
@@ -146,7 +146,7 @@ impl ViewportRenderer {
                         "grid snap"
                     );
 
-                    let orient = frame.camera.render_camera.orientation;
+                    let orient = frame.camera.render_camera.orientation();
                     let right = orient * glam::Vec3::X;
                     let up = orient * glam::Vec3::Y;
                     let back = orient * glam::Vec3::Z;
@@ -157,7 +157,7 @@ impl ViewportRenderer {
                     ];
                     let aspect =
                         frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
-                    let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
+                    let tan_half_fov = (frame.camera.render_camera.fov_y() / 2.0).tan();
 
                     let uniform = GridUniform {
                         view_proj: view_proj_mat,
@@ -165,7 +165,7 @@ impl ViewportRenderer {
                         tan_half_fov,
                         aspect,
                         _pad_ivp: [0.0; 2],
-                        eye_pos: frame.camera.render_camera.eye_position,
+                        eye_pos: frame.camera.render_camera.eye_position().to_array(),
                         grid_z: frame.viewport.grid_z,
                         spacing_minor: spacing,
                         spacing_major,
@@ -210,19 +210,19 @@ impl ViewportRenderer {
                     crate::renderer::types::GroundPlaneMode::Tile => 2,
                     crate::renderer::types::GroundPlaneMode::SolidColour => 3,
                 };
-                let orient = frame.camera.render_camera.orientation;
+                let orient = frame.camera.render_camera.orientation();
                 let right = orient * glam::Vec3::X;
                 let up = orient * glam::Vec3::Y;
                 let back = orient * glam::Vec3::Z;
                 let aspect = frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
-                let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
+                let tan_half_fov = (frame.camera.render_camera.fov_y() / 2.0).tan();
                 let vp = frame.camera.render_camera.view_proj().to_cols_array_2d();
                 let gp_uniform = crate::resources::GroundPlaneUniform {
                     view_proj: vp,
                     cam_right: [right.x, right.y, right.z, 0.0],
                     cam_up: [up.x, up.y, up.z, 0.0],
                     cam_back: [back.x, back.y, back.z, 0.0],
-                    eye_pos: frame.camera.render_camera.eye_position,
+                    eye_pos: frame.camera.render_camera.eye_position().to_array(),
                     height: gp.height,
                     colour: gp.colour.to_linear_rgba(),
                     shadow_colour: gp.shadow_colour.to_linear_rgba(),

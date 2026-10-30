@@ -226,7 +226,7 @@ impl ViewportRenderer {
             return;
         };
         let resources = &self.resources;
-        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+        let eye = frame.camera.render_camera.eye_position();
 
         let mut records: Vec<BasicInstance> = Vec::new();
         let mut opaque: Vec<BasicMeshDraw> = Vec::new();

@@ -591,7 +591,7 @@ impl ViewportRenderer {
             crate::interaction::manipulation::gizmo_overlay::build_gizmo_overlays(
                 frame.interaction.gizmo_mode,
                 cam.view_proj(),
-                glam::Vec3::from(cam.forward),
+                cam.forward(),
                 frame.camera.viewport_size,
                 translation,
                 scale.x,
@@ -617,7 +617,7 @@ impl ViewportRenderer {
             crate::interaction::widgets::axes_indicator::build_axes_overlays(
                 w,
                 h,
-                frame.camera.render_camera.orientation,
+                frame.camera.render_camera.orientation(),
                 &mut shapes,
             );
         }

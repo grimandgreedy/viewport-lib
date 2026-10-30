@@ -279,8 +279,8 @@ impl ViewportRenderer {
         let eq_w = eq_h * 2;
         let eye = glam::Vec3::from(position);
 
-        let near = frame.camera.render_camera.near.max(1e-3);
-        let far = frame.camera.render_camera.far.max(near * 2.0);
+        let near = frame.camera.render_camera.depth_range().0.max(1e-3);
+        let far = frame.camera.render_camera.depth_range().1.max(near * 2.0);
         let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
 
         // Six axis-aligned faces. Up vectors avoid being parallel to the view
@@ -421,8 +421,8 @@ impl ViewportRenderer {
         let eq_w = eq_h * 2;
         let eye = glam::Vec3::from(position);
 
-        let near = frame.camera.render_camera.near.max(1e-3);
-        let far = frame.camera.render_camera.far.max(near * 2.0);
+        let near = frame.camera.render_camera.depth_range().0.max(1e-3);
+        let far = frame.camera.render_camera.depth_range().1.max(near * 2.0);
         let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
 
         // Same six axis-aligned faces and up vectors as the CPU resolve, so the

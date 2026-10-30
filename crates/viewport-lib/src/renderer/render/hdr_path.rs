@@ -42,8 +42,8 @@ fn post_effect_ctx<'a>(
         output_size: slot_hdr.output_size,
         proj: frame.camera.render_camera.projection,
         view: frame.camera.render_camera.view,
-        near: frame.camera.render_camera.near,
-        far: frame.camera.render_camera.far,
+        near: frame.camera.render_camera.depth_range().0,
+        far: frame.camera.render_camera.depth_range().1,
         scene_colour: &slot_hdr.hdr_view,
         scene_depth: &slot_hdr.hdr_depth_only_view,
         post: &frame.effects.post_process,
@@ -454,8 +454,8 @@ impl ViewportRenderer {
             edl_radius: pp.edl.radius,
             edl_strength: pp.edl.strength,
             background_colour: bg_colour,
-            near_plane: frame.camera.render_camera.near,
-            far_plane: frame.camera.render_camera.far,
+            near_plane: frame.camera.render_camera.depth_range().0,
+            far_plane: frame.camera.render_camera.depth_range().1,
             _spare0: 0,
             _spare1: 0.0,
             foreground_enabled: composite_inputs.foreground as u32,
@@ -484,8 +484,8 @@ impl ViewportRenderer {
                 post: pp,
                 proj: frame.camera.render_camera.projection,
                 view: frame.camera.render_camera.view,
-                near: frame.camera.render_camera.near,
-                far: frame.camera.render_camera.far,
+                near: frame.camera.render_camera.depth_range().0,
+                far: frame.camera.render_camera.depth_range().1,
                 first_light: frame.effects.lighting.lights.first(),
                 foreground_active: composite_inputs.foreground,
                 exposure: frame.effects.display.exposure,
@@ -1877,7 +1877,7 @@ impl ViewportRenderer {
         // Opaque front-to-back, then blended back-to-front. Foreground
         // transparency is plain sorted alpha blending against the foreground
         // depth, not OIT.
-        let eye = glam::Vec3::from(fg_camera.eye_position);
+        let eye = fg_camera.eye_position();
         let dist_from_eye = |item: &SceneRenderItem| -> f32 {
             let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
             (pos - eye).length()
@@ -1989,8 +1989,8 @@ impl ViewportRenderer {
             post: pp,
             proj: frame.camera.render_camera.projection,
             view: frame.camera.render_camera.view,
-            near: frame.camera.render_camera.near,
-            far: frame.camera.render_camera.far,
+            near: frame.camera.render_camera.depth_range().0,
+            far: frame.camera.render_camera.depth_range().1,
             first_light: frame.effects.lighting.lights.first(),
             foreground_active: self.foreground_active(frame),
             exposure: frame.effects.display.exposure,

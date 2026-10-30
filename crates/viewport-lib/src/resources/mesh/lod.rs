@@ -171,9 +171,9 @@ pub fn projected_screen_size(local_aabb: &Aabb, model: &glam::Mat4, camera: &Ren
     if radius <= 0.0 {
         return 0.0;
     }
-    let eye = glam::Vec3::from(camera.eye_position);
-    let distance = (center - eye).length().max(camera.near);
-    let half_fov_tan = (camera.fov * 0.5).tan().max(1e-4);
+    let eye = camera.eye_position();
+    let distance = (center - eye).length().max(camera.depth_range().0);
+    let half_fov_tan = (camera.fov_y() * 0.5).tan().max(1e-4);
     radius / (distance * half_fov_tan)
 }
 
