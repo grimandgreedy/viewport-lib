@@ -77,7 +77,8 @@ pub use item_type_plugin::{
     QuadId, StoredId, StoringItemTypePlugin, TriangleItemTypePlugin,
 };
 pub use material_plugin::{
-    FlatColourMaterialPlugin, SurfaceGlowMaterialPlugin, TexturedMaterialPlugin,
+    AoOverrideMaterialPlugin, FlatColourMaterialPlugin, FrameInputsMaterialPlugin,
+    SurfaceGlowMaterialPlugin, TexturedMaterialPlugin,
 };
 pub use post_effect_producer::LoggingPostEffectProducer;
 pub use post_effect_stage::PassthroughPostEffectStage;

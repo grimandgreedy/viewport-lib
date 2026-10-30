@@ -226,4 +226,12 @@ pub trait MaterialPlugin {
     fn param_layout(&self) -> Vec<ParamDesc> {
         Vec::new()
     }
+    /// Wrap and filter for `material_sampler`, the one sampler every
+    /// plugin texture is read through. Only used when
+    /// [`texture_count`](Self::texture_count) is non-zero. Default
+    /// [`SamplerKey::default`](crate::material::SamplerKey::default): repeat,
+    /// linear.
+    fn sampler(&self) -> crate::material::SamplerKey {
+        crate::material::SamplerKey::default()
+    }
 }

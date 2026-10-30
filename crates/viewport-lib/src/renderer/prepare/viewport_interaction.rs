@@ -58,7 +58,7 @@ impl ViewportRenderer {
             }
 
             // Upload camera uniform to per-viewport slot buffer.
-            let mut camera_uniform = frame.camera.render_camera.camera_uniform();
+            let mut camera_uniform = frame.camera.camera_uniform(&self.frame_clock.current());
             // On the HDR path the lit term may exceed 1.0; bound it at f16 max
             // so the Rgba16Float target stays finite. The LDR path keeps the
             // historical [0, 1] clamp.
@@ -86,6 +86,8 @@ impl ViewportRenderer {
                         .foreground_camera(frame.effects.foreground.as_ref());
                     let mut fg_uniform = fg_camera.camera_uniform();
                     fg_uniform.lit_clamp = camera_uniform.lit_clamp;
+                    fg_uniform.viewport = camera_uniform.viewport;
+                    fg_uniform.time = camera_uniform.time;
                     queue.write_buffer(
                         &slot.foreground_camera_buf,
                         0,

@@ -984,7 +984,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
-        let camera_uniform = frame.camera.render_camera.camera_uniform();
+        let time = frame.time.unwrap_or_else(|| self.frame_clock.current());
+        let camera_uniform = frame.camera.camera_uniform(&time);
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_camera_buf"),

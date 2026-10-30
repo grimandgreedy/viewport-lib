@@ -113,7 +113,7 @@ impl ViewportRenderer {
         );
         // The compatibility tier draws through the LDR path, which keeps the lit
         // term in [0, 1].
-        let camera_uniform = frame.camera.render_camera.camera_uniform();
+        let camera_uniform = frame.camera.camera_uniform(&self.frame_clock.current());
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
 

@@ -412,5 +412,200 @@ fn surface_emissive_and_alpha(mode: viewport_lib::PipelineMode) {
     }
 }
 
+/// Register `plugin` on a recommended-limits harness and upload the probe
+/// quad, or `None` (after saying why) when the device cannot.
+fn plugin_harness(
+    label: &'static str,
+    plugin: &dyn viewport_lib::MaterialPlugin,
+) -> Option<(
+    Harness,
+    viewport_lib::MaterialPluginId,
+    viewport_lib::MeshId,
+)> {
+    let Some(mut harness) = recommended_harness(label) else {
+        eprintln!("skipping: no GPU adapter with recommended limits available");
+        return None;
+    };
+    let plugin_id = match harness
+        .renderer
+        .resources_mut()
+        .register_material_plugin(&harness.device, plugin)
+    {
+        Ok(id) => id,
+        Err(err) => {
+            eprintln!("skipping: this device cannot register a material plugin: {err}");
+            return None;
+        }
+    };
+    let mesh_id = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &probe_quad())
+        .expect("upload probe quad");
+    Some((harness, plugin_id, mesh_id))
+}
+
+/// A probe frame drawing the quad, scaled to fill the centre, with `material`.
+fn quad_frame(
+    harness: &mut Harness,
+    mesh_id: viewport_lib::MeshId,
+    material: Material,
+) -> viewport_lib::FrameData {
+    let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).to_cols_array_2d();
+    item.material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(material)
+        .expect("material upload");
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    frame
+}
+
+/// A hook reading `camera.time`, `camera.viewport` and `surf.vertex_colour`
+/// composes, and each reaches the pixel: red follows `FrameData::time`, green
+/// the physical viewport width, blue the quad's (absent, so white) vertex
+/// colour.
+#[test]
+fn material_plugin_reads_frame_time_and_viewport() {
+    use viewport_lib::FrameTime;
+    use viewport_lib_testkit::fixtures::FrameInputsMaterialPlugin;
+
+    let plugin = FrameInputsMaterialPlugin::new("fixture_frame_inputs");
+    let Some((mut harness, plugin_id, mesh_id)) = plugin_harness("fixture-frame-inputs", &plugin)
+    else {
+        return;
+    };
+    let mut material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    material.shading_plugin = Some(plugin_id);
+    let mut frame = quad_frame(&mut harness, mesh_id, material);
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+
+    let centre = (SIZE / 2, SIZE / 2);
+    for seconds in [0.25, 0.5] {
+        frame.time = Some(FrameTime::fixed(seconds));
+        let pixels = harness.render(&frame, SIZE, SIZE);
+        let got = linear_at(&pixels, centre);
+        let want = [seconds as f32, SIZE as f32 / 256.0, 0.5];
+        for (c, (g, w)) in got.iter().zip(want).enumerate() {
+            assert!(
+                (g - w).abs() <= LINEAR_TOLERANCE,
+                "channel {c} at t = {seconds}: expected linear {w:.3}, got {got:?}"
+            );
+        }
+    }
+}
+
+/// Two renders of one frame at the same `FrameTime` are byte-identical, even
+/// with a hook that reads the time; a different time moves the pixel, so the
+/// time does reach the shader. An offscreen frame without a time renders at
+/// the fixed zero time.
+#[test]
+fn frame_time_renders_are_byte_identical() {
+    use viewport_lib::FrameTime;
+    use viewport_lib_testkit::fixtures::FrameInputsMaterialPlugin;
+
+    let plugin = FrameInputsMaterialPlugin::new("fixture_frame_inputs_determinism");
+    let Some((mut harness, plugin_id, mesh_id)) =
+        plugin_harness("fixture-frame-time-determinism", &plugin)
+    else {
+        return;
+    };
+    let mut material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    material.shading_plugin = Some(plugin_id);
+    let mut frame = quad_frame(&mut harness, mesh_id, material);
+    frame.time = Some(FrameTime::new(0.375, 0.016, 42));
+
+    let first = harness.render(&frame, SIZE, SIZE);
+    // A frame through the presented path between the two, at another time,
+    // must not leak into the second render.
+    frame.time = Some(FrameTime::new(0.75, 0.016, 43));
+    let other = harness.render(&frame, SIZE, SIZE);
+    frame.time = Some(FrameTime::new(0.375, 0.016, 42));
+    let second = harness.render(&frame, SIZE, SIZE);
+
+    assert!(
+        first == second,
+        "same FrameTime must render byte-identical frames"
+    );
+    assert!(
+        first != other,
+        "a different FrameTime must change the hooked pixel"
+    );
+
+    // An offscreen render of a frame without a time uses the fixed zero time,
+    // not the renderer's clock.
+    frame.time = None;
+    let unset = harness.render(&frame, SIZE, SIZE);
+    frame.time = Some(FrameTime::fixed(0.0));
+    let fixed = harness.render(&frame, SIZE, SIZE);
+    assert!(
+        unset == fixed,
+        "render_offscreen must render a frame without a time at FrameTime::fixed(0.0)"
+    );
+}
+
+/// `SURFACE_OVERRIDE_AO` with `ao = 0` takes the ambient term to black; the
+/// same `ao = 0` without the flag leaves the draw as the stock PBR path
+/// renders it.
+#[test]
+fn material_plugin_ao_override_darkens_ambient() {
+    use viewport_lib::ShadingModel;
+    use viewport_lib_testkit::fixtures::AoOverrideMaterialPlugin;
+
+    let flagged = AoOverrideMaterialPlugin::new("fixture_ao_flagged", true);
+    let Some((mut harness, flagged_id, mesh_id)) = plugin_harness("fixture-ao-override", &flagged)
+    else {
+        return;
+    };
+    let unflagged_id = harness
+        .renderer
+        .resources_mut()
+        .register_material_plugin(
+            &harness.device,
+            &AoOverrideMaterialPlugin::new("fixture_ao_unflagged", false),
+        )
+        .expect("register the second plugin");
+
+    // Ambient only: no lights, the hemisphere at full strength.
+    let render = |harness: &mut Harness, plugin: Option<viewport_lib::MaterialPluginId>| {
+        let mut material = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+        material.shading_model = ShadingModel::Pbr;
+        material.shading_plugin = plugin;
+        let mut frame = quad_frame(harness, mesh_id, material);
+        frame.effects.lighting.lights.clear();
+        frame.effects.lighting.hemisphere_intensity = 1.0;
+        frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        harness.render(&frame, SIZE, SIZE)
+    };
+    let stock = render(&mut harness, None);
+    let unflagged = render(&mut harness, Some(unflagged_id));
+    let flagged = render(&mut harness, Some(flagged_id));
+
+    let centre = (SIZE / 2, SIZE / 2);
+    let stock_px = linear_at(&stock, centre);
+    assert!(
+        stock_px.iter().all(|&c| c > 0.05),
+        "test premise: the stock ambient lights the quad, got {stock_px:?}"
+    );
+    let flagged_px = linear_at(&flagged, centre);
+    assert!(
+        flagged_px.iter().all(|&c| c <= 0.002),
+        "SURFACE_OVERRIDE_AO with ao = 0 must take the ambient to black, got {flagged_px:?} (stock {stock_px:?})"
+    );
+    let max_diff = stock
+        .iter()
+        .zip(&unflagged)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap();
+    assert!(
+        max_diff <= 1,
+        "without the flag the override's ao must be ignored (max diff {max_diff} from stock)"
+    );
+}
+
 // Keep `wgpu` named so this binary resolves the same leg as the crate.
 const _: Option<wgpu::TextureFormat> = None;

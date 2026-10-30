@@ -65,8 +65,10 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 ///
 /// - `shade_surface` authors the PBR surface before the light loop: it
 ///   receives the resolved `ShadingSurface` and returns a `SurfaceOverride`
-///   (base colour, normal, metallic, roughness, emissive, alpha) that the
-///   composer applies to the live PBR inputs, recomputing F0. Stock lighting
+///   (base colour, normal, metallic, roughness, emissive, alpha, and the AO
+///   and dielectric F0 its `flags` select) that the composer applies to the
+///   live PBR inputs, recomputing F0. Start from
+///   `surface_override_from(surf)`, which changes nothing. Stock lighting
 ///   runs on the authored surface, as do this hook's own lighting functions
 ///   if it defines any. Emissive adds alongside the material's term; alpha
 ///   is honoured only under Mask/Blend alpha modes (Mask re-tests the
@@ -81,6 +83,8 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 ///   of a module-level `params` struct (`params.rim_power`).
 /// - A hook module always shades on the PBR loop: `use_pbr` is ignored and
 ///   the alternate shading-model branches are stripped.
+/// - Bodies may read the group-0 `camera` uniform, including `camera.time`
+///   (from `FrameData::time`) and `camera.viewport`.
 /// - `light.radiance` is unshadowed; the shadow factor is `light.shadow`.
 ///   OIT passes sample no shadows, so `light.shadow` is `1.0` there.
 /// - Lighting hook bodies run inside the light loop's non-uniform control
@@ -424,18 +428,19 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     }
     if hook.has_surface {
         // Apply the override to the live PBR pixel (F0 recomputed from the
-        // authored base colour and metallic, and from the authored dielectric
-        // F0 when `f0_override.w` is set) and patch `surf` so the built-in
-        // loop and any lighting hooks both see the authored surface.
+        // authored base colour and metallic, and the AO and dielectric F0
+        // replaced when the override's flags say so) and patch `surf` so the
+        // built-in loop and any lighting hooks both see the authored surface.
         surface_region.push_str(&format!(
             "        let sov = {name}__shade_surface(surf);\n\
-             \x20       px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness, sov.f0_override);\n\
+             \x20       px = pbr_apply_override(px, sov);\n\
              \x20       N = normalize(sov.normal);\n\
              \x20       {name}__hook_emissive = sov.emissive;\n\
              \x20       surf.base_colour = px.diffuse_colour;\n\
              \x20       surf.normal = N;\n\
              \x20       surf.metallic = px.metallic;\n\
              \x20       surf.roughness = px.perceptual_roughness;\n\
+             \x20       surf.ao = px.diffuse_ao;\n\
              \x20       surf.f0 = px.f0;\n\
              \x20       surf.dielectric_f0 = px.dielectric_f0;\n\
              \x20       surf.f90 = px.f90;\n\
@@ -1130,16 +1135,12 @@ impl crate::resources::DeviceResources {
                 label: Some(&format!("material_plugin_{}_bgl", plugin.name())),
                 entries: &entries,
             });
+        // The plugin's sampler key, deduped through the material sampler
+        // palette like a material's own.
         let sampler = (texture_count > 0).then(|| {
-            device.create_sampler(&crate::gpu::SamplerDescriptor {
-                label: Some(&format!("material_plugin_{}_sampler", plugin.name())),
-                address_mode_u: crate::gpu::AddressMode::Repeat,
-                address_mode_v: crate::gpu::AddressMode::Repeat,
-                mag_filter: crate::gpu::FilterMode::Linear,
-                min_filter: crate::gpu::FilterMode::Linear,
-                mipmap_filter: crate::resources::builders::dmipmap(crate::gpu::FilterMode::Linear),
-                ..Default::default()
-            })
+            self.scene_tier
+                .material
+                .resolve_sampler(device, plugin.sampler())
         });
         let default_group = self.build_plugin_texture_group(
             device,
@@ -1913,10 +1914,17 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 "{shader}: missing surface hook call"
             );
             assert!(
-                composed.contains(
-                    "px = pbr_apply_override(px, sov.base_colour, sov.metallic, sov.roughness, sov.f0_override);"
-                ),
-                "{shader}: missing F0 recompute"
+                composed.contains("px = pbr_apply_override(px, sov);"),
+                "{shader}: missing override apply"
+            );
+            assert!(
+                composed.contains("surf.ao = px.diffuse_ao;"),
+                "{shader}: missing AO patch"
+            );
+            assert!(
+                composed.contains("const SURFACE_OVERRIDE_F0: u32 = 2u;")
+                    && composed.contains("fn surface_override_from(surf: ShadingSurface)"),
+                "{shader}: missing override flags or helper"
             );
             assert!(
                 composed.contains("var<private> paint__hook_emissive"),

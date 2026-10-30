@@ -50,6 +50,15 @@ impl RenderCamera {
             _pad1: 0.0,
             inv_view_proj: vp.inverse().to_cols_array_2d(),
             view: self.view.to_cols_array_2d(),
+            proj: self.projection.to_cols_array_2d(),
+            inv_proj: self.projection.inverse().to_cols_array_2d(),
+            // Filled per frame by `CameraFrame::camera_uniform`.
+            viewport: [0.0; 4],
+            clip: {
+                let (near, far) = self.depth_range();
+                [near, far, f32::from(u8::from(self.is_orthographic())), 0.0]
+            },
+            time: [0.0; 4],
         }
     }
 
@@ -289,6 +298,18 @@ impl Default for CameraFrame {
 }
 
 impl CameraFrame {
+    /// The GPU camera uniform for this frame rendered at `time`: the render
+    /// camera's matrices plus the physical viewport size and the frame time.
+    pub(crate) fn camera_uniform(&self, time: &FrameTime) -> CameraUniform {
+        let mut u = self.render_camera.camera_uniform();
+        let ppp = self.pixels_per_point;
+        let w = (self.viewport_size[0] * ppp).round().max(1.0);
+        let h = (self.viewport_size[1] * ppp).round().max(1.0);
+        u.viewport = [w, h, 1.0 / w, 1.0 / h];
+        u.time = crate::renderer::frame_clock::pack_time(time);
+        u
+    }
+
     /// Build a camera frame from a render camera and viewport size.
     pub fn new(render_camera: RenderCamera, viewport_size: [f32; 2]) -> Self {
         Self {

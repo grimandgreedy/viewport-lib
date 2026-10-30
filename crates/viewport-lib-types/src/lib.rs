@@ -18,6 +18,7 @@ pub mod data;
 pub mod effects;
 pub mod encoding;
 pub mod error;
+pub mod frame_time;
 pub mod ids;
 pub mod input;
 pub mod material;

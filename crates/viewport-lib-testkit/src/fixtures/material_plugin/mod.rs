@@ -11,11 +11,19 @@
 //! - [`SurfaceGlowMaterialPlugin`]: sets emissive and alpha through
 //!   `shade_surface` with lighting zeroed, so a pixel reads a known blend of
 //!   the emissive and the background.
+//! - [`FrameInputsMaterialPlugin`]: emits the camera uniform's time and
+//!   viewport and the raw vertex colour, with lighting zeroed.
+//! - [`AoOverrideMaterialPlugin`]: writes a zero AO override, with or without
+//!   the flag that applies it.
 
+mod ao_override;
 mod flat_colour;
+mod frame_inputs;
 mod surface_glow;
 mod textured;
 
+pub use ao_override::AoOverrideMaterialPlugin;
 pub use flat_colour::FlatColourMaterialPlugin;
+pub use frame_inputs::FrameInputsMaterialPlugin;
 pub use surface_glow::SurfaceGlowMaterialPlugin;
 pub use textured::TexturedMaterialPlugin;
