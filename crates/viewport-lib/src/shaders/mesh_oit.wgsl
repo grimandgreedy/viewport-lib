@@ -693,6 +693,7 @@ fn build_shading_surface(
     metallic: f32,
     roughness: f32,
     F0: vec3<f32>,
+    energy_compensation: vec3<f32>,
 ) -> ShadingSurface {
     var surf: ShadingSurface;
     surf.base_colour = surface.base_colour;
@@ -719,6 +720,7 @@ fn build_shading_surface(
     surf.tangent = t;
     surf.bitangent = cross(n, t) * handedness;
     surf.f0 = F0;
+    surf.energy_compensation = energy_compensation;
     surf.metallic = metallic;
     surf.roughness = roughness;
     surf.ao = surface.ao_factor;
@@ -1015,10 +1017,10 @@ fn compute_lit(
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
     if shading_is_pbr(object.use_pbr) {
-        var px = pbr_resolve(base_colour, object.metallic, object.roughness,
-                             object.has_metallic_roughness_tex != 0u, surface.mr_sample,
-                             object.metallic_range, object.roughness_range,
-                             saa_kernel, ao_factor);
+        var px = pbr_resolve(N, V, base_colour, object.metallic, object.roughness,
+                                 object.has_metallic_roughness_tex != 0u, surface.mr_sample,
+                                 object.metallic_range, object.roughness_range,
+                                 saa_kernel, ao_factor);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>

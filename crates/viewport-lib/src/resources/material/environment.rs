@@ -1557,8 +1557,7 @@ fn encode_brdf_lut_rg16f(rgba: &[f32]) -> Vec<u8> {
         .collect()
 }
 
-/// Create the BRDF LUT texture. Its texels are written by
-/// [`IblResources::write_brdf_lut`] on the first `process_uploads`.
+/// Create the BRDF LUT texture. Fill it with [`write_brdf_lut_texels`].
 pub(crate) fn create_brdf_lut(
     device: &crate::gpu::Device,
 ) -> (crate::gpu::Texture, crate::gpu::TextureView) {
@@ -1581,6 +1580,39 @@ pub(crate) fn create_brdf_lut(
     (texture, view)
 }
 
+/// Write the embedded LUT into a texture from [`create_brdf_lut`].
+pub(crate) fn write_brdf_lut_texels(queue: &crate::gpu::Queue, texture: &crate::gpu::Texture) {
+    write_square_texels(queue, texture, BRDF_LUT_RG16F, BRDF_LUT_SIZE, 4);
+}
+
+fn write_square_texels(
+    queue: &crate::gpu::Queue,
+    texture: &crate::gpu::Texture,
+    data: &[u8],
+    side: u32,
+    texel_bytes: u32,
+) {
+    queue.write_texture(
+        crate::gpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: crate::gpu::Origin3d::ZERO,
+            aspect: crate::gpu::TextureAspect::All,
+        },
+        data,
+        crate::gpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(side * texel_bytes),
+            rows_per_image: Some(side),
+        },
+        crate::gpu::Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
 impl IblResources {
     /// Write the embedded BRDF LUT and the fallback's (1, 0, 0, 1) texel.
     /// Runs once, from `process_uploads`.
@@ -1588,35 +1620,14 @@ impl IblResources {
         if self.brdf_lut_written {
             return;
         }
-        let write = |texture: &crate::gpu::Texture, data: &[u8], side: u32, texel_bytes: u32| {
-            queue.write_texture(
-                crate::gpu::TexelCopyTextureInfo {
-                    texture,
-                    mip_level: 0,
-                    origin: crate::gpu::Origin3d::ZERO,
-                    aspect: crate::gpu::TextureAspect::All,
-                },
-                data,
-                crate::gpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(side * texel_bytes),
-                    rows_per_image: Some(side),
-                },
-                crate::gpu::Extent3d {
-                    width: side,
-                    height: side,
-                    depth_or_array_layers: 1,
-                },
-            );
-        };
         if let Some(texture) = &self.brdf_lut_texture {
-            write(texture, BRDF_LUT_RG16F, BRDF_LUT_SIZE, 4);
+            write_brdf_lut_texels(queue, texture);
         }
         let fallback: Vec<u8> = [1.0f32, 0.0, 0.0, 1.0]
             .iter()
             .flat_map(|&v| f32_to_f16(v).to_le_bytes())
             .collect();
-        write(&self.fallback_brdf_texture, &fallback, 1, 8);
+        write_square_texels(queue, &self.fallback_brdf_texture, &fallback, 1, 8);
         self.brdf_lut_written = true;
     }
 }

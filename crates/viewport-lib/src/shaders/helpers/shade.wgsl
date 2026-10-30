@@ -55,6 +55,10 @@ struct ShadingSurface {
     // 4..8. The meaning of the components is plugin-defined (blend masks,
     // weights, bake data).
     attr: vec4<f32>,
+    // Multiple-scattering energy compensation the lib applies to the specular
+    // lobe: 1 + f0 * (1 / (A + B) - 1) from the split-sum BRDF LUT. Multiply a
+    // hook's own specular term by it to match the built-in lighting.
+    energy_compensation: vec3<f32>,
 };
 
 // Output of the surface-authoring hook

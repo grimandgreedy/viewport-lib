@@ -96,8 +96,19 @@ struct Frame {
 // Built on the CPU by EnvDistribution; sliced by env_func_at / env_cond_at /
 // env_marg_at below.
 @group(0) @binding(14) var<storage, read> env_tables: array<f32>;
+// The split-sum BRDF LUT (x = N.V, y = roughness), read for the specular
+// energy compensation, as the raster path does.
+@group(0) @binding(15) var brdf_lut: texture_2d<f32>;
+@group(0) @binding(16) var brdf_lut_samp: sampler;
 
 // #include "helpers/brdf.wgsl"
+
+// The raster path's specular energy compensation for this surface.
+fn energy_comp(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
+    let uv = vec2<f32>(max(dot(n, v), 1e-3), roughness);
+    let dfg = textureSampleLevel(brdf_lut, brdf_lut_samp, uv, 0.0).rg;
+    return viewport_brdf_energy_compensation(f0, dfg);
+}
 
 // ----- RNG (PCG hash) -----
 
@@ -616,6 +627,7 @@ fn fresnel_dielectric(cos_i: f32, n1: f32, n2: f32) -> f32 {
 
 fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
+    let ec = energy_comp(n, v, m.roughness, f0);
     let count = frame.dims.z;
     for (var i = 0u; i < count; i = i + 1u) {
         let lt = lights[i];
@@ -642,7 +654,8 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
         }
         if dot(n, l) <= 0.0 { continue; }
         if any_hit(pos + n * EPS, l, max_t) { continue; }
-        sum = sum + viewport_brdf_light_contrib(n, v, l, radiance, m.base, m.metallic, m.roughness, f0);
+        sum = sum + viewport_brdf_light_contrib_compensated(n, v, l, radiance, m.base, m.metallic,
+                                                            m.roughness, f0, ec);
     }
     return sum;
 }
@@ -678,7 +691,9 @@ fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32
     if es.pdf <= 0.0 || dot(n, es.dir) <= 0.0 { return vec3<f32>(0.0); }
     if any_hit(pos + n * EPS, es.dir, T_MAX) { return vec3<f32>(0.0); }
     let env_rad = sky(es.dir);
-    let bsdf_cos = viewport_brdf_light_contrib(n, v, es.dir, vec3<f32>(1.0), m.base, m.metallic, m.roughness, f0);
+    let ec = energy_comp(n, v, m.roughness, f0);
+    let bsdf_cos = viewport_brdf_light_contrib_compensated(n, v, es.dir, vec3<f32>(1.0), m.base,
+                                                           m.metallic, m.roughness, f0, ec);
     let pdf_b = bsdf_pdf(n, v, es.dir, m.metallic, m.roughness, f0);
     let w = power_heuristic(es.pdf, pdf_b);
     return bsdf_cos * env_rad * (w / es.pdf);
@@ -732,7 +747,9 @@ fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: 
     // Estimator: (f * cos_surface * Le) / pdf_sa, with the solid-angle pdf of
     // uniform-over-emitters, uniform-on-triangle sampling
     //   pdf_sa = dist^2 / (count * area * cos_light),  area = area2 / 2.
-    let bsdf_cos = viewport_brdf_light_contrib(n, v, wi, le, m.base, m.metallic, m.roughness, f0);
+    let ec = energy_comp(n, v, m.roughness, f0);
+    let bsdf_cos = viewport_brdf_light_contrib_compensated(n, v, wi, le, m.base, m.metallic,
+                                                           m.roughness, f0, ec);
     let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
     return bsdf_cos * inv_pdf;
 }
