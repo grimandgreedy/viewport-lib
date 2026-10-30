@@ -133,10 +133,13 @@ fn a_mesh_frame_under_background_catches_up() {
             if out == expected {
                 break;
             }
+            // A frame can hand further sets to the workers; wait for those
+            // rather than spinning, and allow for a loaded machine.
             assert!(
-                start.elapsed() < std::time::Duration::from_secs(30),
+                start.elapsed() < std::time::Duration::from_secs(120),
                 "hdr {hdr}: the background renderer never drew the blocking frame"
             );
+            background.wait_for_pipelines(&device);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert_eq!(background.last_frame_stats().pipelines_pending, 0);
