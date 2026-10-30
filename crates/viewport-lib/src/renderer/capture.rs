@@ -1670,7 +1670,7 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let calls = std::sync::Arc::new(PluginCalls::default());
-        renderer
+        let first = renderer
             .with_item_type_plugin(
                 &device,
                 Box::new(MockPlugin {
@@ -1715,7 +1715,8 @@ mod tests {
             "a plugin without draws_ldr is not painted on the LDR path"
         );
 
-        // Re-register as an opted-in plugin: paint now runs.
+        // Replace it with an opted-in plugin: paint now runs.
+        renderer.remove_item_type_plugin(first).unwrap();
         renderer
             .with_item_type_plugin(
                 &device,
