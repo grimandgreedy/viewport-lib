@@ -21,6 +21,9 @@ pub(crate) struct ShadowState {
     pub(crate) last_shadow_atlas_resolution: u32,
     /// Whether contact shadows were active on the last prepare.
     pub(crate) last_contact_shadow_active: bool,
+    /// Caster and scene bounds the cascade range is fit to, rebuilt when the
+    /// instance bounds change.
+    pub(crate) cascade_bounds: super::prepare::CascadeBounds,
     /// Cascade splits from the last tracing-log emission (to detect changes).
     pub(crate) last_logged_cascade_splits: [f32; 4],
     /// Shadow atlas uniform from the last prepare.
@@ -80,6 +83,7 @@ impl ShadowState {
             last_shadow_extent: 20.0,
             last_shadow_atlas_resolution: 4096,
             last_contact_shadow_active: false,
+            cascade_bounds: Default::default(),
             last_logged_cascade_splits: [f32::MAX; 4],
             last_shadow_atlas_uniform: bytemuck::Zeroable::zeroed(),
             atlas_cleared: false,

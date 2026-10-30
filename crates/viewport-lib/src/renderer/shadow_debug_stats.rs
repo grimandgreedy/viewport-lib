@@ -15,9 +15,9 @@ pub struct ShadowDebugStats {
     pub cascade_splits: [f32; 4],
     /// Shadow atlas resolution (width = height) in pixels.
     pub shadow_atlas_resolution: u32,
-    /// Shadow frustum half-extent in world units.
-    ///
-    /// Auto-computed as 20.0 unless overridden via `shadow_extent_override`.
+    /// Half-extent in world units of the single shadow map used when the
+    /// camera has no view matrix: `ShadowSettings::extent_override` when set,
+    /// otherwise the shadow casters' half-extent seen from the light.
     pub shadow_extent_world: f32,
     /// True when screen-space contact shadows are enabled in post-process settings.
     pub contact_shadow_active: bool,

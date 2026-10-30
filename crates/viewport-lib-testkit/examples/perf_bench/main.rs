@@ -763,7 +763,6 @@ fn run_one(
         rc.orientation = orientation;
         rc.near = near;
         rc.far = far;
-        rc.distance = (target - eye).length().max(0.001);
         rc.fov = fov;
         rc.aspect = aspect;
         frame.camera.render_camera = rc;

@@ -51,7 +51,6 @@ fn check_pose(rc: &RenderCamera) {
         rc.far
     );
     assert!(close(rc.aspect(), rc.aspect), "aspect");
-    assert_eq!(rc.distance(), rc.distance);
     // The basis is orthonormal and right-handed.
     let (r, u, f) = (rc.right(), rc.up(), rc.forward());
     assert!(close(r.cross(u).dot(-f), 1.0), "basis");
@@ -71,12 +70,13 @@ fn perspective_accessors_match_stored_fields() {
 
 #[test]
 fn orthographic_accessors_match_stored_fields() {
-    let rc = RenderCamera::from_camera(&known_camera(Projection::Orthographic));
+    let cam = known_camera(Projection::Orthographic);
+    let rc = RenderCamera::from_camera(&cam);
     assert!(rc.is_orthographic());
     check_pose(&rc);
     assert_eq!(rc.vertical_fov(), None);
     // The orbit camera frames 2 * distance * tan(fov / 2) at every depth.
-    let expected = 2.0 * rc.distance * (rc.fov / 2.0).tan();
+    let expected = 2.0 * cam.distance * (rc.fov / 2.0).tan();
     for depth in [0.5, 12.0, 300.0] {
         assert!(close(rc.view_height_at(depth), expected), "view height");
     }

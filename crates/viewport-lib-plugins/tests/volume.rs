@@ -202,7 +202,6 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
         rc.orientation = glam::Quat::IDENTITY;
         rc.near = 0.1;
         rc.far = 100.0;
-        rc.distance = (eye - target).length();
         rc.fov = 60_f32.to_radians();
         rc.aspect = 1.0;
         rc
