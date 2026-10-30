@@ -1,5 +1,5 @@
-//! Shadow-map GPU resources: the cascade atlas, point-light shadow cube array,
-//! their depth passes, and the atlas debug viewer.
+//! Shadow-map GPU resources: the cascade atlas, the punctual shadow array for
+//! point and spot lights, their depth passes, and the atlas debug viewer.
 //!
 //! Grouped off `DeviceResources` as a plain data holder. Construction stays in
 //! `resources::init`; the shadow pass in `renderer::prepare::shadow_pass` and the
@@ -10,7 +10,7 @@ use crate::resources::pipeline_slot::LazyFamily;
 
 use crate::resources::builders::LoggedAlloc;
 
-/// Directional-cascade and point-light shadow resources.
+/// Directional-cascade and punctual (point and spot) shadow resources.
 pub(crate) struct ShadowResources {
     /// Shadow atlas depth texture (Depth32Float, `atlas_size` square, 2x2
     /// tile grid). Read for its dimensions by `shadow_allocation_bytes`.
@@ -28,41 +28,40 @@ pub(crate) struct ShadowResources {
     pub(crate) atlas_allocated: bool,
     /// Comparison sampler for PCF shadow filtering.
     pub(crate) sampler: crate::gpu::Sampler,
-    /// Cubemap-array depth texture for point-light shadows. Layered as
-    /// `MAX_POINT_SHADOW_LIGHTS * 6` faces of `POINT_SHADOW_FACE_SIZE` px.
-    pub(crate) point_cube_texture: crate::gpu::Texture,
-    /// `texture_depth_cube_array` view bound to the lit-pass bind group.
-    pub(crate) point_cube_view: crate::gpu::TextureView,
-    /// Whether [`point_cube_texture`](Self::point_cube_texture) is the
-    /// full-size cube array.
+    /// Depth array for point and spot light shadows: a point light's six cube
+    /// faces at `base..base + 6`, a spot light's map at one layer. Each layer
+    /// stores distance to the light over its range.
+    pub(crate) punctual_texture: crate::gpu::Texture,
+    /// `texture_depth_2d_array` view bound at group 0 binding 17.
+    pub(crate) punctual_view: crate::gpu::TextureView,
+    /// Whether [`punctual_texture`](Self::punctual_texture) holds real layers.
     ///
-    /// It starts as a single 1x1 cube. The full array is 192 MB, and a scene
-    /// whose point lights do not cast (or which has no point lights, the
-    /// common case) never samples it.
-    /// [`DeviceResources::ensure_point_shadow_cubes`](crate::resources::DeviceResources::ensure_point_shadow_cubes)
-    /// promotes it.
-    pub(crate) point_cubes_allocated: bool,
-    /// One 2D-array view per face, used as the depth attachment during the
-    /// shadow render pass. `len() == MAX_POINT_SHADOW_LIGHTS * 6`, indexed
-    /// as `slot * 6 + face`.
-    pub(crate) point_face_views: Vec<crate::gpu::TextureView>,
-    /// Render pipelines for the point-shadow depth pass of per-object casters:
-    /// plain (0) and alpha cutout (1). Same vertex layout as the cascade
-    /// shadow pipeline; write linear distance-to-light. `None` until a frame
-    /// has point-shadow faces to draw; see
+    /// It starts as a single 1x1 layer, since a scene whose point and spot
+    /// lights cast nothing never samples it.
+    /// [`DeviceResources::ensure_punctual_shadow_array`](crate::resources::DeviceResources::ensure_punctual_shadow_array)
+    /// sizes it to the layers in use.
+    pub(crate) punctual_allocated: bool,
+    /// One single-layer view per layer, the depth attachment of that layer's
+    /// pass.
+    pub(crate) punctual_layer_views: Vec<crate::gpu::TextureView>,
+    /// Render pipelines for the punctual shadow depth pass (point-light cube
+    /// faces and spot maps) of per-object casters: plain (0) and alpha cutout
+    /// (1). Same vertex layout as the cascade shadow pipeline; write linear
+    /// distance-to-light. `None` until a frame has punctual layers to draw;
+    /// see
     /// [`DeviceResources::ensure_point_shadow_pipeline`](crate::resources::DeviceResources::ensure_point_shadow_pipeline).
     pub(crate) point_pipeline: Option<LazyFamily<ShadowRecipe, 2>>,
-    /// Bind group layout for the point-shadow per-face uniform (group 0
-    /// of the point shadow pass). Kept for pipeline rebuilds.
-    #[allow(dead_code)]
+    /// Bind group layout for the per-layer uniform (group 0 of the punctual
+    /// shadow pass). Kept for pipeline rebuilds and for rebuilding
+    /// [`point_face_bind_group`](Self::point_face_bind_group) when the buffer
+    /// grows.
     pub(crate) point_face_bgl: crate::gpu::BindGroupLayout,
-    /// Per-face uniform buffer holding `view_proj`, `light_pos`, `range`
-    /// for every (slot, face) of the point shadow array. Sized as
-    /// `MAX_POINT_SHADOW_LIGHTS * 6 * 256` bytes (256-byte dynamic-offset
-    /// stride).
+    /// Per-layer uniform buffer holding `view_proj`, `light_pos`, `range`
+    /// for every layer of the punctual shadow array, at a 256-byte
+    /// dynamic-offset stride. Grows with the array.
     pub(crate) point_face_buf: crate::gpu::Buffer,
-    /// Bind group for the point-shadow per-face uniform. Stride is 256;
-    /// the per-face render pass sets a dynamic offset.
+    /// Bind group for the per-layer uniform. Stride is 256; each layer's
+    /// render pass sets a dynamic offset.
     pub(crate) point_face_bind_group: crate::gpu::BindGroup,
     /// Shadow depth-pass pipelines, keyed by facedness and cutout (the
     /// no-discard axis is not a real distinction for a depth-only pass, so
@@ -146,38 +145,46 @@ pub(crate) fn create_atlas_texture(
     (texture, view)
 }
 
-/// The view dimension binding 17 samples the point-light shadow array through:
-/// `CubeArray`, or `D2Array` on a device without cube-array textures.
-pub(crate) fn point_shadow_view_dimension(
-    cube_array_textures: bool,
-) -> crate::gpu::TextureViewDimension {
-    if cube_array_textures {
-        crate::gpu::TextureViewDimension::CubeArray
-    } else {
-        crate::gpu::TextureViewDimension::D2Array
-    }
+/// Largest punctual shadow layer side the renderer allocates, before the
+/// device limit.
+pub(crate) const MAX_PUNCTUAL_RESOLUTION: u32 = 4096;
+/// Smallest punctual shadow layer side.
+pub(crate) const MIN_PUNCTUAL_RESOLUTION: u32 = 64;
+
+/// The layer side a requested `ShadowSettings::punctual_shadow_resolution`
+/// resolves to on a device whose 2D textures reach `max_dimension`.
+pub(crate) fn punctual_resolution_for(requested: u32, max_dimension: u32) -> u32 {
+    let ceiling = MAX_PUNCTUAL_RESOLUTION
+        .min(max_dimension)
+        .max(MIN_PUNCTUAL_RESOLUTION);
+    requested.clamp(MIN_PUNCTUAL_RESOLUTION, ceiling)
 }
 
-/// Create the point-light cube array for `lights` cubes of `face_size` square,
-/// with the sampling view (see [`point_shadow_view_dimension`]) and one 2D view
-/// per face for the depth passes. Called at 1x1x1 cube for the placeholder and
-/// at `POINT_SHADOW_FACE_SIZE` / `MAX_POINT_SHADOW_LIGHTS` when promoted.
-pub(crate) fn create_point_cube_array(
+/// The layer budget a requested `ShadowSettings::punctual_shadow_layers`
+/// resolves to on a device whose texture arrays hold `max_layers`: whole
+/// six-layer slots within the device limit.
+pub(crate) fn punctual_layers_for(requested: u32, max_layers: u32) -> u32 {
+    let slot = crate::renderer::punctual_shadow_pool::SLOT_LAYERS;
+    requested.min(max_layers) / slot * slot
+}
+
+/// Create the punctual shadow array: `layers` layers of `size` square, the
+/// sampling view and one single-layer view per layer for the depth passes.
+/// Called at one 1x1 layer for the placeholder.
+pub(crate) fn create_punctual_array(
     device: &crate::gpu::Device,
-    face_size: u32,
-    lights: u32,
-    cube_array_textures: bool,
+    size: u32,
+    layers: u32,
 ) -> (
     crate::gpu::Texture,
     crate::gpu::TextureView,
     Vec<crate::gpu::TextureView>,
 ) {
-    let layers = lights * 6;
     let texture = device.logged_texture(&crate::gpu::TextureDescriptor {
-        label: Some("point_shadow_cube_array"),
+        label: Some("punctual_shadow_array"),
         size: crate::gpu::Extent3d {
-            width: face_size,
-            height: face_size,
+            width: size,
+            height: size,
             depth_or_array_layers: layers,
         },
         mip_level_count: 1,
@@ -188,9 +195,9 @@ pub(crate) fn create_point_cube_array(
             | crate::gpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let cube_view = texture.create_view(&crate::gpu::TextureViewDescriptor {
-        label: Some("point_shadow_cube_view"),
-        dimension: Some(point_shadow_view_dimension(cube_array_textures)),
+    let view = texture.create_view(&crate::gpu::TextureViewDescriptor {
+        label: Some("punctual_shadow_view"),
+        dimension: Some(crate::gpu::TextureViewDimension::D2Array),
         aspect: crate::gpu::TextureAspect::DepthOnly,
         base_array_layer: 0,
         array_layer_count: Some(layers),
@@ -199,10 +206,10 @@ pub(crate) fn create_point_cube_array(
         format: Some(crate::gpu::TextureFormat::Depth32Float),
         usage: None,
     });
-    let face_views = (0..layers)
+    let layer_views = (0..layers)
         .map(|layer| {
             texture.create_view(&crate::gpu::TextureViewDescriptor {
-                label: Some("point_shadow_face_view"),
+                label: Some("punctual_shadow_layer_view"),
                 dimension: Some(crate::gpu::TextureViewDimension::D2),
                 aspect: crate::gpu::TextureAspect::DepthOnly,
                 base_array_layer: layer,
@@ -214,7 +221,40 @@ pub(crate) fn create_point_cube_array(
             })
         })
         .collect();
-    (texture, cube_view, face_views)
+    (texture, view, layer_views)
+}
+
+/// Byte stride between consecutive layers' entries in the per-layer
+/// dynamic-offset uniform buffer.
+pub(crate) const PUNCTUAL_FACE_STRIDE: u64 = 256;
+
+/// The bind group of the punctual shadow pass's group 0: one per-layer entry
+/// of `buf` (selected by dynamic offset) and the deform header.
+pub(crate) fn face_bind_group(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::BindGroupLayout,
+    buf: &crate::gpu::Buffer,
+    deform_header: &crate::gpu::Buffer,
+) -> crate::gpu::BindGroup {
+    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        label: Some("shadow_point_face_bind_group"),
+        layout,
+        entries: &[
+            crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+                    buffer: buf,
+                    offset: 0,
+                    // One entry: view_proj and the light position and range.
+                    size: Some(crate::gpu::BufferSize::new(96).unwrap()),
+                }),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 23,
+                resource: deform_header.as_entire_binding(),
+            },
+        ],
+    })
 }
 
 /// What a per-object shadow pipeline build reads.
@@ -276,8 +316,8 @@ impl ShadowResources {
         self.pipeline.as_ref()?.get(cascade_index(key, true))
     }
 
-    /// The point-shadow depth pipeline for per-object casters, composed
-    /// alongside the cube array. `cutout` selects the alpha-tested variant.
+    /// The punctual shadow depth pipeline for per-object casters. `cutout`
+    /// selects the alpha-tested variant.
     pub(crate) fn point(&self, cutout: bool) -> Option<&crate::gpu::RenderPipeline> {
         self.point_pipeline.as_ref()?.get(cutout as usize)
     }
@@ -287,8 +327,8 @@ impl ShadowResources {
 mod tests {
     /// A freshly constructed `DeviceResources` wires every shadow resource, and
     /// the two big depth textures start as placeholders rather than at full
-    /// size: the atlas is 64 MB and the point cube array 192 MB, and a viewport
-    /// that never casts a shadow must not pay either. Guards the grouping
+    /// size: the atlas is 64 MB and a point light's six layers 24 MB, and a
+    /// viewport that never casts a shadow must not pay either. Guards the grouping
     /// against a dropped field and the placeholder contract against a
     /// regression back to eager allocation.
     #[test]
@@ -323,18 +363,11 @@ mod tests {
             "the placeholder is smaller than any atlas it stands in for"
         );
         assert!(
-            !shadow.point_cubes_allocated,
-            "the point cube array starts as a placeholder"
+            !shadow.punctual_allocated,
+            "the punctual shadow array starts as a placeholder"
         );
-        assert!(
-            shadow.point_face_views.len() < (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as usize,
-            "the placeholder covers fewer faces than the full array"
-        );
-        assert_eq!(
-            shadow.point_face_views.len() % 6,
-            0,
-            "point-shadow face views cover whole cubes (6 faces each)"
-        );
+        assert_eq!(shadow.punctual_layer_views.len(), 1);
+        assert_eq!(shadow.punctual_texture.width(), 1);
     }
 
     /// Promotion is what the first shadow-casting frame does: both textures
@@ -367,22 +400,38 @@ mod tests {
         assert_eq!(res.scene_tier.shadow.atlas_size, 1024);
 
         assert!(
-            res.ensure_point_shadow_cubes(&device),
+            res.ensure_punctual_shadow_array(&device, 6, 512),
             "first call allocates"
         );
         assert!(
-            !res.ensure_point_shadow_cubes(&device),
+            !res.ensure_punctual_shadow_array(&device, 6, 512),
             "second call is a no-op"
         );
-        assert_eq!(
-            res.scene_tier.shadow.point_face_views.len(),
-            (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as usize
+        assert_eq!(res.scene_tier.shadow.punctual_layer_views.len(), 6);
+        assert_eq!(res.scene_tier.shadow.punctual_texture.width(), 512);
+        assert!(res.scene_tier.shadow.punctual_allocated);
+        assert!(
+            res.ensure_punctual_shadow_array(&device, 120, 512),
+            "more layers recreate"
         );
-        assert_eq!(
-            res.scene_tier.shadow.point_cube_texture.width(),
-            crate::renderer::POINT_SHADOW_FACE_SIZE
+        assert_eq!(res.scene_tier.shadow.punctual_layer_views.len(), 120);
+        assert!(
+            res.scene_tier.shadow.point_face_buf.size() >= 120 * 256,
+            "the per-layer uniform grows with the array"
         );
-        assert!(res.scene_tier.shadow.point_cubes_allocated);
+    }
+
+    #[test]
+    fn punctual_settings_clamp_to_the_device() {
+        use super::{punctual_layers_for, punctual_resolution_for};
+        assert_eq!(punctual_resolution_for(1024, 16384), 1024);
+        assert_eq!(punctual_resolution_for(8, 16384), 64);
+        assert_eq!(punctual_resolution_for(8192, 16384), 4096);
+        assert_eq!(punctual_resolution_for(4096, 2048), 2048);
+        assert_eq!(punctual_layers_for(48, 2048), 48);
+        assert_eq!(punctual_layers_for(50, 2048), 48);
+        assert_eq!(punctual_layers_for(4000, 2048), 2046);
+        assert_eq!(punctual_layers_for(5, 2048), 0);
     }
 
     #[test]

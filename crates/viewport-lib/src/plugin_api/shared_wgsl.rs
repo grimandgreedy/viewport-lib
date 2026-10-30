@@ -33,7 +33,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 6;
+pub const WGSL_VERSION: u32 = 7;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -59,7 +59,7 @@ pub const WGSL_VERSION: u32 = 6;
 /// | 10 | IBL sampler | `ibl_sampler` |
 /// | 11 | Skybox equirect | `skybox_tex` |
 /// | 13 | per-light array | `lights_storage` |
-/// | 17 | point-light shadow cubemap array | `point_shadow_cube` |
+/// | 17 | point and spot light shadow array (`texture_depth_2d_array`) | `punctual_shadow_tex` |
 pub const SHARED_BINDINGS_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_bindings.wgsl"));
 
@@ -83,7 +83,9 @@ pub const SHARED_BINDINGS_WGSL: &str =
 ///
 /// It applies no shadow term. Multiply by
 /// [`viewport_sample_csm`](SHARED_PBR_WGSL) yourself if the item casts into
-/// the cascade atlas.
+/// the cascade atlas, or compose [`SHARED_CSM_WGSL`] and
+/// [`SHARED_PUNCTUAL_SHADOW_WGSL`] for the per-light shadow the mesh shaders
+/// take.
 pub const SHARED_SCENE_LIGHTING_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/scene_lighting.wgsl"));
 
@@ -105,6 +107,36 @@ pub const SHARED_SCENE_LIGHTING_WGSL: &str =
 /// factor. Take this one when the item needs the full sample, or when it is
 /// already composing the clustered lighting path.
 pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/csm.wgsl"));
+
+/// Point and spot light shadows, and the per-light shadow the renderer's own
+/// lit shaders take.
+///
+/// Provides:
+///
+/// ```ignore
+/// fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32;
+/// fn shadow_for_light(
+///     light: SingleLight,
+///     world_pos: vec3<f32>,
+///     eye_pos: vec3<f32>,
+///     shadow_normal: vec3<f32>,
+///     geo_normal: vec3<f32>,
+///     light_dir: vec3<f32>,
+///     receiver_two_sided: u32,
+/// ) -> ShadowSample;
+/// ```
+///
+/// `shadow_for_light` picks by the light's `shadow_kind`: the cascades for the
+/// directional light that casts them, the punctual shadow array at binding 17
+/// for a point or spot light that was given layers this frame, and 1.0 for
+/// any other light. Call it once per light in the shading loop.
+///
+/// Compose it after [`SHARED_CSM_WGSL`], in a body that declares the same
+/// bindings that one reads plus `punctual_shadow_tex` at group 0 binding 17,
+/// which [`SHARED_SCENE_LIGHTING_WGSL`] declares. A body that never declares
+/// binding 17 leaves this out and keeps directional shadows only.
+pub const SHARED_PUNCTUAL_SHADOW_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/punctual_shadow.wgsl"));
 
 /// The `ShadowAtlas` struct: the cascade shadow uniform at group 0 binding 5.
 ///
@@ -453,6 +485,46 @@ fn fs_main(@location(0) world_pos: vec3<f32>, @location(1) n: vec3<f32>) -> @loc
     fn pbr_catalogue_composes_after_the_shared_bindings() {
         let src = format!("{SHARED_BINDINGS_WGSL}\n{SHARED_PBR_WGSL}\n{PBR_CALLER}");
         validate("SHARED_BINDINGS_WGSL + SHARED_PBR_WGSL", &src);
+    }
+
+    // The bindings SHARED_CSM_WGSL and SHARED_PUNCTUAL_SHADOW_WGSL read that
+    // SHARED_SCENE_LIGHTING_WGSL does not declare, and a light loop calling
+    // the per-light shadow.
+    const SHADOW_CALLER: &str = "
+struct ShadowCamera {
+    view_proj: mat4x4<f32>,
+    eye_pos:   vec3<f32>,
+    _pad0:     f32,
+    forward:   vec3<f32>,
+    _pad1:     f32,
+};
+@group(0) @binding(0) var<uniform> camera: ShadowCamera;
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var<uniform> lights_uniform: Lights;
+@group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
+";
+
+    const SHADOW_LOOP: &str = "
+@fragment
+fn fs_main(@location(0) world_pos: vec3<f32>, @location(1) n: vec3<f32>) -> @location(0) vec4<f32> {
+    var lit = 0.0;
+    for (var i = 0u; i < lights_uniform.count; i++) {
+        let l = lights_storage[i];
+        let s = shadow_for_light(l, world_pos, camera.eye_pos, n, n, n, 0u);
+        lit += s.factor;
+    }
+    return vec4<f32>(lit, 0.0, 0.0, 1.0);
+}
+";
+
+    #[test]
+    fn punctual_shadows_compose_after_the_cascades() {
+        let src = format!(
+            "{SHARED_SCENE_LIGHTING_WGSL}\n{SHARED_SHADOW_ATLAS_WGSL}\n{SHADOW_CALLER}\n\
+             {SHARED_CSM_WGSL}\n{SHARED_PUNCTUAL_SHADOW_WGSL}\n{SHADOW_LOOP}"
+        );
+        validate("SHARED_CSM_WGSL + SHARED_PUNCTUAL_SHADOW_WGSL", &src);
     }
 
     #[test]

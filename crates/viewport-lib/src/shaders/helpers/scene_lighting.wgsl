@@ -48,10 +48,10 @@ struct SingleLight {
     range:             f32,
     inner_angle:       f32,
     outer_angle:       f32,
-    // 0 none, 1 cascade atlas, 2 point cube, 3 spot map.
+    // 0 none, 1 cascade atlas, 2 point light layers, 3 spot light layer.
     shadow_kind:       u32,
     spot_direction:    vec3<f32>,
-    // Base shadow layer, -1 none. A point light's cube slot today.
+    // Base layer in the punctual shadow array, -1 none.
     shadow_layer:      i32,
     point_shadow_near: f32,
     radius:            f32,
@@ -130,7 +130,9 @@ struct ClusterGrid {
 // Start of the light index list in cluster_data, in u32 words. Must equal
 // resources::gpu::clustered::CLUSTER_INDEX_BASE_BYTES / 4 on the CPU side.
 const CLUSTER_INDEX_BASE: u32 = 13824u;
-@group(0) @binding(17) var                point_shadow_cube_tex: texture_depth_cube_array;
+// Point and spot light shadows: a point light's six cube faces from its
+// shadow_layer, a spot light's map at its shadow_layer. See punctual_shadow.wgsl.
+@group(0) @binding(17) var                punctual_shadow_tex:   texture_depth_2d_array;
 // Indirect-lighting data (binding 18). Three regions share one storage buffer
 // to keep the fragment stage within the per-stage storage-buffer budget:
 //   [0, ENV_ZONE_BASE)   : per-object light-probe SH, 9 vec4 per light-probe-lit

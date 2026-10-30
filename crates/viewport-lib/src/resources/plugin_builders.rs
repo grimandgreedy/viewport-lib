@@ -132,9 +132,7 @@ impl DeviceResources {
     /// Adapt a shader source that includes the shared group 0 declarations
     /// to this device, before handing it to `create_shader_module`.
     ///
-    /// On a device without cube-array textures binding 17 is a
-    /// `texture_depth_2d_array`, so a source declaring it
-    /// `texture_depth_cube_array` would not match the layout. On the compatibility
+    /// On the compatibility
     /// tier the light list at binding 13 is a uniform array of
     /// [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) and the
     /// cluster lookups in `apply_scene_lighting` walk every light, since that

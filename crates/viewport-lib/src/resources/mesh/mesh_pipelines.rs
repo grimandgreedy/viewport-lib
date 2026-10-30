@@ -509,18 +509,18 @@ pub(crate) fn build_shadow_pipeline(
     )
 }
 
-/// `shadow_point.wgsl`: depth + fragment pipeline for point-light cubemap
-/// shadow faces. Writes linear distance-to-light to `frag_depth`. `cutout`
+/// `shadow_point.wgsl`: depth + fragment pipeline for the punctual shadow
+/// layers (point-light cube faces and spot maps). Writes linear distance-to-light to `frag_depth`. `cutout`
 /// selects `vs_cutout`/`fs_cutout`, which discard below an
 /// `AlphaMode::Mask` caster's cutoff.
 ///
 /// Uses back-face culling (front faces visible to the light are rendered) so
-/// the cubemap stores the near-side distance of each occluder. With linear
+/// each layer stores the near-side distance of each occluder. With linear
 /// distance and front-face culling, the stored depth is the object's far
 /// side, which bakes in an implicit "bias = object thickness" and causes
 /// peter-panning on objects sitting flush against receivers. No pipeline
 /// depth bias: the fragment stage writes `frag_depth`, and the receiver side
-/// (`sample_point_shadow` in the mesh shaders) carries the normal-offset and
+/// (`sample_punctual_shadow` in the mesh shaders) carries the normal-offset and
 /// constant terms that keep the lit side free of acne.
 pub(crate) fn build_shadow_point_pipeline(
     device: &crate::gpu::Device,

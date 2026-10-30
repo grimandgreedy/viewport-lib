@@ -1,4 +1,5 @@
-// Shadow depth pass for point lights : renders one cubemap face per pass.
+// Shadow depth pass for point and spot lights: renders one layer of the
+// punctual shadow array per pass, a point light's cube face or a spot's map.
 //
 // Writes linear distance-to-light (normalised by light range) into
 // @builtin(frag_depth). The lit pass then compares fragment distance against

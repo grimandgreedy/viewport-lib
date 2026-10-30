@@ -23,21 +23,17 @@ pub(crate) struct Group0Profile {
     /// The mesh family's scene data: indirect light (18), the material block
     /// (21) and the deform header (23).
     pub(crate) mesh_family: bool,
-    /// The shadow atlas and point-shadow array hold real shadow maps, rather
+    /// The shadow atlas and punctual shadow array hold real shadow maps, rather
     /// than placeholders the shaders never sample.
     pub(crate) shadows: bool,
     /// The IBL textures can hold an environment, rather than placeholders.
     pub(crate) ibl: bool,
-    /// The view binding 17 samples the point-shadow array through.
-    pub(crate) point_shadow_dimension: crate::gpu::TextureViewDimension,
 }
 
 impl Group0Profile {
     /// The profile for `caps`, or `None` on the overlay-only tier, which has
     /// no lit group 0. This is the one place a tier maps to a group 0.
     pub(crate) fn for_caps(caps: &crate::capabilities::Capabilities) -> Option<Self> {
-        let point_shadow_dimension =
-            crate::resources::shadow::point_shadow_view_dimension(caps.cube_array_textures);
         match caps.tier() {
             crate::capabilities::Tier::Full => Some(Self {
                 uniform_light_list: None,
@@ -45,7 +41,6 @@ impl Group0Profile {
                 mesh_family: true,
                 shadows: true,
                 ibl: true,
-                point_shadow_dimension,
             }),
             crate::capabilities::Tier::Compatibility => Some(Self {
                 uniform_light_list: Some(crate::resources::COMPATIBILITY_MAX_LIGHTS),
@@ -53,7 +48,6 @@ impl Group0Profile {
                 mesh_family: false,
                 shadows: false,
                 ibl: false,
-                point_shadow_dimension,
             }),
             _ => None,
         }
@@ -139,9 +133,9 @@ impl Group0Profile {
             // so the pair costs one fragment storage binding. 16 is free.
             entries.push(storage(15));
         }
-        // Point-light shadows: a `D2Array` view where cube arrays are
-        // missing, with the shaders adapted to match.
-        entries.push(depth(17, self.point_shadow_dimension));
+        // Point and spot light shadows: a 2D array, a point light's cube
+        // faces picked in the shader.
+        entries.push(depth(17, crate::gpu::TextureViewDimension::D2Array));
         if self.mesh_family {
             // Indirect light: per-object light-probe SH, environment zones,
             // the adaptive probe volume and per-instance custom data, regions
