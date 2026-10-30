@@ -74,11 +74,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let stencil = stencil_texel(scene_stencil, scene_sampler, pix);
     if (stencil & u.surface_mask) == 0u { discard; }
 
-    if depth >= 1.0 {
+    if viewport_depth_is_background(depth) {
         discard;
     }
 
-    let ndc     = vec4<f32>(in.ndc_xy, depth, 1.0);
+    let ndc     = vec4<f32>(in.ndc_xy, viewport_depth_finite(depth), 1.0);
     let world_h = camera.inv_view_proj * ndc;
     let world   = world_h.xyz / world_h.w;
 

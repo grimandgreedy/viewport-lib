@@ -196,7 +196,7 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             topology: crate::gpu::PrimitiveTopology::LineList,
             cull_mode: None,
             depth_write: true,
-            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
         }
@@ -212,7 +212,7 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             topology: crate::gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             depth_write: true,
-            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
         }

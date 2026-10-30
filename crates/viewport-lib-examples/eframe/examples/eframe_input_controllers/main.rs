@@ -795,12 +795,10 @@ impl eframe::App for App {
                             (self.cursor_viewport, self.gizmo_center)
                         {
                             if !self.manip.is_active() {
-                                let ray_origin = self.camera.eye_position();
                                 let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
                                 let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
-                                let inv_vp = view_proj.inverse();
-                                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                                let ray_dir = (far - ray_origin).normalize_or(glam::Vec3::NEG_Z);
+                                let (ray_origin, ray_dir) =
+                                    self.camera.screen_ray(glam::Vec2::new(ndc_x, ndc_y));
                                 self.gizmo.hovered_axis = self.gizmo.hit_test(
                                     ray_origin,
                                     ray_dir,

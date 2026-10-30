@@ -53,7 +53,7 @@ fn build(r: &TensorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: Some(viewport_lib::gpu::Face::Back),
                 depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
             },
@@ -93,7 +93,7 @@ fn build(r: &TensorFieldRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             &vertex_buffers,
             Some(viewport_lib::gpu::Face::Back),
             true,
-            viewport_lib::gpu::CompareFunction::Less,
+            viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
         ),
         // The surface mask stamps the same shapes into the scene stencil.
         _ => viewport_lib::plugin_api::builders::build_surface_mask_pipeline(

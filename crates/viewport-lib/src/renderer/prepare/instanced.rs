@@ -1457,8 +1457,12 @@ impl ViewportRenderer {
             cull_state.visibility_index_buf.as_ref(),
             cull_state.indirect_args_buf.as_ref(),
         ) {
+            // Frustum planes from the finite culling projection; the HiZ test
+            // projects with the matrix the scene draws with.
             let vp_mat = frame.camera.render_camera.view_proj();
-            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
+            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(
+                &frame.camera.render_camera.culling_view_proj(),
+            );
 
             // `gpu_culling_enabled` is only set once the compute is built.
             let Some(cull) = instancing.cull_resources.ready() else {

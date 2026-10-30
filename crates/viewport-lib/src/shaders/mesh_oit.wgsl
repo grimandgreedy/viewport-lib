@@ -54,6 +54,7 @@ struct ClipPlanes {
 // #include "helpers/shadow_atlas.wgsl"
 
 // #include "helpers/instance_data.wgsl"
+// #include "helpers/depth.wgsl"
 
 // The per-draw view the shader body reads: assembled by `load_object` from
 // the instance record and its material block. Not a GPU layout.
@@ -888,7 +889,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
         }
         let alpha = fc.a * object.colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
         out.out_oit.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
         out.out_oit.reveal = alpha;
@@ -902,7 +903,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
                 discard;
             }
             let alpha = object.nan_colour.a;
-            let z = in.clip_pos.z;
+            let z = viewport_depth_from_near(in.clip_pos.z);
             let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
             out.resolved = true;
             out.out_oit.accum  = vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w);
@@ -921,7 +922,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // Unlit: skip all lighting, return raw colour directly through OIT.
     if object.unlit != 0u {
         let alpha = obj_colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
         // alpha_mode == 3 means the colour is already premultiplied by alpha, so
         // it is weighted directly; straight blend premultiplies here.
@@ -935,7 +936,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     if object.uv_vis_mode != 0u {
         let vis   = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
         let alpha = obj_colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
         out.out_oit.accum  = vec4<f32>(vis * alpha, alpha) * w;
         out.out_oit.reveal = alpha;
@@ -1260,7 +1261,7 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // <viewport-shade-slot:alpha>
     // </viewport-shade-slot:alpha>
     let alpha = final_alpha;
-    let z = in.clip_pos.z;  // NDC depth 0..1
+    let z = viewport_depth_from_near(in.clip_pos.z);  // 0 near, 1 far
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 
     var out: OitOut;

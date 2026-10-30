@@ -143,8 +143,10 @@ pub struct GpuPickHit {
     /// maintains. [`crate::renderer::PickId::NONE`] is never returned
     /// (non-pickable surfaces are excluded from the pick pass).
     pub object_id: crate::renderer::PickId,
-    /// Clip-space depth value in `[0, 1]` at the picked pixel.
-    /// `0.0` = near plane, `1.0` = far plane.
+    /// Clip-space depth value in `[0, 1]` at the picked pixel, in the scene
+    /// depth convention: [`DEPTH_NEAR`](crate::plugin_api::depth::DEPTH_NEAR)
+    /// (1.0) at the near plane, falling toward
+    /// [`DEPTH_FAR`](crate::plugin_api::depth::DEPTH_FAR) (0.0) at infinity.
     ///
     /// Reconstruct world position:
     /// ```ignore

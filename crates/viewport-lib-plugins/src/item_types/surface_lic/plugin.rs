@@ -129,8 +129,8 @@ fn build(r: &LicRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     // where it is the visible one. The bias absorbs the rounding between
     // this draw and the colour draw of the same triangles.
     let mut depth =
-        builders::scene_depth_stencil(false, viewport_lib::gpu::CompareFunction::LessEqual);
-    depth.bias.constant = -2;
+        builders::scene_depth_stencil(false, viewport_lib::plugin_api::depth::DEPTH_COMPARE);
+    depth.bias = viewport_lib::plugin_api::depth::scene_depth_bias(-2, 0.0);
     builders::render_pipeline(
         &r.device,
         builders::RenderPipelineDesc {

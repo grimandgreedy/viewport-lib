@@ -194,7 +194,7 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
             },
             cull_mode: None,
             depth_write,
-            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
         },
@@ -244,7 +244,7 @@ fn build_oit(r: &RibbonRecipe, premultiplied: bool) -> viewport_lib::gpu::Render
             },
             depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
                 false,
-                viewport_lib::gpu::CompareFunction::LessEqual,
+                viewport_lib::plugin_api::depth::DEPTH_COMPARE,
             )),
             multisample: viewport_lib::gpu::MultisampleState {
                 count: r.sample_count,
@@ -273,7 +273,7 @@ fn build_shadow(r: &RibbonRecipe) -> viewport_lib::gpu::RenderPipeline {
     .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
     let shadow_extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.bgl];
     shadow_opts.extra_bind_group_layouts = &shadow_extra;
-    shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+    shadow_opts.depth_compare = viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT;
     r.builder.build_shadow_pipeline(&r.device, &shadow_opts)
 }
 

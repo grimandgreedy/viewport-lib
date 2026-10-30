@@ -381,7 +381,7 @@ impl PickTargets {
                     depth_slice: None,
                     ops: crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                            r: 1.0,
+                            r: f64::from(crate::plugin_api::depth::DEPTH_CLEAR),
                             g: 0.0,
                             b: 0.0,
                             a: 0.0,
@@ -393,7 +393,7 @@ impl PickTargets {
             depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                 view: &self.ds_view,
                 depth_ops: Some(crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Clear(1.0),
+                    load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                     store: crate::gpu::StoreOp::Store,
                 }),
                 stencil_ops: None,

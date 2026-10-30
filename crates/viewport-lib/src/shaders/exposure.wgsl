@@ -48,6 +48,7 @@ struct ExposureState {
 @group(0) @binding(5) var depth_sampler: sampler;
 
 // #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -99,7 +100,8 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // by the tone map, so it is not scene content and must not bias the meter. A
     // skybox, or transparent content over the background, writes alpha and is
     // metered like geometry. This is the tone map's own background test.
-    if depth_texel(depth_texture, depth_sampler, coord) >= 0.999999 && texel.a < 0.001 {
+    if viewport_depth_is_background(depth_texel(depth_texture, depth_sampler, coord))
+        && texel.a < 0.001 {
         return;
     }
     let lum = luminance(texel.rgb);

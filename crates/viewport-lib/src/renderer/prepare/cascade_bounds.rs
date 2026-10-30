@@ -198,7 +198,7 @@ pub(super) fn fitted_range(
     }
     let sweep = sweep.min(camera_far * 2.0);
 
-    let frustum = Frustum::from_view_proj(&camera.view_proj());
+    let frustum = Frustum::from_view_proj(&camera.culling_view_proj());
     let p = &frustum.planes;
     let planes = [0, 1, 2, 3].map(|i| (p[i].normal, p[i].d));
     let eye = camera.eye_position();

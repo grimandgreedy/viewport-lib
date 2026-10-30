@@ -54,17 +54,20 @@ fn cameras() -> Vec<Camera> {
 }
 
 /// The uniform `from_camera` packed when the camera stored its eye, forward
-/// and depth range as fields beside the matrices.
+/// and depth range as fields beside the matrices. The range is read from the
+/// finite culling projection; far packs as 0 for a perspective projection,
+/// which has no far plane.
 fn stored_field_uniform(cam: &Camera) -> CameraUniform {
     let (view, proj) = (cam.view_matrix(), cam.proj_matrix());
     let vp = proj * view;
     let eye = cam.eye_position();
     let ortho = cam.projection == Projection::Orthographic;
-    let (a, b) = (proj.z_axis.z, proj.w_axis.z);
+    let culling = cam.culling_proj_matrix();
+    let (a, b) = (culling.z_axis.z, culling.w_axis.z);
     let (near, far) = if ortho {
         (b / a, b / a - 1.0 / a)
     } else {
-        (b / a, b / (a + 1.0))
+        (b / a, 0.0)
     };
     CameraUniform {
         view_proj: vp.to_cols_array_2d(),
@@ -98,7 +101,11 @@ fn from_camera_uniform_is_unchanged() {
 fn from_matrices_matches_from_camera() {
     for cam in cameras() {
         let rc = RenderCamera::from_camera(&cam);
-        let rm = RenderCamera::from_matrices(cam.view_matrix(), cam.proj_matrix());
+        // A perspective projection has no far plane to read back, so a host
+        // building from matrices supplies the range.
+        let (near, far) = rc.depth_range();
+        let rm = RenderCamera::from_matrices(cam.view_matrix(), cam.proj_matrix())
+            .with_depth_range(near, far);
         assert_eq!(rc.view(), rm.view());
         assert_eq!(rc.projection(), rm.projection());
         // Eye and forward read back from the view matrix agree with the
@@ -220,8 +227,9 @@ fn depth_range_override_wins_until_the_projection_changes() {
     let rc = RenderCamera::from_matrices(glam::Mat4::IDENTITY, proj).with_depth_range(0.05, 500.0);
     assert_eq!(rc.depth_range(), (0.05, 500.0));
     assert_eq!(rc.projection(), proj);
+    // The clip lane packs far as 0 for a projection with no far plane.
     let clip = rc.camera_uniform().clip;
-    assert_eq!((clip[0], clip[1]), (0.05, 500.0));
+    assert_eq!((clip[0], clip[1]), (0.05, 0.0));
 
     let mut rc = rc;
     rc.set_projection(glam::Mat4::perspective_rh(0.8, 1.5, 0.2, 80.0));
@@ -253,8 +261,9 @@ fn foreground_override_replaces_the_projection() {
     for projection in [Projection::Perspective, Projection::Orthographic] {
         let rc = RenderCamera::from_camera(&known_camera(projection));
         let fg = rc.foreground_camera(Some(&pass));
+        // Reversed depth: far before near.
         let expected =
-            glam::Mat4::perspective_rh(1.1, rc.aspect(), 0.01, rc.depth_range().1.max(0.02));
+            glam::Mat4::perspective_rh(1.1, rc.aspect(), rc.depth_range().1.max(0.02), 0.01);
         assert_eq!(fg.view(), rc.view());
         assert_eq!(fg.projection(), expected);
         // Always perspective, even over an orthographic scene camera.
@@ -262,4 +271,102 @@ fn foreground_override_replaces_the_projection() {
         assert_eq!(fg.fov_y(), 1.1);
         assert!(close(fg.depth_range().0, 0.01));
     }
+}
+
+#[test]
+fn screen_ray_through_the_centre_is_the_eye_and_forward() {
+    for cam in cameras()
+        .into_iter()
+        .filter(|c| c.projection == Projection::Perspective)
+    {
+        let rc = RenderCamera::from_camera(&cam);
+        let (origin, dir) = rc.screen_ray(glam::Vec2::ZERO);
+        assert!(close3(origin, rc.eye_position()), "origin {origin:?}");
+        assert!((dir - rc.forward()).length() < 1e-5, "dir {dir:?}");
+    }
+}
+
+#[test]
+fn orthographic_screen_ray_starts_on_the_near_plane() {
+    let rc = RenderCamera::from_camera(&known_camera(Projection::Orthographic));
+    let (origin, dir) = rc.screen_ray(glam::Vec2::new(0.3, -0.7));
+    assert!((dir - rc.forward()).length() < 1e-5, "dir {dir:?}");
+    let depth = (origin - rc.eye_position()).dot(rc.forward());
+    assert!((depth - rc.depth_range().0).abs() < 1e-4, "depth {depth}");
+}
+
+#[test]
+fn screen_ray_matches_the_camera_ray() {
+    for cam in cameras() {
+        let rc = RenderCamera::from_camera(&cam);
+        for ndc in [glam::Vec2::new(0.8, 0.6), glam::Vec2::new(-0.4, -0.9)] {
+            let (o, d) = rc.screen_ray(ndc);
+            let (co, cd) = cam.screen_ray(ndc);
+            assert!((o - co).length() < 1e-4, "origin {o:?} vs {co:?}");
+            assert!((d - cd).length() < 1e-5, "dir {d:?} vs {cd:?}");
+        }
+    }
+}
+
+#[test]
+fn reversed_projections_read_back_their_range() {
+    let view = glam::Mat4::look_at_rh(
+        glam::Vec3::new(0.0, -10.0, 2.0),
+        glam::Vec3::ZERO,
+        glam::Vec3::Z,
+    );
+    let finite = glam::Mat4::perspective_rh(0.9, 1.5, 400.0, 0.25);
+    let rc = RenderCamera::from_matrices(view, finite);
+    let (near, far) = rc.depth_range();
+    assert!(
+        close(near, 0.25) && far_close(far, 400.0, near, false),
+        "{near} {far}"
+    );
+
+    let ortho = glam::Mat4::orthographic_rh(-4.0, 4.0, -3.0, 3.0, 400.0, 0.25);
+    let rc = RenderCamera::from_matrices(view, ortho);
+    let (near, far) = rc.depth_range();
+    assert!(close(near, 0.25) && close(far, 400.0), "{near} {far}");
+
+    let infinite = glam::Mat4::perspective_infinite_reverse_rh(0.9, 1.5, 0.25);
+    let rc = RenderCamera::from_matrices(view, infinite);
+    let (near, far) = rc.depth_range();
+    assert!(
+        close(near, 0.25) && far_close(far, 2500.0, near, false),
+        "{near} {far}"
+    );
+    assert_eq!(
+        rc.camera_uniform().clip[1],
+        0.0,
+        "no far plane packs far as 0"
+    );
+    let rc = rc.with_depth_range(0.25, 60.0);
+    assert_eq!(rc.depth_range(), (0.25, 60.0));
+    // The culling projection takes the range: a point past it is outside.
+    let frustum = crate::camera::frustum::Frustum::from_view_proj(&rc.culling_view_proj());
+    let inside = crate::scene::aabb::Aabb::from_positions(&[[0.0, 40.0, 0.0]]);
+    let beyond = crate::scene::aabb::Aabb::from_positions(&[[0.0, 80.0, 0.0]]);
+    assert!(!frustum.cull_aabb(&inside));
+    assert!(frustum.cull_aabb(&beyond));
+}
+
+#[test]
+fn projection_reversed_from_a_standard_one() {
+    let standard = glam::Mat4::perspective_rh(0.9, 1.5, 0.25, 400.0);
+    let rc = RenderCamera::default().with_projection_reversed(standard);
+    let expected = glam::Mat4::perspective_rh(0.9, 1.5, 400.0, 0.25);
+    assert!(
+        rc.projection().abs_diff_eq(expected, 1e-6),
+        "{:?}",
+        rc.projection()
+    );
+    let (near, far) = rc.depth_range();
+    assert!(
+        close(near, 0.25) && far_close(far, 400.0, near, false),
+        "{near} {far}"
+    );
+    // A point at the near plane lands at depth 1, one at the far plane at 0.
+    let p = rc.projection();
+    assert!((p.project_point3(glam::Vec3::new(0.0, 0.0, -0.25)).z - 1.0).abs() < 1e-5);
+    assert!(p.project_point3(glam::Vec3::new(0.0, 0.0, -400.0)).z.abs() < 1e-5);
 }

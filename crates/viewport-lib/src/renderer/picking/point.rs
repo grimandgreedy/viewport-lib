@@ -517,16 +517,6 @@ impl ViewportRenderer {
             let diag = (smax - smin).length().max(1.0);
 
             let inv = view_proj.inverse();
-            let unproject = |sx: f32, sy: f32, ndc_z: f32| -> Option<glam::Vec3> {
-                let ndc_x = sx / viewport_size.x * 2.0 - 1.0;
-                let ndc_y = 1.0 - sy / viewport_size.y * 2.0;
-                let clip = inv * glam::Vec4::new(ndc_x, ndc_y, ndc_z, 1.0);
-                if clip.w.abs() < 1e-9 {
-                    None
-                } else {
-                    Some(clip.truncate() / clip.w)
-                }
-            };
 
             // World AABB of the rect frustum: near corners plus each corner ray
             // extended past the scene, then clamped to the scene bound.
@@ -540,18 +530,18 @@ impl ViewportRenderer {
             let mut hi = glam::Vec3::splat(f32::NEG_INFINITY);
             let mut any = false;
             for (sx, sy) in corners {
-                let Some(near) = unproject(sx, sy, 0.0) else {
+                let ndc = glam::Vec2::new(
+                    sx / viewport_size.x * 2.0 - 1.0,
+                    1.0 - sy / viewport_size.y * 2.0,
+                );
+                let (near, dir) = crate::interaction::query::picking::ndc_to_ray(inv, ndc);
+                if !near.is_finite() || !dir.is_finite() {
                     continue;
-                };
-                lo = lo.min(near);
-                hi = hi.max(near);
-                any = true;
-                if let Some(far) = unproject(sx, sy, 1.0) {
-                    let dir = (far - near).normalize_or_zero();
-                    let ext = near + dir * (diag * 4.0);
-                    lo = lo.min(far).min(ext);
-                    hi = hi.max(far).max(ext);
                 }
+                let ext = near + dir * (diag * 4.0);
+                lo = lo.min(near).min(ext);
+                hi = hi.max(near).max(ext);
+                any = true;
             }
             if !any {
                 return Vec::new();

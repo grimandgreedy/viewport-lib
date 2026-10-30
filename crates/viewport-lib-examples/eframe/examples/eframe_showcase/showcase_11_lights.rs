@@ -437,8 +437,8 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // the log-space neighbor differences too small to see.
     let cam = &app.camera;
     let far = (cam.distance * 3.0).max(30.0);
-    let proj = glam::Mat4::perspective_rh(cam.fov_y, cam.aspect, cam.effective_znear(), far);
-    fd.camera.render_camera = vpl::RenderCamera::from_matrices(cam.view_matrix(), proj);
+    fd.camera.render_camera =
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
     if app.lights_state.edl_enabled {
         fd.effects.post_process = {
             let mut _t = vpl::PostProcessSettings::default();

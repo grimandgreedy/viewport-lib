@@ -13,11 +13,13 @@ pub(crate) struct ToneMapUniform {
     pub(crate) edl_radius: f32,
     pub(crate) edl_strength: f32,
     pub(crate) background_colour: [f32; 4],
+    /// Near, and the far distance EDL normalises view distance against.
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
-    /// Two spare lanes, kept so the fields after them hold their offsets.
-    pub(crate) _spare0: u32,
-    pub(crate) _spare1: f32,
+    /// Non-zero for an orthographic projection.
+    pub(crate) orthographic: u32,
+    /// The projection's far plane, 0 when it has none.
+    pub(crate) projection_far: f32,
     /// Non-zero when the foreground pass ran this frame. Gates the
     /// foreground-coverage test that skips SSAO/contact-shadow/EDL on
     /// pixels covered by foreground geometry.
@@ -60,13 +62,14 @@ pub(crate) struct SsaoUniform {
     pub(crate) _pad: [f32; 2],
 }
 
-/// Depth of field uniform (32 bytes).
+/// Depth of field uniform (48 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DofUniform {
     pub(crate) focal_distance: f32,
     pub(crate) focal_range: f32,
     pub(crate) max_blur_radius: f32,
+    /// Near and far of the projection; far is 0 when it has none.
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
     pub(crate) viewport_width: f32,
@@ -74,7 +77,12 @@ pub(crate) struct DofUniform {
     /// Non-zero when the foreground pass ran this frame. Pixels covered by
     /// foreground geometry pass through unblurred.
     pub(crate) foreground_enabled: f32,
+    /// Non-zero for an orthographic projection.
+    pub(crate) orthographic: f32,
+    pub(crate) _pad: [f32; 3],
 }
+
+const _: () = assert!(std::mem::size_of::<DofUniform>() == 48);
 
 /// Shadow atlas uniform (368 bytes, bound at group 0 binding 5).
 ///

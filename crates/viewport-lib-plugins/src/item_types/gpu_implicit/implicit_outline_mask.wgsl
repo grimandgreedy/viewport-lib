@@ -139,17 +139,9 @@ struct MarchHit {
 
 // March the pixel's ray to the surface.
 fn march(ndc_xy: vec2<f32>) -> MarchHit {
-    let near_clip = vec4<f32>(ndc_xy, 0.0, 1.0);
-    let far_clip  = vec4<f32>(ndc_xy, 1.0, 1.0);
-
-    let near_world_h = camera.inv_view_proj * near_clip;
-    let far_world_h  = camera.inv_view_proj * far_clip;
-
-    let near_world = near_world_h.xyz / near_world_h.w;
-    let far_world  = far_world_h.xyz  / far_world_h.w;
-
-    let ray_origin = near_world;
-    let ray_dir    = normalize(far_world - near_world);
+    let ray = viewport_ndc_ray(camera.inv_view_proj, ndc_xy);
+    let ray_origin = ray.origin;
+    let ray_dir    = ray.dir;
 
     var t   = 0.0;
     var hit = false;
@@ -190,5 +182,5 @@ fn fs_stamp(in: VertexOutput) -> @builtin(frag_depth) f32 {
         discard;
     }
     let clip = camera.view_proj * vec4<f32>(m.pos, 1.0);
-    return max(clip.z / clip.w - 1e-6, 0.0);
+    return clamp(viewport_depth_toward_near(clip.z / clip.w, 1e-6), 0.0, 1.0);
 }

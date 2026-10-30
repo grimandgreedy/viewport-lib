@@ -899,8 +899,8 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     fd.effects.display.exposure = app.lighting_state.exposure_settings();
     let cam = &app.camera;
     let far = (cam.distance * 3.0).max(60.0);
-    let proj = glam::Mat4::perspective_rh(cam.fov_y, cam.aspect, cam.effective_znear(), far);
-    fd.camera.render_camera = vpl::RenderCamera::from_matrices(cam.view_matrix(), proj);
+    fd.camera.render_camera =
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
 }
 
 // ---------------------------------------------------------------------------

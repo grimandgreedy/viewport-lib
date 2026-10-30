@@ -43,7 +43,7 @@ fn build(r: &ExternalInstancesRecipe, i: usize) -> gpu::RenderPipeline {
             topology: gpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(gpu::Face::Back),
             depth_write: true,
-            depth_compare: gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
         },

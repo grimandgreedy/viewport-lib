@@ -481,15 +481,18 @@ impl PostProducer for DofProducer {
     ) {
         let settings = &inputs.post.dof;
         let [sw, sh] = hdr.scene_size;
+        let clip = crate::plugin_api::depth::clip_lane(inputs.proj, inputs.near, inputs.far);
         let uniform = super::uniforms::DofUniform {
             focal_distance: settings.focal_distance,
             focal_range: settings.focal_range,
             max_blur_radius: settings.max_blur_radius,
-            near_plane: inputs.near,
-            far_plane: inputs.far,
+            near_plane: clip[0],
+            far_plane: clip[1],
             viewport_width: sw as f32,
             viewport_height: sh as f32,
             foreground_enabled: if inputs.foreground_active { 1.0 } else { 0.0 },
+            orthographic: clip[2],
+            _pad: [0.0; 3],
         };
         queue.write_buffer(&hdr.dof.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
     }

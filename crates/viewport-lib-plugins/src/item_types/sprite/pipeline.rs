@@ -147,7 +147,7 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
             topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             depth_write: key.depth_write,
-            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
         },
@@ -228,7 +228,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                 },
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
                     false,
-                    viewport_lib::gpu::CompareFunction::Less,
+                    viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: viewport_lib::gpu::MultisampleState {
                     count: r.sample_count,
@@ -274,7 +274,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                 },
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
                     true,
-                    viewport_lib::gpu::CompareFunction::Less,
+                    viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: viewport_lib::gpu::MultisampleState {
                     count: 1,
@@ -292,7 +292,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             &vertex_buffers,
             None,
             false,
-            viewport_lib::gpu::CompareFunction::Less,
+            viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
         ),
         // The unlit colour shader again, stamping the scene stencil. It
         // discards where the colour pass did, so a cut-out sprite stamps only
@@ -370,7 +370,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                     },
                     depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
                         false,
-                        viewport_lib::gpu::CompareFunction::LessEqual,
+                        viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                     )),
                     multisample: viewport_lib::gpu::MultisampleState {
                         count: r.sample_count,

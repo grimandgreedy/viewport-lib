@@ -161,6 +161,9 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare_scene").entered();
+        if self.direct_paint {
+            self.resources.ensure_host_depth_reset_pipeline(device);
+        }
         // Start of frame: rotate the double-buffered timestamp query sets.
         // Passes write this frame's timestamps into `ts_query_set`, setting
         // their slot bit as they encode (shadow here in prepare, scene/oit/post
@@ -1123,7 +1126,7 @@ impl ViewportRenderer {
         let plugin_cull_span =
             tracing::debug_span!(target: "viewport_lib::frame", "plugin_cull").entered();
         if !self.item_type_plugins.is_empty() {
-            let vp = frame.camera.render_camera.view_proj();
+            let vp = frame.camera.render_camera.culling_view_proj();
             let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
             self.dispatch_plugin_cull(&frustum, frame);
         }

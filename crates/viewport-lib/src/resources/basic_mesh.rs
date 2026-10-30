@@ -138,7 +138,7 @@ impl BasicMeshPipelines {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     crate::resources::SCENE_DEPTH_FORMAT,
                     !key.blend,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState::default(),
                 cache: None,

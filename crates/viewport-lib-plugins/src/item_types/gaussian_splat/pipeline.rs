@@ -95,7 +95,7 @@ fn build(r: &SplatRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
             },
@@ -182,7 +182,7 @@ pub(super) fn disc_mask_pipeline(
             },
             depth_stencil: Some(builders::scene_depth_stencil(
                 false,
-                gpu::CompareFunction::Less,
+                viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             )),
             multisample: gpu::MultisampleState {
                 count: 1,

@@ -11,10 +11,13 @@ struct ToneMapUniform {
     edl_radius:              f32,
     edl_strength:            f32,
     background_colour:        vec4<f32>,
+    // Near and the far distance EDL normalises against.
     near_plane:              f32,
     far_plane:               f32,
-    _spare0:                 u32,
-    _spare1:                 f32,
+    // Non-zero for an orthographic projection.
+    orthographic:            u32,
+    // The projection's far plane, 0 when it has none.
+    projection_far:          f32,
     foreground_enabled:      u32,
     vignette_amount:         f32,
     vignette_radius:         f32,
@@ -33,7 +36,7 @@ struct ToneMapUniform {
 @group(0) @binding(5) var cs_texture:    texture_2d<f32>;
 @group(0) @binding(6) var depth_texture: texture_2d<f32>;
 @group(0) @binding(7) var depth_sampler: sampler;
-// Foreground pass coverage mask: depth < 1.0 where foreground geometry was
+// Foreground pass coverage mask: not background where foreground geometry was
 // drawn. The screen-space terms below (AO, contact shadows, EDL) are
 // computed from scene depth, which is unrelated to what a covered pixel
 // shows, so they are skipped there.
@@ -57,6 +60,7 @@ struct ExposureState {
 @group(0) @binding(10) var grade_lut: texture_2d<f32>;
 
 // #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 // Sample the strip LUT for a display-space colour, interpolating between the
 // two nearest blue slices.
@@ -148,6 +152,18 @@ fn khronos_neutral(colour: vec3<f32>) -> vec3<f32> {
     return mix(scaled, vec3<f32>(new_peak), g);
 }
 
+// View distance over the EDL reference far, capped at 1 so background and
+// anything past the reference read as the far end.
+fn edl_linear_depth(d: f32) -> f32 {
+    let clip = vec4<f32>(
+        params.near_plane,
+        params.projection_far,
+        f32(params.orthographic),
+        0.0,
+    );
+    return min(viewport_depth_to_view_z(d, clip) / params.far_plane, 1.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth_dims = textureDimensions(depth_texture);
@@ -165,9 +181,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if params.foreground_enabled != 0u {
         let fg_dims = textureDimensions(foreground_depth);
         let fg_coord = vec2<i32>(vec2<u32>(depth_uv * vec2<f32>(fg_dims)));
-        covered = depth_texel(foreground_depth, depth_sampler, fg_coord) < 1.0;
+        covered = !viewport_depth_is_background(
+            depth_texel(foreground_depth, depth_sampler, fg_coord),
+        );
     }
-    let is_background = depth >= 0.999999 && !covered;
+    let is_background = viewport_depth_is_background(depth) && !covered;
     let hdr = textureSample(hdr_texture, hdr_sampler, in.uv);
 
     // Bloom spreads (via blur) beyond the pixels that produced it, so it must
@@ -212,35 +230,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Eye-Dome Lighting: darken pixels at depth discontinuities.
-    // Depth is linearized (z_eye / far) before the log comparison so that the
-    // log differences are large enough to produce a visible effect regardless
-    // of the near/far plane ratio.
+    // Depth is linearized (z_eye / far, capped at 1 for background) before the
+    // log comparison so that the log differences are large enough to produce a
+    // visible effect regardless of the near/far plane ratio.
     if params.edl_enabled != 0u && !covered {
-        let n = params.near_plane;
-        let f = params.far_plane;
-        // Linear depth in [near/far, 1]: z_eye/far = n / (f - d*(f-n))
-        let lin_dc  = n / (f - depth * (f - n));
-        let log_ldc = log(lin_dc);
+        let log_ldc = log(edl_linear_depth(depth));
         let dims_i  = vec2<i32>(depth_dims);
         let edl_r   = i32(max(1.0, round(params.edl_radius)));
         var edl_nc: vec2<i32>;
         var edl_sum = 0.0;
         edl_nc = clamp(depth_coord + vec2<i32>( edl_r,      0), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>( edl_r,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(      0,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(-edl_r,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(-edl_r,      0), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(-edl_r, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(      0, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>( edl_r, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(n / (f - depth_texel(depth_texture, depth_sampler, edl_nc) * (f - n))) - log_ldc);
+        edl_sum += max(0.0, log(edl_linear_depth(depth_texel(depth_texture, depth_sampler, edl_nc))) - log_ldc);
         // Normalize by sample count then apply exponential response so strength=1
         // gives moderate edge darkening and strength=5 gives near-complete darkening.
         let edl_factor = 1.0 - exp(-params.edl_strength * edl_sum / 8.0);

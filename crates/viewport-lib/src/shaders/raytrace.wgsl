@@ -108,6 +108,7 @@ struct Frame {
 @group(0) @binding(16) var brdf_lut_samp: sampler;
 
 // #include "helpers/brdf.wgsl"
+// #include "helpers/depth.wgsl"
 
 // The raster path's specular energy compensation for this surface.
 fn energy_comp(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -1071,9 +1072,10 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
 fn ray_through(uv: vec2<f32>) -> vec3<f32> {
     var ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
-    let far = frame.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
-    let far_point = far.xyz / far.w;
-    return normalize(far_point - frame.cam_pos.xyz);
+    // The far end of the depth range; with no far plane it is at infinity
+    // (w = 0) and its xyz is the direction.
+    let far = frame.inv_view_proj * vec4<f32>(ndc, VIEWPORT_DEPTH_FAR, 1.0);
+    return normalize(far.xyz - frame.cam_pos.xyz * far.w);
 }
 
 fn camera_ray(px: vec2<f32>, rng: ptr<function, u32>) -> vec3<f32> {

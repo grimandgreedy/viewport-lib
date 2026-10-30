@@ -15,6 +15,7 @@ struct ContactShadowUniform {
 @group(0) @binding(0) var depth_texture: texture_2d<f32>;
 @group(0) @binding(1) var depth_sampler: sampler;
 @group(0) @binding(2) var<uniform> params: ContactShadowUniform;
+// #include "helpers/depth.wgsl"
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -36,7 +37,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 // Reconstruct view-space position from depth buffer at given UV.
 fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     // UV -> NDC.
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, viewport_depth_finite(depth), 1.0);
     let view_h = params.inv_proj * ndc;
     return view_h.xyz / view_h.w;
 }
@@ -51,8 +52,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_pos = view_pos_from_depth(in.uv, frag_depth);
     var view_normal = normalize(cross(dpdx(view_pos), dpdy(view_pos)));
 
-    // Skip sky fragments (depth ~ 1.0).
-    if frag_depth >= 0.9999 {
+    // Skip sky fragments.
+    if viewport_depth_is_background(frag_depth) {
         return vec4<f32>(1.0);
     }
 

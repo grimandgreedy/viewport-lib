@@ -618,13 +618,10 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
         // Per-frame gizmo hover when no session is active.
         if !app.interact_state.manip.is_active() {
             if let Some(center) = app.interact_state.gizmo_center {
-                let ray_origin = app.camera.eye_position();
                 let cursor = app.cursor_viewport;
                 let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
                 let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
-                let inv_vp = view_proj.inverse();
-                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                let ray_dir = (far - ray_origin).normalize_or_zero();
+                let (ray_origin, ray_dir) = app.camera.screen_ray(glam::Vec2::new(ndc_x, ndc_y));
                 let orient = crate::gizmo_helpers::gizmo_orientation(
                     &app.interact_state.gizmo,
                     &app.interact_state.selection,

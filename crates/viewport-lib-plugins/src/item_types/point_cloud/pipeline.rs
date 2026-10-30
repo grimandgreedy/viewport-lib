@@ -54,7 +54,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
             },
@@ -122,7 +122,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                     },
                     depth_stencil: Some(builders::scene_depth_stencil(
                         false,
-                        gpu::CompareFunction::Less,
+                        viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                     )),
                     multisample: gpu::MultisampleState {
                         count: 1,
@@ -270,7 +270,7 @@ fn build_stream(r: &PointCloudStreamRecipe, key: usize) -> gpu::RenderPipeline {
             topology: gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             depth_write: true,
-            depth_compare: gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: 1,
             ldr_format: r.ldr_format,
         },

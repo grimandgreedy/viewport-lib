@@ -58,7 +58,7 @@ fn build_pass(r: &PolylinePassRecipe, i: usize) -> crate::gpu::RenderPipeline {
             &instance,
             None,
             true,
-            crate::gpu::CompareFunction::LessEqual,
+            crate::plugin_api::depth::DEPTH_COMPARE,
         ),
     }
 }

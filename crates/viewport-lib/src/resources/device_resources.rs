@@ -1311,7 +1311,7 @@ impl DeviceResources {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: self.sample_count,
@@ -1476,7 +1476,7 @@ impl DeviceResources {
                     cull_mode: None,
                     ..Default::default()
                 },
-                // Drawn after opaques: only sky pixels (depth == 1.0) pass.
+                // Drawn after opaques: only sky pixels (depth at the clear value) pass.
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
                     crate::gpu::CompareFunction::Equal,

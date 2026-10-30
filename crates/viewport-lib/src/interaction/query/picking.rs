@@ -54,10 +54,20 @@ pub fn screen_to_ray(
 ) -> (glam::Vec3, glam::Vec3) {
     let ndc_x = (screen_pos.x / viewport_size.x) * 2.0 - 1.0;
     let ndc_y = 1.0 - (screen_pos.y / viewport_size.y) * 2.0; // Y flipped (screen Y down, NDC Y up)
-    let near = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, 0.0));
-    let far = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-    let dir = (far - near).normalize();
-    (near, dir)
+    ndc_to_ray(view_proj_inv, glam::Vec2::new(ndc_x, ndc_y))
+}
+
+/// The world-space ray through `ndc`, as (point on the near plane, unit
+/// direction), from an inverse view-projection in the scene depth convention.
+///
+/// The second point sits just short of the far end of the depth range, so it
+/// stays finite for a projection with no far plane.
+pub(crate) fn ndc_to_ray(view_proj_inv: glam::Mat4, ndc: glam::Vec2) -> (glam::Vec3, glam::Vec3) {
+    use crate::plugin_api::depth::{DEPTH_FAR, DEPTH_NEAR};
+    let toward_far = DEPTH_FAR + (DEPTH_NEAR - DEPTH_FAR) * 1.0e-3;
+    let near = view_proj_inv.project_point3(glam::Vec3::new(ndc.x, ndc.y, DEPTH_NEAR));
+    let far = view_proj_inv.project_point3(glam::Vec3::new(ndc.x, ndc.y, toward_far));
+    (near, (far - near).normalize())
 }
 
 /// Cast a ray against all visible viewport objects. Returns a [`PickHit`] for the

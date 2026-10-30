@@ -705,7 +705,7 @@ impl DeviceResources {
                 let shadow_sampler = crate::resources::builders::comparison_sampler(
                     device,
                     "shadow_sampler",
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::SHADOW_DEPTH_COMPARE,
                 );
 
                 // Punctual (point and spot) shadow array: a placeholder of one

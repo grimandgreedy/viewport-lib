@@ -497,7 +497,7 @@ impl DeviceResources {
     ///
     /// One colour target (the HDR scene buffer) with the caller's blend state,
     /// and the scene depth attachment bound read-only: the pipeline tests
-    /// against opaque depth (`opts.depth_compare`, `LessEqual` by default) but
+    /// against opaque depth (`opts.depth_compare`, `DEPTH_COMPARE` by default) but
     /// never writes it, since the pass binds depth read-only. Set
     /// `opts.color_blend` to alpha blending for soft particles.
     ///
@@ -790,7 +790,7 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_format,
                     false,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -882,7 +882,7 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_format,
                     false,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -972,7 +972,7 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_stencil_format,
                     true,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -1025,7 +1025,11 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::gpu::DepthStencilState {
                     format: desc.depth_format,
                     depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(opts.depth_compare),
+                    // `opts.depth_compare` is written for scene depth; the
+                    // shadow map keeps its own convention.
+                    depth_compare: crate::resources::builders::dcompare(
+                        crate::plugin_api::depth::scene_to_shadow_compare(opts.depth_compare),
+                    ),
                     stencil: crate::gpu::StencilState::default(),
                     bias: opts.depth_bias.unwrap_or(crate::gpu::DepthBiasState {
                         constant: 2,
@@ -1070,8 +1074,12 @@ pub struct PluginPipelineOpts<'a> {
     /// Whether the opaque builder writes depth. Ignored by the other
     /// builders. Default `true`.
     pub depth_write: bool,
-    /// Depth-compare function for the opaque and shadow builders. Ignored by
-    /// the others.
+    /// Depth-compare function for the opaque and shadow builders, written
+    /// for scene depth. Ignored by the others. Default
+    /// [`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE); use the
+    /// [`depth`](crate::plugin_api::depth) constants rather than naming a
+    /// direction. The shadow builder translates it into the shadow map's own
+    /// convention.
     pub depth_compare: crate::gpu::CompareFunction,
     /// Depth bias for the shadow builder. Ignored by the others.
     ///
@@ -1141,7 +1149,7 @@ impl<'a> PluginPipelineOpts<'a> {
             },
             color_blend: None,
             depth_write: true,
-            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             depth_bias: None,
         }
     }

@@ -214,12 +214,12 @@ pub(super) fn handle_world_radius(
 
 /// Build a ray from the context cursor position.
 pub(super) fn ctx_ray(ctx: &WidgetContext) -> (glam::Vec3, glam::Vec3) {
-    let vp = ctx.camera.view_proj();
-    crate::interaction::query::picking::screen_to_ray(
-        ctx.cursor_viewport,
-        ctx.viewport_size,
-        vp.inverse(),
-    )
+    let size = ctx.viewport_size;
+    let ndc = glam::Vec2::new(
+        (ctx.cursor_viewport.x / size.x) * 2.0 - 1.0,
+        1.0 - (ctx.cursor_viewport.y / size.y) * 2.0,
+    );
+    ctx.camera.screen_ray(ndc)
 }
 
 /// Shortest distance from a ray to a point.

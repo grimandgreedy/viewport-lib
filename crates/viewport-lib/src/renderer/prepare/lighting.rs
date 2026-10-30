@@ -761,8 +761,9 @@ pub(super) fn rank_lights<'a>(
     // Dropping off-screen lights here keeps the cluster build pass and
     // the per-fragment iteration both bounded by what is actually visible.
     // Directional lights always survive : they affect every fragment.
-    let cull_frustum =
-        crate::camera::frustum::Frustum::from_view_proj(&frame.camera.render_camera.view_proj());
+    let cull_frustum = crate::camera::frustum::Frustum::from_view_proj(
+        &frame.camera.render_camera.culling_view_proj(),
+    );
     let mut frustum_culled = 0u32;
     let raw_lights: Vec<(usize, &LightSource)> = lights
         .enumerate()

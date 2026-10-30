@@ -314,13 +314,9 @@ impl ManipulationController {
             if let (Some(gizmo_info), Some(center), Some(cursor)) =
                 (&ctx.gizmo, ctx.selection_center, ctx.cursor_viewport)
             {
-                let camera_view = ctx.camera.view_matrix();
-                let view_proj = ctx.camera.proj_matrix() * camera_view;
-
                 // Build a ray from the cursor position.
-                let ray_origin = ctx.camera.eye_position();
-                let ray_dir =
-                    unproject_cursor_to_ray(cursor, &ctx.camera, view_proj, ctx.viewport_size);
+                let (ray_origin, ray_dir) =
+                    unproject_cursor_to_ray(cursor, &ctx.camera, ctx.viewport_size);
 
                 let temp_gizmo = Gizmo {
                     mode: gizmo_info.mode,
@@ -464,24 +460,15 @@ fn hit_to_constraint(hit: GizmoAxis) -> (Option<GizmoAxis>, bool) {
     }
 }
 
-/// Compute a world-space ray direction from a viewport-local cursor position.
+/// The world-space ray `(origin, direction)` under a viewport-local cursor position.
 fn unproject_cursor_to_ray(
     cursor_viewport: glam::Vec2,
     camera: &crate::camera::camera::Camera,
-    view_proj: glam::Mat4,
     viewport_size: glam::Vec2,
-) -> glam::Vec3 {
-    // Convert cursor from viewport pixels (Y-down) to NDC.
+) -> (glam::Vec3, glam::Vec3) {
     let ndc_x = (cursor_viewport.x / viewport_size.x.max(1.0)) * 2.0 - 1.0;
     let ndc_y = 1.0 - (cursor_viewport.y / viewport_size.y.max(1.0)) * 2.0;
-
-    let inv_vp = view_proj.inverse();
-
-    let far_world = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-
-    // Use the camera eye position for accuracy (same as the gizmo hit-test origin).
-    let eye = camera.eye_position();
-    (far_world - eye).normalize_or(glam::Vec3::NEG_Z)
+    camera.screen_ray(glam::Vec2::new(ndc_x, ndc_y))
 }
 
 // ---------------------------------------------------------------------------

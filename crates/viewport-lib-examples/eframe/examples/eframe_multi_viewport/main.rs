@@ -538,10 +538,7 @@ impl App {
                         let h = qr.height();
                         let ndc_x = (self.cursor_local.x / w.max(1.0)) * 2.0 - 1.0;
                         let ndc_y = 1.0 - (self.cursor_local.y / h.max(1.0)) * 2.0;
-                        let vp_inv = (cam.proj_matrix() * cam.view_matrix()).inverse();
-                        let far = vp_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                        let ray_origin = cam.eye_position();
-                        let ray_dir = (far - ray_origin).normalize_or_zero();
+                        let (ray_origin, ray_dir) = cam.screen_ray(glam::Vec2::new(ndc_x, ndc_y));
                         self.gizmo.hovered_axis =
                             self.gizmo
                                 .hit_test(ray_origin, ray_dir, center, self.gizmo_scales[hq]);

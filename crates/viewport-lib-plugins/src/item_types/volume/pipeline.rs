@@ -55,7 +55,7 @@ fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
             },

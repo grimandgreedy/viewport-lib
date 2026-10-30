@@ -398,10 +398,8 @@ impl ClipPlaneController {
         self.hovered = false;
 
         if let Some(cursor) = ctx.cursor_viewport {
-            let view_proj = ctx.camera.proj_matrix() * ctx.camera.view_matrix();
-            let ray_origin = ctx.camera.eye_position();
-            let ray_dir =
-                unproject_cursor_to_ray(cursor, &ctx.camera, view_proj, ctx.viewport_size);
+            let (ray_origin, ray_dir) =
+                unproject_cursor_to_ray(cursor, &ctx.camera, ctx.viewport_size);
 
             let (plane_normal_arr, plane_dist) = if let ClipShape::Plane {
                 normal, distance, ..
@@ -521,19 +519,15 @@ pub(crate) fn plane_tangents(normal: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
     (t1, t2)
 }
 
-/// Unproject a viewport-pixel cursor position to a world-space ray direction.
+/// The world-space ray `(origin, direction)` under a viewport-pixel cursor position.
 fn unproject_cursor_to_ray(
     cursor_viewport: glam::Vec2,
     camera: &Camera,
-    view_proj: glam::Mat4,
     viewport_size: glam::Vec2,
-) -> glam::Vec3 {
+) -> (glam::Vec3, glam::Vec3) {
     let ndc_x = (cursor_viewport.x / viewport_size.x.max(1.0)) * 2.0 - 1.0;
     let ndc_y = 1.0 - (cursor_viewport.y / viewport_size.y.max(1.0)) * 2.0;
-    let inv_vp = view_proj.inverse();
-    let far_world = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-    let eye = camera.eye_position();
-    (far_world - eye).normalize_or(glam::Vec3::NEG_Z)
+    camera.screen_ray(glam::Vec2::new(ndc_x, ndc_y))
 }
 
 // ---------------------------------------------------------------------------

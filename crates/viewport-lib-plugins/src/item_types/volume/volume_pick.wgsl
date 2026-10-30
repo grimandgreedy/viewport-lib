@@ -281,7 +281,7 @@ fn fs_pick(in: VertexOutput) -> PickOut {
     var miss: PickOut;
     miss.object_id = 0u;
     miss.primitive_id = 0u;
-    miss.depth = 1.0;
-    miss.frag_depth = 1.0;
+    miss.depth = VIEWPORT_DEPTH_FAR;
+    miss.frag_depth = VIEWPORT_DEPTH_FAR;
     return miss;
 }

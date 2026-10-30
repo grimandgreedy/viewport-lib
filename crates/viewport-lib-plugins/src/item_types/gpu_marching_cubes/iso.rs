@@ -153,7 +153,7 @@ fn build(r: &McIsoRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: Some(gpu::Face::Front),
                 depth_write: true,
-                depth_compare: gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
             },

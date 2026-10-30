@@ -76,6 +76,7 @@ fn frustum_cull_rejects_behind_camera() {
     let visible = stats
         .gpu_visible_instances
         .expect("no gpu_visible_instances readback after 8 frames");
+    eprintln!("gpu cull counts: visible={visible} of 20");
     assert!(
         visible < 20,
         "frustum cull rejected nothing: {visible} of 20 instances visible \
