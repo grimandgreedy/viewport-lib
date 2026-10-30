@@ -10,3 +10,5 @@ pub(crate) mod highlight;
 pub(crate) mod overlay_shape;
 pub(crate) mod overlay_text;
 pub(crate) mod overlays;
+/// Section cap fill pipelines.
+pub(crate) mod section_cap;

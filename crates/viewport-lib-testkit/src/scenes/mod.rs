@@ -22,6 +22,7 @@ pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
+pub mod section_caps;
 pub mod shadows;
 pub mod textures;
 
@@ -1058,6 +1059,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(item_types::scenes());
     scenes.extend(overlays::scenes());
     scenes.extend(shadows::scenes());
+    scenes.extend(section_caps::scenes());
     scenes.extend(materials::scenes());
     scenes.extend(fallbacks::scenes());
     scenes.extend(exposure::scenes());

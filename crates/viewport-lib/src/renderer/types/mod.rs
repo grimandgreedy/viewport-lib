@@ -960,11 +960,11 @@ macro_rules! emit_draw_calls {
             }
         }
 
-        // Cap fill pass (section view cross-section fill).
+        // Section caps, clipped by the other planes and the clip volumes.
         if let Some(slot) = _vp_slot {
             if let (false, Some(pipeline)) = (
                 slot.cap_buffers.is_empty(),
-                resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_TRIANGLES),
+                resources.section_cap_pipeline(false),
             ) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);

@@ -947,10 +947,10 @@ impl ViewportRenderer {
                 }
             }
 
-            // Cap fill pass (HDR path : section view cross-section fill).
+            // Section caps, clipped by the other planes and the clip volumes.
             if !slot.cap_buffers.is_empty() {
-                if let Some(hdr_overlay) = resources.scene.hdr_overlay() {
-                    render_pass.set_pipeline(hdr_overlay);
+                if let Some(cap_pipeline) = resources.section_cap_pipeline(true) {
+                    render_pass.set_pipeline(cap_pipeline);
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
                         render_pass.set_bind_group(1, bg, &[]);

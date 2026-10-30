@@ -167,6 +167,8 @@ fn expected(name: &str) -> Option<Expected> {
         "slab_stack_sun" => e(10, 10, 10, 10, 120),
         "slab_stack_point" => e(10, 10, 10, 10, 120),
         "long_hall" => e(26, 26, 5, 5, 312),
+        // Ground, tube and cube; the section caps are not batch draws.
+        "section_caps" => e(3, 3, 3, 3, 408),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),
@@ -324,4 +326,57 @@ fn default_draw_order_keeps_draw_commands() {
         assert_eq!(s.instanced_batches, batches, "{name}: instanced_batches");
         assert_eq!(s.main_draw_commands, commands, "{name}: main_draw_commands");
     }
+}
+
+/// Section caps are cached per mesh, transform and plane: a static capped
+/// frame generates none on its second render, and moving one plane
+/// regenerates only the caps on that plane. The scene's tube is the one item
+/// the clip applies to, cut by two planes, so the first frame builds two
+/// caps and the moved plane rebuilds one.
+#[test]
+fn section_caps_regenerate_only_on_change() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (w, h) = (320u32, 240u32);
+    let scene = viewport_lib_testkit::scene_by_name("section_caps").expect("scene in catalogue");
+    let built = harness.build_scene(&scene);
+    let frame = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
+
+    let _ = harness.render(&frame, w, h);
+    assert_eq!(
+        harness.stats().cap_meshes_built,
+        2,
+        "first frame builds each cap"
+    );
+    let _ = harness.render(&frame, w, h);
+    assert_eq!(
+        harness.stats().cap_meshes_built,
+        0,
+        "a static section regenerated its caps"
+    );
+
+    let mut moved = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
+    let across = moved
+        .effects
+        .clip
+        .objects
+        .iter_mut()
+        .find_map(|o| match &mut o.shape {
+            viewport_lib::ClipShape::Plane {
+                normal, distance, ..
+            } if normal[2] != 0.0 => Some(distance),
+            _ => None,
+        })
+        .expect("the horizontal plane");
+    *across -= 0.2;
+    let _ = harness.render(&moved, w, h);
+    assert_eq!(
+        harness.stats().cap_meshes_built,
+        1,
+        "moving one plane rebuilds only its cap"
+    );
+    let _ = harness.render(&moved, w, h);
+    assert_eq!(harness.stats().cap_meshes_built, 0);
 }

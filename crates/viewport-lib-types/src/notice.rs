@@ -121,6 +121,15 @@ pub enum NoticeDetail {
         /// The atlas side allocated.
         used: u32,
     },
+    /// More clip objects clip geometry than the clip uniforms hold; the ones
+    /// past the limit do not clip and get no section cap.
+    ClipObjectsOverCap {
+        /// Enabled clipping planes in the frame. The first 6 apply.
+        planes: u32,
+        /// Enabled clipping boxes, spheres and cylinders in the frame. The
+        /// first 4 apply.
+        volumes: u32,
+    },
     /// The GPU device was lost.
     DeviceLost {
         /// The reason the backend gave.
@@ -208,6 +217,11 @@ impl fmt::Display for NoticeDetail {
                 "shadow atlas_resolution {requested} is outside what this device takes \
                  (256 to 8192, within its max_texture_dimension_2d, even); the atlas is {used} \
                  square"
+            ),
+            Self::ClipObjectsOverCap { planes, volumes } => write!(
+                f,
+                "the frame enables {planes} clip planes and {volumes} clip volumes; only the \
+                 first 6 planes and 4 volumes clip, and the rest are ignored"
             ),
             Self::DeviceLost { reason } => write!(f, "GPU device lost: {reason}"),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),

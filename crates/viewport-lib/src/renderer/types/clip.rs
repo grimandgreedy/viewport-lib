@@ -50,9 +50,15 @@ pub enum ClipShape {
 /// A clip object : defines a clipping region and optional visual boundary rendering.
 ///
 /// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants and
-/// up to 4 `Box`, `Sphere`, or `Cylinder` variants are supported simultaneously; all
-/// active clip objects apply cumulatively (AND semantics). Entries beyond the limit
-/// are silently ignored.
+/// up to 4 `Box`, `Sphere`, or `Cylinder` variants clip at once; all active clip
+/// objects apply cumulatively (AND semantics). Entries beyond the limit are
+/// ignored, and the renderer reports a
+/// [`NoticeDetail::ClipObjectsOverCap`](crate::NoticeDetail::ClipObjectsOverCap).
+///
+/// With `ClipSettings::cap_fill_enabled`, each clipping plane fills the
+/// cross-section of every mesh it cuts that has CPU geometry and is not
+/// `ignore_clip`. A cap is clipped by the other planes and the clip volumes, and
+/// holes in the section stay open.
 ///
 /// The renderer does not draw a boundary for a clip object; it only performs the
 /// clip operation (and the section cap fill). To show where a clip sits, build the
@@ -68,8 +74,8 @@ pub struct ClipObject {
     pub shape: ClipShape,
     /// Whether this object clips rendered geometry via the GPU clip-plane uniform.
     ///
-    /// Set to `false` to produce only a visual indicator without affecting geometry.
-    /// Default: `true`.
+    /// With `false` the object neither clips nor produces a section cap, and
+    /// takes none of the plane or volume slots. Default: `true`.
     pub clip_geometry: bool,
     /// Whether this object is active. Disabled objects are ignored entirely.
     pub enabled: bool,

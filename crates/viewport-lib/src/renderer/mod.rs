@@ -40,6 +40,7 @@ mod config;
 mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
+mod section_caps;
 pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
@@ -219,12 +220,13 @@ pub(crate) struct ViewportSlot {
     )>,
     /// Per-frame constraint guide line draws, rebuilt in prepare().
     pub constraint_line_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
-    /// Per-frame cap geometry draws (section view cross-section fill), rebuilt in prepare().
+    /// This frame's section cap draws, chosen in prepare() from `cap_cache`.
     pub cap_buffers: Vec<overlay_buffers::OverlayGeometryDraw>,
-    /// The buffers behind `constraint_line_buffers` and `cap_buffers`, kept
-    /// across frames.
+    /// The buffers behind `constraint_line_buffers`, kept across frames.
     pub constraint_line_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
-    pub cap_pool: Vec<overlay_buffers::OverlayGeometrySlot>,
+    /// Section cap geometry kept across frames, regenerated only when a
+    /// mesh, its transform or a clip plane changes.
+    pub(crate) cap_cache: section_caps::SectionCapCache,
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
@@ -3621,7 +3623,7 @@ impl ViewportRenderer {
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
                 constraint_line_pool: Vec::new(),
-                cap_pool: Vec::new(),
+                cap_cache: Default::default(),
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 skybox: None,
