@@ -18,6 +18,17 @@
 //! out of scope; per-window surface loss is handled (the surface is reconfigured
 //! on `Lost`/`Outdated`).
 //!
+//! # Device loss
+//!
+//! The runner owns the device, so it also recovers from losing it. It watches
+//! the device with one [`DeviceLostWatcher`](crate::DeviceLostWatcher) shared by
+//! every window's renderer. When the device is lost it requests a new adapter
+//! and device, recreates each window's surface and [`ViewportInstance`], runs
+//! each window's setup callback again on the new instance, and puts the camera
+//! back where it was. Anything else the app built on the old device (offscreen
+//! targets, its own textures) has to be rebuilt by the app: build it from the
+//! setup callback, or check [`FrameCtx::device_rebuilt`] in the frame callback.
+//!
 //! # The winit boundary
 //!
 //! A consumer never touches winit through this runner: windows are named by the
@@ -268,8 +279,9 @@ impl AppConfig {
 }
 
 /// The per-window setup callback: build this window's scene with the shared device
-/// in hand, one per window.
-type WindowFactory = Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>;
+/// in hand, one per window. Runs again on a fresh instance after the device is
+/// lost and recreated.
+type WindowFactory = Box<dyn FnMut(&mut ViewportInstance, &crate::gpu::Device)>;
 
 /// The per-window per-frame callback.
 type WindowCallback = Box<dyn FnMut(&mut FrameCtx)>;
@@ -312,6 +324,7 @@ enum WindowCommand {
 /// window count does not belong here.
 pub struct FrameCtx<'a> {
     session: &'a mut ViewportInstance,
+    device_rebuilt: bool,
     window: &'a Window,
     window_id: WindowId,
     dt: f32,
@@ -372,6 +385,14 @@ impl FrameCtx<'_> {
         self.device
     }
 
+    /// True on the first frame after the runner replaced a lost device. The
+    /// instance is new and its setup callback has run again; anything the
+    /// frame callback built on the old device (offscreen targets, its own
+    /// textures) has to be built again on [`device`](Self::device).
+    pub fn device_rebuilt(&self) -> bool {
+        self.device_rebuilt
+    }
+
     /// The shared wgpu queue.
     pub fn queue(&self) -> &crate::gpu::Queue {
         self.queue
@@ -404,7 +425,7 @@ impl FrameCtx<'_> {
     pub fn open_window(
         &mut self,
         config: WindowConfig,
-        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
     ) -> WindowId {
         let id = alloc_window_id(&mut self.next_id);
@@ -704,16 +725,17 @@ impl ViewportApp {
     /// Declare a window: its configuration, a one-time setup callback run with the
     /// shared device to build its scene, and a per-frame callback that drives it.
     ///
-    /// Call once per window before [`run`](Self::run). The setup callback runs once,
+    /// Call once per window before [`run`](Self::run). The setup callback runs
     /// after the window's instance is created: upload meshes, build the initial
-    /// scene, attach a runtime. The frame callback runs once per frame for that
+    /// scene, attach a runtime. It runs again on a new instance after the device
+    /// is lost and recreated, so build everything the window draws from it. The frame callback runs once per frame for that
     /// window, before rendering. The
     /// runner drives a built-in orbit controller for this window; take input over
     /// with [`window_with_input`](Self::window_with_input).
     pub fn window(
         self,
         config: WindowConfig,
-        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
     ) -> Self {
         self.push_window(config, factory, None, Box::new(callback), None)
@@ -727,7 +749,7 @@ impl ViewportApp {
     pub fn window_with_input(
         self,
         config: WindowConfig,
-        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         input: impl FnMut(&mut InputCtx) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
     ) -> Self {
@@ -749,7 +771,7 @@ impl ViewportApp {
     pub fn window_with_paint(
         self,
         config: WindowConfig,
-        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
         paint: impl FnMut(&mut PaintCtx) + 'static,
     ) -> Self {
@@ -765,7 +787,7 @@ impl ViewportApp {
     fn push_window(
         mut self,
         config: WindowConfig,
-        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         input: Option<WindowInputHandler>,
         callback: WindowCallback,
         paint: Option<WindowPaint>,
@@ -783,7 +805,22 @@ impl ViewportApp {
     /// Run the event loop, driving every declared window. Blocks until the loop
     /// ends (the last window closes, unless configured otherwise, or a callback
     /// calls [`request_exit`](FrameCtx::request_exit)).
+    ///
+    /// # Panics
+    ///
+    /// With the error [`try_run`](Self::try_run) returns.
     pub fn run(self) {
+        if let Err(e) = self.try_run() {
+            panic!("{e}");
+        }
+    }
+
+    /// As [`run`](Self::run), returning the error that ended the loop instead
+    /// of panicking: [`ViewportError::DeviceUnsupported`](crate::ViewportError::DeviceUnsupported)
+    /// when the device is below the tier a renderer can be built on, or
+    /// [`ViewportError::DeviceLost`](crate::ViewportError::DeviceLost) when a
+    /// device was lost while a window's renderer was being built.
+    pub fn try_run(self) -> Result<(), crate::ViewportError> {
         let event_loop = EventLoop::new().expect("event loop");
         let mut handler = AppHandler {
             config: self.config,
@@ -793,8 +830,13 @@ impl ViewportApp {
             winit_ids: HashMap::new(),
             next_id: 0,
             start: Instant::now(),
+            error: None,
         };
         event_loop.run_app(&mut handler).expect("run app");
+        match handler.error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -804,6 +846,75 @@ struct Gpu {
     adapter: crate::gpu::Adapter,
     device: crate::gpu::Device,
     queue: crate::gpu::Queue,
+    /// Shared by every window's renderer: wgpu keeps one lost callback per
+    /// device.
+    lost: crate::DeviceLostWatcher,
+}
+
+impl Gpu {
+    /// Bring up an instance, an adapter that can present to `window`, and a
+    /// device, returning the window's surface with them.
+    fn request(
+        window: Arc<Window>,
+        marks: &mut super::InitMarks,
+    ) -> (Self, crate::gpu::Surface<'static>) {
+        let instance = crate::gpu::default_instance();
+        let surface = instance.create_surface(window).expect("surface");
+        marks.mark("instance_and_surface");
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            },
+        ))
+        .expect("adapter");
+        marks.mark("request_adapter");
+        let required_features = crate::ViewportRenderer::recommended_device_features(&adapter);
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+                required_features,
+                required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
+                ..Default::default()
+            }))
+            .expect("device");
+        marks.mark("request_device");
+        let lost = crate::DeviceLostWatcher::install(&device);
+        let gpu = Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            lost,
+        };
+        (gpu, surface)
+    }
+
+    /// The format a window's surface is configured with: the first sRGB one.
+    fn surface_format(&self, surface: &crate::gpu::Surface<'static>) -> crate::gpu::TextureFormat {
+        let caps = surface.get_capabilities(&self.adapter);
+        caps.formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .or_else(|| caps.formats.first().copied())
+            .expect("the adapter cannot present to this surface")
+    }
+
+    /// Build a window's instance on this device.
+    fn build_session(
+        &self,
+        app: &AppConfig,
+        format: crate::gpu::TextureFormat,
+    ) -> Result<ViewportInstance, crate::ViewportError> {
+        // Every window's renderer joins the device's one cache, so the saved
+        // data only seeds the first of them.
+        let cache_data = super::load_pipeline_cache(app.pipeline_cache_path.as_deref());
+        let config =
+            super::runner_renderer_config(&app.renderer, format, cache_data, &self.adapter)
+                .with_device_lost_watcher(self.lost.clone());
+        ViewportInstance::try_with_config(&self.device, &config)
+    }
 }
 
 /// Everything one window owns. The multi-window generalisation of the single-window
@@ -813,6 +924,10 @@ struct WindowState {
     surface: crate::gpu::Surface<'static>,
     surface_config: crate::gpu::SurfaceConfiguration,
     session: ViewportInstance,
+    /// The setup callback, kept to run again after the device is recreated.
+    factory: WindowFactory,
+    /// Set when the device was recreated since this window's last frame.
+    device_rebuilt: bool,
     redraw_mode: RedrawMode,
     orbit: OrbitCameraController,
     input: Option<WindowInputHandler>,
@@ -840,6 +955,8 @@ struct AppHandler {
     winit_ids: HashMap<WinitWindowId, WindowId>,
     next_id: u64,
     start: Instant,
+    /// The error that ended the loop, returned from `try_run`.
+    error: Option<crate::ViewportError>,
 }
 
 impl AppHandler {
@@ -857,6 +974,13 @@ impl AppHandler {
         id: WindowId,
         builder: WindowBuilder,
     ) {
+        if self
+            .gpu
+            .as_ref()
+            .is_some_and(|gpu| gpu.lost.is_lost_or_destroyed())
+        {
+            self.recover_device(event_loop);
+        }
         let WindowBuilder {
             config,
             factory,
@@ -887,46 +1011,15 @@ impl AppHandler {
                 .create_surface(window.clone())
                 .expect("surface")
         } else {
-            let instance = crate::gpu::default_instance();
-            let surface = instance.create_surface(window.clone()).expect("surface");
-            marks.mark("instance_and_surface");
-            let adapter = pollster::block_on(instance.request_adapter(
-                &crate::gpu::RequestAdapterOptions {
-                    power_preference: crate::gpu::PowerPreference::HighPerformance,
-                    compatible_surface: Some(&surface),
-                    ..Default::default()
-                },
-            ))
-            .expect("adapter");
-            marks.mark("request_adapter");
-            let required_features = crate::ViewportRenderer::recommended_device_features(&adapter);
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
-                    required_features,
-                    required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
-                    ..Default::default()
-                }))
-                .expect("device");
-            marks.mark("request_device");
-            self.gpu = Some(Gpu {
-                instance,
-                adapter,
-                device,
-                queue,
-            });
+            let (gpu, surface) = Gpu::request(window.clone(), &mut marks);
+            self.gpu = Some(gpu);
             surface
         };
 
         let gpu = self.gpu.as_ref().unwrap();
         let size = window.inner_size();
         let caps = surface.get_capabilities(&gpu.adapter);
-        let format = caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .or_else(|| caps.formats.first().copied())
-            .expect("the adapter cannot present to this surface");
+        let format = gpu.surface_format(&surface);
         let surface_config = crate::gpu::runner_surface_config(
             format,
             size.width.max(1),
@@ -940,14 +1033,15 @@ impl AppHandler {
         surface.configure(&gpu.device, &surface_config);
         marks.mark("surface_configure");
 
-        // Every window's renderer joins the device's one cache, so the saved
-        // data only seeds the first of them.
-        let cache_data = super::load_pipeline_cache(self.config.pipeline_cache_path.as_deref());
-        let mut session = ViewportInstance::with_config(
-            &gpu.device,
-            &super::runner_renderer_config(&self.config.renderer, format, cache_data, &gpu.adapter),
-        );
+        let mut session = match gpu.build_session(&self.config, format) {
+            Ok(session) => session,
+            Err(e) => {
+                self.fail(event_loop, e);
+                return;
+            }
+        };
         marks.mark("renderer");
+        let mut factory = factory;
         factory(&mut session, &gpu.device);
         marks.mark("setup");
 
@@ -974,6 +1068,8 @@ impl AppHandler {
                 surface,
                 surface_config,
                 session,
+                factory,
+                device_rebuilt: false,
                 redraw_mode: config.redraw_mode,
                 orbit: OrbitCameraController::new_stateless(),
                 input,
@@ -989,9 +1085,86 @@ impl AppHandler {
         );
     }
 
+    /// End the loop with `error`, which `try_run` returns.
+    fn fail(&mut self, event_loop: &ActiveEventLoop, error: crate::ViewportError) {
+        tracing::error!("ViewportApp: {error}");
+        self.error.get_or_insert(error);
+        event_loop.exit();
+    }
+
+    /// Replace a lost device: a new instance, adapter and device, then for each
+    /// window a new surface and instance with its setup callback run again and
+    /// its camera put back.
+    fn recover_device(&mut self, event_loop: &ActiveEventLoop) {
+        let reason = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.lost.info())
+            .map(|info| format!("{:?}: {}", info.reason, info.message))
+            .unwrap_or_default();
+        tracing::warn!("ViewportApp: the GPU device was lost ({reason}); recreating it");
+        let states: Vec<(WindowId, WindowState)> = self.windows.drain().collect();
+        let mut marks = super::InitMarks::new();
+        let mut new_gpu: Option<Gpu> = None;
+        let mut failed = None;
+        for (id, mut state) in states {
+            // A window holds one surface at a time, so the old device's goes
+            // before the new one is made.
+            drop(state.surface);
+            state.surface = match new_gpu.as_ref() {
+                Some(gpu) => gpu
+                    .instance
+                    .create_surface(state.window.clone())
+                    .expect("surface"),
+                None => {
+                    let (gpu, surface) = Gpu::request(state.window.clone(), &mut marks);
+                    new_gpu = Some(gpu);
+                    surface
+                }
+            };
+            let gpu = new_gpu.as_ref().unwrap();
+            state.surface_config.format = gpu.surface_format(&state.surface);
+            state.surface.configure(&gpu.device, &state.surface_config);
+            if failed.is_none() {
+                match gpu.build_session(&self.config, state.surface_config.format) {
+                    Ok(mut session) => {
+                        (state.factory)(&mut session, &gpu.device);
+                        *session.camera_mut() = state.session.camera().clone();
+                        let scale = state.window.scale_factor() as f32;
+                        session.set_pixels_per_point(scale);
+                        session.begin_frame(ViewportContext {
+                            hovered: state.hovered,
+                            focused: state.focused,
+                            viewport_size: [
+                                state.surface_config.width as f32 / scale,
+                                state.surface_config.height as f32 / scale,
+                            ],
+                        });
+                        state.session = session;
+                        state.device_rebuilt = true;
+                        state.window.request_redraw();
+                    }
+                    Err(e) => failed = Some(e),
+                }
+            }
+            self.windows.insert(id, state);
+        }
+        self.gpu = new_gpu;
+        if let Some(e) = failed {
+            self.fail(event_loop, e);
+        }
+    }
+
     /// Draw one window: sync size/DPI, run its input handler and callback, assemble,
     /// present, then apply any window commands the callback raised.
     fn redraw(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        if self
+            .gpu
+            .as_ref()
+            .is_some_and(|gpu| gpu.lost.is_lost_or_destroyed())
+        {
+            self.recover_device(event_loop);
+        }
         let commands: Vec<WindowCommand>;
         let next_id: u64;
         let do_exit: bool;
@@ -1032,6 +1205,7 @@ impl AppHandler {
 
             let mut ctx = FrameCtx {
                 session: &mut state.session,
+                device_rebuilt: std::mem::take(&mut state.device_rebuilt),
                 window: &state.window,
                 window_id: id,
                 dt,
@@ -1172,7 +1346,9 @@ impl AppHandler {
                 },
                 time,
             );
-            if wants_redraw(state.redraw_mode, request_redraw, reconfigured) {
+            // A loss shows after the submit; the next redraw replaces the device.
+            let lost = gpu.lost.is_lost_or_destroyed();
+            if lost || wants_redraw(state.redraw_mode, request_redraw, reconfigured) {
                 state.window.request_redraw();
             }
         }
