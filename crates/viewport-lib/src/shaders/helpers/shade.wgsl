@@ -3,9 +3,15 @@
 // These structs are the plugin-facing surface of the fragment-shading seam.
 // Hook bodies registered against the lit mesh family receive them:
 //
+//   fn <name>__shade_surface(surf: ShadingSurface) -> SurfaceOverride
 //   fn <name>__shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32>
 //   fn <name>__shade_ambient(surf: ShadingSurface) -> vec3<f32>
 //   fn <name>__recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32>
+//
+// Bodies may also read the group-0 `camera` uniform: `camera.proj`,
+// `camera.viewport` (physical pixels: w, h, 1/w, 1/h), `camera.clip` (near,
+// far, orthographic flag) and `camera.time` (seconds, the f64 remainder,
+// delta, frame index), which follows `FrameData::time`.
 //
 // Additive changes only: fields may be appended, never renamed, retyped, or
 // removed. The structs are unused (and eliminated) in base modules; only
@@ -70,16 +76,23 @@ struct ShadingSurface {
     // factor mixed toward 1 by metallic. Use it as Schlick's grazing value,
     // `f0 + (f90 - f0) * (1 - cos)^5`.
     f90: f32,
+    // Interpolated vertex colour, raw (before the object colour and albedo
+    // texture multiply into `base_colour`); white when the mesh has none.
+    vertex_colour: vec4<f32>,
 };
 
 // Output of the surface-authoring hook
-// `fn <name>__shade_surface(surf: ShadingSurface) -> SurfaceOverride`. The
-// hook declares `var ov: SurfaceOverride;` and sets the fields it uses; the
-// composer applies every field unconditionally (WGSL has no optional
-// fields), renormalising `normal` and recomputing F0 from the overridden
-// base colour and metallic. A field the hook leaves unset reads zero, so
-// fields appended later are defined to keep the built-in value at zero. Stock lighting, shadows, and IBL then run on
-// the authored surface, as do any lighting hooks the same plugin defines.
+// `fn <name>__shade_surface(surf: ShadingSurface) -> SurfaceOverride`. Start
+// from `var ov = surface_override_from(surf);`, which copies the resolved
+// surface so the override changes nothing, then set the fields the hook
+// authors. The composer applies every field (WGSL has no optional fields),
+// renormalising `normal` and recomputing F0, F90, the energy compensation
+// and the specular occlusion from the authored values. A hook that declares
+// `var ov: SurfaceOverride;` instead gets zero in every field it leaves
+// unset: zero `flags` keeps the material's AO and dielectric F0, but a zero
+// base colour, metallic or roughness is applied as written. Stock lighting,
+// shadows, and IBL then run on the authored surface, as do any lighting
+// hooks the same plugin defines.
 struct SurfaceOverride {
     // Replaces the resolved base colour for direct, ambient, and IBL terms.
     base_colour: vec3<f32>,
@@ -95,11 +108,38 @@ struct SurfaceOverride {
     // draws take it as the output alpha; Mask draws re-test it against the
     // material's cutoff and discard below it. Opaque draws ignore it.
     alpha: f32,
-    // Replaces the material's dielectric F0 with `rgb` when `w` is 1; with
-    // `w` 0 (the zero default) the material's own value is kept. Metallic
-    // still mixes the result toward the base colour.
-    f0_override: vec4<f32>,
+    // SURFACE_OVERRIDE_* bits naming the optional fields below the hook set.
+    // Zero keeps the material's values. Bits 2..7 are reserved.
+    flags: u32,
+    // With SURFACE_OVERRIDE_AO: replaces the material ambient occlusion
+    // (clamped to 0..1) for the ambient term, the micro-shadowing of direct
+    // light and the specular occlusion.
+    ao: f32,
+    // With SURFACE_OVERRIDE_F0: replaces the material's dielectric F0.
+    // Metallic still mixes the result toward the base colour.
+    f0: vec3<f32>,
 };
+
+// `SurfaceOverride.flags` bits.
+const SURFACE_OVERRIDE_AO: u32 = 1u;
+const SURFACE_OVERRIDE_F0: u32 = 2u;
+
+// A `SurfaceOverride` that leaves the surface as resolved: the starting point
+// for a `shade_surface` hook. Flags are zero; `ao` and `f0` carry the
+// resolved values so setting a flag alone changes nothing.
+fn surface_override_from(surf: ShadingSurface) -> SurfaceOverride {
+    var ov: SurfaceOverride;
+    ov.base_colour = surf.base_colour;
+    ov.normal = surf.normal;
+    ov.metallic = surf.metallic;
+    ov.roughness = surf.roughness;
+    ov.emissive = vec3<f32>(0.0);
+    ov.alpha = surf.alpha;
+    ov.flags = 0u;
+    ov.ao = surf.ao;
+    ov.f0 = surf.dielectric_f0;
+    return ov;
+}
 
 // One light's data for the per-light hook. `radiance` folds in
 // colour * intensity * distance/spot attenuation. It does NOT include the

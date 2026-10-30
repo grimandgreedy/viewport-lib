@@ -108,23 +108,23 @@ fn pbr_f90(dielectric_f90: f32, metallic: f32) -> f32 {
 
 // Replace the surface terms of a resolved pixel with authored ones (a shading
 // hook's `shade_surface` output). No specular AA: the author owns the value.
-// `f0_override.w > 0.5` replaces the material's dielectric F0 with
-// `f0_override.rgb`; otherwise it is kept. The split-sum terms and the
-// specular occlusion are derived again at the resolved N.V.
-fn pbr_apply_override(
-    px: PbrPixel,
-    base_colour: vec3<f32>,
-    metallic: f32,
-    roughness: f32,
-    f0_override: vec4<f32>,
-) -> PbrPixel {
+// `SURFACE_OVERRIDE_AO` in `ov.flags` replaces the material AO with `ov.ao`
+// and `SURFACE_OVERRIDE_F0` the dielectric F0 with `ov.f0`; without them
+// both are kept. The split-sum terms and the specular occlusion are derived
+// again at the resolved N.V.
+fn pbr_apply_override(px: PbrPixel, ov: SurfaceOverride) -> PbrPixel {
     var out = px;
-    out.diffuse_colour = base_colour;
-    out.metallic = clamp(metallic, 0.0, 1.0);
-    out.perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
+    out.diffuse_colour = ov.base_colour;
+    out.metallic = clamp(ov.metallic, 0.0, 1.0);
+    out.perceptual_roughness = max(ov.roughness, MIN_PERCEPTUAL_ROUGHNESS);
     out.alpha = out.perceptual_roughness * out.perceptual_roughness;
-    out.dielectric_f0 = select(px.dielectric_f0, f0_override.rgb, f0_override.w > 0.5);
-    out.f0 = mix(out.dielectric_f0, base_colour, out.metallic);
+    if (ov.flags & SURFACE_OVERRIDE_AO) != 0u {
+        out.diffuse_ao = clamp(ov.ao, 0.0, 1.0);
+    }
+    if (ov.flags & SURFACE_OVERRIDE_F0) != 0u {
+        out.dielectric_f0 = ov.f0;
+    }
+    out.f0 = mix(out.dielectric_f0, ov.base_colour, out.metallic);
     out.f90 = pbr_f90(px.dielectric_f90, out.metallic);
     out.dfg = sample_brdf_lut(out.n_dot_v, out.perceptual_roughness);
     out.energy_comp = viewport_brdf_energy_compensation(out.f0, out.dfg);

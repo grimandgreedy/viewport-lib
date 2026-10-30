@@ -177,6 +177,18 @@ pub struct CameraUniform {
     ///
     /// Used by the matcap shader to transform world-space normals to view space.
     pub view: [[f32; 4]; 4],
+    /// Projection matrix (view -> clip, column-major).
+    pub proj: [[f32; 4]; 4],
+    /// Inverse projection matrix.
+    pub inv_proj: [[f32; 4]; 4],
+    /// Viewport size in physical pixels: width, height, 1 / width, 1 / height.
+    pub viewport: [f32; 4],
+    /// Near plane, far plane, 1 for an orthographic projection (0 for
+    /// perspective), and a reserved zero.
+    pub clip: [f32; 4],
+    /// Frame time: seconds as f32, the remainder f32 drops from the f64
+    /// seconds, delta seconds, and the frame index modulo 2^24.
+    pub time: [f32; 4],
 }
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).

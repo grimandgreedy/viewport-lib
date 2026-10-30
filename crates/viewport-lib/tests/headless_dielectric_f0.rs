@@ -1,5 +1,6 @@
 //! Dielectric F0 control: `Material::reflectance` drives the PBR specular, and a
-//! surface hook's `f0_override` replaces it only when its `w` is set.
+//! surface hook's `f0` replaces it only when `SURFACE_OVERRIDE_F0` is in its
+//! flags.
 //!
 //! Part of the headless integration suite. Shared device and mesh helpers live
 //! in tests/common/mod.rs.
@@ -156,8 +157,8 @@ fn full_reflectance_quadruples_the_highlight() {
     );
 }
 
-/// A surface hook that keeps the material and only sets `f0_override` from
-/// two parameters: `f0` for the rgb and `use_f0` for `w`.
+/// A surface hook that keeps the material and only sets the override's `f0`
+/// from two parameters: `f0` for the value and `use_f0` for the flag.
 struct F0OverridePlugin;
 
 impl viewport_lib::MaterialPlugin for F0OverridePlugin {
@@ -167,13 +168,9 @@ impl viewport_lib::MaterialPlugin for F0OverridePlugin {
     fn wgsl_body(&self) -> String {
         "\
 fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
-    var ov: SurfaceOverride;
-    ov.base_colour = surf.base_colour;
-    ov.normal = surf.normal;
-    ov.metallic = surf.metallic;
-    ov.roughness = surf.roughness;
-    ov.alpha = surf.alpha;
-    ov.f0_override = vec4<f32>(vec3<f32>(params.f0), params.use_f0);
+    var ov = surface_override_from(surf);
+    ov.f0 = vec3<f32>(params.f0);
+    ov.flags = select(0u, SURFACE_OVERRIDE_F0, params.use_f0 > 0.5);
     return ov;
 }
 "
@@ -187,10 +184,11 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     }
 }
 
-/// `f0_override.w == 0` keeps the material's dielectric F0 whatever the rgb;
-/// `w == 1` replaces it, matching a material authored with that F0.
+/// Without `SURFACE_OVERRIDE_F0` the material's dielectric F0 is kept whatever
+/// `f0` holds; with it `f0` replaces it, matching a material authored with
+/// that F0.
 #[test]
-fn surface_hook_f0_override_honours_w() {
+fn surface_hook_f0_override_honours_flag() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -209,15 +207,15 @@ fn surface_hook_f0_override_honours_w() {
         m
     };
 
-    // w = 0: the rgb is ignored, and the result is the material's own F0.
+    // Flag clear: `f0` is ignored, and the result is the material's own F0.
     let unset = render_sphere(&mut renderer, &device, &queue, hooked(0.5, 0.0, 0.0));
     let ignored = render_sphere(&mut renderer, &device, &queue, hooked(0.5, 0.16, 0.0));
     assert_eq!(
         unset, ignored,
-        "f0_override.rgb must be ignored when w is 0"
+        "the override f0 must be ignored without SURFACE_OVERRIDE_F0"
     );
 
-    // w = 1 with F0 = 0.16 on a default-reflectance material matches
+    // The flag with F0 = 0.16 on a default-reflectance material matches
     // reflectance 1.0 with the override off.
     let replaced = render_sphere(&mut renderer, &device, &queue, hooked(0.5, 0.16, 1.0));
     let authored = render_sphere(&mut renderer, &device, &queue, hooked(1.0, 0.0, 0.0));
@@ -229,11 +227,11 @@ fn surface_hook_f0_override_honours_w() {
         .unwrap();
     assert!(
         max_diff <= 1,
-        "f0_override (w = 1) must match the authored reflectance (max diff {max_diff})"
+        "the F0 override must match the authored reflectance (max diff {max_diff})"
     );
     let ratio = peak_luminance(&replaced) / peak_luminance(&unset);
     assert!(
         (3.0..=5.0).contains(&ratio),
-        "f0_override 0.16 should brighten the highlight about 4x, got {ratio}"
+        "an F0 override of 0.16 should brighten the highlight about 4x, got {ratio}"
     );
 }
