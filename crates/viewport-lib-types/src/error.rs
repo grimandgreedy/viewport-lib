@@ -601,6 +601,14 @@ pub enum ViewportError {
         missing: Vec<String>,
     },
 
+    /// An item type is already registered under this name. Remove it first to
+    /// register a different plugin under the same name.
+    #[error("item type name '{name}' is already registered")]
+    ItemTypeNameTaken {
+        /// The name that is taken.
+        name: String,
+    },
+
     /// The call needs a higher tier than the renderer runs at: scene content on
     /// an overlay-only device.
     #[error("this needs the {needed} tier and the renderer runs at the {have} tier")]

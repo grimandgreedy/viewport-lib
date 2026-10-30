@@ -54,7 +54,7 @@ fn a_plugins_own_content_lands_in_the_renderers_resident_bytes() {
     renderer
         .with_item_type_plugin(&device, Box::new(SilentPlugin))
         .unwrap();
-    renderer
+    let accounting_a = renderer
         .with_item_type_plugin(
             &device,
             Box::new(AccountingPlugin {
@@ -85,8 +85,9 @@ fn a_plugins_own_content_lands_in_the_renderers_resident_bytes() {
         "plugin bytes are part of the evictable working set"
     );
 
-    // Re-registering under an existing name replaces that plugin, so its
-    // figure is replaced too rather than being counted twice.
+    // Replacing a plugin under the same name replaces its figure too rather
+    // than counting it twice.
+    renderer.remove_item_type_plugin(accounting_a).unwrap();
     renderer
         .with_item_type_plugin(
             &device,

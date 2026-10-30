@@ -14,6 +14,8 @@ use crate::plugin_api::ItemTypePlugin;
 pub(crate) struct ItemPluginRegistry {
     entries: Vec<(&'static str, Box<dyn ItemTypePlugin>)>,
     by_name: std::collections::HashMap<&'static str, usize>,
+    /// The id each entry was registered with, parallel to `entries`.
+    ids: Vec<u64>,
 }
 
 impl ItemPluginRegistry {
@@ -24,14 +26,56 @@ impl ItemPluginRegistry {
     /// Register `plugin` under `name`. A repeat registration of the same name
     /// replaces the plugin but keeps its original position, so adding a plugin
     /// twice does not move it in the draw order.
+    #[cfg(test)]
     pub(crate) fn insert(&mut self, name: &'static str, plugin: Box<dyn ItemTypePlugin>) {
+        self.insert_with_id(name, u64::MAX, plugin);
+    }
+
+    /// [`insert`](Self::insert), recording `id` against the entry. Returns the
+    /// id the name held before, if it was registered.
+    pub(crate) fn insert_with_id(
+        &mut self,
+        name: &'static str,
+        id: u64,
+        plugin: Box<dyn ItemTypePlugin>,
+    ) -> Option<u64> {
         match self.by_name.get(name) {
-            Some(&index) => self.entries[index] = (name, plugin),
+            Some(&index) => {
+                self.entries[index] = (name, plugin);
+                Some(std::mem::replace(&mut self.ids[index], id))
+            }
             None => {
                 self.by_name.insert(name, self.entries.len());
                 self.entries.push((name, plugin));
+                self.ids.push(id);
+                None
             }
         }
+    }
+
+    /// The id `name` was registered with.
+    pub(crate) fn id_of(&self, name: &str) -> Option<u64> {
+        Some(self.ids[*self.by_name.get(name)?])
+    }
+
+    /// The name registered with `id`.
+    pub(crate) fn name_of(&self, id: u64) -> Option<&'static str> {
+        let index = self.ids.iter().position(|&i| i == id)?;
+        Some(self.entries[index].0)
+    }
+
+    /// Remove the plugin under `name`. The plugins that remain keep their
+    /// relative order.
+    pub(crate) fn remove(&mut self, name: &str) -> Option<Box<dyn ItemTypePlugin>> {
+        let index = self.by_name.remove(name)?;
+        let (_, plugin) = self.entries.remove(index);
+        self.ids.remove(index);
+        for slot in self.by_name.values_mut() {
+            if *slot > index {
+                *slot -= 1;
+            }
+        }
+        Some(plugin)
     }
 
     pub(crate) fn contains_key(&self, name: &str) -> bool {
@@ -114,6 +158,20 @@ mod tests {
         let mut reg = registry(&["c", "a", "b"]);
         reg.insert("a", Box::new(Stub("a")));
         assert_eq!(reg.keys().collect::<Vec<_>>(), vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn removal_keeps_the_order_of_the_rest() {
+        let mut reg = ItemPluginRegistry::new();
+        for (id, name) in ["c", "a", "b", "d"].into_iter().enumerate() {
+            reg.insert_with_id(name, id as u64, Box::new(Stub(name)));
+        }
+        assert!(reg.remove("a").is_some());
+        assert!(reg.remove("a").is_none());
+        assert_eq!(reg.keys().collect::<Vec<_>>(), vec!["c", "b", "d"]);
+        assert_eq!(reg.get("d").map(|p| p.type_name()), Some("d"));
+        assert_eq!(reg.name_of(2), Some("b"));
+        assert_eq!(reg.name_of(1), None);
     }
 
     #[test]

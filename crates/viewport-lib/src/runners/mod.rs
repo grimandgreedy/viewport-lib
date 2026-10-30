@@ -488,8 +488,17 @@ impl ViewportInstance {
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) -> Result<(), crate::ViewportError> {
+    ) -> Result<crate::plugin_api::ItemTypeId, crate::ViewportError> {
         self.renderer.with_item_type_plugin(device, plugin)
+    }
+
+    /// Unregister an item type, the same call as
+    /// [`ViewportRenderer::remove_item_type_plugin`](crate::renderer::ViewportRenderer::remove_item_type_plugin).
+    pub fn remove_item_type_plugin(
+        &mut self,
+        id: crate::plugin_api::ItemTypeId,
+    ) -> Option<Box<dyn crate::plugin_api::ItemTypePlugin>> {
+        self.renderer.remove_item_type_plugin(id)
     }
 
     /// Why an item type was refused, the same call as

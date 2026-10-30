@@ -164,9 +164,9 @@ pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
-    ItemFrameContext, ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext,
-    PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
-    SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+    ItemFrameContext, ItemTypeHost, ItemTypeId, ItemTypePlugin, LightContext, OutlineMaskContext,
+    PaintContext, PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection,
+    RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
 };
 pub use plugin_resources::PluginResources;
 pub use post_effect::{
