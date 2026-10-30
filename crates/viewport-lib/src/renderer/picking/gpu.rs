@@ -715,7 +715,8 @@ impl ViewportRenderer {
             submission,
             cursor,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
-            view_proj: frame.camera.render_camera.view_proj(),
+            view_proj: self.origin.camera(&frame.camera.render_camera).view_proj(),
+            origin: self.origin.origin(),
             mask,
             kinds: draw_set.kinds,
             surface_meta: draw_set.surface_meta,
@@ -785,7 +786,7 @@ impl ViewportRenderer {
         // The instance reads the same deform table as the item's colour draw,
         // so a deformed mesh is picked where it is drawn.
         let to_instance = |item: &SceneRenderItem| {
-            let m = item.model;
+            let m = self.origin.rel_model(item.model);
             let record = self
                 .resources
                 .mesh_store
@@ -849,6 +850,7 @@ impl ViewportRenderer {
                 let flags = clip_flag(item.settings.ignore_clip) | PICK_WRITE_INSTANCE;
                 let first = batch_instances.len() as u32;
                 for (i, m) in item.transforms.iter().enumerate() {
+                    let m = self.origin.rel_model(*m);
                     batch_instances.push(PickInstance {
                         model_c0: m[0],
                         model_c1: m[1],
@@ -990,7 +992,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
         let time = frame.time.unwrap_or_else(|| self.frame_clock.current());
-        let camera_uniform = frame.camera.camera_uniform(&time);
+        let camera_uniform = frame.camera.camera_uniform(&time, &self.origin);
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_camera_buf"),
@@ -1383,7 +1385,12 @@ impl ViewportRenderer {
             let depth_view = depth_staging
                 .as_ref()
                 .map(|s| crate::gpu::mapped_range(s.slice(..)));
-            let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
+            let view_proj_inv = self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .inverse();
+            let origin = self.origin.origin();
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
@@ -1420,7 +1427,7 @@ impl ViewportRenderer {
                             let phys_y = (ry + row as u32) as f32 + 0.5;
                             let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
                             let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                            view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+                            pick_world(view_proj_inv, origin, ndc_x, ndc_y, depth).as_vec3()
                         });
                         if let Some(sub) = self.resolve_gpu_sub_object_rect(
                             id as u64,
@@ -1634,7 +1641,12 @@ impl ViewportRenderer {
             rw,
             rh,
             bytes_per_row,
-            view_proj_inv: frame.camera.render_camera.view_proj().inverse(),
+            view_proj_inv: self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .inverse(),
+            origin: self.origin.origin(),
             mask,
             kinds,
             surface_meta: draw_set.surface_meta,
@@ -1662,6 +1674,7 @@ impl ViewportRenderer {
             rh,
             bytes_per_row,
             view_proj_inv,
+            origin,
             mask,
             ..
         } = *pending;
@@ -1713,7 +1726,7 @@ impl ViewportRenderer {
                     ]);
                     let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
                     let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                    let world = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth));
+                    let world = pick_world(view_proj_inv, origin, ndc_x, ndc_y, depth).as_vec3();
                     let sub = self.resolve_gpu_sub_object_rect(
                         id as u64,
                         prim,
@@ -1884,6 +1897,9 @@ impl ViewportRenderer {
     /// per-object decode map. Shared by the blocking and async paths.
     fn resolve_pending_hit(&self, pending: &PendingPick, gpu_hit: GpuPickHit) -> PickHit {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
+        // The pass drew relative to the origin; put the hit back in world
+        // coordinates.
+        hit.world_pos = pending.hit_world(gpu_hit.depth).as_vec3();
         hit.sub_object = self.resolve_gpu_sub_object(
             gpu_hit.object_id.0,
             gpu_hit.sub_primitive,
@@ -2177,7 +2193,9 @@ pub(crate) struct PendingSnap {
     rw: u32,
     rh: u32,
     bytes_per_row: u32,
+    /// Inverse of the pass's view-projection, relative to `origin`.
     view_proj_inv: glam::Mat4,
+    origin: glam::DVec3,
     mask: PickMask,
     kinds: std::collections::HashMap<u64, PickSubKind>,
     surface_meta: SurfacePickMeta,
@@ -2200,7 +2218,10 @@ pub(crate) struct PendingPick {
     submission: crate::gpu::SubmissionIndex,
     cursor: glam::Vec2,
     viewport_size: glam::Vec2,
+    /// The pass's view-projection, relative to `origin`.
     view_proj: glam::Mat4,
+    /// The world origin the pass drew relative to.
+    origin: glam::DVec3,
     /// The mask the pick was submitted with. Decides which sub-object level the
     /// read-back primitive index resolves to (face vs cell vs vertex, etc.).
     mask: PickMask,
@@ -2218,6 +2239,13 @@ pub(crate) struct PendingPick {
 }
 
 impl PendingPick {
+    /// World position of the picked pixel at `depth`, in f64.
+    fn hit_world(&self, depth: f32) -> glam::DVec3 {
+        let ndc_x = (self.cursor.x / self.viewport_size.x) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (self.cursor.y / self.viewport_size.y) * 2.0;
+        pick_world(self.view_proj.inverse(), self.origin, ndc_x, ndc_y, depth)
+    }
+
     /// Read the object id and depth from the mapped staging buffers and unmap
     /// them. Only valid once both maps have completed (the caller has waited or
     /// seen `ready == 3`). Returns `None` for id 0, which is the clear value and
@@ -2249,5 +2277,83 @@ impl PendingPick {
             depth,
             sub_primitive,
         })
+    }
+}
+
+/// World position of a pick-pass pixel: unprojected with the pass's relative
+/// `inv_view_proj`, then moved back by `origin` in f64.
+pub(crate) fn pick_world(
+    inv_view_proj: glam::Mat4,
+    origin: glam::DVec3,
+    ndc_x: f32,
+    ndc_y: f32,
+    depth: f32,
+) -> glam::DVec3 {
+    inv_view_proj
+        .project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+        .as_dvec3()
+        + origin
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::renderer::{CameraFrame, RenderCamera, SceneFrame, WorldOrigin};
+
+    /// A GPU pick of a surface 1,000 km from the world origin lands within a
+    /// millimetre of the true hit when drawn relative to a snapped origin.
+    #[test]
+    fn pick_round_trip_far_from_origin() {
+        let Some((device, queue)) = crate::resources::test_support::try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let (w, h) = (64u32, 64u32);
+        // Exactly representable in f32, so the inputs carry no rounding.
+        let centre = glam::Vec3::new(1_000_000.0, 200_000.0, 10.0);
+        let eye = centre - glam::Vec3::new(5.0, 0.0, 0.0);
+        // The camera looks along +X at the face x = centre.x - 1.
+        let truth = glam::DVec3::new(999_999.0, 200_000.0, 10.0);
+
+        let error = |origin: WorldOrigin| -> f64 {
+            let mut renderer = ViewportRenderer::with_config(
+                &device,
+                &crate::RendererConfig::new(crate::gpu::TextureFormat::Rgba8UnormSrgb)
+                    .with_pipeline_compilation(crate::PipelineCompilation::Blocking)
+                    .with_world_origin(origin),
+            );
+            let mesh = renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &crate::geometry::primitives::cube(2.0))
+                .expect("cube upload");
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh;
+            item.model = glam::Mat4::from_translation(centre).to_cols_array_2d();
+            item.settings.pick_id = PickId(3);
+            let camera = RenderCamera::from_matrices(
+                glam::Mat4::look_at_rh(eye, centre, glam::Vec3::Z),
+                glam::Mat4::perspective_infinite_reverse_rh(0.8, 1.0, 0.1),
+            )
+            .with_depth_range(0.1, 100.0);
+            let frame = FrameData::new(
+                CameraFrame::new(camera, [w as f32, h as f32]),
+                SceneFrame::from_surface_items(vec![item]),
+            );
+            let _ = renderer.render_offscreen(&device, &queue, &frame, w, h);
+            let cursor = glam::Vec2::new(w as f32 * 0.5, h as f32 * 0.5);
+            let PickBegin::Pending(pending) =
+                renderer.pick_scene_gpu_begin(&device, &queue, cursor, &frame, PickMask::OBJECT)
+            else {
+                panic!("nothing to pick");
+            };
+            assert!(wait_for_pick(&device, &pending.submission, "test pick"));
+            let hit = pending.read_hit().expect("the cube is under the cursor");
+            (pending.hit_world(hit.depth) - truth).length()
+        };
+
+        let snapped = error(WorldOrigin::snapped().with_cell(16.0));
+        let zero = error(WorldOrigin::Zero);
+        eprintln!("pick error at 1e6 m: snapped {snapped:e} m, zero {zero:e} m");
+        assert!(snapped < 1.0e-3, "snapped pick missed by {snapped} m");
     }
 }

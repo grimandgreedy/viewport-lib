@@ -60,6 +60,15 @@ pub const WGSL_VERSION: u32 = 9;
 /// | 11 | Skybox equirect | `skybox_tex` |
 /// | 13 | per-light array | `lights_storage` |
 /// | 17 | point and spot light shadow array (`texture_depth_2d_array`) | `punctual_shadow_tex` |
+///
+/// Positions in group 0 are relative to the renderer's world origin (see
+/// [`WorldOrigin`](crate::WorldOrigin)): `camera.view_proj`, `camera.eye_pos`,
+/// the light positions and the clip planes all are, and a vertex shader
+/// multiplies a model matrix whose translation the renderer has already made
+/// relative. `camera.world_origin` holds the origin rounded to f32 and
+/// `camera.origin_epoch` counts its moves. `viewport_absolute_pos(rel)` adds
+/// the origin back for procedural effects that key on world position; it is
+/// lossy far from zero, so never use it to place geometry.
 pub const SHARED_BINDINGS_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_bindings.wgsl"));
 

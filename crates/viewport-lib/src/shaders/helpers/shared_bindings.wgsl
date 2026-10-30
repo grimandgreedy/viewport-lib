@@ -21,6 +21,10 @@ struct Camera {
     // Frame time: seconds as f32, the remainder f32 drops from the f64
     // seconds, delta seconds, frame index modulo 2^24.
     time:          vec4<f32>,
+    // The world origin every position here is relative to, rounded to f32,
+    // and a counter bumped each time it moves.
+    world_origin:  vec3<f32>,
+    origin_epoch:  u32,
 };
 
 struct SingleLight {
@@ -81,6 +85,14 @@ struct Lights {
 // ALT(UNIFORM): @group(0) @binding(13) var<uniform> lights_storage: array<SingleLight, 16>;
 // END_LIGHT_LIST
 @group(0) @binding(17) var          punctual_shadow_tex:  texture_depth_2d_array;
+
+// A position in the relative coordinates the camera and lights use, in world
+// coordinates. Lossy far from the world origin, which is rounded to f32: for
+// procedural effects keyed on world position (noise, height tint, triplanar
+// mapping), not for placing geometry.
+fn viewport_absolute_pos(rel: vec3<f32>) -> vec3<f32> {
+    return rel + camera.world_origin;
+}
 
 // The shadow-info uniform (binding 5) is declared inside SHARED_PBR_WGSL
 // for the sole use of `viewport_sample_csm`. Its struct layout and field

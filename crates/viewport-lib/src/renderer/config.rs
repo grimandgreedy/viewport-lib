@@ -88,6 +88,11 @@ pub struct RendererConfig {
     /// [`DeviceResources::scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
     /// Default `None`.
     pub scene_depth_format: Option<crate::gpu::TextureFormat>,
+    /// The point positions are measured from on their way to the GPU. A
+    /// frame can replace it with
+    /// [`SceneFrame::with_world_origin`](crate::SceneFrame::with_world_origin).
+    /// Default [`WorldOrigin::Zero`](crate::WorldOrigin::Zero).
+    pub world_origin: crate::renderer::WorldOrigin,
 }
 
 impl RendererConfig {
@@ -105,6 +110,7 @@ impl RendererConfig {
             device_lost_watcher: None,
             target_release_frames: None,
             scene_depth_format: None,
+            world_origin: crate::renderer::WorldOrigin::Zero,
         }
     }
 
@@ -170,6 +176,13 @@ impl RendererConfig {
     /// [`scene_depth_format`](Self::scene_depth_format).
     pub fn with_scene_depth_format(mut self, format: crate::gpu::TextureFormat) -> Self {
         self.scene_depth_format = Some(format);
+        self
+    }
+
+    /// Set the origin positions are drawn relative to. See
+    /// [`world_origin`](Self::world_origin).
+    pub fn with_world_origin(mut self, origin: crate::renderer::WorldOrigin) -> Self {
+        self.world_origin = origin;
         self
     }
 

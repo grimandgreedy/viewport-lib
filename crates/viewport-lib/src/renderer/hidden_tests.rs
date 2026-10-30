@@ -115,6 +115,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             collections: &collections,
+            world_origin: glam::DVec3::ZERO,
         };
         let mut plugin = PolylinePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);

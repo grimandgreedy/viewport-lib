@@ -38,6 +38,8 @@ pub use picking::{
 mod capture;
 mod config;
 mod frame_clock;
+pub(crate) mod origin;
+pub use origin::WorldOrigin;
 mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
@@ -241,6 +243,8 @@ pub(crate) struct ViewportSlot {
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
+    /// World origin epoch the sub-object highlight geometry was built against.
+    pub sub_highlight_origin_epoch: u32,
     /// The skybox bind group for this viewport's background environment.
     pub skybox: Option<crate::resources::material::environment::SkyboxBinding>,
     /// Whether this viewport draws a skybox this frame.
@@ -600,6 +604,10 @@ pub struct ViewportRenderer {
     frame_counter: u64,
     /// Monotonic clock and the time the current frame renders at.
     frame_clock: frame_clock::FrameClock,
+    /// The configured world origin, used when a frame sets none.
+    world_origin_mode: WorldOrigin,
+    /// The origin this frame draws relative to, chosen by `prepare_scene`.
+    origin: origin::OriginState,
     /// Current LOD level per item, keyed by pick id, carried across frames so
     /// level switches use hysteresis. Items without a pick id are not tracked
     /// here and resolve fresh each frame. Pruned to the items seen each frame.
@@ -1138,6 +1146,8 @@ impl ViewportRenderer {
             last_prepare_instant: None,
             frame_counter: 0,
             frame_clock: frame_clock::FrameClock::new(),
+            world_origin_mode: config.world_origin,
+            origin: origin::OriginState::default(),
             lod_levels: std::collections::HashMap::new(),
             mesh_instance_lod_levels: std::collections::HashMap::new(),
             pick_scene_items: Vec::new(),
@@ -1643,6 +1653,20 @@ impl ViewportRenderer {
     /// Return the current runtime mode.
     pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
         self.runtime_mode
+    }
+
+    /// Set the origin positions are drawn relative to, for frames that set
+    /// none of their own. Replaces
+    /// [`RendererConfig::world_origin`](crate::RendererConfig::world_origin);
+    /// takes effect at the next prepare.
+    pub fn set_world_origin(&mut self, origin: WorldOrigin) {
+        self.world_origin_mode = origin;
+    }
+
+    /// The origin the last prepared frame was drawn relative to, in world
+    /// coordinates. Zero under [`WorldOrigin::Zero`].
+    pub fn world_origin(&self) -> glam::DVec3 {
+        self.origin.origin()
     }
 
     /// Set how a pipeline is compiled the first time a frame needs it.
@@ -2526,6 +2550,7 @@ impl ViewportRenderer {
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
                     ),
+                    world_origin: self.origin.origin(),
                 };
                 bufs.extend(plugin.prepare(device, queue, &ctx, &items));
                 timings.push((name, start.elapsed().as_secs_f32() * 1000.0));
@@ -2581,6 +2606,7 @@ impl ViewportRenderer {
                 clip_objects: &frame.effects.clip.objects,
                 quality_reduced: self.degradation_volume_quality_reduced,
                 collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                world_origin: self.origin.origin(),
             };
             polylines.extend(plugin.wireframe_polylines(&items, &ctx));
         }
@@ -2991,6 +3017,7 @@ impl ViewportRenderer {
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
                     ),
+                    world_origin: self.origin.origin(),
                 };
                 plugin.cull(frustum, &ctx, &items);
             }
@@ -3757,6 +3784,7 @@ impl ViewportRenderer {
                 cap_cache: Default::default(),
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
+                sub_highlight_origin_epoch: 0,
                 skybox: None,
                 draw_skybox: false,
                 dyn_res: None,

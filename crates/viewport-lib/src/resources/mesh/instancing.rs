@@ -536,9 +536,11 @@ impl DeviceResources {
             .texture_id
             .is_some_and(|id| self.content.textures.get(id).is_some());
 
+        // Drawn relative to the frame's world origin.
+        let origin = self.world_origin;
         let build = |i: usize| -> InstanceData {
             InstanceData {
-                model: item.transforms[i],
+                model: origin.rel_model(item.transforms[i]),
                 colour: item
                     .colours
                     .get(i)

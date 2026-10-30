@@ -761,6 +761,9 @@ pub struct DeviceResources {
     /// renderer last looked. The renderer repacks its instanced batches only
     /// when one of them names such a mesh.
     pub(crate) closed_flipped: Vec<crate::resources::mesh::mesh_store::MeshId>,
+    /// The world origin of the last scene prepare, for the world-space
+    /// volumes written outside it (environment zones, the probe volume).
+    pub(crate) world_origin: crate::renderer::origin::OriginState,
     /// Bumped whenever a material plugin's pipeline set is built or dropped,
     /// or one of its texture groups is built or evicted. A recorded render
     /// bundle that draws plugin batches keys on it.

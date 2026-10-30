@@ -189,6 +189,12 @@ pub struct CameraUniform {
     /// Frame time: seconds as f32, the remainder f32 drops from the f64
     /// seconds, delta seconds, and the frame index modulo 2^24.
     pub time: [f32; 4],
+    /// The world origin every position above is relative to, rounded to f32.
+    /// Too coarse far from zero to rebuild a position with; for procedural
+    /// effects that want world coordinates.
+    pub world_origin: [f32; 3],
+    /// Bumped each time `world_origin` moves.
+    pub origin_epoch: u32,
 }
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).

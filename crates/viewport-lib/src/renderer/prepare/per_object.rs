@@ -190,6 +190,7 @@ pub(super) fn prepare_light_probe_sh(
     resources: &DeviceResources,
     scene_items: &[SceneRenderItem],
     queue: &crate::gpu::Queue,
+    origin: &crate::renderer::origin::OriginState,
 ) -> Vec<Option<u32>> {
     use crate::renderer::IndirectLightSource;
     let mut indices = vec![None; scene_items.len()];
@@ -208,7 +209,15 @@ pub(super) fn prepare_light_probe_sh(
                 // pack a block; the block index rides light_probe_index.
                 if let Some(probes) = probes {
                     if (count as usize) < crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
-                        let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
+                        // Items arrive relative to the origin; probes are in
+                        // world space.
+                        let rel =
+                            glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
+                        let center = if origin.is_zero() {
+                            rel.to_array()
+                        } else {
+                            origin.abs(rel).as_vec3().to_array()
+                        };
                         sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
                         indices[idx] = Some(count);
                         count += 1;
@@ -308,8 +317,9 @@ impl ViewportRenderer {
             );
             let material_id = resources.material_block(item.material, &shading);
             let mesh = resources.mesh_store.get(item.mesh_id);
-            let obj_uniform =
+            let mut obj_uniform =
                 build_instance_record(resources, item, mesh, false, None, material_id);
+            obj_uniform.model = resources.world_origin.rel_model(obj_uniform.model);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)

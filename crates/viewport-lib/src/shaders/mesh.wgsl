@@ -42,6 +42,10 @@ struct Camera {
     // Frame time: seconds as f32, the remainder f32 drops from the f64
     // seconds, delta seconds, frame index modulo 2^24.
     time: vec4<f32>,
+    // The world origin positions are relative to, rounded to f32, and a
+    // counter bumped each time it moves.
+    world_origin: vec3<f32>,
+    origin_epoch: u32,
 };
 
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.

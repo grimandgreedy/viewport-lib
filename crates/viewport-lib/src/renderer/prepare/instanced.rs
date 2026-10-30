@@ -658,6 +658,7 @@ impl ViewportRenderer {
         scene_items: &[SceneRenderItem],
         frame: &FrameData,
         hdr_family: bool,
+        origin_epoch: u32,
     ) -> bool {
         // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
         //
@@ -688,6 +689,7 @@ impl ViewportRenderer {
             && featured_count == instancing.last_instancable_count
             && visible_count == instancing.last_visible_count
             && frame.scene.generation == instancing.last_scene_generation
+            && origin_epoch == instancing.last_origin_epoch
             && frame.interaction.selection_generation == instancing.last_selection_generation
             && scene_items.len() == instancing.last_scene_items_count
             // Cached batches reference mesh and texture ids by slot, so a free can
@@ -1343,6 +1345,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        origin: &crate::renderer::origin::OriginState,
         hdr_family: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
@@ -1459,10 +1462,11 @@ impl ViewportRenderer {
         ) {
             // Frustum planes from the finite culling projection; the HiZ test
             // projects with the matrix the scene draws with.
-            let vp_mat = frame.camera.render_camera.view_proj();
-            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(
-                &frame.camera.render_camera.culling_view_proj(),
-            );
+            // The instance bounds are relative to the origin, so the camera is.
+            let camera = origin.camera(&frame.camera.render_camera);
+            let vp_mat = camera.view_proj();
+            let cpu_frustum =
+                crate::camera::frustum::Frustum::from_view_proj(&camera.culling_view_proj());
 
             // `gpu_culling_enabled` is only set once the compute is built.
             let Some(cull) = instancing.cull_resources.ready() else {
@@ -1490,7 +1494,7 @@ impl ViewportRenderer {
             // the cull frustum-only for that frame.
             let vp_cols = vp_mat.to_cols_array_2d();
             let built = resources.occlusion_culling_enabled()
-                && cull_state.build_hiz_reprojected(queue, &mut encoder, vp_cols);
+                && cull_state.build_hiz_reprojected(queue, &mut encoder, vp_cols, origin.origin());
             let (hiz_view, hiz_dims) = if built {
                 let (view, dims) = cull_state.hiz_cull_view().unwrap();
                 (Some(view), dims)

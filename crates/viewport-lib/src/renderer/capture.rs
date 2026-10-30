@@ -581,6 +581,9 @@ impl ViewportRenderer {
         let gpu = volume.to_gpu();
         self.replace_indirect_light_buffer(device, Some(&gpu));
         self.resources.scene_tier.lighting.has_probe_volume = true;
+        self.resources.scene_tier.lighting.probe_volume_min = Some(volume.min);
+        // The next prepare writes the corner relative to the world origin.
+        self.resources.scene_tier.ibl.zones_dirty = true;
     }
 
     /// Remove the uploaded probe volume. Objects that opted into it fall back to
@@ -591,6 +594,7 @@ impl ViewportRenderer {
         }
         self.replace_indirect_light_buffer(device, None);
         self.resources.scene_tier.lighting.has_probe_volume = false;
+        self.resources.scene_tier.lighting.probe_volume_min = None;
     }
 
     /// Swap in an indirect-light buffer holding `volume`. The probe volume

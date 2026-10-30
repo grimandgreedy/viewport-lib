@@ -177,6 +177,8 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
+        self.resolve_world_origin(frame);
+
         let scene_tier = self.resources.scene_tier.is_built();
         if scene_tier {
             self.ensure_frame_pipelines(device, frame);
@@ -311,6 +313,13 @@ impl ViewportRenderer {
                 &mut scene_items_owned,
             );
 
+        // Everything from here draws relative to the frame's origin. LOD above
+        // measured the items where they are.
+        if !self.origin.is_zero() {
+            for item in &mut scene_items_owned {
+                item.model = self.origin.rel_model(item.model);
+            }
+        }
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let lighting_start = web_time::Instant::now();
@@ -328,6 +337,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            &self.origin,
             sink,
             self.ts_query_set.as_ref(),
             &self.ts_written_mask,
@@ -377,7 +387,8 @@ impl ViewportRenderer {
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
         // same block. No probes uploaded -> all None and nothing written.
-        let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
+        let probe_indices =
+            per_object::prepare_light_probe_sh(resources, scene_items, queue, &self.origin);
 
         // Material blocks persist for their material's lifetime. The shading
         // variants and the custom-data table hold while the instanced batch
@@ -390,6 +401,7 @@ impl ViewportRenderer {
             scene_items,
             frame,
             hdr_family,
+            self.origin.epoch(),
         );
         if !instanced_cache_valid {
             resources.material_table.clear_variants();
@@ -415,6 +427,7 @@ impl ViewportRenderer {
                 hdr_family,
                 self.frame_counter,
             );
+        self.instancing.last_origin_epoch = self.origin.epoch();
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
         // The cascades are fit after the instanced batches are built: only the
         // shadow pass reads them.
@@ -427,6 +440,7 @@ impl ViewportRenderer {
             scene_fx,
             queue,
             frame,
+            &self.origin,
             &mut lighting_frame,
             &mut self.last_stats,
         );
@@ -489,7 +503,7 @@ impl ViewportRenderer {
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);
             let mut record: crate::resources::InstanceData = bytemuck::Zeroable::zeroed();
-            record.model = item.model;
+            record.model = self.origin.rel_model(item.model);
             record.colour = [0.75, 0.75, 0.75, 1.0];
             record.flags = crate::resources::mesh::instancing::instance_flags::WIREFRAME;
             tvm_wireframe_records.push(record);
@@ -767,6 +781,26 @@ impl ViewportRenderer {
         self.flush_camera_bind_group_rebuild(device);
     }
 
+    /// Choose the origin every position this frame is drawn relative to, from
+    /// the frame's camera. Runs before plugin prepare and again at scene
+    /// prepare; a second call with the same frame changes nothing. A derivative
+    /// render (a capture or bake from another camera) keeps the presented
+    /// frame's snapped origin rather than moving it.
+    pub(crate) fn resolve_world_origin(&mut self, frame: &FrameData) {
+        let mode = frame.scene.world_origin.unwrap_or(self.world_origin_mode);
+        if !self.render_advances_state()
+            && matches!(mode, crate::renderer::WorldOrigin::Snapped { .. })
+        {
+            return;
+        }
+        if self.origin.resolve(mode, &frame.camera.render_camera) {
+            // World-space volumes in the shared indirect buffer are rewritten
+            // relative to the new origin.
+            self.resources.scene_tier.ibl.zones_dirty = true;
+        }
+        self.resources.world_origin = self.origin;
+    }
+
     /// Rebuild the camera bind groups if something they name was replaced this
     /// prepare: a shadow texture promoted out of its placeholder, or the
     /// custom-data buffer grown. Run at the end of each prepare phase, before
@@ -944,6 +978,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            &self.origin,
             hdr_family,
             sink,
         );
@@ -1109,6 +1144,10 @@ impl ViewportRenderer {
         let plugin_prepare_span =
             tracing::debug_span!(target: "viewport_lib::frame", "plugin_prepare").entered();
 
+        // The origin is chosen before plugins prepare, which read it. The
+        // split API resolves it in `prepare_scene` instead, once for every
+        // viewport.
+        self.resolve_world_origin(frame);
         // Dispatch item-type plugin prepare work first so any GPU outputs
         // the plugin produces are visible to the rest of `prepare`.
         let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);

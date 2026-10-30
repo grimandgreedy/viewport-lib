@@ -315,6 +315,7 @@ pub use interaction::widgets::axes_indicator::AxisView;
 
 pub use renderer::PipelineSet;
 pub use renderer::RendererConfig;
+pub use renderer::WorldOrigin;
 pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{

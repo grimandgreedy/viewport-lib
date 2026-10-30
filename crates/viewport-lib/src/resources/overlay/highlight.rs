@@ -525,6 +525,18 @@ impl DeviceResources {
         // Append any extra edge segments (e.g. volume AABB outlines from object-level selection).
         edge_data.extend_from_slice(extra_edge_data);
 
+        // Drawn relative to the frame's world origin.
+        let origin = self.world_origin;
+        if !origin.is_zero() {
+            let rel = |p: &mut [f32; 3]| *p = origin.rel(glam::Vec3::from(*p)).to_array();
+            fill_verts.iter_mut().for_each(rel);
+            sprite_pos.iter_mut().for_each(rel);
+            for p in edge_data.chunks_exact_mut(3) {
+                let v = origin.rel(glam::Vec3::new(p[0], p[1], p[2]));
+                p.copy_from_slice(&v.to_array());
+            }
+        }
+
         // Helper: create a VERTEX | COPY_DST buffer from a byte slice, or a 1-byte
         // placeholder when the slice is empty (wgpu requires non-zero size).
         let make_buf = |label: &str, data: &[u8]| -> crate::gpu::Buffer {

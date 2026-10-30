@@ -587,7 +587,9 @@ impl ViewportRenderer {
         let mut polylines = Vec::new();
         if let Some(model) = frame.interaction.gizmo_model {
             let (scale, _rot, translation) = model.to_scale_rotation_translation();
-            let cam = &frame.camera.render_camera;
+            // Projected relative to the origin, subtracted in f64.
+            let cam = &self.origin.camera(&frame.camera.render_camera);
+            let translation = self.origin.rel(translation);
             crate::interaction::manipulation::gizmo_overlay::build_gizmo_overlays(
                 frame.interaction.gizmo_mode,
                 cam.view_proj(),
