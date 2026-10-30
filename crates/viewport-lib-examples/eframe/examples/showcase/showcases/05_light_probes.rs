@@ -742,15 +742,16 @@ impl IndirectLightingShowcase {
         ENVS.iter()
             .enumerate()
             .filter(|(i, _)| self.zone_enabled[*i])
-            .map(|(i, e)| EnvironmentZone {
-                bounds: Aabb {
-                    min: Vec3::new(e.x - ZONE_HALF_X, -8.0, ZONE_ROW_Z - 8.0),
-                    max: Vec3::new(e.x + ZONE_HALF_X, 8.0, ZONE_ROW_Z + 8.0),
-                },
-                environment: self.env_ids[i],
-                fade_distance: ZONE_FADE,
+            .map(|(i, e)| {
                 // Distant gradient environments, not local captures: no parallax.
-                parallax: false,
+                EnvironmentZone::new(
+                    Aabb {
+                        min: Vec3::new(e.x - ZONE_HALF_X, -8.0, ZONE_ROW_Z - 8.0),
+                        max: Vec3::new(e.x + ZONE_HALF_X, 8.0, ZONE_ROW_Z + 8.0),
+                    },
+                    self.env_ids[i],
+                )
+                .with_fade_distance(ZONE_FADE)
             })
             .collect()
     }

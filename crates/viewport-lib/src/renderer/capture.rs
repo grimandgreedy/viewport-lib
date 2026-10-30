@@ -756,12 +756,13 @@ impl ViewportRenderer {
                 crate::TextureData::hdr(panorama.width, panorama.height, panorama.rgba),
                 crate::resources::EnvironmentOptions::default(),
             )?;
-            zones.push(crate::resources::EnvironmentZone {
+            // World-aligned and holding absolute radiance: no rotation and a
+            // multiplier of 1.0, whatever the lighting environment uses.
+            zones.push(crate::resources::EnvironmentZone::probe(
                 bounds,
                 environment,
                 fade_distance,
-                parallax: true,
-            });
+            ));
         }
         self.rebuild_camera_bind_groups(device);
         Ok(zones)

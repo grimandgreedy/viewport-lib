@@ -91,21 +91,22 @@ const AO_FLAG_MICRO_SHADOW: u32 = 2u;
 // One environment-selection zone: a world-space box (center + half_extents) that
 // selects array layer `layer`, with `fade` the outer falloff band. `parallax`
 // is 1 for a local reflection probe (box-project the reflection against this box)
-// and 0 for a distant environment. See env_zone_weight / ibl_ambient_zoned in
-// ambient.wgsl.
+// and 0 for a distant environment. `rotation` (radians about +Z) and `intensity`
+// (the resolved multiplier) are the zone's own, not the lighting environment's.
+// See env_zone_weight / ibl_ambient_zoned in ambient.wgsl.
 //
-// 48 bytes, matching `EnvZoneGpu` in environment.rs. The trailing pad is three
-// SCALAR u32s, not a vec3<u32>: a vec3 has 16-byte alignment, which would round
-// the struct up to 64 and break the array stride against the 48-byte Rust upload.
-// The pad reserves room for a future separate parallax proxy box.
+// 48 bytes, matching `EnvZoneGpu` in environment.rs. The fields after
+// `parallax` are SCALARS, not a vec3: a vec3 has 16-byte alignment, which would
+// round the struct up to 64 and break the array stride against the 48-byte
+// Rust upload.
 struct EnvZone {
     center:       vec3<f32>,   // offset 0
     layer:        u32,         // offset 12
     half_extents: vec3<f32>,   // offset 16
     fade:         f32,         // offset 28
     parallax:     u32,         // offset 32
-    _pad_a:       u32,         // offset 36
-    _pad_b:       u32,         // offset 40
+    rotation:     f32,         // offset 36
+    intensity:    f32,         // offset 40
     _pad_c:       u32,         // offset 44 (struct size 48)
 };
 
@@ -165,13 +166,14 @@ fn custom_data1(base: u32, id: u32) -> vec4<f32> {
 
 // Reconstruct environment zone `i` from the packed vec4 region of
 // indirect_light_data. Mirrors EnvZoneGpu (resources::material::environment):
-// 3 vec4 per zone, with layer/parallax bit-cast from the vec4 lanes.
+// 3 vec4 per zone, with layer/parallax bit-cast from the vec4 lanes and the
+// zone's rotation and intensity in c.y, c.z.
 fn load_env_zone(i: u32) -> EnvZone {
     let base = ENV_ZONE_BASE + i * 3u;
     let a = indirect_light_data[base + 0u];
     let b = indirect_light_data[base + 1u];
     let c = indirect_light_data[base + 2u];
-    return EnvZone(a.xyz, bitcast<u32>(a.w), b.xyz, b.w, bitcast<u32>(c.x), 0u, 0u, 0u);
+    return EnvZone(a.xyz, bitcast<u32>(a.w), b.xyz, b.w, bitcast<u32>(c.x), c.y, c.z, 0u);
 }
 
 

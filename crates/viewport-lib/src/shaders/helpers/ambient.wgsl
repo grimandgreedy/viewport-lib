@@ -390,11 +390,13 @@ fn env_zone_weight(p: vec3<f32>, z: EnvZone) -> f32 {
     return 1.0 - smoothstep(0.0, max(z.fade, 1e-4), outside);
 }
 
-/// Per-fragment environment selection and blend (F2-b). Blends every zone
-/// covering the fragment by influence weight; the leftover weight (where zone
-/// coverage sums below 1) goes to the default environment (layer 0). Weights are
-/// normalized to sum to 1, so overlapping zones cross-fade with no popping.
-/// `count` is `lights_uniform.env_zone_count`; callers gate on `count > 0`.
+/// Per-fragment environment selection and blend. Blends every zone covering
+/// the fragment by influence weight, each sampled with its own rotation and
+/// intensity; the leftover weight (where zone coverage sums below 1) goes to
+/// the lighting environment (layer 0) at `intensity` and `rotation`. Weights
+/// are normalised to sum to 1, so overlapping zones cross-fade with no
+/// popping. `count` is `lights_uniform.env_zone_count`; callers gate on
+/// `count > 0`.
 fn ibl_ambient_zoned(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -422,8 +424,8 @@ fn ibl_ambient_zoned(
             continue;
         }
         let c = ibl_ambient_layer_grad(
-            N, V, base_colour, metallic, roughness, F0, diffuse_occ, spec_occ, intensity,
-            rotation, dr, i32(z.layer), world_pos, z.center, z.half_extents, z.parallax, dfg, ec,
+            N, V, base_colour, metallic, roughness, F0, diffuse_occ, spec_occ, z.intensity,
+            z.rotation, dr, i32(z.layer), world_pos, z.center, z.half_extents, z.parallax, dfg, ec,
         );
         diffuse = diffuse + c.diffuse * w;
         specular = specular + c.specular * w;

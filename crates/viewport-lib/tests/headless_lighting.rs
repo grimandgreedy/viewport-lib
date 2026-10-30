@@ -1206,18 +1206,8 @@ fn environment_zones_select_the_second_zone() {
     renderer.set_environment_zones(
         &queue,
         &[
-            viewport_lib::EnvironmentZone {
-                bounds: far,
-                environment: red,
-                fade_distance: 0.5,
-                parallax: false,
-            },
-            viewport_lib::EnvironmentZone {
-                bounds: here,
-                environment: green,
-                fade_distance: 0.5,
-                parallax: false,
-            },
+            viewport_lib::EnvironmentZone::new(far, red).with_fade_distance(0.5),
+            viewport_lib::EnvironmentZone::new(here, green).with_fade_distance(0.5),
         ],
     );
 
