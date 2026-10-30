@@ -39,7 +39,7 @@ pub fn toon_material(
 pub struct ToonPlugin;
 
 impl vpl::MaterialPlugin for ToonPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_toon"
     }
     fn texture_count(&self) -> u32 {
@@ -83,7 +83,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 pub struct RimPlugin;
 
 impl vpl::MaterialPlugin for RimPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_rim"
     }
     fn wgsl_body(&self) -> String {

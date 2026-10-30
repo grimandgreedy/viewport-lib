@@ -113,7 +113,7 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
 fn two_sided_transparent_material_plugin_draws_back_faces_on_hdr_oit() {
     struct FlatPlugin;
     impl viewport_lib::MaterialPlugin for FlatPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "flat_oit_test"
         }
         fn wgsl_body(&self) -> String {

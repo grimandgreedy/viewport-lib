@@ -230,7 +230,7 @@ fn foreground_items_on_cache_hit_frames_keep_the_scene_materials() {
 
 struct Flat;
 impl crate::MaterialPlugin for Flat {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "store_flat"
     }
     fn texture_count(&self) -> u32 {

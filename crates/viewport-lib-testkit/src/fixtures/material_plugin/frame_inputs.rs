@@ -22,7 +22,7 @@ impl FrameInputsMaterialPlugin {
 }
 
 impl MaterialPlugin for FrameInputsMaterialPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 

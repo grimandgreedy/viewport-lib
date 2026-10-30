@@ -103,3 +103,106 @@ fn installer_fixture_fails_cleanly_without_a_runtime() {
         retry.err()
     );
 }
+
+/// Install, render, uninstall, render: after `uninstall` the renderer's
+/// registries read as they did before the install, the frame still renders,
+/// and the feature installs again under the same names.
+#[test]
+fn installer_fixture_uninstall_restores_the_registries() {
+    use viewport_lib::{Colour, Material, SceneRenderItem, SurfaceSubmission, uninstall_plugin};
+    use viewport_lib_testkit::fixtures::{probe_frame, probe_quad};
+
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::low_power("fixture-installer-uninstall"))
+    else {
+        eprintln!("skipping: no GPU adapter with recommended limits available");
+        return;
+    };
+    let counts = |harness: &Harness| {
+        let res = harness.renderer.resources();
+        (
+            res.registered_deformer_count(),
+            res.registered_shading_hook_count(),
+            res.material_plugin_stats().len(),
+        )
+    };
+    let never_installed = counts(&harness);
+
+    let mesh_id = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &probe_quad())
+        .expect("upload probe quad");
+    let mut frame = probe_frame(64, [0.0, 0.0, 0.0, 1.0]);
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = harness
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9)))
+        .expect("material upload");
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let mut runtime = ViewportRuntime::new();
+    let log = CallLog::new();
+    let handle = match install_plugin(
+        DeformAndStepInstaller::new(log.clone()),
+        &harness.device,
+        &harness.queue,
+        Some(&mut runtime),
+        &mut harness.renderer,
+    ) {
+        Ok(handle) => handle,
+        Err(err) => {
+            eprintln!("skipping: this device cannot register the feature: {err}");
+            return;
+        }
+    };
+    let deformer = handle.deformer;
+    assert_ne!(
+        counts(&harness),
+        never_installed,
+        "install registered a piece"
+    );
+    let installed = harness.render(&frame, 64, 64);
+
+    uninstall_plugin::<DeformAndStepInstaller>(
+        handle,
+        &harness.device,
+        &harness.queue,
+        Some(&mut runtime),
+        &mut harness.renderer,
+    )
+    .expect("uninstall");
+    assert_eq!(
+        counts(&harness),
+        never_installed,
+        "uninstall must leave the registries as they were before the install"
+    );
+    assert!(
+        matches!(
+            harness
+                .renderer
+                .resources_mut()
+                .remove_deformer(&harness.device, deformer),
+            Err(ViewportError::StaleHandle { .. })
+        ),
+        "the uninstalled deformer's id must no longer resolve"
+    );
+    let uninstalled = harness.render(&frame, 64, 64);
+    assert_eq!(
+        installed, uninstalled,
+        "the constant-offset deformer moves nothing until a mesh attaches to it, so the \
+         frame renders the same with and without the feature"
+    );
+
+    // The names are free again, so the feature installs a second time.
+    let again = install_plugin(
+        DeformAndStepInstaller::new(log.clone()),
+        &harness.device,
+        &harness.queue,
+        Some(&mut runtime),
+        &mut harness.renderer,
+    );
+    assert!(again.is_ok(), "reinstall failed: {:?}", again.err());
+}

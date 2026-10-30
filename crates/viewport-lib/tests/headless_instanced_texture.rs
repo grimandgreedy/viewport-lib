@@ -774,7 +774,7 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
 struct AlbedoPlugin;
 #[cfg(test)]
 impl viewport_lib::MaterialPlugin for AlbedoPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "bindless_albedo_test"
     }
     fn wgsl_body(&self) -> String {

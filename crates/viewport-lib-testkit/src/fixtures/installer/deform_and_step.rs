@@ -23,7 +23,8 @@ pub struct DeformAndStepInstallerHandle {
 /// and the host makes one call. The runtime half is required, so installing
 /// against a host with no runtime fails with
 /// [`ViewportError::PluginInstallMissing`](viewport_lib::ViewportError::PluginInstallMissing)
-/// before anything is registered.
+/// before anything is registered. [`PluginInstaller::uninstall`] removes the
+/// deformer again.
 pub struct DeformAndStepInstaller {
     log: CallLog,
 }
@@ -57,5 +58,16 @@ impl PluginInstaller for DeformAndStepInstaller {
             deformer,
             log: self.log,
         })
+    }
+
+    /// Removes the deformer. The runtime plugin stays: the runtime has no
+    /// call to remove one.
+    fn uninstall(
+        handle: DeformAndStepInstallerHandle,
+        ctx: &mut PluginInstallCtx<'_>,
+    ) -> ViewportResult<()> {
+        ctx.renderer
+            .resources_mut()
+            .remove_deformer(ctx.device, handle.deformer)
     }
 }

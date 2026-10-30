@@ -20,7 +20,7 @@ impl AoOverrideMaterialPlugin {
 }
 
 impl MaterialPlugin for AoOverrideMaterialPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 

@@ -26,7 +26,10 @@ use viewport_lib_types::ids::TextureId;
 /// pipeline set and a group-2 bind group per texture set that apply to the
 /// whole draw, so two items batch together only when their plugin and plugin
 /// textures match (`None` for built-in shading). Plugin parameters ride each
-/// material's block and do not split. Carried as `(plugin_index, textures)`.
+/// material's block and do not split. Carried as
+/// `(plugin_index, generation, textures)`, so a material naming an
+/// unregistered plugin never shares a batch with one on a plugin registered
+/// into the same slot later.
 type MaterialKey = (
     usize,
     Option<TextureId>,
@@ -36,7 +39,11 @@ type MaterialKey = (
     Option<TextureId>,
     bool,
     bool,
-    Option<(u32, crate::resources::mesh_sidecar::shade::PluginTextures)>,
+    Option<(
+        u32,
+        u32,
+        crate::resources::mesh_sidecar::shade::PluginTextures,
+    )>,
     u32,
 );
 
@@ -524,7 +531,7 @@ fn material_group_key(
         // Materials on one plugin share a batch when they name the same
         // textures; their parameters ride their own blocks.
         m.shading_plugin
-            .map(|p| (p.plugin_index(), m.plugin_textures)),
+            .map(|p| (p.plugin_index(), p.generation(), m.plugin_textures)),
         // The sampler binds at group-1 binding 2 for the whole batch, on both
         // texture bindings. No key and the default key share a code.
         crate::resources::material::fallbacks::sampler_code(
@@ -1028,8 +1035,10 @@ impl ViewportRenderer {
                             has_alpha_mask,
                             // Batch-uniform: `shading_plugin` is part of the
                             // batch key, so every item in the batch selects the
-                            // same plugin (or built-in shading).
-                            shading_plugin: rep_material.shading_plugin,
+                            // same plugin (or built-in shading). A plugin that
+                            // is no longer registered draws built-in shading.
+                            shading_plugin: resources
+                                .live_material_plugin(rep_material.shading_plugin),
                             plugin_textures: rep_material.plugin_textures,
                             // Batch-uniform: the sampler is part of the batch key.
                             sampler: rep_material.selected_sampler().unwrap_or_default(),

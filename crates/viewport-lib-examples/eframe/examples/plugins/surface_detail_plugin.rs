@@ -41,7 +41,7 @@ pub fn detail_material(
 pub struct DetailLayerPlugin;
 
 impl vpl::MaterialPlugin for DetailLayerPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_detail"
     }
     fn texture_count(&self) -> u32 {
@@ -103,7 +103,7 @@ pub fn parallax_material(
 pub struct ParallaxPlugin;
 
 impl vpl::MaterialPlugin for ParallaxPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_parallax"
     }
     fn texture_count(&self) -> u32 {
@@ -203,7 +203,7 @@ pub fn dissolve_material(
 pub struct DissolvePlugin;
 
 impl vpl::MaterialPlugin for DissolvePlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_dissolve"
     }
     fn wgsl_body(&self) -> String {

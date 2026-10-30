@@ -343,7 +343,7 @@ impl ViewportRenderer {
         // time (paint has no mutable access). This compiles nothing: each
         // pipeline is built by the first draw that selects it. Unknown ids are
         // ignored and those items fall back to built-in shading.
-        let mut seen: Vec<u32> = Vec::new();
+        let mut seen: Vec<crate::scene::material::MaterialPluginId> = Vec::new();
         let mut texture_sets: Vec<(
             crate::scene::material::MaterialPluginId,
             crate::resources::mesh_sidecar::shade::PluginTextures,
@@ -359,10 +359,10 @@ impl ViewportRenderer {
                 if set.1.iter().any(Option::is_some) && !texture_sets.contains(&set) {
                     texture_sets.push(set);
                 }
-                if seen.contains(&pid.plugin_index()) {
+                if seen.contains(&pid) {
                     continue;
                 }
-                seen.push(pid.plugin_index());
+                seen.push(pid);
                 if resources.material_plugin_needs_build(pid) {
                     resources.ensure_material_plugin_pipelines(device, pid);
                 }

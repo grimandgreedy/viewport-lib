@@ -21,6 +21,16 @@
 //! `renderer.resources_mut().register_deformer`, `runtime.add_plugin`,
 //! `runtime.add_gpu_plugin`) and returns whatever handle it wants the host to
 //! keep. The context is a bundle of borrows, not a new registration surface.
+//!
+//! A feature that can be taken out again implements
+//! [`PluginInstaller::uninstall`], which takes the handle back and calls the
+//! matching `remove_*` / `unregister_*` methods:
+//!
+//! ```rust,ignore
+//! viewport_lib::uninstall_plugin::<MyFeature>(
+//!     handle, &device, &queue, Some(&mut runtime), &mut renderer,
+//! )?;
+//! ```
 
 use crate::error::{ViewportError, ViewportResult};
 use crate::renderer::ViewportRenderer;
@@ -107,6 +117,21 @@ pub trait PluginInstaller {
 
     /// Register the feature's pieces against `ctx` and return its handle.
     fn install(self, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<Self::Handle>;
+
+    /// Remove what [`install`](Self::install) registered, consuming the
+    /// handle it returned.
+    ///
+    /// The default does nothing, for a feature with nothing to take out or
+    /// whose pieces stay for the renderer's lifetime. An implementation calls
+    /// the `remove_*` / `unregister_*` method of each piece it registered, so
+    /// the renderer reads as if the feature had never been installed.
+    fn uninstall(handle: Self::Handle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()>
+    where
+        Self: Sized,
+    {
+        let _ = (handle, ctx);
+        Ok(())
+    }
 }
 
 /// Install a feature without writing out the [`PluginInstallCtx`] by hand.
@@ -129,6 +154,25 @@ pub fn install_plugin<P: PluginInstaller>(
 ) -> ViewportResult<P::Handle> {
     let mut ctx = PluginInstallCtx::new(device, queue, runtime, renderer);
     feature.install(&mut ctx)
+}
+
+/// Uninstall a feature without writing out the [`PluginInstallCtx`] by hand:
+/// [`PluginInstaller::uninstall`] for the feature type `P`.
+///
+/// ```rust,ignore
+/// viewport_lib::uninstall_plugin::<MyFeature>(
+///     handle, &device, &queue, Some(&mut runtime), &mut renderer,
+/// )?;
+/// ```
+pub fn uninstall_plugin<P: PluginInstaller>(
+    handle: P::Handle,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    runtime: Option<&mut ViewportRuntime>,
+    renderer: &mut ViewportRenderer,
+) -> ViewportResult<()> {
+    let mut ctx = PluginInstallCtx::new(device, queue, runtime, renderer);
+    P::uninstall(handle, &mut ctx)
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ impl FlatColourMaterialPlugin {
 }
 
 impl MaterialPlugin for FlatColourMaterialPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 
