@@ -7,7 +7,6 @@
 //! - `ibl_irradiance.wgsl`: exact cosine-weighted sum over the 128x64 level
 //! - `ibl_prefilter.wgsl` : GGX importance-sampled roughness convolution (per
 //!   mip), each sample reading the pyramid level its solid angle matches
-//! - `ibl_brdf_lut.wgsl`  : split-sum BRDF integration
 //!
 //! Selected at runtime via [`compute_bake_possible`]. When unavailable, callers
 //! fall back to the CPU path in `environment.rs`, which mirrors these.
@@ -31,7 +30,6 @@ pub(crate) const IBL_IRR_H: u32 = 32;
 pub(crate) const IBL_PREFILTER_W: u32 = 256;
 pub(crate) const IBL_PREFILTER_H: u32 = 128;
 pub(crate) const IBL_PREFILTER_MIPS: u32 = 5;
-pub(crate) const IBL_BRDF_SIZE: u32 = 128;
 
 /// Base size of the filter pyramid the bake reads: the environment
 /// box-downsampled to 512x256, then halved level by level to 4x2.
@@ -193,7 +191,6 @@ fn make_sampler(device: &crate::gpu::Device) -> crate::gpu::Sampler {
 struct ConvolutionBgls {
     irradiance_bgl: crate::gpu::BindGroupLayout,
     prefilter_bgl: crate::gpu::BindGroupLayout,
-    brdf_bgl: crate::gpu::BindGroupLayout,
     downsample_bgl: crate::gpu::BindGroupLayout,
 }
 
@@ -272,20 +269,6 @@ fn make_bgls(device: &crate::gpu::Device) -> ConvolutionBgls {
         ],
     });
 
-    let brdf_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-        label: Some("ibl_brdf_bgl"),
-        entries: &[crate::gpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: crate::gpu::ShaderStages::COMPUTE,
-            ty: crate::gpu::BindingType::StorageTexture {
-                access: crate::gpu::StorageTextureAccess::WriteOnly,
-                format: crate::gpu::TextureFormat::Rgba16Float,
-                view_dimension: crate::gpu::TextureViewDimension::D2,
-            },
-            count: None,
-        }],
-    });
-
     let downsample_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
         label: Some("ibl_downsample_bgl"),
         entries: &[
@@ -315,7 +298,6 @@ fn make_bgls(device: &crate::gpu::Device) -> ConvolutionBgls {
     ConvolutionBgls {
         irradiance_bgl,
         prefilter_bgl,
-        brdf_bgl,
         downsample_bgl,
     }
 }
@@ -381,36 +363,14 @@ fn build_prefilter_pipeline(
     )
 }
 
-fn build_brdf_pipeline(
-    device: &crate::gpu::Device,
-    bgl: &crate::gpu::BindGroupLayout,
-) -> crate::gpu::ComputePipeline {
-    let shader = crate::resources::builders::wgsl_module(
-        device,
-        "ibl_brdf_lut_shader",
-        crate::resources::builders::wgsl_source!("ibl_brdf_lut"),
-    );
-    let layout = crate::resources::builders::pipeline_layout(device, "ibl_brdf_lut_layout", &[bgl]);
-    crate::resources::builders::compute_pipeline(
-        device,
-        "ibl_brdf_lut_pipeline",
-        &layout,
-        &shader,
-        "cs_main",
-    )
-}
-
 /// Result of a GPU IBL bake for one environment layer.
 ///
 /// The irradiance and prefiltered specular results are written in place into the
 /// caller's array textures at the target layer, so they are not carried here.
-/// Only the per-environment skybox source and the one-time BRDF LUT are returned.
+/// Only the per-environment skybox source is returned.
 pub(crate) struct LayerBakeResult {
     pub skybox_texture: crate::gpu::Texture,
     pub skybox_view: crate::gpu::TextureView,
-    /// Generated only if requested (skipped when a cached LUT already exists).
-    pub brdf_texture: Option<crate::gpu::Texture>,
-    pub brdf_view: Option<crate::gpu::TextureView>,
     /// Submission index for the queue submit that ran the compute passes.
     /// Callers gate downstream work on this submission completing.
     pub submission: crate::gpu::SubmissionIndex,
@@ -421,8 +381,7 @@ pub(crate) struct LayerBakeResult {
 /// or a block-compressed texture the device can sample).
 ///
 /// The convolution kernels are unchanged; only the storage output targets a
-/// single array layer instead of a standalone texture. If `compute_brdf` is
-/// `false`, the BRDF LUT step is skipped (the caller reuses a cached LUT).
+/// single array layer instead of a standalone texture.
 pub(crate) fn bake_environment_layer(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
@@ -430,7 +389,6 @@ pub(crate) fn bake_environment_layer(
     irradiance_array: &crate::gpu::Texture,
     prefilter_array: &crate::gpu::Texture,
     layer: u32,
-    compute_brdf: bool,
 ) -> LayerBakeResult {
     let prefilter_mips = IBL_PREFILTER_MIPS;
 
@@ -588,50 +546,6 @@ pub(crate) fn bake_environment_layer(
         pass.dispatch_workgroups(mip_w.div_ceil(8), mip_h.div_ceil(8), 1);
     }
 
-    // ----- BRDF LUT (one-time) -----
-    let (brdf_texture, brdf_view) = if compute_brdf {
-        let brdf_size = IBL_BRDF_SIZE;
-        let brdf_pipeline = build_brdf_pipeline(device, &bgls.brdf_bgl);
-        let brdf_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("ibl_brdf_lut"),
-            size: crate::gpu::Extent3d {
-                width: brdf_size,
-                height: brdf_size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba16Float,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-                | crate::gpu::TextureUsages::STORAGE_BINDING,
-            view_formats: &[],
-        });
-        let brdf_v = brdf_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-
-        let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("ibl_brdf_bg"),
-            layout: &bgls.brdf_bgl,
-            entries: &[crate::gpu::BindGroupEntry {
-                binding: 0,
-                resource: crate::gpu::BindingResource::TextureView(&brdf_v),
-            }],
-        });
-
-        let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
-            label: Some("ibl_brdf_pass"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&brdf_pipeline);
-        pass.set_bind_group(0, &bg, &[]);
-        pass.dispatch_workgroups(brdf_size.div_ceil(8), brdf_size.div_ceil(8), 1);
-        drop(pass);
-
-        (Some(brdf_tex), Some(brdf_v))
-    } else {
-        (None, None)
-    };
-
     let submission = queue.submit(std::iter::once(encoder.finish()));
 
     // Callers gate on the returned submission index instead of blocking
@@ -641,8 +555,6 @@ pub(crate) fn bake_environment_layer(
     LayerBakeResult {
         skybox_texture,
         skybox_view,
-        brdf_texture,
-        brdf_view,
         submission,
     }
 }

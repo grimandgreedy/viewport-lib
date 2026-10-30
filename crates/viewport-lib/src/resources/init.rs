@@ -796,10 +796,10 @@ impl DeviceResources {
                         ..Default::default()
                     });
 
-                // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
-                // 128x128 LUT on the first call to `upload_environment`. The LUT is scene-independent
-                // (function of roughness x N.V only); idempotent caching inside `upload_environment`
-                // means subsequent uploads skip its ~16.7M Hammersley samples.
+                // BRDF integration LUT, from the embedded bytes, and a 1x1 (1, 0, 0, 1)
+                // fallback. Both are written on the first `process_uploads`.
+                let (ibl_brdf_lut_texture, ibl_brdf_lut_view) =
+                    crate::resources::material::environment::create_brdf_lut(device);
                 let ibl_fallback_brdf_texture =
                     device.logged_texture(&crate::gpu::TextureDescriptor {
                         label: Some("ibl_fallback_brdf"),
@@ -880,7 +880,7 @@ impl DeviceResources {
                             crate::gpu::BindGroupEntry {
                                 binding: 9,
                                 resource: crate::gpu::BindingResource::TextureView(
-                                    &ibl_fallback_brdf_view,
+                                    &ibl_brdf_lut_view,
                                 ),
                             },
                             crate::gpu::BindGroupEntry {
@@ -1603,7 +1603,7 @@ impl DeviceResources {
                     ibl: crate::resources::material::environment::IblResources {
                         irradiance_view: None,
                         prefiltered_view: None,
-                        brdf_lut_view: None,
+                        brdf_lut_view: Some(ibl_brdf_lut_view),
                         sampler: ibl_sampler,
                         skybox_view: None,
                         fallback_texture: ibl_fallback_texture,
@@ -1621,7 +1621,8 @@ impl DeviceResources {
                         zones: Vec::new(),
                         zones_dirty: false,
                         env_zone_count: 0,
-                        brdf_lut_texture: None,
+                        brdf_lut_texture: Some(ibl_brdf_lut_texture),
+                        brdf_lut_written: false,
                         skybox_pipeline: None,
                         skybox_bgl: None,
                     },
