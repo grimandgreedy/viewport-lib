@@ -70,6 +70,14 @@ pub struct RendererConfig {
     /// Pass one when several renderers share a device, or when the host sets
     /// the callback itself. Default `None`.
     pub device_lost_watcher: Option<crate::renderer::DeviceLostWatcher>,
+    /// Frames a viewport's post-process, transparency or foreground targets
+    /// stay allocated after the frames stop using them. A target released this
+    /// way is allocated again by the next frame that needs it, so the value
+    /// trades memory held by idle effects against reallocating when an effect
+    /// is toggled back on. `Some(0)` releases after one idle frame. `None`
+    /// keeps every target a viewport has used for as long as the viewport
+    /// exists. Default `None`.
+    pub target_release_frames: Option<u32>,
 }
 
 impl RendererConfig {
@@ -85,6 +93,7 @@ impl RendererConfig {
             backend: None,
             max_tier: None,
             device_lost_watcher: None,
+            target_release_frames: None,
         }
     }
 
@@ -136,6 +145,13 @@ impl RendererConfig {
     /// renderer install its own. See [`device_lost_watcher`](Self::device_lost_watcher).
     pub fn with_device_lost_watcher(mut self, watcher: crate::renderer::DeviceLostWatcher) -> Self {
         self.device_lost_watcher = Some(watcher);
+        self
+    }
+
+    /// Release a viewport's unused targets after `frames` frames. See
+    /// [`target_release_frames`](Self::target_release_frames).
+    pub fn with_target_release_frames(mut self, frames: u32) -> Self {
+        self.target_release_frames = Some(frames);
         self
     }
 

@@ -258,3 +258,71 @@ fn stage_fixtures_chain_in_order_key_order() {
         "the halving stage must apply on top of the pass-through: both {both_centre}, one {one_centre}"
     );
 }
+
+/// Releasing an idle target group and promoting it again keeps the scene
+/// colour and depth in place, so a producer runs every frame through both
+/// without a resize signal, and still gets one when the viewport is resized.
+#[test]
+fn producer_fixture_survives_a_target_release() {
+    let Some((device, queue)) = viewport_lib_testkit::headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut harness = Harness::from_device(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+    );
+    harness.renderer = viewport_lib::ViewportRenderer::with_config(
+        &device,
+        &viewport_lib::RendererConfig::new(wgpu::TextureFormat::Bgra8UnormSrgb)
+            .with_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking)
+            .with_target_release_frames(2),
+    );
+    let log = CallLog::new();
+    harness
+        .renderer
+        .add_post_effect_producer(Box::new(LoggingPostEffectProducer::new(
+            log.clone(),
+            PostEffectSlot::AmbientOcclusion,
+            Arc::new(AtomicBool::new(true)),
+        )))
+        .unwrap();
+    let mut bloom = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
+    bloom.effects.post_process.bloom.enabled = true;
+    let plain = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
+    let per_frame = ["prepare:0".to_string(), format!("encode:0:{SIZE}x{SIZE}")];
+    let per_frame: Vec<&str> = per_frame.iter().map(String::as_str).collect();
+    let bloom_held = |harness: &Harness| {
+        harness
+            .renderer
+            .debug_viewport_live_targets(0)
+            .contains(&"bloom")
+    };
+
+    harness.render(&bloom, SIZE, SIZE);
+    log.assert_take(&[
+        "init_gpu",
+        &format!("resize:0:{SIZE}x{SIZE}"),
+        per_frame[0],
+        per_frame[1],
+    ]);
+    for _ in 0..2 {
+        harness.render(&plain, SIZE, SIZE);
+        log.assert_take(&per_frame);
+    }
+    assert!(!bloom_held(&harness), "bloom must be released by now");
+    harness.render(&bloom, SIZE, SIZE);
+    log.assert_take(&per_frame);
+    assert!(bloom_held(&harness), "bloom must be promoted again");
+
+    let resized = SIZE * 2;
+    let mut bigger = probe_frame(resized, [0.3, 0.3, 0.3, 1.0]);
+    bigger.effects.post_process.bloom.enabled = true;
+    harness.render(&bigger, resized, resized);
+    log.assert_take(&[
+        &format!("resize:0:{resized}x{resized}"),
+        "prepare:0",
+        &format!("encode:0:{resized}x{resized}"),
+    ]);
+}

@@ -256,6 +256,9 @@ pub(crate) struct ViewportSlot {
     /// The LDR pass's depth target on an overlay-only renderer, which builds
     /// no `hdr` state to take it from.
     pub overlay_depth: Option<crate::resources::postprocess::targets::DepthTarget>,
+    /// How long each of `hdr`'s targets has gone unused, for releasing them
+    /// under `RendererConfig::target_release_frames`.
+    pub(crate) target_idle: crate::resources::postprocess::targets::TargetIdle,
 }
 
 /// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
@@ -723,6 +726,8 @@ pub struct ViewportRenderer {
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
     /// Frames skipped since the device was lost.
     frames_skipped_device_lost: u32,
+    /// `RendererConfig::target_release_frames`.
+    target_release_frames: Option<u32>,
 }
 
 impl ViewportRenderer {
@@ -1129,6 +1134,7 @@ impl ViewportRenderer {
             last_lights_dropped: 0,
             last_cluster_stats: None,
             frames_skipped_device_lost: 0,
+            target_release_frames: config.target_release_frames,
         };
         renderer.register_internal_item_plugins(device);
         if renderer.resources.device_lost.is_lost_or_destroyed() {
@@ -3678,6 +3684,7 @@ impl ViewportRenderer {
                 ground_uniform_buf,
                 ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
                 overlay_depth: None,
+                target_idle: Default::default(),
             });
         }
     }
@@ -3951,9 +3958,11 @@ impl ViewportRenderer {
         // Ensure the slot exists.
         self.ensure_viewport_slot(device, viewport_index);
         let slot = &mut self.viewport_slots[viewport_index];
+        slot.target_idle.ask(needed);
         // Create the per-viewport state, recreate it at a new size, or promote
         // the target groups this frame is the first to ask for. A group stays
-        // live once promoted, across later frames and across a resize.
+        // live once promoted, across later frames and across a resize, until
+        // `release_idle_viewport_targets` finds it unused.
         let scene_size = [scene_w.max(1), scene_h.max(1)];
         let resized = slot.hdr.as_ref().is_none_or(|s| {
             s.output_size != [w, h] || s.scene_size != scene_size || s.ssaa_factor != ssaa_factor
@@ -3983,31 +3992,131 @@ impl ViewportRenderer {
             // A promotion that left the scene colour and depth in place has
             // nothing to tell the post-effect plugins: the views they hold
             // are still the live ones.
-            if scene_kept {
-                return;
-            }
-            // Tell post-effect producers and stages this viewport's targets
-            // changed so they can reallocate their own. Any still awaiting
-            // deferred `init_gpu` get this signal during that init instead.
-            let hdr = slot.hdr.as_ref().unwrap();
-            let ctx = crate::plugin_api::PostEffectResizeContext {
-                viewport_index,
-                scene_size: hdr.scene_size,
-                output_size: hdr.output_size,
-                scene_colour: &hdr.hdr_view,
-                scene_depth: &hdr.hdr_depth_only_view,
-                target_format: format,
-            };
-            for entry in &mut self.post_effect_producers {
-                if entry.gpu_ready {
-                    entry.producer.on_viewport_resized(device, &ctx);
-                }
-            }
-            for entry in &mut self.post_effect_stages {
-                if entry.gpu_ready {
-                    entry.stage.on_viewport_resized(device, &ctx);
-                }
+            if !scene_kept {
+                self.notify_viewport_targets_changed(device, viewport_index);
             }
         }
+    }
+
+    /// Return viewport `viewport_index`'s targets that have gone unused for
+    /// `target_release_frames` frames to their placeholders. Called once per
+    /// frame, after `ensure_viewport_hdr` has recorded what the frame needs;
+    /// does nothing when the release is off.
+    pub(crate) fn release_idle_viewport_targets(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        viewport_index: usize,
+    ) {
+        use crate::resources::TargetGroups;
+        let Some(after) = self.target_release_frames else {
+            return;
+        };
+        let Some(slot) = self.viewport_slots.get_mut(viewport_index) else {
+            return;
+        };
+        let Some(hdr) = slot.hdr.as_mut() else {
+            return;
+        };
+        let idle = slot.target_idle.age(
+            hdr.groups,
+            hdr.oit_accum_texture.is_some(),
+            hdr.foreground_depth_texture.is_some(),
+            after.max(1),
+        );
+        if idle.oit {
+            hdr.oit_accum_texture = None;
+            hdr.oit_accum_view = None;
+            hdr.oit_reveal_texture = None;
+            hdr.oit_reveal_view = None;
+            hdr.oit_composite_bind_group = None;
+            hdr.oit_size = [0, 0];
+        }
+        if idle.foreground {
+            hdr.foreground_depth_texture = None;
+            hdr.foreground_depth_view = None;
+            hdr.foreground_depth_only_view = None;
+            hdr.foreground_depth_size = [0, 0];
+            // Bind groups that still name the old view would keep it alive.
+            hdr.dof_bg_foreground = None;
+            hdr.foreground_stamp_bg = crate::resources::cached_bind_group::CachedBindGroup::new();
+        }
+        if idle.groups == TargetGroups::empty() {
+            return;
+        }
+        let old = slot.hdr.take().expect("checked above");
+        let scene_kept = !idle.groups.contains(TargetGroups::SCENE);
+        let format = self.resources.target_format;
+        slot.hdr = Some(self.resources.create_hdr_viewport_state(
+            device,
+            queue,
+            format,
+            old.output_size[0],
+            old.output_size[1],
+            old.scene_size[0],
+            old.scene_size[1],
+            old.ssaa_factor,
+            old.groups.without(idle.groups),
+            Some(&old),
+        ));
+        drop(old);
+        if !scene_kept {
+            self.notify_viewport_targets_changed(device, viewport_index);
+        }
+    }
+
+    /// Tell post-effect producers and stages viewport `viewport_index`'s scene
+    /// targets changed so they can reallocate their own. Any still awaiting
+    /// deferred `init_gpu` get this signal during that init instead.
+    fn notify_viewport_targets_changed(
+        &mut self,
+        device: &crate::gpu::Device,
+        viewport_index: usize,
+    ) {
+        let format = self.resources.target_format;
+        let hdr = self.viewport_slots[viewport_index]
+            .hdr
+            .as_ref()
+            .expect("viewport HDR state must exist");
+        let ctx = crate::plugin_api::PostEffectResizeContext {
+            viewport_index,
+            scene_size: hdr.scene_size,
+            output_size: hdr.output_size,
+            scene_colour: &hdr.hdr_view,
+            scene_depth: &hdr.hdr_depth_only_view,
+            target_format: format,
+        };
+        for entry in &mut self.post_effect_producers {
+            if entry.gpu_ready {
+                entry.producer.on_viewport_resized(device, &ctx);
+            }
+        }
+        for entry in &mut self.post_effect_stages {
+            if entry.gpu_ready {
+                entry.stage.on_viewport_resized(device, &ctx);
+            }
+        }
+    }
+
+    /// The target groups viewport `viewport_index` holds at full size, by
+    /// name, plus `"oit"` and `"foreground_depth"` when those targets are
+    /// allocated. Empty when the viewport has no HDR state.
+    #[doc(hidden)]
+    pub fn debug_viewport_live_targets(&self, viewport_index: usize) -> Vec<&'static str> {
+        let Some(hdr) = self
+            .viewport_slots
+            .get(viewport_index)
+            .and_then(|slot| slot.hdr.as_ref())
+        else {
+            return Vec::new();
+        };
+        let mut names: Vec<&'static str> = hdr.groups.names().collect();
+        if hdr.oit_accum_texture.is_some() {
+            names.push("oit");
+        }
+        if hdr.foreground_depth_texture.is_some() {
+            names.push("foreground_depth");
+        }
+        names
     }
 }

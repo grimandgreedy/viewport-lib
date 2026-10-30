@@ -27,7 +27,9 @@ pub(crate) enum TargetSize {
 /// A viewport holds every target at full size only for the groups a frame has
 /// asked for; the rest are one-texel stand-ins, so the bind groups that name
 /// them stay valid and cost nothing. A group is promoted to full size by the
-/// first frame that uses it and stays live after that.
+/// first frame that uses it. It stays live after that, or, with
+/// `RendererConfig::target_release_frames` set, until it has gone unused for
+/// that many frames (see [`TargetIdle`]).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(crate) struct TargetGroups(u16);
 
@@ -56,6 +58,28 @@ impl TargetGroups {
         self.0 & other.0 == other.0
     }
 
+    /// The groups in `self` that are not in `other`.
+    pub(crate) const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    /// The groups this set holds, one bit each, with their names.
+    pub(crate) fn names(self) -> impl Iterator<Item = &'static str> {
+        const NAMES: [(TargetGroups, &str); 7] = [
+            (TargetGroups::SCENE, "scene"),
+            (TargetGroups::LDR_DEPTH, "ldr_depth"),
+            (TargetGroups::BLOOM, "bloom"),
+            (TargetGroups::SSAO, "ssao"),
+            (TargetGroups::DOF, "dof"),
+            (TargetGroups::CONTACT_SHADOW, "contact_shadow"),
+            (TargetGroups::FXAA, "fxaa"),
+        ];
+        NAMES
+            .into_iter()
+            .filter(move |(group, _)| self.contains(*group))
+            .map(|(_, name)| name)
+    }
+
     /// `group` when `on`, nothing otherwise.
     pub(crate) const fn when(group: Self, on: bool) -> Self {
         if on { group } else { Self(0) }
@@ -75,6 +99,100 @@ impl std::ops::BitOr for TargetGroups {
     type Output = Self;
     fn bitor(self, rhs: Self) -> Self {
         Self(self.0 | rhs.0)
+    }
+}
+
+/// How long each of one viewport's targets has gone unused, so the ones a
+/// viewport stopped asking for can return to their placeholders.
+///
+/// Every frame records what it asked for; [`age`](Self::age) then counts one
+/// frame and reports which held targets have been idle long enough to
+/// release. The OIT and foreground depth targets are not in a group, so they
+/// are counted alongside.
+#[derive(Default)]
+pub(crate) struct TargetIdle {
+    /// Groups asked for since the last `age`.
+    asked: TargetGroups,
+    /// Frames each group has gone unused, indexed by its bit.
+    group_frames: [u32; 16],
+    oit_used: bool,
+    oit_frames: u32,
+    foreground_used: bool,
+    foreground_frames: u32,
+}
+
+/// The held targets [`TargetIdle::age`] found idle long enough to release.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub(crate) struct IdleTargets {
+    pub(crate) groups: TargetGroups,
+    pub(crate) oit: bool,
+    pub(crate) foreground: bool,
+}
+
+impl TargetIdle {
+    /// Record that a frame asked for `groups`.
+    pub(crate) fn ask(&mut self, groups: TargetGroups) {
+        self.asked = self.asked | groups;
+    }
+
+    /// Record that a frame drew order-independent transparency.
+    pub(crate) fn use_oit(&mut self) {
+        self.oit_used = true;
+    }
+
+    /// Record that a frame drew the foreground pass.
+    pub(crate) fn use_foreground(&mut self) {
+        self.foreground_used = true;
+    }
+
+    /// Count one frame. `held` is what the viewport holds and `oit` /
+    /// `foreground` whether it holds those targets; everything recorded since
+    /// the last call counts as used. Returns what has now gone unused for
+    /// `after` frames or more, and resets the count of whatever it returns.
+    pub(crate) fn age(
+        &mut self,
+        held: TargetGroups,
+        oit: bool,
+        foreground: bool,
+        after: u32,
+    ) -> IdleTargets {
+        let mut idle = IdleTargets::default();
+        let asked = std::mem::take(&mut self.asked);
+        for (bit, frames) in self.group_frames.iter_mut().enumerate() {
+            let group = TargetGroups(1 << bit);
+            if !held.contains(group) || asked.contains(group) {
+                *frames = 0;
+                continue;
+            }
+            *frames += 1;
+            if *frames >= after {
+                *frames = 0;
+                idle.groups = idle.groups | group;
+            }
+        }
+        let count = |held: bool, used: bool, frames: &mut u32| -> bool {
+            if !held || used {
+                *frames = 0;
+                return false;
+            }
+            *frames += 1;
+            if *frames >= after {
+                *frames = 0;
+                return true;
+            }
+            false
+        };
+        idle.oit = count(
+            oit,
+            std::mem::take(&mut self.oit_used),
+            &mut self.oit_frames,
+        );
+        idle.foreground = count(
+            foreground,
+            std::mem::take(&mut self.foreground_used),
+            &mut self.foreground_frames,
+        );
+        idle
     }
 }
 
@@ -200,5 +318,46 @@ impl<'a> ViewportTargetAllocator<'a> {
             view,
             depth_only_view,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IdleTargets, TargetGroups as G, TargetIdle};
+
+    /// A group asked for once is released after `after` frames without it,
+    /// and a group asked for again restarts its count.
+    #[test]
+    fn idle_groups_release_after_the_threshold() {
+        let mut idle = TargetIdle::default();
+        let held = G::SCENE | G::BLOOM;
+        idle.ask(held);
+        assert_eq!(idle.age(held, false, false, 3), IdleTargets::default());
+        for _ in 0..2 {
+            idle.ask(G::SCENE);
+            assert_eq!(idle.age(held, false, false, 3).groups, G::empty());
+        }
+        idle.ask(G::SCENE);
+        assert_eq!(idle.age(held, false, false, 3).groups, G::BLOOM);
+
+        idle.ask(G::SCENE);
+        idle.age(held, false, false, 3);
+        idle.ask(G::SCENE | G::BLOOM);
+        idle.age(held, false, false, 3);
+        idle.ask(G::SCENE);
+        assert_eq!(idle.age(held, false, false, 3).groups, G::empty());
+    }
+
+    /// The OIT and foreground targets follow the same count.
+    #[test]
+    fn idle_oit_and_foreground_release_after_the_threshold() {
+        let mut idle = TargetIdle::default();
+        idle.use_oit();
+        idle.use_foreground();
+        assert_eq!(idle.age(G::empty(), true, true, 2), IdleTargets::default());
+        idle.use_foreground();
+        assert_eq!(idle.age(G::empty(), true, true, 2), IdleTargets::default());
+        let released = idle.age(G::empty(), true, true, 2);
+        assert!(released.oit && !released.foreground);
     }
 }
