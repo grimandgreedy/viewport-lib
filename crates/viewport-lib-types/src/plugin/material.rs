@@ -196,8 +196,9 @@ impl ParamDesc {
 ///   `material_texture_0..N` with `material_sampler`. Each material names its own
 ///   set; materials naming different sets draw in separate batches.
 pub trait MaterialPlugin {
-    /// Plugin name: a unique, valid WGSL identifier.
-    fn name(&self) -> &'static str;
+    /// Plugin name: a unique, valid WGSL identifier. The registry stores
+    /// its own copy, so the name can be built at run time.
+    fn name(&self) -> &str;
     /// The WGSL body defining `shade_light` / `shade_ambient` / `recolor`
     /// (any non-empty subset) plus helpers.
     fn wgsl_body(&self) -> String;

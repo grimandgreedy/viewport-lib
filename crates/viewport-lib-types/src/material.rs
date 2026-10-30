@@ -919,13 +919,17 @@ pub fn param_name_hash(name: &str) -> u64 {
 /// a plugin shares its WGSL and pipelines; each carries its own
 /// [`plugin_params`](Material::plugin_params) and
 /// [`plugin_textures`](Material::plugin_textures). The renderer resolves the id
-/// against its registry at draw time; an id from a different session (e.g. a
-/// deserialized scene rendered before the plugin is re-registered) falls back
-/// to built-in shading.
+/// against its registry at draw time. An id that does not resolve falls back
+/// to built-in shading: one from a different session (e.g. a deserialized
+/// scene rendered before the plugin is re-registered), or one whose plugin
+/// was unregistered. Unregistering moves the slot's generation on, so the id
+/// does not resolve to a plugin registered into the same slot later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MaterialPluginId {
     pub(crate) plugin: u32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) generation: u32,
 }
 
 impl MaterialPluginId {
@@ -934,12 +938,25 @@ impl MaterialPluginId {
         self.plugin
     }
 
-    /// Build a handle from a plugin registration index. Crate-internal: the
-    /// shading-hook registry mints these; outside code obtains them from
-    /// registration calls and treats them as opaque.
+    /// Generation of the registration slot when this id was issued.
+    pub fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// Build a handle from a plugin registration index, at the slot's first
+    /// generation. Crate-internal: the shading-hook registry mints these;
+    /// outside code obtains them from registration calls and treats them as
+    /// opaque.
     #[doc(hidden)]
     pub fn from_index(plugin: u32) -> Self {
-        Self { plugin }
+        Self::from_parts(plugin, 0)
+    }
+
+    /// Build a handle from a registration index and slot generation.
+    /// Crate-internal, like [`from_index`](Self::from_index).
+    #[doc(hidden)]
+    pub fn from_parts(plugin: u32, generation: u32) -> Self {
+        Self { plugin, generation }
     }
 }
 

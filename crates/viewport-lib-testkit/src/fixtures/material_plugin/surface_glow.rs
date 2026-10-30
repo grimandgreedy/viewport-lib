@@ -27,7 +27,7 @@ impl SurfaceGlowMaterialPlugin {
 }
 
 impl MaterialPlugin for SurfaceGlowMaterialPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 

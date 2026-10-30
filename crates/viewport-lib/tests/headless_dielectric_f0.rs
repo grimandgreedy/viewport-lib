@@ -162,7 +162,7 @@ fn full_reflectance_quadruples_the_highlight() {
 struct F0OverridePlugin;
 
 impl viewport_lib::MaterialPlugin for F0OverridePlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "f0_override_test"
     }
     fn wgsl_body(&self) -> String {

@@ -31,7 +31,7 @@ impl TexturedMaterialPlugin {
 }
 
 impl MaterialPlugin for TexturedMaterialPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 

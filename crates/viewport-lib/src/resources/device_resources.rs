@@ -574,10 +574,11 @@ pub struct DeviceResources {
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,
-    /// Registered fragment shading hooks (`register_shading_hook`). Each
-    /// entry composes its own lit-shader modules; the base pipelines are
-    /// untouched by registrations.
-    pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
+    /// Registered fragment shading hooks (`register_shading_hook`), one slot
+    /// per registration index. Each live entry composes its own lit-shader
+    /// modules; the base pipelines are untouched by registrations. A slot
+    /// empties on unregistration and is reused by a later registration.
+    pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::ShadeHookSlot>,
     /// Per-material-plugin GPU state (`register_material_plugin`), keyed by
     /// hook index: declared parameters, group-2 texture sets and the lazily
     /// built lit pipeline sets.

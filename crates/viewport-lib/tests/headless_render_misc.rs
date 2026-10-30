@@ -172,7 +172,7 @@ fn two_bind_group_device_renders_without_validation_errors() {
 fn three_bind_group_device_draws_a_material_plugin() {
     struct SampleTexture;
     impl viewport_lib::MaterialPlugin for SampleTexture {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "sample_texture"
         }
         fn wgsl_body(&self) -> String {

@@ -21,7 +21,7 @@ use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 fn material_plugin_changes_rendered_output() {
     struct ToonPlugin;
     impl viewport_lib::MaterialPlugin for ToonPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "toon_test"
         }
         fn wgsl_body(&self) -> String {
@@ -157,7 +157,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 fn material_plugin_texture_renders() {
     struct StripePlugin;
     impl viewport_lib::MaterialPlugin for StripePlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "stripe_test"
         }
         fn texture_count(&self) -> u32 {
@@ -237,7 +237,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 fn material_plugin_reads_vertex_attribute() {
     struct AttrPlugin;
     impl viewport_lib::MaterialPlugin for AttrPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "attr_test"
         }
         fn reads_vertex_attribute(&self) -> bool {
@@ -318,7 +318,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
 fn material_plugin_surface_hook_authors_surface_and_gated_alpha() {
     struct PaintPlugin;
     impl viewport_lib::MaterialPlugin for PaintPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "paint_test"
         }
         fn wgsl_body(&self) -> String {
@@ -487,7 +487,7 @@ fn example_reference_plugins_register() {
 fn material_plugin_instances_on_ldr_path() {
     struct ToonPlugin;
     impl viewport_lib::MaterialPlugin for ToonPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "toon_ldr_instanced"
         }
         fn wgsl_body(&self) -> String {
@@ -582,7 +582,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 fn material_plugin_batch_rides_gpu_culling() {
     struct ToonPlugin;
     impl viewport_lib::MaterialPlugin for ToonPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "toon_cull_instanced"
         }
         fn wgsl_body(&self) -> String {
@@ -673,7 +673,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 fn material_plugin_draws_the_same_at_one_or_two_items() {
     struct ToonPlugin;
     impl viewport_lib::MaterialPlugin for ToonPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "toon_parity"
         }
         fn wgsl_body(&self) -> String {
@@ -755,7 +755,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 fn material_plugin_reading_vertex_attribute_sees_it_in_a_batch() {
     struct AttrPlugin;
     impl viewport_lib::MaterialPlugin for AttrPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "attr_per_object"
         }
         fn reads_vertex_attribute(&self) -> bool {
@@ -839,7 +839,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
 fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
     struct Banded;
     impl viewport_lib::MaterialPlugin for Banded {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "banded_on_demand"
         }
         fn wgsl_body(&self) -> String {
@@ -958,7 +958,7 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
 fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
     struct Flat;
     impl viewport_lib::MaterialPlugin for Flat {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "flat_background"
         }
         fn wgsl_body(&self) -> String {
@@ -1044,7 +1044,7 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
 fn a_background_warm_up_is_counted_then_waited_for() {
     struct Tint;
     impl viewport_lib::MaterialPlugin for Tint {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "tint_pending"
         }
         fn wgsl_body(&self) -> String {
@@ -1115,7 +1115,7 @@ fn a_background_warm_up_is_counted_then_waited_for() {
 /// lights adding nothing, so each material reads as one known colour.
 struct FlatParamPlugin;
 impl viewport_lib::MaterialPlugin for FlatParamPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "flat_param"
     }
     fn wgsl_body(&self) -> String {
@@ -1137,7 +1137,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 /// Shades to the material's first plugin texture through the ambient hook.
 struct FlatTexturePlugin;
 impl viewport_lib::MaterialPlugin for FlatTexturePlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "flat_texture"
     }
     fn texture_count(&self) -> u32 {
@@ -1428,7 +1428,7 @@ fn mismatched_plugin_values_are_refused() {
 fn an_over_budget_texture_layout_is_refused_at_registration() {
     struct Many(u32);
     impl viewport_lib::MaterialPlugin for Many {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             if self.0 > 8 {
                 "many_over_cap"
             } else {
