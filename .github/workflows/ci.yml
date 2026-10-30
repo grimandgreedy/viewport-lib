@@ -1,0 +1,233 @@
+name: CI
+
+# The gating checks. `check` builds everything and runs the tests that need no
+# GPU; `lavapipe` runs the headless renderer tests on Mesa's software Vulkan
+# driver in a pinned container, so the rasteriser, and with it the golden
+# images, only change when this file changes. The other software adapters
+# (WARP, llvmpipe GL) and the web and mobile checks run from the manual and
+# nightly workflow in software-adapters.yml.
+#
+# Started by hand, the workflow runs `bless-lavapipe` instead: it renders a
+# fresh lavapipe reference set and uploads it as an artifact. Review the
+# images, then commit them under
+# crates/viewport-lib-testkit/tests/snapshots/vulkan-lavapipe/ (and
+# vulkan-lavapipe-compatibility/).
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Software rasterisers are slow enough that debug builds time out.
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+
+jobs:
+  check:
+    name: Build, host tests, feature legs, shaders
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - uses: Swatinem/rust-cache@v2
+
+      # Headers the windowed example crates link against (winit, eframe, iced).
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libxkbcommon-dev libwayland-dev \
+            libudev-dev libasound2-dev libfontconfig1-dev
+
+      - name: Build the workspace and every member example
+        run: cargo build --release --workspace --all-targets
+
+      # No adapter on this runner, so the GPU tests skip; VIEWPORT_REQUIRE_GPU
+      # is deliberately unset here. The lavapipe job runs them.
+      - name: Library tests
+        run: cargo test --release
+
+      - name: Check the wgpu 29 leg
+        run: cargo check --release -p viewport-lib --no-default-features --features wgpu29,serde
+
+      - name: Check the wgpu 30 leg
+        run: cargo check --release -p viewport-lib --no-default-features --features wgpu30,serde
+
+      - name: Plugin data types build without the renderer
+        run: scripts/check_plugin_types.sh
+
+      # The only check that enforces WGSL's uniform-control-flow rules.
+      - name: Compile every shader with Tint
+        env:
+          VPL_CHROME: /usr/bin/google-chrome
+        run: python3 scripts/check_shaders.py
+
+  wasm-check:
+    name: wasm compile check
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      # The script defaults to a macOS rustup toolchain path; point it at the
+      # runner's instead.
+      - name: Check the library crates and web examples for wasm32
+        run: VPL_WASM_TOOLCHAIN="$(rustc --print sysroot)" scripts/build_web.sh --check
+
+  lavapipe:
+    name: lavapipe (Vulkan, pinned container)
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # The image digest pins the Mesa build, so the lavapipe output only moves
+    # when this line does. Updating it means re-blessing vulkan-lavapipe/.
+    container: ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+    env:
+      WGPU_BACKEND: vulkan
+      # Every headless test skips quietly when no adapter exists. This makes the
+      # gpu_available canary fail instead, so a broken adapter setup cannot
+      # report green while testing nothing.
+      VIEWPORT_REQUIRE_GPU: 1
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # git before checkout, so the checkout is a repository and `git status`
+      # works; curl and a C toolchain for rustup and the build.
+      - name: Install lavapipe and build tools
+        run: |
+          apt-get update
+          apt-get install -y git curl ca-certificates build-essential pkg-config \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools
+          vulkaninfo --summary
+
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/viewport-lib-testkit
+
+      - name: Adapter probe
+        run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
+
+      - name: Library headless tests
+        run: cargo test --release -p viewport-lib --tests
+
+      # The golden policy rests on scenes rendering bit-identically twice (or
+      # within their tolerances.txt entry), so this runs before anything
+      # compares pixels.
+      - name: Determinism probe
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --test determinism -- --ignored --nocapture
+
+      # An explicit list rather than --tests: gpu_timing and anything that
+      # asserts on elapsed time do not belong on a shared runner.
+      - name: Testkit tests
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          fixtures=$(ls tests/fixture_*.rs | sed 's|tests/\(.*\)\.rs|--test \1|')
+          cargo test --release --lib \
+            --test scene_counters \
+            --test per_object_counters \
+            --test overlay_retained_counters \
+            --test tier \
+            $fixtures \
+            --test buffer_invariants \
+            --test cpu_pick \
+            --test gpu_cull \
+            --test gpu_cull_capacity \
+            --test device_lost \
+            --test stale_texture_handle
+
+      # Compared against the committed lavapipe set when there is one; until
+      # it is blessed, render only, which checks every scene draws.
+      - name: Golden images
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          if ls tests/snapshots/vulkan-lavapipe/*.png >/dev/null 2>&1; then
+            echo "comparing against tests/snapshots/vulkan-lavapipe/"
+          else
+            echo "::warning::no blessed lavapipe set; golden images render only"
+            export GOLDEN_RENDER_ONLY=1
+          fi
+          cargo test --release --test snapshots \
+            --test compatibility_meshes --test compatibility_item_types
+          # A gating run never writes a reference.
+          test -z "$(git status --porcelain tests/snapshots/)"
+
+      - name: Upload failed comparisons
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lavapipe-golden-diffs
+          path: |
+            crates/viewport-lib-testkit/tests/snapshots/**/*.actual.png
+            crates/viewport-lib-testkit/tests/snapshots/**/*.diff.png
+          if-no-files-found: ignore
+
+  bless-lavapipe:
+    name: Bless the lavapipe reference set
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Must match the lavapipe job's image exactly.
+    container: ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+    env:
+      WGPU_BACKEND: vulkan
+      VIEWPORT_REQUIRE_GPU: 1
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install lavapipe and build tools
+        run: |
+          apt-get update
+          apt-get install -y git curl ca-certificates build-essential pkg-config \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools
+          vulkaninfo --summary
+
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/viewport-lib-testkit
+
+      # Not a gate here: its report is what per-scene tolerances are set from.
+      - name: Determinism probe
+        continue-on-error: true
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --test determinism -- --ignored --nocapture
+
+      - name: Render the references
+        working-directory: crates/viewport-lib-testkit
+        env:
+          BLESS: 1
+        run: |
+          rm -f tests/snapshots/vulkan-lavapipe/*.png tests/snapshots/vulkan-lavapipe-compatibility/*.png
+          cargo test --release --test snapshots \
+            --test compatibility_meshes --test compatibility_item_types
+
+      # The driver the set was blessed on. The snapshot tests compare it with
+      # the live adapter's driver_info and ask for a re-bless when it changes.
+      - name: Stamp the Mesa version
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          vulkaninfo --summary | awk -F'= ' '/driverInfo/ { print $2; exit }' \
+            > tests/snapshots/vulkan-lavapipe/MESA_VERSION
+          cat tests/snapshots/vulkan-lavapipe/MESA_VERSION
+          test -s tests/snapshots/vulkan-lavapipe/MESA_VERSION
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vulkan-lavapipe-references
+          path: |
+            crates/viewport-lib-testkit/tests/snapshots/vulkan-lavapipe/
+            crates/viewport-lib-testkit/tests/snapshots/vulkan-lavapipe-compatibility/
