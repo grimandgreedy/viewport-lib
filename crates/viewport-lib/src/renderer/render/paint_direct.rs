@@ -22,19 +22,19 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "paint", vp = vp_idx).entered();
         // The foreground pass needs its own cleared depth attachment, which a
         // host-owned render pass cannot provide (attachments are fixed at
-        // begin_render_pass). Warn once instead of silently drawing nothing.
-        if !frame.scene.foreground_items.is_empty()
-            && !self
-                .foreground_paint_to_warned
-                .swap(true, std::sync::atomic::Ordering::Relaxed)
-        {
-            tracing::warn!(
-                "foreground_items are not drawn by paint()/paint_viewport(): the foreground \
-                 pass needs its own cleared depth attachment, which a host-owned render pass \
-                 cannot provide. Use the HDR path (post-processing enabled) or an \
-                 owned-encoder render path."
+        // begin_render_pass). Report it instead of silently drawing nothing.
+        if !frame.scene.foreground_items.is_empty() {
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Pipeline,
+                    "foreground_unsupported_on_path",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::ForegroundUnsupportedOnPath,
             );
         }
         if self.resources.scene_tier.is_built() {

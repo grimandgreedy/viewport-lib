@@ -266,9 +266,19 @@ impl ViewportRenderer {
                 });
             }
             if resources.mesh_store.get(item.mesh_id).is_none() {
-                tracing::warn!(
-                    mesh_index = item.mesh_id.index(),
-                    "foreground item mesh_index invalid, skipping"
+                let index = item.mesh_id.index() as u32;
+                resources.notices.report(
+                    crate::notice::NoticeKey::new(
+                        crate::NoticeCategory::Item,
+                        "stale_handle",
+                        [u64::from(index), crate::notice::name_id("foreground item")],
+                    ),
+                    crate::Severity::Warning,
+                    || crate::NoticeDetail::StaleHandle {
+                        kind: "mesh",
+                        index,
+                        context: "foreground item",
+                    },
                 );
                 entries[idx].bind_group = None;
                 continue;

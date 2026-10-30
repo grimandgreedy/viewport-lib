@@ -59,7 +59,7 @@ impl ViewportRenderer {
         use parry3d::query::{Ray, RayCast};
 
         if !self.cpu_pick_cache_enabled {
-            warn_pick_cache_disabled();
+            warn_pick_cache_disabled(&self.resources.notices);
             return None;
         }
 
@@ -111,7 +111,11 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
                 }
-                let Some(kept) = (if item.settings.ignore_clip { Some(whole) } else { span }) else {
+                let Some(kept) = (if item.settings.ignore_clip {
+                    Some(whole)
+                } else {
+                    span
+                }) else {
                     continue;
                 };
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -143,7 +147,11 @@ impl ViewportRenderer {
                     Vector::new(cast_from.x, cast_from.y, cast_from.z),
                     Vector::new(local_dir.x, local_dir.y, local_dir.z),
                 );
-                let reach = if kept.end.is_finite() { kept.end - kept.start } else { f32::MAX };
+                let reach = if kept.end.is_finite() {
+                    kept.end - kept.start
+                } else {
+                    f32::MAX
+                };
 
                 {
                     // Vertices are in mesh-local space: use identity pose.
@@ -308,7 +316,11 @@ impl ViewportRenderer {
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     let at = t_of(hit.world_pos);
-                    let kept = if item.settings.ignore_clip { Some(whole) } else { span };
+                    let kept = if item.settings.ignore_clip {
+                        Some(whole)
+                    } else {
+                        span
+                    };
                     if !kept.is_some_and(|k| at >= k.start && at <= k.end) {
                         continue;
                     }

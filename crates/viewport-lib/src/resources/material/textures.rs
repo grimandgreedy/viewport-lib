@@ -2495,18 +2495,19 @@ mod async_texture_tests {
             )
             .unwrap();
         assert!(
-            resources.texture_slot_mismatch().is_ok(),
+            resources.first_texture_slot_mismatch().is_ok(),
             "nothing bound yet"
         );
 
         resources.check_texture_slot(Some(right), crate::TextureSlot::Normal.requirement());
         assert!(
-            resources.texture_slot_mismatch().is_ok(),
+            resources.first_texture_slot_mismatch().is_ok(),
             "a linear upload into a linear slot is not a mismatch"
         );
+        assert!(resources.notices.take().is_empty());
 
         resources.check_texture_slot(Some(wrong), crate::TextureSlot::Normal.requirement());
-        let err = resources.texture_slot_mismatch().unwrap_err();
+        let err = resources.first_texture_slot_mismatch().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("normal_map_id"), "{msg}");
         assert!(msg.contains("TextureData::normal_map"), "{msg}");
@@ -2515,8 +2516,15 @@ mod async_texture_tests {
         resources.check_texture_slot(Some(wrong), crate::TextureSlot::Normal.requirement());
         assert_eq!(resources.texture_slot_mismatches().len(), 1);
 
+        // Both binds are one coalesced error notice.
+        let notices = resources.notices.take();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].count, 2);
+        assert_eq!(notices[0].severity, crate::Severity::Error);
+        assert_eq!(notices[0].detail.to_string(), msg);
+
         resources.clear_texture_slot_mismatches();
-        assert!(resources.texture_slot_mismatch().is_ok());
+        assert!(resources.first_texture_slot_mismatch().is_ok());
     }
 
     #[test]
@@ -3171,6 +3179,16 @@ impl DeviceResources {
         if found == required.colour_space() {
             return;
         }
+        let texture = id.raw();
+        self.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::ResourceSlot,
+                "texture_slot_mismatch",
+                [texture, crate::notice::name_id(required.field_name())],
+            ),
+            crate::Severity::Error,
+            || slot_mismatch_notice(texture, required),
+        );
         let Ok(mut recorded) = self.content.texture_slot_mismatches.lock() else {
             return;
         };
@@ -3182,8 +3200,7 @@ impl DeviceResources {
         {
             return;
         }
-        recorded.push((id.raw(), required));
-        tracing::error!("{}", slot_mismatch_error(id.raw(), required));
+        recorded.push((texture, required));
     }
 
     /// The recorded slot mismatches, oldest first, as `(raw texture id,
@@ -3203,12 +3220,18 @@ impl DeviceResources {
     /// The first recorded slot mismatch, as an error naming the slot and the
     /// constructor that fixes it.
     ///
-    /// Call it after a frame to turn a mismatch into a hard failure: a test gate,
-    /// an asset-pipeline check, or a debug build that should not start with the
-    /// wrong textures loaded. The mismatch is also logged at error level as soon
-    /// as it is seen, because it renders a plausible image and nothing else about
-    /// the frame goes wrong.
+    /// Each mismatch is also reported as an error-severity
+    /// [`NoticeDetail::TextureSlotMismatch`](crate::NoticeDetail::TextureSlotMismatch)
+    /// notice, read with `ViewportRenderer::take_notices`.
+    #[deprecated(
+        note = "read NoticeDetail::TextureSlotMismatch from ViewportRenderer::take_notices instead"
+    )]
     pub fn texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
+        self.first_texture_slot_mismatch()
+    }
+
+    /// The first recorded slot mismatch, as an error.
+    pub(crate) fn first_texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
         let Ok(recorded) = self.content.texture_slot_mismatches.lock() else {
             return Ok(());
         };
@@ -3227,13 +3250,27 @@ impl DeviceResources {
     }
 }
 
-/// Build the error for one recorded mismatch. Shared by the log line and the
-/// accessor so both say the same thing.
-fn slot_mismatch_error(raw: u64, required: TextureRequirement) -> crate::error::ViewportError {
-    let found = match required.colour_space() {
+/// The colour space a texture in the wrong slot was uploaded in: the other one.
+fn slot_mismatch_found(required: TextureRequirement) -> &'static str {
+    match required.colour_space() {
         crate::ColourSpace::Srgb => "linear",
         crate::ColourSpace::Linear => "sRGB",
-    };
+    }
+}
+
+/// The notice for one mismatch. Says the same thing as the error.
+fn slot_mismatch_notice(raw: u64, required: TextureRequirement) -> crate::NoticeDetail {
+    crate::NoticeDetail::TextureSlotMismatch {
+        texture: raw,
+        slot: required.field_name(),
+        found: slot_mismatch_found(required),
+        constructor: required.constructor(),
+    }
+}
+
+/// Build the error for one recorded mismatch.
+fn slot_mismatch_error(raw: u64, required: TextureRequirement) -> crate::error::ViewportError {
+    let found = slot_mismatch_found(required);
     crate::error::ViewportError::TextureColourSpaceMismatch {
         slot: required.field_name(),
         found,

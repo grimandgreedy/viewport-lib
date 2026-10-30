@@ -1760,6 +1760,7 @@ impl DeviceResources {
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
+            notices: crate::notice::NoticeSink::new(),
             mesh_universal: dev_knob!("VIEWPORT_MESH_UNIVERSAL").is_some(),
             frame_feature_sets_capped: std::sync::atomic::AtomicU32::new(0),
             frame_stand_in_draws: std::sync::atomic::AtomicU32::new(0),

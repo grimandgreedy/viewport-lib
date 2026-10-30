@@ -727,13 +727,14 @@ pub(crate) fn strip_mesh_discards<'a>(
     if dev_knob!("VIEWPORT_MESH_NO_DISCARD").is_none() {
         return source;
     }
-    static NOTICE: std::sync::Once = std::sync::Once::new();
-    NOTICE.call_once(|| {
-        eprintln!(
+    crate::notice::log_rate_limited(
+        "VIEWPORT_MESH_NO_DISCARD",
+        crate::Severity::Info,
+        format_args!(
             "VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
              discard (clip planes, clip volumes, and alpha mask are no-ops)"
-        );
-    });
+        ),
+    );
     std::borrow::Cow::Owned(strip_discards(&source))
 }
 
@@ -761,13 +762,14 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     if !source.contains(BEGIN) {
         return source;
     }
-    static NOTICE: std::sync::Once = std::sync::Once::new();
-    NOTICE.call_once(|| {
-        eprintln!(
+    crate::notice::log_rate_limited(
+        "VIEWPORT_MESH_PBR_ONLY",
+        crate::Severity::Info,
+        format_args!(
             "VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
              (Blinn-Phong, matcap, uv-vis, and per-face colour paths removed)"
-        );
-    });
+        ),
+    );
     std::borrow::Cow::Owned(strip_pbr_regions(&source))
 }
 
@@ -797,13 +799,14 @@ pub(crate) fn builtin_hook_env<'a>(
     else {
         return source;
     };
-    static NOTICE: std::sync::Once = std::sync::Once::new();
-    NOTICE.call_once(|| {
-        eprintln!(
+    crate::notice::log_rate_limited(
+        "VIEWPORT_MESH_BUILTIN_HOOK",
+        crate::Severity::Info,
+        format_args!(
             "VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
              through the shading-hook seam (render PBR materials only)"
-        );
-    });
+        ),
+    );
     std::borrow::Cow::Owned(composed)
 }
 

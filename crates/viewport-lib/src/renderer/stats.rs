@@ -313,6 +313,7 @@ pub struct GpuBreakdown {
 /// [`ViewportRenderer::last_frame_stats`](crate::ViewportRenderer::last_frame_stats).
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct FrameStats {
     /// Total mesh-family objects considered for rendering.
     ///
@@ -668,6 +669,10 @@ pub struct FrameStats {
     /// tier and [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) on
     /// the compatibility tier.
     pub lights_dropped: u32,
+    /// Notices waiting for
+    /// [`ViewportRenderer::take_notices`](crate::ViewportRenderer::take_notices),
+    /// by severity, and how many the buffer dropped since the last take.
+    pub notices: crate::NoticeCounts,
 }
 
 #[cfg(test)]

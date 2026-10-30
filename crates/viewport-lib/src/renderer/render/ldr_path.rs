@@ -22,35 +22,44 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) -> crate::gpu::CommandBuffer {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "ldr_scene_pass", vp = vp_idx)
+                .entered();
         // The LDR pipeline has no post chain: the OIT pass (needed for
         // transparent volume meshes) only exists on the HDR path, and
         // item-type plugins draw here only when they opt in via `draws_ldr`.
-        // Report each dropped feature once instead of silently omitting it.
-        use std::sync::atomic::Ordering::Relaxed;
-        let ldr_skipped_plugin = self.item_type_plugins.iter().any(|(name, plugin)| {
-            !plugin.draws_ldr()
+        // Report each dropped feature instead of silently omitting it.
+        for (name, plugin) in self.item_type_plugins.iter() {
+            let skipped = !plugin.draws_ldr()
                 && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                    .is_some_and(|items| !items.is_empty())
-        });
-        if ldr_skipped_plugin && !self.ldr_plugin_items_warned.swap(true, Relaxed) {
-            tracing::warn!(
-                "some item-type plugin items are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): their plugins do not opt into it via \
-                 ItemTypePlugin::draws_ldr. Opt in (with an LDR-format pipeline) or set \
-                 effects.display.mode = PipelineMode::Hdr to render them."
-            );
+                    .is_some_and(|items| !items.is_empty());
+            if skipped {
+                self.resources.notices.report(
+                    crate::notice::NoticeKey::new(
+                        crate::NoticeCategory::Item,
+                        "items_skipped_on_ldr",
+                        [crate::notice::name_id(name), 0],
+                    ),
+                    crate::Severity::Warning,
+                    || crate::NoticeDetail::ItemsSkippedOnLdr {
+                        plugin: name.to_string(),
+                    },
+                );
+            }
         }
         if frame
             .scene
             .volume_meshes
             .iter()
             .any(|m| !m.settings.hidden && m.transparency.is_some())
-            && !self.ldr_volume_transparency_warned.swap(true, Relaxed)
         {
-            tracing::warn!(
-                "transparent volume meshes are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): they require the OIT pass, which only exists in \
-                 the HDR pipeline. Set effects.display.mode = PipelineMode::Hdr."
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Item,
+                    "volume_transparency_on_ldr",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::VolumeTransparencyOnLdr,
             );
         }
 
