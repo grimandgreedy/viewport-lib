@@ -182,23 +182,25 @@ impl ViewportRenderer {
         ];
         // Where the cascades end along the view, and the share of that
         // distance they fade out over (0: no fade and no cut). The single
-        // no-view map has no distance cut. The last two lanes are reserved
-        // for physically sized soft shadows (sun angular radius, widest
-        // penumbra).
+        // no-view map has no distance cut.
         let fade_fraction = match lighting.shadows.fade_fraction {
             f if ends_short && f > 0.0 => f.min(1.0),
             _ => 0.0,
         };
-        let range = if use_csm && effective_cascade_count > 0 {
-            [
+        let (far_s, fade_fraction) = if use_csm && effective_cascade_count > 0 {
+            (
                 cascade_split_distances[effective_cascade_count - 1],
                 fade_fraction,
-                0.0,
-                0.0,
-            ]
+            )
         } else {
-            [0.0; 4]
+            (0.0, 0.0)
         };
+        let range = [
+            far_s,
+            fade_fraction,
+            0.0,
+            pcss_max_radius_world(cascade_view_projs[0], light.tile_size as f32),
+        ];
 
         // Upload ShadowAtlasUniform (binding 5).
         {
@@ -226,7 +228,7 @@ impl ViewportRenderer {
                     ShadowFilter::PcssFast => 4,
                     _ => 0,
                 },
-                pcss_light_radius: lighting.shadows.pcss_light_radius,
+                tan_sun: lighting.shadows.sun_angular_radius.max(0.0).tan(),
                 range,
                 atlas_rects,
             };
@@ -275,6 +277,19 @@ impl ViewportRenderer {
         light.cascade_view_projs = cascade_view_projs;
         light.effective_cascade_count = effective_cascade_count;
     }
+}
+
+/// Texels of cascade 0 the PCSS search and filter radius may span.
+const PCSS_MAX_TEXELS: f32 = 24.0;
+
+/// The widest PCSS search and filter radius in world units: a fixed number of
+/// cascade 0's texels, so every cascade caps the penumbra at the same width.
+fn pcss_max_radius_world(cascade0_view_proj: glam::Mat4, tile_size: f32) -> f32 {
+    let row0 = cascade0_view_proj.row(0).truncate().length();
+    if row0 <= 0.0 || tile_size <= 0.0 {
+        return 0.0;
+    }
+    PCSS_MAX_TEXELS * 2.0 / (row0 * tile_size)
 }
 
 /// A single orthographic shadow map for a directional light, covering
@@ -357,6 +372,75 @@ mod tests {
         let wide = fit(eye, Some(tall));
         assert!(wide.max_z >= tall, "{} < {tall}", wide.max_z);
         assert!(wide.min_z <= own.min_z);
+    }
+
+    /// The directional PCSS filter radius as `csm.wgsl` sizes it, in world
+    /// units: the blocker-receiver height from the NDC depths, the sun's
+    /// tangent, the soft cap, and the one-texel floor.
+    fn pcss_filter_world(
+        view_proj: Mat4,
+        tile: f32,
+        r_max: f32,
+        tan_sun: f32,
+        receiver: Vec3,
+        blocker: Vec3,
+    ) -> f32 {
+        let texel_world = 2.0 / (view_proj.row(0).truncate().length() * tile);
+        let depth_scale = 1.0 / view_proj.row(2).truncate().length();
+        let z = |p: Vec3| view_proj.project_point3(p).z;
+        let height = (z(receiver) - z(blocker)).max(0.0) * depth_scale;
+        let x = tan_sun * height;
+        let knee = 0.5 * r_max;
+        let penumbra = if x <= knee {
+            x
+        } else {
+            knee + knee * (1.0 - (-(x - knee) / knee).exp())
+        };
+        let filter_texels = (penumbra / texel_world).max(1.0);
+        filter_texels * texel_world
+    }
+
+    /// The penumbra radius the old PCSS gave, in world units: a radius in
+    /// atlas texels scaled by a depth ratio in the cascade's own NDC.
+    fn old_pcss_filter_world(
+        view_proj: Mat4,
+        tile: f32,
+        radius_uv: f32,
+        receiver: Vec3,
+        blocker: Vec3,
+    ) -> f32 {
+        let texel_world = 2.0 / (view_proj.row(0).truncate().length() * tile);
+        let z = |p: Vec3| view_proj.project_point3(p).z;
+        let width = radius_uv * (z(receiver) - z(blocker)) / z(blocker).max(0.001);
+        (width * 16.0).max(1.0) * texel_world
+    }
+
+    #[test]
+    fn pcss_penumbra_is_the_same_width_in_neighbouring_cascades() {
+        let tile = 2048.0;
+        let eye = Vec3::new(0.0, -20.0, 1.7);
+        let view = Mat4::look_at_rh(eye, eye + Vec3::Y, Vec3::Z);
+        let cascade = |near, far| {
+            compute_cascade_matrix(sun(), view, 0.8, 1.5, near, far, tile, |_, _| None).view_proj
+        };
+        let (c0, c1) = (cascade(0.5, 10.0), cascade(10.0, 40.0));
+        let r_max = 24.0 * 2.0 / (c0.row(0).truncate().length() * tile);
+        // A receiver on the ground near the split, its blocker 5 m up the
+        // light ray.
+        let receiver = Vec3::new(0.0, -10.5, 0.0);
+        let blocker = receiver + sun() * 5.0;
+        let tan_sun = 0.01f32.tan();
+        let w0 = pcss_filter_world(c0, tile, r_max, tan_sun, receiver, blocker);
+        let w1 = pcss_filter_world(c1, tile, r_max, tan_sun, receiver, blocker);
+        assert!(w0 > 0.0);
+        assert!(
+            ((w0 - w1) / w0).abs() < 0.01,
+            "cascade 0: {w0}, cascade 1: {w1}"
+        );
+        // The old sizing steps at the split for the same pair.
+        let o0 = old_pcss_filter_world(c0, tile, 0.02, receiver, blocker);
+        let o1 = old_pcss_filter_world(c1, tile, 0.02, receiver, blocker);
+        assert!(((o0 - o1) / o0).abs() > 0.01, "old: {o0} vs {o1}");
     }
 
     #[test]

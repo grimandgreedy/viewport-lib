@@ -146,6 +146,7 @@ mod adapt_wgsl_tests {
             assert!(src.contains("textureLoad(shadow_map"));
             let gl = adapt_wgsl(src, &caps(crate::gpu::Backend::Gl));
             assert!(!gl.contains("textureLoad(shadow_map"));
+            assert!(!gl.contains("textureLoad(punctual_shadow_tex"));
             assert!(!gl.contains("BEGIN_PCSS_BLOCKER_SEARCH"));
         }
     }

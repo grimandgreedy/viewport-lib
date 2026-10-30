@@ -196,7 +196,12 @@ fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
     let cos_r = cos(rot);
 
     if _viewport_csm.shadow_filter == 1u {
-        let search_radius = _viewport_csm.pcss_light_radius * 16.0 * texel_size;
+        // Radii in world units, as the mesh shaders size them.
+        let tan_sun = _viewport_csm.tan_sun;
+        let r_max = _viewport_csm.range.w;
+        let depth_scale = 1.0 / max(length(vp_row2), 1e-8);
+        let search_world = min(tan_sun * max(ndc.z, 0.0) * depth_scale, r_max);
+        let search_radius = max(search_world / texel_world, 1.0) * texel_size;
         var blocker_sum = 0.0;
         var blocker_count = 0.0;
         for (var i = 0u; i < 16u; i = i + 1u) {
@@ -215,8 +220,8 @@ fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
             return 1.0;
         }
         let avg_blocker = blocker_sum / blocker_count;
-        let penumbra_width = _viewport_csm.pcss_light_radius * (biased_depth - avg_blocker) / max(avg_blocker, 0.001);
-        let filter_radius = max(penumbra_width * 16.0 * texel_size, texel_size);
+        let penumbra_world = min(tan_sun * max(biased_depth - avg_blocker, 0.0) * depth_scale, r_max);
+        let filter_radius = max(penumbra_world / texel_world, 1.0) * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i = i + 1u) {
             let d = _VIEWPORT_POISSON_DISK[i];

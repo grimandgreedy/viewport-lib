@@ -79,8 +79,8 @@ pub(crate) struct DofUniform {
 /// Shadow atlas uniform (368 bytes, bound at group 0 binding 5).
 ///
 /// Contains per-cascade view-projection matrices, split distances, the
-/// distance fade, atlas layout, and PCSS parameters. Used by the fragment shader for CSM cascade selection
-/// and shadow sampling.
+/// distance fade, atlas layout, and the PCSS sun size. Used by the fragment
+/// shader for CSM cascade selection and shadow sampling.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ShadowAtlasUniform {
@@ -99,13 +99,15 @@ pub(crate) struct ShadowAtlasUniform {
     pub(crate) atlas_size: f32, //   4 bytes
     /// Shadow filter mode: 0=PCF, 1=PCSS.
     pub(crate) shadow_filter: u32, //   4 bytes
-    /// PCSS light source radius in UV space.
-    pub(crate) pcss_light_radius: f32, //   4 bytes
-    /// `[far, fade_fraction, tan_sun, r_max_world]`: `far` is where the
+    /// `tan(ShadowSettings::sun_angular_radius)`: world penumbra radius per
+    /// world unit between blocker and receiver, for the PCSS tiers.
+    pub(crate) tan_sun: f32, //   4 bytes
+    /// `[far, fade_fraction, reserved, r_max_world]`: `far` is where the
     /// cascades end along the view (0 = no distance cut), `fade_fraction`
-    /// the share of `far` over which shadows fade out before it. The sun's
-    /// angular-radius tangent and the widest world-space penumbra are
-    /// reserved for physically sized soft shadows and written as 0.
+    /// the share of `far` over which shadows fade out before it.
+    /// `r_max_world` caps the PCSS search and filter radius in world units,
+    /// 24 texels of cascade 0, so the widest penumbra is the same in every
+    /// cascade.
     pub(crate) range: [f32; 4], //  16 bytes
     /// Per-cascade atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y].
     pub(crate) atlas_rects: [[f32; 4]; 4], //  64 bytes

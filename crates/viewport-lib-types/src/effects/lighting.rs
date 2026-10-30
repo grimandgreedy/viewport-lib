@@ -130,7 +130,10 @@ pub enum LightKind {
         /// this radius, so it both removes the near-field singularity and models
         /// a finite-size emitter (a larger radius is a softer, less point-like
         /// light). `0.0` is a mathematical point source (clamped internally to a
-        /// tiny epsilon). It also sizes the soft-shadow penumbra.
+        /// tiny epsilon). Under the PCSS shadow filters it also sizes the
+        /// penumbra: a blocker `h` in front of a receiver `d` from the light
+        /// casts one about `2 * radius * h / (d - h)` wide. Radii below 0.01
+        /// shadow as 0.01.
         radius: f32,
     },
     /// Cone-shaped spotlight with physical inverse-square falloff.
@@ -332,9 +335,9 @@ impl LightSource {
 ///
 /// Point and spot light shadows follow the same tiers, with the disk laid on
 /// the cube face around the light-to-receiver direction for a point light and
-/// on the spot's map for a spot. They have no blocker search:
-/// [`Pcss`](Self::Pcss) and [`PcssFast`](Self::PcssFast) filter them as
-/// [`Pcf`](Self::Pcf).
+/// on the spot's map for a spot. The PCSS tiers size a directional penumbra by
+/// [`ShadowSettings::sun_angular_radius`] and a point or spot penumbra by the
+/// light's `radius`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -453,8 +456,15 @@ pub struct ShadowSettings {
     pub atlas_resolution: u32,
     /// Shadow filtering mode. Default: PCF.
     pub filter: ShadowFilter,
-    /// PCSS light source radius in shadow-map UV space. Controls penumbra width. Default: 0.02.
-    pub pcss_light_radius: f32,
+    /// Angular radius of the directional light's disc, in radians, for the
+    /// PCSS tiers. A blocker `h` world units above a receiver casts a
+    /// penumbra about `2 * h * tan(sun_angular_radius)` wide, so the same
+    /// pair gives the same penumbra in every cascade. The real sun is about
+    /// 0.0047, which at shadow-map resolution reads close to PCF; the
+    /// default is wider so the PCSS tiers look soft. Point and spot lights
+    /// size their penumbra by their own `radius` instead. Default: 0.01.
+    #[cfg_attr(feature = "serde", serde(default = "default_sun_angular_radius"))]
+    pub sun_angular_radius: f32,
     /// Layers of the punctual shadow array shared by point and spot lights.
     /// A shadow-casting point light takes 6 layers (one per cube face) and a
     /// spot light 1. Lights are given layers in rank order until the budget
@@ -528,6 +538,11 @@ impl Default for CascadeSplit {
 }
 
 #[cfg(feature = "serde")]
+fn default_sun_angular_radius() -> f32 {
+    ShadowSettings::default().sun_angular_radius
+}
+
+#[cfg(feature = "serde")]
 fn default_punctual_shadow_layers() -> u32 {
     ShadowSettings::default().punctual_shadow_layers
 }
@@ -546,7 +561,7 @@ impl Default for ShadowSettings {
             cascade_count: 4,
             atlas_resolution: 4096,
             filter: ShadowFilter::Pcf,
-            pcss_light_radius: 0.02,
+            sun_angular_radius: 0.01,
             punctual_shadow_layers: 48,
             punctual_shadow_resolution: 1024,
             shadow_distance: None,

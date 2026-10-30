@@ -4,18 +4,20 @@
 // `atlas_size` is the side of the backing depth texture in texels. Cascade i
 // renders into `atlas_rects[i]` (uv min xy, uv max zw) of that texture.
 //
-// `range` is (far, fade_fraction, tan_sun, r_max_world). `far` is where the
+// `tan_sun` is the tangent of the sun's angular radius: the PCSS penumbra
+// radius per world unit between blocker and receiver.
+//
+// `range` is (far, fade_fraction, reserved, r_max_world). `far` is where the
 // cascades end along the camera's forward axis, 0 when there is no distance
 // cut; shadows fade out over the last `fade_fraction * far` before it.
-// `tan_sun` and `r_max_world` are reserved for physically sized soft
-// shadows and are 0.
+// `r_max_world` caps the PCSS search and filter radius in world units.
 struct ShadowAtlas {
     cascade_vp:        array<mat4x4<f32>, 4>, // 256 bytes
     cascade_splits:    vec4<f32>,             //  16 bytes
     cascade_count:     u32,                   //   4 bytes
     atlas_size:        f32,                   //   4 bytes
     shadow_filter:     u32,                   //   4 bytes (tier, see csm.wgsl)
-    pcss_light_radius: f32,                   //   4 bytes
+    tan_sun:           f32,                   //   4 bytes
     range:             vec4<f32>,             //  16 bytes
     atlas_rects:       array<vec4<f32>, 4>,   //  64 bytes
 };
