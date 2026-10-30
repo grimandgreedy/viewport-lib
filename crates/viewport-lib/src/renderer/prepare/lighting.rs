@@ -1,15 +1,24 @@
-//! Per-frame lighting and shadow setup (lights, point-shadow slots, CSM
+//! Per-frame lighting and shadow setup (lights, punctual shadow layers, CSM
 //! cascades, shadow atlas uniform, clustered-light build).
 
+use super::shadow_casters::{ShadowCasters, select_shadow_casters};
 use super::*;
+use crate::renderer::punctual_shadow_pool::{SLOT_LAYERS, ShadowKey, ShadowRequest};
 use crate::renderer::shadow_state::LightingWrites;
 
+/// Near plane of the punctual shadow projections, in world units.
+const PUNCTUAL_SHADOW_NEAR: f32 = 0.1;
+/// Widest half-angle a spot light's shadow frustum covers. A cone wider than
+/// this is unshadowed past it.
+const MAX_SPOT_SHADOW_HALF_ANGLE: f32 = 85.0 * std::f32::consts::PI / 180.0;
+
 impl ViewportRenderer {
-    /// Compute this frame's lighting: cull and pack lights, allocate point-light
-    /// shadow slots, fit the directional CSM cascades, build the shadow atlas
-    /// uniform, and run the clustered-light build. Updates the cached shadow
-    /// state and returns the transient cascade / point-shadow data the shadow
-    /// depth pass consumes.
+    /// Compute this frame's lighting: cull and pack lights, choose the shadow
+    /// casters and place the punctual ones in the shadow array, fit the
+    /// directional CSM cascades, build the shadow atlas uniform, and run the
+    /// clustered-light build. Updates the cached shadow state and returns the
+    /// transient cascade and punctual-layer data the shadow depth pass
+    /// consumes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_lighting(
         resources: &mut DeviceResources,
@@ -67,140 +76,65 @@ impl ViewportRenderer {
         // Build the per-light entries that get uploaded to the storage buffer.
         let mut lights_packed: Vec<SingleLightUniform> = combined_lights
             .iter()
-            .enumerate()
-            .map(|(i, (_, src))| {
-                build_single_light_uniform(src, shadow_center, shadow_extent, i == 0)
-            })
+            .map(|(_, src)| build_single_light_uniform(src))
             .collect();
 
-        // ---------------------------------------------------------------
-        // Point-light shadow pool: allocate a cubemap slot per shadow-casting
-        // Point light, build the six per-face view-projection matrices, and
-        // mutate each light's `shadow_layer`/`near` so the lit pass can
-        // sample the cubemap. Faces are rendered later in this function once
-        // the cascade pass has finished.
-        // ---------------------------------------------------------------
-        const POINT_SHADOW_NEAR: f32 = 0.1;
-        let mut point_shadow_faces: Vec<PointShadowFace> = Vec::new();
-        if matches!(
-            lighting.shadows.point_shadow_mode,
-            crate::renderer::types::PointShadowMode::Cube
-        ) && lighting.shadows.enabled
-        {
-            shadow.point_shadow_frame = shadow.point_shadow_frame.wrapping_add(1);
-            shadow
-                .point_shadow_pool
-                .begin_frame(shadow.point_shadow_frame);
-            // Only as many point lights can have shadows as the cubemap pool
-            // holds. Select that many deterministically (nearest to the
-            // camera, importance-weighted) instead of letting every casting
-            // light acquire a slot: the pool evicts on overflow, so a scene
-            // with hundreds of default-constructed point lights (cast_shadows
-            // defaults to true) would otherwise queue six shadow faces per
-            // light per frame and thrash every slot. Lights beyond the pool
-            // render unshadowed, exactly as if their acquire had failed.
-            let eye = frame.camera.render_camera.eye_position();
-            let mut point_casters: Vec<(usize, glam::Vec3, f32, f32)> = combined_lights
-                .iter()
-                .enumerate()
-                .filter(|(_, (_, src))| src.cast_shadows)
-                .filter_map(|(i, (_, src))| match src.kind {
-                    LightKind::Point {
-                        position, range, ..
-                    } => {
-                        let pos = glam::Vec3::from(position);
-                        let score = pos.distance(eye) / src.importance.max(0.001);
-                        Some((i, pos, range, score))
+        // Shadow casters: the directional light that takes the cascades, and
+        // the point and spot lights given layers of the punctual array.
+        let casters = {
+            let settings_lights = lighting.lights.len();
+            let scene_lights = frame.scene.lights.len();
+            let key_of = |source: usize| {
+                if source < settings_lights {
+                    ShadowKey {
+                        source: 0,
+                        index: source as u32,
                     }
-                    _ => None,
-                })
-                .collect();
-            point_casters
-                .sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
-            point_casters.truncate(crate::renderer::types::MAX_POINT_SHADOW_LIGHTS as usize);
-            for &(i, light_pos, range, _) in &point_casters {
-                let key = crate::renderer::point_shadow_pool::LightKey(i as u32);
-                let Some(slot) = shadow.point_shadow_pool.acquire(key) else {
-                    continue;
-                };
-                lights_packed[i].shadow_layer = slot as i32;
-                lights_packed[i].shadow_kind = 2;
-                lights_packed[i].point_shadow_near = POINT_SHADOW_NEAR;
-                // Six standard cubemap face directions (forward, up). Order:
-                //   0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z.
-                let faces: [(glam::Vec3, glam::Vec3); 6] = [
-                    (glam::Vec3::X, glam::Vec3::NEG_Y),
-                    (glam::Vec3::NEG_X, glam::Vec3::NEG_Y),
-                    (glam::Vec3::Y, glam::Vec3::Z),
-                    (glam::Vec3::NEG_Y, glam::Vec3::NEG_Z),
-                    (glam::Vec3::Z, glam::Vec3::NEG_Y),
-                    (glam::Vec3::NEG_Z, glam::Vec3::NEG_Y),
-                ];
-                // Y-flipped projection: cubemap face (u, v) sampling
-                // (WebGPU/OpenGL convention) expects content with V growing
-                // in the opposite direction of `look_at_rh`'s positive view-Y.
-                // Without this flip, every face stores its content mirrored
-                // along V, so the lit pass looks up shadows in the wrong
-                // image rows and shadows land far from the objects that cast
-                // them. The pipeline compensates by treating CW as front-face
-                // (see `build_shadow_point_pipeline`).
-                let proj = glam::Mat4::from_scale(glam::Vec3::new(1.0, -1.0, 1.0))
-                    * glam::Mat4::perspective_rh(
-                        std::f32::consts::FRAC_PI_2,
-                        1.0,
-                        POINT_SHADOW_NEAR,
-                        range.max(POINT_SHADOW_NEAR + 0.01),
-                    );
-                for (f, (forward, up)) in faces.iter().enumerate() {
-                    let view = glam::Mat4::look_at_rh(light_pos, light_pos + *forward, *up);
-                    point_shadow_faces.push(PointShadowFace {
-                        slot,
-                        face: f as u32,
-                        view_proj: proj * view,
-                        light_pos,
-                        range,
-                    });
+                } else if source < settings_lights + scene_lights {
+                    ShadowKey {
+                        source: 1,
+                        index: (source - settings_lights) as u32,
+                    }
+                } else {
+                    ShadowKey {
+                        source: 2,
+                        index: (source - settings_lights - scene_lights) as u32,
+                    }
                 }
-            }
-
-            // The cube array is a placeholder until a frame actually queues
-            // faces. This is that point: the slots are assigned and the depth
-            // passes for them run later in `prepare_shadow_pass`, so the real
-            // array has to exist before either the uniform upload below or any
-            // bind group that samples it.
-            if !point_shadow_faces.is_empty() {
-                resources.ensure_point_shadow_cubes(device);
-                resources.ensure_point_shadow_pipeline(device);
-            }
-
-            // Upload per-face uniforms (view_proj + light_pos + range,
-            // padded to 256-byte dynamic-offset stride).
-            #[repr(C)]
-            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-            struct PointFaceUniform {
-                view_proj: [[f32; 4]; 4], // 0..64
-                // Packed vec4: xyz = light_pos, w = range.
-                light_pos: [f32; 4], // 64..80
-                _pad: [f32; 44],     // pad to 256
-            }
-            for fc in &point_shadow_faces {
-                let entry = PointFaceUniform {
-                    view_proj: fc.view_proj.to_cols_array_2d(),
-                    light_pos: [fc.light_pos.x, fc.light_pos.y, fc.light_pos.z, fc.range],
-                    _pad: [0.0; 44],
-                };
-                let layer = fc.slot * 6 + fc.face;
-                let offset = layer as u64 * POINT_FACE_STRIDE;
-                queue.write_buffer(
-                    &resources.scene_tier.shadow.point_face_buf,
-                    offset,
-                    bytemuck::cast_slice(&[entry]),
-                );
-            }
-        }
+            };
+            let budget = if lighting.shadows.enabled {
+                crate::resources::shadow::punctual_layers_for(
+                    lighting.shadows.punctual_shadow_layers,
+                    device.limits().max_texture_array_layers,
+                )
+            } else {
+                0
+            };
+            shadow
+                .punctual_pool
+                .set_capacity((budget / SLOT_LAYERS) as usize);
+            let pool = &shadow.punctual_pool;
+            select_shadow_casters(
+                combined_lights,
+                key_of,
+                frame.camera.render_camera.eye_position(),
+                budget,
+                |key| pool.holds(key),
+            )
+        };
+        let (punctual_faces, punctual_layers_in_use) = Self::place_punctual_shadows(
+            resources,
+            shadow,
+            &casters,
+            combined_lights,
+            &mut lights_packed,
+            lighting,
+            device,
+            queue,
+        );
 
         // -------------------------------------------------------------------
-        // Compute CSM cascade matrices for lights[0] (directional).
+        // CSM cascade matrices for the cascade caster.
         // Cascades are fit to frame.camera, not to any per-viewport camera, so
         // every split viewport shares one shadow atlas.
         // -------------------------------------------------------------------
@@ -218,80 +152,57 @@ impl ViewportRenderer {
         let cascade_splits =
             compute_cascade_splits(shadow_near, shadow_far, cascade_count as u32, 0.75);
 
-        let light_dir_for_csm = if light_count > 0 {
-            match &combined_lights[0].1.kind {
-                LightKind::Directional { direction } => glam::Vec3::from(*direction).normalize(),
-                LightKind::Point { position, .. } => {
-                    (glam::Vec3::from(*position) - shadow_center).normalize()
+        let csm_direction = casters
+            .cascades
+            .and_then(|i| match combined_lights[i].1.kind {
+                LightKind::Directional { direction } => {
+                    Some(glam::Vec3::from(direction).normalize())
                 }
-                LightKind::Spot {
-                    position,
-                    direction,
-                    ..
-                } => {
-                    let _ = position;
-                    glam::Vec3::from(*direction).normalize()
-                }
-                _ => unreachable!("unhandled LightKind variant"),
-            }
-        } else {
-            glam::Vec3::new(0.3, 1.0, 0.5).normalize()
-        };
+                _ => None,
+            });
 
         let mut cascade_view_projs = [glam::Mat4::IDENTITY; 4];
         // Distance-based splits for fragment shader cascade selection.
         let mut cascade_split_distances = [0.0f32; 4];
 
-        // Determine if we should use CSM (directional light + valid camera data).
-        let use_csm = light_count > 0
-            && matches!(combined_lights[0].1.kind, LightKind::Directional { .. })
-            && frame.camera.render_camera.view != glam::Mat4::IDENTITY;
-
-        if use_csm {
-            for i in 0..cascade_count {
-                let split_near = if i == 0 {
-                    frame.camera.render_camera.depth_range().0.max(0.01)
-                } else {
-                    cascade_splits[i - 1]
-                };
-                let split_far = cascade_splits[i];
-                cascade_view_projs[i] = compute_cascade_matrix(
-                    light_dir_for_csm,
-                    frame.camera.render_camera.view,
-                    frame.camera.render_camera.fov_y(),
-                    frame.camera.render_camera.aspect(),
-                    split_near,
-                    split_far,
-                    tile_size as f32,
-                );
-                cascade_split_distances[i] = split_far;
-            }
-        } else {
-            // Fallback: single shadow map covering the whole scene (legacy behavior).
-            let primary_shadow_mat = if light_count > 0 {
-                compute_shadow_matrix(&combined_lights[0].1.kind, shadow_center, shadow_extent)
+        // A camera with no view gets one map over the scene extent instead.
+        let use_csm = frame.camera.render_camera.view != glam::Mat4::IDENTITY;
+        if let Some(light_dir) = csm_direction {
+            if use_csm {
+                for i in 0..cascade_count {
+                    let split_near = if i == 0 {
+                        frame.camera.render_camera.depth_range().0.max(0.01)
+                    } else {
+                        cascade_splits[i - 1]
+                    };
+                    let split_far = cascade_splits[i];
+                    cascade_view_projs[i] = compute_cascade_matrix(
+                        light_dir,
+                        frame.camera.render_camera.view,
+                        frame.camera.render_camera.fov_y(),
+                        frame.camera.render_camera.aspect(),
+                        split_near,
+                        split_far,
+                        tile_size as f32,
+                    );
+                    cascade_split_distances[i] = split_far;
+                }
             } else {
-                glam::Mat4::IDENTITY
-            };
-            cascade_view_projs[0] = primary_shadow_mat;
-            cascade_split_distances[0] = frame.camera.render_camera.depth_range().1;
+                cascade_view_projs[0] =
+                    compute_shadow_matrix(light_dir, shadow_center, shadow_extent);
+                cascade_split_distances[0] = frame.camera.render_camera.depth_range().1;
+            }
         }
-        // A primary light with `cast_shadows` off gets no shadow map at all:
-        // no cascades are rendered and the shader's CSM sample short-circuits
-        // on `cascade_count == 0`. Point lights manage their own cubemap slots
-        // and are unaffected.
-        let primary_casts_shadows = light_count > 0 && combined_lights[0].1.cast_shadows;
-        let effective_cascade_count = if !primary_casts_shadows {
-            0
-        } else if use_csm {
-            cascade_count
-        } else {
-            1
+        // No casting directional light: no cascades are rendered and the
+        // shader's CSM sample short-circuits on `cascade_count == 0`.
+        let effective_cascade_count = match csm_direction {
+            None => 0,
+            Some(_) if use_csm => cascade_count,
+            Some(_) => 1,
         };
-        if light_count > 0 {
-            let kind = primary_shadow_kind(combined_lights[0].1, lighting.shadows.enabled);
-            if kind != 0 {
-                lights_packed[0].shadow_kind = kind;
+        if let Some(i) = casters.cascades {
+            if lighting.shadows.enabled {
+                lights_packed[i].shadow_kind = 1;
             }
         }
 
@@ -379,9 +290,6 @@ impl ViewportRenderer {
             shadow.last_shadow_atlas_uniform = shadow_atlas_uniform;
         }
 
-        // The primary shadow matrix is still stored in lights[0].light_view_proj for
-        // backward compat with the non-instanced shadow pass uniform.
-        let _primary_shadow_mat = cascade_view_projs[0];
         // Cache for ground plane ShadowOnly mode.
         shadow.last_cascade0_shadow_mat = cascade_view_projs[0];
 
@@ -702,7 +610,8 @@ impl ViewportRenderer {
         }
 
         LightingFrame {
-            point_shadow_faces,
+            punctual_faces,
+            punctual_layers_in_use,
             tile_size,
             cascade_view_projs,
             effective_cascade_count,
@@ -710,101 +619,232 @@ impl ViewportRenderer {
     }
 }
 
-/// Build a light-space view-projection matrix for shadow mapping.
+impl ViewportRenderer {
+    /// Place this frame's punctual casters in the shadow array: give each its
+    /// layers, write its `shadow_kind` and `shadow_layer` (and a spot's
+    /// matrix) into `lights_packed`, size the array, and upload the per-layer
+    /// uniforms. Returns the layers to render and how many are in use.
+    #[allow(clippy::too_many_arguments)]
+    fn place_punctual_shadows(
+        resources: &mut DeviceResources,
+        shadow: &mut ShadowState,
+        casters: &ShadowCasters,
+        lights: &[(usize, &LightSource)],
+        lights_packed: &mut [SingleLightUniform],
+        lighting: &LightingSettings,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> (Vec<PunctualShadowFace>, u32) {
+        let requests: Vec<ShadowRequest> = casters
+            .punctual
+            .iter()
+            .map(|c| ShadowRequest {
+                key: c.key,
+                cube: c.cube,
+            })
+            .collect();
+        let placed = shadow.punctual_pool.place(&requests);
+        if casters.punctual.is_empty() {
+            return (Vec::new(), 0);
+        }
+        let resolution = crate::resources::shadow::punctual_resolution_for(
+            lighting.shadows.punctual_shadow_resolution,
+            resources.capabilities.texture_dimension_2d,
+        );
+        // The array is a placeholder, or too small, until a frame places a
+        // light in it; it has to exist before the uniform upload below and
+        // any bind group that samples it. A new array holds nothing.
+        let layers = shadow.punctual_pool.used_slots() as u32 * SLOT_LAYERS;
+        if resources.ensure_punctual_shadow_array(device, layers, resolution) {
+            shadow.punctual_pool.invalidate();
+        }
+        resources.ensure_point_shadow_pipeline(device);
+
+        // Cube faces in layer order (forward, up): +X, -X, +Y, -Y, +Z, -Z.
+        const CUBE_FACES: [(glam::Vec3, glam::Vec3); 6] = [
+            (glam::Vec3::X, glam::Vec3::NEG_Y),
+            (glam::Vec3::NEG_X, glam::Vec3::NEG_Y),
+            (glam::Vec3::Y, glam::Vec3::Z),
+            (glam::Vec3::NEG_Y, glam::Vec3::NEG_Z),
+            (glam::Vec3::Z, glam::Vec3::NEG_Y),
+            (glam::Vec3::NEG_Z, glam::Vec3::NEG_Y),
+        ];
+        let mut faces = Vec::new();
+        let mut in_use = 0;
+        for (c, base) in casters.punctual.iter().zip(&placed) {
+            let Some(base) = *base else {
+                continue;
+            };
+            let packed = &mut lights_packed[c.light];
+            let mut light_hash = crate::renderer::shader_hashes::fnv1a_hash(&[]);
+            match lights[c.light].1.kind {
+                LightKind::Point {
+                    position, range, ..
+                } => {
+                    let light_pos = glam::Vec3::from(position);
+                    fnv_mix(&mut light_hash, &[2]);
+                    fnv_mix(
+                        &mut light_hash,
+                        bytemuck::cast_slice(&[position[0], position[1], position[2], range]),
+                    );
+                    packed.shadow_kind = 2;
+                    packed.shadow_layer = base as i32;
+                    packed.point_shadow_near = PUNCTUAL_SHADOW_NEAR;
+                    let proj = punctual_projection(std::f32::consts::FRAC_PI_2, range);
+                    for (f, (forward, up)) in CUBE_FACES.iter().enumerate() {
+                        let view = glam::Mat4::look_at_rh(light_pos, light_pos + *forward, *up);
+                        faces.push(PunctualShadowFace {
+                            layer: base + f as u32,
+                            base,
+                            light_hash,
+                            view_proj: proj * view,
+                            light_pos,
+                            range,
+                        });
+                    }
+                    in_use += SLOT_LAYERS;
+                }
+                LightKind::Spot {
+                    position,
+                    direction,
+                    range,
+                    outer_angle,
+                    ..
+                } => {
+                    let light_pos = glam::Vec3::from(position);
+                    let view_proj = spot_shadow_matrix(
+                        light_pos,
+                        glam::Vec3::from(direction),
+                        outer_angle,
+                        range,
+                        resolution,
+                    );
+                    fnv_mix(&mut light_hash, &[3]);
+                    fnv_mix(
+                        &mut light_hash,
+                        bytemuck::cast_slice(&view_proj.to_cols_array()),
+                    );
+                    fnv_mix(&mut light_hash, &range.to_le_bytes());
+                    packed.light_view_proj = view_proj.to_cols_array_2d();
+                    packed.shadow_kind = 3;
+                    packed.shadow_layer = base as i32;
+                    packed.point_shadow_near = PUNCTUAL_SHADOW_NEAR;
+                    faces.push(PunctualShadowFace {
+                        layer: base,
+                        base,
+                        light_hash,
+                        view_proj,
+                        light_pos,
+                        range,
+                    });
+                    in_use += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // Per-layer uniforms: view_proj, light_pos and range, padded to the
+        // 256-byte dynamic-offset stride.
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct PunctualFaceUniform {
+            view_proj: [[f32; 4]; 4], // 0..64
+            // Packed vec4: xyz = light_pos, w = range.
+            light_pos: [f32; 4], // 64..80
+            _pad: [f32; 44],     // pad to 256
+        }
+        for fc in &faces {
+            let entry = PunctualFaceUniform {
+                view_proj: fc.view_proj.to_cols_array_2d(),
+                light_pos: [fc.light_pos.x, fc.light_pos.y, fc.light_pos.z, fc.range],
+                _pad: [0.0; 44],
+            };
+            queue.write_buffer(
+                &resources.scene_tier.shadow.point_face_buf,
+                u64::from(fc.layer) * crate::resources::shadow::PUNCTUAL_FACE_STRIDE,
+                bytemuck::cast_slice(&[entry]),
+            );
+        }
+        (faces, in_use)
+    }
+}
+
+/// A single orthographic shadow map for a directional light, covering
+/// `shadow_extent` around `shadow_center`. Used in place of the cascades when
+/// the camera has no view matrix to fit them to.
 fn compute_shadow_matrix(
-    kind: &LightKind,
+    direction: glam::Vec3,
     shadow_center: glam::Vec3,
     shadow_extent: f32,
 ) -> glam::Mat4 {
-    match kind {
-        LightKind::Directional { direction } => {
-            let dir = glam::Vec3::from(*direction).normalize();
-            let light_up = if dir.z.abs() > 0.99 {
-                glam::Vec3::X
-            } else {
-                glam::Vec3::Z
-            };
-            let light_pos = shadow_center + dir * shadow_extent * 2.0;
-            let light_view = glam::Mat4::look_at_rh(light_pos, shadow_center, light_up);
-            let light_proj = glam::Mat4::orthographic_rh(
-                -shadow_extent,
-                shadow_extent,
-                -shadow_extent,
-                shadow_extent,
-                0.01,
-                shadow_extent * 5.0,
-            );
-            light_proj * light_view
-        }
-        LightKind::Point {
-            position, range, ..
-        } => {
-            let pos = glam::Vec3::from(*position);
-            let to_center = (shadow_center - pos).normalize();
-            let light_up = if to_center.z.abs() > 0.99 {
-                glam::Vec3::X
-            } else {
-                glam::Vec3::Z
-            };
-            let light_view = glam::Mat4::look_at_rh(pos, shadow_center, light_up);
-            let light_proj =
-                glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
-            light_proj * light_view
-        }
-        LightKind::Spot {
-            position,
-            direction,
-            range,
-            ..
-        } => {
-            let pos = glam::Vec3::from(*position);
-            let dir = glam::Vec3::from(*direction).normalize();
-            let look_target = pos + dir;
-            let up = if dir.z.abs() > 0.99 {
-                glam::Vec3::X
-            } else {
-                glam::Vec3::Z
-            };
-            let light_view = glam::Mat4::look_at_rh(pos, look_target, up);
-            let light_proj =
-                glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
-            light_proj * light_view
-        }
-        _ => unreachable!("unhandled LightKind variant"),
-    }
-}
-
-/// The `shadow_kind` the first ranked light takes from the cascade atlas: 1
-/// for a directional light (cascades), 3 for a spot (the single fallback
-/// map), 0 when it casts nothing there. A point light's cube is assigned
-/// separately, with its slot.
-pub(super) fn primary_shadow_kind(light: &LightSource, shadows_enabled: bool) -> u32 {
-    if !shadows_enabled || !light.cast_shadows {
-        return 0;
-    }
-    match light.kind {
-        LightKind::Directional { .. } => 1,
-        LightKind::Spot { .. } => 3,
-        _ => 0,
-    }
-}
-
-/// Convert a `LightSource` to `SingleLightUniform`, computing shadow matrix for lights[0].
-pub(super) fn build_single_light_uniform(
-    src: &LightSource,
-    shadow_center: glam::Vec3,
-    shadow_extent: f32,
-    compute_shadow: bool,
-) -> SingleLightUniform {
-    let shadow_mat = if compute_shadow {
-        compute_shadow_matrix(&src.kind, shadow_center, shadow_extent)
+    let dir = direction.normalize();
+    let light_up = if dir.z.abs() > 0.99 {
+        glam::Vec3::X
     } else {
-        glam::Mat4::IDENTITY
+        glam::Vec3::Z
     };
+    let light_pos = shadow_center + dir * shadow_extent * 2.0;
+    let light_view = glam::Mat4::look_at_rh(light_pos, shadow_center, light_up);
+    let light_proj = glam::Mat4::orthographic_rh(
+        -shadow_extent,
+        shadow_extent,
+        -shadow_extent,
+        shadow_extent,
+        0.01,
+        shadow_extent * 5.0,
+    );
+    light_proj * light_view
+}
 
+/// The Y-flipped perspective a punctual shadow layer is rendered with, the
+/// orientation a hardware cube-map face expects. The flip mirrors winding, so
+/// the pipeline treats CW as front-facing (see `build_shadow_point_pipeline`).
+fn punctual_projection(fov_y: f32, range: f32) -> glam::Mat4 {
+    glam::Mat4::from_scale(glam::Vec3::new(1.0, -1.0, 1.0))
+        * glam::Mat4::perspective_rh(
+            fov_y,
+            1.0,
+            PUNCTUAL_SHADOW_NEAR,
+            range.max(PUNCTUAL_SHADOW_NEAR + 0.01),
+        )
+}
+
+/// A spot light's shadow view-projection: the cone's outer half-angle plus a
+/// two-texel guard for the filter taps, up to [`MAX_SPOT_SHADOW_HALF_ANGLE`],
+/// looking down the spot's axis.
+pub(super) fn spot_shadow_matrix(
+    position: glam::Vec3,
+    direction: glam::Vec3,
+    outer_angle: f32,
+    range: f32,
+    resolution: u32,
+) -> glam::Mat4 {
+    let guard = (2.0 / resolution.max(1) as f32).atan();
+    let half = (outer_angle + guard).clamp(guard, MAX_SPOT_SHADOW_HALF_ANGLE);
+    let dir = direction.normalize();
+    let up = if dir.z.abs() > 0.99 {
+        glam::Vec3::X
+    } else {
+        glam::Vec3::Z
+    };
+    let view = glam::Mat4::look_at_rh(position, position + dir, up);
+    punctual_projection(2.0 * half, range) * view
+}
+
+/// Fold `bytes` into an FNV-1a hash.
+pub(super) fn fnv_mix(hash: &mut u64, bytes: &[u8]) {
+    for &b in bytes {
+        *hash ^= b as u64;
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+}
+
+/// Convert a `LightSource` to `SingleLightUniform`, with no shadow assigned.
+pub(super) fn build_single_light_uniform(src: &LightSource) -> SingleLightUniform {
+    let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
     match &src.kind {
         LightKind::Directional { direction } => SingleLightUniform {
-            light_view_proj: shadow_mat.to_cols_array_2d(),
+            light_view_proj: identity,
             pos_or_dir: *direction,
             light_type: 0,
             colour: src.colour.to_linear_rgb(),
@@ -825,7 +865,7 @@ pub(super) fn build_single_light_uniform(
             range,
             radius,
         } => SingleLightUniform {
-            light_view_proj: shadow_mat.to_cols_array_2d(),
+            light_view_proj: identity,
             pos_or_dir: *position,
             light_type: 1,
             colour: src.colour.to_linear_rgb(),
@@ -849,7 +889,7 @@ pub(super) fn build_single_light_uniform(
             outer_angle,
             radius,
         } => SingleLightUniform {
-            light_view_proj: shadow_mat.to_cols_array_2d(),
+            light_view_proj: identity,
             pos_or_dir: *position,
             light_type: 2,
             colour: src.colour.to_linear_rgb(),
@@ -958,8 +998,9 @@ pub(super) fn rank_lights<'a>(
         })
         .collect();
 
-    // Rank the light array: first directional light pinned at slot 0 (the
-    // cascaded-shadow caster), the rest ordered by
+    // Rank the light array: the cascaded-shadow caster pinned at slot 0 (the
+    // first directional light that casts, else the first directional), the
+    // rest ordered by
     // `importance * proximity_weight` descending (stable, so equal ranks
     // keep submission order). The order does two jobs: over the cap the
     // tail is dropped, and the cluster build keeps each cell's lights in
@@ -968,9 +1009,11 @@ pub(super) fn rank_lights<'a>(
     // treated as infinitely close (proximity_weight = 1). Shading itself is
     // order-independent.
     let camera_pos = frame.camera.render_camera.eye_position();
+    let directional = |l: &LightSource| matches!(l.kind, LightKind::Directional { .. });
     let directional_first = raw_lights
         .iter()
-        .position(|(_, l)| matches!(l.kind, LightKind::Directional { .. }));
+        .position(|(_, l)| directional(l) && l.cast_shadows)
+        .or_else(|| raw_lights.iter().position(|(_, l)| directional(l)));
     let mut out: Vec<(usize, &LightSource)> = Vec::with_capacity(cap.min(raw_lights.len()));
     if let Some(i) = directional_first {
         out.push(raw_lights[i]);
@@ -1099,23 +1142,35 @@ mod tests {
     }
 
     #[test]
-    fn primary_shadow_kind_follows_the_light_type() {
-        let sun = LightSource::default();
-        let spot = LightSource::spot_candela(
-            [0.0, 0.0, 5.0],
-            [0.0, 0.0, -1.0],
-            Candela(10.0),
-            20.0,
-            0.3,
-            0.5,
-            0.0,
-        );
-        assert_eq!(primary_shadow_kind(&sun, true), 1);
-        assert_eq!(primary_shadow_kind(&spot, true), 3);
-        assert_eq!(primary_shadow_kind(&point(1.0), true), 0);
-        assert_eq!(primary_shadow_kind(&sun, false), 0);
+    fn the_casting_directional_light_ranks_first() {
         let mut quiet = LightSource::default();
         quiet.cast_shadows = false;
-        assert_eq!(primary_shadow_kind(&quiet, true), 0);
+        let lights = [point(1.0), quiet, LightSource::default()];
+        let ranked = rank_lights(lights.iter(), &frame(), 16);
+        assert_eq!(ranked.lights[0].0, 2);
+    }
+
+    /// The spot frustum covers the cone plus its tap guard, so a point on the
+    /// cone's rim lands just inside the map's edge.
+    #[test]
+    fn the_spot_frustum_frames_the_cone() {
+        let outer = 0.6f32;
+        let vp = spot_shadow_matrix(
+            glam::Vec3::new(0.0, 0.0, 3.0),
+            glam::Vec3::NEG_Z,
+            outer,
+            10.0,
+            1024,
+        );
+        let rim = glam::Vec3::new(2.0 * outer.tan(), 0.0, 1.0);
+        let clip = vp * rim.extend(1.0);
+        let edge = (clip.x / clip.w).abs().max((clip.y / clip.w).abs());
+        assert!(edge < 1.0 && edge > 0.99, "rim at ndc {edge}");
+        let axis = vp * glam::Vec4::new(0.0, 0.0, 1.0, 1.0);
+        assert!((axis.x / axis.w).abs() < 1e-5 && (axis.y / axis.w).abs() < 1e-5);
+        // A cone past the cap is framed at the cap.
+        let wide = spot_shadow_matrix(glam::Vec3::ZERO, glam::Vec3::X, 1.5, 10.0, 1024);
+        let p00 = wide.row(0).truncate().length();
+        assert!((1.0 / p00 - MAX_SPOT_SHADOW_HALF_ANGLE.tan()).abs() < 1e-3);
     }
 }

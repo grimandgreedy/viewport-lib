@@ -46,9 +46,8 @@ pub use readback::ExposureReadback;
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub(crate) mod pipeline_key;
 use pipeline_key::PipelineKey;
-mod point_shadow_pool;
-mod punctual_shadow_pool;
 mod prepare;
+pub(crate) mod punctual_shadow_pool;
 mod render;
 mod submit;
 mod surface_mask;
@@ -344,8 +343,9 @@ pub(crate) const GPU_TS_POST: u32 = 3;
 /// `cull_instances` + `write_indirect_args` compute passes). Only the main
 /// camera cull is timed; shadow-cascade and single-mesh culls are not.
 pub(crate) const GPU_TS_CULL: u32 = 4;
-/// Point-light cubemap shadow faces: begin on the first face pass, end on the
-/// last, so the slot spans every face rendered this frame.
+/// Punctual shadow layers (point-light cube faces and spot maps): begin on the
+/// first layer pass, end on the last, so the slot spans every layer rendered
+/// this frame.
 pub(crate) const GPU_TS_POINT_SHADOW: u32 = 5;
 /// Clustered-lighting build compute pass.
 pub(crate) const GPU_TS_CLUSTER: u32 = 6;
@@ -1202,21 +1202,22 @@ impl ViewportRenderer {
     }
 
     /// Device memory held by the two shadow depth textures: the directional
-    /// cascade atlas and the point-light cube array.
+    /// cascade atlas and the punctual shadow array for point and spot lights.
     ///
     /// Separate from [`resident_bytes`](Self::resident_bytes), which covers the
     /// content a consumer uploaded. This is fixed renderer overhead, but it is
     /// not paid until a frame needs it: both textures start as placeholders a
     /// few bytes wide, so this reads near zero for a viewport that has not cast
     /// a shadow yet and steps up as each is allocated. The atlas is
-    /// `4 * atlas_resolution^2` bytes (64 MiB at the default 4096) and the cube
-    /// array 192 MiB, so a consumer budgeting device memory wants to know which
-    /// of the two it has actually taken.
+    /// `4 * atlas_resolution^2` bytes (64 MiB at the default 4096) and the
+    /// punctual array `4 * punctual_shadow_resolution^2` bytes per layer in use
+    /// (24 MiB per shadow-casting point light at the default 1024).
     ///
     /// The cascade atlas is allocated by the first frame that rasterises
-    /// cascades (shadows enabled, a casting primary light, and something to
-    /// cast), and the cube array by the first frame that queues point-shadow
-    /// faces. Neither is released afterwards.
+    /// cascades (shadows enabled, a casting directional light, and something to
+    /// cast), and the punctual array by the first frame that places a point or
+    /// spot light, growing in six-layer steps as more are placed. Neither is
+    /// released afterwards.
     pub fn shadow_allocation_bytes(&self) -> u64 {
         if !self.resources.scene_tier.is_built() {
             return 0;
@@ -1224,11 +1225,11 @@ impl ViewportRenderer {
         let shadow = &self.resources.scene_tier.shadow;
         let texel = 4; // Depth32Float
         let atlas = shadow.map_texture.width() as u64 * shadow.map_texture.height() as u64 * texel;
-        let cube = shadow.point_cube_texture.width() as u64
-            * shadow.point_cube_texture.height() as u64
-            * shadow.point_cube_texture.depth_or_array_layers() as u64
+        let punctual = shadow.punctual_texture.width() as u64
+            * shadow.punctual_texture.height() as u64
+            * shadow.punctual_texture.depth_or_array_layers() as u64
             * texel;
-        atlas + cube
+        atlas + punctual
     }
 
     /// Resident GPU bytes for the user-uploaded working set, including whatever
@@ -1452,7 +1453,7 @@ impl ViewportRenderer {
         // Also invalidate the generation cache so the next prepare is guaranteed
         // to enter the rebuild path even if the scene generation is unchanged.
         self.instancing.last_scene_generation = u64::MAX;
-        self.shadow.invalidate_point_shadow_cache();
+        self.shadow.invalidate_punctual_shadow_cache();
     }
 
     /// Re-enable GPU-driven culling after a call to `disable_gpu_driven_culling`.

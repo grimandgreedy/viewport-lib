@@ -697,94 +697,10 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 // #include "helpers/csm.wgsl"
 
 // ---------------------------------------------------------------------------
-// Point-light shadow sampling
+// Point and spot light shadow sampling, and the per-light shadow dispatch
 // ---------------------------------------------------------------------------
 
-// One compare tap of a point light's shadow cube: `dir` points from the light
-// to the receiver (any length), `layer` is the light's cube in the array and
-// `reference` the normalised distance compared against the stored one.
-fn punctual_tap(layer: i32, dir: vec3<f32>, reference: f32) -> f32 {
-    // BEGIN_POINT_SHADOW_SAMPLE
-    return textureSampleCompareLevel(
-        point_shadow_cube_tex,
-        shadow_sampler,
-        dir,
-        layer,
-        reference,
-    );
-    // ALT(NO_CUBE_ARRAY): return 1.0;
-    // END_POINT_SHADOW_SAMPLE
-}
-
-// Point-light shadow, filtered by `shadow_atlas.shadow_filter` the way the
-// directional cascades are: Hard takes one tap, PCF 8 rotated disk taps,
-// PCF high 32. The PCSS tiers have no blocker search for cubes and run PCF.
-fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
-    if light.shadow_layer < 0 {
-        return 1.0;
-    }
-    let tier = shadow_atlas.shadow_filter;
-    let hard = tier == 2u;
-    // Disk radius in cube-face texels; zero for the single hard tap.
-    let radius_texels = select(1.5, 0.0, hard);
-    // The cube stores linear distance-to-light over range, one value per
-    // texel, so across one texel a receiver's own distance changes by
-    // texel_world * tan(theta) (theta between the normal and the light ray).
-    // A flat receiver near the light and nearly parallel to it (a ceiling
-    // slab over a room light) sees that exceed any fixed constant and reads
-    // its own recorded distance as an occluder, in bands aligned with the
-    // cube-face texel rows. Two receiver-side terms clear it:
-    //   - normal offset: the sample point is lifted off the surface along the
-    //     normal by a couple of texels plus the filter radius, scaled by
-    //     sin(theta) so perpendicular receivers stay put. Lifting by e buys a
-    //     distance margin of e / cos(theta), the same growth as a
-    //     slope-scaled bias, but the world displacement stays bounded at
-    //     grazing angles;
-    //   - a constant distance bias of one texel, plus the consumer knob.
-    // Both scale with the cube-face texel footprint at the receiver, so the
-    // bias is a fixed number of texels at any distance and face resolution.
-    let to_light = light.pos_or_dir - world_pos;
-    let dist = length(to_light);
-    let l = to_light / max(dist, 1e-5);
-    // A cube face spans two units at unit distance over face_size texels.
-    let face_size = max(f32(textureDimensions(point_shadow_cube_tex).x), 1.0);
-    let texel_world = dist * 2.0 / face_size;
-    // Whichever side of the surface faces the light: two-sided receivers are
-    // shaded from either side and the offset must always lift toward the
-    // light.
-    let n = geo_normal * select(-1.0, 1.0, dot(geo_normal, l) >= 0.0);
-    let n_dot_l = clamp(dot(n, l), 0.0, 1.0);
-    let sin_t = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0));
-    let offset_pos = world_pos + n * (texel_world * (2.0 + radius_texels) * sin_t);
-    let to_frag = offset_pos - light.pos_or_dir;
-    let offset_dist = length(to_frag);
-    let dir = to_frag / max(offset_dist, 1e-5);
-    let range = max(light.range, 1e-5);
-    let normalised = clamp((offset_dist - texel_world) / range, 0.0, 1.0)
-        - lights_uniform.shadow_bias;
-    if hard {
-        return punctual_tap(light.shadow_layer, dir, normalised);
-    }
-    // Taps on the plane perpendicular to `dir`, at unit distance, where one
-    // cube-face texel spans 2 / face_size. Taps that cross a face edge land
-    // on the neighbouring face through the hardware cube addressing.
-    let t = normalize(cross(dir, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dir.z) > 0.9)));
-    let b = cross(dir, t);
-    let r = radius_texels * 2.0 / face_size;
-    // The same world-space rotation noise as the cascades.
-    let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
-    let rot = noise * 6.28318530;
-    let sin_r = sin(rot);
-    let cos_r = cos(rot);
-    let taps = select(8u, 32u, tier == 3u);
-    var shadow = 0.0;
-    for (var i = 0u; i < taps; i++) {
-        let d = shadow_tap_dir(i, taps == 8u);
-        let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
-        shadow += punctual_tap(light.shadow_layer, dir + (t * rd.x + b * rd.y) * r, normalised);
-    }
-    return shadow / f32(taps);
-}
+// #include "helpers/punctual_shadow.wgsl"
 
 
 // ---------------------------------------------------------------------------
@@ -1296,11 +1212,9 @@ fn compute_lit(
             if dot(N, L) <= 0.0 { continue; }
             // </viewport-shade-slot:backface-cull>
 
-            // Shadow factor. Directional `lights[0]` uses CSM; point lights
-            // with an allocated cubemap slot sample the point shadow array.
-            // Spot lights keep their existing single-face perspective path
-            // (sampled inside `sample_shadow_csm` when lights[0] is a spot;
-            // unshadowed otherwise). Per-receiver opt-out via
+            // Shadow factor: the cascades for the cascade caster, the
+            // punctual array for a point or spot light with layers (see
+            // `shadow_for_light`). Per-receiver opt-out via
             // ItemSettings.receive_shadows skips the sample.
             // <viewport-shade-slot:shadow>
             var shadow_factor = 1.0;
@@ -1314,11 +1228,12 @@ fn compute_lit(
                     // one, and comparing a surface against itself at grazing
                     // angles is what shadow acne is.
                     shadow_factor = 0.0;
-                } else if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
-                    shadow_factor = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.shadow_layer >= 0 {
-                    shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
+                } else {
+                    let ss = shadow_for_light(l, in.world_pos, camera.eye_pos, shadow_normal, geo_normal, L, receiver_two_sided);
+                    if l.shadow_kind == 1u {
+                        last_shadow_sample = ss;
+                    }
+                    shadow_factor = ss.factor;
                 }
             }
             // </viewport-shade-slot:shadow>
@@ -1381,11 +1296,12 @@ fn compute_lit(
                 if object.mesh_closed != 0u && surface.front_facing == 0u {
                     // Inside a closed solid: see the loop above.
                     shadow = 0.0;
-                } else if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
-                    shadow = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.shadow_layer >= 0 {
-                    shadow = sample_point_shadow(l, in.world_pos, geo_normal);
+                } else {
+                    let ss = shadow_for_light(l, in.world_pos, camera.eye_pos, shadow_normal, geo_normal, light_dir, receiver_two_sided);
+                    if l.shadow_kind == 1u {
+                        last_shadow_sample = ss;
+                    }
+                    shadow = ss.factor;
                 }
             }
             if FEAT_LIGHTMAP && object.has_shadowmask != 0u && i < 4u {

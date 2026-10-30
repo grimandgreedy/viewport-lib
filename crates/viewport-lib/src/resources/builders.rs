@@ -44,9 +44,6 @@ pub fn wgsl_module<'a>(
 /// is replaced by its `ALT(<NAME>)` lines' code; everywhere else the source is
 /// unchanged. The alternatives and the conditions:
 ///
-/// - `POINT_SHADOW_SAMPLE` / `NO_CUBE_ARRAY`: no cube-array textures. The
-///   point-light shadow array is also declared `texture_depth_2d_array`, to
-///   match the `D2Array` view binding 17 carries there.
 /// - `PCSS_BLOCKER_SEARCH` / `NO_DEPTH_LOADS`: shaders cannot load from depth
 ///   textures (wgpu's GL backend). The PCSS tiers filter as PCF.
 /// - `LIGHT_LIST` / `UNIFORM`: the group 0 profile holds the light list in a
@@ -60,13 +57,6 @@ pub fn adapt_wgsl<'a>(
     let mut source = source.into();
     let profile = crate::resources::group0::Group0Profile::for_caps(caps);
     let mut picks: Vec<(&str, &str)> = Vec::new();
-    if !caps.cube_array_textures {
-        const CUBE: &str = "texture_depth_cube_array";
-        if source.contains(CUBE) {
-            source = std::borrow::Cow::Owned(source.replace(CUBE, "texture_depth_2d_array"));
-        }
-        picks.push(("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"));
-    }
     if !caps.depth_texture_loads {
         picks.push(("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"));
     }
@@ -292,7 +282,6 @@ fn fs_main() -> @location(0) vec4<f32> {
             crate::plugin_api::shared_wgsl::SHARED_CSM_WGSL,
         ];
         let wants = [
-            ("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"),
             ("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"),
             ("LIGHT_LIST", "UNIFORM"),
             ("CLUSTER_LOOKUP", "UNCLUSTERED"),

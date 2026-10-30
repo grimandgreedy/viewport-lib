@@ -65,7 +65,7 @@ struct Lights {
 @group(0) @binding(13) var<storage, read> lights_storage: array<SingleLight>;
 // ALT(UNIFORM): @group(0) @binding(13) var<uniform> lights_storage: array<SingleLight, 16>;
 // END_LIGHT_LIST
-@group(0) @binding(17) var          point_shadow_cube:    texture_depth_cube_array;
+@group(0) @binding(17) var          punctual_shadow_tex:  texture_depth_2d_array;
 
 // The shadow-info uniform (binding 5) is declared inside SHARED_PBR_WGSL
 // for the sole use of `viewport_sample_csm`. Its struct layout and field

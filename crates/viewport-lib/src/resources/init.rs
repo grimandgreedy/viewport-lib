@@ -708,28 +708,14 @@ impl DeviceResources {
                     crate::gpu::CompareFunction::LessEqual,
                 );
 
-                // ------------------------------------------------------------------
-                // Point-light cubemap shadow texture array.
-                //
-                // Stored as a 2D texture array of `MAX_POINT_SHADOW_LIGHTS * 6`
-                // layers and viewed two ways:
-                //  - Per-face 2D-array views (one per face) for shadow render passes.
-                //  - A `CubeArray` view bound to the lit pass for sampling.
-                // ------------------------------------------------------------------
-                // Also a placeholder: one 1x1 cube rather than the real
-                // MAX_POINT_SHADOW_LIGHTS array, which is 192 MB at
-                // POINT_SHADOW_FACE_SIZE. Most scenes have no shadow-casting point
-                // light at all. `ensure_point_shadow_cubes` swaps in the full array the
-                // first time a frame queues point-shadow faces.
-                let (point_shadow_cube_texture, point_shadow_cube_view, point_shadow_face_views) =
-                    crate::resources::shadow::create_point_cube_array(
-                        device,
-                        1,
-                        1,
-                        capabilities.cube_array_textures,
-                    );
+                // Punctual (point and spot) shadow array: a placeholder of one
+                // 1x1 layer. Most scenes have no shadow-casting point or spot
+                // light; `ensure_punctual_shadow_array` sizes it to the layers a
+                // frame places.
+                let (punctual_shadow_texture, punctual_shadow_view, punctual_shadow_layer_views) =
+                    crate::resources::shadow::create_punctual_array(device, 1, 1);
 
-                // The directional atlas and the point-shadow cube array are placeholders
+                // The directional atlas and the punctual shadow array are placeholders
                 // at this point; both are promoted on the first frame that needs them.
                 mark("buffers_and_shadow_textures");
 
@@ -908,7 +894,7 @@ impl DeviceResources {
                             crate::gpu::BindGroupEntry {
                                 binding: 17,
                                 resource: crate::gpu::BindingResource::TextureView(
-                                    &point_shadow_cube_view,
+                                    &punctual_shadow_view,
                                 ),
                             },
                             crate::gpu::BindGroupEntry {
@@ -979,16 +965,16 @@ impl DeviceResources {
                     });
 
                 // ------------------------------------------------------------------
-                // Point-light cubemap shadow pipeline.
+                // Punctual shadow pipeline (point-light cube faces and spot maps).
                 //
-                // One render pass per (light slot, face) writes linear distance to
-                // the light into a per-face depth attachment. The bind group layout
-                // mirrors the cascade pipeline (same object bind group) and carries a
-                // per-face uniform with view_proj + light_pos + range, and the deform
+                // One render pass per layer writes linear distance to the light
+                // into that layer. The bind group layout mirrors the cascade
+                // pipeline (same object bind group) and carries a per-layer
+                // uniform with view_proj + light_pos + range, and the deform
                 // header.
                 // ------------------------------------------------------------------
                 // The pipeline itself is built by `ensure_point_shadow_pipeline` on the
-                // first frame with point-shadow faces to draw.
+                // first frame with punctual layers to draw.
                 let shadow_point_face_bgl =
                     device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                         label: Some("shadow_point_face_bgl"),
@@ -1010,39 +996,21 @@ impl DeviceResources {
                             ),
                         ],
                     });
-                // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
-                // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
-                const SHADOW_POINT_FACE_STRIDE: u64 = 256;
-                let shadow_point_face_count = (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as u64;
+                // Per-layer uniform buffer at a 256-byte stride (wgpu's
+                // dynamic-offset alignment), sized for the default layer budget
+                // and grown with the punctual array.
                 let shadow_point_face_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("shadow_point_face_buf"),
-                    size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
+                    size: 48 * crate::resources::shadow::PUNCTUAL_FACE_STRIDE,
                     usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let shadow_point_face_bind_group =
-                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("shadow_point_face_bind_group"),
-                        layout: &shadow_point_face_bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::Buffer(
-                                    crate::gpu::BufferBinding {
-                                        buffer: &shadow_point_face_buf,
-                                        offset: 0,
-                                        // Bind one PointFace slot worth (96 bytes rounded up
-                                        // to 16-byte alignment is fine here).
-                                        size: Some(crate::gpu::BufferSize::new(96).unwrap()),
-                                    },
-                                ),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 23,
-                                resource: deform.header_buffer.as_entire_binding(),
-                            },
-                        ],
-                    });
+                let shadow_point_face_bind_group = crate::resources::shadow::face_bind_group(
+                    device,
+                    &shadow_point_face_bgl,
+                    &shadow_point_face_buf,
+                    &deform.header_buffer,
+                );
 
                 mark("shadow_pipelines");
 
@@ -1542,10 +1510,10 @@ impl DeviceResources {
                         map_view: shadow_map_view,
                         atlas_allocated: false,
                         sampler: shadow_sampler,
-                        point_cube_texture: point_shadow_cube_texture,
-                        point_cube_view: point_shadow_cube_view,
-                        point_cubes_allocated: false,
-                        point_face_views: point_shadow_face_views,
+                        punctual_texture: punctual_shadow_texture,
+                        punctual_view: punctual_shadow_view,
+                        punctual_allocated: false,
+                        punctual_layer_views: punctual_shadow_layer_views,
                         point_pipeline: None,
                         point_face_bgl: shadow_point_face_bgl,
                         point_face_buf: shadow_point_face_buf,

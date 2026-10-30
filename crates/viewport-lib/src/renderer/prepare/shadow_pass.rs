@@ -1,4 +1,5 @@
-//! Shadow depth pass: directional cascades and point-light cube-map faces.
+//! Shadow depth pass: directional cascades and the punctual shadow layers
+//! (point-light cube faces and spot-light maps).
 
 use super::*;
 
@@ -26,7 +27,8 @@ fn shadow_cull_bind_groups_stale(
 
 impl ViewportRenderer {
     /// Render the shadow depth pass: directional CSM cascades into the atlas
-    /// tiles and point-light cube-map faces, including per-cascade plugin draws.
+    /// tiles, including per-cascade plugin draws, and the punctual shadow
+    /// layers.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_shadow_pass(
         resources: &mut DeviceResources,
@@ -73,6 +75,9 @@ impl ViewportRenderer {
         let shadow_instrument =
             tracing::enabled!(target: "viewport_lib::shadow", tracing::Level::DEBUG);
         let shadow_start = web_time::Instant::now();
+        last_stats.shadow_cascade_passes = 0;
+        last_stats.punctual_shadow_layer_passes = 0;
+        last_stats.punctual_shadow_layers = light.punctual_layers_in_use;
 
         // Shadow depth pass : CSM: render each cascade into its atlas tile.
         // Skip the pass entirely when over budget and shadow reduction is allowed.
@@ -651,6 +656,7 @@ impl ViewportRenderer {
                 }
 
                 drop(shadow_pass);
+                last_stats.shadow_cascade_passes = light.effective_cascade_count as u32;
                 last_stats.shadow_draw_calls = shadow_draws;
                 last_stats.shadow_draw_commands = shadow_draw_cmds;
                 last_stats.shadow_buffer_binds = shadow_binds;
@@ -659,27 +665,28 @@ impl ViewportRenderer {
         }
 
         // ----------------------------------------------------------------
-        // Point-light cubemap shadow passes.
+        // Punctual shadow passes.
         //
-        // One depth-only render pass per (slot, face). Opaque casters only,
-        // writing linear distance-to-light to frag_depth. Every caster draws
-        // through `shadow_point.wgsl` from its records, culled per face
-        // against the face frustum. Masked casters use the cutout variant.
+        // One depth-only render pass per layer: a point light's cube face or
+        // a spot light's map. Opaque casters only, writing linear
+        // distance-to-light to frag_depth. Every caster draws through
+        // `shadow_point.wgsl` from its records, culled against the layer's
+        // frustum. Masked casters use the cutout variant.
         // ----------------------------------------------------------------
         if lighting.shadows.enabled
             && !scene_items.is_empty()
-            && !light.point_shadow_faces.is_empty()
+            && !light.punctual_faces.is_empty()
             && resources.scene_tier.shadow.point_pipeline.is_some()
         {
             // The batches that cast, each with its own bind group, drawn by
             // instance run.
-            struct PointCaster<'a> {
+            struct PunctualCaster<'a> {
                 batch: &'a InstancedBatch,
                 mesh: &'a crate::resources::GpuMesh,
                 group1: &'a crate::gpu::BindGroup,
                 cutout: bool,
             }
-            let casters: Vec<PointCaster> = instancing
+            let casters: Vec<PunctualCaster> = instancing
                 .batches
                 .iter()
                 .filter(|b| {
@@ -695,7 +702,7 @@ impl ViewportRenderer {
                         .material_bind_groups
                         .get(&b.shadow_bind_key)
                         .map(|m| &m.bind_group)?;
-                    Some(PointCaster {
+                    Some(PunctualCaster {
                         batch: b,
                         mesh,
                         group1,
@@ -708,52 +715,42 @@ impl ViewportRenderer {
                 })
                 .collect();
 
-            // The slot hashes below record what was rendered, so while any
+            // The layer hashes below record what was rendered, so while any
             // pipeline these casters need is still on a worker the whole block
-            // waits rather than marking a cubemap up to date that was never
+            // waits rather than marking a layer up to date that was never
             // fully drawn.
             let mut ready = resources.scene_tier.shadow.point(false).is_some();
             if casters.iter().any(|c| c.cutout) {
                 ready &= resources.scene_tier.shadow.point(true).is_some();
             }
 
-            // Decide per pool slot whether its cubemap must re-render this
-            // frame. A slot's content is fully determined by its light's
-            // position and range plus every in-range caster's mesh identity,
-            // content revision, and model matrix; hash those and skip the
-            // slot's six face passes when the hash matches what was rendered
-            // last time. The pool's depth layers persist between frames, so a
-            // skipped slot keeps sampling its existing cubemap. Casters with
-            // an active deform instance or a position/normal override animate
-            // without changing any hashed input, so their slots re-render
-            // every frame.
+            // Decide per light whether its layers must re-render this frame.
+            // A light's layers are fully determined by its own inputs
+            // (`light_hash`: position and range, and a spot's frustum) plus
+            // every in-range caster's mesh identity, content revision, and
+            // model matrix; hash those and skip the light's passes when the
+            // hash matches what its base layer last rendered. The array's
+            // layers persist between frames, so a skipped light keeps
+            // sampling what it has. Casters with an active deform instance or
+            // a position/normal override animate without changing any hashed
+            // input, so their lights re-render every frame.
             let closest_sq = |aabb: &crate::scene::aabb::Aabb, p: glam::Vec3| -> f32 {
                 let c = p.clamp(aabb.min, aabb.max);
                 (p - c).length_squared()
             };
-            let mut slot_dirty = std::collections::HashMap::new();
-            for fc in light.point_shadow_faces.iter().filter(|_| ready) {
-                if slot_dirty.contains_key(&fc.slot) {
+            let mut base_dirty = std::collections::HashMap::new();
+            for fc in light.punctual_faces.iter().filter(|_| ready) {
+                if base_dirty.contains_key(&fc.base) {
                     continue;
                 }
-                let mut hasher = crate::renderer::shader_hashes::fnv1a_hash(&[]);
-                let mut mix = |bytes: &[u8]| {
-                    for &b in bytes {
-                        hasher ^= b as u64;
-                        hasher = hasher.wrapping_mul(0x0000_0100_0000_01B3);
-                    }
-                };
-                mix(&fc.light_pos.x.to_le_bytes());
-                mix(&fc.light_pos.y.to_le_bytes());
-                mix(&fc.light_pos.z.to_le_bytes());
-                mix(&fc.range.to_le_bytes());
+                let mut hasher = fc.light_hash;
                 let mut cacheable = true;
                 let range_sq = fc.range * fc.range;
-                // Every batch contributes the identity of its
-                // mesh and the hash of its instance records (which carry each
-                // caster's model matrix) when any of its instances is in
-                // range. A deform instance or an override animates without
-                // changing any hashed input, so such a batch keeps its slot
+                // Every batch contributes the identity of its mesh and the
+                // hash of its instance records (which carry each caster's
+                // model matrix) when any of its instances is in range. A
+                // deform instance or an override animates without changing
+                // any hashed input, so such a batch keeps the light
                 // re-rendering every frame.
                 for (bi, b) in instancing.batches.iter().enumerate() {
                     if b.is_transparent {
@@ -787,41 +784,38 @@ impl ViewportRenderer {
                         cacheable = false;
                         break;
                     }
-                    mix(&(b.mesh_id.index() as u64).to_le_bytes());
-                    mix(&b.mesh_id.generation().to_le_bytes());
-                    mix(&mesh.content_rev.to_le_bytes());
-                    mix(&instancing
-                        .cached_instance_hashes
-                        .get(bi)
-                        .copied()
-                        .unwrap_or(0)
-                        .to_le_bytes());
-                    // A mask cuts the cubemap, so its albedo counts (the
-                    // cutoff rides the hashed records).
+                    let mix = super::lighting::fnv_mix;
+                    mix(&mut hasher, &(b.mesh_id.index() as u64).to_le_bytes());
+                    mix(&mut hasher, &b.mesh_id.generation().to_le_bytes());
+                    mix(&mut hasher, &mesh.content_rev.to_le_bytes());
+                    mix(
+                        &mut hasher,
+                        &instancing
+                            .cached_instance_hashes
+                            .get(bi)
+                            .copied()
+                            .unwrap_or(0)
+                            .to_le_bytes(),
+                    );
+                    // A mask cuts the map, so its albedo counts (the cutoff
+                    // rides the hashed records).
                     if b.is_cutout {
                         let tex = b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX);
-                        mix(&tex.to_le_bytes());
+                        mix(&mut hasher, &tex.to_le_bytes());
                     }
                 }
-                let slot_idx = fc.slot as usize;
-                let dirty = !cacheable
-                    || shadow
-                        .point_shadow_slot_hashes
-                        .get(slot_idx)
-                        .copied()
-                        .flatten()
-                        != Some(hasher);
-                if let Some(entry) = shadow.point_shadow_slot_hashes.get_mut(slot_idx) {
-                    *entry = cacheable.then_some(hasher);
-                }
-                slot_dirty.insert(fc.slot, dirty);
+                let pool = &mut shadow.punctual_pool;
+                let dirty = !cacheable || pool.layer_hash(fc.base) != Some(hasher);
+                pool.set_layer_hash(fc.base, cacheable.then_some(hasher));
+                base_dirty.insert(fc.base, dirty);
             }
 
-            let rendered: Vec<&super::PointShadowFace> = light
-                .point_shadow_faces
+            let rendered: Vec<&super::PunctualShadowFace> = light
+                .punctual_faces
                 .iter()
-                .filter(|fc| ready && slot_dirty.get(&fc.slot).copied().unwrap_or(true))
+                .filter(|fc| ready && base_dirty.get(&fc.base).copied().unwrap_or(true))
                 .collect();
+            last_stats.punctual_shadow_layer_passes = rendered.len() as u32;
             if !rendered.is_empty() {
                 let mut enc =
                     device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
@@ -829,11 +823,10 @@ impl ViewportRenderer {
                     });
                 let last_face = rendered.len() - 1;
                 for (face_idx, fc) in rendered.iter().enumerate() {
-                    let layer = fc.slot * 6 + fc.face;
-                    let view = &resources.scene_tier.shadow.point_face_views[layer as usize];
-                    // One slot spans all faces: begin on the first face pass, end
-                    // on the last, so the readback sees the whole cubemap cost
-                    // (up to casters x 6 depth passes) as one duration.
+                    let view = &resources.scene_tier.shadow.punctual_layer_views[fc.layer as usize];
+                    // The timestamps span every layer pass: begin on the first,
+                    // end on the last, so the readback sees the whole punctual
+                    // cost as one duration.
                     let ts_writes = ts_query_set
                         .filter(|_| face_idx == 0 || face_idx == last_face)
                         .map(|qs| {
@@ -867,7 +860,8 @@ impl ViewportRenderer {
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
-                    let dyn_offset = layer * POINT_FACE_STRIDE as u32;
+                    let dyn_offset =
+                        fc.layer * crate::resources::shadow::PUNCTUAL_FACE_STRIDE as u32;
                     pass.set_bind_group(
                         0,
                         &resources.scene_tier.shadow.point_face_bind_group,
@@ -918,7 +912,7 @@ impl ViewportRenderer {
                 cascades = light.effective_cascade_count,
                 atlas = resources.scene_tier.shadow.atlas_size,
                 draws = last_stats.shadow_draw_calls,
-                point_faces = light.point_shadow_faces.len(),
+                punctual_layers = last_stats.punctual_shadow_layer_passes,
                 "shadow pass encoded"
             );
         }

@@ -1541,9 +1541,9 @@ impl DeviceResources {
         ));
     }
 
-    /// Build the point-light cubemap shadow pipeline and its module. Called from
-    /// the point-shadow branch of the lighting prepare, the same point the cube
-    /// array is allocated. A no-op once built.
+    /// Build the punctual shadow pipeline (point-light cube faces and spot
+    /// maps) and its module. Called from the lighting prepare when it places a
+    /// light in the punctual array. A no-op once built.
     pub(crate) fn ensure_point_shadow_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.scene_tier.shadow.point_pipeline.is_some() {
             return;
@@ -1627,32 +1627,57 @@ impl DeviceResources {
         used
     }
 
-    /// Promote the point-light cube array from its single 1x1 cube to the full
-    /// `MAX_POINT_SHADOW_LIGHTS` array at `POINT_SHADOW_FACE_SIZE`, and rebuild
-    /// the bind groups that sample it. A no-op once promoted.
+    /// Make the punctual shadow array `layers` layers of `size` square,
+    /// recreating it when either differs from what it holds, and rebuild the
+    /// bind groups that sample it. The per-layer uniform buffer grows to
+    /// match. A no-op when the array already has that shape.
     ///
-    /// Returns whether it allocated. See [`ensure_shadow_atlas`](Self::ensure_shadow_atlas)
-    /// for why the caller cares.
-    pub(crate) fn ensure_point_shadow_cubes(&mut self, device: &crate::gpu::Device) -> bool {
-        if self.scene_tier.shadow.point_cubes_allocated {
+    /// Returns whether it allocated: a recreated array holds nothing, so the
+    /// caller forgets what its layers held. See
+    /// [`ensure_shadow_atlas`](Self::ensure_shadow_atlas) for the bind groups.
+    pub(crate) fn ensure_punctual_shadow_array(
+        &mut self,
+        device: &crate::gpu::Device,
+        layers: u32,
+        size: u32,
+    ) -> bool {
+        let shadow = &self.scene_tier.shadow;
+        if shadow.punctual_allocated
+            && shadow.punctual_layer_views.len() == layers as usize
+            && shadow.punctual_texture.width() == size
+        {
             return false;
         }
-        let (texture, cube_view, face_views) = crate::resources::shadow::create_point_cube_array(
-            device,
-            crate::renderer::POINT_SHADOW_FACE_SIZE,
-            crate::renderer::MAX_POINT_SHADOW_LIGHTS,
-            self.capabilities.cube_array_textures,
-        );
-        self.scene_tier.shadow.point_cube_texture = texture;
-        self.scene_tier.shadow.point_cube_view = cube_view;
-        self.scene_tier.shadow.point_face_views = face_views;
-        self.scene_tier.shadow.point_cubes_allocated = true;
+        let (texture, view, layer_views) =
+            crate::resources::shadow::create_punctual_array(device, size, layers);
+        self.scene_tier.shadow.punctual_texture = texture;
+        self.scene_tier.shadow.punctual_view = view;
+        self.scene_tier.shadow.punctual_layer_views = layer_views;
+        self.scene_tier.shadow.punctual_allocated = true;
+        let face_bytes = u64::from(layers) * crate::resources::shadow::PUNCTUAL_FACE_STRIDE;
+        use crate::resources::builders::LoggedAlloc;
+        if self.scene_tier.shadow.point_face_buf.size() < face_bytes {
+            let buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("shadow_point_face_buf"),
+                size: face_bytes,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.scene_tier.shadow.point_face_bind_group =
+                crate::resources::shadow::face_bind_group(
+                    device,
+                    &self.scene_tier.shadow.point_face_bgl,
+                    &buf,
+                    &self.scene_tier.deform.header_buffer,
+                );
+            self.scene_tier.shadow.point_face_buf = buf;
+        }
         self.rebuild_shadow_sampling_bind_groups(device);
         tracing::debug!(
             target: "viewport_lib::init",
-            lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS,
-            face = crate::renderer::POINT_SHADOW_FACE_SIZE,
-            "allocated the point-light shadow cube array"
+            layers,
+            size,
+            "allocated the punctual shadow array"
         );
         true
     }
@@ -1802,7 +1827,7 @@ impl DeviceResources {
             ibl_sampler: &ibl.sampler,
             skybox: ibl.skybox_view.as_ref().unwrap_or(&ibl.fallback_view),
             light_list: &tier.lighting.storage_buf,
-            point_shadows: &tier.shadow.point_cube_view,
+            point_shadows: &tier.shadow.punctual_view,
             clusters: Some((
                 &tier.clustered.grid_uniform_buf,
                 &tier.clustered.cluster_buf,

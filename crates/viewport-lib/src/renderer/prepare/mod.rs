@@ -26,26 +26,30 @@ pub(crate) use mesh_material::{active_submesh_materials, has_transparent_draws};
 use overlay_geometry::*;
 use projection::*;
 
-/// One cube-map face of a point-light shadow: which atlas slot and face it
-/// occupies, the light-space view-projection used to render it, and the light
-/// position and range for depth reconstruction.
-pub(super) struct PointShadowFace {
-    pub(super) slot: u32,
-    pub(super) face: u32,
+/// One layer of the punctual shadow array to render this frame: a point
+/// light's cube face or a spot light's map.
+pub(super) struct PunctualShadowFace {
+    /// Layer in the punctual shadow array.
+    pub(super) layer: u32,
+    /// First layer of the light: a cube's base layer, or the spot's own. The
+    /// content cache is kept per light at this layer.
+    pub(super) base: u32,
+    /// Hash of the light's own inputs (kind, position, range, and a spot's
+    /// direction and cone), seeding the layer's content hash.
+    pub(super) light_hash: u64,
+    /// The light-space view-projection used to render it.
     pub(super) view_proj: glam::Mat4,
     pub(super) light_pos: glam::Vec3,
     pub(super) range: f32,
 }
 
-/// Byte stride between consecutive point-light cube-map face entries in the
-/// per-face dynamic-offset uniform buffer.
-pub(super) const POINT_FACE_STRIDE: u64 = 256;
-
 /// Transient per-frame lighting results produced by the lighting phase and
 /// consumed by the shadow depth pass: the directional cascade matrices and the
-/// point-light cube-map faces to render this frame.
+/// punctual shadow layers to render this frame.
 pub(super) struct LightingFrame {
-    pub(super) point_shadow_faces: Vec<PointShadowFace>,
+    pub(super) punctual_faces: Vec<PunctualShadowFace>,
+    /// Layers placed this frame (rendered or served from cache).
+    pub(super) punctual_layers_in_use: u32,
     pub(super) tile_size: u32,
     pub(super) cascade_view_projs: [glam::Mat4; 4],
     pub(super) effective_cascade_count: usize,

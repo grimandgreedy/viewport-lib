@@ -58,7 +58,7 @@ pub(crate) mod scene_bindings;
 /// Core scene mesh pipelines (base LDR set plus HDR variants).
 pub(crate) mod scene_pipelines;
 pub(crate) mod scivis;
-/// Shadow-map GPU resources (cascade atlas, point-shadow cube array, debug viewer).
+/// Shadow-map GPU resources (cascade atlas, punctual shadow array, debug viewer).
 pub(crate) mod shadow;
 #[cfg(test)]
 pub(crate) mod test_support;

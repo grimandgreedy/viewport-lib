@@ -1,8 +1,10 @@
 // Cascaded shadow map sampling shared by the mesh shader family: cascade
 // selection by eye distance, receiver-side bias, and the filter tiers.
 // Include after the shadow bindings (`shadow_map`, `shadow_sampler`,
-// `shadow_atlas`), `camera`, `lights_storage`, and `lights_uniform` are
-// declared; the binding layout is identical across the mesh shaders.
+// `shadow_atlas`), `camera` and `lights_uniform` are declared; the binding
+// layout is identical across the mesh shaders. The cascades belong to one
+// directional light; point and spot lights sample the punctual shadow array
+// (punctual_shadow.wgsl).
 //
 // `shadow_atlas.shadow_filter` selects the filter tier:
 //   0 = PCF: 8 rotated Poisson taps, fixed radius (default)
@@ -89,10 +91,8 @@ fn shadow_tap_dir(i: u32, use_vogel8: bool) -> vec2<f32> {
 // slab's far edge), where the texel straddling the edge records the far
 // side at the receiver's depth give or take its quantisation. Six
 // texel-depths covers a caster the light grazes at 75 degrees across the
-// 1.5-texel PCF radius. One-sided receivers under a directional light
-// only: cull-none casters record both faces and cannot leak this way,
-// and the perspective matrices of point and spot lights do not map
-// texels to depth like this.
+// 1.5-texel PCF radius. One-sided receivers only: cull-none casters
+// record both faces and cannot leak this way.
 //
 // It runs after the filter, and only for a penumbra result: the leak
 // shows as a partly lit average, and a fully lit or fully shadowed
@@ -170,9 +170,8 @@ fn sample_shadow_csm(
     );
 
     let n_dot_l = dot(surface_normal, light_dir);
-    let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
-    // World-space texel size of this cascade. For directional (ortho) light,
-    // ortho_scale_x is recovered as the length of the matrix's first row
+    // World-space texel size of this cascade. The cascade matrix is
+    // orthographic: ortho_scale_x is recovered as the length of its first row
     // (element [0][0] alone is ortho_scale * right.x of the light rotation,
     // which varies with azimuth and goes to zero at the light-up-vector
     // switch).
@@ -181,54 +180,41 @@ fn sample_shadow_csm(
     let vp_row1 = vec3<f32>(vp[0][1], vp[1][1], vp[2][1]);
     let vp_row2 = vec3<f32>(vp[0][2], vp[1][2], vp[2][2]);
     let texel_world = 2.0 / (length(vp_row0) * shadow_atlas.atlas_size * (rect.z - rect.x));
-    // Two bias schemes, branched on primary-light type:
-    //   - Directional (type 0): push receiver along -light_dir. The light
-    //     direction is uniform scene-wide and the cascade matrix is
-    //     orthographic, so world offset maps linearly to NDC depth. This
-    //     bias eliminates the coplanar leak class (cube on ground, cube
-    //     bottom vs platform top, side-wall bottom edges).
-    //   - Point / spot (types 1, 2): keep the old surface-normal-aligned
-    //     offset. light_dir varies per fragment for these, and the shadow
-    //     matrix is perspective (90 deg cone), so a light-direction offset
-    //     gives wrong-magnitude NDC depth shifts and visibly distorts or
-    //     erases shadows.
-    let primary_light_type = lights_storage[0].light_type;
-    var offset_world: vec3<f32>;
+    // Push the receiver along -light_dir. The light direction is uniform
+    // scene-wide and the cascade matrix is orthographic, so a world offset
+    // maps linearly to NDC depth. This bias eliminates the coplanar leak
+    // class (cube on ground, cube bottom vs platform top, side-wall bottom
+    // edges).
     var normal_bias: f32;
-    if primary_light_type == 0u {
-        // Scale bias by `n_dot_l`. Grazing receivers (n_dot_l -> 0) get the
-        // full `texel_world * 1.5` cascade-scaled bias to clear
-        // shadow-texel quantization across the surface. Perpendicular
-        // receivers (n_dot_l -> 1) get a small cascade-INDEPENDENT floor
-        // that's just enough to close the coplanar leak (cube bottom flush
-        // with the ground), and crucially can't grow with cascade width.
-        // The earlier `texel_world * floor` form scaled the perpendicular
-        // bias with the cascade too, so wide cascades pushed thin
-        // perpendicular receivers (a 0.01-thick slab top) past their own
-        // back face into the recorded caster depth and they self-shadowed.
-        //
-        // Two-sided receivers cast through the cull-none shadow pipeline,
-        // where the receiver and caster are the same surface. Their
-        // receiver bias has to stay well below that pipeline's caster-side
-        // bias (`CSM_SHADOW_BIAS_TWO_SIDED`) across every cascade or the
-        // surface self-shadows uniformly, reading as a broad dark patch. A
-        // 0.0001-world floor clears the much smaller cull-front caster
-        // bias (closed solids shadowing a two-sided receiver) while
-        // staying under the cull-none caster bias; larger values produce
-        // cascade-boundary seams on self-cast two-sided receivers (cloth,
-        // foliage).
-        let bias_floor_cull = 0.001;
-        let bias_floor_two_sided = 0.0001;
-        if receiver_two_sided != 0u {
-            normal_bias = bias_floor_two_sided;
-        } else {
-            normal_bias = mix(texel_world * 1.5, bias_floor_cull, clamp(abs(n_dot_l), 0.0, 1.0));
-        }
-        offset_world = world_pos - light_dir * normal_bias;
+    // Scale bias by `n_dot_l`. Grazing receivers (n_dot_l -> 0) get the
+    // full `texel_world * 1.5` cascade-scaled bias to clear
+    // shadow-texel quantization across the surface. Perpendicular
+    // receivers (n_dot_l -> 1) get a small cascade-INDEPENDENT floor
+    // that's just enough to close the coplanar leak (cube bottom flush
+    // with the ground), and crucially can't grow with cascade width.
+    // The earlier `texel_world * floor` form scaled the perpendicular
+    // bias with the cascade too, so wide cascades pushed thin
+    // perpendicular receivers (a 0.01-thick slab top) past their own
+    // back face into the recorded caster depth and they self-shadowed.
+    //
+    // Two-sided receivers cast through the cull-none shadow pipeline,
+    // where the receiver and caster are the same surface. Their
+    // receiver bias has to stay well below that pipeline's caster-side
+    // bias (`CSM_SHADOW_BIAS_TWO_SIDED`) across every cascade or the
+    // surface self-shadows uniformly, reading as a broad dark patch. A
+    // 0.0001-world floor clears the much smaller cull-front caster
+    // bias (closed solids shadowing a two-sided receiver) while
+    // staying under the cull-none caster bias; larger values produce
+    // cascade-boundary seams on self-cast two-sided receivers (cloth,
+    // foliage).
+    let bias_floor_cull = 0.001;
+    let bias_floor_two_sided = 0.0001;
+    if receiver_two_sided != 0u {
+        normal_bias = bias_floor_two_sided;
     } else {
-        normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
-        offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
+        normal_bias = mix(texel_world * 1.5, bias_floor_cull, clamp(abs(n_dot_l), 0.0, 1.0));
     }
+    let offset_world = world_pos - light_dir * normal_bias;
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
     let surface_depth = ndc.z;
@@ -262,16 +248,10 @@ fn sample_shadow_csm(
     let nz = nz_sign * max(abs(n_ndc.z), 1e-4);
     // Depth change per atlas-UV step. Tile V runs opposite to NDC Y, which
     // flips the sign of the Y term.
-    // Receiver-plane bias is derived assuming an ortho cascade matrix. For
-    // perspective shadow matrices (point/spot), the row magnitudes aren't
-    // orthonormal in the same way and depth_grad can blow up, producing
-    // streaky shadows. Zero it out for non-directional lights so each tap
-    // uses the unmodified biased_depth.
-    let rp_gate = select(0.0, 1.0, primary_light_type == 0u);
     let depth_grad = vec2<f32>(
         -n_ndc.x / nz * 2.0 / (rect.z - rect.x),
         n_ndc.y / nz * 2.0 / (rect.w - rect.y),
-    ) * rp_gate;
+    );
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
 
@@ -281,7 +261,7 @@ fn sample_shadow_csm(
     let cos_r = cos(rot);
 
     let tier = shadow_atlas.shadow_filter;
-    let contact_rule = primary_light_type == 0u && receiver_two_sided == 0u;
+    let contact_rule = receiver_two_sided == 0u;
     let texel_depth = texel_world * length(vp_row2);
     // BEGIN_PCSS_BLOCKER_SEARCH
     if tier == 1u || tier == 4u {
@@ -329,11 +309,10 @@ fn sample_shadow_csm(
     // END_PCSS_BLOCKER_SEARCH
 
     // PCF: fixed-radius rotated Poisson disk. The default is 8 taps; the
-    // high tier is 32. The disk radius is 1.5 shadow texels for
-    // directional lights, so taps beyond 8 sharpen the penumbra dither
-    // slightly but cost linearly.
+    // high tier is 32. The disk radius is 1.5 shadow texels, so taps beyond
+    // 8 sharpen the penumbra dither slightly but cost linearly.
     let taps = select(8u, 32u, tier == 3u);
-    let pcf_radius = select(4.0, 1.5, primary_light_type == 0u) * texel_size;
+    let pcf_radius = 1.5 * texel_size;
     var shadow = 0.0;
     for (var i = 0u; i < taps; i++) {
         let d = shadow_tap_dir(i, taps == 8u);

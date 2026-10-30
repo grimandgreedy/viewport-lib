@@ -182,7 +182,7 @@ pub struct CameraUniform {
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).
 ///
 /// Layout (144 bytes, 16-byte aligned):
-/// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; only used for `lights[0]`)
+/// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; a spot light's, when it has a layer)
 /// - pos_or_dir:        `[f32; 3]`     = 12 bytes  (direction for directional, position for point/spot)
 /// - light_type:        u32            =  4 bytes  (0=directional, 1=point, 2=spot)
 /// - colour:             `[f32; 3]`     = 12 bytes
@@ -190,9 +190,9 @@ pub struct CameraUniform {
 /// - range:             f32        =  4 bytes
 /// - inner_angle:       f32        =  4 bytes
 /// - outer_angle:       f32        =  4 bytes
-/// - shadow_kind:       u32        =  4 bytes  (0 none, 1 cascades, 2 cube, 3 spot)
+/// - shadow_kind:       u32        =  4 bytes  (0 none, 1 cascades, 2 point layers, 3 spot layer)
 /// - spot_direction:    `[f32; 3]` = 12 bytes  (spot only; at offset 112 to match WGSL vec3 align)
-/// - shadow_layer:      i32        =  4 bytes  (base shadow layer, -1 none)
+/// - shadow_layer:      i32        =  4 bytes  (base punctual shadow layer, -1 none)
 /// - point_shadow_near: f32        =  4 bytes
 /// - radius:            f32        =  4 bytes
 /// - channel_mask:      u32        =  4 bytes  (layer mask; AND-tested per object)
@@ -204,7 +204,8 @@ pub struct CameraUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SingleLightUniform {
-    /// Light-space view-projection matrix for shadow map rendering.
+    /// Light-space view-projection matrix of a spot light's shadow layer.
+    /// Identity for every other light.
     pub light_view_proj: [[f32; 4]; 4], // 64 bytes, offset   0
     /// World-space position (point/spot) or direction (directional) of the light.
     pub pos_or_dir: [f32; 3], // 12 bytes, offset  64
@@ -220,19 +221,17 @@ pub struct SingleLightUniform {
     pub inner_angle: f32, //  4 bytes, offset 100
     /// Cosine of the outer cone half-angle (spot lights; smooth falloff edge).
     pub outer_angle: f32, //  4 bytes, offset 104
-    /// Which shadow this light samples: 0 none, 1 the cascade atlas, 2 a
-    /// point-light cube, 3 the single spot map. Also keeps `spot_direction`
-    /// at offset 112.
+    /// Which shadow this light samples: 0 none, 1 the cascade atlas, 2 a point
+    /// light's six layers of the punctual shadow array, 3 a spot light's one
+    /// layer. Also keeps `spot_direction` at offset 112.
     pub shadow_kind: u32, //  4 bytes, offset 108
     /// World-space unit direction the spot cone points toward.
     pub spot_direction: [f32; 3], // 12 bytes, offset 112
-    /// Base shadow layer for this light, or -1 when it has none this frame.
-    /// Today only point lights set it: the cubemap slot whose six faces start
-    /// at layer `6 * shadow_layer` of the point-shadow cube array.
+    /// Base layer of this light in the punctual shadow array, or -1 when it
+    /// has none this frame: a point light's six cube faces start here, a spot
+    /// light's map is this layer.
     pub shadow_layer: i32, //  4 bytes, offset 124
-    /// Near plane for the point-shadow perspective projection (world units).
-    /// Used by the lit pass to map fragment distance back into the
-    /// normalised [0, 1] depth that was written into the cubemap.
+    /// Near plane of the punctual shadow projection (world units).
     pub point_shadow_near: f32, //  4 bytes, offset 128
     /// Source radius (world units) for point/spot lights: clamps the
     /// inverse-square falloff near the light and sizes a finite emitter.
