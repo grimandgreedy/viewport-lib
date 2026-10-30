@@ -793,6 +793,12 @@ impl DeviceResources {
     /// decode); draw it with an unlit material for a faithful 1:1 blit. `width` /
     /// `height` are informational.
     ///
+    /// The id can also go on `Material::normal_map_id`. A normal map view should
+    /// be linear; only its red and green channels are read and Z is rebuilt, so
+    /// a two-channel format such as `Rg8Unorm` works. Snorm formats
+    /// (`Rg8Snorm`, `Bc5RgSnorm`, `EacRg11Snorm`, ...) are decoded as signed,
+    /// unorm ones are remapped from [0, 1].
+    ///
     /// The store borrows the view: it never writes to or resizes it, and
     /// [`replace_texture`](Self::replace_texture) (the CPU-write path) should not be
     /// used on the returned id. When the source view is recreated, re-point the id

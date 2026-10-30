@@ -925,6 +925,9 @@ pub(crate) mod instance_flags {
     pub(crate) const HAS_SIDECAR: u32 = 1 << 17;
     /// The mesh has a second UV set in its chunk's uv1 stream.
     pub(crate) const HAS_UV1: u32 = 1 << 18;
+    /// The normal map has a signed (snorm) format, so it samples in [-1, 1]
+    /// and the shader skips the [0, 1] remap.
+    pub(crate) const NORMAL_MAP_SIGNED: u32 = 1 << 19;
 
     /// `bit` when `on`, else 0.
     #[inline]

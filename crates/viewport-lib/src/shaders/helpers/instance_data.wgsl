@@ -61,3 +61,5 @@ const INST_HAS_WARP: u32 = 65536u;
 const INST_HAS_SIDECAR: u32 = 131072u;
 // The mesh has a second UV set in the chunk's uv1 stream.
 const INST_HAS_UV1: u32 = 262144u;
+// The normal map has a signed format (snorm): its texels are in [-1, 1].
+const INST_NORMAL_MAP_SIGNED: u32 = 524288u;

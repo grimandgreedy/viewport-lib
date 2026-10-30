@@ -109,6 +109,10 @@ pub(crate) fn build_instance_record(
         | f::when(wireframe_mode || item.settings.wireframe, f::WIREFRAME)
         | f::when(cm.has_texture != 0, f::HAS_TEXTURE)
         | f::when(cm.has_normal_map != 0, f::HAS_NORMAL_MAP)
+        | f::when(
+            cm.has_normal_map != 0 && normal_map_is_signed(resources, m),
+            f::NORMAL_MAP_SIGNED,
+        )
         | f::when(cm.has_ao_map != 0, f::HAS_AO_MAP)
         | f::when(cm.unlit != 0, f::UNLIT)
         | f::when(cm.receive_shadows != 0, f::RECEIVE_SHADOWS)

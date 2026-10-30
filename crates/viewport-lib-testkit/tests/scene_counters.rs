@@ -62,6 +62,9 @@ fn expected(name: &str) -> Option<Expected> {
         // is the extra item.
         "materials_textures" => e(42, 42, 7, 7, 22176),
         "materials_alpha" => e(65, 65, 11, 11, 130),
+        // Three normal-mapped spheres (BC5 is left out without the device
+        // feature) and an open two-sided sheet.
+        "normalmap_bc5_and_backface" => e(4, 4, 4, 4, 11906),
         // Each column's pinned and batched copies share a batch where the
         // copies match.
         "materials_fallbacks" => e(44, 44, 20, 20, 21128),
