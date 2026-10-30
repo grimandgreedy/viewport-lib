@@ -92,7 +92,6 @@ impl SectionCapCache {
 
     /// The cap for `key`, built with `build` when the key is new. Returns the
     /// draw, if the cap has geometry, and whether `build` ran.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn cap(
         &mut self,
         device: &crate::gpu::Device,
