@@ -812,6 +812,34 @@ pub struct Material {
     /// sets together with this field.
     #[cfg_attr(feature = "serde", serde(default = "default_ior"))]
     pub ior: f32,
+    /// Strength of a clear coat layered over the base, 0..1, as glTF
+    /// `KHR_materials_clearcoat`'s `clearcoatFactor`. Default 0 (no coat). The
+    /// coat is a dielectric (F0 0.04) GGX lobe on the shading normal; the
+    /// light it reflects is taken from the base beneath it. PBR shading only.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clearcoat: f32,
+    /// Perceptual roughness of the clear coat, 0..1. Default 0. The base's
+    /// roughness is raised toward it by [`clearcoat`](Self::clearcoat).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clearcoat_roughness: f32,
+    /// Colour of a sheen layer (a Charlie microfibre lobe, for cloth and
+    /// velvet), as glTF `KHR_materials_sheen`'s `sheenColorFactor`. Default
+    /// black (no sheen). The base is dimmed by the light the sheen reflects.
+    #[cfg_attr(feature = "serde", serde(default = "default_sheen_colour"))]
+    pub sheen_colour: crate::colour::Colour,
+    /// Perceptual roughness of the sheen, 0..1. Default 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub sheen_roughness: f32,
+    /// Anisotropy of the base specular lobe, -1..1. Default 0 (isotropic).
+    /// Positive values stretch the highlight along the tangent, negative along
+    /// the bitangent. Reads the mesh's tangents, or a frame built from the
+    /// normal when the mesh has none.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub anisotropy: f32,
+    /// Rotation of the anisotropy direction from the tangent toward the
+    /// bitangent, in radians. Default 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub anisotropy_rotation: f32,
 }
 
 /// A material's values for its plugin's declared parameters, keyed by name.
@@ -988,6 +1016,11 @@ fn default_ior() -> f32 {
     1.5
 }
 
+#[cfg(feature = "serde")]
+fn default_sheen_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0)
+}
+
 impl Default for Material {
     fn default() -> Self {
         Self {
@@ -1025,6 +1058,12 @@ impl Default for Material {
             specular_factor: 1.0,
             specular_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
             ior: 1.5,
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
+            sheen_colour: crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0),
+            sheen_roughness: 0.0,
+            anisotropy: 0.0,
+            anisotropy_rotation: 0.0,
         }
     }
 }
@@ -1093,6 +1132,30 @@ impl Material {
     pub fn with_ior(mut self, ior: f32) -> Self {
         self.ior = ior;
         self.reflectance = ((ior - 1.0) / (ior + 1.0)).abs() / 0.4;
+        self
+    }
+
+    /// Layer a clear coat of `amount` (0..1) and perceptual `roughness` over
+    /// the base. See [`clearcoat`](Self::clearcoat).
+    pub fn with_clearcoat(mut self, amount: f32, roughness: f32) -> Self {
+        self.clearcoat = amount;
+        self.clearcoat_roughness = roughness;
+        self
+    }
+
+    /// Layer a sheen of `colour` and perceptual `roughness` over the base. See
+    /// [`sheen_colour`](Self::sheen_colour).
+    pub fn with_sheen(mut self, colour: crate::colour::Colour, roughness: f32) -> Self {
+        self.sheen_colour = colour;
+        self.sheen_roughness = roughness;
+        self
+    }
+
+    /// Stretch the base specular lobe by `strength` (-1..1), turned by
+    /// `rotation` radians from the tangent. See [`anisotropy`](Self::anisotropy).
+    pub fn with_anisotropy(mut self, strength: f32, rotation: f32) -> Self {
+        self.anisotropy = strength;
+        self.anisotropy_rotation = rotation;
         self
     }
 

@@ -69,6 +69,12 @@ impl TexTransformGpu {
 /// - `tex_index0` = bindless array indices (albedo, normal, ao, metallic-roughness)
 /// - `tex_index1` = (emissive bindless index, sampler code, unused, unused)
 /// - `specular` = (dielectric F0 rgb, dielectric F90), see [`dielectric_specular`]
+/// - `layers0` = (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
+/// - `layers1` = (sheen colour rgb, sheen roughness)
+///
+/// A layer the material does not use has its lanes zeroed and its
+/// `item_flags` bit clear, so a material without layers interns to the same
+/// block whatever its unused layer roughness.
 ///
 /// `tex_index0` / `tex_index1` hold each material texture's index into the
 /// bindless texture array, or `NO_TEXTURE` (`u32::MAX`) when the material has no
@@ -130,10 +136,14 @@ pub(crate) struct MaterialGpu {
     pub(crate) params: [[f32; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
     /// `(dielectric_f0.rgb, dielectric_f90)`; see [`dielectric_specular`].
     pub(crate) specular: [f32; 4],
+    /// `(clearcoat, clearcoat_roughness, anisotropy, anisotropy_rotation)`.
+    pub(crate) layers0: [f32; 4],
+    /// `(sheen_colour.rgb, sheen_roughness)`.
+    pub(crate) layers1: [f32; 4],
 }
 
 /// Size in bytes of one [`MaterialGpu`] block.
-pub(crate) const MATERIAL_GPU_BYTES: usize = 624;
+pub(crate) const MATERIAL_GPU_BYTES: usize = 656;
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
 
 /// A dielectric's specular reflectance at normal and grazing incidence,
@@ -176,6 +186,43 @@ pub(crate) mod item_flags {
     pub(crate) const USES_UV1: u32 = 1 << 6;
     /// Some texture slot has an offset, scale or rotation.
     pub(crate) const UV_TRANSFORM: u32 = 1 << 7;
+    /// A clear coat is layered over the base (`layers0.xy`).
+    pub(crate) const HAS_CLEARCOAT: u32 = 1 << 8;
+    /// A sheen is layered over the base (`layers1`).
+    pub(crate) const HAS_SHEEN: u32 = 1 << 9;
+    /// The base specular lobe is anisotropic (`layers0.zw`).
+    pub(crate) const HAS_ANISOTROPY: u32 = 1 << 10;
+}
+
+/// The material's layer lanes and their `item_flags` bits:
+/// `(layers0, layers1, flags)`. A layer that is off contributes zeros.
+fn layer_lanes(m: &Material) -> ([f32; 4], [f32; 4], u32) {
+    let mut layers0 = [0.0; 4];
+    let mut layers1 = [0.0; 4];
+    let mut flags = 0;
+    let coat = m.clearcoat.clamp(0.0, 1.0);
+    if coat > 0.0 {
+        layers0[0] = coat;
+        layers0[1] = m.clearcoat_roughness.clamp(0.0, 1.0);
+        flags |= item_flags::HAS_CLEARCOAT;
+    }
+    let aniso = m.anisotropy.clamp(-1.0, 1.0);
+    if aniso != 0.0 {
+        layers0[2] = aniso;
+        layers0[3] = m.anisotropy_rotation;
+        flags |= item_flags::HAS_ANISOTROPY;
+    }
+    let sheen = m.sheen_colour.to_linear_rgb().map(|c| c.max(0.0));
+    if sheen.iter().any(|&c| c > 0.0) {
+        layers1 = [
+            sheen[0],
+            sheen[1],
+            sheen[2],
+            m.sheen_roughness.clamp(0.0, 1.0),
+        ];
+        flags |= item_flags::HAS_SHEEN;
+    }
+    (layers0, layers1, flags)
 }
 
 /// The item-level and mesh-level shading facts that ride the material block
@@ -392,6 +439,7 @@ impl MaterialGpu {
             // Forward-compat: an unknown future mode renders as Opaque (the default).
             _ => 0,
         };
+        let (layers0, layers1, layer_flags) = layer_lanes(m);
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
         // Styled back-face policy and colour (the per-item Pattern world scale
@@ -477,7 +525,8 @@ impl MaterialGpu {
                         | on(shadowmask, f::HAS_SHADOWMASK)
                         | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX)
                         | on(xf.iter().any(|x| x.rot_tc[1] > 0.5), f::USES_UV1)
-                        | on(xf.iter().any(|x| !x.is_identity()), f::UV_TRANSFORM),
+                        | on(xf.iter().any(|x| !x.is_identity()), f::UV_TRANSFORM)
+                        | layer_flags,
                     mode,
                     0,
                     0,
@@ -489,6 +538,8 @@ impl MaterialGpu {
                 m.specular_colour.to_linear_rgb(),
                 m.specular_factor,
             ),
+            layers0,
+            layers1,
         }
     }
 }
@@ -743,6 +794,35 @@ mod tests {
         let half = dielectric_specular(0.5, [1.0; 3], 0.5);
         assert_eq!(half, [0.02, 0.02, 0.02, 0.5]);
         assert_eq!(dielectric_specular(0.5, [1.0; 3], 0.0), [0.0; 4]);
+    }
+
+    #[test]
+    fn layers_pack_only_when_on() {
+        let block = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
+        };
+        let plain = block(&Material::default());
+        assert_eq!(plain.layers0, [0.0; 4]);
+        assert_eq!(plain.layers1, [0.0; 4]);
+        assert_eq!(plain.item_flags[0] & 0x700, 0);
+        // A layer roughness without its layer changes nothing.
+        let mut idle = Material::default();
+        idle.clearcoat_roughness = 0.3;
+        idle.sheen_roughness = 0.6;
+        idle.anisotropy_rotation = 1.0;
+        assert_eq!(bytes(&idle, false), bytes(&Material::default(), false));
+
+        let m = Material::default()
+            .with_clearcoat(0.8, 0.2)
+            .with_sheen(crate::Colour::linear_rgb(0.5, 0.25, 0.0), 0.7)
+            .with_anisotropy(-0.5, 0.25);
+        let b = block(&m);
+        assert_eq!(b.layers0, [0.8, 0.2, -0.5, 0.25]);
+        assert_eq!(b.layers1, [0.5, 0.25, 0.0, 0.7]);
+        let f = b.item_flags[0];
+        assert_ne!(f & item_flags::HAS_CLEARCOAT, 0);
+        assert_ne!(f & item_flags::HAS_SHEEN, 0);
+        assert_ne!(f & item_flags::HAS_ANISOTROPY, 0);
     }
 
     #[test]
