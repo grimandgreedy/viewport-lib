@@ -293,6 +293,7 @@
 
 ### Fixed
 
+- **`free_mesh` drops the mesh's deform slots** - the per-mesh and per-instance deform data of a freed mesh used to stay in the renderer's deform map, with its source buffers still counted toward the per-frame copy pass; it is now released with the mesh.
 - **`Frustum::cull_cone`** - the far-cap test subtracted the cap radius instead of adding it, so a spot light whose apex sat outside one frustum plane was culled even when its cone covered the view, and neither lit nor shadowed.
 - **Every casting spot light is shadowed** - a spot light was shadowed only as the first light in the list, so beside a sun it cast nothing, and its map was a fixed 90 degree frustum whatever the cone. Each spot now takes a layer of the punctual array framed to its outer cone plus a two-texel guard, up to 85 degrees from the axis.
 - **Point light shadows without cube-array textures** - point lights now cast shadows on devices without cube-array textures (iOS among them), where they rendered unshadowed.
