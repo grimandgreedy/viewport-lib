@@ -193,11 +193,13 @@ pub struct LightSource {
     pub importance: f32,
     /// When true, this light contributes to shadow casting.
     ///
-    /// Directional lights cast cascaded shadows into the shared atlas (only
-    /// the first directional light is treated as the CSM caster). Point
-    /// lights with `cast_shadows = true` acquire a slot in the cubemap
-    /// shadow pool, up to `MAX_POINT_SHADOW_LIGHTS` active casters. Spot
-    /// lights cast a single-face perspective shadow.
+    /// The first directional light with `cast_shadows` set casts cascaded
+    /// shadows into the shared atlas; other directional lights cast none.
+    /// Point and spot lights take layers of the punctual shadow array, 6 for
+    /// a point light and 1 for a spot, in rank order until
+    /// [`ShadowSettings::punctual_shadow_layers`] is spent. A light that does
+    /// not fit renders unshadowed. A spot's shadow covers cones up to 85
+    /// degrees from the axis; past that the rim is unshadowed.
     ///
     /// Default: true. Disable per-light to skip the shadow render work.
     pub cast_shadows: bool,
@@ -463,6 +465,36 @@ pub struct ShadowSettings {
     pub pcss_light_radius: f32,
     /// Point-light shadow technique. Default: cubemap.
     pub point_shadow_mode: PointShadowMode,
+    /// Layers of the punctual shadow array shared by point and spot lights.
+    /// A shadow-casting point light takes 6 layers (one per cube face) and a
+    /// spot light 1. Lights are given layers in rank order until the budget
+    /// is spent; a light that does not fit renders unshadowed. Default: 48,
+    /// room for 8 point lights. Rounded down to a multiple of 6 and clamped
+    /// to the device's `max_texture_array_layers`.
+    ///
+    /// The array grows in steps of 6 layers as casters need them, so the
+    /// memory taken is `4 * punctual_shadow_resolution^2` bytes per layer in
+    /// use, not per layer of budget.
+    #[cfg_attr(feature = "serde", serde(default = "default_punctual_shadow_layers"))]
+    pub punctual_shadow_layers: u32,
+    /// Side of each punctual shadow layer in texels. Default: 1024 (24 MB per
+    /// point light, 4 MB per spot light). Clamped to 64..=4096 and the device's
+    /// largest 2D texture.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "default_punctual_shadow_resolution")
+    )]
+    pub punctual_shadow_resolution: u32,
+}
+
+#[cfg(feature = "serde")]
+fn default_punctual_shadow_layers() -> u32 {
+    ShadowSettings::default().punctual_shadow_layers
+}
+
+#[cfg(feature = "serde")]
+fn default_punctual_shadow_resolution() -> u32 {
+    ShadowSettings::default().punctual_shadow_resolution
 }
 
 impl Default for ShadowSettings {
@@ -476,6 +508,8 @@ impl Default for ShadowSettings {
             filter: ShadowFilter::Pcf,
             pcss_light_radius: 0.02,
             point_shadow_mode: PointShadowMode::default(),
+            punctual_shadow_layers: 48,
+            punctual_shadow_resolution: 1024,
         }
     }
 }
