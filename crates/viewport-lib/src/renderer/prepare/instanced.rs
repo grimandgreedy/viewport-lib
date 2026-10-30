@@ -1137,6 +1137,11 @@ impl ViewportRenderer {
             }
 
             instancing.cached_instance_count = all_instances.len();
+            if bytemuck::cast_slice::<InstanceAabb, u8>(&all_aabbs)
+                != bytemuck::cast_slice::<InstanceAabb, u8>(&instancing.cached_aabbs)
+            {
+                instancing.aabbs_gen = instancing.aabbs_gen.wrapping_add(1);
+            }
             instancing.cached_aabbs = all_aabbs;
             #[cfg(debug_assertions)]
             {

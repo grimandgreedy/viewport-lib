@@ -120,6 +120,10 @@ pub(crate) struct InstancingState {
     /// instance buffer. Used by the CPU per-cascade shadow cull on devices
     /// without GPU-driven culling.
     pub(crate) cached_aabbs: Vec<crate::resources::InstanceAabb>,
+    /// Bumped whenever a rebuild leaves `cached_aabbs` with different contents.
+    /// Unlike `instance_gen` it also moves on the partial-upload path, so a
+    /// cache derived from the bounds can key on it.
+    pub(crate) aabbs_gen: u64,
     /// The instance records from the last rebuild, kept in debug builds so the
     /// feature-set check can read them.
     #[cfg(debug_assertions)]
@@ -211,6 +215,7 @@ impl InstancingState {
             cached_instance_hashes: Vec::new(),
             cached_batches: Vec::new(),
             cached_aabbs: Vec::new(),
+            aabbs_gen: 0,
             #[cfg(debug_assertions)]
             cached_records: Vec::new(),
             force_full_upload: false,

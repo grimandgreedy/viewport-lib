@@ -2,6 +2,7 @@ use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
 mod cascade_fit;
+pub(crate) use cascade_fit::CascadeBounds;
 pub(crate) mod compatibility;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
@@ -407,11 +408,14 @@ impl ViewportRenderer {
         Self::fit_cascades(
             resources,
             &mut self.shadow,
+            &self.instancing,
+            &self.item_type_plugins,
             &self.viewport_slots,
             scene_fx,
             queue,
             frame,
             &mut lighting_frame,
+            &mut self.last_stats,
         );
         #[cfg(debug_assertions)]
         {

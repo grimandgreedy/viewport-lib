@@ -433,6 +433,10 @@ pub struct FrameStats {
     /// Directional shadow cascades rasterised into the atlas this frame. Zero
     /// when no directional light casts, shadows are off, or nothing casts.
     pub shadow_cascade_passes: u32,
+    /// Times this frame the directional shadow fit rebuilt its caster and
+    /// scene bounds: one when the mesh instances' bounds changed since the
+    /// last rebuild, zero otherwise and when no directional light casts.
+    pub shadow_bounds_rebuilds: u32,
     /// Layers of the punctual shadow array held by this frame's point and spot
     /// casters: six per point light, one per spot light.
     pub punctual_shadow_layers: u32,
