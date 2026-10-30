@@ -158,7 +158,13 @@ fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {
           + deform_read_instance_mat4(slot, j3) * w3;
     out.position = (m * vec4<f32>(v.position, 1.0)).xyz;
     let m3 = mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz);
-    out.normal = m3 * v.normal;
+    // Normals take the cofactor of the blended matrix (the inverse transpose
+    // up to scale), signed so a mirroring joint keeps the normal's side; the
+    // tangent is a surface direction and takes the matrix itself.
+    let c = mat3x3<f32>(cross(m3[1], m3[2]), cross(m3[2], m3[0]), cross(m3[0], m3[1]));
+    let det_sign = select(1.0, -1.0, dot(m3[0], c[0]) < 0.0);
+    out.normal = (c * v.normal) * det_sign;
+    out.tangent = vec4<f32>(m3 * v.tangent.xyz, v.tangent.w);
     return out;
 }
 "#;
