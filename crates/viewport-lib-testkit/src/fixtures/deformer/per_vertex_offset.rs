@@ -16,7 +16,7 @@ use viewport_lib::{DeformStage, DeformerDesc, MeshId};
 /// moving, not just as nothing moving.
 pub fn per_vertex_offset_deformer() -> DeformerDesc {
     DeformerDesc {
-        name: PerVertexOffsetDeformer::NAME,
+        name: PerVertexOffsetDeformer::NAME.into(),
         stage: DeformStage::WorldSpace,
         priority: 0,
         wgsl_body: "\
