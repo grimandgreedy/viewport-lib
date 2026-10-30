@@ -153,7 +153,8 @@ pub enum CompressedFormat {
     Bc4RSigned,
     /// BC5: two unsigned channels, the usual normal-map format.
     Bc5Rg,
-    /// BC5: two signed channels.
+    /// BC5: two signed channels. As a normal map it is decoded as signed
+    /// (no [0, 1] remap).
     Bc5RgSigned,
     /// BC6H: unsigned half-float RGB, the usual HDR format.
     Bc6hRgb,
@@ -511,6 +512,12 @@ impl TextureData {
 
     /// A block-compressed tangent-space normal map: linear, bound into the
     /// normal-map slot. BC5 is the usual format.
+    ///
+    /// Only the red and green channels are read and Z is rebuilt from them, so
+    /// a two-channel format (BC5, EAC RG11) decodes like a three-channel one.
+    /// Unsigned formats are remapped from [0, 1] to [-1, 1]; the signed ones
+    /// ([`Bc5RgSigned`](CompressedFormat::Bc5RgSigned),
+    /// [`EacRg11Signed`](CompressedFormat::EacRg11Signed)) are decoded as signed.
     pub fn compressed_normal_map(
         width: u32,
         height: u32,

@@ -93,6 +93,36 @@ pub(super) fn common_material(
     }
 }
 
+/// Whether `m`'s normal map has a signed (snorm) format, which samples in
+/// [-1, 1] and must not be remapped from [0, 1]. False when the material has no
+/// live normal map.
+pub(super) fn normal_map_is_signed(
+    resources: &DeviceResources,
+    m: &crate::scene::material::Material,
+) -> bool {
+    m.normal_map_id
+        .and_then(|id| resources.content.textures.get(id))
+        .is_some_and(|t| is_signed_format(t.view.texture().format()))
+}
+
+/// The snorm formats a normal map can be sampled from.
+fn is_signed_format(format: crate::gpu::TextureFormat) -> bool {
+    use crate::gpu::TextureFormat as F;
+    matches!(
+        format,
+        F::R8Snorm
+            | F::Rg8Snorm
+            | F::Rgba8Snorm
+            | F::R16Snorm
+            | F::Rg16Snorm
+            | F::Rgba16Snorm
+            | F::Bc4RSnorm
+            | F::Bc5RgSnorm
+            | F::EacR11Snorm
+            | F::EacRg11Snorm
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use crate::scene::material::{AlphaMode, BackfacePolicy};
@@ -107,5 +137,23 @@ mod tests {
         m.alpha_mode = AlphaMode::Mask(0.45);
         assert!(m.is_two_sided());
         assert!(!m.backface_needs_per_object());
+    }
+
+    /// Snorm formats are decoded as signed; unorm and sRGB ones are remapped.
+    #[test]
+    fn signed_normal_map_formats() {
+        use crate::gpu::TextureFormat as F;
+        for f in [F::Bc5RgSnorm, F::EacRg11Snorm, F::Rg8Snorm, F::Rgba8Snorm] {
+            assert!(super::is_signed_format(f), "{f:?}");
+        }
+        for f in [
+            F::Bc5RgUnorm,
+            F::EacRg11Unorm,
+            F::Rg8Unorm,
+            F::Rgba8Unorm,
+            F::Rgba8UnormSrgb,
+        ] {
+            assert!(!super::is_signed_format(f), "{f:?}");
+        }
     }
 }

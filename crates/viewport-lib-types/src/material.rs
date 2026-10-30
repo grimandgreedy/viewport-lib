@@ -290,7 +290,7 @@ impl Default for PatternConfig {
 /// Controls how back faces of a mesh are rendered.
 ///
 /// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
-/// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColour`]
+/// to shade them as front faces lit from the viewer's side, or [`BackfacePolicy::DifferentColour`]
 /// to shade back faces in a distinct colour : useful for spotting mesh orientation errors or
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,7 +299,9 @@ impl Default for PatternConfig {
 pub enum BackfacePolicy {
     /// Back faces are culled (invisible). Default.
     Cull,
-    /// Back faces are visible and shaded identically to front faces.
+    /// Back faces are visible and shaded as front faces, with the normal
+    /// flipped toward the viewer, so an open sheet seen from behind is lit from
+    /// the side the camera is on.
     Identical,
     /// Back faces are visible and shaded in the given colour.
     ///
@@ -1076,11 +1078,11 @@ impl Material {
     /// Returns `true` if back faces need the per-object draw path.
     ///
     /// `Cull` and `Identical` render correctly through the instanced path: `Cull`
-    /// uses back-face culling and `Identical` disables culling but shades back
-    /// faces with the geometric normal, neither of which needs per-item state the
-    /// instanced shader does not carry. The styled policies (`DifferentColour`,
-    /// `Tint`, `Pattern`) flip the normal and read a per-item back-face colour, so
-    /// they stay on the per-object path.
+    /// uses back-face culling and `Identical` disables culling and flips the
+    /// normal on back faces, neither of which needs per-item state the instanced
+    /// shader does not carry. The styled policies (`DifferentColour`, `Tint`,
+    /// `Pattern`) also read a per-item back-face colour, so they stay on the
+    /// per-object path.
     pub fn backface_needs_per_object(&self) -> bool {
         matches!(
             self.backface_policy,

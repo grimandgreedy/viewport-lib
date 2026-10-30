@@ -284,7 +284,8 @@ fn load_object_vertex(i: u32) -> Object {
     o.selected = u32((bit & INST_SELECTED) != 0u);
     o.wireframe = u32((bit & INST_WIREFRAME) != 0u);
     o.has_texture = u32((bit & INST_HAS_TEXTURE) != 0u);
-    o.has_normal_map = u32((bit & INST_HAS_NORMAL_MAP) != 0u);
+    // 0 none, 1 unsigned map (remapped from [0, 1]), 2 signed map.
+    o.has_normal_map = select(0u, select(1u, 2u, (bit & INST_NORMAL_MAP_SIGNED) != 0u), (bit & INST_HAS_NORMAL_MAP) != 0u);
     o.has_ao_map = u32((bit & INST_HAS_AO_MAP) != 0u);
     o.has_attribute = u32((bit & INST_HAS_ATTRIBUTE) != 0u);
     o.use_face_colour = u32((bit & INST_USE_FACE_COLOUR) != 0u);
@@ -900,11 +901,14 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
-        var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
-        ts_unpacked.x = ts_unpacked.x * object.normal_strength;
-        ts_unpacked.y = ts_unpacked.y * object.normal_strength;
-        let ts_normal = normalize(ts_unpacked);
+        // Only XY is read and Z is rebuilt, so two-channel maps (BC5, RG8,
+        // EAC) decode the same as RGB ones. A signed format samples in
+        // [-1, 1] already and skips the remap.
+        let nm_xy = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).xy;
+        var ts_xy = select(nm_xy * 2.0 - vec2<f32>(1.0), nm_xy, object.has_normal_map == 2u);
+        ts_xy = ts_xy * object.normal_strength;
+        let ts_z = sqrt(max(1.0 - dot(ts_xy, ts_xy), 0.0));
+        let ts_normal = normalize(vec3<f32>(ts_xy, ts_z));
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
         let T_orth = normalize(T - dot(T, Ng) * Ng);
@@ -915,15 +919,16 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         N = normalize(in.world_normal);
     }
 
-    // Back-face policy handling: flip normal and optionally override colour for back faces.
+    // Back-face policy handling: every two-sided policy flips the normal toward
+    // the viewer on back faces; the styled ones also override the colour.
     // 0=Cull, 1=Identical, 2=DifferentColour, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
-    if !is_front && object.backface_policy >= 2u {
+    if !is_front && object.backface_policy >= 1u {
         N = -N;
         if object.backface_policy == 2u {
             base_colour = object.backface_colour.rgb;
         } else if object.backface_policy == 3u {
             base_colour = base_colour * (1.0 - object.backface_colour.r);
-        } else {
+        } else if object.backface_policy >= 4u {
             let pattern_colour = object.backface_colour.rgb;
             let pattern_type = object.backface_policy - 4u;
             let wp = in.world_pos * object.backface_colour.w;
