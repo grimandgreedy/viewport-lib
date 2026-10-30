@@ -4,16 +4,16 @@
 ///
 /// The host application owns playback state, time, and scene content.
 /// `RuntimeMode` tells the renderer what workload to expect so it can adjust
-/// internal defaults (e.g. picking rate) accordingly.
+/// internal defaults accordingly. Picking runs the same in every mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RuntimeMode {
-    /// Prioritize responsiveness and picking accuracy.
+    /// Prioritize responsiveness.
     #[default]
     Interactive,
-    /// Prioritize steady frame pacing; picking may be throttled.
+    /// Prioritize steady frame pacing.
     Playback,
-    /// Restore full quality; picking runs at full rate.
+    /// Restore full quality.
     Paused,
     /// Full-quality render intended for screenshot or export workflows.
     ///

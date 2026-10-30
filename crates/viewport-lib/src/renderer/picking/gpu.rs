@@ -36,6 +36,31 @@ fn snap_priority(sub: Option<SubObjectRef>) -> i32 {
     }
 }
 
+/// Block until the pick submission `index` has completed. Returns `false`, after
+/// a rate-limited warning, when the wait fails (timeout or a lost device). The
+/// caller then reports no hit and drops its staging buffers unread, which
+/// releases their pending maps.
+fn wait_for_pick(
+    device: &crate::gpu::Device,
+    index: &crate::gpu::SubmissionIndex,
+    what: &str,
+) -> bool {
+    match device.poll(crate::gpu::PollType::Wait {
+        submission_index: Some(index.clone()),
+        timeout: Some(std::time::Duration::from_secs(5)),
+    }) {
+        Ok(_) => true,
+        Err(e) => {
+            crate::notice::log_rate_limited(
+                "pick_poll_failed",
+                crate::Severity::Warning,
+                format_args!("GPU {what} read-back failed, reporting no hit: {e}"),
+            );
+            false
+        }
+    }
+}
+
 impl PickItemType {
     /// Whether this type answers any level requested in `mask`. A type is drawn
     /// only when the caller asked for something it can resolve.
@@ -415,14 +440,6 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> Option<GpuPickHit> {
-        // In Playback mode, throttle picking to every 4th frame to reduce overhead
-        // during animation. Interactive, Paused, and Capture modes always pick.
-        if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
-            && self.frame_counter % 4 != 0
-        {
-            return None;
-        }
-
         let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
             PickBegin::Miss => return None,
             PickBegin::Pending(p) => p,
@@ -431,12 +448,9 @@ impl ViewportRenderer {
         // Synchronous resolve: wait on this pick's submission (and thus its
         // staging maps), then read the pixel. The wait is targeted at the pick
         // submission index, so it does not drain frames queued after it.
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(pending.submission.clone()),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &pending.submission, "point pick") {
+            return None;
+        }
         pending.read_hit()
     }
 
@@ -454,23 +468,13 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> Option<PickHit> {
-        // Mirror the Playback throttle in pick_scene_gpu_masked.
-        if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
-            && self.frame_counter % 4 != 0
-        {
-            return None;
-        }
-
         let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
             PickBegin::Miss => return None,
             PickBegin::Pending(p) => p,
         };
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(pending.submission.clone()),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &pending.submission, "point pick") {
+            return None;
+        }
         pending
             .read_hit()
             .map(|h| self.resolve_pending_hit(&pending, h))
@@ -1259,12 +1263,12 @@ impl ViewportRenderer {
         if let Some(depth) = &depth_staging {
             depth.slice(..).map_async(crate::gpu::MapMode::Read, |_| {});
         }
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &submission, "rect pick") {
+            return crate::renderer::picking::PickRectResult {
+                objects: Vec::new(),
+                elements: Vec::new(),
+            };
+        }
 
         let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut objects: Vec<u64> = Vec::new();
@@ -1368,12 +1372,9 @@ impl ViewportRenderer {
         mask: PickMask,
     ) -> Option<crate::renderer::picking::SnapHit> {
         let pending = self.snap_query_submit(device, queue, cursor, radius_px, frame, mask)?;
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(pending.submission.clone()),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &pending.submission, "snap query") {
+            return None;
+        }
         self.snap_read(&pending, frame)
     }
 
