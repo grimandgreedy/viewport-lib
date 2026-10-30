@@ -9,12 +9,11 @@
 //! ```rust,ignore
 //! use viewport_lib::runtime::{
 //!     FixedTimestep, RuntimeFrameContext, RuntimePhase, RuntimePlugin,
-//!     RuntimeStepContext, SceneRuntimeMode, ViewportRuntime,
+//!     RuntimeStepContext, ViewportRuntime,
 //! };
 //!
 //! // Build the runtime once at startup.
 //! let mut runtime = ViewportRuntime::new()
-//!     .with_mode(SceneRuntimeMode::Simulation)
 //!     .with_fixed_timestep(FixedTimestep::new(60.0))
 //!     .with_plugin(MyPhysicsPlugin::new());
 //!
@@ -50,7 +49,6 @@ pub mod gpu_plugin;
 pub mod guide;
 /// Async job handoff types for runtime plugins.
 pub mod jobs;
-pub mod mode;
 pub mod output;
 pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
@@ -66,7 +64,6 @@ pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
 pub use gpu_plugin::{GpuFrameContext, GpuPlugin, PostPaintTargets, gpu_phase};
 pub use jobs::{JobPoll, JobSender, JobSlot};
-pub use mode::SceneRuntimeMode;
 pub use output::{
     CameraCommand, CameraFollowTarget, NodeTransformOp, RuntimeOutput, SelectionOp,
     TransformWriteback, apply_camera_commands,
@@ -75,7 +72,7 @@ pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
-pub use timestep::{FixedStepIter, FixedTimestep};
+pub use timestep::{DEFAULT_MAX_STEPS, FixedStepIter, FixedTimestep};
 
 use crate::interaction::select::selection::Selection;
 use crate::scene::scene::Scene;
@@ -136,6 +133,10 @@ pub struct RuntimeStats {
     /// CPU ms spent in each GPU plugin's `post_paint` during the last
     /// [`ViewportRuntime::post_paint`].
     pub post_paint_ms: std::collections::HashMap<&'static str, f32>,
+    /// Simulated time, in ms, the fixed timestep dropped during the last
+    /// [`ViewportRuntime::step`] because more than its `max_steps` steps were
+    /// pending. Zero without a fixed timestep or when nothing was dropped.
+    pub dropped_sim_ms: f32,
 }
 
 impl RuntimeStats {
@@ -507,6 +508,82 @@ mod tests {
 
         let snap = runtime.snapshots().get(node_id).expect("snapshot missing");
         assert!((snap.curr.translation.x - 7.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_snapshot_records_world_transform_of_child() {
+        let mut scene = Scene::new();
+        let parent = scene.add(
+            None,
+            glam::Mat4::from_translation(glam::Vec3::new(10.0, 0.0, 0.0)),
+            MaterialId::DEFAULT,
+        );
+        let child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        scene.set_parent(child, Some(parent));
+        scene.update_transforms();
+
+        let local = glam::Affine3A::from_translation(glam::Vec3::new(0.0, 2.0, 3.0));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(WritebackPlugin {
+                node_id: child,
+                transform: local,
+            })
+            .with_camera_follow(CameraFollow::Node {
+                id: child,
+                offset: glam::Vec3::ZERO,
+                look_at: false,
+            });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut sel = Selection::new();
+        let output = runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
+
+        let world = glam::Affine3A::from_mat4(scene.node(child).unwrap().world_transform());
+        let expected = glam::Vec3::new(10.0, 2.0, 3.0);
+        assert!((glam::Vec3::from(world.translation) - expected).length() < 1e-5);
+
+        let snap = runtime.snapshots().get(child).expect("snapshot missing");
+        assert_eq!(snap.curr, world);
+
+        let target = output
+            .events
+            .read::<CameraFollowTarget>()
+            .next()
+            .expect("no camera follow target");
+        assert!(
+            (target.0 - expected).length() < 1e-5,
+            "target was {:?}",
+            target.0
+        );
+    }
+
+    #[test]
+    fn test_dropped_sim_ms_reported_on_hitch() {
+        let mut runtime = ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(60.0));
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 2.0));
+        assert_eq!(runtime.step_index(), 8);
+        let dropped = runtime.last_stats().dropped_sim_ms;
+        assert!(
+            dropped > 1800.0 && dropped < 2000.0,
+            "dropped was {dropped}"
+        );
+
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
+        assert_eq!(runtime.last_stats().dropped_sim_ms, 0.0);
     }
 
     // ---- new tests ----------------------------------------------------------
@@ -1524,7 +1601,6 @@ mod tests {
 /// 4. `[SIMULATE, POST_SIM)` -- Simulate (600): once per fixed step or once at wall dt
 /// 5. `[POST_SIM, i32::MAX]` -- PostSim (700), Writeback (800): once at wall dt
 pub struct ViewportRuntime {
-    mode: SceneRuntimeMode,
     plugins: Vec<Box<dyn RuntimePlugin>>,
     gpu_plugins: Vec<Box<dyn GpuPlugin>>,
     /// GPU plugins removed because the device did not meet their
@@ -1559,7 +1635,6 @@ impl ViewportRuntime {
     /// Create a runtime with default settings and no plugins.
     pub fn new() -> Self {
         Self {
-            mode: SceneRuntimeMode::default(),
             plugins: Vec::new(),
             gpu_plugins: Vec::new(),
             declined_gpu_plugins: Vec::new(),
@@ -1617,12 +1692,6 @@ impl ViewportRuntime {
     /// Access the built-in manipulation system, if enabled.
     pub fn manipulation_system(&self) -> Option<&ManipulationSystem> {
         self.manipulation_system.as_ref()
-    }
-
-    /// Set the runtime mode.
-    pub fn with_mode(mut self, mode: SceneRuntimeMode) -> Self {
-        self.mode = mode;
-        self
     }
 
     /// Register a plugin. Plugins run in ascending priority order each frame.
@@ -1838,11 +1907,6 @@ impl ViewportRuntime {
         self.fixed_timestep = None;
     }
 
-    /// The current runtime mode.
-    pub fn mode(&self) -> SceneRuntimeMode {
-        self.mode
-    }
-
     /// The transform snapshot table for interpolated rendering.
     ///
     /// Updated each frame during writeback. Pass [`alpha`](Self::alpha) as the
@@ -2050,6 +2114,7 @@ impl ViewportRuntime {
         );
 
         // Simulate: [SIMULATE, POST_SIM) -- once per fixed step or once at wall dt.
+        self.stats.dropped_sim_ms = 0.0;
         if self.fixed_timestep.is_some() {
             let mut ts = self.fixed_timestep.take().unwrap();
             for step_dt in ts.advance(frame.dt) {
@@ -2067,6 +2132,7 @@ impl ViewportRuntime {
                 );
                 self.step_index = self.step_index.wrapping_add(1);
             }
+            self.stats.dropped_sim_ms = ts.dropped() * 1000.0;
             self.fixed_timestep = Some(ts);
         } else {
             run_range(
@@ -2138,10 +2204,17 @@ impl ViewportRuntime {
                 glam::Mat4::from(op.transform)
             };
             scene.set_local_transform(op.id, new_local);
-            self.snapshots.update(op.id, op.transform);
         }
         if !ops.is_empty() {
             scene.update_transforms();
+            // Snapshots hold world transforms, read after propagation so a
+            // parent's transform and a preserved scale are included.
+            for op in &ops {
+                if let Some(node) = scene.node(op.id) {
+                    self.snapshots
+                        .update(op.id, glam::Affine3A::from_mat4(node.world_transform()));
+                }
+            }
         }
         output.node_transform_ops = ops;
 

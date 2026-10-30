@@ -123,6 +123,8 @@
 
 ### Changed
 
+- **`ViewportRuntime::snapshots()` holds world transforms** - each node a writeback op touches is recorded with its world transform after the scene's transforms are propagated, so a child's snapshot includes its parents and a `preserve_scale` op's kept scale. It used to record the op's incoming local transform. `interpolated()` and `CameraFollow::Node` now give the world position for a parented node; code that treated the snapshot as a local transform composes the parent's inverse world transform instead.
+- **`FixedTimestep` caps the steps per frame** - one `advance` yields at most 8 steps (`DEFAULT_MAX_STEPS`, set with `with_max_steps(n)`), so a hitch no longer makes the simulation run ever further behind. Whole steps past the cap are dropped and reported by `FixedTimestep::dropped()` and `RuntimeStats::dropped_sim_ms`; the leftover fraction of a step is kept for `alpha()`. Pass a larger `with_max_steps` to keep the old catch-up behaviour for longer stalls.
 - **`Modifiers` keeps Super apart from Ctrl** - new `super_key` field (Cmd on macOS, the Windows key), set by both adapters, and `command()` for the platform's shortcut key. `Modifiers` is `#[non_exhaustive]`: build it with the adapter helpers or `Modifiers::NONE.with_*`. Bindings still treat Ctrl and Super as one key (`Modifiers::for_bindings`), so no binding changes behaviour.
 - **`from_egui` maps `KeyCode` from the physical key** - it reads egui's `physical_key`, falling back to the layout key when a host leaves it empty, so a `KeyCode` binding means the same key through egui and winit on non-US layouts.
 - **Scene depth for plugins is unfilterable float** - `depth_read_bind_group_layout` binds the depth view as `TextureSampleType::Float { filterable: false }`. Declare the scene depth `texture_2d<f32>` and read it through the sampler (`textureSampleLevel(...).r`), or compose `shared_wgsl::SHARED_DEPTH_TEXEL_WGSL` and call `depth_texel`. `builders::depth_texel_entry` and `builders::nearest_sampler_entry` build the matching layout entries for a plugin's own group.
@@ -241,6 +243,10 @@
 - **Repeated renderer warnings go through the notice channel** - the conditions listed under notices used to log once per renderer or process and then go quiet. They are now logged on the `viewport_lib::notice` target the first time, then at most once every five seconds as "repeated N times since frame F", and counted in `take_notices`. The `dev-knobs` shader-knob messages are logged through `tracing` the same way instead of printed to stderr.
 - **`FrameStats` is `#[non_exhaustive]`** - read it from `last_frame_stats()`; code outside the crate can no longer build it with a struct literal.
 - **`DeviceResources::texture_slot_mismatch()` is deprecated** - take the error-severity `NoticeDetail::TextureSlotMismatch` from `ViewportRenderer::take_notices` instead. `texture_slot_mismatches()` and `clear_texture_slot_mismatches()` are unchanged.
+
+### Removed
+
+- **`SceneRuntimeMode`, `ViewportRuntime::with_mode` and `mode()`** - the mode was stored and never read. Delete the `with_mode` call and configure the runtime directly, for example `with_fixed_timestep(FixedTimestep::new(60.0))` for a simulation; gizmo and camera policy stay with the application.
 
 ### Fixed
 
