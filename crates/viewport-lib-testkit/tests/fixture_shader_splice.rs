@@ -607,5 +607,367 @@ fn material_plugin_ao_override_darkens_ambient() {
     );
 }
 
+/// A flat-colour plugin that records every call the renderer makes into it,
+/// so a test can see the renderer stops consulting a removed plugin.
+struct LoggedFlatColour {
+    inner: FlatColourMaterialPlugin,
+    name: String,
+    log: viewport_lib_testkit::fixtures::CallLog,
+}
+
+impl LoggedFlatColour {
+    fn new(name: &str, colour: [f32; 3], log: &viewport_lib_testkit::fixtures::CallLog) -> Self {
+        Self {
+            inner: FlatColourMaterialPlugin::new("unused", colour),
+            name: name.to_string(),
+            log: log.clone(),
+        }
+    }
+}
+
+impl viewport_lib::MaterialPlugin for LoggedFlatColour {
+    fn name(&self) -> &str {
+        self.log.record(format!("{}:name", self.name));
+        &self.name
+    }
+    fn wgsl_body(&self) -> String {
+        self.log.record(format!("{}:wgsl_body", self.name));
+        self.inner.wgsl_body()
+    }
+    fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+        self.log.record(format!("{}:param_layout", self.name));
+        self.inner.param_layout()
+    }
+}
+
+/// One frame of three quads side by side, one per material, and the pixel
+/// at each quad's centre.
+fn three_quads(
+    harness: &mut Harness,
+    mesh_id: viewport_lib::MeshId,
+    materials: [Material; 3],
+    generation: u64,
+) -> [[u8; 3]; 3] {
+    let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let xs = [-1.3f32, 0.0, 1.3];
+    let items: Vec<SceneRenderItem> = xs
+        .iter()
+        .zip(materials)
+        .map(|(&x, material)| {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+            item.material = harness
+                .renderer
+                .resources_mut()
+                .upload_material(material)
+                .expect("material upload");
+            item
+        })
+        .collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    frame.scene.generation = generation;
+    let view_proj = frame.camera.render_camera.view_proj();
+    let pixels = harness.render(&frame, SIZE, SIZE);
+    xs.map(|x| {
+        let ndc = view_proj.project_point3(glam::Vec3::new(x, 0.0, 0.0));
+        let px = ((ndc.x * 0.5 + 0.5) * SIZE as f32) as u32;
+        let py = ((0.5 - ndc.y * 0.5) * SIZE as f32) as u32;
+        let i = ((py * SIZE + px) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    })
+}
+
+/// The red base material every removal test draws, with or without a plugin.
+fn red(plugin: Option<viewport_lib::MaterialPluginId>) -> Material {
+    let mut material = Material::from_colour(Colour::linear_rgb(0.8, 0.1, 0.1));
+    material.shading_plugin = plugin;
+    material
+}
+
+fn near(a: [u8; 3], b: [u8; 3]) -> bool {
+    a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 1)
+}
+
+/// Register, render, unregister, render: once its plugin is unregistered a
+/// material draws exactly as the same material with no plugin does, the
+/// renderer makes no further call into the plugin, the registry counts drop
+/// back, and the name can be registered again.
+#[test]
+fn material_plugin_unregister_falls_back_to_pbr() {
+    use viewport_lib_testkit::fixtures::CallLog;
+
+    let Some(mut harness) = recommended_harness("fixture-material-unregister") else {
+        eprintln!("skipping: no GPU adapter with recommended limits available");
+        return;
+    };
+    let log = CallLog::new();
+    let plugin = LoggedFlatColour::new("fixture_removed", [0.0, 0.9, 0.0], &log);
+    let id = match harness
+        .renderer
+        .resources_mut()
+        .register_material_plugin(&harness.device, &plugin)
+    {
+        Ok(id) => id,
+        Err(err) => {
+            eprintln!("skipping: this device cannot register a material plugin: {err}");
+            return;
+        }
+    };
+    let mesh_id = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &probe_quad())
+        .expect("upload probe quad");
+
+    let stock = three_quads(&mut harness, mesh_id, [red(None); 3], 1);
+    let hooked = three_quads(&mut harness, mesh_id, [red(Some(id)); 3], 2);
+    assert!(
+        hooked.iter().all(|p| p[1] > p[0] + 40),
+        "test premise: the plugin shades flat green, got {hooked:?}"
+    );
+
+    log.clear();
+    harness
+        .renderer
+        .resources_mut()
+        .unregister_material_plugin(id)
+        .expect("unregister");
+    let res = harness.renderer.resources();
+    assert_eq!(res.registered_shading_hook_count(), 0);
+    assert!(res.material_plugin_stats().is_empty());
+    assert!(!res.material_plugin_pipelines_ready(id));
+
+    // Materials still naming the removed plugin, uploaded before and after
+    // the removal, draw as built-in PBR.
+    let removed = three_quads(&mut harness, mesh_id, [red(Some(id)); 3], 3);
+    for (i, (got, want)) in removed.iter().zip(stock).enumerate() {
+        assert!(
+            near(*got, want),
+            "quad {i}: a material on a removed plugin must draw as PBR: got {got:?}, PBR {want:?}"
+        );
+    }
+    log.assert_empty();
+
+    assert!(matches!(
+        harness
+            .renderer
+            .resources_mut()
+            .unregister_material_plugin(id),
+        Err(viewport_lib::ViewportError::StaleHandle { .. })
+    ));
+
+    // The name is free again.
+    let again = harness
+        .renderer
+        .resources_mut()
+        .register_material_plugin(&harness.device, &plugin)
+        .expect("re-registering a removed name");
+    assert_ne!(again, id, "a new registration gets a new id");
+    let back = three_quads(&mut harness, mesh_id, [red(Some(again)); 3], 4);
+    assert!(
+        back.iter().all(|p| p[1] > p[0] + 40),
+        "the re-registered plugin shades again, got {back:?}"
+    );
+}
+
+/// Three plugins, the middle one removed: the other two keep their ids and
+/// their shading, and the removed one's material draws as PBR. A plugin
+/// registered after that reuses the freed slot, the removed id stays stale
+/// (`StaleHandle`), and materials on it do not pick up the newcomer.
+#[test]
+fn material_plugin_removal_keeps_the_others() {
+    use viewport_lib::MaterialPlugin as _;
+    let Some(mut harness) = recommended_harness("fixture-material-order") else {
+        eprintln!("skipping: no GPU adapter with recommended limits available");
+        return;
+    };
+    let plugins = [
+        FlatColourMaterialPlugin::new("fixture_order_a", [0.9, 0.0, 0.0]),
+        FlatColourMaterialPlugin::new("fixture_order_b", [0.0, 0.9, 0.0]),
+        FlatColourMaterialPlugin::new("fixture_order_c", [0.0, 0.0, 0.9]),
+    ];
+    let mut ids = Vec::new();
+    for plugin in &plugins {
+        match harness
+            .renderer
+            .resources_mut()
+            .register_material_plugin(&harness.device, plugin)
+        {
+            Ok(id) => ids.push(id),
+            Err(err) => {
+                eprintln!("skipping: this device cannot register a material plugin: {err}");
+                return;
+            }
+        }
+    }
+    let [a, b, c] = [ids[0], ids[1], ids[2]];
+    let mesh_id = harness
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&harness.device, &probe_quad())
+        .expect("upload probe quad");
+    let stock = three_quads(&mut harness, mesh_id, [red(None); 3], 1);
+    let before = three_quads(
+        &mut harness,
+        mesh_id,
+        [red(Some(a)), red(Some(b)), red(Some(c))],
+        2,
+    );
+
+    harness
+        .renderer
+        .resources_mut()
+        .unregister_material_plugin(b)
+        .expect("unregister b");
+    let stats = harness.renderer.resources().material_plugin_stats();
+    let names: Vec<(viewport_lib::MaterialPluginId, &str)> =
+        stats.iter().map(|s| (s.id, s.name.as_str())).collect();
+    assert_eq!(
+        names,
+        vec![(a, plugins[0].name()), (c, plugins[2].name())],
+        "A and C stay registered, in order, under their ids"
+    );
+    let after = three_quads(
+        &mut harness,
+        mesh_id,
+        [red(Some(a)), red(Some(b)), red(Some(c))],
+        3,
+    );
+    assert!(
+        near(after[0], before[0]),
+        "A still shades: {after:?} vs {before:?}"
+    );
+    assert!(
+        near(after[2], before[2]),
+        "C still shades: {after:?} vs {before:?}"
+    );
+    assert!(
+        near(after[1], stock[1]),
+        "B's material draws as PBR: {:?} vs {:?}",
+        after[1],
+        stock[1]
+    );
+
+    // A newcomer takes B's slot at a new generation.
+    let d = harness
+        .renderer
+        .resources_mut()
+        .register_material_plugin(
+            &harness.device,
+            &FlatColourMaterialPlugin::new("fixture_order_d", [0.9, 0.9, 0.0]),
+        )
+        .expect("register d");
+    assert_eq!(
+        d.plugin_index(),
+        b.plugin_index(),
+        "the freed slot is reused"
+    );
+    assert_ne!(d, b);
+    assert!(matches!(
+        harness
+            .renderer
+            .resources_mut()
+            .unregister_material_plugin(b),
+        Err(viewport_lib::ViewportError::StaleHandle { .. })
+    ));
+    let reused = three_quads(
+        &mut harness,
+        mesh_id,
+        [red(Some(b)), red(Some(d)), red(None)],
+        4,
+    );
+    assert!(
+        near(reused[0], stock[0]),
+        "a material on the stale id must not draw with the newcomer: {:?} vs PBR {:?}",
+        reused[0],
+        stock[0]
+    );
+    assert!(
+        reused[1][0] > 150 && reused[1][1] > 150 && reused[1][2] < 60,
+        "the newcomer shades yellow, got {:?}",
+        reused[1]
+    );
+}
+
+/// `replace_material_plugin` keeps the id and changes the pixels; a parameter
+/// value the material set carries over by name, and a replacement that fails
+/// validation leaves the registered plugin as it was.
+#[test]
+fn material_plugin_replace_keeps_the_id() {
+    struct Broken;
+    impl viewport_lib::MaterialPlugin for Broken {
+        fn name(&self) -> &str {
+            "fixture_replaced"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_ambient(surf: ShadingSurface) -> vec3<f32> { return nope; }".to_string()
+        }
+    }
+
+    let green = FlatColourMaterialPlugin::new("fixture_replaced", [0.0, 0.9, 0.0]);
+    let Some((mut harness, id, mesh_id)) = plugin_harness("fixture-material-replace", &green)
+    else {
+        return;
+    };
+    let set_red = red(Some(id)).with_param("colour", [0.9f32, 0.0, 0.0]);
+    let before = three_quads(
+        &mut harness,
+        mesh_id,
+        [red(Some(id)), set_red, red(None)],
+        1,
+    );
+    assert!(
+        before[0][1] > before[0][0] + 40,
+        "premise: green, got {before:?}"
+    );
+
+    assert!(
+        harness
+            .renderer
+            .resources_mut()
+            .replace_material_plugin(&harness.device, id, &Broken)
+            .is_err(),
+        "an invalid replacement is refused"
+    );
+    let kept = three_quads(
+        &mut harness,
+        mesh_id,
+        [red(Some(id)), set_red, red(None)],
+        2,
+    );
+    assert_eq!(kept, before, "a refused replacement changes nothing");
+
+    let blue = FlatColourMaterialPlugin::new("fixture_replaced", [0.0, 0.0, 0.9]);
+    harness
+        .renderer
+        .resources_mut()
+        .replace_material_plugin(&harness.device, id, &blue)
+        .expect("replace");
+    let stats = harness.renderer.resources().material_plugin_stats();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].id, id, "the replaced plugin keeps its id");
+    let after = three_quads(
+        &mut harness,
+        mesh_id,
+        [red(Some(id)), set_red, red(None)],
+        3,
+    );
+    assert!(
+        after[0][2] > after[0][1] + 40,
+        "a material on the defaults now reads the new default, blue: got {:?}",
+        after[0]
+    );
+    assert!(
+        near(after[1], before[1]),
+        "a value the material set carries over by name: {:?} vs {:?}",
+        after[1],
+        before[1]
+    );
+    assert!(near(after[2], before[2]), "the stock quad is untouched");
+}
+
 // Keep `wgpu` named so this binary resolves the same leg as the crate.
 const _: Option<wgpu::TextureFormat> = None;
