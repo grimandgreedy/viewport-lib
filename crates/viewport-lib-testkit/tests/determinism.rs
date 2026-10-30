@@ -20,7 +20,15 @@
 //! on some runs: a real, every-frame order dependence can read as an occasional
 //! one-pixel flicker. Comparing floats reports it wherever it occurs, every
 //! time.
+//!
+//! A scene with an entry in the adapter's `tolerances.txt` (the same reference
+//! directory the snapshot suite uses) is held to that tolerance instead of
+//! bit-identity: a pixel counts as moved when a channel differs by more than
+//! `max_channel_delta` on the 0..255 scale, and the scene passes while no more
+//! than `max_pixels_over` pixels move. Scenes without an entry stay exact.
 
+use std::path::Path;
+use viewport_lib_testkit::golden::{self, Tolerance};
 use viewport_lib_testkit::{Harness, catalogue, frame_for};
 
 const W: u32 = 400;
@@ -52,6 +60,15 @@ fn diff(a: &[[f32; 4]], b: &[[f32; 4]]) -> (f32, u64) {
     (worst, moved)
 }
 
+/// Pixels with any channel differing by more than `tol.max_channel_delta / 255`.
+fn pixels_over(a: &[[f32; 4]], b: &[[f32; 4]], tol: Tolerance) -> u64 {
+    let limit = f32::from(tol.max_channel_delta) / 255.0;
+    a.iter()
+        .zip(b.iter())
+        .filter(|(pa, pb)| (0..4).any(|c| (pa[c] - pb[c]).abs() > limit))
+        .count() as u64
+}
+
 // Ignored by default: this is a diagnostic to run deliberately on the reference
 // adapter when measuring or updating the tolerance manifest, not a per-commit
 // gate. Its result is adapter-specific and it renders the whole catalogue twice,
@@ -69,6 +86,12 @@ fn scenes_render_deterministically() {
         return;
     };
 
+    let tolerances = golden::load_tolerances(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/snapshots")
+            .join(harness.backend_dir_name())
+            .join("tolerances.txt"),
+    );
     let mut nondeterministic: Vec<String> = Vec::new();
 
     for scene in catalogue() {
@@ -81,7 +104,27 @@ fn scenes_render_deterministically() {
         let second = harness.render_float(&frame, W, H);
 
         let (worst, moved) = diff(&first, &second);
-        if moved != 0 {
+        if moved == 0 {
+            continue;
+        }
+        if let Some(&tol) = tolerances.get(scene.name) {
+            let over = pixels_over(&first, &second, tol);
+            if over <= tol.max_pixels_over {
+                eprintln!(
+                    "{}: within tolerance (pixels_moved={moved}, over={over}, allowed: \
+                     delta<={}, over<={})",
+                    scene.name, tol.max_channel_delta, tol.max_pixels_over
+                );
+            } else {
+                nondeterministic.push(format!(
+                    "{}: pixels_over={over}/{} exceeds tolerance (delta<={}, over<={})",
+                    scene.name,
+                    (W * H) as u64,
+                    tol.max_channel_delta,
+                    tol.max_pixels_over
+                ));
+            }
+        } else {
             nondeterministic.push(format!(
                 "{}: worst_relative_difference={worst:.6} pixels_moved={moved}/{}",
                 scene.name,
@@ -92,8 +135,8 @@ fn scenes_render_deterministically() {
 
     if nondeterministic.is_empty() {
         eprintln!(
-            "all catalogue scenes render bit-identically twice on this adapter \
-             (half-float target)"
+            "all catalogue scenes render bit-identically twice on this adapter, or \
+             within their tolerance (half-float target)"
         );
     }
     assert!(

@@ -122,8 +122,9 @@ jobs:
       - name: Library headless tests
         run: cargo test --release -p viewport-lib --tests
 
-      # The golden policy rests on scenes rendering bit-identically twice, so
-      # this runs before anything compares pixels.
+      # The golden policy rests on scenes rendering bit-identically twice (or
+      # within their tolerances.txt entry), so this runs before anything
+      # compares pixels.
       - name: Determinism probe
         working-directory: crates/viewport-lib-testkit
         run: cargo test --release --test determinism -- --ignored --nocapture
