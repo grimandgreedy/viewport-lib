@@ -31,9 +31,6 @@ pub struct RenderCamera {
     pub near: f32,
     /// Far clip plane distance. Default: 1000.0.
     pub far: f32,
-    /// Orbit distance from camera to scene center (world units). Default: 10.0.
-    /// Used internally to derive shadow cascade range so shadow quality tracks zoom level.
-    pub distance: f32,
     /// Vertical field of view in radians. Default: PI/4.
     pub fov: f32,
     /// Aspect ratio (width / height). Default: 1.333.
@@ -183,13 +180,6 @@ impl RenderCamera {
         self.projection.y_axis.y / self.projection.x_axis.x
     }
 
-    /// Orbit distance from the eye to the scene centre (world units).
-    ///
-    /// Not recoverable from the matrices; returns the stored field.
-    pub fn distance(&self) -> f32 {
-        self.distance
-    }
-
     /// Vertical field of view for the renderer's size and frustum maths: the
     /// stored `fov` field, for both projections.
     ///
@@ -232,7 +222,6 @@ impl RenderCamera {
             far: cam.effective_zfar(),
             fov: cam.fov_y,
             aspect: cam.aspect,
-            distance: cam.distance,
         }
     }
 }
@@ -249,7 +238,6 @@ impl Default for RenderCamera {
             far: 1000.0,
             fov: std::f32::consts::FRAC_PI_4,
             aspect: 1.333,
-            distance: 10.0,
         }
     }
 }
