@@ -120,6 +120,7 @@
 - **`FrameStats::notices`** - the notices waiting for `take_notices`, by severity, plus the dropped count.
 - **`ItemFrameContext::report_notice`** - an item type reports a condition under a key of its own; it reaches the host as `NoticeDetail::Plugin` and coalesces like the renderer's own notices.
 - **Tracing spans on the `viewport_lib::frame` target** - `debug` spans around `prepare`, `prepare_scene`, `prepare_viewport` (`vp`), the prepare phases (`plugin_prepare`, `plugin_cull`, `lighting`, `uniforms`, `instancing`, `geometry`, `shadow`, `overlay`), each item type's prepare (`item_plugin_prepare`, `plugin`), `render` and `paint` (`vp`), the scene, OIT, post, overlay and cull passes, `process_uploads` (`bytes`), each upload job on its worker (`upload_job`) and each pipeline compile on the compile pool (`pipeline_compile`). At the default `info` level they cost a cached filter check; enable `viewport_lib::frame=debug` in a subscriber such as `tracing-tracy` or `tracing-chrome` to see a frame's timeline.
+- **`shared_wgsl::SHARED_SHADOW_ATLAS_WGSL`** - the `ShadowAtlas` struct `SHARED_CSM_WGSL` reads through `shadow_atlas`, for a body that declares its own group-0 bindings. Compose it in place of a copy of the struct.
 
 ### Changed
 
