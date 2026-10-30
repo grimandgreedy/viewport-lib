@@ -33,6 +33,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
                 &[
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
+                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
                 ],
                 wgsl_source!("ribbon"),
             ),
@@ -43,6 +44,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
                 &[
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
+                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
                 ],
                 wgsl_source!("ribbon_oit"),
             ),

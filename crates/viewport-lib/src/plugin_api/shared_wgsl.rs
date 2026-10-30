@@ -106,6 +106,15 @@ pub const SHARED_SCENE_LIGHTING_WGSL: &str =
 /// already composing the clustered lighting path.
 pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/csm.wgsl"));
 
+/// The `ShadowAtlas` struct: the cascade shadow uniform at group 0 binding 5.
+///
+/// For a body that declares its own group-0 bindings and binds
+/// `shadow_atlas: ShadowAtlas` for [`SHARED_CSM_WGSL`]. It declares the struct
+/// only, no binding, so compose it once next to the body that binds it.
+/// [`SHARED_BINDINGS_WGSL`] users do not need it.
+pub const SHARED_SHADOW_ATLAS_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/shadow_atlas.wgsl"));
+
 /// The section-view clip-volume test, for a body that declares its own group-0
 /// bindings.
 ///

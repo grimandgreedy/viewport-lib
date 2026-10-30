@@ -52,16 +52,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Shadow atlas uniform : 416 bytes.
-struct ShadowAtlas {
-    cascade_vp: array<mat4x4<f32>, 4>,   // 256 bytes
-    cascade_splits: vec4<f32>,            //  16 bytes
-    cascade_count: u32,                   //   4 bytes
-    atlas_size: f32,                      //   4 bytes
-    shadow_filter: u32,                   //   4 bytes (0=PCF, 1=PCSS)
-    pcss_light_radius: f32,               //   4 bytes
-    atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
-};
+// #include "helpers/shadow_atlas.wgsl"
 
 // Per-object uniform. Layout mirrors the renderer's `ObjectUniform`
 // (320 bytes); keep the field offsets in sync with its doc table.

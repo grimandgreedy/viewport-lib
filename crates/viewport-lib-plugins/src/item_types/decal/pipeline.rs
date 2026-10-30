@@ -15,6 +15,7 @@ pub(super) fn decal_source() -> String {
     lit_shader(
         &[
             shared_wgsl::SHARED_CSM_WGSL,
+            shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
             shared_wgsl::SHARED_BRDF_WGSL,
             shared_wgsl::SHARED_DEPTH_TEXEL_WGSL,
         ],

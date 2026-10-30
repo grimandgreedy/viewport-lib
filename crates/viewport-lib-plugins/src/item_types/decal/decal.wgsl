@@ -33,15 +33,7 @@ struct Camera {
 @group(0) @binding(1) var shadow_map:     texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 
-struct ShadowAtlas {
-    cascade_vp: array<mat4x4<f32>, 4>,
-    cascade_splits: vec4<f32>,
-    cascade_count: u32,
-    atlas_size: f32,
-    shadow_filter: u32,
-    pcss_light_radius: f32,
-    atlas_rects: array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 @group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).

@@ -50,8 +50,8 @@ pub(crate) fn scene_shader(extra: &[&str], body: &str) -> String {
 /// declares the camera and the `Lights` uniform itself rather than taking
 /// `SHARED_BINDINGS_WGSL`. That also means it cannot reach the clip and
 /// shadow helpers the shared bindings carry, so `extra` names the standalone
-/// catalogue constants that supply them: `SHARED_CLIP_VOLUME_WGSL` and
-/// `SHARED_CSM_WGSL`.
+/// catalogue constants that supply them: `SHARED_CLIP_VOLUME_WGSL`, and
+/// `SHARED_CSM_WGSL` with `SHARED_SHADOW_ATLAS_WGSL` for the struct it reads.
 pub(crate) fn lit_shader(extra: &[&str], body: &str) -> String {
     let mut out = String::with_capacity(
         shared_wgsl::SHARED_SCENE_LIGHTING_WGSL.len()

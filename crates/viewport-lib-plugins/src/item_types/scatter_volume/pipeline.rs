@@ -25,11 +25,14 @@ use super::volume::{ColourSource, MAX_SCATTER_VOLUMES, ScatterVolume};
 use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
 use viewport_lib::plugin_api::shared_wgsl;
 
-/// The ray-march shader: the scene-lighting section and the depth read in
-/// front of the volume body.
+/// The ray-march shader: the scene-lighting section, the shadow atlas struct
+/// and the depth read in front of the volume body.
 pub(super) fn volume_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_DEPTH_TEXEL_WGSL],
+        &[
+            shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+            shared_wgsl::SHARED_DEPTH_TEXEL_WGSL,
+        ],
         wgsl_source!("scatter_volume"),
     )
 }

@@ -23,6 +23,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     let lit_extra = [
         shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
         shared_wgsl::SHARED_CSM_WGSL,
+        shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
     ];
     vec![
         ("sprite.wgsl", scene_shader(&[], wgsl_source!("sprite"))),
