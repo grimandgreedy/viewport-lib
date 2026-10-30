@@ -37,6 +37,7 @@ pub use picking::{
 };
 mod capture;
 mod config;
+mod frame_clock;
 mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
@@ -94,7 +95,7 @@ pub use self::types::{
     ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings,
     EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
     ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
-    GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    FrameTime, GlyphRunItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
     OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
@@ -596,6 +597,8 @@ pub struct ViewportRenderer {
     last_prepare_instant: Option<web_time::Instant>,
     /// Frame counter incremented each `prepare()` call.
     frame_counter: u64,
+    /// Monotonic clock and the time the current frame renders at.
+    frame_clock: frame_clock::FrameClock,
     /// Current LOD level per item, keyed by pick id, carried across frames so
     /// level switches use hysteresis. Items without a pick id are not tracked
     /// here and resolve fresh each frame. Pruned to the items seen each frame.
@@ -1106,6 +1109,7 @@ impl ViewportRenderer {
             current_render_scale: 1.0,
             last_prepare_instant: None,
             frame_counter: 0,
+            frame_clock: frame_clock::FrameClock::new(),
             lod_levels: std::collections::HashMap::new(),
             mesh_instance_lod_levels: std::collections::HashMap::new(),
             pick_scene_items: Vec::new(),

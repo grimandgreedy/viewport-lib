@@ -675,6 +675,7 @@ pub use self::items::*;
 pub use self::lighting::*;
 pub use self::overlay::*;
 pub use self::postprocess::*;
+pub use viewport_lib_types::frame_time::FrameTime;
 // ---------------------------------------------------------------------------
 
 /// All data needed to render one frame of the viewport.
@@ -697,6 +698,11 @@ pub struct FrameData {
     /// Screen-space overlays rendered after post-processing (shapes, labels,
     /// glyph runs, polylines).
     pub overlays: OverlayFrame,
+    /// The time this frame renders at, read by time-driven shaders through
+    /// the camera uniform and the deform header. `None` (the default) uses
+    /// the renderer's monotonic clock, started when it was created; set a
+    /// fixed time when two renders must match exactly.
+    pub time: Option<FrameTime>,
 }
 
 impl Default for FrameData {
@@ -708,6 +714,7 @@ impl Default for FrameData {
             interaction: InteractionFrame::default(),
             effects: EffectsFrame::default(),
             overlays: OverlayFrame::default(),
+            time: None,
         }
     }
 }
@@ -750,6 +757,12 @@ impl FrameData {
             interaction: InteractionFrame::from_selection(selection),
             ..Self::default()
         }
+    }
+
+    /// Render this frame at `time` instead of the renderer's clock.
+    pub fn with_time(mut self, time: FrameTime) -> Self {
+        self.time = Some(time);
+        self
     }
 
     /// Set the viewport background clear colour.

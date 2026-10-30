@@ -168,6 +168,15 @@ impl ViewportRenderer {
             self.ensure_frame_pipelines(device, frame);
         }
 
+        // The time this frame renders at, for the camera uniform and the
+        // deform header.
+        let time = self.frame_clock.resolve(
+            frame.time,
+            self.render_advances_state(),
+            self.frame_counter,
+        );
+        self.resources.feed_deform_time(queue, time.seconds as f32);
+
         // A glyph atlas that filled up last frame is cleared here, before any
         // text this frame is laid out against it. A derivative render leaves it
         // alone: the presented frame it runs beside may still draw the old cells.

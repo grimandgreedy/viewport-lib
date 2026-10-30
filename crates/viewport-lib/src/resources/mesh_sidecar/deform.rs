@@ -262,6 +262,9 @@ pub(crate) struct DeformationState {
     pub header_buffer: crate::gpu::Buffer,
     pub meshes: HashMap<MeshId, MeshDeform>,
     pub header_cpu: DeformHeader,
+    /// Set by `set_deform_time`: the header keeps the host's time and the
+    /// frame time no longer feeds it.
+    pub time_pinned: bool,
     /// Currently registered deformers, in registration order.
     pub registrations: Vec<StoredDeformer>,
     /// Bit per slot whose registered body defines the optional `keep` hook.
@@ -306,6 +309,7 @@ impl DeformationState {
             header_buffer,
             meshes: HashMap::new(),
             header_cpu,
+            time_pinned: false,
             registrations: Vec::new(),
             keep_slots: 0,
             external_source_count: 0,
@@ -580,16 +584,44 @@ fn build_external_source(
 impl DeviceResources {
     /// Write the shared header uniform's `time_seconds` field. Cheap; safe to
     /// call per frame.
+    ///
+    /// Without this the header follows the frame time (`FrameData::time`, or
+    /// the renderer's clock). Once called, the value set here wins until
+    /// [`clear_deform_time`](Self::clear_deform_time).
     pub fn set_deform_time(&mut self, queue: &crate::gpu::Queue, time_seconds: f32) {
         if !self.scene_tier.is_built() {
             return;
         }
+        self.scene_tier.deform.time_pinned = true;
         self.scene_tier.deform.header_cpu.time_seconds = time_seconds;
         queue.write_buffer(
             &self.scene_tier.deform.header_buffer,
             0,
             bytemuck::bytes_of(&self.scene_tier.deform.header_cpu),
         );
+    }
+
+    /// Undo [`set_deform_time`](Self::set_deform_time): the header follows the
+    /// frame time again from the next prepare.
+    pub fn clear_deform_time(&mut self) {
+        if self.scene_tier.is_built() {
+            self.scene_tier.deform.time_pinned = false;
+        }
+    }
+
+    /// Feed the frame time into the header unless the host pinned its own.
+    /// Writes only when the value changes.
+    pub(crate) fn feed_deform_time(&mut self, queue: &crate::gpu::Queue, time_seconds: f32) {
+        if !self.scene_tier.is_built() {
+            return;
+        }
+        let deform = &mut self.scene_tier.deform;
+        if deform.time_pinned || deform.header_cpu.time_seconds.to_bits() == time_seconds.to_bits()
+        {
+            return;
+        }
+        deform.header_cpu.time_seconds = time_seconds;
+        queue.write_buffer(&deform.header_buffer, 0, bytemuck::bytes_of(&time_seconds));
     }
 
     /// Write the four `vec4<f32>` parameter words for one slot in the shared

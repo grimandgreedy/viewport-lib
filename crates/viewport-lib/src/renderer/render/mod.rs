@@ -1072,6 +1072,10 @@ impl ViewportRenderer {
     /// preview / thumbnail *alongside* a main presented frame and do not want it
     /// to touch that frame's state, use
     /// [`render_offscreen_snapshot`](Self::render_offscreen_snapshot).
+    ///
+    /// A frame that leaves `FrameData::time` at `None` renders at
+    /// `FrameTime::fixed(0.0)` here, not the renderer's clock, so two captures
+    /// of one frame match.
     pub fn render_offscreen(
         &mut self,
         device: &crate::gpu::Device,
@@ -1114,7 +1118,11 @@ impl ViewportRenderer {
         //    The caller must set `frame.camera.viewport_size` to `[width as f32, height as f32]`
         //    and build `frame.camera.render_camera.projection` with aspect `width / height`
         //    for correct HDR target allocation and scissor rects.
+        //    A frame without its own time renders at `FrameTime::fixed(0.0)`
+        //    so captures are reproducible.
+        let prev_fixed = self.frame_clock.set_fixed_fallback(true);
         let cmd_buf = self.render(device, queue, &output_view, frame);
+        self.frame_clock.set_fixed_fallback(prev_fixed);
         queue.submit(std::iter::once(cmd_buf));
 
         // 5. Copy texture -> staging buffer (wgpu requires row alignment to 256 bytes).
