@@ -887,3 +887,53 @@ fn clip_overflow(viewport_fx: &ViewportEffects<'_>) -> Option<(u32, u32)> {
     }
     (planes > 6 || volumes as usize > CLIP_VOLUME_MAX).then_some((planes, volumes))
 }
+
+#[cfg(test)]
+mod clip_plane_tests {
+    use super::*;
+    use crate::renderer::types::{ClipObject, EffectsFrame};
+
+    fn effects(objects: Vec<ClipObject>) -> EffectsFrame {
+        let mut fx = EffectsFrame::default();
+        fx.clip.objects = objects;
+        fx
+    }
+
+    /// A plane that does not clip, or is disabled, takes no slot, so the cap
+    /// indices match the clip-plane uniform.
+    #[test]
+    fn plane_indices_skip_non_clipping_objects() {
+        let mut inert = ClipObject::plane([0.0, 1.0, 0.0], 0.0);
+        inert.clip_geometry = false;
+        let mut off = ClipObject::plane([0.0, 0.0, 1.0], 0.0);
+        off.enabled = false;
+        let fx = effects(vec![
+            inert,
+            ClipObject::plane([1.0, 0.0, 0.0], 1.0),
+            off,
+            ClipObject::sphere([0.0; 3], 1.0),
+            ClipObject::plane([-1.0, 0.0, 0.0], 2.0),
+        ]);
+        let (_, vfx) = fx.split();
+        let planes: Vec<(u32, f32)> = clipping_planes(&vfx).map(|(i, _, d, _)| (i, d)).collect();
+        assert_eq!(planes, vec![(0, 1.0), (1, 2.0)]);
+        assert_eq!(clip_overflow(&vfx), None);
+    }
+
+    #[test]
+    fn overflow_counts_clipping_objects() {
+        let mut objects: Vec<ClipObject> = (0..7)
+            .map(|i| ClipObject::plane([1.0, 0.0, 0.0], i as f32))
+            .collect();
+        let mut inert = ClipObject::sphere([0.0; 3], 1.0);
+        inert.clip_geometry = false;
+        objects.push(inert);
+        let fx = effects(objects);
+        let (_, vfx) = fx.split();
+        assert_eq!(clipping_planes(&vfx).count(), 6);
+        assert_eq!(clip_overflow(&vfx), Some((7, 0)));
+
+        let fx = effects((0..5).map(|_| ClipObject::sphere([0.0; 3], 1.0)).collect());
+        assert_eq!(clip_overflow(&fx.split().1), Some((0, 5)));
+    }
+}
