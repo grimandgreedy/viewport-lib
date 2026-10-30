@@ -114,13 +114,9 @@ impl ManipulationSystem {
             if let (Some(center), Some(cursor)) = (self.gizmo_center, frame.cursor_viewport) {
                 let w = frame.viewport_size.x.max(1.0);
                 let h = frame.viewport_size.y.max(1.0);
-                let view_proj = frame.camera.proj_matrix() * frame.camera.view_matrix();
-                let inv_vp = view_proj.inverse();
                 let ndc_x = (cursor.x / w) * 2.0 - 1.0;
                 let ndc_y = 1.0 - (cursor.y / h) * 2.0;
-                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                let ray_origin = frame.camera.eye_position();
-                let ray_dir = (far - ray_origin).normalize_or_zero();
+                let (ray_origin, ray_dir) = frame.camera.screen_ray(glam::Vec2::new(ndc_x, ndc_y));
                 self.gizmo.hovered_axis = self.gizmo.hit_test_oriented(
                     ray_origin,
                     ray_dir,

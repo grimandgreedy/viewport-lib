@@ -24,8 +24,11 @@ use crate::resources::CameraUniform;
 pub struct RenderCamera {
     view: glam::Mat4,
     projection: glam::Mat4,
+    culling_projection: glam::Mat4,
     pose: CameraPose,
     lens: CameraLens,
+    /// Near and far read from `culling_projection`.
+    culling_range: (f32, f32),
     depth_override: Option<(f32, f32)>,
 }
 
@@ -56,7 +59,10 @@ impl CameraPose {
 #[derive(Debug, Clone, Copy)]
 struct CameraLens {
     orthographic: bool,
+    /// Depth runs from 1 at the near plane to 0 at the far plane.
+    reversed: bool,
     near: f32,
+    /// `f32::INFINITY` for a perspective projection with no far plane.
     far: f32,
     aspect: f32,
     vertical_fov: Option<f32>,
@@ -68,17 +74,30 @@ impl CameraLens {
     fn from_projection(p: glam::Mat4) -> Self {
         let orthographic = p.w_axis.w != 0.0;
         let (a, b) = (p.z_axis.z, p.w_axis.z);
-        let (near, far) = if orthographic {
+        // Standard depth has a negative z scale, reversed depth a positive
+        // one (zero for an infinite reversed perspective).
+        let reversed = a >= 0.0;
+        let (near, far) = match (orthographic, reversed) {
             // a = 1 / (near - far), b = near / (near - far)
-            let near = b / a;
-            (near, near - 1.0 / a)
-        } else {
+            (true, false) => {
+                let near = b / a;
+                (near, near - 1.0 / a)
+            }
+            // a = 1 / (far - near), b = far / (far - near)
+            (true, true) => ((b - 1.0) / a, b / a),
             // a = far / (near - far), b = near * far / (near - far)
-            (b / a, b / (a + 1.0))
+            (false, false) => (b / a, b / (a + 1.0)),
+            // a = near / (far - near), b = near * far / (far - near); a = 0
+            // and b = near with no far plane.
+            (false, true) => {
+                let far = if a == 0.0 { f32::INFINITY } else { b / a };
+                (b / (a + 1.0), far)
+            }
         };
         let vertical_fov = (!orthographic).then(|| 2.0 * (1.0 / p.y_axis.y).atan());
         Self {
             orthographic,
+            reversed,
             near,
             far,
             aspect: p.y_axis.y / p.x_axis.x,
@@ -88,23 +107,70 @@ impl CameraLens {
     }
 }
 
+/// Far distance assumed for a projection with no far plane when the host
+/// gives no range: this many times the near distance.
+const INFINITE_FAR_RATIO: f32 = 10_000.0;
+
+/// `projection` with its depth row replaced by standard 0..1 depth between
+/// `near` and `far`, keeping the x, y and w rows.
+fn standard_depth_projection(projection: glam::Mat4, near: f32, far: f32) -> glam::Mat4 {
+    let orthographic = projection.w_axis.w != 0.0;
+    let (a, b) = if orthographic {
+        (1.0 / (near - far), near / (near - far))
+    } else {
+        (far / (near - far), near * far / (near - far))
+    };
+    let mut p = projection;
+    p.x_axis.z = 0.0;
+    p.y_axis.z = 0.0;
+    p.z_axis.z = a;
+    p.w_axis.z = b;
+    p
+}
+
 impl RenderCamera {
     /// Build a camera from a world-to-view matrix and a view-to-clip
     /// projection matrix.
     ///
     /// The projection is expected to be right-handed with 0..1 depth, as built
-    /// by glam's `perspective_rh` or `orthographic_rh`. For a projection whose
-    /// near and far planes cannot be read back (reversed-Z, infinite far,
-    /// oblique near plane), follow with
+    /// by glam's `perspective_rh` or `orthographic_rh`. Its near and far
+    /// planes are read back for [`depth_range`](Self::depth_range); for a
+    /// projection with no far plane or an oblique near plane, follow with
     /// [`with_depth_range`](Self::with_depth_range).
     pub fn from_matrices(view: glam::Mat4, projection: glam::Mat4) -> Self {
-        Self {
+        let mut cam = Self {
             view,
             projection,
+            culling_projection: projection,
             pose: CameraPose::from_view(view),
             lens: CameraLens::from_projection(projection),
+            culling_range: (0.0, 0.0),
             depth_override: None,
-        }
+        };
+        cam.derive_culling();
+        cam
+    }
+
+    /// Rebuild the culling projection from the projection and the depth
+    /// range. A finite standard-depth projection with no range set is its
+    /// own culling projection.
+    fn derive_culling(&mut self) {
+        let lens = self.lens;
+        let finite = lens.far.is_finite();
+        self.culling_projection = match self.depth_override {
+            None if !lens.reversed && finite => self.projection,
+            Some((near, far)) => standard_depth_projection(self.projection, near, far),
+            None => {
+                let far = if finite {
+                    lens.far
+                } else {
+                    lens.near * INFINITE_FAR_RATIO
+                };
+                standard_depth_projection(self.projection, lens.near, far)
+            }
+        };
+        let culling = CameraLens::from_projection(self.culling_projection);
+        self.culling_range = (culling.near, culling.far);
     }
 
     /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera).
@@ -120,19 +186,24 @@ impl RenderCamera {
         rc.pose.eye = eye;
         rc.pose.forward = (cam.center - eye).normalize_or_zero();
         rc.lens.fov_y = cam.fov_y;
+        rc.culling_projection = cam.culling_proj_matrix();
+        let culling = CameraLens::from_projection(rc.culling_projection);
+        rc.culling_range = (culling.near, culling.far);
         rc
     }
 
     /// Report `near` and `far` from [`depth_range`](Self::depth_range) instead
     /// of the values read from the projection.
     ///
-    /// For a projection the read-back cannot handle: reversed-Z, an infinite
-    /// far plane or an oblique near plane. The projection itself is not
-    /// changed; the range feeds shadow cascade fitting, clustered light
-    /// slicing and depth picking. A later [`set_projection`](Self::set_projection)
-    /// clears it.
+    /// For a projection the read-back cannot handle, such as an oblique near
+    /// plane, or to give a projection with no far plane a far distance. The
+    /// projection itself is not changed; the range sets the
+    /// [`culling_projection`](Self::culling_projection) and feeds shadow
+    /// cascade fitting, clustered light slicing and depth picking. A later
+    /// [`set_projection`](Self::set_projection) clears it.
     pub fn with_depth_range(mut self, near: f32, far: f32) -> Self {
         self.depth_override = Some((near, far));
+        self.derive_culling();
         self
     }
 
@@ -158,6 +229,47 @@ impl RenderCamera {
         self.projection = projection;
         self.lens = CameraLens::from_projection(projection);
         self.depth_override = None;
+        self.derive_culling();
+    }
+
+    /// A finite projection with standard 0..1 depth over the same view as
+    /// [`projection`](Self::projection), between the near and far of
+    /// [`depth_range`](Self::depth_range).
+    ///
+    /// For CPU work that needs both a near and a far plane: frustum planes,
+    /// culling and cascade fitting. Do not draw with it.
+    pub fn culling_projection(&self) -> glam::Mat4 {
+        self.culling_projection
+    }
+
+    /// [`culling_projection`](Self::culling_projection) times the view
+    /// matrix. Build CPU frustums from this rather than
+    /// [`view_proj`](Self::view_proj).
+    pub fn culling_view_proj(&self) -> glam::Mat4 {
+        self.culling_projection * self.view
+    }
+
+    /// The world-space ray through a point on screen, as `(origin, direction)`
+    /// with a unit direction.
+    ///
+    /// `ndc` is the point in normalised device coordinates: -1..1 left to
+    /// right and bottom to top. A perspective ray starts at the eye; an
+    /// orthographic ray starts on the near plane and runs along the view
+    /// direction. Works for any projection, including one with no far plane.
+    pub fn screen_ray(&self, ndc: glam::Vec2) -> (glam::Vec3, glam::Vec3) {
+        let near_ndc = if self.lens.reversed { 1.0 } else { 0.0 };
+        let on_near = self
+            .projection
+            .inverse()
+            .project_point3(glam::Vec3::new(ndc.x, ndc.y, near_ndc));
+        let inv_view = self.view.inverse();
+        if self.is_orthographic() {
+            let dir = (-inv_view.z_axis.truncate()).normalize();
+            (inv_view.transform_point3(on_near), dir)
+        } else {
+            let dir = inv_view.transform_vector3(on_near).normalize();
+            (self.pose.eye, dir)
+        }
     }
 
     /// Build the GPU-facing camera uniform from this camera's state.
@@ -178,6 +290,8 @@ impl RenderCamera {
             viewport: [0.0; 4],
             clip: {
                 let (near, far) = self.depth_range();
+                // Far is 0 for a projection with no far plane.
+                let far = if self.lens.far.is_finite() { far } else { 0.0 };
                 [near, far, f32::from(u8::from(self.is_orthographic())), 0.0]
             },
             time: [0.0; 4],
@@ -228,14 +342,17 @@ impl RenderCamera {
     /// [`with_depth_range`](Self::with_depth_range), or else the planes read
     /// from the projection.
     ///
-    /// The read-back expects a right-handed, 0..1 depth projection as built by
-    /// glam's `perspective_rh` or `orthographic_rh`. A perspective far plane
-    /// keeps only about `f32::EPSILON * far / near` of relative precision.
+    /// The read-back takes a right-handed projection with standard or
+    /// reversed 0..1 depth. For a projection with no far plane, far is
+    /// 10,000 times near unless a range is set. A camera built with
+    /// [`from_camera`](Self::from_camera) reports the camera's own near and
+    /// far. A perspective far plane read from a matrix keeps only about
+    /// `f32::EPSILON * far / near` of relative precision.
     pub fn depth_range(&self) -> (f32, f32) {
         if let Some(range) = self.depth_override {
             return range;
         }
-        let (near, far) = (self.lens.near, self.lens.far);
+        let (near, far) = self.culling_range;
         debug_assert!(
             self.lens.orthographic || (near > 0.0 && near < far),
             "perspective depth range is not 0 < near < far: ({near}, {far}); \

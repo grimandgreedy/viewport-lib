@@ -246,11 +246,6 @@ impl Camera {
         glam::Mat4::look_at_rh(eye, self.center, up)
     }
 
-    /// Right-handed projection matrix (wgpu depth 0..1).
-    ///
-    /// In orthographic mode the viewing volume is derived from `distance` and
-    /// `fov_y` so that switching between perspective and orthographic at the
-    /// same distance produces a similar framing.
     /// Effective far-plane distance : `zfar` floored to `distance * 3` so the
     /// far plane always extends past the orbit centre regardless of zoom level.
     pub fn effective_zfar(&self) -> f32 {
@@ -269,8 +264,23 @@ impl Camera {
             .unwrap_or_else(|| self.effective_zfar() / 10_000.0)
     }
 
-    /// Returns the projection matrix for the current camera state.
+    /// The projection matrix the renderer draws with: right-handed, 0..1 depth.
+    ///
+    /// In orthographic mode the viewing volume is derived from `distance` and
+    /// `fov_y` so that switching between perspective and orthographic at the
+    /// same distance produces a similar framing.
     pub fn proj_matrix(&self) -> glam::Mat4 {
+        self.culling_proj_matrix()
+    }
+
+    /// A finite projection over the same view as [`proj_matrix`](Self::proj_matrix),
+    /// with standard depth (near at 0, far at 1) between
+    /// [`effective_znear`](Self::effective_znear) and
+    /// [`effective_zfar`](Self::effective_zfar).
+    ///
+    /// For CPU work that needs both a near and a far plane: frustum planes,
+    /// culling and cascade fitting. Do not draw with it.
+    pub fn culling_proj_matrix(&self) -> glam::Mat4 {
         let effective_znear = self.effective_znear();
         let effective_zfar = self.effective_zfar();
         match self.projection {
@@ -298,6 +308,41 @@ impl Camera {
         self.proj_matrix() * self.view_matrix()
     }
 
+    /// [`culling_proj_matrix`](Self::culling_proj_matrix) times the view matrix.
+    pub fn culling_view_proj_matrix(&self) -> glam::Mat4 {
+        self.culling_proj_matrix() * self.view_matrix()
+    }
+
+    /// The world-space ray through a point on screen, as `(origin, direction)`
+    /// with a unit direction.
+    ///
+    /// `ndc` is the point in normalised device coordinates: -1..1 left to
+    /// right and bottom to top. A perspective ray starts at the eye; an
+    /// orthographic ray starts on the near plane and runs along
+    /// [`forward`](Self::forward).
+    pub fn screen_ray(&self, ndc: glam::Vec2) -> (glam::Vec3, glam::Vec3) {
+        let forward = self.forward();
+        let right = self.right();
+        let up = self.up();
+        let tan_half = (self.fov_y / 2.0).tan();
+        match self.projection {
+            Projection::Perspective => {
+                let dir =
+                    forward + right * (ndc.x * tan_half * self.aspect) + up * (ndc.y * tan_half);
+                (self.eye_position(), dir.normalize())
+            }
+            Projection::Orthographic => {
+                let half_h = self.distance * tan_half;
+                let half_w = half_h * self.aspect;
+                let origin = self.eye_position()
+                    + right * (ndc.x * half_w)
+                    + up * (ndc.y * half_h)
+                    + forward * self.effective_znear();
+                (origin, forward)
+            }
+        }
+    }
+
     /// The direction the camera looks, in world space: from the eye toward
     /// the centre.
     pub fn forward(&self) -> glam::Vec3 {
@@ -314,9 +359,9 @@ impl Camera {
         self.orientation * glam::Vec3::Y
     }
 
-    /// Extract the view frustum from the current view-projection matrix.
+    /// The view frustum, from [`culling_view_proj_matrix`](Self::culling_view_proj_matrix).
     pub fn frustum(&self) -> crate::camera::frustum::Frustum {
-        crate::camera::frustum::Frustum::from_view_proj(&self.view_proj_matrix())
+        crate::camera::frustum::Frustum::from_view_proj(&self.culling_view_proj_matrix())
     }
 
     /// Compute `(center, distance)` that would frame a bounding sphere in view,
@@ -389,6 +434,45 @@ mod tests {
             "center should be in front of camera, z={}",
             center_view.z
         );
+    }
+
+    #[test]
+    fn screen_ray_through_the_centre_is_the_eye_and_forward() {
+        let cam = Camera::default();
+        let (origin, dir) = cam.screen_ray(glam::Vec2::ZERO);
+        assert!((origin - cam.eye_position()).length() < 1e-5);
+        assert!((dir - cam.forward()).length() < 1e-5);
+    }
+
+    #[test]
+    fn screen_ray_lands_on_its_screen_point() {
+        for projection in [Projection::Perspective, Projection::Orthographic] {
+            let cam = Camera {
+                projection,
+                ..Camera::default()
+            };
+            let ndc = glam::Vec2::new(0.6, -0.3);
+            let (origin, dir) = cam.screen_ray(ndc);
+            let p = cam
+                .culling_view_proj_matrix()
+                .project_point3(origin + dir * 3.0);
+            assert!(
+                (p.truncate() - ndc).length() < 1e-4,
+                "{projection:?}: {p:?} for {ndc:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn orthographic_screen_ray_starts_on_the_near_plane() {
+        let cam = Camera {
+            projection: Projection::Orthographic,
+            ..Camera::default()
+        };
+        let (origin, dir) = cam.screen_ray(glam::Vec2::new(-0.5, 0.25));
+        assert!((dir - cam.forward()).length() < 1e-6);
+        let depth = (origin - cam.eye_position()).dot(cam.forward());
+        assert!((depth - cam.effective_znear()).abs() < 1e-4, "{depth}");
     }
 
     #[test]
