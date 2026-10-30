@@ -73,6 +73,11 @@ impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
             weights: self.weights,
         })
     }
+
+    fn uninstall(handle: SkinnedMeshHandle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()> {
+        handle.uninstall(ctx);
+        Ok(())
+    }
 }
 
 /// Uploads joint palettes for the meshes a [`SkinnedMeshFeature`] drives.
@@ -91,6 +96,16 @@ impl SkinnedMeshHandle {
     /// palettes directly.
     pub fn skinning(&self) -> &SkinningPlugin {
         &self.skinning
+    }
+
+    /// Detach the skin weights of every mesh this handle skinned, consuming
+    /// it. See [`SkinningPlugin::uninstall`]: the skinning deformer itself
+    /// stays registered, so a later install reuses it. The runtime has no
+    /// call to remove a plugin, so the pose plugin stays on it and keeps
+    /// emitting updates that nothing drains.
+    pub fn uninstall(self, ctx: &mut PluginInstallCtx<'_>) {
+        self.skinning
+            .uninstall(ctx.renderer.resources_mut(), ctx.device);
     }
 
     /// Drain pose updates from `output` and upload them.
@@ -253,6 +268,41 @@ mod tests {
                 .deformer_id_by_name("viewport_skin")
                 .is_none(),
             "a missing runtime leaves the deformer unregistered"
+        );
+    }
+
+    #[test]
+    fn uninstall_detaches_the_skinned_meshes() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::geometry::primitives::cube(1.0))
+            .expect("upload");
+        let vertex_count = crate::geometry::primitives::cube(1.0).positions.len();
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 0, 0, 0]; vertex_count],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0]; vertex_count],
+        };
+        let mut runtime = ViewportRuntime::new();
+
+        let mut ctx = PluginInstallCtx::new(&device, &queue, Some(&mut runtime), &mut renderer);
+        let handle = SkinnedMeshFeature::new(gpu_skeleton_plugin(mesh_id))
+            .install(&mut ctx)
+            .expect("install");
+        let skinning = handle.skinning().clone();
+        skinning.attach_weights(ctx.renderer.resources_mut(), &device, mesh_id, &weights);
+        assert!(skinning.is_skinned_mesh(mesh_id));
+
+        SkinnedMeshFeature::<SkeletonPlugin>::uninstall(handle, &mut ctx).expect("uninstall");
+        assert!(
+            !skinning.is_skinned_mesh(mesh_id),
+            "uninstall detached the mesh's skin weights"
         );
     }
 
