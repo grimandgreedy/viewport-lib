@@ -52,16 +52,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Shadow atlas uniform : 416 bytes.
-struct ShadowAtlas {
-    cascade_vp: array<mat4x4<f32>, 4>,   // 256 bytes
-    cascade_splits: vec4<f32>,            //  16 bytes
-    cascade_count: u32,                   //   4 bytes
-    atlas_size: f32,                      //   4 bytes
-    shadow_filter: u32,                   //   4 bytes (0=PCF, 1=PCSS)
-    pcss_light_radius: f32,               //   4 bytes
-    atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
-};
+// #include "helpers/shadow_atlas.wgsl"
 
 // Per-object uniform. Layout mirrors the renderer's `ObjectUniform`
 // (320 bytes); keep the field offsets in sync with its doc table.
@@ -707,7 +698,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 // ---------------------------------------------------------------------------
 
 fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
-    if light.point_shadow_slot < 0 {
+    if light.shadow_layer < 0 {
         return 1.0;
     }
     // The cube stores linear distance-to-light over range, one value per
@@ -749,7 +740,7 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec
         point_shadow_cube_tex,
         shadow_sampler,
         dir,
-        light.point_shadow_slot,
+        light.shadow_layer,
         normalised,
     );
     // ALT(NO_CUBE_ARRAY): return 1.0;
@@ -1287,7 +1278,7 @@ fn compute_lit(
                 } else if i == 0u && lights_storage[0].light_type != 1u {
                     last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
                     shadow_factor = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
+                } else if l.light_type == 1u && l.shadow_layer >= 0 {
                     shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }
@@ -1420,7 +1411,7 @@ fn compute_lit(
                 } else if i == 0u && lights_storage[0].light_type != 1u {
                     last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
                     shadow = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
+                } else if l.light_type == 1u && l.shadow_layer >= 0 {
                     shadow = sample_point_shadow(l, in.world_pos, geo_normal);
                 }
             }

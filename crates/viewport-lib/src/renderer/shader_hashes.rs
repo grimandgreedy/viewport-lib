@@ -324,6 +324,7 @@ return a;
         let sources = SHADERS.iter().map(|e| (e.name, e.source)).chain([
             ("SHARED_SCENE_LIGHTING_WGSL", s::SHARED_SCENE_LIGHTING_WGSL),
             ("SHARED_CSM_WGSL", s::SHARED_CSM_WGSL),
+            ("SHARED_SHADOW_ATLAS_WGSL", s::SHARED_SHADOW_ATLAS_WGSL),
             ("SHARED_CLIP_VOLUME_WGSL", s::SHARED_CLIP_VOLUME_WGSL),
             ("SHARED_CLIP_WGSL", s::SHARED_CLIP_WGSL),
             ("SHARED_BRDF_WGSL", s::SHARED_BRDF_WGSL),

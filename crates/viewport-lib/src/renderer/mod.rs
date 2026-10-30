@@ -1105,9 +1105,10 @@ impl ViewportRenderer {
     /// content a consumer uploaded. This is fixed renderer overhead, but it is
     /// not paid until a frame needs it: both textures start as placeholders a
     /// few bytes wide, so this reads near zero for a viewport that has not cast
-    /// a shadow yet and steps up as each is allocated. At full size the atlas is
-    /// 64 MiB and the cube array 192 MiB, so a consumer budgeting device memory
-    /// wants to know which of the two it has actually taken.
+    /// a shadow yet and steps up as each is allocated. The atlas is
+    /// `4 * atlas_resolution^2` bytes (64 MiB at the default 4096) and the cube
+    /// array 192 MiB, so a consumer budgeting device memory wants to know which
+    /// of the two it has actually taken.
     ///
     /// The cascade atlas is allocated by the first frame that rasterises
     /// cascades (shadows enabled, a casting primary light, and something to

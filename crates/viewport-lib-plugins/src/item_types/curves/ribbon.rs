@@ -26,6 +26,7 @@ use viewport_lib::plugin_api::shared_wgsl;
 const RIBBON_LIT_EXTRA: &[&str] = &[
     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
     shared_wgsl::SHARED_CSM_WGSL,
+    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
 ];
 use viewport_lib::plugin_api::pick_helpers::{project_to_screen, ray_triangle, segment_in_rect};
 use viewport_lib::plugin_api::{

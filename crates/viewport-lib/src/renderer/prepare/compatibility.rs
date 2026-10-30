@@ -66,7 +66,7 @@ impl ViewportRenderer {
         let packed: Vec<crate::resources::SingleLightUniform> = ranked
             .lights
             .iter()
-            .map(|l| lighting::build_single_light_uniform(l, glam::Vec3::ZERO, 0.0, false))
+            .map(|(_, l)| lighting::build_single_light_uniform(l, glam::Vec3::ZERO, 0.0, false))
             .collect();
 
         let header = lighting::lights_header(

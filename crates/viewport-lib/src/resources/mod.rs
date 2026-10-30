@@ -123,7 +123,7 @@ pub(crate) use self::types::{
     GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, MeshInstanceGpuData,
     OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
     OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
-    ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
+    ProjectedTetUniform, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
     SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{

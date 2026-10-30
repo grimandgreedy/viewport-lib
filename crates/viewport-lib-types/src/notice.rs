@@ -112,6 +112,15 @@ pub enum NoticeDetail {
         /// The size the buffer would have had.
         bytes: u64,
     },
+    /// `ShadowSettings::atlas_resolution` was outside what the renderer
+    /// allocates on this device (256 to 8192, the device's largest 2D texture,
+    /// an even number), so the cascade atlas was made at `used` instead.
+    ShadowAtlasClamped {
+        /// The resolution the settings asked for.
+        requested: u32,
+        /// The atlas side allocated.
+        used: u32,
+    },
     /// The GPU device was lost.
     DeviceLost {
         /// The reason the backend gave.
@@ -193,6 +202,12 @@ impl fmt::Display for NoticeDetail {
                 f,
                 "{buffer} buffer for mesh {mesh} would be {bytes} bytes, over the device's \
                  max_buffer_size; the view that needs it was skipped"
+            ),
+            Self::ShadowAtlasClamped { requested, used } => write!(
+                f,
+                "shadow atlas_resolution {requested} is outside what this device takes \
+                 (256 to 8192, within its max_texture_dimension_2d, even); the atlas is {used} \
+                 square"
             ),
             Self::DeviceLost { reason } => write!(f, "GPU device lost: {reason}"),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),

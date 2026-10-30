@@ -30,16 +30,7 @@ struct GroundPlaneUniform {
     colour2:        vec4<f32>,    // offset 256, 16 bytes : second tile colour
 } // total 272 bytes
 
-// Shadow atlas uniform : matches the mesh shader's ShadowAtlas struct exactly.
-struct ShadowAtlas {
-    cascade_vp:       array<mat4x4<f32>, 4>,  // 256 bytes
-    cascade_splits:   vec4<f32>,               //  16 bytes
-    cascade_count:    u32,                     //   4 bytes
-    atlas_size:       f32,                     //   4 bytes
-    shadow_filter:    u32,                     //   4 bytes
-    pcss_light_radius: f32,                    //   4 bytes
-    atlas_rects:      array<vec4<f32>, 8>,     // 128 bytes
-} // total 416 bytes
+// #include "helpers/shadow_atlas.wgsl"
 
 @group(0) @binding(0) var<uniform> gp: GroundPlaneUniform;
 @group(0) @binding(1) var shadow_tex: texture_depth_2d;

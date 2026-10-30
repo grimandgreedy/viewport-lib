@@ -217,7 +217,11 @@ fn build_compute(r: &McComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePip
 /// The triangle surface's shader: the shared shading, then its entry points.
 pub(crate) fn surface_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_CLIP_WGSL],
+        &[
+            shared_wgsl::SHARED_CSM_WGSL,
+            shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+            shared_wgsl::SHARED_CLIP_WGSL,
+        ],
         &[wgsl_source!("mc_shading"), wgsl_source!("mc_surface")].join("\n"),
     )
 }

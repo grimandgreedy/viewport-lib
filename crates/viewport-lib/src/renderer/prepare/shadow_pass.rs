@@ -95,7 +95,7 @@ impl ViewportRenderer {
         // Only once: the atlas holds a constant after the clear, so repeating it
         // every frame is pure cost. An app that draws no casters at all (an
         // overlay-only consumer, or one whose scene is empty this frame) pays
-        // for a 4096-square depth clear it never reads otherwise.
+        // for a full-atlas depth clear it never reads otherwise.
         if lighting.shadows.enabled && (skip_shadows || !has_casters) && !shadow.atlas_cleared {
             shadow.atlas_cleared = true;
             let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
@@ -130,10 +130,11 @@ impl ViewportRenderer {
             && light.effective_cascade_count > 0
         {
             // Cascades are about to be rasterised into the atlas, so this is
-            // where the real texture has to exist: until now it has been a 1x1
-            // placeholder. Promoting replaces the texture, so whatever the old
-            // one held is gone and the clear flag resets either way.
-            resources.ensure_shadow_atlas(device);
+            // where the real texture has to exist at the size the lighting
+            // prepare resolved: until now it may be a 1x1 placeholder or a
+            // texture of the previous size. Replacing it loses whatever the
+            // old one held, so the clear flag resets either way.
+            resources.ensure_shadow_atlas(device, light.tile_size * 2);
             resources.ensure_cascade_shadow_pipelines(device);
             // Casters are about to be drawn into the atlas, so it no longer
             // holds the cleared value and the next empty frame must clear again.

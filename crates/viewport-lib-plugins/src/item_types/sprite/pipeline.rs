@@ -502,6 +502,7 @@ impl SpriteGpu {
                 &[
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
+                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit"),
             ),
@@ -553,6 +554,7 @@ impl SpriteGpu {
                 &[
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
+                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit_oit"),
             ),

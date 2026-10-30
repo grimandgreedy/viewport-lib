@@ -694,7 +694,7 @@ impl DeviceResources {
                 // ------------------------------------------------------------------
                 // Shadow map texture, sampler, and bind group
                 // ------------------------------------------------------------------
-                // A 1x1 placeholder, not the real atlas. At SHADOW_ATLAS_SIZE the atlas
+                // A 1x1 placeholder, not the real atlas. At its default 4096 the atlas
                 // is 64 MB, and a viewport whose scene casts no cascade shadow never
                 // samples it, so the bind groups start on a placeholder the same way
                 // the IBL slots below do. `ensure_shadow_atlas` swaps in the full
@@ -1555,7 +1555,7 @@ impl DeviceResources {
                         uniform_buf: shadow_uniform_buf,
                         bind_group: shadow_bind_group,
                         info_buf: shadow_info_buf,
-                        atlas_size: SHADOW_ATLAS_SIZE,
+                        atlas_size: 1,
                         atlas_depth_sampler: shadow_atlas_depth_sampler,
                         atlas_viewer_bg: shadow_atlas_viewer_bg,
                         atlas_viewer_bgl: atlas_blit_bgl,

@@ -18,7 +18,11 @@ use viewport_lib_geometry::volume::grid::VolumeData;
 /// The ray-marched isosurface's shader: the shared shading, then the march.
 pub(crate) fn isosurface_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_CLIP_WGSL],
+        &[
+            shared_wgsl::SHARED_CSM_WGSL,
+            shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+            shared_wgsl::SHARED_CLIP_WGSL,
+        ],
         &[wgsl_source!("mc_shading"), wgsl_source!("mc_isosurface")].join("\n"),
     )
 }

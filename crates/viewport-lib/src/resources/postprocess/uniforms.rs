@@ -90,12 +90,12 @@ pub(crate) struct ShadowAtlasUniform {
     pub(crate) cascade_splits: [f32; 4], //  16 bytes
     /// Number of active cascades (1-4).
     pub(crate) cascade_count: u32, //   4 bytes
-    /// Backing atlas texture size in pixels (always `SHADOW_ATLAS_SIZE`).
+    /// Backing atlas texture size in pixels: the resolved
+    /// `ShadowSettings::atlas_resolution`.
     ///
     /// Shaders derive everything from this plus the atlas rects: one texel in
     /// UV space is `1.0 / atlas_size`, and a tile's pixel width is
-    /// `atlas_size * (rect.z - rect.x)`. When the requested shadow resolution
-    /// is below `SHADOW_ATLAS_SIZE`, the rects shrink but this value does not.
+    /// `atlas_size * (rect.z - rect.x)`, half the atlas.
     pub(crate) atlas_size: f32, //   4 bytes
     /// Shadow filter mode: 0=PCF, 1=PCSS.
     pub(crate) shadow_filter: u32, //   4 bytes
