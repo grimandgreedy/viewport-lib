@@ -512,8 +512,9 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
 
 /// The internal hook behind the `VIEWPORT_MESH_BUILTIN_HOOK` A/B knob: the
 /// built-in Cook-Torrance per-light term replayed through the shading seam.
-/// `shade_light` calls the same `viewport_brdf_light_contrib` the inline path
-/// calls (with `radiance * shadow`, matching the inline multiply exactly), keeps the
+/// `shade_light` calls the same `viewport_brdf_light_contrib_compensated` the
+/// inline path calls (with `radiance * shadow`, matching the inline multiply
+/// exactly, and the surface's energy compensation), keeps the
 /// backface early-continue, and leaves ambient and recolor on the defaults.
 /// The composed module therefore computes identical lighting; what it adds is
 /// exactly the hook mechanism (ShadingSurface fill, LightSample construction,
@@ -527,9 +528,10 @@ pub(crate) fn builtin_pbr_hook() -> &'static StoredShadingHook {
             name: "builtin_pbr",
             wgsl_body: "\
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    return viewport_brdf_light_contrib(surf.normal, surf.view_dir, light.l,
-                                       light.radiance * light.shadow,
-                                       surf.base_colour, surf.metallic, surf.roughness, surf.f0);
+    return viewport_brdf_light_contrib_compensated(surf.normal, surf.view_dir, light.l,
+                                                   light.radiance * light.shadow,
+                                                   surf.base_colour, surf.metallic, surf.roughness,
+                                                   surf.f0, surf.energy_compensation);
 }
 "
             .to_string(),
