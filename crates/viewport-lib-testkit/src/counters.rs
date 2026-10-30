@@ -33,6 +33,8 @@ pub struct CounterSnapshot {
     pub batches_reuploaded: u32,
     /// Instanced batches skipped as unchanged.
     pub batches_skipped: u32,
+    /// Section cap meshes generated (0 on a settled section).
+    pub cap_meshes_built: u32,
 }
 
 impl CounterSnapshot {
@@ -48,11 +50,12 @@ impl CounterSnapshot {
             triangles_submitted: s.triangles_submitted,
             batches_reuploaded: s.batches_reuploaded,
             batches_skipped: s.batches_skipped,
+            cap_meshes_built: s.cap_meshes_built,
         }
     }
 
     /// The `Display` column order, for a header row when recording several.
-    pub const HEADER: &'static str = "total_objects,visible_objects,culled_objects,draw_calls,instanced_batches,per_object_bgs,triangles,batches_reup,batches_skip";
+    pub const HEADER: &'static str = "total_objects,visible_objects,culled_objects,draw_calls,instanced_batches,per_object_bgs,triangles,batches_reup,batches_skip,caps_built";
 }
 
 impl fmt::Display for CounterSnapshot {
@@ -60,7 +63,7 @@ impl fmt::Display for CounterSnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{}",
             self.total_objects,
             self.visible_objects,
             self.culled_objects,
@@ -70,6 +73,7 @@ impl fmt::Display for CounterSnapshot {
             self.triangles_submitted,
             self.batches_reuploaded,
             self.batches_skipped,
+            self.cap_meshes_built,
         )
     }
 }
