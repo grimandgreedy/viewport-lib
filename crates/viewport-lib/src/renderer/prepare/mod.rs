@@ -1,6 +1,7 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
+mod cascade_fit;
 pub(crate) mod compatibility;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
@@ -51,7 +52,15 @@ pub(super) struct LightingFrame {
     /// Layers placed this frame (rendered or served from cache).
     pub(super) punctual_layers_in_use: u32,
     pub(super) tile_size: u32,
+    /// Side of the shadow atlas texture, two cascade tiles wide.
+    pub(super) atlas_size: u32,
+    /// Cascades the settings ask for, clamped to 1..=4.
+    pub(super) cascade_count: usize,
+    /// Direction of the directional light that takes the cascades, if any.
+    pub(super) csm_direction: Option<glam::Vec3>,
+    /// Filled in by `fit_cascades`.
     pub(super) cascade_view_projs: [glam::Mat4; 4],
+    /// Filled in by `fit_cascades`.
     pub(super) effective_cascade_count: usize,
 }
 
@@ -293,13 +302,12 @@ impl ViewportRenderer {
         let lighting_start = web_time::Instant::now();
         let lighting_span =
             tracing::debug_span!(target: "viewport_lib::frame", "lighting").entered();
-        let lighting_frame = Self::prepare_lighting(
+        let mut lighting_frame = Self::prepare_lighting(
             resources,
             &mut self.shadow,
             &mut self.last_cluster_stats,
             &mut self.last_frustum_culled_lights,
             &mut self.last_lights_dropped,
-            &self.viewport_slots,
             &self.item_type_plugins,
             plugin_frame_index,
             scene_fx,
@@ -394,6 +402,17 @@ impl ViewportRenderer {
                 self.frame_counter,
             );
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
+        // The cascades are fit after the instanced batches are built: only the
+        // shadow pass reads them.
+        Self::fit_cascades(
+            resources,
+            &mut self.shadow,
+            &self.viewport_slots,
+            scene_fx,
+            queue,
+            frame,
+            &mut lighting_frame,
+        );
         #[cfg(debug_assertions)]
         {
             let wrong = instanced::feature_set_violations(resources, &self.instancing);
