@@ -1376,10 +1376,11 @@ impl DeviceResources {
     /// are valid either way.
     ///
     /// `reuse` is the state this one replaces when a group is being promoted
-    /// and no size has changed. Its live groups, uniform buffers and lazily
-    /// allocated targets carry over by handle, so anything already rendered
-    /// into them this frame (the outline mask is drawn at prepare time) and
-    /// anything that persists across frames (the exposure state) survives.
+    /// or released and no size has changed. Its live groups that stay in
+    /// `groups`, its uniform buffers and its lazily allocated targets carry
+    /// over by handle, so anything already rendered into them this frame (the
+    /// outline mask is drawn at prepare time) and anything that persists
+    /// across frames (the exposure state) survives.
     ///
     /// [`ensure_hdr_infra`](Self::ensure_hdr_infra) must have been called first so that
     /// BGLs, samplers, and placeholder textures are available on `self`.
@@ -1406,8 +1407,11 @@ impl DeviceResources {
         // All viewport-sized targets go through the allocator, which owns the
         // resolution classes and the base usage; see `targets.rs`.
         let alloc = ViewportTargetAllocator::new(device, w, h, scene_w, scene_h, ssaa_factor);
-        // The old state, for a group that was already live in it.
-        let kept = |group: TargetGroups| reuse.filter(|old| old.groups.contains(group));
+        // The old state, for a group that was already live in it and stays
+        // live. A group being released gets its placeholder.
+        let kept = |group: TargetGroups| {
+            reuse.filter(|old| old.groups.contains(group) && groups.contains(group))
+        };
 
         // HDR scene colour and depth -- at scene resolution (render_scale * output).
         // COPY_SRC enables the refractive sprite pass to copy the resolved

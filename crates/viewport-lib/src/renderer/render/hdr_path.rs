@@ -574,7 +574,9 @@ impl ViewportRenderer {
                     self.resources.ensure_oit_mesh_pipelines(device);
                     self.resources.ensure_oit_cull_pipelines(device);
                 }
-                let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
+                let slot = &mut self.viewport_slots[vp_idx];
+                slot.target_idle.use_oit();
+                let hdr = slot.hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
                 self.resources.ensure_viewport_oit(device, hdr, sw, sh);
             }

@@ -801,7 +801,8 @@ impl ViewportRenderer {
         // Ensure the per-viewport targets this frame draws into. The LDR path
         // needs its depth buffer and nothing else; the HDR path needs the scene
         // colour and depth plus the targets of each effect that is on. A group
-        // an earlier frame promoted stays live.
+        // an earlier frame promoted stays live until it has gone unused for
+        // `target_release_frames` frames.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
         let needed = {
             use crate::resources::TargetGroups as G;
@@ -828,6 +829,10 @@ impl ViewportRenderer {
                 self.current_render_scale,
                 needed,
             );
+            if self.foreground_active(frame) {
+                self.viewport_slots[vp_idx].target_idle.use_foreground();
+            }
+            self.release_idle_viewport_targets(device, queue, vp_idx);
         } else {
             self.ensure_overlay_depth(device, vp_idx, w.max(1), h.max(1));
         }

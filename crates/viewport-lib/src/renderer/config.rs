@@ -64,6 +64,14 @@ pub struct RendererConfig {
     /// [`Capabilities::capped_at`](crate::Capabilities::capped_at) for what it
     /// does and does not model. Default `None`.
     pub max_tier: Option<crate::capabilities::Tier>,
+    /// Frames a viewport's post-process, transparency or foreground targets
+    /// stay allocated after the frames stop using them. A target released this
+    /// way is allocated again by the next frame that needs it, so the value
+    /// trades memory held by idle effects against reallocating when an effect
+    /// is toggled back on. `Some(0)` releases after one idle frame. `None`
+    /// keeps every target a viewport has used for as long as the viewport
+    /// exists. Default `None`.
+    pub target_release_frames: Option<u32>,
 }
 
 impl RendererConfig {
@@ -78,6 +86,7 @@ impl RendererConfig {
             downlevel_capabilities: None,
             backend: None,
             max_tier: None,
+            target_release_frames: None,
         }
     }
 
@@ -122,6 +131,13 @@ impl RendererConfig {
     /// [`max_tier`](Self::max_tier).
     pub fn with_max_tier(mut self, tier: crate::capabilities::Tier) -> Self {
         self.max_tier = Some(tier);
+        self
+    }
+
+    /// Release a viewport's unused targets after `frames` frames. See
+    /// [`target_release_frames`](Self::target_release_frames).
+    pub fn with_target_release_frames(mut self, frames: u32) -> Self {
+        self.target_release_frames = Some(frames);
         self
     }
 
