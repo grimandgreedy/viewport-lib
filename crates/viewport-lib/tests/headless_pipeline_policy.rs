@@ -46,6 +46,12 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
 /// workers take turns.
 static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Serialises the tests on the build log. A test that panics while holding
+/// the lock poisons it; the next test takes it anyway rather than failing too.
+fn log_lock() -> std::sync::MutexGuard<'static, ()> {
+    LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn pipelines_built() -> Vec<String> {
     viewport_lib::resources::build_log::drain()
         .into_iter()
@@ -58,7 +64,7 @@ fn pipelines_built() -> Vec<String> {
 /// frame of two boxes compiles a handful, not the family.
 #[test]
 fn a_mesh_frame_builds_only_the_pipelines_it_binds() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -103,7 +109,7 @@ fn a_mesh_frame_builds_only_the_pipelines_it_binds() {
 /// worker and later frames draw the same image as `Blocking`.
 #[test]
 fn a_mesh_frame_under_background_catches_up() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -150,7 +156,7 @@ fn a_mesh_frame_under_background_catches_up() {
 /// frame never shows a shadow with nothing above it.
 #[test]
 fn a_compiling_item_casts_no_shadow() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -192,7 +198,7 @@ fn a_compiling_item_casts_no_shadow() {
 /// on the first call.
 #[test]
 fn a_read_back_under_background_is_complete() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -221,7 +227,7 @@ fn a_read_back_under_background_is_complete() {
 /// pipelines are built, and the image then matches a `Blocking` renderer's.
 #[test]
 fn an_effect_switched_on_under_background_catches_up() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -292,7 +298,7 @@ fn an_effect_switched_on_under_background_catches_up() {
 /// relies on.
 #[test]
 fn a_warmed_renderer_compiles_nothing_afterwards() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -378,7 +384,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
 /// cull takes over.
 #[test]
 fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -456,7 +462,7 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
 /// request order.
 #[test]
 fn warm_up_asks_for_plain_sets_before_universal_members() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -502,7 +508,7 @@ fn warm_up_asks_for_plain_sets_before_universal_members() {
 /// those draws; once it lands the count is back to zero.
 #[test]
 fn a_new_feature_set_draws_on_the_stand_in_and_is_counted() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
