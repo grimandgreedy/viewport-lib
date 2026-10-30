@@ -412,11 +412,11 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     let mut surface_region = String::new();
     if wire_vertex_attr || hook.has_surface {
         surface_region.push_str(
-            "        var surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp);\n",
+            "        var surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp, px.spec_ao);\n",
         );
     } else {
         surface_region.push_str(
-            "        let surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp);\n",
+            "        let surf = build_shading_surface(surface, in, V, px.metallic, px.perceptual_roughness, px.f0, px.energy_comp, px.spec_ao);\n",
         );
     }
     if wire_vertex_attr {
@@ -436,7 +436,8 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
              \x20       surf.metallic = px.metallic;\n\
              \x20       surf.roughness = px.perceptual_roughness;\n\
              \x20       surf.f0 = px.f0;\n\
-             \x20       surf.energy_compensation = px.energy_comp;\n"
+             \x20       surf.energy_compensation = px.energy_comp;\n\
+             \x20       surf.spec_ao = px.spec_ao;\n"
         ));
         if wire_alpha {
             // Gated alpha: only Mask/Blend materials take the hook's alpha;

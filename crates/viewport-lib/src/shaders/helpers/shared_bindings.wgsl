@@ -47,6 +47,11 @@ struct Lights {
     env_zone_count:       u32,
     ibl_specular_scale:   f32,
     _pad_dbg_c:           u32,
+    // Material AO options: bit 0 multi-bounce, bit 1 micro-shadowing.
+    ao_flags:             u32,
+    _pad_ao_a:            u32,
+    _pad_ao_b:            u32,
+    _pad_ao_c:            u32,
 };
 
 // The clip uniforms (bindings 4 and 6) and the clip tests.

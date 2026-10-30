@@ -77,7 +77,16 @@ struct Lights {
     ibl_specular_scale:   f32,
     // Start of the custom-data region of indirect_light_data, in vec4 elements.
     custom_data_base:     u32,
+    // Material AO options: AO_FLAG_MULTI_BOUNCE, AO_FLAG_MICRO_SHADOW.
+    ao_flags:             u32,
+    _pad_ao_a:            u32,
+    _pad_ao_b:            u32,
+    _pad_ao_c:            u32,
 };
+
+// Lights::ao_flags bits. Match the constants in renderer/prepare/lighting.rs.
+const AO_FLAG_MULTI_BOUNCE: u32 = 1u;
+const AO_FLAG_MICRO_SHADOW: u32 = 2u;
 
 // One environment-selection zone: a world-space box (center + half_extents) that
 // selects array layer `layer`, with `fade` the outer falloff band. `parallax`

@@ -872,6 +872,7 @@ fn build_shading_surface(
     roughness: f32,
     F0: vec3<f32>,
     energy_compensation: vec3<f32>,
+    spec_ao: f32,
 ) -> ShadingSurface {
     var surf: ShadingSurface;
     surf.base_colour = surface.base_colour;
@@ -899,6 +900,7 @@ fn build_shading_surface(
     surf.bitangent = cross(n, t) * handedness;
     surf.f0 = F0;
     surf.energy_compensation = energy_compensation;
+    surf.spec_ao = spec_ao;
     surf.metallic = metallic;
     surf.roughness = roughness;
     surf.ao = surface.ao_factor;
@@ -1328,6 +1330,11 @@ fn compute_lit(
             if FEAT_LIGHTMAP && object.has_shadowmask != 0u && i < 4u {
                 shadow_factor = min(shadow_factor, shadowmask[i]);
             }
+            // Micro-shadowing: material AO shadows a directional light where
+            // it grazes a cavity.
+            if (lights_uniform.ao_flags & AO_FLAG_MICRO_SHADOW) != 0u && l.light_type == 0u {
+                shadow_factor *= pbr_micro_shadow(dot(N, L), px.diffuse_ao);
+            }
             // <viewport-shade-slot:light>
             radiance *= shadow_factor;
             // Subtractive lightmap: the main directional light (index 0) is baked
@@ -1437,7 +1444,7 @@ fn compute_lit(
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode, last_shadow_sample.factor);
+            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, vec3<f32>(ao_factor), lm, object.lightmap_mode, last_shadow_sample.factor);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
 

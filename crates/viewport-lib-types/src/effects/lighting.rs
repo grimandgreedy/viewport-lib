@@ -421,6 +421,23 @@ pub struct LightingSettings {
     /// sets a lux target to match its sun.
     #[cfg_attr(feature = "serde", serde(default))]
     pub environment_intensity: crate::effects::environment::EnvironmentIntensity,
+    /// Brighten material ambient occlusion by the light that bounces between
+    /// the occluding surfaces (Jimenez's multi-bounce fit), coloured by the
+    /// surface's albedo, so AO on bright materials does not read as dirt.
+    /// Applies to the environment, hemisphere, probe and lightmap ambient.
+    /// Default: true.
+    #[cfg_attr(feature = "serde", serde(default = "default_multi_bounce_ao"))]
+    pub multi_bounce_ao: bool,
+    /// Let material ambient occlusion shadow directional lights too: a cavity
+    /// darkens where the light grazes it (micro-shadowing). Point and spot
+    /// lights are not affected. Default: false.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub ao_micro_shadowing: bool,
+}
+
+#[cfg(feature = "serde")]
+fn default_multi_bounce_ao() -> bool {
+    true
 }
 
 impl Default for LightingSettings {
@@ -432,6 +449,8 @@ impl Default for LightingSettings {
             hemisphere_intensity: 0.4,
             shadows: ShadowSettings::default(),
             environment_intensity: Default::default(),
+            multi_bounce_ao: true,
+            ao_micro_shadowing: false,
         }
     }
 }

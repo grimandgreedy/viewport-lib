@@ -102,6 +102,32 @@ fn viewport_brdf_light_contrib_compensated(
 }
 
 // ---------------------------------------------------------------------------
+// Ambient occlusion of the indirect terms. Here rather than in ambient.wgsl so
+// the plugin PBR catalogue applies the same occlusion as the lit mesh shaders.
+// ---------------------------------------------------------------------------
+
+// Roughness-aware specular occlusion from AO and N.V (Lagarde, Frostbite).
+// Keeps a prefiltered reflection from leaking into cavities; 1.0 (neutral) at
+// ao = 1 and equal to `ao` for a fully rough surface. `alpha` is the GGX
+// roughness (perceptual roughness squared).
+fn viewport_brdf_spec_occlusion(n_dot_v: f32, ao: f32, alpha: f32) -> f32 {
+    return clamp(pow(n_dot_v + ao, exp2(-16.0 * alpha - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
+// Multi-bounce ambient occlusion (Jimenez 2016): the visibility `v` raised by
+// the light that inter-reflects inside the occluded region, which depends on
+// the surface's `albedo`. Returns `v` for black albedo. Clamped to 1 so a fully
+// visible fragment (v = 1) keeps exactly its unoccluded value; the fit itself
+// lands within 1e-4 of 1 there.
+fn viewport_brdf_multi_bounce_ao(v: f32, albedo: vec3<f32>) -> vec3<f32> {
+    let a = 2.0404 * albedo - 0.3324;
+    let b = -4.7951 * albedo + 0.6417;
+    let c = 2.7552 * albedo + 0.6903;
+    let vv = vec3<f32>(v);
+    return min(max(vv, ((vv * a + b) * vv + c) * vv), vec3<f32>(1.0));
+}
+
+// ---------------------------------------------------------------------------
 // Specular anti-aliasing.
 //
 // Widens the specular lobe where the shading normal changes fast across a

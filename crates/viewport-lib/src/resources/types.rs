@@ -282,7 +282,9 @@ const _: () = {
 /// - env_zone_count:       u32            =  4 bytes
 /// - ibl_specular_scale:   f32            =  4 bytes
 /// - custom_data_base:     u32            =  4 bytes
-/// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
+/// - ao_flags:             u32            =  4 bytes
+/// - _pad_ao:              `[u32; 3]`     = 12 bytes
+/// Total: 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightsUniform {
@@ -320,6 +322,11 @@ pub struct LightsUniform {
     /// Start of the custom-data region of the binding-18 buffer, in `vec4`
     /// elements.
     pub custom_data_base: u32, // 4 bytes
+    /// Material AO options: bit 0 multi-bounce, bit 1 micro-shadowing of
+    /// directional lights.
+    pub ao_flags: u32, // 4 bytes
+    /// Padding to a 16-byte multiple.
+    pub _pad_ao: [u32; 3], // 12 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.

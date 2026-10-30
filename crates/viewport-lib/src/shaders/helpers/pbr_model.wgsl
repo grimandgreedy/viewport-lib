@@ -41,6 +41,8 @@ struct PbrPixel {
     energy_comp: vec3<f32>,
     // max(N.V, 1e-3) for the resolved normal.
     n_dot_v: f32,
+    // Material ambient occlusion: the diffuse visibility, and the specular
+    // occlusion derived from it, N.V and alpha (spec_occlusion).
     diffuse_ao: f32,
     spec_ao: f32,
 };
@@ -85,13 +87,14 @@ fn pbr_resolve(
     px.dfg = sample_brdf_lut(px.n_dot_v, roughness);
     px.energy_comp = viewport_brdf_energy_compensation(px.f0, px.dfg);
     px.diffuse_ao = ao;
-    px.spec_ao = ao;
+    px.spec_ao = spec_occlusion(px.n_dot_v, ao, px.alpha);
     return px;
 }
 
 // Replace the surface terms of a resolved pixel with authored ones (a shading
 // hook's `shade_surface` output). No specular AA: the author owns the value.
-// The split-sum terms are looked up again at the resolved N.V.
+// The split-sum terms and the specular occlusion are derived again at the
+// resolved N.V.
 fn pbr_apply_override(
     px: PbrPixel,
     base_colour: vec3<f32>,
@@ -106,7 +109,17 @@ fn pbr_apply_override(
     out.f0 = mix(vec3<f32>(DEFAULT_DIELECTRIC_F0), base_colour, out.metallic);
     out.dfg = sample_brdf_lut(out.n_dot_v, out.perceptual_roughness);
     out.energy_comp = viewport_brdf_energy_compensation(out.f0, out.dfg);
+    out.spec_ao = spec_occlusion(out.n_dot_v, out.diffuse_ao, out.alpha);
     return out;
+}
+
+// Micro-shadowing (Chan 2018): material AO read as a cone of visibility, so a
+// cavity is shadowed where the light grazes it. Multiplies a directional
+// light's shadow factor; 1 where N.L clears the cone.
+fn pbr_micro_shadow(n_dot_l: f32, ao: f32) -> f32 {
+    let aperture = inverseSqrt(1.0 - min(ao, 0.9999));
+    let ms = clamp(n_dot_l * aperture, 0.0, 1.0);
+    return ms * ms;
 }
 
 // One light's direct contribution. `radiance` is the light's colour times its
@@ -153,7 +166,12 @@ fn pbr_ambient(
     let metallic = px.metallic;
     let roughness = px.perceptual_roughness;
     let F0 = px.f0;
-    let ao_factor = px.diffuse_ao;
+    // Diffuse terms take the visibility, the environment's specular the
+    // specular occlusion; each through the multi-bounce fit when enabled,
+    // over the diffuse albedo and F0 respectively.
+    let multi_bounce = (lights_uniform.ao_flags & AO_FLAG_MULTI_BOUNCE) != 0u;
+    let diffuse_occ = ao_occlusion(px.diffuse_ao, base_colour * (1.0 - metallic), multi_bounce);
+    let spec_occ = ao_occlusion(px.spec_ao, F0, multi_bounce);
 
     var out: AmbientOut;
     var ambient: vec3<f32>;
@@ -166,12 +184,12 @@ fn pbr_ambient(
         var ibl: IblContrib;
         if lights_uniform.env_zone_count != 0u {
             ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
-                                    ao_factor, lights_uniform.ibl_intensity,
+                                    diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                     lights_uniform.ibl_rotation, refl_dr, world_pos,
                                     lights_uniform.env_zone_count, px.dfg, px.energy_comp);
         } else {
             ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
-                                   ao_factor, lights_uniform.ibl_intensity,
+                                   diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                    lights_uniform.ibl_rotation, refl_dr, px.dfg, px.energy_comp);
         }
         ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
@@ -184,14 +202,14 @@ fn pbr_ambient(
         let hemi_t = clamp(vertex_normal.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
         let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
-        ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
+        ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * diffuse_occ;
         ambient_lum = dot(ambient, lum_weights);
     }
     // A light-probe object takes its indirect diffuse from the SH field at its
     // position. SH probes carry diffuse only: with an environment, the probe
     // takes the diffuse weight and the environment's reflection stays.
     if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
-        let probe = evaluate_object_indirect(object.light_probe_index, world_pos, N) * base_colour * ao_factor;
+        let probe = evaluate_object_indirect(object.light_probe_index, world_pos, N) * base_colour * diffuse_occ;
         if lights_uniform.ibl_enabled != 0u {
             ambient = probe * ambient_kd + ibl_specular;
         } else {
@@ -211,7 +229,7 @@ fn pbr_ambient(
             let f = lightmap_directional_factor(lightmap_uv, lm_page, N, vertex_normal);
             lm = vec4<f32>(lm.rgb * f, lm.a);
         }
-        ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode, lightmap_shadow);
+        ambient = apply_lightmap(ambient, base_colour, diffuse_occ, lm, object.lightmap_mode, lightmap_shadow);
         // Replace and Subtractive bake the diffuse only: weight it like the
         // environment's diffuse and keep the environment's reflection.
         if lights_uniform.ibl_enabled != 0u
