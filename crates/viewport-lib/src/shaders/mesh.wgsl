@@ -1521,7 +1521,10 @@ fn transmission_resolve(colour: vec4<f32>, frag_depth: f32) -> vec4<f32> {
     if behind_depth <= 0.0 || behind_depth > frag_depth {
         return colour;
     }
-    let lod = t.roughness * f32(textureNumLevels(transmission_scene) - 1u);
+    // The copy has one mip per halving of its shorter side; derived from the
+    // size, since GLSL ES has no level-count query.
+    let top_mip = floor(log2(f32(max(min(size.x, size.y), 1u))));
+    let lod = t.roughness * top_mip;
     let behind = textureSampleLevel(transmission_scene, transmission_sampler, uv, lod).rgb;
     return vec4<f32>(colour.rgb + t.weight * behind - t.fallback, colour.a);
 }
