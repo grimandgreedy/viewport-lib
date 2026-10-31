@@ -129,7 +129,8 @@ impl ItemTypePlugin for TensorFieldPlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let built = build_tensor_field(device, queue, &binds, item, 0);
+            let built =
+                build_tensor_field(device, queue, &binds, item, 0, Some(ctx.world_origin()));
             let draw = built.draw();
             let pick_bind_group = (draw.pick_id != PickId::NONE)
                 .then(|| gpu.pick_bind_group(device, queue, draw.pick_id, built.uniform_buf()));
@@ -156,7 +157,8 @@ impl ItemTypePlugin for TensorFieldPlugin {
             let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
-            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&ref_item.model));
+            let model = crate::item_types::origin::rel_model(ref_item.model, ctx.world_origin());
+            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&model));
             let mut draw = entry.draw();
             // The pick id comes from the reference, not from the upload: the
             // same stored field can be drawn twice under two ids.
@@ -483,7 +485,7 @@ impl TensorFieldPlugin {
             .layouts
             .get_or_insert_with(|| TensorFieldResources::new(device));
         let binds = resolve_bindings(resources, layouts, item);
-        build_tensor_field(device, queue, &binds, item, capacity)
+        build_tensor_field(device, queue, &binds, item, capacity, None)
     }
 
     /// Pre-upload a tensor field and return its handle.
@@ -615,7 +617,7 @@ impl TensorFieldPlugin {
         let binds = resolve_bindings(resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_tensor_field(&device, &queue, &binds, &item, 0))
+        jobs.submit_cpu(move || build_tensor_field(&device, &queue, &binds, &item, 0, None))
     }
 
     /// Store the field a finished job built and hand back its handle.
