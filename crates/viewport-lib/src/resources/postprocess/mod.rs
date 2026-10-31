@@ -1823,6 +1823,10 @@ impl DeviceResources {
                     binding: composite::slot::GRADE_LUT,
                     resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::VIEW_LUT,
+                    resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
+                },
             ],
         });
         let bloom_threshold_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2427,6 +2431,11 @@ impl DeviceResources {
             .and_then(|id| self.content.textures.get(id))
             .map(|t| &t.view)
             .unwrap_or(ao_placeholder);
+        let view_lut_view = inputs
+            .view_lut
+            .and_then(|id| self.content.textures.get(id))
+            .map(|t| &t.view)
+            .unwrap_or(ao_placeholder);
         let views = [
             tone_map_hdr_input.clone(),
             bloom_view.clone(),
@@ -2435,6 +2444,7 @@ impl DeviceResources {
             hdr.hdr_depth_only_view.clone(),
             foreground_view.clone(),
             grade_lut_view.clone(),
+            view_lut_view.clone(),
         ];
         if hdr.tone_map_bg_views.as_ref() != Some(&views) {
             hdr.tone_map_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2491,6 +2501,10 @@ impl DeviceResources {
                     crate::gpu::BindGroupEntry {
                         binding: composite::slot::GRADE_LUT,
                         resource: crate::gpu::BindingResource::TextureView(grade_lut_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::VIEW_LUT,
+                        resource: crate::gpu::BindingResource::TextureView(view_lut_view),
                     },
                 ],
             });

@@ -28,6 +28,9 @@ pub(crate) mod slot {
     /// uniform's `grade_mode`. A neutral placeholder is bound when grading is
     /// off.
     pub(crate) const GRADE_LUT: u32 = 10;
+    /// View-transform strip LUT, sampled in place of the operator when the
+    /// uniform's `mode` selects it. A neutral placeholder otherwise.
+    pub(crate) const VIEW_LUT: u32 = 11;
 }
 
 /// GPU-side shape of one composite binding.
@@ -60,6 +63,7 @@ const BINDINGS: &[(u32, BindingKind)] = &[
     (slot::FOREGROUND_DEPTH, BindingKind::DepthTexture),
     (slot::EXPOSURE, BindingKind::StorageReadOnly),
     (slot::GRADE_LUT, BindingKind::FilterableTexture),
+    (slot::VIEW_LUT, BindingKind::FilterableTexture),
 ];
 
 /// Build the tone-map bind group layout from the binding table.
@@ -127,4 +131,40 @@ pub(crate) struct CompositeInputs {
     /// Colour-grading LUT to bind at `slot::GRADE_LUT`, already validated
     /// against the texture store (`None` binds the neutral placeholder).
     pub(crate) grade_lut: Option<crate::resources::TextureId>,
+    /// View-transform LUT to bind at `slot::VIEW_LUT`, validated the same
+    /// way.
+    pub(crate) view_lut: Option<crate::resources::TextureId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use viewport_lib_types::effects::tone_curve::VIEW_LUT_SHAPER;
+
+    /// The composite's shaper constants are the types crate's.
+    #[test]
+    fn shader_shaper_matches_view_lut_shaper() {
+        let wgsl = include_str!("../../shaders/tone_map.wgsl");
+        let constant = |name: &str| -> f32 {
+            let prefix = format!("const {name}: f32 = ");
+            let line = wgsl
+                .lines()
+                .find_map(|l| l.trim().strip_prefix(prefix.as_str()))
+                .unwrap_or_else(|| panic!("{name} not in tone_map.wgsl"));
+            line.trim_end_matches(';').parse().unwrap()
+        };
+        assert_eq!(constant("GRADE_LOG2_MIN"), VIEW_LUT_SHAPER.log2_min);
+        assert_eq!(constant("GRADE_LOG2_RANGE"), VIEW_LUT_SHAPER.log2_range);
+    }
+
+    /// Every binding the composite declares is in the layout table.
+    #[test]
+    fn shader_bindings_match_the_table() {
+        let wgsl = include_str!("../../shaders/tone_map.wgsl");
+        let declared = wgsl
+            .lines()
+            .filter(|l| l.trim_start().starts_with("@group(0) @binding("))
+            .count();
+        assert_eq!(declared, super::BINDINGS.len());
+        assert!(wgsl.contains(&format!("@binding({}) var view_lut", super::slot::VIEW_LUT)));
+    }
 }

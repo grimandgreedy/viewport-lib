@@ -159,11 +159,12 @@ impl PassTable {
     }
 
     /// The composite's inputs: an effect's input is bound only when a pass
-    /// that writes it runs this frame. The grade LUT is not a pass output
-    /// and comes from the caller.
+    /// that writes it runs this frame. The grade and view LUTs are not pass
+    /// outputs and come from the caller.
     pub(crate) fn composite_inputs(
         &self,
         grade_lut: Option<crate::resources::TextureId>,
+        view_lut: Option<crate::resources::TextureId>,
     ) -> crate::resources::CompositeInputs {
         let writes = self.live_writes();
         crate::resources::CompositeInputs {
@@ -173,6 +174,7 @@ impl PassTable {
             dof: writes.contains(TargetId::Dof),
             foreground: writes.contains(TargetId::ForegroundDepth),
             grade_lut,
+            view_lut,
         }
     }
 
@@ -529,7 +531,7 @@ mod tests {
                 ("tone_map", true)
             ]
         );
-        assert!(!table.composite_inputs(None).bloom);
+        assert!(!table.composite_inputs(None, None).bloom);
         assert_eq!(table.groups(), crate::resources::TargetGroups::SCENE);
     }
 }

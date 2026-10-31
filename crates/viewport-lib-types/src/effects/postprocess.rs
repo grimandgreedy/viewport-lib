@@ -38,6 +38,33 @@ pub enum ToneMapping {
     /// A configurable per-channel curve through a mid-grey point and a
     /// white point, shaped by [`PostProcessSettings::generic_tone_curve`].
     Generic,
+    /// A curve supplied as a view-transform LUT: a strip LUT baked with
+    /// [`bake_view_transform_lut`] and uploaded through the renderer's
+    /// texture API like any texture.
+    ///
+    /// The composite shapes exposed radiance with [`VIEW_LUT_SHAPER`],
+    /// samples the LUT and uses the result in place of a built-in operator;
+    /// the background composite and display-referred grading follow as
+    /// usual. Under [`WorkingSpace::Rec2020`] the LUT is looked up with
+    /// Rec.2020 values and its output is converted back to Rec.709, so bake
+    /// a curve that expects Rec.2020 input.
+    ///
+    /// A [`PostProcessSettings::grade_lut`] under [`GradingSpace::Scene`]
+    /// still applies first, and this LUT replaces only the operator. For one
+    /// LUT holding the whole view transform, bake the grade in through
+    /// [`bake_view_transform_lut`]'s `grade` argument and leave `grade_lut`
+    /// unset.
+    ///
+    /// An id that does not name an uploaded texture (or names an external
+    /// view, whose size the renderer cannot read) applies no operator: the
+    /// exposed colour reaches the display unchanged.
+    ///
+    /// [`bake_view_transform_lut`]: crate::effects::tone_curve::bake_view_transform_lut
+    /// [`VIEW_LUT_SHAPER`]: crate::effects::tone_curve::VIEW_LUT_SHAPER
+    Custom {
+        /// The baked LUT.
+        lut: crate::ids::TextureId,
+    },
 }
 
 impl ToneMapping {
@@ -51,6 +78,7 @@ impl ToneMapping {
             ToneMapping::Agx => 3,
             ToneMapping::AcesRrt => 4,
             ToneMapping::Generic => 5,
+            ToneMapping::Custom { .. } => 6,
         }
     }
 }

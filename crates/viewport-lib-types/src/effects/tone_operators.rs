@@ -282,7 +282,8 @@ pub fn aces_rrt_with_brightness(rec2020: [f32; 3], brightness: f32) -> [f32; 3] 
 /// The composite's operator block on exposed Rec.709 radiance: convert to
 /// `post.working_space`, apply `operator`, convert back to Rec.709. AgX and
 /// ACES RRT convert to Rec.2020 and back, clamping negative channels to 0.
-/// The colour grade is not applied.
+/// The colour grade is not applied, and [`ToneMapping::Custom`], whose curve
+/// lives in a texture, passes the colour through.
 pub fn tone_map(colour: [f32; 3], operator: ToneMapping, post: &PostProcessSettings) -> [f32; 3] {
     let rec2020 = post.working_space == WorkingSpace::Rec2020;
     let c = if rec2020 {
@@ -290,6 +291,22 @@ pub fn tone_map(colour: [f32; 3], operator: ToneMapping, post: &PostProcessSetti
     } else {
         colour
     };
+    let c = operator_in_working_space(c, operator, post);
+    if rec2020 {
+        map(apply(&REC2020_TO_SRGB, c), |x| x.max(0.0))
+    } else {
+        c
+    }
+}
+
+/// The operator step of [`tone_map`] alone, on a colour already in
+/// `post.working_space`.
+pub fn operator_in_working_space(
+    c: [f32; 3],
+    operator: ToneMapping,
+    post: &PostProcessSettings,
+) -> [f32; 3] {
+    let rec2020 = post.working_space == WorkingSpace::Rec2020;
     // Into Rec.2020 and back out to the working space, for the operators that
     // run there.
     let wide = |c: [f32; 3], f: &dyn Fn([f32; 3]) -> [f32; 3]| {
@@ -302,18 +319,14 @@ pub fn tone_map(colour: [f32; 3], operator: ToneMapping, post: &PostProcessSetti
             )
         }
     };
-    let c = match operator {
+    match operator {
         ToneMapping::Reinhard => reinhard(c),
         ToneMapping::Aces => aces_fit(c),
         ToneMapping::KhronosNeutral => khronos_neutral(c),
         ToneMapping::Agx => wide(c, &|v| agx(v, post.agx_look)),
         ToneMapping::AcesRrt => wide(c, &aces_rrt),
         ToneMapping::Generic => generic(c, &post.generic_tone_curve),
-    };
-    if rec2020 {
-        map(apply(&REC2020_TO_SRGB, c), |x| x.max(0.0))
-    } else {
-        c
+        ToneMapping::Custom { .. } => c,
     }
 }
 

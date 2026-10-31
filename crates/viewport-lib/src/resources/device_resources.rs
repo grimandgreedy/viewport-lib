@@ -85,7 +85,7 @@ pub(crate) struct ViewportHdrState {
     /// The views `tone_map_bind_group` was last built over (HDR input, bloom,
     /// AO, contact shadow, scene depth, foreground depth, grade LUT), so a
     /// frame that binds the same ones reuses it. `None` until the first rebuild.
-    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 7]>,
+    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 8]>,
     /// The foreground view the DOF bind group was last built with.
     pub dof_bg_foreground: Option<crate::gpu::TextureView>,
     /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.

@@ -370,21 +370,27 @@ impl ViewportRenderer {
         // The grade LUT is validated against the texture store up front: the
         // renderer needs an owned texture to read the LUT's height, so ids
         // registered as external views are ignored.
-        let grade_lut = pp.grade_lut.filter(|id| {
+        // The custom operator's view LUT is validated the same way.
+        let owned_lut_size = |id: crate::resources::TextureId| {
             self.resources
                 .content
                 .textures
-                .get(*id)
-                .is_some_and(|t| t.texture.is_some())
-        });
-        let grade_lut_size = grade_lut
-            .and_then(|id| self.resources.content.textures.get(id))
-            .and_then(|t| t.texture.as_ref())
-            .map(|t| t.height() as f32)
-            .unwrap_or(0.0);
+                .get(id)
+                .and_then(|t| t.texture.as_ref())
+                .map(|t| t.height() as f32)
+        };
+        let grade_lut = pp.grade_lut.filter(|id| owned_lut_size(*id).is_some());
+        let grade_lut_size = grade_lut.and_then(owned_lut_size).unwrap_or(0.0);
+        let view_lut = match frame.effects.display.operator {
+            crate::renderer::ToneMapping::Custom { lut } => {
+                Some(lut).filter(|id| owned_lut_size(*id).is_some())
+            }
+            _ => None,
+        };
+        let view_lut_size = view_lut.and_then(owned_lut_size).unwrap_or(0.0);
         let mut composite_inputs = self.viewport_slots[vp_idx]
             .pass_table
-            .composite_inputs(grade_lut);
+            .composite_inputs(grade_lut, view_lut);
 
         // Build what this frame binds and nothing else. Each group is built by
         // the first frame that asks for it, on the same condition its pass
@@ -467,7 +473,13 @@ impl ViewportRenderer {
         }
 
         // Upload tone map uniform into the per-viewport buffer.
-        let mode = frame.effects.display.operator.composite_index();
+        // A custom operator whose LUT is missing applies no operator.
+        let mode = match frame.effects.display.operator {
+            crate::renderer::ToneMapping::Custom { .. } if composite_inputs.view_lut.is_none() => {
+                u32::MAX
+            }
+            op => op.composite_index(),
+        };
         let (contrast, input_scale, output_scale) = pp.generic_tone_curve.scales();
         let tm_uniform = crate::resources::ToneMapUniform {
             // Exposure is applied from the per-viewport exposure state buffer
@@ -513,7 +525,7 @@ impl ViewportRenderer {
                 crate::renderer::AgxLook::Golden => 2,
                 _ => 0,
             },
-            generic_curve: [contrast, input_scale, output_scale, 0.0],
+            generic_curve: [contrast, input_scale, output_scale, view_lut_size],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();

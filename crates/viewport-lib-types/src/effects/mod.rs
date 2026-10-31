@@ -13,4 +13,5 @@ pub mod lighting;
 pub mod lightmap;
 pub mod postprocess;
 pub mod scatter;
+pub mod tone_curve;
 pub mod tone_operators;

@@ -333,8 +333,9 @@ pub use renderer::{
     GpuPickHit, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame,
     LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture,
-    LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
+    LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem, NineSlice,
+    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode,
+    OverlayAnchoring,
     OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
     OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
     OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
@@ -344,9 +345,10 @@ pub use renderer::{
     RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
     ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
     SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency, WorkingSpace,
-    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
+    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem,
+    VolumeSelectionInfo, VolumeTransparency, WorkingSpace, aabb_wireframe_polyline,
+    bake_view_transform_lut, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 pub use resources::PipelineCompilation;
