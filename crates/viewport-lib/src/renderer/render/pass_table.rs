@@ -12,7 +12,7 @@ use super::*;
 use crate::resources::postprocess::targets::{TargetId, TargetSet};
 
 /// Capacity of the table: every pass the HDR path declares.
-const MAX_PASSES: usize = 32;
+pub(crate) const MAX_PASSES: usize = 32;
 
 /// One pass of the HDR frame, in the order the frame encodes them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -98,11 +98,6 @@ impl PassTable {
         }
     }
 
-    /// Whether `pass` runs this frame.
-    pub(crate) fn runs(&self, pass: HdrPass) -> bool {
-        self.passes.iter().any(|d| d.pass == pass && d.live)
-    }
-
     /// The passes that run, in encode order.
     pub(crate) fn live_passes(&self) -> impl Iterator<Item = HdrPass> + '_ {
         self.passes.iter().filter(|d| d.live).map(|d| d.pass)
@@ -129,6 +124,32 @@ impl PassTable {
             .filter(|(i, _)| ran & (1 << i) != 0)
             .map(|(_, d)| d.name)
             .collect()
+    }
+
+    /// The targets the running passes write.
+    fn live_writes(&self) -> TargetSet {
+        self.passes
+            .iter()
+            .filter(|d| d.live)
+            .fold(TargetSet::empty(), |set, d| set | d.writes)
+    }
+
+    /// The composite's inputs: an effect's input is bound only when a pass
+    /// that writes it runs this frame. The grade LUT is not a pass output
+    /// and comes from the caller.
+    pub(crate) fn composite_inputs(
+        &self,
+        grade_lut: Option<crate::resources::TextureId>,
+    ) -> crate::resources::CompositeInputs {
+        let writes = self.live_writes();
+        crate::resources::CompositeInputs {
+            bloom: writes.contains(TargetId::Bloom),
+            ssao: writes.contains(TargetId::Ssao),
+            contact_shadows: writes.contains(TargetId::ContactShadow),
+            dof: writes.contains(TargetId::Dof),
+            foreground: writes.contains(TargetId::ForegroundDepth),
+            grade_lut,
+        }
     }
 
     /// The target groups the running passes read or write.
