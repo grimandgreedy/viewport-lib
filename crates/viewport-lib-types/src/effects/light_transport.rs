@@ -160,9 +160,9 @@
 //!
 //! # Current behaviour
 //!
-//! Under [`ExposureMode::Automatic`] a frame shades with the
-//! exposure the previous frame metered, so the first frame after switching to
-//! it draws at the exposure the viewport held before.
+//! Under [`ExposureMode::Automatic`] a frame shades with the exposure the
+//! previous frame metered, so the first frame after switching to it draws at
+//! the exposure the viewport held before.
 //!
 //! [`ExposureMode`]: crate::effects::postprocess::ExposureMode
 //! [`ExposureMode::Passthrough`]: crate::effects::postprocess::ExposureMode::Passthrough
