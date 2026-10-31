@@ -52,7 +52,7 @@ fn environment_pixels() -> Vec<f32> {
 }
 
 /// Upload the procedural environment.
-fn upload_environment(ctx: &mut BuildCtx<'_>) -> viewport_lib::EnvironmentMapId {
+pub(super) fn upload_environment(ctx: &mut BuildCtx<'_>) -> viewport_lib::EnvironmentMapId {
     ctx.renderer
         .upload_environment(
             ctx.device,

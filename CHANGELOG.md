@@ -184,6 +184,7 @@
 - **`RenderCamera::with_projection_reversed`** - takes a standard 0..1 depth projection (glam's `perspective_rh`, `orthographic_rh`) and stores its reversed-depth equivalent.
 - **`RendererConfig::scene_depth_format`** - `Some(Depth32FloatStencil8)` draws the scene into a 32-bit float depth with stencil where the device has `Features::DEPTH32FLOAT_STENCIL8` (now in `recommended_device_features`); without it the renderer uses `Depth24PlusStencil8` and reports `NoticeDetail::SceneDepthFormatFallback`, and a format with no stencil aspect fails with `ViewportError::InvalidSceneDepthFormat`. `None`, the default, stays `Depth24PlusStencil8`.
 - **`ViewportRenderer::scene_depth_format`, `DeviceResources::scene_depth_format`, `PipelineBuilder::scene_depth_format` and `Capabilities::scene_depth_format`** - the scene depth format in use; every target descriptor's `depth_format` returns it. A host-owned render pass handed to `pass().paint` carries a depth attachment of this format.
+- **`effects::light_transport`** - a documentation module in `viewport-lib-types` setting out the light units, where the camera's exposure applies, which colours it leaves alone, the fill with no environment, the view transform order and which defaults a scene can pin. Its last section lists where the renderer does not match it yet.
 
 ### Changed
 

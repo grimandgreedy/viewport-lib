@@ -180,9 +180,16 @@ impl Harness {
 
     /// Upload a scene's assets into this harness's renderer and return the built
     /// scene. Assets accumulate in the renderer; build each scene on a fresh
-    /// harness when isolated counts matter.
+    /// harness when isolated counts matter. Any environment zones are cleared
+    /// first, so only the scene built last has its zones in effect.
     #[cfg(feature = "scenes")]
     pub fn build_scene(&mut self, scene: &NamedScene) -> BuiltScene {
+        // Environment zones are renderer state rather than frame data: a scene
+        // that sets them does so in its build, and the next build starts clear.
+        // Only the full tier holds them.
+        if self.renderer.tier() == viewport_lib::Tier::Full {
+            self.renderer.clear_environment_zones();
+        }
         let mut ctx = BuildCtx {
             renderer: &mut self.renderer,
             device: &self.device,
