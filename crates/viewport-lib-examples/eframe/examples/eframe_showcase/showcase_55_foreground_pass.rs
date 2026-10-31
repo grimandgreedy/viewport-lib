@@ -112,7 +112,7 @@ fn build_orbit_track() -> CameraTrack {
         track.push(
             (i as f64) * 2.5,
             CameraTarget {
-                center,
+                center: center.as_dvec3(),
                 distance,
                 orientation,
             },

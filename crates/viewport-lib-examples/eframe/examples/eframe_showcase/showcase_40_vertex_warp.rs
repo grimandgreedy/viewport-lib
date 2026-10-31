@@ -221,7 +221,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_warp_scene(app, renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.0),
+        center: glam::DVec3::new(0.0, 0.0, 0.0),
         distance: 10.0,
         orientation: glam::Quat::from_rotation_x(0.6),
         ..vpl::Camera::default()

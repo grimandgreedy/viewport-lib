@@ -54,7 +54,7 @@ fn camera() -> Camera {
 /// A square facing the camera, three units behind the sphere, large enough
 /// to fill the view behind it.
 fn backdrop() -> (MeshData, glam::Mat4) {
-    let to_eye = camera().eye_position().normalize();
+    let to_eye = camera().eye_position().as_vec3().normalize();
     let model = glam::Mat4::from_rotation_translation(
         glam::Quat::from_rotation_arc(glam::Vec3::Z, to_eye),
         -to_eye * 3.0,
@@ -257,7 +257,7 @@ mod parity {
         let cam = camera();
         let rt_cam = RtCamera {
             inv_view_proj: cam.view_proj_matrix().inverse(),
-            position: cam.eye_position(),
+            position: cam.eye_position().as_vec3(),
             width: SIZE,
             height: SIZE,
         };

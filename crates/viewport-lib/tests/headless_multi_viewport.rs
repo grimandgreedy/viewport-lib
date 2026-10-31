@@ -30,7 +30,7 @@ fn renderer(device: &wgpu::Device) -> ViewportRenderer {
 /// grid and axes indicator off.
 fn base_frame(vp: ViewportId, mode: PipelineMode) -> FrameData {
     let cam = Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 10.0,
         orientation: glam::Quat::IDENTITY,
         ..Camera::default()

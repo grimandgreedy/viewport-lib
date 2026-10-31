@@ -74,7 +74,7 @@ impl CameraRig {
             self.mode = match self.mode {
                 CameraMode::Orbit => {
                     self.fp.sync_from_camera(session.camera());
-                    self.eye = session.camera().eye_position();
+                    self.eye = session.camera().eye_position().as_vec3();
                     CameraMode::FirstPerson
                 }
                 CameraMode::FirstPerson => {
@@ -82,7 +82,7 @@ impl CameraRig {
                     let eye = session.camera().eye_position();
                     let aim = self.fp.aim_dir();
                     let camera = session.camera_mut();
-                    camera.center = eye + aim * 8.0;
+                    camera.center = eye + (aim * 8.0).as_dvec3();
                     camera.distance = 8.0;
                     CameraMode::Orbit
                 }

@@ -152,7 +152,7 @@ impl App {
             renderer,
             target: None,
             camera: Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 28.0,
                 // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
                 // orientation * Y ~ world Z (screen up), orientation * Z points from center to eye.

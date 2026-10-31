@@ -125,7 +125,7 @@ fn compatibility_tier_draws_lit_meshes() {
         Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
     );
     let opaque_at = glam::Vec3::new(1.4, 0.0, 0.0);
-    let towards_eye = (scene_camera().eye_position() - opaque_at).normalize();
+    let towards_eye = (scene_camera().eye_position().as_vec3() - opaque_at).normalize();
     let mut glass = item(cube, grey, (opaque_at + towards_eye * 1.3).to_array());
     glass.model = (glass.model.to_mat4()
         * glam::Mat4::from_scale(glam::Vec3::splat(0.6)))

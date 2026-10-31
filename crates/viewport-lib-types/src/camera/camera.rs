@@ -11,8 +11,8 @@
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CameraTarget {
-    /// Orbit target point in world space.
-    pub center: glam::Vec3,
+    /// Orbit target point in world space, in f64.
+    pub center: glam::DVec3,
     /// Distance from center to eye.
     pub distance: f32,
     /// Camera orientation as a unit quaternion.
@@ -43,8 +43,9 @@ pub enum Projection {
 pub struct Camera {
     /// Projection mode (perspective or orthographic).
     pub projection: Projection,
-    /// Orbit target point in world space.
-    pub center: glam::Vec3,
+    /// Orbit target point in world space. f64, so a camera far from the world
+    /// origin keeps its position exactly.
+    pub center: glam::DVec3,
     /// Distance from center to eye (zoom).
     pub distance: f32,
     /// Camera orientation as a unit quaternion.
@@ -68,7 +69,7 @@ impl Default for Camera {
     fn default() -> Self {
         Self {
             projection: Projection::Perspective,
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 5.0,
             // Default: eye slightly above the x-y plane (Z-up world), ~27 deg elevation.
             // from_rotation_x(1.1) ~ 63 deg from top = 27 deg above horizontal.
@@ -93,13 +94,13 @@ impl Camera {
     // -----------------------------------------------------------------------
 
     /// Return the orbit target center in world space.
-    pub fn center(&self) -> glam::Vec3 {
+    pub fn center(&self) -> glam::DVec3 {
         self.center
     }
 
     /// Set the orbit target center in world space.
-    pub fn set_center(&mut self, center: glam::Vec3) {
-        self.center = center;
+    pub fn set_center(&mut self, center: impl Into<glam::DVec3>) {
+        self.center = center.into();
     }
 
     /// Return the camera distance (zoom).
@@ -162,8 +163,8 @@ impl Camera {
     /// `up_delta` adds to center along the camera up vector. This sign
     /// convention matches mouse pan: dragging right moves the scene left.
     pub fn pan_world(&mut self, right_delta: f32, up_delta: f32) {
-        self.center -= self.right() * right_delta;
-        self.center += self.up() * up_delta;
+        self.center -= (self.right() * right_delta).as_dvec3();
+        self.center += (self.up() * up_delta).as_dvec3();
     }
 
     /// Pan the camera by pixel-space deltas.
@@ -190,7 +191,7 @@ impl Camera {
     // -----------------------------------------------------------------------
 
     /// Frame the camera to contain a bounding sphere, applying the result directly.
-    pub fn frame_sphere(&mut self, center: glam::Vec3, radius: f32) {
+    pub fn frame_sphere(&mut self, center: impl Into<glam::DVec3>, radius: f32) {
         let (c, d) = self.fit_sphere(center, radius);
         self.center = c;
         self.set_distance(d);
@@ -205,7 +206,7 @@ impl Camera {
 
     /// Compute a [`CameraTarget`] that would frame a bounding sphere,
     /// preserving the current orientation.
-    pub fn fit_sphere_target(&self, center: glam::Vec3, radius: f32) -> CameraTarget {
+    pub fn fit_sphere_target(&self, center: impl Into<glam::DVec3>, radius: f32) -> CameraTarget {
         let (c, d) = self.fit_sphere(center, radius);
         CameraTarget {
             center: c,
@@ -234,16 +235,19 @@ impl Camera {
         self.orientation * (glam::Vec3::Z * self.distance)
     }
 
-    /// Eye (camera) position in world space.
-    pub fn eye_position(&self) -> glam::Vec3 {
-        self.center + self.eye_offset()
+    /// Eye (camera) position in world space, in f64.
+    pub fn eye_position(&self) -> glam::DVec3 {
+        self.center + self.eye_offset().as_dvec3()
     }
 
-    /// Right-handed view matrix (world -> camera space).
+    /// Right-handed view matrix (world -> camera space), in f32 world
+    /// coordinates. Far from the world origin its translation loses
+    /// precision; the renderer rebuilds it from the f64 eye.
     pub fn view_matrix(&self) -> glam::Mat4 {
-        let eye = self.eye_position();
+        let center = self.center.as_vec3();
+        let eye = center + self.eye_offset();
         let up = self.orientation * glam::Vec3::Y;
-        glam::Mat4::look_at_rh(eye, self.center, up)
+        glam::Mat4::look_at_rh(eye, center, up)
     }
 
     /// Effective far-plane distance : `zfar` floored to `distance * 3` so the
@@ -357,12 +361,12 @@ impl Camera {
             Projection::Perspective => {
                 let dir =
                     forward + right * (ndc.x * tan_half * self.aspect) + up * (ndc.y * tan_half);
-                (self.eye_position(), dir.normalize())
+                (self.eye_position().as_vec3(), dir.normalize())
             }
             Projection::Orthographic => {
                 let half_h = self.distance * tan_half;
                 let half_w = half_h * self.aspect;
-                let origin = self.eye_position()
+                let origin = self.eye_position().as_vec3()
                     + right * (ndc.x * half_w)
                     + up * (ndc.y * half_h)
                     + forward * self.effective_znear();
@@ -396,7 +400,8 @@ impl Camera {
     /// preserving the current orientation.
     ///
     /// A 1.2x padding factor is applied so the object doesn't touch the edges.
-    pub fn fit_sphere(&self, center: glam::Vec3, radius: f32) -> (glam::Vec3, f32) {
+    pub fn fit_sphere(&self, center: impl Into<glam::DVec3>, radius: f32) -> (glam::DVec3, f32) {
+        let center = center.into();
         let distance = match self.projection {
             Projection::Perspective => radius / (self.fov_y / 2.0).tan() * 1.2,
             Projection::Orthographic => radius * 1.2,
@@ -408,7 +413,7 @@ impl Camera {
     /// preserving the current orientation.
     ///
     /// Converts the AABB to a bounding sphere and delegates to [`fit_sphere`](Self::fit_sphere).
-    pub fn fit_aabb(&self, aabb: &crate::scene::aabb::Aabb) -> (glam::Vec3, f32) {
+    pub fn fit_aabb(&self, aabb: &crate::scene::aabb::Aabb) -> (glam::DVec3, f32) {
         let center = aabb.center();
         let radius = aabb.half_extents().length();
         self.fit_sphere(center, radius)
@@ -417,7 +422,7 @@ impl Camera {
     /// Center the camera on a domain of the given extents, adjusting distance
     /// and clipping planes so the entire domain is visible.
     pub fn center_on_domain(&mut self, nx: f32, ny: f32, nz: f32) {
-        self.center = glam::Vec3::new(nx / 2.0, ny / 2.0, nz / 2.0);
+        self.center = glam::DVec3::new(f64::from(nx) / 2.0, f64::from(ny) / 2.0, f64::from(nz) / 2.0);
         let diagonal = (nx * nx + ny * ny + nz * nz).sqrt();
         self.distance = (diagonal / 2.0) / (self.fov_y / 2.0).tan() * 1.2;
         self.znear = Some((diagonal * 0.0001).max(0.01));
@@ -432,7 +437,7 @@ mod tests {
     #[test]
     fn test_default_eye_position() {
         let cam = Camera::default();
-        let expected = cam.center + cam.orientation * (glam::Vec3::Z * cam.distance);
+        let expected = cam.center + (cam.orientation * (glam::Vec3::Z * cam.distance)).as_dvec3();
         let eye = cam.eye_position();
         assert!(
             (eye - expected).length() < 1e-5,
@@ -445,7 +450,7 @@ mod tests {
         let cam = Camera::default();
         let view = cam.view_matrix();
         // Center in view space should be near the negative Z axis.
-        let center_view = view.transform_point3(cam.center);
+        let center_view = view.transform_point3(cam.center.as_vec3());
         // X and Y should be near zero; Z should be negative (in front of camera).
         assert!(
             center_view.x.abs() < 1e-4,
@@ -492,7 +497,7 @@ mod tests {
     fn screen_ray_through_the_centre_is_the_eye_and_forward() {
         let cam = Camera::default();
         let (origin, dir) = cam.screen_ray(glam::Vec2::ZERO);
-        assert!((origin - cam.eye_position()).length() < 1e-5);
+        assert!((origin - cam.eye_position().as_vec3()).length() < 1e-5);
         assert!((dir - cam.forward()).length() < 1e-5);
     }
 
@@ -523,7 +528,7 @@ mod tests {
         };
         let (origin, dir) = cam.screen_ray(glam::Vec2::new(-0.5, 0.25));
         assert!((dir - cam.forward()).length() < 1e-6);
-        let depth = (origin - cam.eye_position()).dot(cam.forward());
+        let depth = (origin - cam.eye_position().as_vec3()).dot(cam.forward());
         assert!((depth - cam.effective_znear()).abs() < 1e-4, "{depth}");
     }
 
@@ -536,8 +541,8 @@ mod tests {
         let world_pt = vp_inv.project_point3(glam::Vec3::new(0.0, 0.0, 0.5));
         // The unprojected point should lie along the camera-to-center ray.
         let eye = cam.eye_position();
-        let to_center = (cam.center - eye).normalize();
-        let to_pt = (world_pt - eye).normalize();
+        let to_center = (cam.center - eye).as_vec3().normalize();
+        let to_pt = (world_pt - eye.as_vec3()).normalize();
         let dot = to_center.dot(to_pt);
         assert!(
             dot > 0.99,
@@ -549,7 +554,7 @@ mod tests {
     fn test_center_on_domain() {
         let mut cam = Camera::default();
         cam.center_on_domain(10.0, 10.0, 10.0);
-        assert!((cam.center - glam::Vec3::splat(5.0)).length() < 1e-5);
+        assert!((cam.center - glam::DVec3::splat(5.0)).length() < 1e-5);
         assert!(cam.distance > 0.0);
     }
 
@@ -557,7 +562,7 @@ mod tests {
     fn test_fit_sphere_perspective() {
         let cam = Camera::default(); // perspective, fov_y = PI/4
         let (center, dist) = cam.fit_sphere(glam::Vec3::ZERO, 5.0);
-        assert!((center - glam::Vec3::ZERO).length() < 1e-5);
+        assert!((center - glam::DVec3::ZERO).length() < 1e-5);
         let expected = 5.0 / (cam.fov_y / 2.0).tan() * 1.2;
         assert!(
             (dist - expected).abs() < 1e-4,
@@ -651,7 +656,7 @@ mod tests {
     #[test]
     fn test_set_center_and_getter() {
         let mut cam = Camera::default();
-        let target = glam::Vec3::new(1.0, 2.0, 3.0);
+        let target = glam::DVec3::new(1.0, 2.0, 3.0);
         cam.set_center(target);
         assert_eq!(cam.center(), target);
         assert_eq!(cam.center, target);
@@ -737,7 +742,7 @@ mod tests {
         let up = cam.up();
         let orig_center = cam.center;
         cam.pan_world(1.0, 0.5);
-        let expected = orig_center - right * 1.0 + up * 0.5;
+        let expected = orig_center - (right * 1.0 - up * 0.5).as_dvec3();
         assert!(
             (cam.center - expected).length() < 1e-5,
             "pan_world center mismatch"
@@ -757,7 +762,7 @@ mod tests {
         let right = cam.right();
         let up = cam.up();
         cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
-        let expected = orig_center - right * dx * pan_scale + up * dy * pan_scale;
+        let expected = orig_center - (right * dx * pan_scale - up * dy * pan_scale).as_dvec3();
         assert!(
             (cam.center - expected).length() < 1e-4,
             "pan_pixels center mismatch"

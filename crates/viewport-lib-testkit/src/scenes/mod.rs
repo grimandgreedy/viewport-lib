@@ -190,7 +190,7 @@ pub struct NamedScene {
 pub fn orbit_camera(centre: Vec3, distance: f32, yaw: f32, pitch: f32) -> Camera {
     Camera {
         // `center` is viewport-lib's field name (external API keeps its spelling).
-        center: centre,
+        center: centre.as_dvec3(),
         distance,
         orientation: Quat::from_rotation_z(yaw) * Quat::from_rotation_x(pitch),
         ..Camera::default()

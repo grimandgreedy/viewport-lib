@@ -102,7 +102,7 @@ impl ViewportRenderer {
 
             // Upload grid uniform (full-screen analytical shader : no vertex buffers needed).
             if frame.viewport.show_grid {
-                let eye = frame.camera.render_camera.eye_position();
+                let eye = frame.camera.render_camera.eye_position().as_vec3();
                 if !eye.is_finite() {
                     tracing::warn!(
                         eye_x = eye.x,
@@ -192,7 +192,7 @@ impl ViewportRenderer {
                         tan_half_fov,
                         aspect,
                         _pad_ivp: [0.0; 2],
-                        eye_pos: gpu_camera.eye_position().to_array(),
+                        eye_pos: gpu_camera.eye_position().as_vec3().to_array(),
                         grid_z: self
                             .origin
                             .rel_plane_d(glam::Vec3::NEG_Z, frame.viewport.grid_z),
@@ -262,7 +262,7 @@ impl ViewportRenderer {
                     cam_right: [right.x, right.y, right.z, 0.0],
                     cam_up: [up.x, up.y, up.z, 0.0],
                     cam_back: [back.x, back.y, back.z, 0.0],
-                    eye_pos: gpu_camera.eye_position().to_array(),
+                    eye_pos: gpu_camera.eye_position().as_vec3().to_array(),
                     height: self.origin.rel_plane_d(glam::Vec3::NEG_Z, gp.height),
                     colour: gp.colour.to_linear_rgba(),
                     shadow_colour: gp.shadow_colour.to_linear_rgba(),

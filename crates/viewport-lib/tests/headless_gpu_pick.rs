@@ -572,7 +572,7 @@ fn gpu_pick_face_fills_geometric_normal() {
         "expected an axis-aligned box face normal, got {:?}",
         hit.normal
     );
-    let to_eye = frame.camera.render_camera.eye_position() - hit.world_pos;
+    let to_eye = frame.camera.render_camera.eye_position().as_vec3() - hit.world_pos;
     assert!(
         hit.normal.dot(to_eye) > 0.0,
         "face normal should point toward the camera, got {:?}",

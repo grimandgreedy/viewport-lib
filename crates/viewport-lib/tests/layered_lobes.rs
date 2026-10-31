@@ -154,7 +154,7 @@ mod parity {
         let cam = camera();
         let rt_cam = RtCamera {
             inv_view_proj: cam.view_proj_matrix().inverse(),
-            position: cam.eye_position(),
+            position: cam.eye_position().as_vec3(),
             width: SIZE,
             height: SIZE,
         };

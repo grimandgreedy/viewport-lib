@@ -125,7 +125,7 @@ impl App {
     ) {
         self.build_emissive_scene(renderer);
         self.camera = vpl::Camera {
-            center: glam::Vec3::new(4.8, 0.5, 0.8),
+            center: glam::DVec3::new(4.8, 0.5, 0.8),
             distance: 17.0,
             orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
             ..vpl::Camera::default()

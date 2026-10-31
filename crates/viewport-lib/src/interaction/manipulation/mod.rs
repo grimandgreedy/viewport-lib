@@ -237,7 +237,9 @@ impl ManipulationController {
                         }
                     } else {
                         // Unconstrained: rotate around camera view direction.
-                        let view_dir = (ctx.camera.center - ctx.camera.eye_position()).normalize();
+                        let view_dir = (ctx.camera.center - ctx.camera.eye_position())
+                            .as_vec3()
+                            .normalize();
                         glam::Quat::from_axis_angle(view_dir, pointer_delta.x * 0.01 + twist)
                     };
                     delta.rotation = rot;

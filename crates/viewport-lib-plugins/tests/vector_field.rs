@@ -109,7 +109,7 @@ fn cpu_pick_vector_field_resolves_sample() {
     let mut frame = sub_object_pick_frame();
 
     let mut item =
-        three_samples_facing(shape, frame.camera.render_camera.eye_position().to_array());
+        three_samples_facing(shape, frame.camera.render_camera.eye_position().as_vec3().to_array());
     item.settings.pick_id = PickId(801);
     frame.scene.items_mut::<VectorFieldItem>().push(item);
 
@@ -146,7 +146,7 @@ fn an_object_query_drops_the_sample_sub_object() {
     let mut frame = sub_object_pick_frame();
 
     let mut item =
-        three_samples_facing(shape, frame.camera.render_camera.eye_position().to_array());
+        three_samples_facing(shape, frame.camera.render_camera.eye_position().as_vec3().to_array());
     item.settings.pick_id = PickId(802);
     frame.scene.items_mut::<VectorFieldItem>().push(item);
 

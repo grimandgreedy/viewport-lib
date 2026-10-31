@@ -1725,7 +1725,7 @@ impl App {
         // Side-on view of the sphere at (-4, 0, 0.6), low camera angle.
         // SplitScreen: left = normal, right = ShadowFactor.
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(-4.0, 0.0, 0.6);
+        self.session.camera_mut().center = glam::DVec3::new(-4.0, 0.0, 0.6);
         self.session.camera_mut().distance = 7.0;
         // Looking from the Y+ side, slightly above horizontal.
         self.session.camera_mut().orientation =
@@ -1744,7 +1744,7 @@ impl App {
         // Steep top-down view of the rough sphere in the Materials tab.
         // SplitScreen: left = normal, right = ShadowFactor (acne appears as bright speckles).
         self.tab = Tab::Materials;
-        self.session.camera_mut().center = glam::Vec3::new(4.5, 2.5, 0.7);
+        self.session.camera_mut().center = glam::DVec3::new(4.5, 2.5, 0.7);
         self.session.camera_mut().distance = 4.0;
         // Looking down at steep angle.
         self.session.camera_mut().orientation =
@@ -1762,7 +1762,7 @@ impl App {
         // Pulled back to see the full scene from a moderate angle.
         // SplitScreen: left = normal, right = CascadeIndex (bands as distinct colours).
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(0.0, 0.0, 0.5);
+        self.session.camera_mut().center = glam::DVec3::new(0.0, 0.0, 0.5);
         self.session.camera_mut().distance = 22.0;
         self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
@@ -1779,7 +1779,7 @@ impl App {
         // Mid-distance orbit view. Orbit while watching AtlasUV on the right half.
         // Unstable UVs during orbit point to cascade matrix instability.
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(0.0, 0.0, 0.5);
+        self.session.camera_mut().center = glam::DVec3::new(0.0, 0.0, 0.5);
         self.session.camera_mut().distance = 12.0;
         self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(1.0) * glam::Quat::from_rotation_x(1.15);
@@ -1796,7 +1796,7 @@ impl App {
         // Looking at the torus from above at a low angle so the inner ring is visible.
         // SplitScreen: left = normal, right = ContactShadowFactor.
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(4.0, 0.0, 0.18);
+        self.session.camera_mut().center = glam::DVec3::new(4.0, 0.0, 0.18);
         self.session.camera_mut().distance = 5.0;
         self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(1.3);

@@ -249,7 +249,7 @@ impl ApplicationHandler for App {
 
         // Perspective camera : standard orbit view.
         let cam_persp = Camera {
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 12.0,
             orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
             ..Camera::default()
@@ -258,7 +258,7 @@ impl ApplicationHandler for App {
         // Top view: looking straight down (-Z direction).
         let cam_top = Camera {
             projection: Projection::Orthographic,
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 10.0,
             // from_rotation_x(-PI/2) puts the camera directly above looking down.
             orientation: glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
@@ -268,7 +268,7 @@ impl ApplicationHandler for App {
         // Front view: looking along -Y.
         let cam_front = Camera {
             projection: Projection::Orthographic,
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 10.0,
             orientation: glam::Quat::IDENTITY,
             ..Camera::default()
@@ -277,7 +277,7 @@ impl ApplicationHandler for App {
         // Right view: looking along -X (rotate 90 degrees around Z then front).
         let cam_right = Camera {
             projection: Projection::Orthographic,
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 10.0,
             orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
             ..Camera::default()

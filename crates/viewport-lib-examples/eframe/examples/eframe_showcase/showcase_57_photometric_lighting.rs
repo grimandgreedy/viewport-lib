@@ -474,7 +474,7 @@ impl App {
             LightingSub::Presets => {
                 self.build_presets_scene(renderer);
                 self.camera = vpl::Camera {
-                    center: glam::Vec3::new(4.8, 0.4, 0.7),
+                    center: glam::DVec3::new(4.8, 0.4, 0.7),
                     distance: 16.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.2),
@@ -485,7 +485,7 @@ impl App {
                 self.build_falloff_scene(renderer);
                 // Frame the row from the side so the near-to-far dimming reads.
                 self.camera = vpl::Camera {
-                    center: glam::Vec3::new(9.0, 0.0, 0.5),
+                    center: glam::DVec3::new(9.0, 0.0, 0.5),
                     distance: 22.0,
                     orientation: glam::Quat::from_rotation_z(0.5)
                         * glam::Quat::from_rotation_x(1.15),
@@ -495,7 +495,7 @@ impl App {
             LightingSub::Exposure => {
                 self.build_exposure_scene(renderer);
                 self.camera = vpl::Camera {
-                    center: glam::Vec3::new(6.0, 0.4, 0.7),
+                    center: glam::DVec3::new(6.0, 0.4, 0.7),
                     distance: 17.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.2),

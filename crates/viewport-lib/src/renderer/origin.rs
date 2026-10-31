@@ -119,7 +119,7 @@ impl OriginState {
             WorldOrigin::Zero => DVec3::ZERO,
             WorldOrigin::Fixed(p) => p,
             WorldOrigin::Snapped { cell, hysteresis } => {
-                let eye = camera.eye_position().as_dvec3();
+                let eye = camera.eye_position();
                 let limit = self.cell * (0.5 + hysteresis.max(0.0));
                 let strayed = self.cell <= 0.0
                     || cell.is_some_and(|c| c != self.cell)
@@ -225,7 +225,7 @@ pub(crate) fn rel_model(mut m: [[f32; 4]; 4], origin: DVec3) -> [[f32; 4]; 4] {
 /// A world-to-view matrix for points relative to `origin`: the rotation of
 /// `view` with the translation rebuilt in f64 from the eye, as
 /// `-R (eye - origin)`, rather than `view * translate(origin)` in f32.
-pub(crate) fn rel_view(view: Mat4, eye: Vec3, origin: DVec3) -> Mat4 {
+pub(crate) fn rel_view(view: Mat4, eye: DVec3, origin: DVec3) -> Mat4 {
     if origin == DVec3::ZERO {
         return view;
     }
@@ -234,7 +234,7 @@ pub(crate) fn rel_view(view: Mat4, eye: Vec3, origin: DVec3) -> Mat4 {
         view.y_axis.truncate().as_dvec3(),
         view.z_axis.truncate().as_dvec3(),
     );
-    let t = -(r * (eye.as_dvec3() - origin));
+    let t = -(r * (eye - origin));
     let mut out = view;
     out.w_axis = t.as_vec3().extend(view.w_axis.w);
     out
@@ -279,7 +279,7 @@ mod tests {
         let p = Vec3::new(1.0e6 + 0.0625, -3.5, 7.25);
         assert_eq!(s.rel(p).to_array(), p.to_array());
         let view = Mat4::look_at_rh(p, Vec3::ZERO, Vec3::Z);
-        assert_eq!(rel_view(view, p, DVec3::ZERO), view);
+        assert_eq!(rel_view(view, p.as_dvec3(), DVec3::ZERO), view);
         assert_eq!(s.epoch(), 0);
     }
 
@@ -321,7 +321,7 @@ mod tests {
         let target = eye + Vec3::new(3.0, 4.0, -1.0);
         let view = Mat4::look_at_rh(eye, target, Vec3::Z);
         let origin = DVec3::new(1.0e6 - 8.0, 2.0e5 + 4.0, 0.0);
-        let rv = rel_view(view, eye, origin);
+        let rv = rel_view(view, eye.as_dvec3(), origin);
         // The eye maps to the view-space origin.
         let e = rv.transform_point3(rel(eye, origin));
         assert!(e.length() < 1e-5, "{e}");

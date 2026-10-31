@@ -72,7 +72,7 @@ fn auto_exposure_stable_across_zoom() {
     eprintln!("distance |  center_luma |  metered_EV | mult");
     for &dist in &[6.0f32, 10.0, 16.0, 26.0, 40.0] {
         let cam = Camera {
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: dist,
             ..Camera::default()
         };
@@ -179,7 +179,7 @@ fn probe_example_scene() {
     };
     let make = |orient: glam::Quat, dist: f32, hemi: f32| {
         let cam = Camera {
-            center: glam::Vec3::new(span * 0.5, 0.4, 0.6),
+            center: glam::Vec3::new(span * 0.5, 0.4, 0.6).as_dvec3(),
             distance: dist,
             orientation: orient,
             ..Camera::default()

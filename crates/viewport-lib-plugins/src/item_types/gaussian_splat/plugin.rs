@@ -188,7 +188,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         // The sort and the draw share the uniform, so both take the eye and
         // the model relative to the world origin.
         let origin = ctx.world_origin();
-        let eye = rel_vec3(ctx.camera.eye_position(), origin).to_array();
+        let eye = (ctx.camera.eye_position() - origin).as_vec3().to_array();
         let vp_w = ctx.viewport_size.x.max(1.0);
         let vp_h = ctx.viewport_size.y.max(1.0);
         let mut encoder: Option<gpu::CommandEncoder> = None;
@@ -787,7 +787,7 @@ impl GaussianSplatPlugin {
                 gpu,
                 set,
                 ctx.viewport_index,
-                rel_vec3(ctx.camera.eye_position(), ctx.world_origin()).to_array(),
+                (ctx.camera.eye_position() - ctx.world_origin()).as_vec3().to_array(),
                 rel_model(item.model, ctx.world_origin()),
                 viewport_size,
                 item.settings.ignore_clip,

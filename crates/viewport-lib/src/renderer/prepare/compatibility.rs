@@ -229,7 +229,7 @@ impl ViewportRenderer {
             return;
         };
         let resources = &self.resources;
-        let eye = frame.camera.render_camera.eye_position();
+        let eye = frame.camera.render_camera.eye_position().as_vec3();
 
         let mut records: Vec<BasicInstance> = Vec::new();
         let mut opaque: Vec<BasicMeshDraw> = Vec::new();

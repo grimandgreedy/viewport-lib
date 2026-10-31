@@ -134,7 +134,7 @@ impl ThirdPersonCameraController {
             pivot += Vec3::Z * self.shoulder_offset.y;
         }
 
-        camera.center = pivot;
+        camera.center = pivot.as_dvec3();
         camera.distance = self.distance;
         camera.orientation = orientation;
     }
@@ -226,7 +226,7 @@ mod tests {
         let mut camera = Camera::default();
         c.apply(&mut camera, &look(0.0, 0.0), Vec3::ZERO);
         // yaw 0, pitch 0: aim +Y, so the eye sits 6 units along -Y at z=1.2.
-        let eye = camera.eye_position();
+        let eye = camera.eye_position().as_vec3();
         assert!(approx_eq(eye, Vec3::new(0.0, -6.0, 1.2)), "eye={eye:?}");
     }
 

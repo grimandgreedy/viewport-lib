@@ -868,7 +868,7 @@ impl eframe::App for App {
                         if let Some(center) = self.gizmo_center {
                             self.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
                                 center,
-                                self.camera.eye_position(),
+                                self.camera.eye_position().as_vec3(),
                                 self.camera.fov_y,
                                 h,
                             );

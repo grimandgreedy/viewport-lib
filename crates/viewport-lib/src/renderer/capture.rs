@@ -1339,7 +1339,7 @@ mod tests {
         }
 
         let cam = Camera {
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 18.0,
             ..Camera::default()
         };
@@ -1433,7 +1433,7 @@ mod tests {
 
         let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
             let cam = Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 5.0,
                 ..Camera::default()
             };

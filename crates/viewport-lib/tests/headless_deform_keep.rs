@@ -49,7 +49,7 @@ fn plane_cut() -> DeformerDesc {
 fn top_down() -> RenderCamera {
     let mut cam = Camera::default();
     cam.orientation = glam::Quat::IDENTITY;
-    cam.center = glam::Vec3::ZERO;
+    cam.center = glam::DVec3::ZERO;
     cam.distance = 5.0;
     cam.aspect = W as f32 / H as f32;
     RenderCamera::from_camera(&cam)

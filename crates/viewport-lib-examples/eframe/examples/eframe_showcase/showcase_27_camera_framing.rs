@@ -114,7 +114,7 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
     let distance = (f.near * 0.5_f32).max(0.01);
     let center = eye + orientation * (-glam::Vec3::Z) * distance;
     vpl::CameraTarget {
-        center,
+        center: center.as_dvec3(),
         distance,
         orientation,
     }
@@ -123,7 +123,7 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
 /// Build the default demo track: overview -> A -> B -> C -> overview.
 fn build_demo_track(frustums: &[FrustumData]) -> CameraTrack {
     let overview = CameraTarget {
-        center: glam::Vec3::new(0.0, 0.0, 0.5),
+        center: glam::DVec3::new(0.0, 0.0, 0.5),
         distance: 30.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
     };
@@ -616,7 +616,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_aux_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.5),
+        center: glam::DVec3::new(0.0, 0.0, 0.5),
         distance: 30.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()

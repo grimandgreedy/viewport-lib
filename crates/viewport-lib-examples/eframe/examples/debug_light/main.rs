@@ -242,7 +242,7 @@ impl App {
     ) -> Self {
         Self {
             camera: Camera {
-                center: glam::Vec3::new(0.0, 0.0, 1.0),
+                center: glam::DVec3::new(0.0, 0.0, 1.0),
                 distance: 8.0,
                 ..Camera::default()
             },

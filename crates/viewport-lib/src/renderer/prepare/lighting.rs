@@ -120,7 +120,7 @@ impl ViewportRenderer {
             select_shadow_casters(
                 combined_lights,
                 key_of,
-                camera.eye_position(),
+                camera.eye_position().as_vec3(),
                 budget,
                 |key| pool.holds(key),
             )
@@ -860,7 +860,7 @@ pub(super) fn rank_lights<'a>(
     // lowest-priority lights deterministically. Directional lights are
     // treated as infinitely close (proximity_weight = 1). Shading itself is
     // order-independent.
-    let camera_pos = frame.camera.render_camera.eye_position();
+    let camera_pos = frame.camera.render_camera.eye_position().as_vec3();
     let directional = |l: &LightSource| matches!(l.kind, LightKind::Directional { .. });
     let directional_first = raw_lights
         .iter()

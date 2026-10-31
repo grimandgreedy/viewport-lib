@@ -88,13 +88,13 @@ fn set_center_applies_to_camera() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!((cam.center - glam::Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+    assert!((cam.center - glam::DVec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
 }
 
 #[test]
 fn offset_center_adds_to_current_position() {
     let mut camera = Camera::default();
-    camera.center = glam::Vec3::new(5.0, 0.0, 0.0);
+    camera.center = glam::DVec3::new(5.0, 0.0, 0.0);
 
     let mut runtime =
         ViewportRuntime::new().with_plugin(OffsetCenterPlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
@@ -118,7 +118,7 @@ fn set_distance_applies() {
 #[test]
 fn blend_toward_interpolates() {
     let target = CameraTarget {
-        center: glam::Vec3::new(10.0, 0.0, 0.0),
+        center: glam::DVec3::new(10.0, 0.0, 0.0),
         distance: 20.0,
         orientation: glam::Quat::IDENTITY,
     };
@@ -128,7 +128,7 @@ fn blend_toward_interpolates() {
     });
 
     let mut camera = Camera::default();
-    camera.center = glam::Vec3::ZERO;
+    camera.center = glam::DVec3::ZERO;
     camera.distance = 4.0;
 
     let mut output = step(&mut runtime, &camera);
@@ -141,7 +141,7 @@ fn blend_toward_interpolates() {
 #[test]
 fn blend_at_weight_one_snaps_to_target() {
     let target = CameraTarget {
-        center: glam::Vec3::new(7.0, 8.0, 9.0),
+        center: glam::DVec3::new(7.0, 8.0, 9.0),
         distance: 5.0,
         orientation: glam::Quat::IDENTITY,
     };
@@ -155,7 +155,7 @@ fn blend_at_weight_one_snaps_to_target() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!((cam.center - glam::Vec3::new(7.0, 8.0, 9.0)).length() < 1e-5);
+    assert!((cam.center - glam::DVec3::new(7.0, 8.0, 9.0)).length() < 1e-5);
     assert!((cam.distance - 5.0).abs() < 1e-5);
 }
 

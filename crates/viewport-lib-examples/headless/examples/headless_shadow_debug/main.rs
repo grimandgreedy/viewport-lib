@@ -132,7 +132,7 @@ fn main() {
         distance: f(8, 18.0),
         ..Camera::default()
     };
-    camera.center = glam::Vec3::new(f(5, 0.0), f(6, 0.0), f(7, 0.0));
+    camera.center = glam::Vec3::new(f(5, 0.0), f(6, 0.0), f(7, 0.0)).as_dvec3();
     camera.orientation =
         glam::Quat::from_rotation_z(f(9, 0.6)) * glam::Quat::from_rotation_x(f(10, 1.0));
     camera.set_aspect_ratio(W as f32, H as f32);

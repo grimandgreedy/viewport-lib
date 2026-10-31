@@ -84,7 +84,7 @@ pub fn interpolate_camera(track: &CameraTrack, t: f64) -> CameraTarget {
 
     match kfs.len() {
         0 => CameraTarget {
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 5.0,
             orientation: glam::Quat::IDENTITY,
         },
@@ -135,7 +135,7 @@ pub fn interpolate_camera(track: &CameraTrack, t: f64) -> CameraTarget {
             };
 
             CameraTarget {
-                center: catmull_rom_vec3(p0.center, p1.center, p2.center, p3.center, s),
+                center: catmull_rom_dvec3(p0.center, p1.center, p2.center, p3.center, s),
                 distance: catmull_rom_f32(p0.distance, p1.distance, p2.distance, p3.distance, s)
                     .max(Camera::MIN_DISTANCE),
                 orientation: p1.orientation.slerp(p2.orientation, s).normalize(),
@@ -157,18 +157,22 @@ fn catmull_rom_f32(p0: f32, p1: f32, p2: f32, p3: f32, s: f32) -> f32 {
         + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * s3)
 }
 
-fn catmull_rom_vec3(
-    p0: glam::Vec3,
-    p1: glam::Vec3,
-    p2: glam::Vec3,
-    p3: glam::Vec3,
+/// Catmull-Rom through f64 points, so a track far from the world origin
+/// keeps its precision.
+fn catmull_rom_dvec3(
+    p0: glam::DVec3,
+    p1: glam::DVec3,
+    p2: glam::DVec3,
+    p3: glam::DVec3,
     s: f32,
-) -> glam::Vec3 {
-    glam::Vec3::new(
-        catmull_rom_f32(p0.x, p1.x, p2.x, p3.x, s),
-        catmull_rom_f32(p0.y, p1.y, p2.y, p3.y, s),
-        catmull_rom_f32(p0.z, p1.z, p2.z, p3.z, s),
-    )
+) -> glam::DVec3 {
+    let s = f64::from(s);
+    let s2 = s * s;
+    let s3 = s2 * s;
+    0.5 * (2.0 * p1
+        + (-p0 + p2) * s
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * s2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * s3)
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +185,7 @@ mod tests {
 
     fn target(x: f32, d: f32) -> CameraTarget {
         CameraTarget {
-            center: glam::Vec3::new(x, 0.0, 0.0),
+            center: glam::DVec3::new(f64::from(x), 0.0, 0.0),
             distance: d,
             orientation: glam::Quat::IDENTITY,
         }

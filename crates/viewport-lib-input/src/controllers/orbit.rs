@@ -310,7 +310,7 @@ impl OrbitCameraController {
                     self.fly_speed
                 };
                 // Translate center (and thus eye) without changing orientation or distance.
-                camera.center += wish * speed * dt;
+                camera.center += (wish * speed * dt).as_dvec3();
             }
 
             // NavigationMode is non_exhaustive; no-op for modes not handled here.
@@ -399,7 +399,7 @@ fn apply_fly_look(camera: &mut Camera, yaw: f32, pitch: f32) {
         .turned(yaw, -pitch)
         .with_pitch_clamped(-POLE_LIMIT, POLE_LIMIT);
     camera.orientation = look.orientation();
-    camera.center = eye + look.direction() * camera.distance;
+    camera.center = eye + (look.direction() * camera.distance).as_dvec3();
 }
 
 #[cfg(test)]
@@ -559,7 +559,7 @@ mod tests {
         ctrl.fly_speed = 60.0;
         ctrl.begin_frame(make_ctx());
         let mut cam = Camera::default();
-        cam.center = glam::Vec3::ZERO;
+        cam.center = glam::DVec3::ZERO;
         cam.orientation = glam::Quat::IDENTITY;
         let center_before = cam.center;
         ctrl.push_event(ViewportEvent::Key {
@@ -714,7 +714,7 @@ mod tests {
             1.0,
         );
         let moved = (cam.center - before).length();
-        assert!((moved - ctrl.fly_boost).abs() < 1e-5, "moved={moved}");
+        assert!((moved - f64::from(ctrl.fly_boost)).abs() < 1e-5, "moved={moved}");
     }
 
     #[test]

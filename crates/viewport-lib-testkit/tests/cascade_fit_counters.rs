@@ -121,7 +121,7 @@ fn a_first_person_camera_fits_the_cascades_to_the_scene() {
     // how far the scene reaches.
     let eye = Vec3::new(0.0, -14.0, 1.7);
     let camera = Camera {
-        center: eye + Vec3::Y * 0.01,
+        center: (eye + Vec3::Y * 0.01).as_dvec3(),
         distance: 0.01,
         orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
         ..Camera::default()
@@ -289,7 +289,7 @@ fn shadow_past_the_distance(h: &mut Harness, fade_fraction: f32) -> (f32, f32) {
 
     let eye = Vec3::new(0.0, 0.0, 1.7);
     let camera = Camera {
-        center: eye + Vec3::Y * 0.01,
+        center: (eye + Vec3::Y * 0.01).as_dvec3(),
         distance: 0.01,
         orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
         ..Camera::default()

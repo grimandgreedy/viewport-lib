@@ -75,12 +75,12 @@ impl Default for CameraDamping {
 /// An in-progress fly-to animation.
 #[derive(Clone, Debug)]
 struct CameraFlight {
-    start_center: glam::Vec3,
+    start_center: glam::DVec3,
     start_distance: f32,
     start_orientation: glam::Quat,
     #[allow(dead_code)]
     start_projection: Projection,
-    target_center: glam::Vec3,
+    target_center: glam::DVec3,
     target_distance: f32,
     target_orientation: glam::Quat,
     target_projection: Option<Projection>,
@@ -182,7 +182,7 @@ impl CameraAnimator {
     pub fn fly_to(
         &mut self,
         camera: &Camera,
-        target_center: glam::Vec3,
+        target_center: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         duration: f32,
@@ -202,7 +202,7 @@ impl CameraAnimator {
     pub fn fly_to_with_easing(
         &mut self,
         camera: &Camera,
-        target_center: glam::Vec3,
+        target_center: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         duration: f32,
@@ -224,7 +224,7 @@ impl CameraAnimator {
     pub fn fly_to_full(
         &mut self,
         camera: &Camera,
-        target_center: glam::Vec3,
+        target_center: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         target_projection: Option<Projection>,
@@ -241,7 +241,7 @@ impl CameraAnimator {
             start_distance: camera.distance(),
             start_orientation: camera.orientation(),
             start_projection: camera.projection,
-            target_center,
+            target_center: target_center.into(),
             target_distance,
             target_orientation,
             target_projection,
@@ -299,7 +299,11 @@ impl CameraAnimator {
             let raw_t = (flight.elapsed / flight.duration).min(1.0);
             let t = flight.easing.eval(raw_t);
 
-            camera.set_center(flight.start_center.lerp(flight.target_center, t));
+            camera.set_center(
+                flight
+                    .start_center
+                    .lerp(flight.target_center, f64::from(t)),
+            );
             camera.set_distance(
                 flight.start_distance + (flight.target_distance - flight.start_distance) * t,
             );
@@ -436,7 +440,7 @@ mod tests {
             anim.update(1.0 / 60.0, &mut cam);
         }
         assert!(
-            (cam.center - target_center).length() < 1e-4,
+            (cam.center - target_center.as_dvec3()).length() < 1e-4,
             "center should match target: {:?}",
             cam.center
         );
@@ -509,7 +513,7 @@ mod tests {
         anim.update(1.0 / 60.0, &mut cam);
         // Camera should NOT have reached the target.
         assert!(
-            (cam.center - target).length() > 1.0,
+            (cam.center - target.as_dvec3()).length() > 1.0,
             "flight should have been cancelled"
         );
     }
@@ -552,7 +556,7 @@ mod tests {
         for _ in 0..(hz as usize * 10) {
             anim.update(1.0 / hz, &mut cam);
         }
-        (cam.center - start).length()
+        (cam.center - start).length() as f32
     }
 
     #[test]

@@ -30,7 +30,7 @@ const C_SWAP: [u8; 4] = [200, 180, 160, 255];
 fn top_down_camera() -> Camera {
     let mut cam = Camera::default();
     cam.orientation = glam::Quat::IDENTITY; // identity = top view in a Z-up world
-    cam.center = glam::Vec3::ZERO;
+    cam.center = glam::DVec3::ZERO;
     cam.distance = 5.0;
     cam.aspect = W as f32 / H as f32;
     cam
@@ -258,7 +258,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
             distance: 16.0,
             ..Camera::default()
         };
-        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
+        cam.center = glam::DVec3::new(-4.0, 0.0, 0.0);
         cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
@@ -1395,7 +1395,7 @@ fn instanced_cutout_shadow_reflects_free_texture() {
             distance: 16.0,
             ..Camera::default()
         };
-        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
+        cam.center = glam::DVec3::new(-4.0, 0.0, 0.0);
         cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);

@@ -161,7 +161,7 @@ fn main() -> eframe::Result {
                 viewport_target: None,
                 mv_targets: Vec::new(),
                 camera: Camera {
-                    center: glam::Vec3::ZERO,
+                    center: glam::DVec3::ZERO,
                     distance: 12.0,
                     orientation: glam::Quat::from_rotation_z(0.6)
                         * glam::Quat::from_rotation_x(1.1),

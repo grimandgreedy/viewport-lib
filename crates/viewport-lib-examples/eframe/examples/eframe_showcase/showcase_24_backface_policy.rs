@@ -384,7 +384,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         // Pull back so both the front spheres and the background
         // SSAA stress-grid are fully visible.
-        center: glam::Vec3::new(0.0, 0.0, -1.5),
+        center: glam::DVec3::new(0.0, 0.0, -1.5),
         distance: 16.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()

@@ -76,7 +76,7 @@ impl Scene {
         frame.effects.lighting.hemisphere_intensity = 0.5;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
+            cam.center = glam::DVec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
             RenderCamera::from_camera(&cam)
@@ -359,7 +359,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
+            cam.center = glam::DVec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
             RenderCamera::from_camera(&cam)
@@ -472,7 +472,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
+            cam.center = glam::DVec3::ZERO;
             cam.distance = 6.0;
             cam.orientation = glam::Quat::IDENTITY;
             RenderCamera::from_camera(&cam)

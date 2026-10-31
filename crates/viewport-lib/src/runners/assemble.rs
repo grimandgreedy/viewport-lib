@@ -183,7 +183,7 @@ impl ViewportInstance {
         };
         let scale = compute_gizmo_scale(
             center,
-            self.camera.eye_position(),
+            self.camera.eye_position().as_vec3(),
             self.camera.fov_y,
             self.viewport_size[1],
         );

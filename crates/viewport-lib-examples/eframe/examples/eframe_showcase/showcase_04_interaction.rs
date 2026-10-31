@@ -415,7 +415,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_interact_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 12.0,
         orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
@@ -587,7 +587,7 @@ pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
     if let Some(center) = app.interact_state.gizmo_center {
         app.interact_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
             center,
-            app.camera.eye_position(),
+            app.camera.eye_position().as_vec3(),
             app.camera.fov_y,
             cx.rect.height(),
         );

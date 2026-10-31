@@ -181,7 +181,7 @@ impl App {
         }
 
         self.camera = Camera {
-            center: glam::Vec3::new(0.0, 0.5, 0.0),
+            center: glam::DVec3::new(0.0, 0.5, 0.0),
             distance: 9.0,
             orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
             znear: Some(0.2),

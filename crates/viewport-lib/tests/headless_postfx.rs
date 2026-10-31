@@ -269,7 +269,7 @@ fn foreground_override_projection_avoids_near_clip() {
 
     // A small box held 0.05 world units in front of the eye: inside the
     // scene near plane (0.1 for the default camera).
-    let eye = frame.camera.render_camera.eye_position();
+    let eye = frame.camera.render_camera.eye_position().as_vec3();
     let fwd = frame.camera.render_camera.forward();
     let model = glam::Mat4::from_translation(eye + fwd * 0.05)
         * glam::Mat4::from_scale(glam::Vec3::splat(0.02));

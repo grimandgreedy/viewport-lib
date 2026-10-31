@@ -85,7 +85,7 @@ fn trio_frame(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool)
     );
 
     let camera = Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 9.0,
         orientation: glam::Quat::from_rotation_z(0.7) * glam::Quat::from_rotation_x(1.0),
         ..Camera::default()

@@ -102,7 +102,7 @@ impl ManipulationSystem {
         if let Some(center) = self.gizmo_center {
             self.gizmo_scale = gizmo::compute_gizmo_scale(
                 center,
-                frame.camera.eye_position(),
+                frame.camera.eye_position().as_vec3(),
                 frame.camera.fov_y,
                 frame.viewport_size.y,
             );

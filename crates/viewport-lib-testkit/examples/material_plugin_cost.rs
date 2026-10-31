@@ -178,7 +178,7 @@ fn main() {
         .collect();
 
     let camera = Camera {
-        center: glam::Vec3::new(0.0, 0.0, 1.0),
+        center: glam::DVec3::new(0.0, 0.0, 1.0),
         distance: 15.0,
         orientation: glam::Quat::from_rotation_x(1.1),
         ..Camera::default()

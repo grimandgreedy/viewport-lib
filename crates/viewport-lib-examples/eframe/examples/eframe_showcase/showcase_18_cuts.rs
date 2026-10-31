@@ -129,7 +129,7 @@ pub(crate) fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     state.built = true;
 
     app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.9),
+        center: glam::DVec3::new(0.0, 0.0, 0.9),
         distance: 8.5,
         orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.95),
         ..vpl::Camera::default()

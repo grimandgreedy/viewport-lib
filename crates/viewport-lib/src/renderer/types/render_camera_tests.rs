@@ -30,7 +30,7 @@ fn far_close(far: f32, expected: f32, near: f32, orthographic: bool) -> bool {
 fn known_camera(projection: Projection) -> Camera {
     let mut cam = Camera::default();
     cam.projection = projection;
-    cam.center = glam::Vec3::new(1.5, -2.0, 0.75);
+    cam.center = glam::DVec3::new(1.5, -2.0, 0.75);
     cam.distance = 12.0;
     cam.orientation = glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(0.9);
     cam.fov_y = 0.9;
@@ -71,9 +71,9 @@ fn stored_field_uniform(cam: &Camera) -> CameraUniform {
     };
     CameraUniform {
         view_proj: vp.to_cols_array_2d(),
-        eye_pos: eye.to_array(),
+        eye_pos: eye.as_vec3().to_array(),
         lit_clamp: 1.0,
-        forward: (cam.center - eye).normalize_or_zero().to_array(),
+        forward: (cam.center.as_vec3() - eye.as_vec3()).normalize_or_zero().to_array(),
         _pad1: 0.0,
         inv_view_proj: vp.inverse().to_cols_array_2d(),
         view: view.to_cols_array_2d(),
@@ -135,7 +135,7 @@ fn from_camera_round_trips_the_camera() {
         let rc = RenderCamera::from_camera(&cam);
         let ortho = cam.projection == Projection::Orthographic;
         assert_eq!(rc.is_orthographic(), ortho);
-        assert!(close3(rc.eye_position(), cam.eye_position()), "eye");
+        assert!(close3(rc.eye_position().as_vec3(), cam.eye_position().as_vec3()), "eye");
         assert!(close3(rc.forward(), cam.forward()), "forward");
         assert!(close(rc.aspect(), cam.aspect), "aspect");
         let (near, far) = rc.depth_range();
@@ -191,7 +191,7 @@ fn setters_refresh_the_derived_state() {
     let eye = glam::Vec3::new(3.0, 4.0, 5.0);
     rc.set_view(glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z));
     rc.set_projection(glam::Mat4::perspective_rh(0.6, 2.0, 0.5, 50.0));
-    assert!(close3(rc.eye_position(), eye));
+    assert!(close3(rc.eye_position().as_vec3(), eye));
     assert!(close3(rc.forward(), (-eye).normalize()));
     let (near, far) = rc.depth_range();
     assert!(close(near, 0.5));
@@ -210,7 +210,7 @@ fn setters_refresh_the_derived_state() {
 #[test]
 fn default_is_a_perspective_camera_down_negative_z() {
     let rc = RenderCamera::default();
-    assert!(close3(rc.eye_position(), glam::Vec3::new(0.0, 0.0, 5.0)));
+    assert!(close3(rc.eye_position().as_vec3(), glam::Vec3::new(0.0, 0.0, 5.0)));
     assert!(close3(rc.forward(), glam::Vec3::NEG_Z));
     assert!(close(
         rc.vertical_fov().unwrap(),
@@ -283,7 +283,7 @@ fn screen_ray_through_the_centre_is_the_eye_and_forward() {
     {
         let rc = RenderCamera::from_camera(&cam);
         let (origin, dir) = rc.screen_ray(glam::Vec2::ZERO);
-        assert!(close3(origin, rc.eye_position()), "origin {origin:?}");
+        assert!(close3(origin, rc.eye_position().as_vec3()), "origin {origin:?}");
         assert!((dir - rc.forward()).length() < 1e-5, "dir {dir:?}");
     }
 }
@@ -293,7 +293,7 @@ fn orthographic_screen_ray_starts_on_the_near_plane() {
     let rc = RenderCamera::from_camera(&known_camera(Projection::Orthographic));
     let (origin, dir) = rc.screen_ray(glam::Vec2::new(0.3, -0.7));
     assert!((dir - rc.forward()).length() < 1e-5, "dir {dir:?}");
-    let depth = (origin - rc.eye_position()).dot(rc.forward());
+    let depth = (origin - rc.eye_position().as_vec3()).dot(rc.forward());
     assert!((depth - rc.depth_range().0).abs() < 1e-4, "depth {depth}");
 }
 

@@ -62,7 +62,7 @@ fn coverage(px: &[u8]) -> usize {
 
 fn top_down_camera(distance: f32) -> Camera {
     let mut c = Camera::default();
-    c.center = glam::Vec3::ZERO;
+    c.center = glam::DVec3::ZERO;
     c.distance = distance;
     c.orientation = glam::Quat::from_rotation_x(0.15);
     c

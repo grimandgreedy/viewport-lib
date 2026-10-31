@@ -141,7 +141,7 @@ fn fixture() -> Option<Fixture> {
 
 fn frame(items: Vec<SceneRenderItem>) -> FrameData {
     let cam = Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 4.0,
         ..Camera::default()
     };
