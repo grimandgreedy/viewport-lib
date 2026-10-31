@@ -26,15 +26,15 @@ fn prepare_timing_10k() {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
             let (x, y) = ((i % 100) as f32, (i / 100) as f32);
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x - 50.0, y - 50.0, 0.0))
-                .into();
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(x - 50.0, y - 50.0, 0.0)).into();
             item.settings.colour = Some(Colour::linear_rgb((i % 7) as f32 / 7.0, 0.5, 0.5));
             item
         })
         .collect();
     let mut frame = FrameData::default();
-    let mut camera = Camera::default();
-    camera.distance = 140.0;
+    let default = Camera::default();
+    let camera = Camera::orbit(glam::DVec3::ZERO, 140.0, default.orientation());
     frame.camera.render_camera = RenderCamera::from_camera(&camera);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.camera.pixels_per_point = 1.0;

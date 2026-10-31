@@ -697,7 +697,7 @@ impl<'rp> PaintCtx<'_, 'rp> {
 ///             let red = vp.resources_mut()
 ///                 .upload_material(Material::from_colour(Colour::linear_rgb(0.85, 0.25, 0.2))).unwrap();
 ///             vp.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
-///             vp.camera_mut().distance = 6.0;
+///             vp.camera_mut().set_orbit_distance(6.0);
 ///         },
 ///         |_ctx| {},
 ///     )

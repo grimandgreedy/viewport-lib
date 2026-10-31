@@ -897,8 +897,8 @@ impl Showcase for IndirectLightingShowcase {
         l.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.3);
 
         ctx.session.viewport_frame_mut().show_grid = true;
-        ctx.session.camera_mut().distance = 22.0;
-        ctx.session.camera_mut().orientation = glam::Quat::from_rotation_x(0.55);
+        let camera = ctx.session.camera_mut();
+        camera.set_orbit(camera.target(), 22.0, glam::Quat::from_rotation_x(0.55));
 
         self.rebuild(ctx.session);
         self.shown = Some(self.mode);

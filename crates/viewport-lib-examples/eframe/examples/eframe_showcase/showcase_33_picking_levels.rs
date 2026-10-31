@@ -2226,7 +2226,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             max_steps: 64,
             step_scale: 0.9,
             hit_threshold: 1e-3,
-            max_distance: app.camera.zfar,
+            max_distance: app.camera.depth_range().1,
         };
         item.settings.pick_id = PickId(53);
         item.settings.selected = app.pl_state.selection.contains(53);

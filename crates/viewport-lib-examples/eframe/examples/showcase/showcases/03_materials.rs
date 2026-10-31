@@ -213,8 +213,7 @@ impl Showcase for MaterialsShowcase {
         // No grid: material balls read best against the plain background.
         // Elevated three-quarter view (identity orientation is straight down).
         let cam = ctx.session.camera_mut();
-        cam.distance = 24.0;
-        cam.orientation = glam::Quat::from_rotation_x(0.85);
+        cam.set_orbit(cam.target(), 24.0, glam::Quat::from_rotation_x(0.85));
     }
 
     fn update(&mut self, ctx: &mut ShowcaseCtx) {

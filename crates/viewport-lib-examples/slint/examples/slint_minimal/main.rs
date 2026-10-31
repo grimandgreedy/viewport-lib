@@ -149,10 +149,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let state = Rc::new(RefCell::new(State {
         renderer,
-        camera: Camera {
-            distance: 10.0,
-            ..Camera::default()
-        },
+        camera: Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation()),
         controller: OrbitCameraController::new_stateless(),
         last_frame: Instant::now(),
         input: ViewportInput::from_preset(BindingPreset::Viewer),

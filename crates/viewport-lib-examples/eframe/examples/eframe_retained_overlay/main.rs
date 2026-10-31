@@ -144,7 +144,7 @@ fn main() -> eframe::Result {
             session
                 .scene_mut()
                 .add(Some(cube), glam::Mat4::IDENTITY, blue);
-            session.camera_mut().distance = 6.0;
+            session.camera_mut().set_orbit_distance(6.0);
 
             Ok(Box::new(App {
                 session,

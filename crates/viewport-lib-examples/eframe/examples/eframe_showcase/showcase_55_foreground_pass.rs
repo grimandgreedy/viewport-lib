@@ -208,9 +208,9 @@ impl App {
 
         // Start the camera on the track.
         let target = interpolate_camera(&self.fg_state.track, 0.0);
-        self.camera.center = target.center;
-        self.camera.set_distance(target.distance);
-        self.camera.set_orientation(target.orientation);
+        self.camera.set_orbit_center(target.center);
+        self.camera.set_orbit_distance(target.distance);
+        self.camera.set_orbit_orientation(target.orientation);
 
         self.fg_state.built = true;
     }
@@ -253,9 +253,9 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
                 app.fg_state.track_t -= dur;
             }
             let target = interpolate_camera(&app.fg_state.track, app.fg_state.track_t);
-            app.camera.center = target.center;
-            app.camera.set_distance(target.distance);
-            app.camera.set_orientation(target.orientation);
+            app.camera.set_orbit_center(target.center);
+            app.camera.set_orbit_distance(target.distance);
+            app.camera.set_orbit_orientation(target.orientation);
         }
     }
 
@@ -270,9 +270,9 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
 pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
     // Cap the far plane so cascades and the depth range stay useful.
     let cam = &app.camera;
-    let far = (cam.distance * 3.0).max(60.0);
+    let far = (cam.focus_distance() * 3.0).max(60.0);
     fd.camera.render_camera =
-        RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
+        RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
 
     // The foreground pass runs in the HDR path, so keep the HDR pipeline active
     // (also required for DoF). DoF itself is toggled separately.

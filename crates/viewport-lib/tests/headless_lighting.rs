@@ -1256,7 +1256,7 @@ fn environment_zones_select_the_second_zone() {
 /// square aspect, pulled back to fit two spheres side by side.
 fn sphere_test_camera() -> Camera {
     let mut cam = Camera::default();
-    cam.set_distance(8.0);
+    cam.set_orbit_distance(8.0);
     cam.set_aspect_ratio(1.0, 1.0);
     cam
 }

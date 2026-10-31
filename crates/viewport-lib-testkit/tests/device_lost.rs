@@ -258,7 +258,7 @@ fn instance_rebuild_keeps_the_scene_and_lists_stale_handles() {
             material,
         )
         .expect("mesh");
-    instance.camera_mut().distance = 7.5;
+    instance.camera_mut().set_orbit_distance(7.5);
     device.destroy();
     let _ = device.poll(wgpu::PollType::Poll);
     assert!(instance.renderer_mut().is_device_lost());
@@ -272,7 +272,7 @@ fn instance_rebuild_keeps_the_scene_and_lists_stale_handles() {
     assert_eq!(stale.materials(), &[material]);
     assert!(stale.textures().is_empty());
     assert!(instance.scene().node(node).is_some());
-    assert_eq!(instance.camera().distance, 7.5);
+    assert_eq!(instance.camera().focus_distance(), 7.5);
 
     // The host uploads again and rebinds.
     let new_mesh = instance

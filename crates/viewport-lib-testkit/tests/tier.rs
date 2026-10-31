@@ -887,7 +887,7 @@ fn compatibility_sub_object_highlights_draw_through_the_split_and_host_pass_path
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     let mut camera = viewport_lib::Camera::default();
-    camera.set_distance(6.0);
+    camera.set_orbit_distance(6.0);
     camera.set_aspect_ratio(W as f32, H as f32);
     let base = || {
         let mut frame = viewport_lib::FrameData::default();
@@ -992,7 +992,7 @@ fn compatibility_outlines_draw_through_the_split_and_host_pass_paths() {
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     item.settings.selected = true;
     let mut camera = viewport_lib::Camera::default();
-    camera.set_distance(6.0);
+    camera.set_orbit_distance(6.0);
     camera.set_aspect_ratio(W as f32, H as f32);
     let mut frame = viewport_lib::FrameData::default();
     frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);
@@ -1040,7 +1040,7 @@ fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     let mut camera = viewport_lib::Camera::default();
-    camera.set_distance(6.0);
+    camera.set_orbit_distance(6.0);
     camera.set_aspect_ratio(W as f32, H as f32);
     let mut frame = viewport_lib::FrameData::default();
     frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);

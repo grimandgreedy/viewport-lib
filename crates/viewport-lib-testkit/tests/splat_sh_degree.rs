@@ -13,12 +13,11 @@ const SH0: f32 = 0.282_094_79;
 
 /// The camera on the -y side of the origin at `yaw` 0, on the +y side at pi.
 fn view(yaw: f32) -> viewport_lib::Camera {
-    viewport_lib::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 4.0,
-        orientation: glam::Quat::from_rotation_z(yaw) * glam::Quat::from_rotation_x(1.5708),
-        ..viewport_lib::Camera::default()
-    }
+    viewport_lib::Camera::orbit(
+        glam::DVec3::ZERO,
+        4.0,
+        glam::Quat::from_rotation_z(yaw) * glam::Quat::from_rotation_x(1.5708),
+    )
 }
 
 fn render(harness: &mut Harness, data: &GaussianSplatData, yaw: f32) -> Vec<u8> {

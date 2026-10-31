@@ -22,3 +22,6 @@ bytemuck = { version = "1.25", features = ["derive"] }
 glam = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "2.0"
+
+[dev-dependencies]
+serde_json = "1"

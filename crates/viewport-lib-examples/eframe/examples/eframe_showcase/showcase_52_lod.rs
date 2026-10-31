@@ -112,7 +112,7 @@ pub(crate) fn update_lod(app: &mut App, dt: f32) {
     if app.lod_state.auto_dolly {
         app.lod_state.dolly_time += dt;
         let t = (app.lod_state.dolly_time * 0.35).sin() * 0.5 + 0.5;
-        app.camera.distance = 16.0 + t * (78.0 - 16.0);
+        app.camera.set_orbit_distance(16.0 + t * (78.0 - 16.0));
     }
 }
 
@@ -134,8 +134,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
         .map(|i| {
             let y = -half + i as f32 * (2.0 * half / (count as f32 - 1.0));
             let mut item = SceneRenderItem::default();
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = st.sphere_material;
             item.settings.pick_id = PickId(1000 + i as u64);
             if st.lod_enabled {
@@ -241,7 +240,7 @@ pub(crate) fn controls_lod(app: &mut App, ui: &mut egui::Ui) {
     stat_row(
         ui,
         "Camera distance",
-        &format!("{:.1}", app.camera.distance),
+        &format!("{:.1}", app.camera.focus_distance()),
     );
     stat_row(ui, "LOD resolved", &s.lod_items_resolved.to_string());
     stat_row(ui, "LOD reduced", &s.lod_items_reduced.to_string());
@@ -300,12 +299,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_lod_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 48.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        48.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------

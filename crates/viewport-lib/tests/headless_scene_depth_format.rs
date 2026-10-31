@@ -84,12 +84,11 @@ fn trio_frame(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool)
         4,
     );
 
-    let camera = Camera {
-        center: glam::DVec3::ZERO,
-        distance: 9.0,
-        orientation: glam::Quat::from_rotation_z(0.7) * glam::Quat::from_rotation_x(1.0),
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(
+        glam::DVec3::ZERO,
+        9.0,
+        glam::Quat::from_rotation_z(0.7) * glam::Quat::from_rotation_x(1.0),
+    );
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&camera);
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];

@@ -27,53 +27,74 @@ fn far_close(far: f32, expected: f32, near: f32, orthographic: bool) -> bool {
     (far - expected).abs() <= eps * expected
 }
 
-fn known_camera(projection: Projection) -> Camera {
-    let mut cam = Camera::default();
-    cam.projection = projection;
-    cam.center = glam::DVec3::new(1.5, -2.0, 0.75);
-    cam.distance = 12.0;
-    cam.orientation = glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(0.9);
-    cam.fov_y = 0.9;
-    cam.aspect = 16.0 / 9.0;
-    cam.znear = Some(0.25);
-    cam.zfar = 400.0;
-    cam
+const PERSPECTIVE: Projection = Projection::Perspective {
+    fov_y: 0.9,
+    near: Some(0.25),
+    far: None,
+};
+
+/// `PERSPECTIVE` framed orthographically at the known camera's distance.
+fn orthographic() -> Projection {
+    Projection::Orthographic {
+        height: 2.0 * (12.0 * (0.9f32 / 2.0).tan()),
+        near: Some(0.25),
+        far: Some(400.0),
+    }
 }
 
-/// The default camera, an orbit camera, an orthographic one and a wide one.
+fn known_camera(projection: Projection) -> Camera {
+    Camera::orbit(
+        glam::DVec3::new(1.5, -2.0, 0.75),
+        12.0,
+        glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(0.9),
+    )
+    .with_projection(projection)
+    .with_aspect(16.0 / 9.0)
+}
+
+/// The default camera, an orbit camera, an orthographic one, a wide one and
+/// one with a finite far plane.
 fn cameras() -> Vec<Camera> {
-    let mut wide = known_camera(Projection::Perspective);
-    wide.aspect = 3.2;
-    wide.fov_y = 1.4;
+    let mut wide = known_camera(PERSPECTIVE).with_aspect(3.2);
+    wide.set_fov_y(1.4);
+    let finite = known_camera(Projection::Perspective {
+        fov_y: 0.9,
+        near: Some(0.25),
+        far: Some(400.0),
+    });
     vec![
         Camera::default(),
-        known_camera(Projection::Perspective),
-        known_camera(Projection::Orthographic),
+        known_camera(PERSPECTIVE),
+        known_camera(orthographic()),
         wide,
+        finite,
     ]
 }
 
-/// The uniform `from_camera` packed when the camera stored its eye, forward
-/// and depth range as fields beside the matrices. The range is read from the
-/// finite culling projection; far packs as 0 for a perspective projection,
-/// which has no far plane.
+/// The uniform `from_camera` packs from the camera's own eye, forward and
+/// depth range. The range is read from the finite culling projection; far
+/// packs as 0 for a perspective projection with no far plane.
 fn stored_field_uniform(cam: &Camera) -> CameraUniform {
     let (view, proj) = (cam.view_matrix(), cam.proj_matrix());
     let vp = proj * view;
-    let eye = cam.eye_position();
-    let ortho = cam.projection == Projection::Orthographic;
+    let eye = cam.eye();
+    let ortho = cam.is_orthographic();
     let culling = cam.culling_proj_matrix();
     let (a, b) = (culling.z_axis.z, culling.w_axis.z);
     let (near, far) = if ortho {
         (b / a, b / a - 1.0 / a)
-    } else {
+    } else if proj.z_axis.z == 0.0 {
         (b / a, 0.0)
+    } else {
+        (b / a, b / (a + 1.0))
     };
     CameraUniform {
         view_proj: vp.to_cols_array_2d(),
         eye_pos: eye.as_vec3().to_array(),
         lit_clamp: 1.0,
-        forward: (cam.center.as_vec3() - eye.as_vec3()).normalize_or_zero().to_array(),
+        forward: (cam.target().as_vec3() - eye.as_vec3())
+            .normalize_or_zero()
+            .to_array(),
         _pad1: 0.0,
         inv_view_proj: vp.inverse().to_cols_array_2d(),
         view: view.to_cols_array_2d(),
@@ -133,24 +154,27 @@ fn from_matrices_matches_from_camera() {
 fn from_camera_round_trips_the_camera() {
     for cam in cameras() {
         let rc = RenderCamera::from_camera(&cam);
-        let ortho = cam.projection == Projection::Orthographic;
+        let ortho = cam.is_orthographic();
         assert_eq!(rc.is_orthographic(), ortho);
-        assert!(close3(rc.eye_position().as_vec3(), cam.eye_position().as_vec3()), "eye");
+        assert!(
+            close3(rc.eye_position().as_vec3(), cam.eye().as_vec3()),
+            "eye"
+        );
         assert!(close3(rc.forward(), cam.forward()), "forward");
         assert!(close(rc.aspect(), cam.aspect), "aspect");
         let (near, far) = rc.depth_range();
-        assert!(close(near, cam.effective_znear()), "near {near}");
+        let (cam_near, cam_far) = cam.depth_range();
+        assert!(close(near, cam_near), "near {near}");
         assert!(
-            far_close(far, cam.effective_zfar(), near, ortho),
-            "far {far} vs {}",
-            cam.effective_zfar()
+            far_close(far, cam_far, near, ortho),
+            "far {far} vs {cam_far}"
         );
         match rc.vertical_fov() {
-            Some(fov) => assert!(!ortho && close(fov, cam.fov_y), "fov {fov}"),
+            Some(fov) => assert!(!ortho && close(fov, cam.fov_y()), "fov {fov}"),
             None => assert!(ortho),
         }
         // The camera's own angle, exactly, for both projections.
-        assert_eq!(rc.fov_y(), cam.fov_y);
+        assert_eq!(rc.fov_y(), cam.fov_y());
     }
 }
 
@@ -161,25 +185,25 @@ fn basis_is_orthonormal_and_right_handed() {
         let (r, u, f) = (rc.right(), rc.up(), rc.forward());
         assert!(close(r.cross(u).dot(-f), 1.0), "basis");
         // q and -q are the same rotation.
-        assert!(close(rc.orientation().dot(cam.orientation).abs(), 1.0));
+        assert!(close(rc.orientation().dot(cam.orientation()).abs(), 1.0));
     }
 }
 
 #[test]
 fn perspective_view_height_grows_with_depth() {
-    let cam = known_camera(Projection::Perspective);
+    let cam = known_camera(PERSPECTIVE);
     let rc = RenderCamera::from_camera(&cam);
     let depth = 7.0;
-    let expected = 2.0 * (cam.fov_y / 2.0).tan() * depth;
+    let expected = 2.0 * (cam.fov_y() / 2.0).tan() * depth;
     assert!(close(rc.view_height_at(depth), expected), "view height");
 }
 
 #[test]
 fn orthographic_view_height_is_constant() {
-    let cam = known_camera(Projection::Orthographic);
+    let cam = known_camera(orthographic());
     let rc = RenderCamera::from_camera(&cam);
     // The orbit camera frames 2 * distance * tan(fov / 2) at every depth.
-    let expected = 2.0 * cam.distance * (cam.fov_y / 2.0).tan();
+    let expected = 2.0 * cam.focus_distance() * (0.9f32 / 2.0).tan();
     for depth in [0.5, 12.0, 300.0] {
         assert!(close(rc.view_height_at(depth), expected), "view height");
     }
@@ -210,7 +234,10 @@ fn setters_refresh_the_derived_state() {
 #[test]
 fn default_is_a_perspective_camera_down_negative_z() {
     let rc = RenderCamera::default();
-    assert!(close3(rc.eye_position().as_vec3(), glam::Vec3::new(0.0, 0.0, 5.0)));
+    assert!(close3(
+        rc.eye_position().as_vec3(),
+        glam::Vec3::new(0.0, 0.0, 5.0)
+    ));
     assert!(close3(rc.forward(), glam::Vec3::NEG_Z));
     assert!(close(
         rc.vertical_fov().unwrap(),
@@ -242,7 +269,7 @@ fn depth_range_override_wins_until_the_projection_changes() {
 
 #[test]
 fn foreground_without_override_is_the_scene_camera() {
-    let rc = RenderCamera::from_camera(&known_camera(Projection::Perspective));
+    let rc = RenderCamera::from_camera(&known_camera(PERSPECTIVE));
     for pass in [None, Some(ForegroundPass::default())] {
         let fg = rc.foreground_camera(pass.as_ref());
         assert_eq!(fg.view(), rc.view());
@@ -260,7 +287,7 @@ fn foreground_override_replaces_the_projection() {
             far: None,
         }),
     };
-    for projection in [Projection::Perspective, Projection::Orthographic] {
+    for projection in [PERSPECTIVE, orthographic()] {
         let rc = RenderCamera::from_camera(&known_camera(projection));
         let fg = rc.foreground_camera(Some(&pass));
         // Reversed depth: far before near.
@@ -277,20 +304,20 @@ fn foreground_override_replaces_the_projection() {
 
 #[test]
 fn screen_ray_through_the_centre_is_the_eye_and_forward() {
-    for cam in cameras()
-        .into_iter()
-        .filter(|c| c.projection == Projection::Perspective)
-    {
+    for cam in cameras().into_iter().filter(|c| !c.is_orthographic()) {
         let rc = RenderCamera::from_camera(&cam);
         let (origin, dir) = rc.screen_ray(glam::Vec2::ZERO);
-        assert!(close3(origin, rc.eye_position().as_vec3()), "origin {origin:?}");
+        assert!(
+            close3(origin, rc.eye_position().as_vec3()),
+            "origin {origin:?}"
+        );
         assert!((dir - rc.forward()).length() < 1e-5, "dir {dir:?}");
     }
 }
 
 #[test]
 fn orthographic_screen_ray_starts_on_the_near_plane() {
-    let rc = RenderCamera::from_camera(&known_camera(Projection::Orthographic));
+    let rc = RenderCamera::from_camera(&known_camera(orthographic()));
     let (origin, dir) = rc.screen_ray(glam::Vec2::new(0.3, -0.7));
     assert!((dir - rc.forward()).length() < 1e-5, "dir {dir:?}");
     let depth = (origin - rc.eye_position().as_vec3()).dot(rc.forward());
@@ -371,4 +398,13 @@ fn projection_reversed_from_a_standard_one() {
     let p = rc.projection();
     assert!((p.project_point3(glam::Vec3::new(0.0, 0.0, -0.25)).z - 1.0).abs() < 1e-5);
     assert!(p.project_point3(glam::Vec3::new(0.0, 0.0, -400.0)).z.abs() < 1e-5);
+}
+
+#[test]
+fn matrix_projection_culls_over_its_range() {
+    let proj = glam::Mat4::perspective_infinite_reverse_rh(0.8, 1.5, 0.05);
+    let rc = RenderCamera::from_camera(&known_camera(Projection::from_matrix(proj, (0.05, 500.0))));
+    assert_eq!(rc.projection(), proj);
+    assert_eq!(rc.depth_range(), (0.05, 500.0));
+    assert!(close(rc.vertical_fov().unwrap(), 0.8));
 }

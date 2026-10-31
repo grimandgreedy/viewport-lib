@@ -11,7 +11,7 @@ use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
     BackfacePolicy, Camera, Colour, CompressedFormat, LightKind, LightSource, LightingSettings,
-    Material, MeshData, Projection, TextureId, primitives,
+    Material, MeshData, TextureId, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item_model, textures, upload};
@@ -281,16 +281,15 @@ fn build_normalmap_bc5_and_backface(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// direction. The view is 6 units tall.
 fn front_ortho() -> Camera {
     let distance = 10.0;
-    Camera {
-        projection: Projection::Orthographic,
-        center: glam::DVec3::ZERO,
+    Camera::orbit(
+        glam::DVec3::ZERO,
         distance,
-        orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-        fov_y: 2.0 * (3.0f32 / distance).atan(),
-        // The snapshot's 400x300, so a pixel is 0.02 units both ways.
-        aspect: 4.0 / 3.0,
-        ..Camera::default()
-    }
+        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+    )
+    .with_fov_y(2.0 * (3.0f32 / distance).atan())
+    .orthographic()
+    // The snapshot's 400x300, so a pixel is 0.02 units both ways.
+    .with_aspect(4.0 / 3.0)
 }
 
 /// The normal-map decode and back-face scenes.

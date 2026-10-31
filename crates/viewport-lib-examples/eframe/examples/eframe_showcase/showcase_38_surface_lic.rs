@@ -481,12 +481,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_lic_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::new(0.0, 0.0, 7.5),
-        distance: 18.0,
-        orientation: glam::Quat::from_rotation_x(0.45),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 7.5),
+        18.0,
+        glam::Quat::from_rotation_x(0.45),
+    );
 }
 
 // ---------------------------------------------------------------------------

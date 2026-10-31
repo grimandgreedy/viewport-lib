@@ -166,7 +166,7 @@ fn main() {
                         left.session
                             .scene_mut()
                             .add(Some(cube), glam::Mat4::IDENTITY, material);
-                    left.session.camera_mut().distance = 5.0;
+                    left.session.camera_mut().set_orbit_distance(5.0);
                     panes.cube = Some(node);
                     panes.left = Some(left);
 
@@ -185,7 +185,7 @@ fn main() {
                         .session
                         .scene_mut()
                         .add(Some(torus), glam::Mat4::IDENTITY, material);
-                    right.session.camera_mut().distance = 5.0;
+                    right.session.camera_mut().set_orbit_distance(5.0);
                     panes.right = Some(right);
                 }
 

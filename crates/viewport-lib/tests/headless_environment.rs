@@ -250,10 +250,7 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
     let plane = upload_material(&mut renderer, plane);
     let render = |renderer: &mut ViewportRenderer, from_environment: bool| {
         let mut frame = FrameData::default();
-        let camera = Camera {
-            orientation: glam::Quat::from_rotation_x(0.2),
-            ..Camera::default()
-        };
+        let camera = Camera::orbit(glam::DVec3::ZERO, 5.0, glam::Quat::from_rotation_x(0.2));
         frame.camera.render_camera = RenderCamera::from_camera(&camera);
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.viewport.show_grid = false;

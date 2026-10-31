@@ -182,7 +182,7 @@ pub fn build_parts(ctx: &mut BuildCtx<'_>, parts: &[Part], at: Vec3) -> BuiltSce
 /// out at 2^20 m.
 pub fn camera(at: Vec3) -> Camera {
     let mut camera = orbit_camera(at + Vec3::new(0.0, 0.5, 0.25), 5.0, 0.0, 0.8f32.acos());
-    camera.fov_y = std::f32::consts::FRAC_PI_3;
+    camera.set_fov_y(std::f32::consts::FRAC_PI_3);
     camera.aspect = 4.0 / 3.0;
     camera
 }

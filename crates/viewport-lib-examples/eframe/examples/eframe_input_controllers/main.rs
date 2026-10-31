@@ -223,10 +223,7 @@ impl App {
             renderer,
             target: None,
             mode: Mode::Primitives,
-            camera: Camera {
-                distance: 12.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 12.0, Camera::default().orientation()),
             ctrl_primitives: OrbitCameraController::new_stateless(),
             input_primitives: ViewportInput::from_preset(BindingPreset::Viewer),
             ctrl_all: OrbitCameraController::new_stateless(),
@@ -868,8 +865,8 @@ impl eframe::App for App {
                         if let Some(center) = self.gizmo_center {
                             self.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
                                 center,
-                                self.camera.eye_position().as_vec3(),
-                                self.camera.fov_y,
+                                self.camera.eye().as_vec3(),
+                                self.camera.fov_y(),
                                 h,
                             );
                         }

@@ -250,8 +250,7 @@ impl ApplicationHandler<State> for App {
 
                 // Z-up: spin one item about the world up axis.
                 let t = state.start.elapsed().as_secs_f32();
-                state.scene_items[state.spin_item].model =
-                    glam::Mat4::from_rotation_z(t).into();
+                state.scene_items[state.spin_item].model = glam::Mat4::from_rotation_z(t).into();
 
                 let mut frame_data = FrameData::new(
                     CameraFrame::from_camera(&state.camera, [w, h]),
@@ -393,10 +392,7 @@ async fn build_state(window: Arc<Window>) -> State {
         make_item(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
     ];
 
-    let camera = Camera {
-        distance: 10.0,
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
     input.begin_frame(ViewportContext {

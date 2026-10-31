@@ -88,20 +88,20 @@ fn set_center_applies_to_camera() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!((cam.center - glam::DVec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+    assert!((cam.target() - glam::DVec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
 }
 
 #[test]
 fn offset_center_adds_to_current_position() {
     let mut camera = Camera::default();
-    camera.center = glam::DVec3::new(5.0, 0.0, 0.0);
+    camera.set_orbit_center(glam::DVec3::new(5.0, 0.0, 0.0));
 
     let mut runtime =
         ViewportRuntime::new().with_plugin(OffsetCenterPlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
     let mut output = step(&mut runtime, &camera);
 
     apply_camera_commands(&mut output.events, &mut camera);
-    assert!((camera.center.x - 6.0).abs() < 1e-5);
+    assert!((camera.target().x - 6.0).abs() < 1e-5);
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn set_distance_applies() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!((cam.distance - 10.0).abs() < 1e-5);
+    assert!((cam.focus_distance() - 10.0).abs() < 1e-5);
 }
 
 #[test]
@@ -128,14 +128,13 @@ fn blend_toward_interpolates() {
     });
 
     let mut camera = Camera::default();
-    camera.center = glam::DVec3::ZERO;
-    camera.distance = 4.0;
+    camera.set_orbit(glam::DVec3::ZERO, 4.0, camera.orientation());
 
     let mut output = step(&mut runtime, &camera);
     apply_camera_commands(&mut output.events, &mut camera);
 
-    assert!((camera.center.x - 5.0).abs() < 1e-4);
-    assert!((camera.distance - 12.0).abs() < 1e-4);
+    assert!((camera.target().x - 5.0).abs() < 1e-4);
+    assert!((camera.focus_distance() - 12.0).abs() < 1e-4);
 }
 
 #[test]
@@ -155,8 +154,8 @@ fn blend_at_weight_one_snaps_to_target() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!((cam.center - glam::DVec3::new(7.0, 8.0, 9.0)).length() < 1e-5);
-    assert!((cam.distance - 5.0).abs() < 1e-5);
+    assert!((cam.target() - glam::DVec3::new(7.0, 8.0, 9.0)).length() < 1e-5);
+    assert!((cam.focus_distance() - 5.0).abs() < 1e-5);
 }
 
 #[test]
@@ -171,21 +170,21 @@ fn commands_applied_in_emission_order() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!((cam.center.x - 11.0).abs() < 1e-5);
+    assert!((cam.target().x - 11.0).abs() < 1e-5);
 }
 
 #[test]
 fn no_commands_leaves_camera_unchanged() {
     let mut runtime = ViewportRuntime::new();
     let camera = Camera::default();
-    let original_center = camera.center;
-    let original_distance = camera.distance;
+    let original_center = camera.target();
+    let original_distance = camera.focus_distance();
     let mut output = step(&mut runtime, &camera);
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert_eq!(cam.center, original_center);
-    assert_eq!(cam.distance, original_distance);
+    assert_eq!(cam.target(), original_center);
+    assert_eq!(cam.focus_distance(), original_distance);
 }
 
 #[test]
@@ -236,5 +235,5 @@ fn set_orientation_applies() {
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert!(cam.orientation.dot(q).abs() > 0.9999);
+    assert!(cam.orientation().dot(q).abs() > 0.9999);
 }

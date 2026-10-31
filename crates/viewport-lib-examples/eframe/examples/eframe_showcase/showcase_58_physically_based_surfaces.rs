@@ -124,12 +124,11 @@ impl App {
         renderer: &mut ViewportRenderer,
     ) {
         self.build_emissive_scene(renderer);
-        self.camera = vpl::Camera {
-            center: glam::DVec3::new(4.8, 0.5, 0.8),
-            distance: 17.0,
-            orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
-            ..vpl::Camera::default()
-        };
+        self.camera = vpl::Camera::orbit(
+            glam::DVec3::new(4.8, 0.5, 0.8),
+            17.0,
+            glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+        );
     }
 
     fn build_emissive_scene(&mut self, renderer: &mut ViewportRenderer) {
@@ -311,9 +310,9 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
             fd.viewport.environment_background = EnvironmentBackground::colour();
         }
         let cam = &app.camera;
-        let far = (cam.distance * 3.0).max(60.0);
+        let far = (cam.focus_distance() * 3.0).max(60.0);
         fd.camera.render_camera =
-            vpl::RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
+            vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
     }
 }
 

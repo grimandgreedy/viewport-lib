@@ -195,10 +195,11 @@ fn run_variant(
         }
     }
 
-    let cam = Camera {
-        distance: grid as f32 * 1.8,
-        ..Camera::default()
-    };
+    let cam = Camera::orbit(
+        glam::DVec3::ZERO,
+        grid as f32 * 1.8,
+        Camera::default().orientation(),
+    );
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [width as f32, height as f32];

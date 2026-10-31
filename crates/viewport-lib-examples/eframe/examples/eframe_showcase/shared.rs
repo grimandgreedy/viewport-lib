@@ -70,27 +70,25 @@ pub(crate) fn edit_material(
 pub(crate) fn opening_camera(mode: ShowcaseMode) -> Option<Camera> {
     match mode {
         // Eye at +Y looking along -Y, Z up on screen.
-        ShowcaseMode::PickLevels => Some(Camera {
-            center: glam::DVec3::ZERO,
-            distance: 14.0,
-            orientation: glam::Quat::from_axis_angle(
+        ShowcaseMode::PickLevels => Some(Camera::orbit(
+            glam::DVec3::ZERO,
+            14.0,
+            glam::Quat::from_axis_angle(
                 glam::Vec3::new(0.0, 1.0, 1.0).normalize(),
                 std::f32::consts::PI,
             ),
-            ..Camera::default()
-        }),
+        )),
         // Z-up scene: wall front at y=0 (+Y normal), ground top at z=0 (+Z normal).
         // 180-degree rotation around (0,1,1)/sqrt(2): maps orbit-Z -> +Y (eye
         // in front of wall) and orbit-Y -> +Z (Z appears as screen-up).
-        ShowcaseMode::Decals => Some(Camera {
-            center: glam::DVec3::new(0.0, 0.0, 1.5),
-            distance: 10.0,
-            orientation: glam::Quat::from_axis_angle(
+        ShowcaseMode::Decals => Some(Camera::orbit(
+            glam::DVec3::new(0.0, 0.0, 1.5),
+            10.0,
+            glam::Quat::from_axis_angle(
                 glam::Vec3::new(0.0, 1.0, 1.0).normalize(),
                 std::f32::consts::PI,
             ),
-            ..Camera::default()
-        }),
+        )),
         _ => None,
     }
 }

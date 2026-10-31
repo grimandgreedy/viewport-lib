@@ -140,11 +140,7 @@ fn fixture() -> Option<Fixture> {
 }
 
 fn frame(items: Vec<SceneRenderItem>) -> FrameData {
-    let cam = Camera {
-        center: glam::DVec3::ZERO,
-        distance: 4.0,
-        ..Camera::default()
-    };
+    let cam = Camera::orbit(glam::DVec3::ZERO, 4.0, Camera::default().orientation());
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];

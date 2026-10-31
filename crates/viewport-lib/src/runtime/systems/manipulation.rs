@@ -93,17 +93,17 @@ impl ManipulationSystem {
     ) {
         // Compute gizmo center from selection.
         self.gizmo_center = gizmo::gizmo_center_from_selection(selection, |id| {
-            scene.node(id).map(|n| {
-                n.world_transform().translation.as_vec3()
-            })
+            scene
+                .node(id)
+                .map(|n| n.world_transform().translation.as_vec3())
         });
 
         // Compute gizmo scale.
         if let Some(center) = self.gizmo_center {
             self.gizmo_scale = gizmo::compute_gizmo_scale(
                 center,
-                frame.camera.eye_position().as_vec3(),
-                frame.camera.fov_y,
+                frame.camera.eye().as_vec3(),
+                frame.camera.fov_y(),
                 frame.viewport_size.y,
             );
         }
@@ -176,7 +176,8 @@ impl ManipulationSystem {
                 // converts the result back to local for writeback. Storing
                 // world here keeps that math consistent across drag and
                 // cancel.
-                self.transforms_snapshot.insert(id, node.world_transform().to_mat4());
+                self.transforms_snapshot
+                    .insert(id, node.world_transform().to_mat4());
             }
         }
     }

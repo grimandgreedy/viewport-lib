@@ -73,7 +73,7 @@ fn main() {
                 );
                 setup_id.set(Some(cube_node));
 
-                session.camera_mut().distance = 10.0;
+                session.camera_mut().set_orbit_distance(10.0);
             },
             move |ctx| {
                 if let Some(id) = cube_id.get() {

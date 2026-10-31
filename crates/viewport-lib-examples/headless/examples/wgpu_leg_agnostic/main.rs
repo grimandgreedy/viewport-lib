@@ -57,10 +57,7 @@ fn main() {
         .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.85, 0.9)))
         .expect("upload material");
 
-    let mut camera = Camera {
-        distance: 5.0,
-        ..Camera::default()
-    };
+    let mut camera = Camera::orbit(glam::DVec3::ZERO, 5.0, Camera::default().orientation());
     camera.set_aspect_ratio(W as f32, H as f32);
 
     let mut item = SceneRenderItem::new(cube, material);

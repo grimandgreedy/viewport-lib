@@ -241,11 +241,11 @@ impl App {
         tvm_items: Vec<SceneRenderItem>,
     ) -> Self {
         Self {
-            camera: Camera {
-                center: glam::DVec3::new(0.0, 0.0, 1.0),
-                distance: 8.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(
+                glam::DVec3::new(0.0, 0.0, 1.0),
+                8.0,
+                Camera::default().orientation(),
+            ),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             floor,
@@ -260,8 +260,7 @@ impl App {
         floor.model = glam::Mat4::IDENTITY.into();
 
         let mut slab = SceneRenderItem::new(self.slab.0, self.slab.1);
-        slab.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).into();
+        slab.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).into();
 
         let mut items = vec![slab, floor];
         items.extend(self.tvm_items.iter().cloned());

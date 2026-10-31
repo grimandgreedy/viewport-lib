@@ -88,10 +88,7 @@ impl App {
         };
 
         Self {
-            camera: Camera {
-                distance: 10.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation()),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             manip: ManipulationController::new(),
@@ -234,9 +231,9 @@ impl App {
             .map(|(c, p)| c - p)
             .unwrap_or(glam::Vec2::ZERO);
 
-        let selection_center = self.selected.map(|i| {
-            self.scene_items[i].model.translation.as_vec3()
-        });
+        let selection_center = self
+            .selected
+            .map(|i| self.scene_items[i].model.translation.as_vec3());
 
         let manip_ctx = ManipulationContext {
             camera: self.camera.clone(),

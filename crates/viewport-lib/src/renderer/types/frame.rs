@@ -182,25 +182,45 @@ impl RenderCamera {
         self.culling_range = (culling.near, culling.far);
     }
 
-    /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera).
+    /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera):
+    /// [`from_matrices`](Self::from_matrices) over the camera's view and
+    /// projection matrices, with the camera's culling range.
     ///
-    /// This is the intended conversion path: resolve the orbit camera to a
+    /// The camera's own eye, view direction, f64 rotation and framing angle
+    /// replace the values read back from the matrices, which differ in the
+    /// last bits (an orthographic matrix carries no angle at all), and the
+    /// culling projection is the camera's own. Resolve the camera to a
     /// `RenderCamera` once per frame and pass it through `CameraFrame`.
     pub fn from_camera(cam: &crate::camera::Camera) -> Self {
-        let mut rc = Self::from_matrices(cam.view_matrix(), cam.proj_matrix());
-        // Keep the camera's own eye, view direction and angle rather than the
-        // values read back from the matrices, which differ in the last bits;
-        // an orthographic matrix does not carry the framing angle at all.
-        let eye = cam.eye_position();
+        let rc = Self::from_matrices(cam.view_matrix(), cam.proj_matrix());
+        let mut rc = match cam.projection {
+            crate::camera::Projection::Matrix {
+                culling_range: (near, far),
+                ..
+            } => rc.with_depth_range(near, far),
+            _ => {
+                let mut rc = rc;
+                rc.culling_projection = cam.culling_proj_matrix();
+                let culling = CameraLens::from_projection(rc.culling_projection);
+                rc.culling_range = (culling.near, culling.far);
+                rc.lens.fov_y = cam.fov_y();
+                rc
+            }
+        };
+        let eye = cam.eye();
+        let target = cam.target();
         rc.pose.eye = eye;
-        rc.pose.forward = (cam.center.as_vec3() - eye.as_vec3()).normalize_or_zero();
-        let up = (cam.orientation * glam::Vec3::Y).as_dvec3();
-        let exact = glam::DMat4::look_at_rh(eye, cam.center, up);
+        if target == eye {
+            // No focus distance to look along: take the axes from the pose.
+            rc.pose.forward = cam.forward();
+            let rotation = glam::DMat3::from_quat(cam.pose.orientation).transpose();
+            rc.exact_rotation = Some(rotation.as_mat3());
+            return rc;
+        }
+        rc.pose.forward = (target.as_vec3() - eye.as_vec3()).normalize_or_zero();
+        let up = (cam.orientation() * glam::Vec3::Y).as_dvec3();
+        let exact = glam::DMat4::look_at_rh(eye, target, up);
         rc.exact_rotation = Some(glam::DMat3::from_mat4(exact).as_mat3());
-        rc.lens.fov_y = cam.fov_y;
-        rc.culling_projection = cam.culling_proj_matrix();
-        let culling = CameraLens::from_projection(rc.culling_projection);
-        rc.culling_range = (culling.near, culling.far);
         rc
     }
 

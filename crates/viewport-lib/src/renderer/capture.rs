@@ -1332,17 +1332,12 @@ mod tests {
                 mesh_id: mesh,
                 ..Default::default()
             };
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.settings.visibility_mask = 0b01;
             items.push(item);
         }
 
-        let cam = Camera {
-            center: glam::DVec3::ZERO,
-            distance: 18.0,
-            ..Camera::default()
-        };
+        let cam = Camera::orbit(glam::DVec3::ZERO, 18.0, Camera::default().orientation());
         let mut frame = FrameData::default();
         frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
@@ -1432,11 +1427,7 @@ mod tests {
             .unwrap();
 
         let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
-            let cam = Camera {
-                center: glam::DVec3::ZERO,
-                distance: 5.0,
-                ..Camera::default()
-            };
+            let cam = Camera::orbit(glam::DVec3::ZERO, 5.0, Camera::default().orientation());
             let mut frame = FrameData::default();
             frame.camera.render_camera = RenderCamera::from_camera(&cam);
             frame.camera.viewport_size = [64.0, 64.0];

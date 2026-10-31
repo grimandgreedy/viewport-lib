@@ -373,12 +373,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_lights_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        14.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -436,9 +435,9 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // Without this, all scene geometry clusters near depth 0.99, making
     // the log-space neighbor differences too small to see.
     let cam = &app.camera;
-    let far = (cam.distance * 3.0).max(30.0);
+    let far = (cam.focus_distance() * 3.0).max(30.0);
     fd.camera.render_camera =
-        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
     if app.lights_state.edl_enabled {
         fd.effects.post_process = {
             let mut _t = vpl::PostProcessSettings::default();

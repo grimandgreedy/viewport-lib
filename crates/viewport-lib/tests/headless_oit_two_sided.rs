@@ -54,9 +54,7 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
     // back face. Small pitch is the top-down view (see the testkit's cameras).
     let cam = {
         let mut c = Camera::default();
-        c.center = glam::DVec3::ZERO;
-        c.distance = 6.0;
-        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::from_rotation_x(0.15));
         c
     };
     let render = |renderer: &mut ViewportRenderer, two_sided: bool, opacity: f32| {
@@ -146,9 +144,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     let cam = {
         let mut c = Camera::default();
-        c.center = glam::DVec3::ZERO;
-        c.distance = 6.0;
-        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::from_rotation_x(0.15));
         c
     };
     let mut frame = FrameData::default();

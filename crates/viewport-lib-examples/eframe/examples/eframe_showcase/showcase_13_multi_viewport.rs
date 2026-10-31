@@ -28,8 +28,8 @@ use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
     GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, Material, MouseButton, NodeId, OrbitCameraController, PickBackend,
-    PickMask, Projection, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer,
+    PickMask, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer,
     gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
 };
 
@@ -66,35 +66,25 @@ impl Default for MvState {
             scene: vpl::scene::Scene::new(),
             selection: Selection::new(),
             cameras: [
-                Camera {
-                    center: glam::DVec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                },
-                Camera {
-                    center: glam::DVec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::IDENTITY,
-                    projection: Projection::Orthographic,
-                    ..Camera::default()
-                },
-                Camera {
-                    center: glam::DVec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    projection: Projection::Orthographic,
-                    ..Camera::default()
-                },
-                Camera {
-                    center: glam::DVec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
+                Camera::orbit(
+                    glam::DVec3::ZERO,
+                    12.0,
+                    glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+                ),
+                Camera::orbit(glam::DVec3::ZERO, 10.0, glam::Quat::IDENTITY).orthographic(),
+                Camera::orbit(
+                    glam::DVec3::ZERO,
+                    10.0,
+                    glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                )
+                .orthographic(),
+                Camera::orbit(
+                    glam::DVec3::ZERO,
+                    10.0,
+                    glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
                         * glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    projection: Projection::Orthographic,
-                    ..Camera::default()
-                },
+                )
+                .orthographic(),
             ],
             controllers: [
                 OrbitCameraController::new_stateless(),
@@ -464,8 +454,8 @@ impl App {
                 let qr = quad_rects[i];
                 self.mv_state.gizmo_scales[i] = compute_gizmo_scale(
                     center,
-                    self.mv_state.cameras[i].eye_position().as_vec3(),
-                    self.mv_state.cameras[i].fov_y,
+                    self.mv_state.cameras[i].eye().as_vec3(),
+                    self.mv_state.cameras[i].fov_y(),
                     qr.height(),
                 );
             }

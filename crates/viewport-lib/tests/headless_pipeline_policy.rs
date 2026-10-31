@@ -35,8 +35,7 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
     opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).into();
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = sphere_id;
-    transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
+    transparent.model = glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
     transparent.settings.opacity = 0.5;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
     frame
@@ -355,8 +354,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
                 items[0].settings.selected = true;
                 let mut third = items[0].clone();
                 third.settings.selected = false;
-                third.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).into();
+                third.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).into();
                 items.push(third);
                 frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
             }
@@ -395,10 +393,11 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
             .upload_mesh_data(&device, &box_mesh())
             .unwrap();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = RenderCamera::from_camera(&Camera {
-            distance: 14.0,
-            ..Camera::default()
-        });
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
+            glam::DVec3::ZERO,
+            14.0,
+            Camera::default().orientation(),
+        ));
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;

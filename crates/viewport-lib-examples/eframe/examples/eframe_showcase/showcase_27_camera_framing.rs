@@ -469,8 +469,9 @@ fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
     if (speed_changed || tilt_changed) && app.aux_state.turntable_running {
         let az = app.aux_state.turntable.azimuth;
         let tilt = app.aux_state.turntable.tilt;
-        app.camera
-            .set_orientation(glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt));
+        app.camera.set_orbit_orientation(
+            glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt),
+        );
     }
 
     ui.add_space(4.0);
@@ -557,9 +558,9 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
             app.aux_state.track_playing = false;
             // Apply scrubbed position immediately.
             let target = interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-            app.camera.center = target.center;
-            app.camera.set_distance(target.distance);
-            app.camera.set_orientation(target.orientation);
+            app.camera.set_orbit_center(target.center);
+            app.camera.set_orbit_distance(target.distance);
+            app.camera.set_orbit_orientation(target.orientation);
         }
     }
 
@@ -583,9 +584,9 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
         if ui.button("Add current view").clicked() {
             let t = if duration > 0.0 { duration + 2.5 } else { 0.0 };
             let target = CameraTarget {
-                center: app.camera.center,
-                distance: app.camera.distance,
-                orientation: app.camera.orientation,
+                center: app.camera.target(),
+                distance: app.camera.focus_distance(),
+                orientation: app.camera.orientation(),
             };
             app.aux_state.track.push(t, target);
         }
@@ -615,12 +616,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_aux_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::new(0.0, 0.0, 0.5),
-        distance: 30.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 0.5),
+        30.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -670,9 +670,9 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // Cap far plane for better cascade distribution, but track orbit
     // distance so the scene doesn't disappear when zooming out.
     let cam = &app.camera;
-    let far = (cam.distance * 3.0).max(60.0);
+    let far = (cam.focus_distance() * 3.0).max(60.0);
     fd.camera.render_camera =
-        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
 }
 
 // ---------------------------------------------------------------------------
@@ -710,9 +710,9 @@ pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
                 app.aux_state.track_t = 0.0;
             }
             let target = vpl::interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-            app.camera.center = target.center;
-            app.camera.set_distance(target.distance);
-            app.camera.set_orientation(target.orientation);
+            app.camera.set_orbit_center(target.center);
+            app.camera.set_orbit_distance(target.distance);
+            app.camera.set_orbit_orientation(target.orientation);
         }
         _ => {}
     }

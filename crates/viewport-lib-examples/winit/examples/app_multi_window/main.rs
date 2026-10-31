@@ -76,7 +76,7 @@ fn handle_open_close(ctx: &mut FrameCtx) {
                     .unwrap();
                 vp.scene_mut()
                     .add(Some(sphere), glam::Mat4::IDENTITY, material);
-                vp.camera_mut().distance = 6.0;
+                vp.camera_mut().set_orbit_distance(6.0);
             },
             handle_open_close,
         );
@@ -111,7 +111,7 @@ fn main() {
                     .scene_mut()
                     .add(Some(cube), glam::Mat4::IDENTITY, material);
                 left_setup_id.set(Some(node));
-                vp.camera_mut().distance = 6.0;
+                vp.camera_mut().set_orbit_distance(6.0);
             },
             move |ctx| {
                 if let Some(id) = cube_id.get() {
@@ -138,7 +138,7 @@ fn main() {
                     .unwrap();
                 vp.scene_mut()
                     .add(Some(torus), glam::Mat4::IDENTITY, material);
-                vp.camera_mut().distance = 6.0;
+                vp.camera_mut().set_orbit_distance(6.0);
             },
             handle_open_close,
         )

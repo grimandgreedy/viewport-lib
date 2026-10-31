@@ -77,7 +77,7 @@ impl Showcase for ObjectsShowcase {
         let vp = ctx.session.viewport_frame_mut();
         vp.show_grid = true;
 
-        ctx.session.camera_mut().distance = 12.0;
+        ctx.session.camera_mut().set_orbit_distance(12.0);
         self.selected = None;
         self.idle_transform = None;
     }
@@ -141,9 +141,12 @@ impl Showcase for ObjectsShowcase {
             }
             ManipResult::None => {
                 // Idle: snapshot the selected node so cancel/constraint can restore it.
-                self.idle_transform = self
-                    .selected
-                    .and_then(|id| session.scene().node(id).map(|n| n.local_transform().to_mat4()));
+                self.idle_transform = self.selected.and_then(|id| {
+                    session
+                        .scene()
+                        .node(id)
+                        .map(|n| n.local_transform().to_mat4())
+                });
             }
             _ => {}
         }

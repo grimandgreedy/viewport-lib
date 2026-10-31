@@ -1083,14 +1083,15 @@ mod tests {
     fn render_camera_from_camera_roundtrip() {
         let cam = crate::camera::Camera::default();
         let rc = RenderCamera::from_camera(&cam);
-        assert!(rc.eye_position().abs_diff_eq(cam.eye_position(), 1e-5));
-        assert!(rc.orientation().dot(cam.orientation).abs() > 1.0 - 1e-5);
+        assert!(rc.eye_position().abs_diff_eq(cam.eye(), 1e-5));
+        assert!(rc.orientation().dot(cam.orientation()).abs() > 1.0 - 1e-5);
         let (near, far) = rc.depth_range();
-        assert!((near - cam.effective_znear()).abs() <= 1e-5);
+        let (cam_near, cam_far) = cam.depth_range();
+        assert!((near - cam_near).abs() <= 1e-5);
         // A perspective far plane keeps about f32 epsilon * far / near.
-        let far_eps = 4.0 * f32::EPSILON * cam.zfar / cam.effective_znear();
-        assert!((far - cam.zfar).abs() <= far_eps * cam.zfar);
-        assert_eq!(rc.fov_y(), cam.fov_y);
+        let far_eps = 4.0 * f32::EPSILON * cam_far / cam_near;
+        assert!((far - cam_far).abs() <= far_eps * cam_far);
+        assert_eq!(rc.fov_y(), cam.fov_y());
         assert!((rc.aspect() - cam.aspect).abs() <= 1e-5);
         // view_proj should match Camera's own method
         let expected_vp = cam.view_proj_matrix();

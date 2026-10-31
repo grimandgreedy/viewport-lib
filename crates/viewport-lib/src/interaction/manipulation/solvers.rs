@@ -77,7 +77,8 @@ pub fn angular_rotation_from_cursor(
 /// * `axis` : optional axis constraint. `None` = free camera-plane movement.
 /// * `exclude_axis` : if `true`, `axis` names the axis to *exclude*; movement is in the perpendicular plane.
 /// * `gizmo_center` : world-space pivot (used for axis projection).
-/// * `camera` : current camera (provides right, up, distance, fov_y).
+/// * `camera` : current camera (provides right, up and the view height at the
+///   focus distance).
 /// * `viewport_size` : viewport dimensions in pixels.
 pub fn constrained_translation(
     pointer_delta: glam::Vec2,
@@ -87,7 +88,7 @@ pub fn constrained_translation(
     camera: &Camera,
     viewport_size: glam::Vec2,
 ) -> glam::Vec3 {
-    let pan_scale = 2.0 * camera.distance * (camera.fov_y / 2.0).tan() / viewport_size.y.max(1.0);
+    let pan_scale = camera.view_height_at(camera.focus_distance()) / viewport_size.y.max(1.0);
     let camera_right = camera.right();
     let camera_up = camera.up();
 

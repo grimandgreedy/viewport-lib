@@ -88,8 +88,7 @@ fn main() -> eframe::Result {
 
             let item = |mesh_id: MeshId, x, z, colour: [f32; 3]| {
                 let mut s = SceneRenderItem::new(mesh_id, material);
-                s.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).into();
+                s.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).into();
                 s.settings.colour = Some(Colour::from_linear_rgb_array(colour));
                 s
             };
@@ -151,14 +150,13 @@ impl App {
         Self {
             renderer,
             target: None,
-            camera: Camera {
-                center: glam::DVec3::ZERO,
-                distance: 28.0,
-                // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
-                // orientation * Y ~ world Z (screen up), orientation * Z points from center to eye.
-                orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-                ..Camera::default()
-            },
+            // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
+            // orientation * Y ~ world Z (screen up), orientation * Z points from center to eye.
+            camera: Camera::orbit(
+                glam::DVec3::ZERO,
+                28.0,
+                glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+            ),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             scene_items,

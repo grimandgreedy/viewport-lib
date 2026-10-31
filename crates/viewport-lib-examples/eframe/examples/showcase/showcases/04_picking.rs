@@ -746,8 +746,7 @@ impl Showcase for PickingShowcase {
         ctx.session
             .set_selection_outline(true, [1.0, 0.85, 0.2, 1.0], 2.5);
         let cam = ctx.session.camera_mut();
-        cam.distance = 34.0;
-        cam.orientation = glam::Quat::from_rotation_x(0.85);
+        cam.set_orbit(cam.target(), 34.0, glam::Quat::from_rotation_x(0.85));
     }
 
     fn update(&mut self, ctx: &mut ShowcaseCtx) {

@@ -302,9 +302,7 @@ fn a_shadow_caster_follows_its_override_window() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::DVec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
             RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
@@ -406,9 +404,7 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
     ];
     frame.camera.render_camera = {
         let mut cam = Camera::default();
-        cam.orientation = glam::Quat::IDENTITY;
-        cam.center = glam::DVec3::ZERO;
-        cam.distance = 5.0;
+        cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
         cam.aspect = 1.0;
         RenderCamera::from_camera(&cam)
     };

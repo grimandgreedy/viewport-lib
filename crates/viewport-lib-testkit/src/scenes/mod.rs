@@ -188,13 +188,11 @@ pub struct NamedScene {
 /// Build an orbit camera looking at `centre` from `distance`, using the same
 /// yaw/pitch convention as `Camera::default` (identity = top-down in Z-up).
 pub fn orbit_camera(centre: Vec3, distance: f32, yaw: f32, pitch: f32) -> Camera {
-    Camera {
-        // `center` is viewport-lib's field name (external API keeps its spelling).
-        center: centre.as_dvec3(),
+    Camera::orbit(
+        centre.as_dvec3(),
         distance,
-        orientation: Quat::from_rotation_z(yaw) * Quat::from_rotation_x(pitch),
-        ..Camera::default()
-    }
+        Quat::from_rotation_z(yaw) * Quat::from_rotation_x(pitch),
+    )
 }
 
 /// A standard set of viewpoints (iso, front, top, low grazing) around a target.
@@ -266,8 +264,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.surface_lics.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>() =
         scene.surface_contours.clone();
-    *sf.items_mut::<viewport_lib_plugins::item_types::external_instances::ExternalInstancesItem>() =
-        scene.external_instances.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::external_instances::ExternalInstancesItem>(
+    ) = scene.external_instances.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
     if let Some(origin) = scene.world_origin {

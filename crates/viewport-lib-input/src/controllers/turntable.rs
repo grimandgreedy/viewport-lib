@@ -8,8 +8,11 @@ use viewport_lib_types::camera::{Camera, LookAngles};
 
 /// Continuously orbits the camera around the Z axis at a fixed elevation.
 ///
-/// Each frame, advance the azimuth by `angular_velocity * dt` and apply the
-/// result to the camera. The orbit distance and center are left unchanged.
+/// Each frame, advance the azimuth by `angular_velocity * dt` and place the
+/// camera on that orbit around [`center`](Self::center) at
+/// [`distance`](Self::distance). Left at `None`, both follow the camera's own
+/// focus point and focus distance, so the turntable spins about whatever the
+/// camera was looking at.
 ///
 /// This is the one controller that reads no input at all: it takes `dt` and
 /// nothing else, so a viewport on a turntable ignores the whole `ActionFrame`
@@ -39,6 +42,10 @@ pub struct TurntableController {
     /// Current azimuth angle in radians, turning around world Z as
     /// `Quat::from_rotation_z(azimuth)`. The look yaw is `-azimuth`.
     pub azimuth: f32,
+    /// Orbit centre. `None` uses the camera's focus point each frame.
+    pub center: Option<glam::DVec3>,
+    /// Orbit distance. `None` uses the camera's focus distance each frame.
+    pub distance: Option<f32>,
 }
 
 impl TurntableController {
@@ -51,6 +58,8 @@ impl TurntableController {
             angular_velocity,
             tilt,
             azimuth: 0.0,
+            center: None,
+            distance: None,
         }
     }
 
@@ -91,14 +100,27 @@ impl TurntableController {
         self.tilt = pitch + std::f32::consts::FRAC_PI_2;
     }
 
-    /// Advance the turntable by `dt` seconds and write the new orientation into
-    /// `camera`. Distance and center are unchanged.
+    /// Builder: orbit about `center` at `distance` rather than the camera's
+    /// focus point.
+    pub fn with_pivot(mut self, center: impl Into<glam::DVec3>, distance: f32) -> Self {
+        self.center = Some(center.into());
+        self.distance = Some(distance);
+        self
+    }
+
+    /// Advance the turntable by `dt` seconds and place `camera` on the orbit at
+    /// the new azimuth.
     pub fn update(&mut self, dt: f32, camera: &mut Camera) {
         self.azimuth += self.angular_velocity * dt;
         // Normalize azimuth to [-PI, PI] to avoid float drift over time.
         self.azimuth = normalize_angle(self.azimuth);
-        camera.set_orientation(
-            glam::Quat::from_rotation_z(self.azimuth) * glam::Quat::from_rotation_x(self.tilt),
+        let center = self.center.unwrap_or_else(|| camera.target());
+        let distance = self.distance.unwrap_or_else(|| camera.focus_distance());
+        camera.set_orbit(
+            center,
+            distance,
+            (glam::Quat::from_rotation_z(self.azimuth) * glam::Quat::from_rotation_x(self.tilt))
+                .normalize(),
         );
     }
 }
@@ -143,20 +165,32 @@ mod tests {
 
     #[test]
     fn test_turntable_does_not_change_distance() {
-        let mut cam = default_camera();
-        cam.set_distance(7.5);
+        let mut cam = Camera::orbit(glam::DVec3::ZERO, 7.5, glam::Quat::IDENTITY);
         let mut tt = TurntableController::new(1.0, 1.0);
         tt.update(1.0, &mut cam);
-        assert!((cam.distance() - 7.5).abs() < 1e-5);
+        assert!((cam.focus_distance() - 7.5).abs() < 1e-5);
+        assert!((cam.eye().length() - 7.5).abs() < 1e-5);
     }
 
     #[test]
     fn test_turntable_does_not_change_center() {
-        let mut cam = default_camera();
-        cam.set_center(glam::Vec3::new(1.0, 2.0, 3.0));
+        let center = glam::DVec3::new(1.0, 2.0, 3.0);
+        let mut cam = Camera::orbit(center, 5.0, glam::Quat::IDENTITY);
         let mut tt = TurntableController::new(1.0, 1.0);
-        tt.update(1.0, &mut cam);
-        assert!((cam.center() - glam::DVec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+        for _ in 0..10 {
+            tt.update(0.1, &mut cam);
+        }
+        assert!((cam.target() - center).length() < 1e-5);
+    }
+
+    #[test]
+    fn pivot_overrides_the_camera() {
+        let mut cam = default_camera();
+        let center = glam::DVec3::new(-4.0, 0.0, 1.0);
+        let mut tt = TurntableController::new(1.0, 1.0).with_pivot(center, 3.0);
+        tt.update(0.5, &mut cam);
+        assert!((cam.target() - center).length() < 1e-5);
+        assert!((cam.eye() - center).length() - 3.0 < 1e-5);
     }
 
     #[test]
@@ -164,8 +198,9 @@ mod tests {
         let cam = default_camera();
         let tt = TurntableController::from_camera(&cam, 0.5);
         // Apply to a fresh camera and check orientation matches original.
-        let mut cam2 = default_camera();
-        cam2.set_orientation(
+        let cam2 = Camera::orbit(
+            glam::DVec3::ZERO,
+            5.0,
             glam::Quat::from_rotation_z(tt.azimuth) * glam::Quat::from_rotation_x(tt.tilt),
         );
         let orig_eye = cam.orientation() * glam::Vec3::Z;
@@ -221,8 +256,11 @@ mod tests {
     #[test]
     fn sync_keeps_velocity() {
         let mut tt = TurntableController::new(2.5, 0.0);
-        let mut cam = default_camera();
-        cam.set_orientation(LookAngles::new(0.4, -0.2).orientation());
+        let cam = Camera::orbit(
+            glam::DVec3::ZERO,
+            5.0,
+            LookAngles::new(0.4, -0.2).orientation(),
+        );
         tt.sync_from_camera(&cam);
         assert_eq!(tt.angular_velocity, 2.5);
         assert!((tt.look().yaw - 0.4).abs() < 1e-4);

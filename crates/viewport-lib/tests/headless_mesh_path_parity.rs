@@ -76,9 +76,7 @@ impl Scene {
         frame.effects.lighting.hemisphere_intensity = 0.5;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::DVec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
             RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
@@ -86,8 +84,7 @@ impl Scene {
         let item_at = |x: f32| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.mesh;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).into();
             item.material = material;
             item.settings.opacity = opacity;
             item
@@ -359,9 +356,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::DVec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
             RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
@@ -472,9 +467,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::DVec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
             RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
