@@ -793,9 +793,11 @@ impl ViewportRenderer {
         {
             return;
         }
-        if self.origin.resolve(mode, &frame.camera.render_camera) {
+        if self.origin.resolve(mode, &frame.camera.render_camera)
+            && self.resources.scene_tier.is_built()
+        {
             // World-space volumes in the shared indirect buffer are rewritten
-            // relative to the new origin.
+            // relative to the new origin. Below the full tier there are none.
             self.resources.scene_tier.ibl.zones_dirty = true;
         }
         self.resources.world_origin = self.origin;
