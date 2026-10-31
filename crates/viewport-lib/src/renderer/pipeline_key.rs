@@ -123,6 +123,9 @@ impl FeatureSet {
     pub const SHEEN: u16 = 1 << 12;
     /// The anisotropic base specular lobe.
     pub const ANISOTROPY: u16 = 1 << 13;
+    /// Transmission: the diffuse lobe gives way to light refracted through
+    /// the surface. Bit 15 is the one left in the set.
+    pub const TRANSMISSION: u16 = 1 << 14;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
@@ -153,6 +156,7 @@ impl FeatureSet {
         (Self::CLEARCOAT, "FEAT_CLEARCOAT"),
         (Self::SHEEN, "FEAT_SHEEN"),
         (Self::ANISOTROPY, "FEAT_ANISOTROPY"),
+        (Self::TRANSMISSION, "FEAT_TRANSMISSION"),
     ];
 
     pub fn bits(self) -> u16 {
@@ -209,6 +213,10 @@ impl FeatureSet {
             .with(Self::CLEARCOAT, material_flags[0] & m::HAS_CLEARCOAT != 0)
             .with(Self::SHEEN, material_flags[0] & m::HAS_SHEEN != 0)
             .with(Self::ANISOTROPY, material_flags[0] & m::HAS_ANISOTROPY != 0)
+            .with(
+                Self::TRANSMISSION,
+                material_flags[0] & m::HAS_TRANSMISSION != 0,
+            )
     }
 
     /// The pipeline constants for this set: the features it leaves out set
@@ -250,6 +258,7 @@ mod feature_set_tests {
             (m::HAS_CLEARCOAT, FeatureSet::CLEARCOAT),
             (m::HAS_SHEEN, FeatureSet::SHEEN),
             (m::HAS_ANISOTROPY, FeatureSet::ANISOTROPY),
+            (m::HAS_TRANSMISSION, FeatureSet::TRANSMISSION),
         ] {
             assert_eq!(FeatureSet::of_record(&inst, [bit, 0, 0, 0]).bits(), feat);
             assert!(FeatureSet::UNIVERSAL.has(feat));

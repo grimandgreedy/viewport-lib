@@ -166,6 +166,8 @@ struct MaterialGpu {
     specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
     layers0: vec4<f32>,      // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
     layers1: vec4<f32>,      // (sheen colour rgb, sheen roughness)
+    volume0: vec4<f32>,      // (transmission, thickness, ior, 0)
+    volume1: vec4<f32>,      // (absorption coefficient rgb, 0)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -181,6 +183,7 @@ const MAT_UV_TRANSFORM: u32 = 128u;
 const MAT_HAS_CLEARCOAT: u32 = 256u;
 const MAT_HAS_SHEEN: u32 = 512u;
 const MAT_HAS_ANISOTROPY: u32 = 1024u;
+const MAT_HAS_TRANSMISSION: u32 = 2048u;
 
 // A transformed UV plus its screen-space derivatives, for textureSampleGrad.
 struct SlotUv {
@@ -307,6 +310,7 @@ override FEAT_LIGHT_PROBE: bool = true;
 override FEAT_CLEARCOAT: bool = true;
 override FEAT_SHEEN: bool = true;
 override FEAT_ANISOTROPY: bool = true;
+override FEAT_TRANSMISSION: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
