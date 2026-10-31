@@ -67,8 +67,11 @@ pub(crate) struct PassTable {
 }
 
 impl PassTable {
+    /// Empty the table for a new frame. The first call sizes it for every
+    /// pass, so planning never allocates after that.
     fn clear(&mut self) {
         self.passes.clear();
+        self.passes.reserve_exact(MAX_PASSES);
         *self.ran.get_mut() = 0;
     }
 
@@ -124,6 +127,25 @@ impl PassTable {
             .filter(|(i, _)| ran & (1 << i) != 0)
             .map(|(_, d)| d.name)
             .collect()
+    }
+
+    /// Drop the passes whose output nothing reads. Walks back from the
+    /// frame's output: a pass survives when it has side effects or writes a
+    /// target a surviving later pass reads, and then what it reads is needed
+    /// in turn. Every pass loads what it writes, so a write never satisfies
+    /// an earlier pass's need.
+    fn cull(&mut self) {
+        let mut needed = TargetSet::of(TargetId::Output);
+        for decl in self.passes.iter_mut().rev() {
+            if !decl.live {
+                continue;
+            }
+            if decl.side_effect || decl.writes.intersects(needed) {
+                needed = needed | decl.reads;
+            } else {
+                decl.live = false;
+            }
+        }
     }
 
     /// The targets the running passes write.
@@ -335,11 +357,15 @@ impl ViewportRenderer {
             foreground_active: foreground,
             exposure: frame.effects.display.exposure,
         };
+        // The composite reads what each enabled producer writes, except
+        // while the effects throttle skips that producer: its target would
+        // hold an older frame. A producer the composite does not read is
+        // culled below.
         let mut composite_reads = scene.with_if(T::ForegroundDepth, foreground);
         for (i, producer) in self.resources.post_producers().into_iter().enumerate() {
-            let live = producer.enabled(&inputs) && (!throttled || !producer.throttleable());
+            let live = producer.enabled(&inputs);
             let writes = producer.writes();
-            if live {
+            if live && (!throttled || !producer.throttleable()) {
                 composite_reads = composite_reads | writes;
             }
             table.declare(
@@ -414,6 +440,74 @@ impl ViewportRenderer {
             TargetSet::of(T::Output),
         );
 
+        table.cull();
         self.viewport_slots[vp_idx].pass_table = table;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fill(table: &mut PassTable, live: bool) {
+        table.clear();
+        for i in 0..MAX_PASSES {
+            table.declare(
+                HdrPass::Producer(i as u8),
+                "p",
+                live,
+                TargetSet::of(TargetId::HdrColour),
+                TargetSet::of(TargetId::Output),
+            );
+        }
+    }
+
+    /// A full table refills in place frame after frame.
+    #[test]
+    fn replanning_reuses_the_table() {
+        let mut table = PassTable::default();
+        fill(&mut table, true);
+        let buffer = table.passes.as_ptr();
+        for frame in 0..4 {
+            fill(&mut table, frame % 2 == 0);
+            assert_eq!(table.passes.as_ptr(), buffer);
+        }
+    }
+
+    /// A pass whose output nothing reads is culled; one that feeds a
+    /// surviving pass, or has side effects, stays.
+    #[test]
+    fn cull_keeps_only_what_reaches_the_output() {
+        let mut table = PassTable::default();
+        table.clear();
+        let colour = TargetSet::of(TargetId::HdrColour);
+        table.declare(HdrPass::Scene, "scene", true, TargetSet::empty(), colour);
+        table.declare(
+            HdrPass::Producer(0),
+            "bloom",
+            true,
+            colour,
+            TargetSet::of(TargetId::Bloom),
+        );
+        table.declare_side_effect(HdrPass::ExternalProducers, "external", true);
+        table.declare(
+            HdrPass::ToneMap,
+            "tone_map",
+            true,
+            colour,
+            TargetSet::of(TargetId::Output),
+        );
+        table.cull();
+        assert_eq!(
+            table.names(),
+            vec![
+                ("scene", true),
+                ("bloom", false),
+                ("external", true),
+                ("tone_map", true)
+            ]
+        );
+        assert!(!table.composite_inputs(None).bloom);
+        assert_eq!(table.groups(), crate::resources::TargetGroups::SCENE);
     }
 }
