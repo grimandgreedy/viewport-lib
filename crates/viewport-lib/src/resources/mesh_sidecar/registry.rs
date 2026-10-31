@@ -349,6 +349,18 @@ pub(crate) fn validate_with_wgpu(
     label: &str,
     source: &str,
 ) -> ViewportResult<crate::gpu::ShaderModule> {
+    // The transmission entry points bind group 3, which a device with fewer
+    // groups rejects at module creation; the pipelines leave them out there
+    // too (see `adapt_wgsl`).
+    let source = if device.limits().max_bind_groups < 4 {
+        crate::resources::builders::select_wgsl_alternative(
+            source,
+            "TRANSMISSION_PASS",
+            "NO_TRANSMISSION_PASS",
+        )
+    } else {
+        std::borrow::Cow::Borrowed(source)
+    };
     let (module, captured) = crate::resources::builders::capture_validation(device, || {
         crate::resources::builders::wgsl_module(device, label, source)
     });
