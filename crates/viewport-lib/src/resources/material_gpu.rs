@@ -904,7 +904,10 @@ mod tests {
         assert_eq!(bytes(&idle, false), bytes(&Material::default(), false));
         // Phong shading does not transmit.
         let phong = Material::default().with_transmission(1.0, 1.0);
-        assert_eq!(block(&phong).item_flags[0] & item_flags::HAS_TRANSMISSION, 0);
+        assert_eq!(
+            block(&phong).item_flags[0] & item_flags::HAS_TRANSMISSION,
+            0
+        );
 
         let mut glass = Material::default()
             .with_transmission(0.75, 2.0)
