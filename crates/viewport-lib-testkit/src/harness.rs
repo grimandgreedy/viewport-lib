@@ -186,7 +186,10 @@ impl Harness {
     pub fn build_scene(&mut self, scene: &NamedScene) -> BuiltScene {
         // Environment zones are renderer state rather than frame data: a scene
         // that sets them does so in its build, and the next build starts clear.
-        self.renderer.clear_environment_zones();
+        // Only the full tier holds them.
+        if self.renderer.tier() == viewport_lib::Tier::Full {
+            self.renderer.clear_environment_zones();
+        }
         let mut ctx = BuildCtx {
             renderer: &mut self.renderer,
             device: &self.device,
