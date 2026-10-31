@@ -844,7 +844,7 @@ pub struct Material {
     /// diffusely reflected, 0..1, as glTF `KHR_materials_transmission`'s
     /// `transmissionFactor`. Default 0 (opaque). The transmitted light is
     /// tinted by the base colour and refracted by [`ior`](Self::ior). PBR
-    /// shading only; metals do not transmit.
+    /// shading in the opaque or mask alpha mode only; metals do not transmit.
     ///
     /// An opaque-mode transmissive mesh draws after the opaque scene and reads
     /// a copy of it, blurred by roughness. It sees opaque geometry only: a

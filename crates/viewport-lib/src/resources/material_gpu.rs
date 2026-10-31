@@ -203,9 +203,13 @@ pub(crate) mod item_flags {
 }
 
 /// Whether `m` draws as a transmissive surface: PBR built-in shading with a
-/// non-zero transmission. A material plugin's shading does not transmit.
+/// non-zero transmission, in the opaque or mask alpha mode. A material
+/// plugin's shading and a blended material do not transmit.
 pub(crate) fn transmits(m: &Material) -> bool {
-    m.transmission > 0.0 && m.is_pbr() && m.shading_plugin.is_none()
+    m.transmission > 0.0
+        && m.is_pbr()
+        && m.shading_plugin.is_none()
+        && !m.is_blend()
 }
 
 /// A material's volume lanes and their `item_flags` bit:
