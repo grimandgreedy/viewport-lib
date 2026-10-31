@@ -437,7 +437,7 @@ fn image_slice(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
         .upload_volume(ctx.device, ctx.queue, &data, dims);
     let mut slice = ImageSliceItem::default();
     slice.volume_id = vid;
-    slice.axis = SliceAxis::X;
+    slice.axis = SliceAxis::Y;
     slice.offset = 0.5;
     slice.bbox_min = qp(at, [-1.0, -1.0, 0.0]);
     slice.bbox_max = qp(at, [1.0, 1.0, 2.0]);
