@@ -157,14 +157,11 @@
 //!
 //! # Current behaviour
 //!
-//! The renderer does not yet match clauses 6 and 7 in full. With image-based
-//! lighting off, PBR ambient is `Material::ambient` plus the hemisphere fill,
-//! and the default fill is 0.4, so a white sky gives an upward-facing surface
-//! 0.15 + 0.4 times its albedo. The colour grade is applied only
-//! display-referred, after the operator and the background composite. Under
-//! [`ExposureMode::Automatic`] a frame shades with the exposure the previous
-//! frame metered, so the first frame after switching to it draws at the
-//! exposure the viewport held before.
+//! The renderer does not yet match clause 7 in full: the colour grade is
+//! applied only display-referred, after the operator and the background
+//! composite. Under [`ExposureMode::Automatic`] a frame shades with the
+//! exposure the previous frame metered, so the first frame after switching to
+//! it draws at the exposure the viewport held before.
 //!
 //! [`ExposureMode`]: crate::effects::postprocess::ExposureMode
 //! [`ExposureMode::Passthrough`]: crate::effects::postprocess::ExposureMode::Passthrough
