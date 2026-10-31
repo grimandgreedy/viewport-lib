@@ -50,6 +50,9 @@ pub fn wgsl_module<'a>(
 ///   uniform array (the compatibility tier).
 /// - `CLUSTER_LOOKUP` and `CLUSTER_INDEX` / `UNCLUSTERED`: the group 0
 ///   profile has no clusters, so the lighting loops walk every light.
+/// - `TRANSMISSION_PASS` / `NO_TRANSMISSION_PASS`: fewer than four bind
+///   groups, so the mesh shader leaves out the transmission entry points and
+///   their group 3.
 pub fn adapt_wgsl<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     caps: &crate::capabilities::Capabilities,
@@ -59,6 +62,9 @@ pub fn adapt_wgsl<'a>(
     let mut picks: Vec<(&str, &str)> = Vec::new();
     if !caps.depth_texture_loads {
         picks.push(("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"));
+    }
+    if caps.bind_groups < 4 {
+        picks.push(("TRANSMISSION_PASS", "NO_TRANSMISSION_PASS"));
     }
     if let Some(profile) = profile {
         if profile.uniform_light_list.is_some() {

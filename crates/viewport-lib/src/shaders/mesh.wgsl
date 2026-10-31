@@ -1474,6 +1474,10 @@ fn fs_main_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @l
     return fs_body(from_plain(p), is_front);
 }
 
+// BEGIN_TRANSMISSION_PASS
+// A device with fewer than four bind groups compiles the module without this
+// region; it has no transmission pass.
+// ALT(NO_TRANSMISSION_PASS):
 // `fs_main` for a transmissive surface, drawn after the opaque scene with a
 // copy of it bound at group 3: the scene behind replaces the environment
 // that stood in for it.
@@ -1521,6 +1525,7 @@ fn transmission_resolve(colour: vec4<f32>, frag_depth: f32) -> vec4<f32> {
     let behind = textureSampleLevel(transmission_scene, transmission_sampler, uv, lod).rgb;
     return vec4<f32>(colour.rgb + t.weight * behind - t.fallback, colour.a);
 }
+// END_TRANSMISSION_PASS
 
 fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     object = load_object(in.obj_idx);
