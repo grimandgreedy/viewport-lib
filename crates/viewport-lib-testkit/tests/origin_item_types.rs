@@ -99,3 +99,63 @@ fn item_types_far_from_origin_match_the_world_origin() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The ground slab lit by a point light and cut by a clip plane, both placed
+/// at `at` plus odd multiples of 1/16. f32 steps by 1/8 at 2^20 m and would
+/// round each by 1/16 there, so only an f64 position draws the far copy in
+/// place.
+fn render_light_and_clip(harness: &mut Harness, far: bool, generation: u64) -> Vec<u8> {
+    let at = if far {
+        far_origin::far_offset()
+    } else {
+        glam::Vec3::ZERO
+    };
+    let mut ctx = BuildCtx {
+        renderer: &mut harness.renderer,
+        device: &harness.device,
+        queue: &harness.queue,
+    };
+    let ground = mix_parts().into_iter().take(1).collect::<Vec<_>>();
+    let mut scene = build_parts(&mut ctx, &ground, at);
+    scene.generation = generation;
+    scene.world_origin = Some(if far {
+        viewport_lib::WorldOrigin::snapped()
+    } else {
+        viewport_lib::WorldOrigin::Zero
+    });
+    let at = at.as_dvec3();
+    let mut light = viewport_lib::LightSource::point_candela(
+        at + glam::DVec3::new(0.3125, -0.6875, 0.5625),
+        viewport_lib::Candela(12.0),
+        4.0,
+        0.05,
+    );
+    light.colour = viewport_lib::Colour::linear_rgb(1.0, 0.6, 0.3);
+    scene.lighting.lights.push(light);
+    // Keep x >= at.x + 0.3125: `dot(p, n) + d >= 0` with n = +X.
+    let plane = viewport_lib::ClipObject::plane([1.0, 0.0, 0.0], -(at.x + 0.3125));
+    scene.clip = Some((vec![plane], false));
+    let frame = frame_for(
+        &scene,
+        &far_origin::camera(at.as_vec3()),
+        [W as f32, H as f32],
+    );
+    let _ = harness.render(&frame, W, H);
+    harness.render(&frame, W, H)
+}
+
+#[test]
+fn point_light_and_clip_plane_far_from_origin_match_the_world_origin() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let near = render_light_and_clip(&mut harness, false, 20_000);
+    let far = render_light_and_clip(&mut harness, true, 20_001);
+    let blank = differing(&near, &vec![0u8; near.len()]) == 0;
+    assert!(!blank, "the light and clip scene rendered nothing");
+    let n = differing(&near, &far);
+    let limit = (W * H) as usize * PIXELS_PER_MILLE / 1000;
+    eprintln!("light_and_clip: {n} of {} pixels differ", W * H);
+    assert!(n <= limit, "{n} pixels differ (allowed {limit})");
+}
