@@ -56,6 +56,50 @@ pub(crate) fn anchor_offset(anchor: DVec3, origin: DVec3) -> Vec3 {
     (anchor - origin).as_vec3()
 }
 
+/// Beyond this distance from zero, in any axis, a mesh generated on the CPU
+/// from an item's positions is built around its first position instead: f32
+/// steps there are 0.1 mm, fine enough for any swept profile, and further out
+/// a thin tube's cross-section starts to snap to the grid.
+const ANCHOR_BEYOND: f32 = 1024.0;
+
+/// The point a CPU-generated mesh is built around, and `positions` moved to
+/// it, or `None` when they stay as they are.
+///
+/// Positions near zero are left alone. Far ones are rebuilt as offsets from
+/// the first position, subtracted in f64, so the mesh keeps its fine detail;
+/// [`anchored_model`] puts the anchor back into the model matrix.
+pub(crate) fn anchored(positions: &[[f32; 3]]) -> (Vec3, Option<Vec<[f32; 3]>>) {
+    let Some(first) = positions.first() else {
+        return (Vec3::ZERO, None);
+    };
+    let anchor = Vec3::from(*first);
+    if anchor.abs().max_element() <= ANCHOR_BEYOND {
+        return (Vec3::ZERO, None);
+    }
+    let a = anchor.as_dvec3();
+    let local = positions
+        .iter()
+        .map(|p| (Vec3::from(*p).as_dvec3() - a).as_vec3().to_array())
+        .collect();
+    (anchor, Some(local))
+}
+
+/// The model matrix for a mesh built around `anchor` (see [`anchored`]),
+/// relative to `origin`: `model * translate(anchor)` with the translation
+/// composed in f64.
+pub(crate) fn anchored_model(model: [[f32; 4]; 4], anchor: Vec3, origin: DVec3) -> [[f32; 4]; 4] {
+    if anchor == Vec3::ZERO {
+        return rel_model(model, origin);
+    }
+    let m = Mat4::from_cols_array_2d(&model).as_dmat4();
+    let t = (m.transform_point3(anchor.as_dvec3()) - origin).as_vec3();
+    let mut out = model;
+    out[3][0] = t.x;
+    out[3][1] = t.y;
+    out[3][2] = t.z;
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +125,23 @@ mod tests {
         let r = rel_mat4(m, origin);
         assert_eq!(r.w_axis.truncate(), Vec3::new(2.125, -3.5, 7.25));
         assert_eq!(r.x_axis, m.x_axis);
+    }
+
+    #[test]
+    fn near_positions_are_not_anchored() {
+        let (anchor, local) = anchored(&[[3.0, -2.0, 1.0], [5.0e3, 0.0, 0.0]]);
+        assert_eq!(anchor, Vec3::ZERO);
+        assert!(local.is_none());
+    }
+
+    #[test]
+    fn far_positions_rebuild_around_the_first() {
+        let far = 1_048_576.0;
+        let (anchor, local) = anchored(&[[far, far, 1.0], [far + 0.125, far - 0.25, 2.0]]);
+        assert_eq!(anchor, Vec3::new(far, far, 1.0));
+        assert_eq!(local.unwrap(), vec![[0.0, 0.0, 0.0], [0.125, -0.25, 1.0]]);
+        let origin = DVec3::new(f64::from(far) - 16.0, f64::from(far), 0.0);
+        let m = anchored_model(Mat4::IDENTITY.to_cols_array_2d(), anchor, origin);
+        assert_eq!([m[3][0], m[3][1], m[3][2]], [16.0, 0.0, 1.0]);
     }
 }

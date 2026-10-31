@@ -264,7 +264,8 @@ pub(super) fn build_streamtube(
         let mut tri_strip: Vec<u32> = Vec::new();
         let mut seg_acc: u32 = 0;
 
-        let positions = &item.positions;
+        let (anchor, local) = crate::item_types::origin::anchored(&item.positions);
+        let positions: &[[f32; 3]] = local.as_deref().unwrap_or(&item.positions);
         let mut strip_start = 0usize;
 
         for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
@@ -475,7 +476,7 @@ pub(super) fn build_streamtube(
             _pad: [f32; 3],
         }
         let uniform_data = StreamtubeUniform {
-            model: item.model,
+            model: crate::item_types::origin::anchored_model(item.model, anchor, glam::DVec3::ZERO),
             colour: item.colour.to_linear_rgba(),
             radius,
             use_vertex_colour: 0,
@@ -520,6 +521,7 @@ pub(super) fn build_streamtube(
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            anchor,
             cast_shadows: true,
             oit_eligible: false,
             depth_write: true,
@@ -527,7 +529,7 @@ pub(super) fn build_streamtube(
                 device,
                 queue,
                 &tri_segment,
-                &item.positions,
+                positions,
                 &item.strip_lengths,
             ),
             tri_segment: tri_segment.into(),
@@ -598,7 +600,8 @@ pub(super) fn build_tube(
         let mut tri_strip: Vec<u32> = Vec::new();
         let mut seg_acc: u32 = 0;
 
-        let positions = &item.positions;
+        let (anchor, local) = crate::item_types::origin::anchored(&item.positions);
+        let positions: &[[f32; 3]] = local.as_deref().unwrap_or(&item.positions);
         let mut strip_start = 0usize;
 
         for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
@@ -805,7 +808,7 @@ pub(super) fn build_tube(
             _pad: [f32; 3],
         }
         let uniform_data = TubeUniform {
-            model: item.model,
+            model: crate::item_types::origin::anchored_model(item.model, anchor, glam::DVec3::ZERO),
             colour: item.colour.to_linear_rgba(),
             radius: item.radius.max(f32::EPSILON),
             use_vertex_colour,
@@ -850,6 +853,7 @@ pub(super) fn build_tube(
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            anchor,
             cast_shadows: true,
             oit_eligible: false,
             depth_write: true,
@@ -857,7 +861,7 @@ pub(super) fn build_tube(
                 device,
                 queue,
                 &tri_segment,
-                &item.positions,
+                positions,
                 &item.strip_lengths,
             ),
             tri_segment: tri_segment.into(),
@@ -938,7 +942,8 @@ pub(super) fn build_ribbon(
         let mut tri_strip: Vec<u32> = Vec::new();
         let mut seg_acc: u32 = 0;
 
-        let positions = &item.positions;
+        let (anchor, local) = crate::item_types::origin::anchored(&item.positions);
+        let positions: &[[f32; 3]] = local.as_deref().unwrap_or(&item.positions);
         let mut strip_start = 0usize;
 
         for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
@@ -1120,7 +1125,7 @@ pub(super) fn build_ribbon(
         let (texture_view, has_texture): (&viewport_lib::gpu::TextureView, u32) =
             (&binds.texture_view, binds.has_texture);
         let uniform_data = RibbonUniform {
-            model: item.model,
+            model: crate::item_types::origin::anchored_model(item.model, anchor, glam::DVec3::ZERO),
             colour: item.colour.to_linear_rgba(),
             radius: item.width * 0.5,
             use_vertex_colour,
@@ -1190,6 +1195,7 @@ pub(super) fn build_ribbon(
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            anchor,
             cast_shadows: true,
             oit_eligible,
             depth_write: item.depth_write,
@@ -1197,7 +1203,7 @@ pub(super) fn build_ribbon(
                 device,
                 queue,
                 &tri_segment,
-                &item.positions,
+                positions,
                 &item.strip_lengths,
             ),
             tri_segment: tri_segment.into(),
@@ -1241,6 +1247,10 @@ pub(crate) struct StreamtubeGpuData {
     /// Model matrix the streamtube shader applies to `vertex_buffer`. The pick
     /// pass uses the same matrix so its silhouette matches the rendered tube.
     pub(crate) model: [[f32; 4]; 4],
+    /// The point the mesh was built around, in the item's model space: zero
+    /// for positions near zero, else the first position. `model` has it
+    /// composed in.
+    pub(crate) anchor: glam::Vec3,
     /// Set from the source item's `settings.cast_shadows`, overwritten by the
     /// prepare loop alongside `pick_id`/`model`. Only Ribbon items currently
     /// read this in the shadow pass (see `shadow_pass.rs`'s ribbon caster
