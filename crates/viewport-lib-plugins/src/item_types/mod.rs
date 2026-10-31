@@ -178,6 +178,8 @@ pub mod volume_surface_slice;
 #[cfg(feature = "gpu")]
 mod helpers;
 #[cfg(feature = "gpu")]
+mod origin;
+#[cfg(feature = "gpu")]
 mod shader;
 #[cfg(feature = "gpu")]
 mod sources;
