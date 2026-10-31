@@ -326,3 +326,58 @@ fn producer_fixture_survives_a_target_release() {
         &format!("encode:0:{resized}x{resized}"),
     ]);
 }
+
+/// An external producer is untouched by a target-group demotion: with
+/// bloom's group released after it goes idle, the producer still prepares and
+/// encodes every frame, and a later resize still reaches it.
+#[test]
+fn producer_fixture_survives_a_group_demotion() {
+    let Some((device, queue)) = viewport_lib_testkit::headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let config = viewport_lib::RendererConfig::new(wgpu::TextureFormat::Rgba8UnormSrgb)
+        .with_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking)
+        .with_target_release_frames(2);
+    let mut renderer = viewport_lib::ViewportRenderer::with_config(&device, &config);
+    let log = CallLog::new();
+    renderer
+        .add_post_effect_producer(Box::new(LoggingPostEffectProducer::new(
+            log.clone(),
+            PostEffectSlot::Bloom,
+            Arc::new(AtomicBool::new(true)),
+        )))
+        .unwrap();
+    let mut frame = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
+    frame.effects.post_process.bloom.enabled = true;
+    renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    assert!(renderer.debug_viewport_live_targets(0).contains(&"bloom"));
+    log.assert_take(&[
+        "init_gpu",
+        &format!("resize:0:{SIZE}x{SIZE}"),
+        "prepare:0",
+        &format!("encode:0:{SIZE}x{SIZE}"),
+    ]);
+
+    frame.effects.post_process.bloom.enabled = false;
+    for _ in 0..2 {
+        renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        log.assert_take(&["prepare:0", &format!("encode:0:{SIZE}x{SIZE}")]);
+    }
+    assert!(
+        !renderer.debug_viewport_live_targets(0).contains(&"bloom"),
+        "test premise: the bloom group must be released"
+    );
+    renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    log.assert_take(&["prepare:0", &format!("encode:0:{SIZE}x{SIZE}")]);
+
+    let big = SIZE * 2;
+    let mut resized = probe_frame(big, [0.3, 0.3, 0.3, 1.0]);
+    resized.effects.post_process.bloom.enabled = false;
+    renderer.render_offscreen(&device, &queue, &resized, big, big);
+    log.assert_take(&[
+        &format!("resize:0:{big}x{big}"),
+        "prepare:0",
+        &format!("encode:0:{big}x{big}"),
+    ]);
+}

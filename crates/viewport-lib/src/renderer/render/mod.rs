@@ -254,6 +254,7 @@ macro_rules! emit_overlay_2d {
 mod hdr_path;
 mod ldr_path;
 mod paint_direct;
+pub(crate) mod pass_table;
 
 impl ViewportRenderer {
     /// Render the scene into an intermediate dyn-res texture for the LDR callback
@@ -828,24 +829,17 @@ impl ViewportRenderer {
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
         // Ensure the per-viewport targets this frame draws into. The LDR path
-        // needs its depth buffer and nothing else; the HDR path needs the scene
-        // colour and depth plus the targets of each effect that is on. A group
+        // needs its depth buffer and nothing else; the HDR path needs the
+        // targets its planned passes read and write. A group
         // an earlier frame promoted stays live until it has gone unused for
         // `target_release_frames` frames.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
-        let needed = {
-            use crate::resources::TargetGroups as G;
-            if self.renders_hdr(frame) {
-                let pp = &frame.effects.post_process;
-                G::SCENE
-                    | G::when(G::BLOOM, pp.bloom.enabled)
-                    | G::when(G::SSAO, pp.ssao)
-                    | G::when(G::DOF, pp.dof.enabled)
-                    | G::when(G::CONTACT_SHADOW, pp.contact_shadows.enabled)
-                    | G::when(G::FXAA, pp.fxaa)
-            } else {
-                G::LDR_DEPTH
-            }
+        let needed = if self.renders_hdr(frame) {
+            self.ensure_viewport_slot(device, vp_idx);
+            self.plan_hdr_passes(frame, scene_items, vp_idx, w.max(1), h.max(1), ssaa_factor);
+            self.viewport_slots[vp_idx].pass_table.groups()
+        } else {
+            crate::resources::TargetGroups::LDR_DEPTH
         };
         if self.resources.scene_tier.is_built() {
             self.ensure_viewport_hdr(

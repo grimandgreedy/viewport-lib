@@ -9,8 +9,8 @@
 use viewport_lib::resources::build_log;
 use viewport_lib::wgpu;
 use viewport_lib::{
-    Colour, FrameData, Material, PipelineCompilation, RendererConfig, SceneRenderItem,
-    ViewportRenderer,
+    Colour, FrameData, Material, PerformancePolicy, PipelineCompilation, RendererConfig,
+    SceneRenderItem, ViewportRenderer,
 };
 use viewport_lib_testkit::fixtures::{probe_frame, probe_quad};
 
@@ -54,6 +54,18 @@ impl Rig {
 
     fn holds(&self, target: &str) -> bool {
         self.live().contains(&target)
+    }
+
+    /// Whether the last frame's pass table ran the pass `name`.
+    fn ran(&self, name: &str) -> bool {
+        self.renderer
+            .viewport_pass_table(0)
+            .iter()
+            .any(|(pass, live)| *pass == name && *live)
+    }
+
+    fn throttled(&self) -> bool {
+        self.renderer.last_frame_stats().effects_throttled
     }
 
     /// A unit quad as a foreground item.
@@ -203,4 +215,72 @@ fn nothing_is_released_by_default() {
         rig.render(&frame(SIZE, false), SIZE);
     }
     assert_eq!(rig.live(), held);
+}
+
+/// While the effects throttle skips bloom, the composite stops reading its
+/// target and the bloom pass is culled from the frame, though bloom is still
+/// on in the settings. Its group then goes idle like any other and is
+/// released; once the throttle lets go, bloom runs and promotes it again.
+#[test]
+fn a_culled_bloom_producer_is_demoted_and_promoted_again() {
+    let Some(mut rig) = Rig::new(Some(3)) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let bloom = frame(SIZE, true);
+    rig.render(&bloom, SIZE);
+    assert!(rig.ran("bloom") && rig.holds("bloom"), "{:?}", rig.live());
+
+    // No frame can meet this budget, so the tier climbs one step per frame
+    // until the effects throttle engages.
+    rig.renderer.set_performance_policy(PerformancePolicy {
+        target_fps: Some(1.0e9),
+        allow_dynamic_resolution: false,
+        allow_effect_throttling: true,
+        ..PerformancePolicy::default()
+    });
+    let mut throttled_frames = 0;
+    for _ in 0..32 {
+        rig.render(&bloom, SIZE);
+        if rig.throttled() {
+            throttled_frames += 1;
+            assert!(!rig.ran("bloom"), "a throttled bloom must be culled");
+            let table = rig.renderer.viewport_pass_table(0);
+            assert!(
+                table.contains(&("bloom", false)),
+                "bloom stays declared, culled: {table:?}"
+            );
+            if throttled_frames == 3 {
+                break;
+            }
+            assert!(rig.holds("bloom"), "released early: {:?}", rig.live());
+        }
+    }
+    assert_eq!(
+        throttled_frames, 3,
+        "test premise: the throttle must engage"
+    );
+    assert!(
+        !rig.holds("bloom"),
+        "the culled bloom group must be released after three frames: {:?}",
+        rig.live()
+    );
+    assert!(rig.holds("scene"), "{:?}", rig.live());
+
+    rig.renderer
+        .set_performance_policy(PerformancePolicy::default());
+    let mut released = false;
+    for _ in 0..32 {
+        rig.render(&bloom, SIZE);
+        if !rig.throttled() {
+            released = true;
+            break;
+        }
+    }
+    assert!(released, "test premise: the throttle must release");
+    assert!(
+        rig.ran("bloom") && rig.holds("bloom"),
+        "bloom back in the frame must promote its group: {:?}",
+        rig.live()
+    );
 }

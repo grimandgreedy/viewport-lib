@@ -2,6 +2,7 @@
 //! decals, transparency, scatter, flow, bloom, tone mapping, overlays). Builds
 //! its own command encoder and returns the finished buffer.
 
+use super::pass_table::{HdrPass, MAX_PASSES};
 use super::*;
 use crate::resources::PostProducer;
 use crate::resources::scene_pipelines::MeshColourFamily;
@@ -25,6 +26,40 @@ struct HdrFrameCtx<'a> {
     /// slot contributions applied.
     composite_inputs: crate::resources::CompositeInputs,
     tm_uniform: crate::resources::ToneMapUniform,
+}
+
+/// One entry of the post-composite stage chain.
+enum ChainEntry<'a> {
+    Builtin(&'a dyn crate::resources::PostStage),
+    External(usize),
+}
+
+/// The post-composite stage chain: built-in stages (FXAA) and external stages
+/// merged in ascending order-key order (stable: ties keep built-ins first,
+/// then registration order). The composite renders into the first stage's
+/// input, each stage into the next stage's input, and the last into the
+/// frame's final target.
+fn post_stage_chain<'a>(
+    resources: &'a DeviceResources,
+    stages: &[crate::renderer::RegisteredPostEffectStage],
+    pp: &crate::PostProcessSettings,
+) -> Vec<(i32, ChainEntry<'a>)> {
+    let mut chain: Vec<(i32, ChainEntry<'a>)> = Vec::new();
+    for s in resources.post_stages() {
+        if s.enabled(pp) {
+            chain.push((
+                crate::plugin_api::post_effect::stage_order::ANTI_ALIASING,
+                ChainEntry::Builtin(s),
+            ));
+        }
+    }
+    for (i, entry) in stages.iter().enumerate() {
+        if entry.gpu_ready && entry.stage.enabled() {
+            chain.push((entry.order, ChainEntry::External(i)));
+        }
+    }
+    chain.sort_by_key(|(order, _)| *order);
+    chain
 }
 
 /// Build the per-frame, per-viewport context handed to external post-effect
@@ -347,14 +382,9 @@ impl ViewportRenderer {
             .and_then(|t| t.texture.as_ref())
             .map(|t| t.height() as f32)
             .unwrap_or(0.0);
-        let mut composite_inputs = crate::resources::CompositeInputs {
-            bloom: pp.bloom.enabled,
-            ssao: pp.ssao,
-            contact_shadows: pp.contact_shadows.enabled,
-            dof: pp.dof.enabled,
-            foreground: self.foreground_active(frame),
-            grade_lut,
-        };
+        let mut composite_inputs = self.viewport_slots[vp_idx]
+            .pass_table
+            .composite_inputs(grade_lut);
 
         // Build what this frame binds and nothing else. Each group is built by
         // the first frame that asks for it, on the same condition its pass
@@ -434,11 +464,6 @@ impl ViewportRenderer {
             composite_inputs.ssao &= post.ssao.ready();
             composite_inputs.contact_shadows &= post.contact_shadow.ready();
             composite_inputs.dof &= post.dof.ready();
-        }
-        // The throttle skips these producers, so their targets hold last
-        // frame's output; bind the placeholders instead.
-        if self.degradation_effects_throttled {
-            composite_inputs.mask_throttled();
         }
 
         // Upload tone map uniform into the per-viewport buffer.
@@ -609,44 +634,64 @@ impl ViewportRenderer {
             tm_uniform,
         };
 
-        self.hdr_scene_pass(&ctx, &mut encoder);
-        self.hdr_store_hiz_depth(&ctx, &mut encoder);
-        self.hdr_ssaa_refraction(&ctx, &mut encoder);
-        // Stamp the surface mask before anything reads it. After the resolve,
-        // so the stencil written is the one the passes below attach.
-        self.encode_surface_mask(&mut encoder, frame, vp_idx);
-        // Item-type plugins that composite onto the finished opaque surfaces:
-        // decals stamp here, underneath the selection affordances and the
-        // depth-read transparency that follow.
-        self.encode_scope(
-            &ctx,
-            &mut encoder,
-            crate::plugin_api::EncoderScope::OnOpaqueSurfaces,
-        );
-        self.hdr_sub_highlight(&ctx, &mut encoder);
-        self.hdr_depth_read_pass(&ctx, &mut encoder);
-        // Item-type plugins that own passes rather than draws get the encoder
-        // here, with the opaque image and final opaque depth in hand.
-        self.encode_scope(
-            &ctx,
-            &mut encoder,
-            crate::plugin_api::EncoderScope::AfterOpaque,
-        );
-        self.hdr_oit(&ctx, &mut encoder);
-        // The second scope: opaque plus resolved transparency, which is what a
-        // volumetric effect composites over. The scatter-volume plugin encodes
-        // its ray-march, temporal blend and composite here.
-        self.encode_scope(
-            &ctx,
-            &mut encoder,
-            crate::plugin_api::EncoderScope::AfterTransparent,
-        );
-        self.hdr_outline_composite(&ctx, &mut encoder);
-        self.hdr_foreground(&ctx, &mut encoder);
-        self.hdr_post_effects(&ctx, &mut encoder);
-        self.hdr_tonemap_resolve(&ctx, &mut encoder);
-        self.hdr_scene_overlays(&ctx, &mut encoder);
-        self.hdr_final_overlay(&ctx, &mut encoder);
+        // The passes the table runs, in declaration order. Copied out so the
+        // passes can borrow the renderer mutably.
+        let mut passes = [HdrPass::Scene; MAX_PASSES];
+        let mut count = 0;
+        for pass in self.viewport_slots[vp_idx].pass_table.live_passes() {
+            passes[count] = pass;
+            count += 1;
+        }
+        for pass in &passes[..count] {
+            match *pass {
+                HdrPass::Scene => self.hdr_scene_pass(&ctx, &mut encoder),
+                HdrPass::HizStore => self.hdr_store_hiz_depth(&ctx, &mut encoder),
+                HdrPass::SsaaResolve => self.hdr_ssaa_refraction(&ctx, &mut encoder),
+                // Stamp the surface mask before anything reads it. After the
+                // resolve, so the stencil written is the one the passes below
+                // attach.
+                HdrPass::SurfaceMask => self.hdr_surface_mask(&ctx, &mut encoder),
+                // Item-type plugins that composite onto the finished opaque
+                // surfaces: decals stamp here, underneath the selection
+                // affordances and the depth-read transparency that follow.
+                HdrPass::ScopeOnOpaqueSurfaces => self.encode_scope(
+                    &ctx,
+                    &mut encoder,
+                    crate::plugin_api::EncoderScope::OnOpaqueSurfaces,
+                ),
+                HdrPass::SubHighlight => self.hdr_sub_highlight(&ctx, &mut encoder),
+                HdrPass::DepthRead => self.hdr_depth_read_pass(&ctx, &mut encoder),
+                // Item-type plugins that own passes rather than draws get the
+                // encoder here, with the opaque image and final opaque depth
+                // in hand.
+                HdrPass::ScopeAfterOpaque => self.encode_scope(
+                    &ctx,
+                    &mut encoder,
+                    crate::plugin_api::EncoderScope::AfterOpaque,
+                ),
+                HdrPass::Oit => self.hdr_oit(&ctx, &mut encoder),
+                // The second scope: opaque plus resolved transparency, which is
+                // what a volumetric effect composites over. The scatter-volume
+                // plugin encodes its ray-march, temporal blend and composite
+                // here.
+                HdrPass::ScopeAfterTransparent => self.encode_scope(
+                    &ctx,
+                    &mut encoder,
+                    crate::plugin_api::EncoderScope::AfterTransparent,
+                ),
+                HdrPass::OutlineComposite => self.hdr_outline_composite(&ctx, &mut encoder),
+                HdrPass::Foreground => self.hdr_foreground(&ctx, &mut encoder),
+                HdrPass::Producer(i) => self.hdr_builtin_producer(&ctx, &mut encoder, i as usize),
+                HdrPass::ExternalProducers => self.hdr_external_producers(&ctx, &mut encoder),
+                HdrPass::ToneMap => self.hdr_tone_map(&ctx, &mut encoder),
+                HdrPass::PostStages => self.hdr_post_stages(&ctx, &mut encoder),
+                HdrPass::Upscale => self.hdr_upscale(&ctx, &mut encoder),
+                HdrPass::OutputDepthBlit => self.hdr_output_depth_blit(&ctx, &mut encoder),
+                HdrPass::ForegroundStamp => self.hdr_foreground_stamp(&ctx, &mut encoder),
+                HdrPass::SceneOverlays => self.hdr_scene_overlays(&ctx, &mut encoder),
+                HdrPass::Overlay => self.hdr_final_overlay(&ctx, &mut encoder),
+            }
+        }
         // Resolve last frame's timestamp queries -> staging buffer (HDR path).
         // Skip while a readback is unread or in flight so the single staging
         // buffer is not overwritten before prepare() reads it. The set resolved
@@ -700,8 +745,16 @@ impl ViewportRenderer {
         encoder.finish()
     }
 
+    fn hdr_surface_mask(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        if self.surface_mask.active() {
+            self.mark_pass_ran(ctx.vp_idx, HdrPass::SurfaceMask);
+        }
+        self.encode_surface_mask(encoder, ctx.frame, ctx.vp_idx);
+    }
+
     fn hdr_scene_pass(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "scene_pass").entered();
+        self.mark_pass_ran(ctx.vp_idx, HdrPass::Scene);
         let frame = ctx.frame;
         let scene_items = ctx.scene_items;
         let vp_idx = ctx.vp_idx;
@@ -1043,6 +1096,7 @@ impl ViewportRenderer {
         if !self.render_advances_state() {
             return;
         }
+        self.mark_pass_ran(ctx.vp_idx, HdrPass::HizStore);
         let view_proj = self
             .origin
             .camera(&ctx.frame.camera.render_camera)
@@ -1089,6 +1143,7 @@ impl ViewportRenderer {
         // plugin encode hook all fail their depth test and draw nothing.
         // -----------------------------------------------------------------------
         if ssaa_factor > 1 {
+            self.mark_pass_ran(vp_idx, HdrPass::SsaaResolve);
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let (Some(pipeline), Some(bg)) = (
                 &self.resources.post.ssaa_resolve_pipeline,
@@ -1169,6 +1224,7 @@ impl ViewportRenderer {
                 &resources.sub_highlight.edge_pipeline,
                 &resources.sub_highlight.sprite_pipeline,
             ) {
+                self.mark_pass_ran(vp_idx, HdrPass::SubHighlight);
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
@@ -1239,6 +1295,7 @@ impl ViewportRenderer {
         if !self.any_plugin_draws_depth_read(frame) {
             return;
         }
+        self.mark_pass_ran(ctx.vp_idx, HdrPass::DepthRead);
         // The depth plugins sample. Where a read-only depth attachment cannot
         // also be sampled (wgpu's GL backend counts it as written), that is a
         // copy taken just before the pass; elsewhere the scene depth itself.
@@ -1345,6 +1402,18 @@ impl ViewportRenderer {
                 .any(|p| p.encoder_scopes().contains(&scope))
         {
             self.copy_depth_for_read(ctx, encoder);
+        }
+        if self.any_plugin_encodes_at(scope) {
+            self.mark_pass_ran(
+                ctx.vp_idx,
+                match scope {
+                    crate::plugin_api::EncoderScope::OnOpaqueSurfaces => {
+                        HdrPass::ScopeOnOpaqueSurfaces
+                    }
+                    crate::plugin_api::EncoderScope::AfterOpaque => HdrPass::ScopeAfterOpaque,
+                    _ => HdrPass::ScopeAfterTransparent,
+                },
+            );
         }
         self.dispatch_plugin_encode(encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx);
     }
@@ -1488,6 +1557,7 @@ impl ViewportRenderer {
                 slot_hdr.oit_accum_view.as_ref(),
                 slot_hdr.oit_reveal_view.as_ref(),
             ) {
+                self.mark_pass_ran(vp_idx, HdrPass::Oit);
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
                 let oit_ts_writes = self.ts_query_set.as_ref().map(|qs| {
                     self.ts_written_mask.fetch_or(
@@ -1822,6 +1892,7 @@ impl ViewportRenderer {
                     .and_then(|o| o.composite_hdr()),
                 slot.outline_targets.as_ref(),
             ) {
+                self.mark_pass_ran(vp_idx, HdrPass::OutlineComposite);
                 let bg = &targets.composite_bind_group;
                 let hdr_view = &slot_hdr.hdr_view;
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
@@ -1882,6 +1953,7 @@ impl ViewportRenderer {
         if resources.scene.hdr.is_none() {
             return;
         }
+        self.mark_pass_ran(vp_idx, HdrPass::Foreground);
         let family = resources.scene.hdr_family();
 
         let fg_camera = frame
@@ -1992,7 +2064,14 @@ impl ViewportRenderer {
         self.dispatch_plugin_paint_foreground(&mut render_pass, frame, &fg_camera);
     }
 
-    fn hdr_post_effects(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+    /// Encode built-in composite-input producer `index` (see
+    /// `DeviceResources::post_producers`).
+    fn hdr_builtin_producer(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+        index: usize,
+    ) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "post_effects").entered();
         let vp_idx = ctx.vp_idx;
         let frame = ctx.frame;
@@ -2022,14 +2101,26 @@ impl ViewportRenderer {
             query_set: self.ts_query_set.as_ref(),
             written_mask: &self.ts_written_mask,
         };
-        for producer in self.resources.post_producers() {
-            if producer.enabled(&inputs)
-                && producer.ready()
-                && (!throttle_effects || !producer.throttleable())
-            {
-                producer.encode(slot_hdr, encoder, &inputs, &timing);
-            }
+        let producer = self.resources.post_producers()[index];
+        if producer.enabled(&inputs)
+            && producer.ready()
+            && (!throttle_effects || !producer.throttleable())
+        {
+            self.mark_pass_ran(vp_idx, HdrPass::Producer(index as u8));
+            producer.encode(slot_hdr, encoder, &inputs, &timing);
         }
+    }
+
+    fn hdr_external_producers(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "post_effects").entered();
+        let vp_idx = ctx.vp_idx;
+        let frame = ctx.frame;
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+        let throttle_effects = self.degradation_effects_throttled;
 
         // External post-effect producers run after the built-ins, in
         // registration order, under the same throttle. Returned views are
@@ -2037,6 +2128,7 @@ impl ViewportRenderer {
         // rebuilds the composite bind group; the last producer for a slot
         // wins, and an external view over an enabled built-in logs once.
         if !self.post_effect_producers.is_empty() && !throttle_effects {
+            self.mark_pass_ran(vp_idx, HdrPass::ExternalProducers);
             let ci = ctx.composite_inputs;
             let ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx, &self.origin);
             let mut collected: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)> =
@@ -2083,7 +2175,7 @@ impl ViewportRenderer {
         }
     }
 
-    fn hdr_tonemap_resolve(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+    fn hdr_tone_map(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "post_pass").entered();
         let output_view = ctx.output_view;
         let vp_idx = ctx.vp_idx;
@@ -2136,36 +2228,14 @@ impl ViewportRenderer {
         // upscale-blitted to output_view at native resolution.
         // -----------------------------------------------------------------------
         let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
-        // The post-composite stage chain: built-in stages (FXAA) and external
-        // stages merged in ascending order-key order (stable: ties keep
-        // built-ins first, then registration order). The composite renders
-        // into the first stage's input, each stage into the next stage's
-        // input, and the last into the frame's final target.
-        enum ChainEntry<'a> {
-            Builtin(&'a dyn crate::resources::PostStage),
-            External(usize),
-        }
-        let mut chain: Vec<(i32, ChainEntry<'_>)> = Vec::new();
-        for s in self.resources.post_stages() {
-            if s.enabled(pp) {
-                chain.push((
-                    crate::plugin_api::post_effect::stage_order::ANTI_ALIASING,
-                    ChainEntry::Builtin(s),
-                ));
-            }
-        }
-        for (i, entry) in self.post_effect_stages.iter().enumerate() {
-            if entry.gpu_ready && entry.stage.enabled() {
-                chain.push((entry.order, ChainEntry::External(i)));
-            }
-        }
-        chain.sort_by_key(|(order, _)| *order);
+        let chain = post_stage_chain(&self.resources, &self.post_effect_stages, pp);
         let final_target: crate::gpu::TextureView = if use_hdr_upscale {
             slot_hdr.upscale_view.as_ref().unwrap().clone()
         } else {
             output_view.clone()
         };
         if let Some(tone_map_pipeline) = &self.resources.post.tone_map_pipeline {
+            self.mark_pass_ran(vp_idx, HdrPass::ToneMap);
             let tone_target: crate::gpu::TextureView = match chain.first() {
                 Some((_, ChainEntry::Builtin(s))) => s.input_view(slot_hdr).clone(),
                 Some((_, ChainEntry::External(j))) => {
@@ -2206,7 +2276,24 @@ impl ViewportRenderer {
             tone_pass.set_bind_group(0, &slot_hdr.tone_map_bind_group, &[]);
             tone_pass.draw(0..3, 0..1);
         }
+    }
 
+    /// The post-composite stages, chained from the composite's output toward
+    /// the final target.
+    fn hdr_post_stages(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "post_pass").entered();
+        let output_view = ctx.output_view;
+        let vp_idx = ctx.vp_idx;
+        let frame = ctx.frame;
+        let pp = &frame.effects.post_process;
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+        let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
+        let chain = post_stage_chain(&self.resources, &self.post_effect_stages, pp);
+        let final_target: crate::gpu::TextureView = if use_hdr_upscale {
+            slot_hdr.upscale_view.as_ref().unwrap().clone()
+        } else {
+            output_view.clone()
+        };
         // -----------------------------------------------------------------------
         // Post-composite stages, chained toward the final target.
         // -----------------------------------------------------------------------
@@ -2215,6 +2302,9 @@ impl ViewportRenderer {
                 query_set: self.ts_query_set.as_ref(),
                 written_mask: &self.ts_written_mask,
             };
+            if !chain.is_empty() {
+                self.mark_pass_ran(vp_idx, HdrPass::PostStages);
+            }
             for i in 0..chain.len() {
                 let target: crate::gpu::TextureView = match chain.get(i + 1) {
                     Some((_, ChainEntry::Builtin(s))) => s.input_view(slot_hdr).clone(),
@@ -2235,7 +2325,15 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
 
+    fn hdr_upscale(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let output_view = ctx.output_view;
+        let vp_idx = ctx.vp_idx;
+        let use_hdr_upscale = self.viewport_slots[vp_idx]
+            .hdr
+            .as_ref()
+            .is_some_and(|hdr| hdr.upscale_bind_group.is_some());
         // -----------------------------------------------------------------------
         // HDR upscale pass: blit scene-resolution post-processed output to native
         // output_view. Only runs when render_scale < 1.0.
@@ -2244,6 +2342,7 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let Some(upscale_bg) = &slot_hdr.upscale_bind_group {
                 if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
+                    self.mark_pass_ran(vp_idx, HdrPass::Upscale);
                     let mut upscale_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                             #[cfg(any(wgpu29, wgpu30))]
@@ -2268,7 +2367,14 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
 
+    fn hdr_output_depth_blit(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) {
+        let vp_idx = ctx.vp_idx;
         // Depth blit pass: when render_scale < 1.0, the scene depth texture is
         // smaller than the output surface. Copy it to output_depth_texture (native
         // resolution) so the post-tone-map passes below can attach output_depth_view
@@ -2278,6 +2384,7 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let Some(blit_bg) = &slot_hdr.depth_blit_bind_group {
                 if let Some(blit_pipeline) = &self.resources.post.depth_blit_pipeline {
+                    self.mark_pass_ran(vp_idx, HdrPass::OutputDepthBlit);
                     let mut blit_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                             #[cfg(any(wgpu29, wgpu30))]
@@ -2305,7 +2412,14 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
 
+    fn hdr_foreground_stamp(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) {
+        let vp_idx = ctx.vp_idx;
         // Foreground depth stamp: write near depth into output_depth_view
         // wherever the foreground pass drew, so the post-tone-map passes
         // below (grid, ground plane, gizmos) are occluded by foreground
@@ -2313,6 +2427,7 @@ impl ViewportRenderer {
         // (at scale 1.0 output_depth_view aliases the scene depth, which the
         // tone map pass has already consumed).
         if self.foreground_active(ctx.frame) {
+            self.mark_pass_ran(vp_idx, HdrPass::ForegroundStamp);
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             if let (Some(fg_view), Some(pipeline), Some(bgl), Some(nearest)) = (
                 hdr.foreground_depth_only_view.clone(),
@@ -2377,6 +2492,7 @@ impl ViewportRenderer {
         ) {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
+            self.mark_pass_ran(vp_idx, HdrPass::SceneOverlays);
             let grid_bg = &slot.grid_bind_group;
             let mut grid_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
@@ -2415,6 +2531,7 @@ impl ViewportRenderer {
         ) {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
+            self.mark_pass_ran(vp_idx, HdrPass::SceneOverlays);
             let mut gp_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
@@ -2457,6 +2574,7 @@ impl ViewportRenderer {
             let has_editor_overlays =
                 !slot.constraint_line_buffers.is_empty() || !slot.xray_object_buffers.is_empty();
             if has_editor_overlays {
+                self.mark_pass_ran(vp_idx, HdrPass::SceneOverlays);
                 let camera_bg = &slot.camera_bind_group;
                 let mut overlay_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
@@ -2574,6 +2692,7 @@ impl ViewportRenderer {
         };
 
         if has_overlay {
+            self.mark_pass_ran(vp_idx, HdrPass::Overlay);
             let hdr_depth_view = &self.viewport_slots[vp_idx]
                 .hdr
                 .as_ref()

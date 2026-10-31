@@ -8,6 +8,7 @@
 //! frame loop drives every producer through the same three calls, so adding
 //! an effect of this shape means adding a producer, not editing the loop.
 
+use super::targets::{TargetId, TargetSet};
 use crate::resources::ViewportHdrState;
 
 /// Per-frame inputs a producer may read: the active settings plus the camera
@@ -96,6 +97,8 @@ fn ready(pipeline: &Option<super::LazyFullscreen>) -> bool {
 
 /// A pre-tone-map effect that fills a composite input slot.
 pub(crate) trait PostProducer {
+    /// A short name for the producer's pass, as the frame's pass list shows it.
+    fn name(&self) -> &'static str;
     /// Whether the effect is switched on this frame (settings only; the
     /// degradation throttle is applied by the caller at encode time).
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool;
@@ -110,6 +113,17 @@ pub(crate) trait PostProducer {
     /// in the state buffer the tone map always reads.
     fn throttleable(&self) -> bool {
         true
+    }
+    /// The targets the producer's passes read. The default names the scene
+    /// colour and depth, which keeps a producer that does not say otherwise
+    /// from being culled.
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour).with(TargetId::HdrDepth)
+    }
+    /// The targets the producer's passes write. The default is as
+    /// conservative as [`reads`](Self::reads).
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour).with(TargetId::HdrDepth)
     }
     /// Write this frame's uniforms into the viewport's buffers.
     fn upload(
@@ -158,8 +172,20 @@ pub(crate) struct SsaoViewport {
 }
 
 impl PostProducer for SsaoProducer {
+    fn name(&self) -> &'static str {
+        "ssao"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.ssao
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrDepth)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Ssao)
     }
 
     fn ready(&self) -> bool {
@@ -239,8 +265,20 @@ pub(crate) struct ContactShadowViewport {
 }
 
 impl PostProducer for ContactShadowProducer {
+    fn name(&self) -> &'static str {
+        "contact_shadow"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.contact_shadows.enabled
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrDepth)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::ContactShadow)
     }
 
     fn ready(&self) -> bool {
@@ -352,8 +390,20 @@ pub(crate) struct BloomViewport {
 }
 
 impl PostProducer for BloomProducer {
+    fn name(&self) -> &'static str {
+        "bloom"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.bloom.enabled
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Bloom)
     }
 
     fn ready(&self) -> bool {
@@ -465,8 +515,22 @@ pub(crate) struct DofViewport {
 }
 
 impl PostProducer for DofProducer {
+    fn name(&self) -> &'static str {
+        "dof"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.dof.enabled
+    }
+
+    fn reads(&self, inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour)
+            .with(TargetId::HdrDepth)
+            .with_if(TargetId::ForegroundDepth, inputs.foreground_active)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Dof)
     }
 
     fn ready(&self) -> bool {
@@ -529,10 +593,22 @@ impl PostProducer for DofProducer {
 /// encode, in the same submission, before the tone map, so a single dirty
 /// render is correctly exposed on its own frame.
 impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
+    fn name(&self) -> &'static str {
+        "exposure"
+    }
+
     fn enabled(&self, _inputs: &ProducerFrameInputs<'_>) -> bool {
         // Some exposure mode is always active; Manual still needs its
         // upload-time state write.
         true
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Exposure)
     }
 
     fn throttleable(&self) -> bool {

@@ -102,6 +102,99 @@ impl std::ops::BitOr for TargetGroups {
     }
 }
 
+/// One target an HDR frame pass reads or writes.
+///
+/// Finer than [`TargetGroups`]: a pass names the targets it touches, and the
+/// groups a frame needs follow from the passes that run (see
+/// [`TargetSet::groups`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(crate) enum TargetId {
+    HdrColour,
+    HdrDepth,
+    HiZ,
+    SsaaColour,
+    SurfaceStencil,
+    OitAccum,
+    OitReveal,
+    Outline,
+    ForegroundDepth,
+    Bloom,
+    Ssao,
+    Dof,
+    ContactShadow,
+    Exposure,
+    FxaaInput,
+    /// The frame's output view.
+    Output,
+}
+
+/// A set of [`TargetId`]s, one bit each.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub(crate) struct TargetSet(u32);
+
+impl TargetSet {
+    pub(crate) const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub(crate) const fn of(id: TargetId) -> Self {
+        Self(1 << id as u32)
+    }
+
+    /// `self` plus `id`.
+    pub(crate) const fn with(self, id: TargetId) -> Self {
+        Self(self.0 | 1 << id as u32)
+    }
+
+    /// `self` plus `id` when `on`.
+    pub(crate) const fn with_if(self, id: TargetId, on: bool) -> Self {
+        if on { self.with(id) } else { self }
+    }
+
+    pub(crate) const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub(crate) const fn contains(self, id: TargetId) -> bool {
+        self.0 & (1 << id as u32) != 0
+    }
+
+    pub(crate) const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    /// The target groups that hold these targets. Targets allocated outside
+    /// the groups (OIT, the foreground depth, the outline, Hi-Z, exposure,
+    /// the output) contribute nothing.
+    pub(crate) fn groups(self) -> TargetGroups {
+        use TargetId as T;
+        TargetGroups::when(
+            TargetGroups::SCENE,
+            self.intersects(
+                Self::of(T::HdrColour)
+                    .with(T::HdrDepth)
+                    .with(T::SsaaColour)
+                    .with(T::SurfaceStencil),
+            ),
+        ) | TargetGroups::when(TargetGroups::BLOOM, self.contains(T::Bloom))
+            | TargetGroups::when(TargetGroups::SSAO, self.contains(T::Ssao))
+            | TargetGroups::when(TargetGroups::DOF, self.contains(T::Dof))
+            | TargetGroups::when(
+                TargetGroups::CONTACT_SHADOW,
+                self.contains(T::ContactShadow),
+            )
+            | TargetGroups::when(TargetGroups::FXAA, self.contains(T::FxaaInput))
+    }
+}
+
+impl std::ops::BitOr for TargetSet {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        self.union(rhs)
+    }
+}
+
 /// How long each of one viewport's targets has gone unused, so the ones a
 /// viewport stopped asking for can return to their placeholders.
 ///
