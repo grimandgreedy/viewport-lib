@@ -8,7 +8,7 @@ use crate::effects::postprocess::ExposureMode;
 /// The defaults are the sunny-16 rule: f/16, 1/125 s, ISO 100 (about
 /// EV100 15), focused 5 units out.
 ///
-/// The renderer reads exposure from `PostProcessSettings::exposure`, not from
+/// The renderer reads exposure from `DisplaySettings::exposure`, not from
 /// here. To expose a frame with these settings, set that field's mode to
 /// [`to_exposure_mode`](Self::to_exposure_mode).
 ///
@@ -60,7 +60,7 @@ impl PhysicalExposure {
     }
 
     /// The matching [`ExposureMode::PhysicalCamera`], for
-    /// `PostProcessSettings::exposure`.
+    /// `DisplaySettings::exposure`.
     pub fn to_exposure_mode(&self) -> ExposureMode {
         ExposureMode::PhysicalCamera {
             aperture: self.aperture,

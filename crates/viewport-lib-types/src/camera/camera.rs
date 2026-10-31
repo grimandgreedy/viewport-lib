@@ -98,7 +98,7 @@ pub struct Camera {
     /// Projection.
     pub projection: Projection,
     /// Physical exposure settings and focus distance. The renderer reads
-    /// exposure from `PostProcessSettings::exposure`, not from here; set it
+    /// exposure from `DisplaySettings::exposure`, not from here; set it
     /// from [`PhysicalExposure::to_exposure_mode`].
     pub exposure: PhysicalExposure,
     /// Viewport width / height ratio, updated each frame from the viewport rect.
