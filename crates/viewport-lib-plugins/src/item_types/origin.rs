@@ -56,6 +56,32 @@ pub(crate) fn anchor_offset(anchor: DVec3, origin: DVec3) -> Vec3 {
     (anchor - origin).as_vec3()
 }
 
+/// The view matrix the GPU draws `camera` with: its rotation, with the
+/// translation rebuilt in f64 from the eye relative to `origin`.
+///
+/// Plugin contexts carry the world-space camera; CPU work that has to agree
+/// with the group-0 camera on positions written relative to the origin
+/// (screen-space scissors, reprojection matrices) uses this instead.
+pub(crate) fn rel_view(camera: &viewport_lib::RenderCamera, origin: DVec3) -> Mat4 {
+    let view = camera.view();
+    if origin == DVec3::ZERO {
+        return view;
+    }
+    let r = glam::Mat3::from_mat4(view).as_dmat3();
+    let t = -(r * (camera.eye_position().as_dvec3() - origin));
+    let mut out = view;
+    out.w_axis = t.as_vec3().extend(view.w_axis.w);
+    out
+}
+
+/// `projection * `[`rel_view`]: the group-0 `view_proj`.
+pub(crate) fn rel_view_proj(camera: &viewport_lib::RenderCamera, origin: DVec3) -> Mat4 {
+    if origin == DVec3::ZERO {
+        return camera.view_proj();
+    }
+    camera.projection() * rel_view(camera, origin)
+}
+
 /// Beyond this distance from zero, in any axis, a mesh generated on the CPU
 /// from an item's positions is built around its first position instead: f32
 /// steps there are 0.1 mm, fine enough for any swept profile, and further out
