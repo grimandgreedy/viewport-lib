@@ -159,18 +159,21 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     /// Camera eye position in world space (used for specular lighting).
     pub eye_pos: [f32; 3],
-    /// Upper bound applied to the lit (pre-emissive) mesh colour.
+    /// Upper bound applied to the lit (pre-emissive) mesh colour, which is
+    /// exposed radiance.
     ///
-    /// 1.0 on the LDR path, so lit output stays normalised as before. On the
-    /// HDR path this is F16_MAX, letting bright direct light and ambient stay
-    /// above 1.0 into the Rgba16Float target so the tone mapper receives real
-    /// HDR (emissive was already unclamped on both paths). Occupies what was
-    /// alignment padding, so the struct layout is unchanged.
+    /// 1.0 on the LDR path, where the target cannot hold more. On the HDR path
+    /// this is F16_MAX, so bright direct light and ambient stay above 1.0 in
+    /// the Rgba16Float target and the tone mapper receives real HDR.
     pub lit_clamp: f32,
     /// Camera forward direction in world space (used for view-depth tests).
     pub forward: [f32; 3],
-    /// Padding to align `forward` to 16 bytes.
-    pub _pad1: f32,
+    /// The camera's exposure: the linear multiplier the shaders apply to every
+    /// radiance source where they read it (lights, environment, hemisphere
+    /// fill, probes, lightmaps, emissive). 1.0 under
+    /// `ExposureMode::Passthrough`; under `ExposureMode::Automatic` the HDR
+    /// path copies the adapted value in on the GPU before the scene draws.
+    pub exposure: f32,
     /// Inverse view-projection matrix (for reconstructing world-space rays, e.g. skybox).
     pub inv_view_proj: [[f32; 4]; 4],
     /// View matrix (world -> camera space, column-major).
@@ -196,6 +199,11 @@ pub struct CameraUniform {
     /// Bumped each time `world_origin` moves.
     pub origin_epoch: u32,
 }
+
+/// Byte offset of [`CameraUniform::exposure`], where the HDR path copies an
+/// automatic exposure in.
+pub(crate) const CAMERA_EXPOSURE_OFFSET: u64 = std::mem::offset_of!(CameraUniform, exposure) as u64;
+const _: () = assert!(CAMERA_EXPOSURE_OFFSET == 92);
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).
 ///
@@ -281,6 +289,10 @@ const _: () = {
 /// and the active light count. Sized so the structure cost stays well
 /// inside the uniform-buffer budget regardless of how many lights are
 /// active in a given frame.
+///
+/// One header serves every viewport of a scene, so its intensities are
+/// absolute (unexposed); a shader multiplies each by the viewport's
+/// `CameraUniform::exposure` where it reads it.
 ///
 /// Layout:
 /// - count:                u32            =  4 bytes

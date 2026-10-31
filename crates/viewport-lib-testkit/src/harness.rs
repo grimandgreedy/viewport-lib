@@ -344,7 +344,8 @@ fn half_to_f32(bits: u16) -> f32 {
                 f <<= 1;
                 shift -= 1;
             }
-            (sign << 31) | (((127 - 15 + shift) as u32) << 23) | ((f & 0x3ff) << 13)
+            // A subnormal's exponent is -14, one above the biased zero.
+            (sign << 31) | (((127 - 14 + shift) as u32) << 23) | ((f & 0x3ff) << 13)
         }
     } else if exponent == 0x1f {
         (sign << 31) | (0xff << 23) | (fraction << 13)
@@ -395,8 +396,18 @@ pub fn reference_dir_name(
 
 #[cfg(test)]
 mod tests {
-    use super::reference_dir_name;
+    use super::{half_to_f32, reference_dir_name};
     use viewport_lib::wgpu::{Backend, DeviceType};
+
+    #[test]
+    fn halves_decode_across_the_subnormal_boundary() {
+        assert_eq!(half_to_f32(0x0001), 2f32.powi(-24));
+        assert_eq!(half_to_f32(0x0200), 2f32.powi(-15));
+        assert_eq!(half_to_f32(0x03ff), 1023.0 * 2f32.powi(-24));
+        assert_eq!(half_to_f32(0x0400), 2f32.powi(-14));
+        assert_eq!(half_to_f32(0x3c00), 1.0);
+        assert_eq!(half_to_f32(0xc000), -2.0);
+    }
 
     #[test]
     fn hardware_adapters_keep_the_backend_name() {

@@ -5,6 +5,22 @@
 use super::*;
 
 impl ViewportRenderer {
+    /// The LDR pipeline has no HDR target to meter, so an automatic exposure
+    /// draws at the passthrough exposure (the camera uniform carries 1.0).
+    /// Report it rather than drawing differently without a word.
+    pub(crate) fn report_auto_exposure_on_ldr(&self, frame: &FrameData) {
+        if frame.effects.display.exposure.manual_multiplier().is_none() {
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Pipeline,
+                    "auto_exposure_on_ldr",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::AutoExposureOnLdr,
+            );
+        }
+    }
+
     pub(crate) fn paint_to<'rp>(
         &self,
         render_pass: &mut crate::gpu::RenderPass<'rp>,
@@ -37,6 +53,7 @@ impl ViewportRenderer {
                 || crate::NoticeDetail::ForegroundUnsupportedOnPath,
             );
         }
+        self.report_auto_exposure_on_ldr(frame);
         // The host cleared this pass's depth to a value of its own; reset the
         // viewport rect to the renderer's clear value before drawing.
         if let Some(reset) = &self.resources.post.host_depth_reset_pipeline {

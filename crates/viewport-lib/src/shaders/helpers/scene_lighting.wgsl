@@ -18,8 +18,9 @@
 // fixed slice iterates the full array too, so no light is ever dropped.
 //
 // The world-to-view matrix is carried inside the cluster grid uniform so the
-// helper can derive the view-space fragment position itself; consumers don't
-// have to extend their per-shader `Camera` struct to expose it.
+// helper can derive the view-space fragment position itself. The radiance
+// `eval_light` and `apply_scene_lighting` return is exposed: both multiply by
+// `camera.exposure`, the lane after `forward` in the group-0 camera uniform.
 //
 // The BEGIN_/END_ regions carry an alternative on `// ALT(NAME):` lines, which
 // `builders::adapt_wgsl` swaps in where the device's group 0 needs it: the
@@ -32,6 +33,8 @@
 //   - Bind the per-light storage buffer at `@group(0) @binding(13)`.
 //   - Bind the cluster grid uniform / cells / index list at bindings 14, 15,
 //     and 16 (all on group 0).
+//   - Declare `camera` at `@group(0) @binding(0)` with the uniform's layout
+//     through `exposure` (view_proj, eye_pos, a f32, forward, exposure).
 //   - Remove any local `SingleLight` and `Lights` struct definitions and
 //     `// #include "scene_lighting.wgsl"` near the top of the file instead.
 
@@ -253,8 +256,8 @@ fn cluster_light_global(range: LightRange, j: u32) -> u32 {
 }
 
 // Per-light geometry and unshadowed radiance for one fragment. `radiance`
-// folds in colour * intensity * distance/spot attenuation; it carries no
-// shadow factor and no N.L term. `in_range` is false when a punctual light is
+// folds in colour * intensity * exposure * distance/spot attenuation; it
+// carries no shadow factor and no N.L term. `in_range` is false when a punctual light is
 // at or beyond its range (radiance would be zero); callers skip such lights
 // outright and so avoid shadow taps and BRDF work. This is the one canonical
 // copy of the per-light attenuation math for every lit mesh loop.
@@ -274,9 +277,11 @@ fn light_in_channel(light: SingleLight, object_mask: u32) -> bool {
 
 fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
     var ev: LightEval;
+    // The light's exposed intensity: exposure applies where radiance is read.
+    let intensity = light.intensity * camera.exposure;
     if light.light_type == 0u {
         ev.l = normalize(light.pos_or_dir);
-        ev.radiance = light.colour * light.intensity;
+        ev.radiance = light.colour * intensity;
         ev.in_range = true;
         return ev;
     }
@@ -298,7 +303,7 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
     let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
     let atten = inv_sq * win * win;
     if light.light_type == 1u {
-        ev.radiance = light.colour * light.intensity * atten;
+        ev.radiance = light.colour * intensity * atten;
     } else {
         let spot_dir = normalize(light.spot_direction);
         let cos_angle = dot(-ev.l, spot_dir);
@@ -308,7 +313,7 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
             (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
             0.0, 1.0,
         );
-        ev.radiance = light.colour * light.intensity * atten * cone_att;
+        ev.radiance = light.colour * intensity * atten * cone_att;
     }
     return ev;
 }
@@ -325,7 +330,7 @@ fn apply_scene_lighting(
     // disables the term and items rely entirely on direct lights.
     let up_weight = clamp(normal.z * 0.5 + 0.5, 0.0, 1.0);
     let ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity;
+                  * (lights.hemisphere_intensity * camera.exposure);
 
     var direct = vec3<f32>(0.0);
     let range = cluster_light_range(world_pos, lights.count);

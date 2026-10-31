@@ -63,6 +63,8 @@ impl ViewportRenderer {
             );
         }
 
+        self.report_auto_exposure_on_ldr(frame);
+
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
         // Otherwise render directly to output_view.

@@ -33,7 +33,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 9;
+pub const WGSL_VERSION: u32 = 10;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -69,6 +69,13 @@ pub const WGSL_VERSION: u32 = 9;
 /// `camera.origin_epoch` counts its moves. `viewport_absolute_pos(rel)` adds
 /// the origin back for procedural effects that key on world position; it is
 /// lossy far from zero, so never use it to place geometry.
+///
+/// `camera.exposure` is the camera's exposure, the linear multiplier every
+/// radiance source takes where a shader reads it: a light's colour times its
+/// intensity, the environment, the hemisphere fill, an emissive term. The
+/// helpers in [`SHARED_PBR_WGSL`] apply it; a shader that reads `lights` or
+/// the IBL textures itself multiplies by it. A colour the item draws without
+/// lighting does not take it.
 pub const SHARED_BINDINGS_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_bindings.wgsl"));
 
@@ -89,6 +96,13 @@ pub const SHARED_BINDINGS_WGSL: &str =
 /// [`SHARED_BINDINGS_WGSL`] on bindings 13 and 17. Compose one or the other,
 /// not both: a body using this declares its own camera at binding 0 and the
 /// `Lights` uniform at binding 3.
+///
+/// The camera it declares must carry the uniform's layout as far as
+/// `exposure` (`view_proj`, `eye_pos`, a `f32`, `forward`, `exposure`), named
+/// `camera`: `eval_light` and `apply_scene_lighting` return exposed radiance,
+/// multiplied by `camera.exposure`. A body that reads another radiance source
+/// itself (the hemisphere colours, an emissive term) multiplies it the same
+/// way.
 ///
 /// It applies no shadow term. Multiply by
 /// [`viewport_sample_csm`](SHARED_PBR_WGSL) yourself if the item casts into
@@ -305,6 +319,10 @@ pub const SHARED_OUTLINE_EDGE_WGSL: &str =
 /// `viewport_apply_scene_lighting` is the simpler Lambert helper used by
 /// non-PBR pipelines (glyphs, tubes, ribbons). Use it when a plugin wants
 /// scene-light parity with those built-in items.
+///
+/// Every helper here returns exposed radiance: lights, the environment, the
+/// hemisphere fill and `PbrInputs::emissive` are multiplied by
+/// `camera.exposure`.
 pub const SHARED_PBR_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_pbr.wgsl"));
 
@@ -545,7 +563,7 @@ struct ShadowCamera {
     eye_pos:   vec3<f32>,
     _pad0:     f32,
     forward:   vec3<f32>,
-    _pad1:     f32,
+    exposure:  f32,
 };
 @group(0) @binding(0) var<uniform> camera: ShadowCamera;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;

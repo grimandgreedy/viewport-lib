@@ -1,5 +1,5 @@
 
-// @viewport-wgsl-version: 2
+// @viewport-wgsl-version: 3
 // Shared PBR / lit-shading helpers. Requires SHARED_BINDINGS_WGSL to be
 // included first.
 //
@@ -46,7 +46,7 @@ struct PbrInputs {
     emissive:   vec3<f32>,
 };
 
-// One light's direction and unshadowed radiance at a point.
+// One light's direction and unshadowed, exposed radiance at a point.
 struct _ViewportLightEval {
     l:        vec3<f32>,
     radiance: vec3<f32>,
@@ -57,9 +57,10 @@ struct _ViewportLightEval {
 // spot cone on top. Zero radiance at or beyond `range`.
 fn _viewport_eval_light(light: SingleLight, world_pos: vec3<f32>) -> _ViewportLightEval {
     var ev: _ViewportLightEval;
+    let intensity = light.intensity * camera.exposure;
     if light.light_type == 0u {
         ev.l = normalize(light.pos_or_dir);
-        ev.radiance = light.colour * light.intensity;
+        ev.radiance = light.colour * intensity;
         return ev;
     }
     let to_light = light.pos_or_dir - world_pos;
@@ -70,7 +71,7 @@ fn _viewport_eval_light(light: SingleLight, world_pos: vec3<f32>) -> _ViewportLi
     let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
     let atten = inv_sq * win * win;
     if light.light_type == 1u {
-        ev.radiance = light.colour * light.intensity * atten;
+        ev.radiance = light.colour * intensity * atten;
     } else {
         let spot_dir = normalize(light.spot_direction);
         let cos_angle = dot(-ev.l, spot_dir);
@@ -80,7 +81,7 @@ fn _viewport_eval_light(light: SingleLight, world_pos: vec3<f32>) -> _ViewportLi
             (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
             0.0, 1.0,
         );
-        ev.radiance = light.colour * light.intensity * atten * cone_att;
+        ev.radiance = light.colour * intensity * atten * cone_att;
     }
     return ev;
 }
@@ -93,7 +94,7 @@ fn viewport_apply_scene_lighting(
 ) -> vec3<f32> {
     let up_weight = clamp(normal.z * 0.5 + 0.5, 0.0, 1.0);
     let ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity;
+                  * (lights.hemisphere_intensity * camera.exposure);
 
     var direct = vec3<f32>(0.0);
     let n_lights = lights.count;
@@ -318,7 +319,7 @@ fn viewport_ibl_ambient(
     }
     let diffuse = kd * irradiance * albedo * diffuse_occ * lights.ibl_diffuse_scale;
     let specular = prefiltered * (f * brdf.x + brdf.y) * spec_occ * lights.ibl_specular_scale;
-    return (diffuse + specular) * lights.ibl_intensity;
+    return (diffuse + specular) * (lights.ibl_intensity * camera.exposure);
 }
 
 // PBR shading with the lit mesh shaders' direct BRDF: Cook-Torrance specular
@@ -344,7 +345,7 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
             occ = viewport_brdf_multi_bounce_ao(inp.ao, inp.albedo * (1.0 - inp.metallic));
         }
         ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity * inp.albedo * occ;
+                  * (lights.hemisphere_intensity * camera.exposure) * inp.albedo * occ;
     }
 
     var lo = vec3<f32>(0.0);
@@ -362,5 +363,5 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
                                               inp.metallic, roughness, f0);
     }
 
-    return ambient + lo + inp.emissive;
+    return ambient + lo + inp.emissive * camera.exposure;
 }

@@ -28,13 +28,20 @@ pub const PASSTHROUGH_EV100: f32 = -0.263_034_4;
 #[doc(hidden)]
 pub const METER_CALIBRATION_K: f32 = 12.5;
 
-/// How the pre-tone-map exposure multiplier is derived each frame.
+/// How the camera's exposure multiplier is derived each frame.
 ///
-/// Every mode resolves to a single linear multiplier applied to scene radiance
-/// before tone mapping (see `tone_map.wgsl`). The multiplier is routed through a
-/// small GPU buffer so auto-exposure can write it from a compute pass in the
-/// same submission as the tone map, keeping a one-shot (dirty-only) render
-/// correctly exposed on its own frame.
+/// Every mode resolves to a single linear multiplier. The shaders apply it
+/// where they read radiance (lights, the environment, the hemisphere fill,
+/// probes, lightmaps, emissive), not in the composite, so shading, plugin
+/// hooks and post effects see exposed radiance and colours drawn without
+/// lighting are left alone; see
+/// [`light_transport`](crate::effects::light_transport).
+///
+/// The fixed modes resolve on the CPU and apply on the frame they are set.
+/// [`ExposureMode::Automatic`] meters the HDR target on the GPU, and a frame
+/// shades with the exposure the frame before it metered, so a viewport that
+/// switches to it, or renders only when dirty, needs a second frame to show
+/// the adapted exposure.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ExposureMode {
@@ -59,7 +66,10 @@ pub enum ExposureMode {
         iso: f32,
     },
     /// Auto-exposure: meter the HDR target's log-luminance histogram each frame
-    /// and adapt an internal EV toward it (see [`AutoExposure`]).
+    /// and adapt an internal EV toward it (see [`AutoExposure`]). The next frame
+    /// shades with the adapted EV. Needs [`PipelineMode::Hdr`]: on
+    /// [`PipelineMode::Direct`] there is no target to meter, so the frame draws
+    /// at the passthrough exposure and the renderer reports a notice.
     Automatic(AutoExposure),
 }
 
@@ -74,7 +84,7 @@ impl ExposureMode {
 /// Metering reduces the HDR target to a percentile-clipped average
 /// log-luminance, converts it to a target EV100, and eases an internal EV
 /// toward it. `dt` is the smoothing control: `dt <= 0` snaps to the target this
-/// frame (the default, correct for consumers that render only when dirty);
+/// frame (the default), so the next frame shades at the metered exposure;
 /// `dt > 0` applies exponential smoothing (the "eye adjusting" look).
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -139,11 +149,12 @@ impl Default for AutoExposure {
     }
 }
 
-/// Physical-camera exposure configuration for the HDR pipeline.
+/// Physical-camera exposure configuration.
 ///
 /// Passed via `DisplaySettings::exposure`. `compensation` is a stops-of-bias
-/// applied on top of every mode (positive brightens the image). Which values
-/// the exposure scales and which it leaves alone is set out in
+/// applied on top of every mode (positive brightens the image). The resolved
+/// multiplier is applied where the shaders read radiance, on both pipelines;
+/// which values it scales and which it leaves alone is set out in
 /// [`light_transport`](crate::effects::light_transport).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -264,9 +275,11 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
 /// `Hdr` is the main path; `Direct` is a constrained fallback for
 /// host-owned render passes (`paint_to` / `paint_viewport`, which always use it)
 /// and cheap inline rendering. `Direct` omits the HDR target and therefore
-/// exposure, tone mapping, every post effect, OIT (so transparency is
+/// automatic exposure, tone mapping, every post effect, OIT (so transparency is
 /// order-dependent), the skybox, and item-type plugins that have not opted
-/// into LDR painting via `ItemTypePlugin::draws_ldr`. Transparent volume
+/// into LDR painting via `ItemTypePlugin::draws_ldr`. A fixed exposure
+/// (`Manual`, `PhysicalCamera`) applies on `Direct` as on `Hdr`, with lit
+/// radiance clamped to 1.0. Transparent volume
 /// meshes (`SceneFrame::transparent_volume_meshes`) require `Hdr`.
 // NOT #[non_exhaustive]: a closed, consumer-selected binary (cf. `ToneMapping`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -285,16 +298,17 @@ pub enum PipelineMode {
 ///
 /// Passed via `EffectsFrame::display`. Groups the three
 /// controls of the HDR-to-display stage - the [`PipelineMode`] switch, the
-/// [`ExposureSettings`] applied before tone mapping, and the [`ToneMapping`]
-/// operator. Exposure and the operator are inert on [`PipelineMode::Direct`].
+/// [`ExposureSettings`] the shaders apply where they read radiance, and the
+/// [`ToneMapping`] operator. The operator is inert on [`PipelineMode::Direct`],
+/// and so is an automatic exposure.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DisplaySettings {
     /// Which render pipeline runs. Default: [`PipelineMode::Hdr`].
     pub mode: PipelineMode,
-    /// Exposure model applied to linear radiance before tone mapping. Default:
-    /// [`ExposureMode::Passthrough`].
+    /// The camera's exposure, applied to every radiance source where the shaders
+    /// read it. Default: [`ExposureMode::Passthrough`].
     pub exposure: ExposureSettings,
     /// Tone-map operator mapping exposed HDR radiance into display range.
     /// Default: [`ToneMapping::KhronosNeutral`].

@@ -441,7 +441,14 @@ struct ForwardLit {
 }
 
 const FORWARD_LIT_BODY: &str = "
-@group(0) @binding(0) var<uniform> test_view_proj: mat4x4<f32>;
+struct TestCamera {
+    view_proj: mat4x4<f32>,
+    eye_pos: vec3<f32>,
+    _pad: f32,
+    forward: vec3<f32>,
+    exposure: f32,
+};
+@group(0) @binding(0) var<uniform> camera: TestCamera;
 @group(0) @binding(3) var<uniform> test_lights: Lights;
 
 struct TestOut {
@@ -452,7 +459,7 @@ struct TestOut {
 @vertex
 fn vs_main(@location(0) position: vec3<f32>) -> TestOut {
     var out: TestOut;
-    out.clip = test_view_proj * vec4<f32>(position, 1.0);
+    out.clip = camera.view_proj * vec4<f32>(position, 1.0);
     out.world = position;
     return out;
 }

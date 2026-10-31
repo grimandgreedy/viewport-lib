@@ -137,13 +137,13 @@ fn sample_probe_volume(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
 
 /// An object's indirect diffuse from either its per-object light-probe SH block
 /// or, when `index` is the volume sentinel (0xffffffff), the adaptive probe
-/// volume sampled at world position `p`. Lets both indirect sources share the
-/// one per-object flag and shader branch.
+/// volume sampled at world position `p`, exposed by the camera's exposure.
+/// Lets both indirect sources share the one per-object flag and shader branch.
 fn evaluate_object_indirect(index: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     if index == 0xffffffffu {
-        return sample_probe_volume(p, n);
+        return sample_probe_volume(p, n) * camera.exposure;
     }
-    return evaluate_sh_probe(index, n);
+    return evaluate_sh_probe(index, n) * camera.exposure;
 }
 
 /// Sample the irradiance map (diffuse IBL) of the default environment (array
@@ -381,8 +381,8 @@ fn ibl_ambient_layer_grad(
 const SUBTRACTIVE_STRENGTH: f32 = 0.3;
 const SUBTRACTIVE_SHADOW_FLOOR: f32 = 0.6;
 
-/// Fold a baked lightmap sample into the ambient term. `lm` is the raw texture
-/// sample (rgb radiance, or r for occlusion) and `mode` selects the blend:
+/// Fold a baked lightmap sample into the (exposed) ambient term. `lm` is the raw
+/// texture sample (rgb radiance, or r for occlusion) and `mode` selects the blend:
 /// 1 = Replace the indirect diffuse with the baked radiance, 2 = Add it on top,
 /// 3 = treat the red channel as an occlusion factor over the ambient term,
 /// 4 = Subtractive (the baked radiance is the full lighting; the main light's
@@ -390,13 +390,16 @@ const SUBTRACTIVE_SHADOW_FLOOR: f32 = 0.6;
 /// cast onto it at a consistent depth). `ao` is the diffuse occlusion. The
 /// caller gates on `mode != 0`.
 fn apply_lightmap(ambient: vec3<f32>, base_colour: vec3<f32>, ao: vec3<f32>, lm: vec4<f32>, mode: u32, main_shadow: f32) -> vec3<f32> {
+    // Baked radiance is exposed where it is read; the occlusion mode's factor
+    // is unitless and is not.
+    let radiance = lm.rgb * camera.exposure;
     if mode == 1u {
-        return base_colour * lm.rgb * ao;
+        return base_colour * radiance * ao;
     } else if mode == 2u {
-        return ambient + base_colour * lm.rgb;
+        return ambient + base_colour * radiance;
     } else if mode == 4u {
-        let baked = base_colour * lm.rgb * ao;
-        let removed = (1.0 - clamp(main_shadow, 0.0, 1.0)) * SUBTRACTIVE_STRENGTH;
+        let baked = base_colour * radiance * ao;
+        let removed = (1.0 - clamp(main_shadow, 0.0, 1.0)) * SUBTRACTIVE_STRENGTH * camera.exposure;
         return max(baked - vec3<f32>(removed), baked * SUBTRACTIVE_SHADOW_FLOOR);
     }
     return ambient * lm.r;

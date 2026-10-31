@@ -20,6 +20,9 @@ struct Camera {
     view_proj: mat4x4<f32>,
     eye_pos:   vec3<f32>,
     _pad:      f32,
+    forward:   vec3<f32>,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:  f32,
 };
 
 struct ClipPlanes {

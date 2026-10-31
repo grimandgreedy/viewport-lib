@@ -8,7 +8,7 @@ struct Camera {
     eye_pos: vec3<f32>,
     _pad: f32,
     forward: vec3<f32>,
-    _pad1: f32,
+    exposure: f32,
     inv_view_proj: mat4x4<f32>,
 };
 
@@ -91,5 +91,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             ibl_prefiltered, ibl_sampler, uv, i32(background.layer), background.blur_lod
         ).rgb;
     }
-    return vec4<f32>(colour * background.intensity, 1.0);
+    // Radiance in nits, exposed like the lit scene in front of it.
+    return vec4<f32>(colour * background.intensity * camera.exposure, 1.0);
 }

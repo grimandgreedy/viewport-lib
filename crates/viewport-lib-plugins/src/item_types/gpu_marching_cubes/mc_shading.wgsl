@@ -24,7 +24,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -94,7 +95,7 @@ fn shade_mc(world_pos: vec3<f32>, world_norm: vec3<f32>) -> vec4<f32> {
         lights_uniform.sky_colour    * lights_uniform.hemisphere_intensity,
         up_dot,
     );
-    let ambient = hemi_ambient + vec3<f32>(material.ambient);
+    let ambient = (hemi_ambient + vec3<f32>(material.ambient)) * camera.exposure;
 
     // Accumulate all light types. Iterate the cluster's light list when the
     // build pass is active, or the full active-light array under the small-N
@@ -107,11 +108,13 @@ fn shade_mc(world_pos: vec3<f32>, world_norm: vec3<f32>) -> vec4<f32> {
         let light = lights_storage[i];
         var L: vec3<f32>;
         var light_rgb: vec3<f32>;
+        // Exposed, as `eval_light` exposes it.
+        let intensity = light.intensity * camera.exposure;
 
         if light.light_type == 0u {
             // Directional: pos_or_dir is the surface-to-light direction.
             L = normalize(light.pos_or_dir);
-            light_rgb = light.colour * light.intensity;
+            light_rgb = light.colour * intensity;
         } else if light.light_type == 1u {
             // Point: physical inverse-square falloff, radius-clamped and windowed
             // to zero at `range`. Matches the shared scene lighting
@@ -122,7 +125,7 @@ fn shade_mc(world_pos: vec3<f32>, world_norm: vec3<f32>) -> vec4<f32> {
             let r2 = max(light.radius * light.radius, 1.0e-4);
             let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
             let atten = win * win / max(dist * dist, r2);
-            light_rgb = light.colour * light.intensity * atten;
+            light_rgb = light.colour * intensity * atten;
         } else {
             // Spot: inverse-square falloff * cone attenuation.
             let to_light = light.pos_or_dir - world_pos;
@@ -139,7 +142,7 @@ fn shade_mc(world_pos: vec3<f32>, world_norm: vec3<f32>) -> vec4<f32> {
                 (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
                 0.0, 1.0,
             );
-            light_rgb = light.colour * light.intensity * atten * cone_att;
+            light_rgb = light.colour * intensity * atten * cone_att;
         }
 
         let H = normalize(L + V);

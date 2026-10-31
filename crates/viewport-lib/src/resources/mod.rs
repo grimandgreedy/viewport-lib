@@ -108,6 +108,7 @@ pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;
+pub(crate) use self::types::CAMERA_EXPOSURE_OFFSET;
 #[allow(deprecated)]
 pub use self::types::ViewportGpuResources;
 // GlyphBaseMesh and OverlayUniform are re-exported for crate-internal use even

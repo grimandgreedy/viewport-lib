@@ -1,5 +1,5 @@
 
-// @viewport-wgsl-version: 1
+// @viewport-wgsl-version: 2
 // Shared group-0 declarations. Do not re-declare these bindings in plugin
 // shaders.
 
@@ -8,7 +8,9 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad0:         f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure: multiply a radiance source by it where it is
+    // read, as the shared lighting helpers do.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
     // View -> clip and its inverse.

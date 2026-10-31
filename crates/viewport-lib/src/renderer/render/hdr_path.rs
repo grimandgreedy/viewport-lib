@@ -524,6 +524,7 @@ impl ViewportRenderer {
                 first_light: frame.effects.lighting.lights.first(),
                 foreground_active: composite_inputs.foreground,
                 exposure: frame.effects.display.exposure,
+                presented: self.render_advances_state(),
             };
             for producer in self.resources.post_producers() {
                 if producer.enabled(&inputs) {
@@ -620,6 +621,29 @@ impl ViewportRenderer {
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("hdr_encoder"),
         });
+
+        // An automatic exposure lives on the GPU: copy the one the last frame
+        // resolved into this viewport's camera copies ahead of every draw, so
+        // the frame shades with it and the meter can divide it back out. The
+        // fixed modes wrote theirs at prepare.
+        if frame.effects.display.exposure.manual_multiplier().is_none() {
+            let slot = &self.viewport_slots[vp_idx];
+            if let Some(hdr) = slot.hdr.as_ref() {
+                for camera in [
+                    &slot.camera_buf,
+                    &slot.foreground_camera_buf,
+                    &self.resources.scene_tier.binds.camera_uniform_buf,
+                ] {
+                    encoder.copy_buffer_to_buffer(
+                        &hdr.exposure_state_buf,
+                        0,
+                        camera,
+                        crate::resources::CAMERA_EXPOSURE_OFFSET,
+                        4,
+                    );
+                }
+            }
+        }
 
         let ctx = HdrFrameCtx {
             device,
@@ -2100,6 +2124,7 @@ impl ViewportRenderer {
             first_light: frame.effects.lighting.lights.first(),
             foreground_active: self.foreground_active(frame),
             exposure: frame.effects.display.exposure,
+            presented: self.render_advances_state(),
         };
         let timing = crate::resources::ProducerTiming {
             query_set: self.ts_query_set.as_ref(),

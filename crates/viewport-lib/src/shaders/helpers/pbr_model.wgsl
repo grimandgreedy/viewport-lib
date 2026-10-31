@@ -262,7 +262,7 @@ struct AmbientOut {
     ambient_lum: f32,
 };
 
-// The indirect term: the environment (zoned when zones exist) or the
+// The indirect term, exposed: the environment (zoned when zones exist) or the
 // hemisphere ambient, then a light probe replacing the diffuse, then the
 // baked lightmap. `vertex_normal` is the interpolated, unnormalised vertex
 // normal, `refl_dr` the reflection footprint and `lightmap_shadow` the main
@@ -311,8 +311,9 @@ fn pbr_ambient(
                                    diffuse_occ, spec_occ, lights_uniform.ibl_intensity,
                                    lights_uniform.ibl_rotation, refl_dr, px.dfg, px.energy_comp);
         }
-        ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
-        ibl.specular *= lights_uniform.ibl_specular_scale;
+        // Exposure applies once to the environment, zones included.
+        ibl.diffuse *= lights_uniform.ibl_diffuse_scale * camera.exposure;
+        ibl.specular *= lights_uniform.ibl_specular_scale * camera.exposure;
         ibl_diffuse = ibl.diffuse;
         ibl_specular = ibl.specular;
         ambient = ibl.diffuse + ibl.specular;
@@ -320,7 +321,8 @@ fn pbr_ambient(
     } else {
         let hemi_t = clamp(vertex_normal.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-        let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+        let ambient_scale = (vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity)
+            * camera.exposure;
         ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * diffuse_occ;
         ambient_lum = dot(ambient, lum_weights);
     }
@@ -370,17 +372,18 @@ fn pbr_ambient(
     return out;
 }
 
-// The environment's radiance from direction `R`, prefiltered for perceptual
-// `roughness`: the environment (default layer) when one is bound, else the
-// hemisphere ambient.
+// The environment's exposed radiance from direction `R`, prefiltered for
+// perceptual `roughness`: the environment (default layer) when one is bound,
+// else the hemisphere ambient.
 fn pbr_layer_radiance(R: vec3<f32>, roughness: f32, refl_dr: f32) -> vec3<f32> {
     if lights_uniform.ibl_enabled != 0u {
         return sample_ibl_prefiltered_grad(R, roughness, lights_uniform.ibl_rotation, refl_dr)
-            * lights_uniform.ibl_intensity * lights_uniform.ibl_specular_scale;
+            * (lights_uniform.ibl_intensity * camera.exposure) * lights_uniform.ibl_specular_scale;
     }
     let hemi_t = clamp(R.z * 0.5 + 0.5, 0.0, 1.0);
     let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-    return vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+    return (vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity)
+        * camera.exposure;
 }
 
 // Light refracted through a transmissive surface, before the scene behind it

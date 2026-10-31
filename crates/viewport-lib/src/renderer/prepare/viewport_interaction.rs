@@ -6,6 +6,18 @@ use super::*;
 use crate::renderer::overlay_buffers::OverlayGeometrySlot;
 use crate::resources::overlay::highlight::OutlineBinding;
 
+/// The exposure the CPU writes into a frame's camera uniform: the fixed
+/// multiplier of the manual modes, or 1.0 under `Automatic`, whose value the
+/// HDR path copies in on the GPU and which the LDR path does not meter.
+pub(crate) fn frame_exposure(frame: &FrameData) -> f32 {
+    frame
+        .effects
+        .display
+        .exposure
+        .manual_multiplier()
+        .unwrap_or(1.0)
+}
+
 impl ViewportRenderer {
     pub(super) fn prepare_clip_uniforms(
         &mut self,
@@ -70,6 +82,7 @@ impl ViewportRenderer {
             if frame.effects.display.is_hdr() {
                 camera_uniform.lit_clamp = 65504.0;
             }
+            camera_uniform.exposure = frame_exposure(frame);
             // Write to shared buffer for legacy single-viewport callers.
             queue.write_buffer(
                 &resources.scene_tier.binds.camera_uniform_buf,
@@ -88,6 +101,7 @@ impl ViewportRenderer {
                     let fg_camera = gpu_camera.foreground_camera(frame.effects.foreground.as_ref());
                     let mut fg_uniform = fg_camera.camera_uniform();
                     fg_uniform.lit_clamp = camera_uniform.lit_clamp;
+                    fg_uniform.exposure = camera_uniform.exposure;
                     fg_uniform.viewport = camera_uniform.viewport;
                     fg_uniform.time = camera_uniform.time;
                     fg_uniform.world_origin = camera_uniform.world_origin;

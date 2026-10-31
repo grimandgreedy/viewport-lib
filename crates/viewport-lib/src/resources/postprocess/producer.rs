@@ -24,6 +24,9 @@ pub(crate) struct ProducerFrameInputs<'a> {
     /// through unblurred).
     pub(crate) foreground_active: bool,
     pub(crate) exposure: crate::ExposureSettings,
+    /// The render presents a frame. False for a capture or snapshot, which
+    /// leaves the viewport's exposure state as the presented frames left it.
+    pub(crate) presented: bool,
 }
 
 /// GPU timestamp plumbing for producer passes, mirroring the renderer's
@@ -586,21 +589,23 @@ impl PostProducer for DofProducer {
 
 // --- Auto-exposure ---
 
-/// Exposure as a producer: it fills the composite's exposure-state buffer
-/// slot rather than a texture. Manual / PhysicalCamera modes write the
-/// multiplier CPU-side at upload; Automatic writes the metering params at
-/// upload and dispatches the clear -> build -> resolve compute passes at
-/// encode, in the same submission, before the tone map, so a single dirty
-/// render is correctly exposed on its own frame.
+/// Exposure as a producer: it fills the viewport's exposure-state buffer
+/// rather than a texture. Manual / PhysicalCamera modes write the multiplier
+/// CPU-side at upload, for the readback; their camera uniform already carries
+/// it. Automatic writes the metering params at upload and dispatches the
+/// clear -> build -> resolve compute passes at encode, in the same
+/// submission; the next frame copies the resolved multiplier into its camera
+/// uniform before it draws.
 impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
     fn name(&self) -> &'static str {
         "exposure"
     }
 
-    fn enabled(&self, _inputs: &ProducerFrameInputs<'_>) -> bool {
+    fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         // Some exposure mode is always active; Manual still needs its
-        // upload-time state write.
-        true
+        // upload-time state write. A capture or snapshot neither meters nor
+        // writes the state, so the presented frames keep their adaptation.
+        inputs.presented
     }
 
     fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {

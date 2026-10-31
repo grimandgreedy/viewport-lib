@@ -78,7 +78,9 @@ pub enum RedrawMode {
     /// Redraw only when there is something new: an input event, a resize, or an
     /// explicit [`FrameCtx::request_redraw`] from the callback. The loop idles
     /// between events. A callback that animates must call `request_redraw` each
-    /// frame to keep the loop going.
+    /// frame to keep the loop going. Under `ExposureMode::Automatic` the runner
+    /// draws one frame more after each, which shades with the exposure the
+    /// first metered.
     OnDemand,
 }
 
@@ -929,6 +931,8 @@ struct WindowState {
     /// Set when the device was recreated since this window's last frame.
     device_rebuilt: bool,
     redraw_mode: RedrawMode,
+    /// The last frame was the extra one an automatic exposure asks for.
+    exposure_follow_up: bool,
     orbit: OrbitCameraController,
     input: Option<WindowInputHandler>,
     callback: WindowCallback,
@@ -1071,6 +1075,7 @@ impl AppHandler {
                 factory,
                 device_rebuilt: false,
                 redraw_mode: config.redraw_mode,
+                exposure_follow_up: false,
                 orbit: OrbitCameraController::new_stateless(),
                 input,
                 callback,
@@ -1241,7 +1246,7 @@ impl AppHandler {
             state.session.step_runtime(dt);
             // With an input handler the app already drove the camera, so assemble
             // without touching it; otherwise drive the built-in orbit.
-            if state.input.is_some() {
+            let assembled = if state.input.is_some() {
                 let vctx = ViewportContext {
                     hovered: state.hovered,
                     focused: state.focused,
@@ -1253,7 +1258,7 @@ impl AppHandler {
                         inject(frame);
                     }
                     auto_fill_exposure_dt(frame, dt);
-                });
+                })
             } else {
                 state
                     .session
@@ -1263,8 +1268,12 @@ impl AppHandler {
                             inject(frame);
                         }
                         auto_fill_exposure_dt(frame, dt);
-                    });
-            }
+                    })
+            };
+            let automatic_exposure = matches!(
+                assembled.effects.display.exposure.mode,
+                ExposureMode::Automatic(_)
+            );
 
             // A frame that cannot be acquired is not drawn, but the rest of the
             // turn still runs: the callback's window commands and exit request,
@@ -1348,7 +1357,17 @@ impl AppHandler {
             );
             // A loss shows after the submit; the next redraw replaces the device.
             let lost = gpu.lost.is_lost_or_destroyed();
-            if lost || wants_redraw(state.redraw_mode, request_redraw, reconfigured) {
+            // A frame shades with the automatic exposure the frame before it
+            // metered, so an on-demand window draws one frame more to show it.
+            let exposure_follow_up = automatic_exposure && !state.exposure_follow_up;
+            state.exposure_follow_up = exposure_follow_up;
+            if lost
+                || wants_redraw(
+                    state.redraw_mode,
+                    request_redraw || exposure_follow_up,
+                    reconfigured,
+                )
+            {
                 state.window.request_redraw();
             }
         }

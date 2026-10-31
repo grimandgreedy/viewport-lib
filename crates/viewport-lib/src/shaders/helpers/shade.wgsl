@@ -10,8 +10,13 @@
 //
 // Bodies may also read the group-0 `camera` uniform: `camera.proj`,
 // `camera.viewport` (physical pixels: w, h, 1/w, 1/h), `camera.clip` (near,
-// far, orthographic flag) and `camera.time` (seconds, the f64 remainder,
-// delta, frame index), which follows `FrameData::time`.
+// far, orthographic flag), `camera.time` (seconds, the f64 remainder,
+// delta, frame index), which follows `FrameData::time`, and
+// `camera.exposure`.
+//
+// Hooks see and return exposed radiance: every light, environment and
+// ambient value they receive is already multiplied by `camera.exposure`, and
+// a hook that reads a light source itself multiplies by it the same way.
 //
 // Additive changes only: fields may be appended, never renamed, retyped, or
 // removed. The structs are unused (and eliminated) in base modules; only
@@ -155,7 +160,7 @@ fn surface_override_from(surf: ShadingSurface) -> SurfaceOverride {
 }
 
 // One light's data for the per-light hook. `radiance` folds in
-// colour * intensity * distance/spot attenuation. It does NOT include the
+// colour * intensity * exposure * distance/spot attenuation. It does NOT include the
 // shadow factor (that is `shadow`, passed separately so stylised and
 // back-hemisphere shading can decide for themselves) and does NOT include
 // the N.L cosine term: the hook applies its own.
