@@ -30,6 +30,7 @@ use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use viewport_lib_plugins::item_types::scatter_volume::{ScatterVolume, ScatterVolumeItem};
 use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteSizeMode};
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
+use viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem;
 use viewport_lib_plugins::item_types::tensor_field::{TensorFieldItem, TensorSource};
 use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
@@ -143,6 +144,10 @@ pub fn extra_parts() -> Vec<Part> {
         Part {
             name: "scatter_volume",
             add: scatter_volume,
+        },
+        Part {
+            name: "surface_lic",
+            add: surface_lic,
         },
     ]
 }
@@ -577,4 +582,40 @@ fn scatter_volume(_ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
     settings.downsample = false;
     settings.quality = viewport_lib::ScatterQuality::High;
     scene.scatter_settings = Some(settings);
+}
+
+fn surface_lic(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
+    let mut mesh = primitives::sphere(1.0, 32, 16);
+    let flow = mesh
+        .positions
+        .iter()
+        .map(|p| {
+            Vec3::Z
+                .cross(Vec3::from(*p))
+                .normalize_or(Vec3::X)
+                .to_array()
+        })
+        .collect();
+    mesh.attributes.insert(
+        "flow".to_string(),
+        viewport_lib::AttributeData::VertexVector(flow),
+    );
+    let ball = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &mesh)
+        .expect("sphere upload");
+    let model = at_model(at, Vec3::new(0.0, 0.0, 1.0));
+    let mut item = SceneRenderItem::new(
+        ball,
+        material(
+            ctx,
+            Material::pbr(Colour::linear_rgb(0.55, 0.6, 0.7), 0.0, 0.7),
+        ),
+    );
+    item.model = model;
+    scene.items.push(item);
+    scene
+        .surface_lics
+        .push(SurfaceLicItem::new(ball, model, "flow"));
 }
