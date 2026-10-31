@@ -151,19 +151,23 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             let gpu = self
                 .iso_gpu
                 .get_or_insert_with(|| iso::McIsoGpu::new(device, ctx.resources));
-            self.iso_frame = gpu.frame(device, volumes, items);
+            self.iso_frame = gpu.frame(device, volumes, items, ctx.world_origin());
             return Vec::new();
         }
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::McGpu::new(device, ctx.resources));
 
-        let (frame, buf) = gpu.run_jobs(device, volumes, items);
+        let (frame, buf) = gpu.run_jobs(device, volumes, items, ctx.world_origin());
         self.frame = frame;
 
         for entry in &self.frame {
-            self.pick_bgs
-                .push(gpu.pick_bind_group(device, queue, entry.pick_id, entry.settings.ignore_clip));
+            self.pick_bgs.push(gpu.pick_bind_group(
+                device,
+                queue,
+                entry.pick_id,
+                entry.settings.ignore_clip,
+            ));
         }
         buf.into_iter().collect()
     }
@@ -233,7 +237,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
     /// Always casts from the solid slab data regardless of `wireframe`:
     /// shadows reflect the actual surface, not its display mode. MC vertices
-    /// are world-space, so there is no group-1 bind group and no per-item
+    /// are written relative to the world origin, the frame group 0 draws
+    /// in, so there is no group-1 bind group and no per-item
     /// cascade cull (the frame data carries no world AABB).
     fn cast_shadow_pass(
         &self,
