@@ -5,3 +5,6 @@
 //! renderer's `crate::renderer::types::postprocess::*` paths keep resolving.
 
 pub use viewport_lib_types::effects::postprocess::*;
+pub use viewport_lib_types::effects::tone_curve::{
+    LogShaper, OperatorCurve, ToneCurve, VIEW_LUT_SHAPER, bake_view_transform_lut,
+};

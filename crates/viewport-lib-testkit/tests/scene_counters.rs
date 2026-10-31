@@ -111,6 +111,7 @@ fn expected(name: &str) -> Option<Expected> {
         "tone_agx_punchy" => e(28, 28, 1, 1, 56),
         "tone_aces_rrt" => e(28, 28, 1, 1, 56),
         "tone_generic" => e(28, 28, 1, 1, 56),
+        "tone_custom_baked" => e(28, 28, 1, 1, 56),
         "many_objects" => e(144, 144, 2, 2, 16992),
         "lights_eight" => e(4, 4, 2, 2, 2892),
         "game_mix" => e(85, 85, 4, 4, 2972),

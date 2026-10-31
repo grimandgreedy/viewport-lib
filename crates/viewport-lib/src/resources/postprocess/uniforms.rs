@@ -6,7 +6,7 @@
 pub(crate) struct ToneMapUniform {
     pub(crate) exposure: f32,
     /// Operator: 0 Reinhard, 1 ACES fit, 2 Khronos Neutral, 3 AgX,
-    /// 4 ACES RRT, 5 generic curve.
+    /// 4 ACES RRT, 5 generic curve, 6 view LUT; any other value applies none.
     pub(crate) mode: u32,
     pub(crate) bloom_enabled: u32,
     pub(crate) ssao_enabled: u32,
@@ -41,7 +41,8 @@ pub(crate) struct ToneMapUniform {
     pub(crate) working_space: u32,
     /// AgX look: 0 = none, 1 = punchy, 2 = golden.
     pub(crate) agx_look: u32,
-    /// Generic curve: contrast, input scale, output scale, unused.
+    /// Generic curve: contrast, input scale, output scale; the last lane is
+    /// the view LUT's slice count.
     pub(crate) generic_curve: [f32; 4],
 }
 

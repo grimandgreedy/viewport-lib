@@ -3,7 +3,8 @@
 
 struct ToneMapUniform {
     exposure:                f32,
-    // 0 Reinhard, 1 ACES fit, 2 Khronos Neutral, 3 AgX, 4 ACES RRT, 5 generic.
+    // 0 Reinhard, 1 ACES fit, 2 Khronos Neutral, 3 AgX, 4 ACES RRT, 5 generic,
+    // 6 view LUT.
     mode:                    u32,
     bloom_enabled:           u32,
     ssao_enabled:            u32,
@@ -30,7 +31,8 @@ struct ToneMapUniform {
     working_space:           u32,
     // 0 = none, 1 = punchy, 2 = golden.
     agx_look:                u32,
-    // Generic curve: contrast, input scale, output scale, unused.
+    // Generic curve: contrast, input scale, output scale; w is the view LUT's
+    // slice count.
     generic_curve:           vec4<f32>,
 }
 
@@ -65,6 +67,11 @@ struct ExposureState {
 // down it, blue selects the slice. Neutral placeholder when grading is off.
 @group(0) @binding(10) var grade_lut: texture_2d<f32>;
 
+// View-transform strip LUT for mode 6, same layout as the grade LUT, holding
+// display values over the scene-referred shaper. Neutral placeholder
+// otherwise.
+@group(0) @binding(11) var view_lut: texture_2d<f32>;
+
 // #include "helpers/depth_texel.wgsl"
 // #include "helpers/depth.wgsl"
 // #include "helpers/tone_operators.wgsl"
@@ -73,6 +80,8 @@ const GRADE_DISPLAY: u32 = 1u;
 const GRADE_SCENE: u32 = 2u;
 
 const WORKING_REC2020: u32 = 1u;
+
+const MODE_VIEW_LUT: u32 = 6u;
 
 // The working-space colour in Rec.2020, for the operators that run there.
 fn to_rec2020(colour: vec3<f32>, rec2020: bool) -> vec3<f32> {
@@ -91,14 +100,13 @@ fn from_rec2020(colour: vec3<f32>, rec2020: bool) -> vec3<f32> {
 }
 
 // Scene-referred shaper: log2 of exposed radiance over [2^-14, 2^10] mapped
-// to [0, 1]. Kept in step with the `GradingSpace::Scene` documentation.
+// to [0, 1]. Must equal the types crate's `VIEW_LUT_SHAPER`.
 const GRADE_LOG2_MIN: f32 = -14.0;
 const GRADE_LOG2_RANGE: f32 = 24.0;
 
-// Sample the strip LUT at a colour in [0, 1], interpolating between the two
-// nearest blue slices.
-fn grade(colour: vec3<f32>) -> vec3<f32> {
-    let n = params.grade_lut_size;
+// Sample a strip LUT of n slices at a colour in [0, 1], interpolating between
+// the two nearest blue slices.
+fn sample_strip(lut: texture_2d<f32>, n: f32, colour: vec3<f32>) -> vec3<f32> {
     let c = clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));
     let b = c.b * (n - 1.0);
     let slice0 = floor(b);
@@ -107,16 +115,25 @@ fn grade(colour: vec3<f32>) -> vec3<f32> {
     let u0 = (slice0 * n + c.r * (n - 1.0) + 0.5) / (n * n);
     let u1 = (slice1 * n + c.r * (n - 1.0) + 0.5) / (n * n);
     let v = (c.g * (n - 1.0) + 0.5) / n;
-    let s0 = textureSampleLevel(grade_lut, hdr_sampler, vec2<f32>(u0, v), 0.0).rgb;
-    let s1 = textureSampleLevel(grade_lut, hdr_sampler, vec2<f32>(u1, v), 0.0).rgb;
+    let s0 = textureSampleLevel(lut, hdr_sampler, vec2<f32>(u0, v), 0.0).rgb;
+    let s1 = textureSampleLevel(lut, hdr_sampler, vec2<f32>(u1, v), 0.0).rgb;
     return mix(s0, s1, f);
+}
+
+// The grade LUT at a colour in [0, 1].
+fn grade(colour: vec3<f32>) -> vec3<f32> {
+    return sample_strip(grade_lut, params.grade_lut_size, colour);
+}
+
+// Exposed radiance through the log shaper, before the clamp to [0, 1].
+fn shape_scene(colour: vec3<f32>) -> vec3<f32> {
+    let floor_value = vec3<f32>(exp2(GRADE_LOG2_MIN));
+    return (log2(max(colour, floor_value)) - GRADE_LOG2_MIN) / GRADE_LOG2_RANGE;
 }
 
 // Grade exposed radiance through the log shaper and back.
 fn grade_scene(colour: vec3<f32>) -> vec3<f32> {
-    let floor_value = vec3<f32>(exp2(GRADE_LOG2_MIN));
-    let shaped = (log2(max(colour, floor_value)) - GRADE_LOG2_MIN) / GRADE_LOG2_RANGE;
-    let graded = grade(shaped);
+    let graded = grade(shape_scene(colour));
     return exp2(graded * GRADE_LOG2_RANGE + GRADE_LOG2_MIN);
 }
 
@@ -328,6 +345,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else if params.mode == 5u {
         let g = params.generic_curve;
         colour = generic_curve(colour, g.x, g.y, g.z);
+    } else if params.mode == MODE_VIEW_LUT {
+        colour = sample_strip(view_lut, params.generic_curve.w, shape_scene(colour));
     }
 
     // Back to Rec.709 for the display-space composite.

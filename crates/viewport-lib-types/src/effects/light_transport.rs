@@ -146,6 +146,14 @@
 //! A named curve does not change: a corrected or retuned curve is a new
 //! [`ToneMapping`] variant, so a scene that names an operator keeps its look.
 //!
+//! [`ToneMapping::Custom`] supplies the operator as data: a LUT baked from any
+//! [`ToneCurve`] with [`bake_view_transform_lut`]. Step 3 then shapes the
+//! colour with [`VIEW_LUT_SHAPER`] (the shaper step 2 uses) and looks it up in
+//! the LUT, whose texels are display values. A scene-referred grade still
+//! applies first at step 2; a host that wants one LUT for steps 2 and 3 bakes
+//! the grade in and leaves the grade LUT unset. Under
+//! [`WorkingSpace::Rec2020`] the LUT is looked up with Rec.2020 values.
+//!
 //! The viewport's background colour is a display-space value. It is not
 //! exposed or tone mapped, and it is graded only by a display-referred grade.
 //!
@@ -155,7 +163,10 @@
 //! relying on a default:
 //!
 //! - the exposure mode and compensation ([`DisplaySettings::exposure`]);
-//! - the tone-map operator ([`DisplaySettings::operator`]);
+//! - the tone-map operator ([`DisplaySettings::operator`]); a custom curve
+//!   ([`ToneMapping::Custom`]) is pinned by its LUT's texels, so keep the
+//!   baked texture (or the curve and slice count that made it) with the
+//!   scene;
 //! - where a colour grade is applied ([`PostProcessSettings::grading_space`]);
 //! - the working space ([`PostProcessSettings::working_space`]);
 //! - the hemisphere fill ([`LightingSettings::hemisphere_intensity`]) and its
@@ -190,6 +201,10 @@
 //! [`WorkingSpace::Rec2020`]: crate::effects::postprocess::WorkingSpace::Rec2020
 //! [`ToneMapping::Agx`]: crate::effects::postprocess::ToneMapping::Agx
 //! [`ToneMapping::AcesRrt`]: crate::effects::postprocess::ToneMapping::AcesRrt
+//! [`ToneMapping::Custom`]: crate::effects::postprocess::ToneMapping::Custom
+//! [`ToneCurve`]: crate::effects::tone_curve::ToneCurve
+//! [`bake_view_transform_lut`]: crate::effects::tone_curve::bake_view_transform_lut
+//! [`VIEW_LUT_SHAPER`]: crate::effects::tone_curve::VIEW_LUT_SHAPER
 //! [`PhysicalExposure`]: crate::camera::PhysicalExposure
 //! [`PhysicalExposure::to_exposure_mode`]: crate::camera::PhysicalExposure::to_exposure_mode
 //! [`Lux`]: crate::effects::lighting::Lux

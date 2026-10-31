@@ -191,6 +191,9 @@
 - **`PostProcessSettings::working_space` and `WorkingSpace`** - `WorkingSpace::Rec2020` converts exposed radiance to Rec.2020 before the scene-referred grade and the operator and back to Rec.709 after them; the default `Rec709` converts nothing, so existing images are unchanged.
 - **`effects::tone_operators` and `effects::colour_space`** - CPU versions of every tone-map operator on `[f32; 3]`, `tone_operators::tone_map` for the composite's operator block, and the f64 primaries matrices (sRGB, Rec.2020, ACES AP0 and AP1) the shaders' constants are checked against.
 - **`tone_agx`, `tone_agx_punchy`, `tone_aces_rrt` and `tone_generic` testkit scenes** - an emissive grey ramp from 2^-9 to 2^6 nits over hue cards at 1 and 4 nits, under each new operator.
+- **`ToneMapping::Custom { lut }`** - the composite's operator supplied as a view-transform LUT: exposed radiance is shaped with `VIEW_LUT_SHAPER` and looked up in the LUT, whose texels are display values. Upload the LUT like any texture and name its `TextureId`. A scene-referred `grade_lut` still applies first; under `WorkingSpace::Rec2020` the LUT reads Rec.2020 values. An id that names no uploaded texture applies no operator.
+- **`ToneCurve`, `OperatorCurve`, `bake_view_transform_lut`, `LogShaper` and `VIEW_LUT_SHAPER`** - `bake_view_transform_lut(curve, grade, size)` bakes any `ToneCurve` (a closure, a `ToneMapping`, or an `OperatorCurve` with its settings), after an optional scene-linear grade, into a float strip LUT for `ToneMapping::Custom`. Bake the grade in and leave `grade_lut` unset for one LUT covering the whole view transform. `tone_operators::operator_in_working_space` is the operator step alone.
+- **`tone_custom_baked` testkit scene** - the operator chart under a baked steep generic curve over a teal-orange grade.
 
 ### Changed
 
