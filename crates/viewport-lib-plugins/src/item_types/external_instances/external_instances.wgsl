@@ -15,7 +15,8 @@ struct DrawUniform {
     model:  mat4x4<f32>,
     colour: vec4<f32>,
     scale:  f32,
-    _pad0:  f32,
+    // Always zero. See `vs_main`.
+    keep:   u32,
     _pad1:  f32,
     _pad2:  f32,
 };
@@ -53,13 +54,20 @@ fn vs_main(in: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
     }
     let instance_pos = vec3<f32>(positions[pi], positions[pi + 1u], positions[pi + 2u]);
 
-    let local = instance_pos + in.position * draw_ub.scale;
-    let world4 = draw_ub.model * vec4<f32>(local, 1.0);
+    // The instance position goes through the model first, so a buffer of
+    // positions far from zero lands near the camera before the mesh offset is
+    // added, rather than the offset being rounded away against it.
     let model3 = mat3x3<f32>(
         draw_ub.model[0].xyz,
         draw_ub.model[1].xyz,
         draw_ub.model[2].xyz,
     );
+    // The centre is pinned before the offset is added: OR-ing in a uniform
+    // the compiler cannot see is zero stops fast-math from reassociating the
+    // sum back to `instance_pos + offset`, which would round the offset away.
+    let centre = (draw_ub.model * vec4<f32>(instance_pos, 1.0)).xyz;
+    let pinned = bitcast<vec3<f32>>(bitcast<vec3<u32>>(centre) | vec3<u32>(draw_ub.keep));
+    let world4 = vec4<f32>(pinned + model3 * (in.position * draw_ub.scale), 1.0);
 
     out.clip_pos     = camera.view_proj * world4;
     out.world_pos    = world4.xyz;

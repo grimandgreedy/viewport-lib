@@ -175,7 +175,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
             let Some(set) = self.sets.get(item.set_id) else {
                 continue;
             };
-            if let Some(data) = store::build_draw_data(device, bgl, set, item) {
+            if let Some(data) = store::build_draw_data(device, bgl, set, item, ctx.world_origin()) {
                 self.frame.push(data);
             }
         }
