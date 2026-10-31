@@ -5,7 +5,7 @@
 //! [`bake_view_transform_lut`] samples one (optionally after a scene-referred
 //! grade) over the [`VIEW_LUT_SHAPER`] log domain into a strip LUT. Upload the
 //! result like any texture and name it with
-//! [`ToneMapping::Custom`](crate::effects::postprocess::ToneMapping::Custom).
+//! [`ToneMapping::Custom`].
 
 use super::postprocess::{PostProcessSettings, ToneMapping};
 use super::tone_operators::operator_in_working_space;
