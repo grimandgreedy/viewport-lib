@@ -128,6 +128,9 @@ pub struct BuiltScene {
         Vec<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>,
     /// Mesh-instance batch items.
     pub mesh_instances: Vec<MeshInstanceItem>,
+    /// External instance set items.
+    pub external_instances:
+        Vec<viewport_lib_plugins::item_types::external_instances::ExternalInstancesItem>,
     /// Volume mesh items.
     pub volume_meshes: Vec<viewport_lib::VolumeMeshItem>,
     /// Scatter pass settings override. Scenes with scatter volumes pin these
@@ -263,6 +266,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.surface_lics.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>() =
         scene.surface_contours.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::external_instances::ExternalInstancesItem>() =
+        scene.external_instances.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
     if let Some(origin) = scene.world_origin {

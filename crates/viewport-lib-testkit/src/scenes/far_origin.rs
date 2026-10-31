@@ -149,6 +149,10 @@ pub fn extra_parts() -> Vec<Part> {
             name: "surface_lic",
             add: surface_lic,
         },
+        Part {
+            name: "external_instances",
+            add: external_instances,
+        },
     ]
 }
 
@@ -618,4 +622,35 @@ fn surface_lic(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
     scene
         .surface_lics
         .push(SurfaceLicItem::new(ball, model, "flow"));
+}
+
+fn external_instances(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
+    use viewport_lib::wgpu::util::DeviceExt as _;
+    use viewport_lib_plugins::item_types::external_instances::{
+        ExternalInstanceSetConfig, ExternalInstanceUploads, ExternalInstancesItem,
+    };
+    let cube = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::cube(1.0))
+        .expect("cube upload");
+    let positions: Vec<u8> = (0..9)
+        .flat_map(|i| qp(at, [(i % 3) as f32 - 1.0, (i / 3) as f32 - 1.0, 0.25]))
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    let buffer = ctx
+        .device
+        .create_buffer_init(&viewport_lib::wgpu::util::BufferInitDescriptor {
+            label: Some("far_origin_instances"),
+            contents: &positions,
+            usage: viewport_lib::wgpu::BufferUsages::STORAGE,
+        });
+    let set = ctx
+        .renderer
+        .create_external_instance_set(ctx.device, &ExternalInstanceSetConfig::new(cube, buffer))
+        .expect("external instance set");
+    let mut item = ExternalInstancesItem::new(set, 9);
+    item.scale = 0.375;
+    item.colour = Colour::linear(0.8, 0.5, 0.3, 1.0);
+    scene.external_instances.push(item);
 }
