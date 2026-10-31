@@ -547,6 +547,7 @@ impl crate::resources::DeviceResources {
                 .flatten()
                 .map(|set| set.feature_sets())
                 .sum::<usize>()
+            + self.transmission.feature_sets()
             + self.oit.pipeline.as_ref().map_or(0, |f| f.feature_sets())
             + self
                 .oit

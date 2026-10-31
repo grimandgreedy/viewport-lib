@@ -1699,6 +1699,7 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             oit: crate::resources::postprocess::OitResources::default(),
+            transmission: Default::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
             pick: crate::resources::types::PickResources::default(),
 

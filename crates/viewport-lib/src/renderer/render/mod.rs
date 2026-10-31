@@ -253,6 +253,7 @@ macro_rules! emit_overlay_2d {
 
 mod hdr_path;
 mod ldr_path;
+mod transmission;
 mod paint_direct;
 pub(crate) mod pass_table;
 
@@ -836,6 +837,9 @@ impl ViewportRenderer {
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
         let needed = if self.renders_hdr(frame) {
             self.ensure_viewport_slot(device, vp_idx);
+            if self.has_transmissive_batches() {
+                self.resources.ensure_transmission(device);
+            }
             self.plan_hdr_passes(frame, scene_items, vp_idx, w.max(1), h.max(1), ssaa_factor);
             self.viewport_slots[vp_idx].pass_table.groups()
         } else {

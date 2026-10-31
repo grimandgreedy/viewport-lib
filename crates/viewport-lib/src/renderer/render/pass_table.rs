@@ -24,6 +24,8 @@ pub(crate) enum HdrPass {
     ScopeOnOpaqueSurfaces,
     SubHighlight,
     DepthRead,
+    OpaqueCopy,
+    Transmission,
     ScopeAfterOpaque,
     Oit,
     ScopeAfterTransparent,
@@ -309,6 +311,25 @@ impl ViewportRenderer {
             "depth_read",
             self.any_plugin_draws_depth_read(frame),
             scene.with(T::SurfaceStencil),
+            TargetSet::of(T::HdrColour),
+        );
+        // Transmissive meshes read a copy of the opaque scene taken here, so
+        // they see the sub-highlight and depth-read output but not one
+        // another, and draw before the plugins that sample the scene.
+        let transmission = self.has_transmissive_batches()
+            && self.resources.transmission.mip_pipelines().is_some();
+        table.declare(
+            HdrPass::OpaqueCopy,
+            "opaque_copy",
+            transmission,
+            scene,
+            TargetSet::of(T::OpaqueCopy),
+        );
+        table.declare(
+            HdrPass::Transmission,
+            "transmission",
+            transmission,
+            scene.with(T::OpaqueCopy),
             TargetSet::of(T::HdrColour),
         );
         table.declare_side_effect(

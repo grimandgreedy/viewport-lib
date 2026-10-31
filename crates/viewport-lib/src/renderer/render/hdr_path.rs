@@ -612,6 +612,8 @@ impl ViewportRenderer {
             }
         }
 
+        self.ensure_transmission_target(device, vp_idx);
+
         // -----------------------------------------------------------------------
         // Build the command encoder.
         // -----------------------------------------------------------------------
@@ -661,6 +663,8 @@ impl ViewportRenderer {
                 ),
                 HdrPass::SubHighlight => self.hdr_sub_highlight(&ctx, &mut encoder),
                 HdrPass::DepthRead => self.hdr_depth_read_pass(&ctx, &mut encoder),
+                HdrPass::OpaqueCopy => self.hdr_opaque_copy(device, &mut encoder, vp_idx),
+                HdrPass::Transmission => self.hdr_transmission(&mut encoder, vp_idx, frame),
                 // Item-type plugins that own passes rather than draws get the
                 // encoder here, with the opaque image and final opaque depth
                 // in hand.
@@ -969,6 +973,7 @@ impl ViewportRenderer {
                     let batch_bgs = &self.mesh_uniforms.material_bind_groups;
                     for batch in batches {
                         if batch.is_transparent
+                            || batch.is_transmissive
                             || matches!(batch.draw, crate::renderer::types::DrawKind::NormalLines)
                             || (use_indirect && batch.draws_culled())
                             || bundle_hit.is_some()

@@ -64,6 +64,9 @@ struct BatchKey {
     lut: u64,
     matcap: u64,
     deform_instance: Option<u32>,
+    /// The record draws in the HDR transmission pass. Last, so batches
+    /// without it keep their order.
+    transmits: bool,
 }
 
 impl BatchKey {
@@ -396,6 +399,7 @@ fn batch_key(
         lut: item.colourmap_id.map_or(u64::MAX, |c| c.0 as u64),
         matcap: material.matcap_id().map_or(u64::MAX, |m| m.index() as u64),
         deform_instance: item.deform_instance,
+        transmits: false,
     })
 }
 
@@ -749,6 +753,7 @@ impl ViewportRenderer {
             // recovered after sorting reorders the list.
             let binding = resources.instancing.material_texture_binding;
             let wireframe_mode = frame.viewport.wireframe_mode;
+            let transmission_pass = hdr_family && resources.transmission_supported();
             // One entry per record: every visible item, plus a record per
             // submesh range and one for its normal lines. Hidden items are
             // never packed.
@@ -762,15 +767,26 @@ impl ViewportRenderer {
                 };
                 let mut push = |kind: RecordKind, material: crate::resources::MaterialId| {
                     let material = resources.material_or_default(material);
-                    let Some(key) =
+                    let Some(mut key) =
                         batch_key(item, material, kind, resources, wireframe_mode, binding)
                     else {
                         return;
                     };
+                    // An opaque transmissive surface draws in the HDR
+                    // transmission pass, sorted back to front by item.
+                    key.transmits = transmission_pass
+                        && crate::resources::material_gpu::transmits(material)
+                        && !key.blends()
+                        && matches!(
+                            key.draw,
+                            crate::renderer::types::DrawKind::Triangles
+                                | crate::renderer::types::DrawKind::Range(..)
+                                | crate::renderer::types::DrawKind::FaceVertices
+                        );
                     // HDR resolves blended batches through OIT, which needs no
                     // order. The LDR pass blends in draw order, so there each
                     // blended record is its own batch and the pass sorts them.
-                    let solo = (!hdr_family && key.blends()).then_some(idx);
+                    let solo = ((!hdr_family && key.blends()) || key.transmits).then_some(idx);
                     entries.push(Entry {
                         idx,
                         item,
@@ -1023,6 +1039,7 @@ impl ViewportRenderer {
                             instance_offset,
                             instance_count: batch_entries.len() as u32,
                             is_transparent,
+                            is_transmissive: rep.key.transmits,
                             // A range draws two-sided when its own material or
                             // the item's says so.
                             two_sided: rep_material.is_two_sided()

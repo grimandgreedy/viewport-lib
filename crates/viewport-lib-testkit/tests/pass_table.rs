@@ -74,6 +74,8 @@ fn with(extra: &[&'static str]) -> Vec<&'static str> {
         "scope_on_opaque_surfaces",
         "sub_highlight",
         "depth_read",
+        "opaque_copy",
+        "transmission",
         "scope_after_opaque",
         "oit",
         "scope_after_transparent",
@@ -196,6 +198,44 @@ fn scene_features_add_their_passes() {
 
     harness.renderer.set_occlusion_culling(true);
     assert_eq!(passes(&mut harness, &frame), with(&["hiz_store"]));
+}
+
+/// A transmissive material moves its mesh out of the scene pass into the
+/// transmission pass, after the opaque scene is copied. Back to an opaque
+/// material, both passes stop.
+#[test]
+fn a_transmissive_material_adds_the_copy_and_transmission_passes() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut frame = quad_frame(&mut harness);
+    let mut glass = Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9))
+        .with_transmission(1.0, 0.5)
+        .with_ior(1.5);
+    glass.shading_model = viewport_lib::ShadingModel::Pbr;
+    glass.roughness = 0.1;
+    let glass = harness
+        .renderer
+        .resources_mut()
+        .upload_material(glass)
+        .expect("material upload");
+    let mut item = match &frame.scene.surfaces {
+        SurfaceSubmission::Flat(items) => items[0].clone(),
+        _ => unreachable!(),
+    };
+    let opaque = item.material;
+    item.material = glass;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    frame.scene.generation += 1;
+    let list = passes(&mut harness, &frame);
+    eprintln!("transmission: {list:?}");
+    assert_eq!(list, with(&["opaque_copy", "transmission"]));
+
+    item.material = opaque;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    frame.scene.generation += 1;
+    assert_eq!(passes(&mut harness, &frame), with(&[]));
 }
 
 #[test]

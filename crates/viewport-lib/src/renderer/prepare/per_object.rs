@@ -405,6 +405,7 @@ impl ViewportRenderer {
                 .iter()
                 .filter(|b| {
                     !b.is_transparent
+                        && !b.is_transmissive
                         && (!direct_only || !b.draws_culled())
                         && !matches!(b.draw, crate::renderer::types::DrawKind::NormalLines)
                 })
@@ -574,6 +575,7 @@ impl ViewportRenderer {
         let mut bound = BatchBound::default();
         for batch in &self.instancing.batches {
             if batch.is_transparent
+                || batch.is_transmissive
                 || matches!(batch.draw, DrawKind::NormalLines)
                 || (direct_only && batch.draws_culled())
             {
