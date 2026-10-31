@@ -70,10 +70,17 @@
 //! # 4. Resolved colours are display-relative
 //!
 //! Some colours are data rather than light, and exposure does not touch them:
-//! [`ItemSettings::unlit`], matcaps, UV visualisation, face colours,
-//! wireframe, vertex colours and scalar colour maps. A colour-mapped value of
-//! 0.5 shows as 0.5 (before the view transform) under any exposure, so a
-//! colour bar stays true.
+//! the colour of an [`ItemSettings::unlit`] item, matcaps, UV visualisation,
+//! face colours, wireframe, the NaN colour of a scalar map, and the colours of
+//! item types that draw without lighting, such as a point cloud's solid,
+//! per-point or colour-mapped colours. A colour-mapped value that maps to 0.5
+//! shows as 0.5 (before the view transform) under any exposure, so a colour
+//! bar stays true.
+//!
+//! On a lit mesh, vertex colours and a scalar colour map are the base colour:
+//! the light multiplies them like any albedo, and they reach the display
+//! through clause 2. Set [`ItemSettings::unlit`] on the item to show the mapped
+//! colours themselves.
 //!
 //! A surface that has to be an unlit emitter in nits, one that should dim and
 //! brighten with the camera, is a black base colour with an emissive term at
@@ -107,9 +114,10 @@
 //! [`Material::ambient`] is a Blinn-Phong coefficient and does not reach PBR
 //! shading.
 //!
-//! The default fill is 0.4. [`LightingSettings::daylight`] sets 8 000 nits to
-//! sit beside its 100 000 lux sun. Set the fill to 0 for a scene that should
-//! be dark where no light reaches.
+//! The default fill is 0.55, so an upward-facing surface under a white sky
+//! receives 0.55 times its albedo. [`LightingSettings::daylight`] sets 8 000
+//! nits to sit beside its 100 000 lux sun. Set the fill to 0 for a scene that
+//! should be dark where no light reaches.
 //!
 //! # 7. The view transform
 //!
@@ -149,16 +157,18 @@
 //!
 //! # Current behaviour
 //!
-//! The renderer does not yet match clauses 2, 3, 6 and 7 in full. Exposure is
-//! applied once, to the final HDR colour just before the tone-map operator, so
-//! shading, plugin hooks and post producers see unexposed radiance, and
-//! resolved colours (clause 4) and the `recolor` output are exposed along with
-//! everything else; a colour map dims under a physical camera. There is no
-//! emissive weight: emissive is always exposed, which matches weight 1.
-//! [`PipelineMode::Direct`] applies no exposure in any mode. With image-based
-//! lighting off, PBR ambient is `Material::ambient + hemisphere fill` (0.15 +
-//! 0.4 for a white sky by default). The colour grade is applied only
-//! display-referred, after the operator and the background composite.
+//! The renderer does not yet match clauses 2, 3, 4, 6 and 7 in full. Exposure
+//! is applied once, to the final HDR colour just before the tone-map operator,
+//! so shading, plugin hooks and post producers see unexposed radiance, and
+//! resolved colours (clause 4) are exposed along with everything else: an
+//! unlit item or a point cloud's colour map goes dark under a physical camera.
+//! There is no emissive weight: emissive is always exposed, which matches
+//! weight 1. [`PipelineMode::Direct`] applies no exposure in any mode. With
+//! image-based lighting off, PBR ambient is `Material::ambient` plus the
+//! hemisphere fill, and the default fill is 0.4, so a white sky gives an
+//! upward-facing surface 0.15 + 0.4 times its albedo. The colour grade is
+//! applied only display-referred, after the operator and the background
+//! composite.
 //!
 //! [`ExposureMode`]: crate::effects::postprocess::ExposureMode
 //! [`ExposureMode::Passthrough`]: crate::effects::postprocess::ExposureMode::Passthrough
