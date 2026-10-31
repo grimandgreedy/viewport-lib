@@ -339,6 +339,10 @@ impl Default for RtMaterial {
 
 /// An analytic light. Directional lights are delta lights sampled via next-event
 /// estimation; the tracer does not importance-sample them via the BSDF.
+///
+/// A light's colour carries its magnitude in the rasteriser's units: a
+/// `LightSource`'s colour times its intensity, lux for a directional light and
+/// candela for a point light. The scene's exposure scales it.
 #[derive(Clone, Copy, Debug)]
 pub enum RtLight {
     /// `direction` points from the surface toward the light (i.e. the negated
