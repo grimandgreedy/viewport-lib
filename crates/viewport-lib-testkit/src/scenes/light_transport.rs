@@ -180,24 +180,21 @@ fn build_bloom_unit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// A sphere and a cube carrying every glTF texture slot: base colour,
 /// tangent-space normal, metallic-roughness, occlusion and emissive.
 fn textured_model(ctx: &mut BuildCtx<'_>) -> Vec<SceneRenderItem> {
-    let albedo = textures::checker(256, 8, [200, 170, 120], [90, 95, 110]);
+    let albedo = textures::checker(256, 4, [200, 170, 120], [90, 95, 110]);
     let albedo = upload_texture(
         ctx,
         TextureData::srgb(albedo.width, albedo.height, albedo.rgba),
     );
-    let normal = textures::normal_bumps(256, 8);
+    let normal = textures::normal_bumps(256, 4);
     let normal = upload_texture(
         ctx,
         TextureData::normal_map(normal.width, normal.height, normal.rgba),
     );
-    // Value noise in every channel: roughness (G) and metallic (B) vary over
-    // the surface, and the same texture is the occlusion map (R).
-    let noise = textures::value_noise(256);
-    let orm = upload_texture(
-        ctx,
-        TextureData::linear(noise.width, noise.height, noise.rgba),
-    );
-    let glow = textures::checker(256, 16, [255, 120, 30], [0, 0, 0]);
+    // A smooth gradient: occlusion (R), roughness (G) and metallic (B) each
+    // sweep across the surface.
+    let ramp = textures::gradient(256);
+    let orm = upload_texture(ctx, TextureData::linear(ramp.width, ramp.height, ramp.rgba));
+    let glow = textures::checker(256, 4, [255, 120, 30], [0, 0, 0]);
     let glow = upload_texture(ctx, TextureData::srgb(glow.width, glow.height, glow.rgba));
 
     let mut m = Material::pbr(Colour::WHITE, 1.0, 1.0);
