@@ -51,21 +51,24 @@ pub fn neutral_lut(n: u32) -> Vec<f32> {
     strip_lut(n, |c| c)
 }
 
-/// A teal-orange grade for the scene-referred shaper: values a stop or more
-/// below mid-grey lean teal, values above it lean orange, and saturation is
-/// raised around the shaped luma.
+/// A teal-orange grade on shaped values: values a stop or more below
+/// mid-grey lean teal, values above it lean orange, and saturation is raised
+/// around the shaped luma.
+pub fn teal_orange(s: [f32; 3]) -> [f32; 3] {
+    let luma = 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
+    // Mid-grey (0.18) shapes to about 0.48; 0.1 is 2.4 stops.
+    let tone = ((luma - 0.48) / 0.1).clamp(-1.0, 1.0);
+    let sat = |c: f32| luma + (c - luma) * 1.3;
+    [
+        sat(s[0]) + 0.04 * tone,
+        sat(s[1]) + 0.01 * tone,
+        sat(s[2]) - 0.05 * tone,
+    ]
+}
+
+/// [`teal_orange`] as a strip LUT for the scene-referred shaper.
 pub fn teal_orange_lut(n: u32) -> Vec<f32> {
-    strip_lut(n, |s| {
-        let luma = 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
-        // Mid-grey (0.18) shapes to about 0.48; 0.1 is 2.4 stops.
-        let tone = ((luma - 0.48) / 0.1).clamp(-1.0, 1.0);
-        let sat = |c: f32| luma + (c - luma) * 1.3;
-        [
-            sat(s[0]) + 0.04 * tone,
-            sat(s[1]) + 0.01 * tone,
-            sat(s[2]) - 0.05 * tone,
-        ]
-    })
+    strip_lut(n, teal_orange)
 }
 
 /// Upload a float strip LUT of `n` slices.
