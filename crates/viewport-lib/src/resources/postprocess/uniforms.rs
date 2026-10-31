@@ -30,8 +30,9 @@ pub(crate) struct ToneMapUniform {
     pub(crate) vignette_radius: f32,
     /// Width of the vignette falloff band past the radius.
     pub(crate) vignette_softness: f32,
-    /// Non-zero when a grade LUT is bound at the composite's LUT slot.
-    pub(crate) grade_enabled: u32,
+    /// Grade LUT placement: 0 = none bound, 1 = display-referred,
+    /// 2 = scene-referred.
+    pub(crate) grade_mode: u32,
     /// Slice count / height of the strip LUT (its texture height).
     pub(crate) grade_lut_size: f32,
     pub(crate) _pad: [u32; 2],

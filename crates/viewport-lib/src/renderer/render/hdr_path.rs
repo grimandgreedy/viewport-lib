@@ -501,7 +501,11 @@ impl ViewportRenderer {
             },
             vignette_radius: pp.vignette.radius,
             vignette_softness: pp.vignette.softness,
-            grade_enabled: composite_inputs.grade_lut.is_some() as u32,
+            grade_mode: match (composite_inputs.grade_lut, pp.grading_space) {
+                (None, _) => 0,
+                (Some(_), crate::renderer::GradingSpace::Display) => 1,
+                (Some(_), _) => 2,
+            },
             grade_lut_size,
             _pad: [0; 2],
         };

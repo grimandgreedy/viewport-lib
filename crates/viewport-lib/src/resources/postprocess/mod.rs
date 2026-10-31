@@ -1818,7 +1818,7 @@ impl DeviceResources {
                     binding: composite::slot::EXPOSURE,
                     resource: exposure_state_buf.as_entire_binding(),
                 },
-                // Neutral stand-in; the shader gates on `grade_enabled`.
+                // Neutral stand-in; the shader gates on `grade_mode`.
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::GRADE_LUT,
                     resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),

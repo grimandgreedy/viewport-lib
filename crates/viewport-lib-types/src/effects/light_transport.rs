@@ -124,16 +124,19 @@
 //! Exposed radiance becomes display pixels in this order:
 //!
 //! 1. exposed radiance (clause 2);
-//! 2. scene-referred grading, when a grade is placed there;
+//! 2. scene-referred grading ([`GradingSpace::Scene`], the default placement
+//!    of [`PostProcessSettings::grade_lut`]);
 //! 3. the tone-map operator ([`DisplaySettings::operator`]);
 //! 4. the background colour, composited in display space;
-//! 5. display-referred grading, when a grade is placed there;
+//! 5. display-referred grading ([`GradingSpace::Display`]);
 //! 6. the vignette.
 //!
 //! The default operator is [`ToneMapping::KhronosNeutral`], Khronos' PBR
 //! Neutral curve. The working primaries are Rec.709 (sRGB); radiance outside
 //! that gamut is carried as negative or above-one channels and is not
-//! gamut-mapped.
+//! gamut-mapped. A wider working space would need the operator and the
+//! scene-referred grade's log shaper evaluated in it, and the result converted
+//! to the display's primaries at the end of the composite.
 //!
 //! A named curve does not change: a corrected or retuned curve is a new
 //! [`ToneMapping`] variant, so a scene that names an operator keeps its look.
@@ -148,7 +151,7 @@
 //!
 //! - the exposure mode and compensation ([`DisplaySettings::exposure`]);
 //! - the tone-map operator ([`DisplaySettings::operator`]);
-//! - where a colour grade is applied;
+//! - where a colour grade is applied ([`PostProcessSettings::grading_space`]);
 //! - the hemisphere fill ([`LightingSettings::hemisphere_intensity`]) and its
 //!   sky and ground colours.
 //!
@@ -157,9 +160,7 @@
 //!
 //! # Current behaviour
 //!
-//! The renderer does not yet match clause 7 in full: the colour grade is
-//! applied only display-referred, after the operator and the background
-//! composite. Under [`ExposureMode::Automatic`] a frame shades with the
+//! Under [`ExposureMode::Automatic`] a frame shades with the
 //! exposure the previous frame metered, so the first frame after switching to
 //! it draws at the exposure the viewport held before.
 //!
@@ -174,6 +175,10 @@
 //! [`PipelineMode::Direct`]: crate::effects::postprocess::PipelineMode::Direct
 //! [`ToneMapping`]: crate::effects::postprocess::ToneMapping
 //! [`ToneMapping::KhronosNeutral`]: crate::effects::postprocess::ToneMapping::KhronosNeutral
+//! [`GradingSpace::Scene`]: crate::effects::postprocess::GradingSpace::Scene
+//! [`GradingSpace::Display`]: crate::effects::postprocess::GradingSpace::Display
+//! [`PostProcessSettings::grade_lut`]: crate::effects::postprocess::PostProcessSettings::grade_lut
+//! [`PostProcessSettings::grading_space`]: crate::effects::postprocess::PostProcessSettings::grading_space
 //! [`PhysicalExposure`]: crate::camera::PhysicalExposure
 //! [`PhysicalExposure::to_exposure_mode`]: crate::camera::PhysicalExposure::to_exposure_mode
 //! [`Lux`]: crate::effects::lighting::Lux

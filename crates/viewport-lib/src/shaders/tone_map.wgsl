@@ -22,7 +22,8 @@ struct ToneMapUniform {
     vignette_amount:         f32,
     vignette_radius:         f32,
     vignette_softness:       f32,
-    grade_enabled:           u32,
+    // 0 = no grading, 1 = display-referred, 2 = scene-referred.
+    grade_mode:              u32,
     grade_lut_size:          f32,
     _pad0:                   u32,
     _pad1:                   u32,
@@ -62,8 +63,16 @@ struct ExposureState {
 // #include "helpers/depth_texel.wgsl"
 // #include "helpers/depth.wgsl"
 
-// Sample the strip LUT for a display-space colour, interpolating between the
-// two nearest blue slices.
+const GRADE_DISPLAY: u32 = 1u;
+const GRADE_SCENE: u32 = 2u;
+
+// Scene-referred shaper: log2 of exposed radiance over [2^-14, 2^10] mapped
+// to [0, 1]. Kept in step with the `GradingSpace::Scene` documentation.
+const GRADE_LOG2_MIN: f32 = -14.0;
+const GRADE_LOG2_RANGE: f32 = 24.0;
+
+// Sample the strip LUT at a colour in [0, 1], interpolating between the two
+// nearest blue slices.
 fn grade(colour: vec3<f32>) -> vec3<f32> {
     let n = params.grade_lut_size;
     let c = clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -79,12 +88,20 @@ fn grade(colour: vec3<f32>) -> vec3<f32> {
     return mix(s0, s1, f);
 }
 
-// Final display-space treatment shared by every exit: colour grading, then
-// the vignette. Applied on the pure-background fast path too, so grading and
-// corner darkening cover empty regions.
+// Grade exposed radiance through the log shaper and back.
+fn grade_scene(colour: vec3<f32>) -> vec3<f32> {
+    let floor_value = vec3<f32>(exp2(GRADE_LOG2_MIN));
+    let shaped = (log2(max(colour, floor_value)) - GRADE_LOG2_MIN) / GRADE_LOG2_RANGE;
+    let graded = grade(shaped);
+    return exp2(graded * GRADE_LOG2_RANGE + GRADE_LOG2_MIN);
+}
+
+// Final display-space treatment shared by every exit: display-referred
+// grading, then the vignette. Applied on the pure-background fast path too,
+// so both cover empty regions.
 fn display_finish(colour_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     var colour = colour_in;
-    if params.grade_enabled != 0u {
+    if params.grade_mode == GRADE_DISPLAY {
         colour = grade(colour);
     }
     if params.vignette_amount > 0.0 {
@@ -261,12 +278,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour * (1.0 - edl_factor);
     }
 
-    // Tone mapping.
+    // Scene-referred grading, on exposed radiance before the operator.
+    if params.grade_mode == GRADE_SCENE {
+        colour = grade_scene(colour);
+    }
+
+    // Tone mapping. An unknown mode leaves the colour unchanged rather than
+    // picking an operator.
     if params.mode == 0u {
         colour = reinhard(colour);
     } else if params.mode == 1u {
         colour = aces(colour);
-    } else {
+    } else if params.mode == 2u {
         colour = khronos_neutral(colour);
     }
 
