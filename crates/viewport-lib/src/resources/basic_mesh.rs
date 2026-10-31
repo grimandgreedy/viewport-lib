@@ -19,7 +19,8 @@ pub(crate) struct BasicInstance {
     /// are carried for a lighting model that reads them; the basic one does
     /// not.
     pub(crate) material: [f32; 4],
-    /// Flags, the NaN colour as RGBA8, two unused words.
+    /// Flags, the NaN colour as RGBA8, the emissive exposure weight as `f32`
+    /// bits, one unused word.
     pub(crate) params: [u32; 4],
 }
 

@@ -352,7 +352,12 @@ impl ViewportRenderer {
                     base_colour: [bc[0], bc[1], bc[2], item.settings.opacity],
                     emissive: [e[0], e[1], e[2], mask_cutoff.unwrap_or(0.5)],
                     material: [m.metallic, m.roughness, scalar_min, scalar_max],
-                    params: [flags, nan_colour, 0, 0],
+                    params: [
+                        flags,
+                        nan_colour,
+                        m.emissive_exposure_weight.clamp(0.0, 1.0).to_bits(),
+                        0,
+                    ],
                 });
                 // Edge lines draw opaque whatever the item's opacity, as on the
                 // full tier: a translucent wireframe item draws its lines.

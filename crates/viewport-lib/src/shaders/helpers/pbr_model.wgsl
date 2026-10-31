@@ -410,7 +410,7 @@ struct PbrTransmission {
 };
 
 // Resolve the transmission of `px` at `world_pos` from the material's volume
-// lanes: `volume0` (transmission, thickness, ior, 0) and `volume1`
+// lanes: `volume0` (transmission, thickness, ior, emissive weight) and `volume1`
 // (absorption coefficient rgb, 0). A thick surface refracts into a sphere of
 // the given thickness and out of its far side.
 fn pbr_transmission(

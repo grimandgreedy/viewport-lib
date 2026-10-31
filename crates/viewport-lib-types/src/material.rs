@@ -657,7 +657,8 @@ pub struct Material {
     /// **nits** is `emissive * emissive_strength`, so this sets the hue and
     /// `emissive_strength` sets the brightness. Applied to both the Blinn-Phong
     /// and PBR paths. When `emissive_texture_id` is set, it is multiplied by the
-    /// texture sample.
+    /// texture sample. The camera's exposure scales it as set by
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight).
     pub emissive: crate::colour::Colour,
     /// Emissive luminance in **nits**, multiplying [`Self::emissive`]. Default
     /// `1.0`.
@@ -666,7 +667,21 @@ pub struct Material {
     /// an emitter must reach a luminance comparable to the lit scene to read as
     /// glowing: a few hundred nits for a soft indoor glow, thousands to stay
     /// bright against daylight. `emissive = [0, 0, 0]` emits nothing regardless.
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight) sets how
+    /// far the camera's exposure scales it.
     pub emissive_strength: f32,
+    /// How far the camera's exposure scales this material's emissive, 0..1.
+    /// Default `1.0`.
+    ///
+    /// At 1 the emissive is radiance in nits, exposed with the rest of the
+    /// scene. At 0 it is display-relative: added after exposure, so an
+    /// emitter of 1 nit adds 1 to the exposed colour whatever the exposure,
+    /// for annotation and UI-like surfaces that should read the same in
+    /// daylight and indoors. Values between blend the scale linearly,
+    /// `mix(1, exposure, weight)`. Applies to the emissive factor and map, the
+    /// item's custom-data emissive and a material plugin's emissive.
+    #[cfg_attr(feature = "serde", serde(default = "default_emissive_exposure_weight"))]
+    pub emissive_exposure_weight: f32,
     /// Optional emissive texture identifier. Default None.
     ///
     /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`
@@ -1043,6 +1058,11 @@ fn default_specular_colour() -> crate::colour::Colour {
 }
 
 #[cfg(feature = "serde")]
+fn default_emissive_exposure_weight() -> f32 {
+    1.0
+}
+
+#[cfg(feature = "serde")]
 fn default_ior() -> f32 {
     1.5
 }
@@ -1079,6 +1099,7 @@ impl Default for Material {
             metallic_roughness_texture_id: None,
             emissive: crate::colour::Colour::BLACK,
             emissive_strength: 1.0,
+            emissive_exposure_weight: 1.0,
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
             shading_model: ShadingModel::Phong,
@@ -1168,6 +1189,14 @@ impl Material {
     /// Bind `id` to `slot`. See [`set_texture`](Self::set_texture).
     pub fn with_texture(mut self, slot: TextureSlot, id: crate::ids::TextureId) -> Self {
         self.set_texture(slot, Some(id));
+        self
+    }
+
+    /// Set how far the camera's exposure scales the emissive: 1 exposes it with
+    /// the scene, 0 keeps it display-relative. See
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight).
+    pub fn with_emissive_exposure_weight(mut self, weight: f32) -> Self {
+        self.emissive_exposure_weight = weight;
         self
     }
 
@@ -1463,6 +1492,19 @@ mod tests {
         let f0 = 0.16 * m.reflectance * m.reflectance;
         let expected = ((2.4f32 - 1.0) / (2.4 + 1.0)).powi(2);
         assert!((f0 - expected).abs() < 1e-6, "{f0} vs {expected}");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn emissive_exposure_weight_defaults_to_one_when_absent() {
+        let mut json =
+            serde_json::to_value(Material::default().with_emissive_exposure_weight(0.25)).unwrap();
+        assert_eq!(json["emissive_exposure_weight"], 0.25);
+        json.as_object_mut()
+            .unwrap()
+            .remove("emissive_exposure_weight");
+        let m: Material = serde_json::from_value(json).unwrap();
+        assert_eq!(m.emissive_exposure_weight, 1.0);
     }
 
     #[test]

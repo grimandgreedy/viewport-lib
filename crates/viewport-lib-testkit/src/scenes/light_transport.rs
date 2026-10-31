@@ -2,6 +2,7 @@
 //!
 //! Each scene puts one kind of radiance source beside a reference under a
 //! named exposure: emitters in nits beside an unlit card and a lit 18% card,
+//! emitters across the emissive exposure weight,
 //! bloom from an emitter at physical and at unit scale, a textured PBR model
 //! under image-based lighting with and without an environment zone, a
 //! captured reflection probe at two intensities, a `recolor` hook surface, a
@@ -115,6 +116,27 @@ fn build_emitter_ev0(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 fn build_emitter_sunny16(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     emitter_chart(ctx, sunny16())
+}
+
+/// Left to right: three 2 000 nit emitters at emissive exposure weights 1,
+/// 0.5 and 0, and a Lambert 18% card, on a mid-grey ground in daylight under
+/// a sunny-16 camera.
+fn build_emitter_weights(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let card = upload(ctx, &primitives::plane(CARD, CARD));
+    let mut items = vec![ground_item(ctx, 0.3)];
+    let x = |i: usize| (i as f32 - 1.5) * COL_STEP;
+    let at = |i: usize| Mat4::from_translation(Vec3::new(x(i), 0.0, 0.01));
+    for (i, weight) in [1.0, 0.5, 0.0].into_iter().enumerate() {
+        let m = emitter(2_000.0).with_emissive_exposure_weight(weight);
+        items.push(item_model(ctx, card, at(i), m));
+    }
+    items.push(item_model(ctx, card, at(3), lambert(0.18)));
+    BuiltScene {
+        items,
+        lighting: daylight(),
+        exposure: Some(sunny16()),
+        ..Default::default()
+    }
 }
 
 // --- bloom ------------------------------------------------------------------
@@ -509,6 +531,11 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "light_transport_emitter_sunny16",
             cameras: top_camera(),
             build: build_emitter_sunny16,
+        },
+        NamedScene {
+            name: "light_transport_emitter_weights",
+            cameras: top_camera(),
+            build: build_emitter_weights,
         },
         NamedScene {
             name: "light_transport_bloom_physical",

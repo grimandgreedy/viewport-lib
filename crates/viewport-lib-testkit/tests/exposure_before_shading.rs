@@ -5,7 +5,8 @@
 //! what follows from that: the auto-exposure meter settles on the EV it
 //! measures in absolute radiance, the `Direct` path takes a fixed exposure and
 //! reports an automatic one, viewports over one scene expose independently,
-//! and a capture holds absolute radiance whatever the frame's exposure.
+//! a capture holds absolute radiance whatever the frame's exposure, and an
+//! emitter's exposure weight sets how far the exposure reaches it.
 //!
 //! The float tests read back a half-float target, so a ratio is measured to
 //! half-float precision rather than through 8-bit quantisation.
@@ -351,4 +352,79 @@ fn captures_ignore_the_frame_exposure() {
         passthrough.rgba == ev15.rgba,
         "the panorama changed with the frame's exposure"
     );
+}
+
+/// An emitter at exposure weight 1 scales with the exposure multiplier, one at
+/// weight 0 draws the same under any exposure, and one at 0.5 takes the
+/// midpoint scale. `light_transport_emitter_weights` holds 2 000 nit black
+/// cards at weights 1, 0.5 and 0; with no lights the cards carry only their
+/// emissive.
+#[test]
+fn emissive_exposure_weight_sets_the_exposure_scale() {
+    let Some(mut h) = Harness::with_target_format(Harness::FLOAT_TARGET_FORMAT) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    const NITS: f32 = 2_000.0;
+    let scene =
+        scene_by_name("light_transport_emitter_weights").expect("emitter weights in the catalogue");
+    let built = h.build_scene(&scene);
+    let mut frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+    let mut lighting = LightingSettings::default();
+    lighting.lights.clear();
+    lighting.hemisphere_intensity = 0.0;
+    frame.effects.lighting = lighting;
+    let m = multiplier(15.0);
+
+    let mut render = |frame: &mut FrameData, mode: PipelineMode, exposure: ExposureSettings| {
+        frame.effects.display.mode = mode;
+        frame.effects.display.exposure = exposure;
+        h.render_float(frame, W, H)
+    };
+    let direct_pass = render(
+        &mut frame,
+        PipelineMode::Direct,
+        ExposureSettings::passthrough(),
+    );
+    let direct_ev15 = render(
+        &mut frame,
+        PipelineMode::Direct,
+        ExposureSettings::manual(15.0),
+    );
+    let hdr_pass = render(
+        &mut frame,
+        PipelineMode::Hdr,
+        ExposureSettings::passthrough(),
+    );
+    let hdr_ev15 = render(
+        &mut frame,
+        PipelineMode::Hdr,
+        ExposureSettings::manual(15.0),
+    );
+
+    // Card interiors: exactly the emitter's radiance under Passthrough.
+    let (mut unit, mut half, mut zero) = (0usize, 0usize, 0usize);
+    for (i, (pass, ev15)) in direct_pass.iter().zip(&direct_ev15).enumerate() {
+        if !(0..3).all(|c| pass[c] == NITS) {
+            continue;
+        }
+        let v = ev15[0];
+        if v == NITS {
+            zero += 1;
+            // Tone mapped, the weight-0 card is still the same in both.
+            assert_eq!(
+                hdr_pass[i], hdr_ev15[i],
+                "weight-0 pixel {i} changed with the exposure on the HDR path"
+            );
+        } else if (v / (NITS * m) - 1.0).abs() <= 0.002 {
+            unit += 1;
+        } else if (v / (NITS * (0.5 * m + 0.5)) - 1.0).abs() <= 0.002 {
+            half += 1;
+        } else {
+            panic!("card pixel {i} reads {v} at EV 15, matching no weight");
+        }
+    }
+    for (label, n) in [("weight 1", unit), ("weight 0.5", half), ("weight 0", zero)] {
+        assert!(n > 1000, "{label}: only {n} card pixels");
+    }
 }
