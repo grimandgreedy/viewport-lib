@@ -91,6 +91,7 @@ fn expected(name: &str) -> Option<Expected> {
         "exposure_auto_partial" => e(13, 13, 2, 2, 26),
         "light_transport_emitter_ev0" => e(5, 5, 2, 2, 10),
         "light_transport_emitter_sunny16" => e(5, 5, 2, 2, 10),
+        "light_transport_emitter_weights" => e(5, 5, 2, 2, 10),
         "light_transport_bloom_physical" => e(4, 4, 3, 3, 1934),
         "light_transport_bloom_unit" => e(4, 4, 3, 3, 1934),
         "light_transport_helmet_ibl" => e(2, 2, 2, 2, 3980),
