@@ -2805,6 +2805,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
 
         assert_eq!(gpu.len(), 2);
@@ -2852,6 +2853,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
 
         assert_eq!(gpu.len(), 1);
@@ -2879,6 +2881,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
         assert_eq!(gpu.len(), max);
         assert_eq!(bboxes.len(), max);
@@ -2897,6 +2900,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
         assert!(gpu.is_empty());
         assert!(map.is_empty());
@@ -2927,6 +2931,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
 
         assert_eq!(gpu.len(), 1, "the vector shape must not be encoded");
