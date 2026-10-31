@@ -67,6 +67,8 @@ pub struct ScatterVolumePlugin {
     /// `encode` runs from a shared borrow but allocates on resize and advances
     /// the history ping-pong.
     viewports: std::sync::Mutex<Vec<Option<pipeline::ScatterViewportState>>>,
+    /// The world origin of the last prepare, which `draws` are relative to.
+    origin: glam::DVec3,
 }
 
 impl ItemTypePlugin for ScatterVolumePlugin {
@@ -105,6 +107,8 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         let volumes = items.of::<ScatterVolumeItem>();
+        let origin = ctx.world_origin();
+        self.origin = origin;
 
         self.draws.clear();
         self.refraction_draws.clear();
@@ -127,7 +131,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             .any(|v| !v.settings.hidden && v.settings.pick_id != PickId::NONE)
         {
             self.gpu.ensure_pick_proxies(device);
-            self.build_pick_bindings(device, volumes);
+            self.build_pick_bindings(device, volumes, origin);
         }
 
         for item in volumes {
@@ -143,19 +147,21 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             if item.settings.receive_shadows {
                 flags |= packing::SCATTER_FLAG_RECEIVE_SHADOWS;
             }
-            self.draws
-                .push((item.volume.clone(), item.settings.opacity, flags));
-            if item.volume.refraction.is_some() {
+            // The march runs in group 0's frame, relative to the origin.
+            let volume = relative_volume(&item.volume, origin);
+            if volume.refraction.is_some() {
                 self.refraction_draws
-                    .push((item.volume.clone(), item.settings.opacity));
+                    .push((volume.clone(), item.settings.opacity));
             }
+            self.draws.push((volume, item.settings.opacity, flags));
         }
 
         if self.draws.is_empty() {
             return Vec::new();
         }
 
-        sort_back_to_front(&mut self.draws, ctx.camera.eye_position().to_array());
+        let eye = crate::item_types::origin::rel_vec3(ctx.camera.eye_position(), origin);
+        sort_back_to_front(&mut self.draws, eye.to_array());
 
         let res = ctx.resources;
         self.gpu.ensure_frame_uniform_buffer(device);
@@ -251,9 +257,17 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         self.encode_march(encoder, ctx, state, &frame_bg, passes.march);
 
         let composite_source = if settings.temporal {
+            // The previous camera, measured from this frame's origin, so a
+            // move of the origin between the two frames reprojects cleanly.
+            let prev_view_proj = state
+                .prev_camera
+                .as_ref()
+                .map_or(state.prev_view_proj, |c| {
+                    crate::item_types::origin::rel_view_proj(c, self.origin).to_cols_array_2d()
+                });
             self.gpu.write_temporal_uniform(
                 ctx.queue,
-                state.prev_view_proj,
+                prev_view_proj,
                 settings.temporal_blend,
                 state.history_valid,
             );
@@ -263,7 +277,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         };
         self.encode_composite(encoder, ctx, composite_source, passes.composite);
 
-        state.prev_view_proj = ctx.camera.view_proj().to_cols_array_2d();
+        state.prev_camera = Some(ctx.camera.clone());
         state.parity = 1 - state.parity;
         state.history_valid = settings.temporal;
     }
@@ -706,6 +720,7 @@ impl ScatterVolumePlugin {
         &mut self,
         device: &viewport_lib::gpu::Device,
         volumes: &[ScatterVolumeItem],
+        origin: glam::DVec3,
     ) {
         use viewport_lib::gpu::util::DeviceExt as _;
         let Some(bgl) = self.gpu.pick_bgl.as_ref() else {
@@ -715,7 +730,7 @@ impl ScatterVolumePlugin {
             if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                 continue;
             }
-            let (model, shape) = match item.volume.shape {
+            let (model, shape) = match relative_volume(&item.volume, origin).shape {
                 volume::ScatterShape::Box(b) => {
                     let extent = b.max - b.min;
                     if extent.min_element() <= 0.0 {
@@ -857,4 +872,33 @@ fn derive_virtual_lights(
         lights.push(light);
     }
     lights
+}
+
+/// `volume` with its shape and falloff centre moved relative to `origin`,
+/// subtracted in f64.
+fn relative_volume(volume: &ScatterVolume, origin: glam::DVec3) -> ScatterVolume {
+    use crate::item_types::origin::{rel_point, rel_vec3};
+    let mut out = volume.clone();
+    if origin == glam::DVec3::ZERO {
+        return out;
+    }
+    out.shape = match volume.shape {
+        volume::ScatterShape::Box(b) => {
+            volume::ScatterShape::Box(viewport_lib_types::scene::aabb::Aabb {
+                min: rel_vec3(b.min, origin),
+                max: rel_vec3(b.max, origin),
+            })
+        }
+        volume::ScatterShape::Sphere { center, radius } => volume::ScatterShape::Sphere {
+            center: rel_point(center, origin),
+            radius,
+        },
+    };
+    if let volume::DensityRemap::ExpFalloff { center, falloff } = volume.density_remap {
+        out.density_remap = volume::DensityRemap::ExpFalloff {
+            center: rel_point(center, origin),
+            falloff,
+        };
+    }
+    out
 }

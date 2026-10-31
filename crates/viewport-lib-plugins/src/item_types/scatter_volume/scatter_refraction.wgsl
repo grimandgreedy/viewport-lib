@@ -191,7 +191,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         cos(time * 0.83),
         sin(time * 0.59 + 1.7),
     );
-    let q   = p * noise_scale + warp;
+    // Keyed on the absolute position, so the shimmer stays put when the
+    // origin moves.
+    let q   = viewport_absolute_pos(p) * noise_scale + warp;
     let eps = 0.35;
     let n_x0 = value_noise_3d(q - vec3<f32>(eps, 0.0, 0.0));
     let n_x1 = value_noise_3d(q + vec3<f32>(eps, 0.0, 0.0));

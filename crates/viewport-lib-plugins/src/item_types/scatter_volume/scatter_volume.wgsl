@@ -21,6 +21,14 @@ struct Camera {
     _pad1:         f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
+    proj:          mat4x4<f32>,
+    inv_proj:      mat4x4<f32>,
+    viewport:      vec4<f32>,
+    clip:          vec4<f32>,
+    time:          vec4<f32>,
+    // The world origin the positions here are relative to, rounded to f32.
+    world_origin:  vec3<f32>,
+    origin_epoch:  u32,
 };
 
 // `SingleLight`, `Lights` and the `lights_storage` binding at group 0 binding
@@ -455,7 +463,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         if use_density_tex {
             modulator = sample_density_texture(aabb_min, aabb_max, p);
         } else {
-            modulator = apply_noise(flags, vol.noise_pack, vol.noise_vel.xyz, p, time);
+            // The noise is keyed on the absolute position, so it stays put
+            // when the origin moves.
+            let p_abs = p + camera.world_origin;
+            modulator = apply_noise(flags, vol.noise_pack, vol.noise_vel.xyz, p_abs, time);
         }
         let local_density = vol.colour_density.a * remap * modulator;
         let step_extinction = local_density * dt;
