@@ -33,9 +33,9 @@ use vpl::resources::{
     LightProbe, LightProbeSet, LightmapData, LightmapMode, SHCoefficients, TextureId,
 };
 use vpl::{
-    Aabb, BackfacePolicy, EnvironmentLighting, EnvironmentMapId, EnvironmentOptions,
-    EnvironmentZone, IndirectLightSource, LightKind, LightSource, Material, MaterialId, MeshId,
-    NodeId, TextureData, primitives,
+    BackfacePolicy, EnvironmentLighting, EnvironmentMapId, EnvironmentOptions, EnvironmentZone,
+    IndirectLightSource, LightKind, LightSource, Material, MaterialId, MeshId, NodeId, TextureData,
+    primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -70,7 +70,7 @@ fn build_probe_set(enabled: &[bool]) -> LightProbeSet {
     for (i, &(colour, x)) in PROBES.iter().enumerate() {
         if enabled.get(i).copied().unwrap_or(false) {
             probes.push(LightProbe {
-                position: [x, 0.0, PROBE_ROW_Z],
+                position: Vec3::new(x, 0.0, PROBE_ROW_Z).as_dvec3(),
                 sh: flat_sh(colour),
             });
         }
@@ -745,10 +745,8 @@ impl IndirectLightingShowcase {
             .map(|(i, e)| {
                 // Distant gradient environments, not local captures: no parallax.
                 EnvironmentZone::new(
-                    Aabb {
-                        min: Vec3::new(e.x - ZONE_HALF_X, -8.0, ZONE_ROW_Z - 8.0),
-                        max: Vec3::new(e.x + ZONE_HALF_X, 8.0, ZONE_ROW_Z + 8.0),
-                    },
+                    Vec3::new(e.x, 0.0, ZONE_ROW_Z),
+                    Vec3::new(ZONE_HALF_X, 8.0, 8.0),
                     self.env_ids[i],
                 )
                 .with_fade_distance(ZONE_FADE)

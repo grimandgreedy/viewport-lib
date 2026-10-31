@@ -901,8 +901,8 @@ impl OverlayShapeItem {
 
     /// Pin the shape to a 3D world position, projected to screen each frame.
     /// Sugar for `with_anchor(OverlayOrigin::World(pos))`.
-    pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchoring.origin = OverlayOrigin::World(pos);
+    pub fn with_world_anchor(mut self, pos: impl crate::scene::IntoWorldPosition) -> Self {
+        self.anchoring.origin = OverlayOrigin::World(pos.into_world_position());
         self
     }
 

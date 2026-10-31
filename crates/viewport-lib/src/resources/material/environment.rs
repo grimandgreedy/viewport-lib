@@ -341,7 +341,7 @@ pub const ENV_ZONE_STRIDE_BYTES: usize = 48;
 
 /// A world-space box that selects an environment for fragments inside it.
 ///
-/// Fragments inside `bounds` are lit by `environment`; fragments within
+/// Fragments inside the box (`centre` and `half_extents`) are lit by `environment`; fragments within
 /// `fade_distance` of the box cross-fade to whatever else covers them (other
 /// zones, or the lighting environment where coverage is incomplete). Overlapping
 /// zones blend by influence weight, so there is no hard seam at a boundary. Feed
@@ -349,7 +349,7 @@ pub const ENV_ZONE_STRIDE_BYTES: usize = 48;
 ///
 /// A distant environment (a region-selected sky, [`new`](Self::new)) has no
 /// parallax. A local reflection probe, captured at the box centre
-/// ([`probe`](Self::probe)), is box-projected against `bounds`;
+/// ([`probe`](Self::probe)), is box-projected against the box;
 /// `ViewportRenderer::capture_reflection_probe` returns one already configured.
 ///
 /// The zone's environment is sampled with the zone's own `rotation` and
@@ -358,14 +358,18 @@ pub const ENV_ZONE_STRIDE_BYTES: usize = 48;
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
 pub struct EnvironmentZone {
-    /// World-space box this zone covers (and, for a probe, the parallax proxy).
-    pub bounds: crate::scene::aabb::Aabb,
+    /// World-space centre of the box this zone covers (and, for a probe, the
+    /// parallax proxy), in f64 so a zone far from the world origin keeps its
+    /// place.
+    pub centre: glam::DVec3,
+    /// Half the box's size along each world axis.
+    pub half_extents: glam::Vec3,
     /// Environment selected inside the box (from `upload_environment`). A zone
     /// naming a freed environment is skipped.
     pub environment: EnvironmentMapId,
     /// Outer falloff band, in world units, over which influence fades to zero.
     pub fade_distance: f32,
-    /// Box-project the reflection against `bounds` (a local reflection probe).
+    /// Box-project the reflection against the box (a local reflection probe).
     pub parallax: bool,
     /// Rotation of the zone's environment about +Z, in radians. Default 0.
     pub rotation: f32,
@@ -375,11 +379,16 @@ pub struct EnvironmentZone {
 }
 
 impl EnvironmentZone {
-    /// A zone selecting a distant `environment` inside `bounds`: no parallax,
-    /// no fade band, no rotation and a multiplier of 1.0.
-    pub fn new(bounds: crate::scene::aabb::Aabb, environment: EnvironmentMapId) -> Self {
+    /// A zone selecting a distant `environment` inside the box at `centre`:
+    /// no parallax, no fade band, no rotation and a multiplier of 1.0.
+    pub fn new(
+        centre: impl crate::IntoWorldPosition,
+        half_extents: glam::Vec3,
+        environment: EnvironmentMapId,
+    ) -> Self {
         Self {
-            bounds,
+            centre: centre.into_world_position(),
+            half_extents,
             environment,
             fade_distance: 0.0,
             parallax: false,
@@ -388,19 +397,26 @@ impl EnvironmentZone {
         }
     }
 
-    /// A local reflection probe: `environment` captured at the centre of
-    /// `bounds`, box-projected against them and fading out over
-    /// `fade_distance` beyond them.
+    /// A local reflection probe: `environment` captured at `centre`,
+    /// box-projected against the box and fading out over `fade_distance`
+    /// beyond it.
     pub fn probe(
-        bounds: crate::scene::aabb::Aabb,
+        centre: impl crate::IntoWorldPosition,
+        half_extents: glam::Vec3,
         environment: EnvironmentMapId,
         fade_distance: f32,
     ) -> Self {
         Self {
             fade_distance,
             parallax: true,
-            ..Self::new(bounds, environment)
+            ..Self::new(centre, half_extents, environment)
         }
+    }
+
+    /// A zone covering a world-space [`Aabb`](crate::scene::aabb::Aabb), with
+    /// the defaults of [`new`](Self::new).
+    pub fn from_aabb(bounds: crate::scene::aabb::Aabb, environment: EnvironmentMapId) -> Self {
+        Self::new(bounds.center(), bounds.half_extents(), environment)
     }
 
     /// Set the outer falloff band, in world units.
@@ -480,7 +496,7 @@ pub(crate) fn write_environment_zones(
     let origin = resources.world_origin;
     // The probe volume's corner shares the buffer and the origin rule.
     if let Some(min) = resources.scene_tier.lighting.probe_volume_min {
-        let m = origin.rel(glam::Vec3::from(min));
+        let m = origin.rel_d(min);
         queue.write_buffer(
             &resources.scene_tier.lighting.indirect_buf,
             crate::resources::lighting::PROBE_VOLUME_REGION_OFFSET_BYTES,
@@ -494,9 +510,9 @@ pub(crate) fn write_environment_zones(
         .iter()
         .filter(|z| ibl.is_baked(z.environment))
         .map(|z| EnvZoneGpu {
-            center: origin.rel(z.bounds.center()).into(),
+            center: origin.rel_d(z.centre).into(),
             layer: z.environment.index(),
-            half_extents: z.bounds.half_extents().into(),
+            half_extents: z.half_extents.into(),
             fade: z.fade_distance,
             parallax: u32::from(z.parallax),
             rotation: z.rotation,
@@ -2834,14 +2850,7 @@ mod tests {
         upload(&mut resources, &device, &queue, [0.5, 0.5, 0.5]).unwrap();
         let env = upload(&mut resources, &device, &queue, [0.9, 0.1, 0.1]).unwrap();
 
-        let zone = EnvironmentZone::probe(
-            crate::scene::aabb::Aabb {
-                min: glam::Vec3::splat(-1.0),
-                max: glam::Vec3::splat(1.0),
-            },
-            env,
-            0.5,
-        );
+        let zone = EnvironmentZone::probe(glam::DVec3::ZERO, glam::Vec3::ONE, env, 0.5);
         set_environment_zones(&mut resources, &queue, &[zone]);
         assert_eq!(resources.scene_tier.ibl.env_zone_count, 1);
 

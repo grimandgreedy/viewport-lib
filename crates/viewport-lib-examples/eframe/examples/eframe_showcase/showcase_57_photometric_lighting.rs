@@ -249,12 +249,12 @@ impl FalloffState {
         s.cast_shadows = false;
         s.kind = match self.light_type {
             LfType::Point => LightKind::Point {
-                position: [0.0, 0.0, self.height],
+                position: glam::DVec3::new(0.0, 0.0, self.height.into()),
                 range: self.range,
                 radius: self.radius,
             },
             LfType::Spot => LightKind::Spot {
-                position: [0.0, 0.0, self.height],
+                position: glam::DVec3::new(0.0, 0.0, self.height.into()),
                 direction: [1.0, 0.0, -0.3],
                 range: self.range,
                 inner_angle: 0.25,

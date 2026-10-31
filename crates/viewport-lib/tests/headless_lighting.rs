@@ -914,7 +914,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
     sh.r[0] = 1.0 / 0.282095;
     let probes =
         viewport_lib::resources::LightProbeSet::new(vec![viewport_lib::resources::LightProbe {
-            position: [0.0, 0.0, 0.0],
+            position: [0.0, 0.0, 0.0].into(),
             sh,
         }]);
     renderer.set_light_probes(probes);
@@ -1191,8 +1191,8 @@ fn environment_zones_select_the_second_zone() {
     renderer.set_environment_zones(
         &queue,
         &[
-            viewport_lib::EnvironmentZone::new(far, red).with_fade_distance(0.5),
-            viewport_lib::EnvironmentZone::new(here, green).with_fade_distance(0.5),
+            viewport_lib::EnvironmentZone::from_aabb(far, red).with_fade_distance(0.5),
+            viewport_lib::EnvironmentZone::from_aabb(here, green).with_fade_distance(0.5),
         ],
     );
 
@@ -1442,7 +1442,10 @@ fn zone_ignores_the_lighting_intensity() {
         |f| f.effects.lighting.hemisphere_intensity = 0.0,
     );
 
-    renderer.set_environment_zones(&queue, &[viewport_lib::EnvironmentZone::new(here, warm)]);
+    renderer.set_environment_zones(
+        &queue,
+        &[viewport_lib::EnvironmentZone::from_aabb(here, warm)],
+    );
     let zoned = render_spheres(
         &mut renderer,
         &device,
@@ -1468,7 +1471,7 @@ fn zone_ignores_the_lighting_intensity() {
     // The zone's own intensity does scale it.
     renderer.set_environment_zones(
         &queue,
-        &[viewport_lib::EnvironmentZone::new(here, warm)
+        &[viewport_lib::EnvironmentZone::from_aabb(here, warm)
             .with_intensity(viewport_lib::EnvironmentIntensity::Multiplier(2.0))],
     );
     let brighter = render_spheres(
@@ -1521,7 +1524,10 @@ fn empty_zone_far_away_leaves_the_image_unchanged() {
         min: glam::Vec3::splat(-31.0),
         max: glam::Vec3::splat(-29.0),
     };
-    renderer.set_environment_zones(&queue, &[viewport_lib::EnvironmentZone::new(far, red)]);
+    renderer.set_environment_zones(
+        &queue,
+        &[viewport_lib::EnvironmentZone::from_aabb(far, red)],
+    );
     let with = render(&mut renderer);
     assert!(
         without.chunks_exact(4).any(|p| p[0] > 20),
@@ -1919,7 +1925,7 @@ fn clustered_lighting_matches_the_per_light_fallback() {
             .map(|i| {
                 let mut light = LightSource::default();
                 light.kind = LightKind::Point {
-                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.5],
+                    position: glam::DVec3::new((i % 6) as f64 - 2.5, (i / 6) as f64 - 1.5, 1.5),
                     range: 3.0,
                     radius: 0.05,
                 };

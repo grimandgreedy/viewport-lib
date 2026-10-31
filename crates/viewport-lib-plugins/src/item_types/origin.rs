@@ -40,11 +40,8 @@ pub(crate) fn rel_model(mut m: [[f32; 4]; 4], origin: DVec3) -> [[f32; 4]; 4] {
 
 /// A plane `dot(n, p) + d = 0` in world space moved relative to `origin`:
 /// returns the new `d`, `d + dot(n, origin)` in f64.
-pub(crate) fn rel_plane_d(normal: [f32; 3], d: f32, origin: DVec3) -> f32 {
-    if origin == DVec3::ZERO {
-        return d;
-    }
-    (f64::from(d) + Vec3::from(normal).as_dvec3().dot(origin)) as f32
+pub(crate) fn rel_plane_d(normal: [f32; 3], d: f64, origin: DVec3) -> f32 {
+    (d + Vec3::from(normal).as_dvec3().dot(origin)) as f32
 }
 
 /// `a * b`, with the product's translation made relative to `origin`. The

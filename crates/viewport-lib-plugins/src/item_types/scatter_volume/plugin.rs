@@ -860,7 +860,7 @@ fn derive_virtual_lights(
         let range = (size * 4.0).max(extent * 2.0);
         let mut light = viewport_lib::renderer::LightSource::default();
         light.kind = viewport_lib::renderer::LightKind::Point {
-            position: centre,
+            position: glam::Vec3::from(centre).as_dvec3(),
             range,
             // Soft emitter: a volume is not a point source, so give it a
             // radius tied to its size to keep the inverse-square falloff

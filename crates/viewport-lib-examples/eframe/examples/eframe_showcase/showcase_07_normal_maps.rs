@@ -393,7 +393,7 @@ pub(crate) fn scene(
                 {
                     let mut _t = vpl::LightSource::default();
                     _t.kind = vpl::LightKind::Point {
-                        position: [3.0, 3.0, 3.0],
+                        position: [3.0, 3.0, 3.0].into(),
                         range: 15.0,
                         radius: 0.1,
                     };

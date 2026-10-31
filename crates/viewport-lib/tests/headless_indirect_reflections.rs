@@ -98,7 +98,7 @@ fn light_probe_objects_keep_the_sky_reflection() {
     sh.r[0] = 1.0 / 0.282095;
     renderer.set_light_probes(viewport_lib::resources::LightProbeSet::new(vec![
         viewport_lib::resources::LightProbe {
-            position: [0.0, 0.0, 0.0],
+            position: [0.0, 0.0, 0.0].into(),
             sh,
         },
     ]));

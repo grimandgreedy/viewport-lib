@@ -110,7 +110,7 @@ pub enum ClipAxis {
 /// Construct a [`ClipObject`] from an axis preset and a distance from the origin.
 ///
 /// Convenience for the common case of axis-aligned section planes.
-pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
+pub fn plane_from_axis_preset(axis: ClipAxis, distance: impl Into<f64>) -> ClipObject {
     let normal = match axis {
         ClipAxis::X => [1.0, 0.0, 0.0],
         ClipAxis::Y => [0.0, 1.0, 0.0],
@@ -119,7 +119,7 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
     ClipObject {
         shape: ClipShape::Plane {
             normal,
-            distance,
+            distance: distance.into(),
             cap_colour: None,
         },
         ..ClipObject::default()
@@ -261,7 +261,7 @@ pub enum ClipPlaneResult {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClipPlaneDelta {
     /// Change in signed distance along the normal. Add to the plane's `distance` field.
-    pub distance_delta: f32,
+    pub distance_delta: f64,
     /// New normal orientation. Only set during Orient sessions; `None` during Distance.
     pub normal_override: Option<[f32; 3]>,
 }
@@ -301,7 +301,7 @@ struct ClipPlaneSession {
     /// Normal at session start, used to restore on Cancel.
     original_normal: [f32; 3],
     /// Distance at session start, used to restore on Cancel.
-    original_distance: f32,
+    original_distance: f64,
     /// Cursor position when the drag began.
     cursor_anchor: Option<glam::Vec2>,
     /// Cumulative cursor displacement used on the previous frame (for stable deltas).
@@ -369,7 +369,7 @@ impl ClipPlaneController {
             let delta = match session.kind {
                 ClipPlaneSessionKind::Distance => {
                     let normal = glam::Vec3::from(session.original_normal);
-                    let plane_point = normal * session.original_distance;
+                    let plane_point = (normal.as_dvec3() * session.original_distance).as_vec3();
                     let distance_delta = project_drag_onto_normal(
                         pointer_delta,
                         normal,
@@ -378,7 +378,7 @@ impl ClipPlaneController {
                         ctx.viewport_size,
                     );
                     ClipPlaneDelta {
-                        distance_delta,
+                        distance_delta: f64::from(distance_delta),
                         normal_override: None,
                     }
                 }
@@ -410,7 +410,7 @@ impl ClipPlaneController {
                 return ClipPlaneResult::None;
             };
             let plane_normal = glam::Vec3::from(plane_normal_arr);
-            let plane_center = plane_normal * plane_dist;
+            let plane_center = (plane_normal.as_dvec3() * plane_dist).as_vec3();
             let handle_length = ctx.plane_extent * 0.4;
             let handle_radius = ctx.plane_extent * 0.04;
 

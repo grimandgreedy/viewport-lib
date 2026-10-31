@@ -204,21 +204,36 @@ pub fn outline(shape: &ClipShape, extent: f32, colour: [f32; 4]) -> PolylineItem
             // Foot of the normal from the world origin. A host that translates the
             // plane laterally (its own display centre) calls `plane_outline`
             // directly with that centre instead.
-            let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
+            let center = (glam::Vec3::from(normal).normalize_or_zero().as_dvec3() * -distance)
+                .as_vec3()
+                .to_array();
             plane_outline(center, normal, extent, colour)
         }
         ClipShape::Box {
             center,
             half_extents,
             orientation,
-        } => box_outline(center, half_extents, orientation, colour),
-        ClipShape::Sphere { center, radius } => sphere_outline(center, radius, colour),
+        } => box_outline(
+            center.as_vec3().to_array(),
+            half_extents,
+            orientation,
+            colour,
+        ),
+        ClipShape::Sphere { center, radius } => {
+            sphere_outline(center.as_vec3().to_array(), radius, colour)
+        }
         ClipShape::Cylinder {
             center,
             axis,
             radius,
             half_length,
-        } => cylinder_outline(center, axis, radius, half_length, colour),
+        } => cylinder_outline(
+            center.as_vec3().to_array(),
+            axis,
+            radius,
+            half_length,
+            colour,
+        ),
     }
 }
 
@@ -297,7 +312,7 @@ mod tests {
     #[test]
     fn outline_dispatches_per_shape() {
         let sphere = ClipShape::Sphere {
-            center: [0.0; 3],
+            center: [0.0; 3].into(),
             radius: 1.0,
         };
         assert_eq!(outline(&sphere, 1.0, [1.0; 4]).strip_lengths.len(), 3);

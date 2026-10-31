@@ -34,11 +34,12 @@ fn overflow_frame(h: &mut Harness, lights: usize) -> FrameData {
     for i in 0..lights {
         let mut s = LightSource::default();
         s.kind = LightKind::Point {
-            position: [
+            position: glam::Vec3::new(
                 (i % 10) as f32 * 3.0 - 13.5,
                 ((i / 10) % 10) as f32 * 3.0 - 13.5,
                 6.0 + (i / 100) as f32 * 2.0,
-            ],
+            )
+            .as_dvec3(),
             range: 40.0,
             radius: 0.0,
         };
@@ -169,11 +170,12 @@ fn ranked_last_frame(h: &mut Harness, with_bright: bool) -> FrameData {
     for i in 0..70 {
         let mut s = LightSource::default();
         s.kind = LightKind::Point {
-            position: [
+            position: glam::Vec3::new(
                 (i % 10) as f32 * 2.0 - 9.0,
                 (i / 10) as f32 * 2.0 - 7.0,
                 4.0,
-            ],
+            )
+            .as_dvec3(),
             range: 40.0,
             radius: 0.0,
         };
@@ -185,7 +187,7 @@ fn ranked_last_frame(h: &mut Harness, with_bright: bool) -> FrameData {
     if with_bright {
         let mut s = LightSource::default();
         s.kind = LightKind::Point {
-            position: [0.0, 0.0, 3.0],
+            position: [0.0, 0.0, 3.0].into(),
             range: 20.0,
             radius: 0.0,
         };

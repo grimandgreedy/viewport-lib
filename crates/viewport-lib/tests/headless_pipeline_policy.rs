@@ -35,8 +35,7 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
     opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).into();
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = sphere_id;
-    transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
+    transparent.model = glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
     transparent.settings.opacity = 0.5;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
     frame
@@ -328,7 +327,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
             let points = (0..24).map(|i| {
                 let mut light = viewport_lib::LightSource::default();
                 light.kind = viewport_lib::LightKind::Point {
-                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.0],
+                    position: glam::DVec3::new((i % 6) as f64 - 2.5, (i / 6) as f64 - 1.5, 1.0),
                     range: 3.0,
                     radius: 0.05,
                 };
@@ -355,8 +354,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
                 items[0].settings.selected = true;
                 let mut third = items[0].clone();
                 third.settings.selected = false;
-                third.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).into();
+                third.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).into();
                 items.push(third);
                 frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
             }

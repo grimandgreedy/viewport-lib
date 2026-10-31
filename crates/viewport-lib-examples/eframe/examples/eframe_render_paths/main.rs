@@ -586,12 +586,12 @@ impl App {
         let mut light = LightSource::default();
         light.kind = match self.light_kind {
             1 => LightKind::Point {
-                position: self.point_position,
+                position: glam::Vec3::from(self.point_position).as_dvec3(),
                 range: self.point_range,
                 radius: 0.1,
             },
             2 => LightKind::Spot {
-                position: self.spot_position,
+                position: glam::Vec3::from(self.spot_position).as_dvec3(),
                 direction: self.spot_direction,
                 range: self.spot_range,
                 inner_angle: self.spot_inner_deg.to_radians(),

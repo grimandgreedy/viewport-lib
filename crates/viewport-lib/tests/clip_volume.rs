@@ -54,7 +54,7 @@ fn clip_objects_construct_and_assign() {
     // Box variant
     let mut obj = ClipObject::default();
     obj.shape = ClipShape::Box {
-        center: [1.0, 2.0, 3.0],
+        center: [1.0, 2.0, 3.0].into(),
         half_extents: [0.5, 0.5, 0.5],
         orientation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     };
@@ -68,7 +68,7 @@ fn clip_objects_construct_and_assign() {
     // Sphere variant
     let mut obj = ClipObject::default();
     obj.shape = ClipShape::Sphere {
-        center: [0.0, 0.0, 0.0],
+        center: [0.0, 0.0, 0.0].into(),
         radius: 2.5,
     };
     frame.effects.clip.objects.push(obj);

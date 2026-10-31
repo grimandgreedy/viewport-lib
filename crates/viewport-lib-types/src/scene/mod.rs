@@ -4,9 +4,11 @@
 //! `viewport-lib`; this module holds the pure leaves it is composed of.
 
 pub mod aabb;
+pub mod position;
 pub mod transform;
 
 pub use aabb::Aabb;
+pub use position::IntoWorldPosition;
 pub use transform::Transform;
 
 /// Node identifier: matches `ViewportObject::id()` return type.

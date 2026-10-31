@@ -63,8 +63,7 @@ fn cache_reuses_and_invalidates(kind: Kind) {
 
         let mut caster = SceneRenderItem::default();
         caster.mesh_id = cube_id;
-        caster.model =
-            glam::Mat4::from_translation(Vec3::new(caster_x, 0.0, 1.0)).into();
+        caster.model = glam::Mat4::from_translation(Vec3::new(caster_x, 0.0, 1.0)).into();
         caster.material = caster_material;
 
         let camera = orbit_camera(Vec3::new(0.0, 0.0, 0.0), 10.0, 0.9, 0.9);
@@ -79,13 +78,13 @@ fn cache_reuses_and_invalidates(kind: Kind) {
         let mut l = LightSource::default();
         l.kind = match kind {
             Kind::Point => LightKind::Point {
-                position: [light_x, 0.0, 5.0],
+                position: glam::Vec3::new(light_x, 0.0, 5.0).as_dvec3(),
                 range: 30.0,
                 radius: 0.0,
             },
             // Lower than the point light, so the spot's apex is in view.
             Kind::Spot => LightKind::Spot {
-                position: [light_x, 0.0, 3.0],
+                position: glam::Vec3::new(light_x, 0.0, 3.0).as_dvec3(),
                 direction: [0.0, 0.0, -1.0],
                 range: 30.0,
                 inner_angle: 0.6,

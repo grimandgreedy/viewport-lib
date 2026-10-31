@@ -289,7 +289,7 @@ impl ViewportRenderer {
                     LightKind::Directional { .. } => continue,
                     _ => continue,
                 };
-                let view_depth = -view_mat.transform_point3(glam::Vec3::from(position)).z;
+                let view_depth = -view_mat.transform_point3(position.as_vec3()).z;
                 light_far = light_far.max(view_depth + range);
             }
             let far = if light_far > 0.0 {
@@ -385,7 +385,7 @@ impl ViewportRenderer {
                         LightKind::Point {
                             position, range, ..
                         } => {
-                            let view_pos = view_mat.transform_point3(glam::Vec3::from(position));
+                            let view_pos = view_mat.transform_point3(position.as_vec3());
                             (view_pos, range, 1u32, glam::Vec3::ZERO, 1.0)
                         }
                         LightKind::Spot {
@@ -395,7 +395,7 @@ impl ViewportRenderer {
                             outer_angle,
                             ..
                         } => {
-                            let view_pos = view_mat.transform_point3(glam::Vec3::from(position));
+                            let view_pos = view_mat.transform_point3(position.as_vec3());
                             let view_dir = view_mat
                                 .transform_vector3(glam::Vec3::from(direction))
                                 .normalize_or_zero();
@@ -533,11 +533,11 @@ impl ViewportRenderer {
                 LightKind::Point {
                     position, range, ..
                 } => {
-                    let light_pos = glam::Vec3::from(position);
+                    let light_pos = position.as_vec3();
                     fnv_mix(&mut light_hash, &[2]);
                     fnv_mix(
                         &mut light_hash,
-                        bytemuck::cast_slice(&[position[0], position[1], position[2], range]),
+                        bytemuck::cast_slice(&[light_pos.x, light_pos.y, light_pos.z, range]),
                     );
                     packed.shadow_kind = 2;
                     packed.shadow_layer = base as i32;
@@ -563,7 +563,7 @@ impl ViewportRenderer {
                     outer_angle,
                     ..
                 } => {
-                    let light_pos = glam::Vec3::from(position);
+                    let light_pos = position.as_vec3();
                     let view_proj = spot_shadow_matrix(
                         light_pos,
                         glam::Vec3::from(direction),
@@ -664,30 +664,20 @@ pub(super) fn fnv_mix(hash: &mut u64, bytes: &[u8]) {
     }
 }
 
-/// `src` with a point or spot light's position made relative to the origin.
-fn rel_light_source(
+/// `src` with a point or spot light's position made relative to the origin,
+/// subtracted in f64.
+pub(super) fn rel_light_source(
     src: &LightSource,
     origin: &crate::renderer::origin::OriginState,
 ) -> LightSource {
     let mut l = src.clone();
     match &mut l.kind {
         LightKind::Point { position, .. } | LightKind::Spot { position, .. } => {
-            *position = origin.rel(glam::Vec3::from(*position)).to_array();
+            *position -= origin.origin();
         }
         _ => {}
     }
     l
-}
-
-/// `u` with a point or spot light's position made relative to the origin.
-pub(super) fn rel_light(
-    mut u: SingleLightUniform,
-    origin: &crate::renderer::origin::OriginState,
-) -> SingleLightUniform {
-    if u.light_type != 0 {
-        u.pos_or_dir = origin.rel(glam::Vec3::from(u.pos_or_dir)).to_array();
-    }
-    u
 }
 
 /// Convert a `LightSource` to `SingleLightUniform`, with no shadow assigned.
@@ -717,7 +707,7 @@ pub(super) fn build_single_light_uniform(src: &LightSource) -> SingleLightUnifor
             radius,
         } => SingleLightUniform {
             light_view_proj: identity,
-            pos_or_dir: *position,
+            pos_or_dir: position.as_vec3().to_array(),
             light_type: 1,
             colour: src.colour.to_linear_rgb(),
             intensity: src.intensity,
@@ -741,7 +731,7 @@ pub(super) fn build_single_light_uniform(src: &LightSource) -> SingleLightUnifor
             radius,
         } => SingleLightUniform {
             light_view_proj: identity,
-            pos_or_dir: *position,
+            pos_or_dir: position.as_vec3().to_array(),
             light_type: 2,
             colour: src.colour.to_linear_rgb(),
             intensity: src.intensity,
@@ -822,7 +812,7 @@ pub(super) fn rank_lights<'a>(
             LightKind::Point {
                 position, range, ..
             } => {
-                let keep = !cull_frustum.cull_sphere(glam::Vec3::from(position), range);
+                let keep = !cull_frustum.cull_sphere(position.as_vec3(), range);
                 if !keep {
                     frustum_culled += 1;
                 }
@@ -839,8 +829,7 @@ pub(super) fn rank_lights<'a>(
                 if axis.length_squared() < 1e-8 {
                     return true;
                 }
-                let keep =
-                    !cull_frustum.cull_cone(glam::Vec3::from(position), axis, outer_angle, range);
+                let keep = !cull_frustum.cull_cone(position.as_vec3(), axis, outer_angle, range);
                 if !keep {
                     frustum_culled += 1;
                 }
@@ -860,7 +849,7 @@ pub(super) fn rank_lights<'a>(
     // lowest-priority lights deterministically. Directional lights are
     // treated as infinitely close (proximity_weight = 1). Shading itself is
     // order-independent.
-    let camera_pos = frame.camera.render_camera.eye_position().as_vec3();
+    let camera_pos = frame.camera.render_camera.eye_position();
     let directional = |l: &LightSource| matches!(l.kind, LightKind::Directional { .. });
     let directional_first = raw_lights
         .iter()
@@ -883,7 +872,7 @@ pub(super) fn rank_lights<'a>(
                 | LightKind::Spot {
                     position, range, ..
                 } => {
-                    let d = (glam::Vec3::from(position) - camera_pos).length();
+                    let d = (position - camera_pos).length() as f32;
                     // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
                     (range / (range + d.max(0.0))).clamp(0.0, 1.0)
                 }

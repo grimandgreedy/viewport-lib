@@ -157,7 +157,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
             app.lights_state.sources.push({
                 let mut _t = LightSource::default();
                 _t.kind = LightKind::Point {
-                    position: [0.0, 3.0, 3.0],
+                    position: [0.0, 3.0, 3.0].into(),
                     range: 15.0,
                     radius: 0.1,
                 };
@@ -172,7 +172,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
             app.lights_state.sources.push({
                 let mut _t = LightSource::default();
                 _t.kind = LightKind::Spot {
-                    position: [0.0, 3.0, 6.0],
+                    position: [0.0, 3.0, 6.0].into(),
                     direction: [0.0, 0.0, -1.0],
                     range: 20.0,
                     inner_angle: 0.25,

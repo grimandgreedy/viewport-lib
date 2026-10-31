@@ -282,7 +282,7 @@ fn a_shadow_caster_follows_its_override_window() {
     };
     let mut bulb = LightSource::default();
     bulb.kind = LightKind::Point {
-        position: [3.0, 0.0, 3.0],
+        position: [3.0, 0.0, 3.0].into(),
         range: 30.0,
         radius: 0.0,
     };

@@ -168,6 +168,11 @@ impl OriginState {
         rel(p, self.origin)
     }
 
+    /// An f64 world position relative to the origin, cast to f32.
+    pub(crate) fn rel_d(&self, p: DVec3) -> Vec3 {
+        (p - self.origin).as_vec3()
+    }
+
     /// A model matrix with its translation made relative to the origin.
     /// Rotation and scale are unchanged.
     pub(crate) fn rel_model(&self, m: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
@@ -190,11 +195,8 @@ impl OriginState {
 
     /// A world-space plane `dot(n, p) + d = 0` moved into relative
     /// coordinates: returns the new `d`.
-    pub(crate) fn rel_plane_d(&self, normal: Vec3, d: f32) -> f32 {
-        if self.is_zero() {
-            return d;
-        }
-        (f64::from(d) + normal.as_dvec3().dot(self.origin)) as f32
+    pub(crate) fn rel_plane_d(&self, normal: Vec3, d: impl Into<f64>) -> f32 {
+        (d.into() + normal.as_dvec3().dot(self.origin)) as f32
     }
 }
 
