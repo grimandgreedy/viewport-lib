@@ -30,6 +30,10 @@ pub enum ToneMapping {
     /// An approximation of the ACES reference rendering and output
     /// transforms (RRT and ODT, 100 nit display) with the glow, red
     /// modifier and desaturation stages, evaluated in AP0 and AP1.
+    ///
+    /// Colours move to AP0 without adapting the white point, as the
+    /// reference does, so a neutral grey comes out slightly blue in the
+    /// shadows and warm in the highlights.
     AcesRrt,
     /// A configurable per-channel curve through a mid-grey point and a
     /// white point, shaped by [`PostProcessSettings::generic_tone_curve`].
