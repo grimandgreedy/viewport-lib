@@ -328,7 +328,7 @@ impl ItemTypePlugin for TensorFieldPlugin {
             ) else {
                 continue;
             };
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if wants_instance {
                 if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                     hit.sub_object = Some(SubObjectRef::Instance(idx));

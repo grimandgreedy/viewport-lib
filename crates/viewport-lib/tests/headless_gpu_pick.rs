@@ -572,7 +572,7 @@ fn gpu_pick_face_fills_geometric_normal() {
         "expected an axis-aligned box face normal, got {:?}",
         hit.normal
     );
-    let to_eye = frame.camera.render_camera.eye_position().as_vec3() - hit.world_pos;
+    let to_eye = frame.camera.render_camera.eye_position().as_vec3() - hit.world_pos.as_vec3();
     assert!(
         hit.normal.dot(to_eye) > 0.0,
         "face normal should point toward the camera, got {:?}",
@@ -1644,7 +1644,7 @@ fn cpu_pick_matches_gpu_pick_under_non_uniform_scale() {
     // the inverse-model ray transform and the inverse-transpose normal
     // fix-up, without depending on GPU pixel quantization.
     let model = glam::Mat4::from_scale(glam::Vec3::new(1.0, 2.0, 3.0));
-    let local_hit = model.inverse().transform_point3(cpu_hit.world_pos);
+    let local_hit = model.inverse().transform_point3(cpu_hit.world_pos.as_vec3());
     let max_component = local_hit
         .x
         .abs()

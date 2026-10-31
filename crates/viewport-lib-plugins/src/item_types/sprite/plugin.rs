@@ -882,7 +882,7 @@ impl ItemTypePlugin for SpritePlugin {
             if !wants_instance {
                 hit.sub_object = None;
             }
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if best.as_ref().is_none_or(|(t, _)| toi < *t) {
                 best = Some((toi, hit));
             }

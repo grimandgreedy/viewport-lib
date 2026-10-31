@@ -680,7 +680,7 @@ impl ItemTypePlugin for RibbonPlugin {
                     ctx.viewport_size,
                     radius_px.max(8.0),
                 ) {
-                    let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                    let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
                     consider(toi, hit);
                 }
             }

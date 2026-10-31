@@ -236,7 +236,7 @@ impl PickAccelerator {
         Some(crate::renderer::PickHit {
             id: entry.node_id,
             sub_object: cast.sub_object,
-            world_pos: cast.world_pos,
+            world_pos: cast.world_pos.as_dvec3(),
             normal: cast.normal,
             scalar_value: None,
             sub_object_world_pos: None,

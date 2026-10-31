@@ -784,7 +784,7 @@ pub(crate) fn decal46_place(app: &mut App, pick: &vpl::PickHit) {
     if !app.decal46_state.built {
         return;
     }
-    let hit = pick.world_pos;
+    let hit = pick.world_pos.as_vec3();
     let normal = pick.normal;
 
     // Detect whether the hit was on the column by comparing the picked node ID.

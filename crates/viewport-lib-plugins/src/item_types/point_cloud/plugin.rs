@@ -314,7 +314,7 @@ impl ItemTypePlugin for PointCloudPlugin {
             ) else {
                 continue;
             };
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if !wants_cloud {
                 hit.sub_object = None;
             }

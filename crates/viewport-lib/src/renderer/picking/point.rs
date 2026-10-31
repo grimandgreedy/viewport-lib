@@ -273,7 +273,7 @@ impl ViewportRenderer {
                         let hit = PickHit {
                             id: item.settings.pick_id.0,
                             sub_object,
-                            world_pos,
+                            world_pos: world_pos.as_dvec3(),
                             normal,
                             scalar_value: None,
                             sub_object_world_pos: None,
@@ -306,8 +306,8 @@ impl ViewportRenderer {
                     model,
                     data,
                 ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    let at = t_of(hit.world_pos);
+                    let toi = (hit.world_pos.as_vec3() - ray_origin).dot(ray_dir).max(0.0);
+                    let at = t_of(hit.world_pos.as_vec3());
                     let kept = if item.settings.ignore_clip { Some(whole) } else { span };
                     if !kept.is_some_and(|k| at >= k.start && at <= k.end) {
                         continue;
@@ -345,7 +345,7 @@ impl ViewportRenderer {
                     match plugin_span {
                         None => consider(t, hit),
                         Some(s) => {
-                            let at = t_of(hit.world_pos);
+                            let at = t_of(hit.world_pos.as_vec3());
                             let slack = (s.end - s.start).abs().min(1.0) * 1e-4;
                             if at >= s.start - slack && at <= s.end + slack {
                                 consider(at, hit);

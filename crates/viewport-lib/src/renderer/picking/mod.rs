@@ -217,7 +217,9 @@ impl ViewportRenderer {
         // replace the camera-facing normal stand-in with the real geometric
         // face normal, for align-to-surface placement.
         hit.map(|mut h| {
-            h.sub_object_world_pos = self.snap_world_pos(h.id, h.sub_object, h.world_pos, frame);
+            h.sub_object_world_pos = self
+                .snap_world_pos(h.id, h.sub_object, h.world_pos.as_vec3(), frame)
+                .map(|p| p.as_dvec3());
             if let Some(n) = self.pick_face_normal(&h, frame) {
                 h.normal = n;
             }
@@ -259,8 +261,7 @@ impl ViewportRenderer {
         // The pick struck the front face, so the outward normal points back
         // toward the eye. Orient it that way to resolve the winding sign, which
         // also matches the previous camera-facing stand-in.
-        let eye = frame.camera.render_camera.eye_position().as_vec3();
-        let to_eye = eye - hit.world_pos;
+        let to_eye = (frame.camera.render_camera.eye_position() - hit.world_pos).as_vec3();
         Some(if n.dot(to_eye) < 0.0 { -n } else { n })
     }
 

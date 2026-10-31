@@ -367,11 +367,11 @@ impl ItemTypePlugin for VectorFieldPlugin {
             // against.
             if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                 if let Some(base) = item.positions.get(idx as usize) {
-                    hit.world_pos = model.transform_point3(glam::Vec3::from(*base));
+                    hit.world_pos = model.transform_point3(glam::Vec3::from(*base)).as_dvec3();
                 }
                 hit.sub_object = wants_instance.then_some(SubObjectRef::Instance(idx));
             }
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if best.as_ref().is_none_or(|(t, _)| toi < *t) {
                 best = Some((toi, hit));
             }

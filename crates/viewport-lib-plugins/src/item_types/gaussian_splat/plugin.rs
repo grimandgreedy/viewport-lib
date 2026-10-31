@@ -409,7 +409,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             ) {
                 // pick_gaussian_splat_cpu returns SubObjectRef::Point; remap
                 // to Splat, or clear it for object-level queries.
-                let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
                 if wants_splat {
                     if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                         hit.sub_object = Some(SubObjectRef::Splat(idx));
