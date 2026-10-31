@@ -17,6 +17,7 @@ pub mod exposure;
 pub mod fallbacks;
 pub mod far_origin;
 pub mod item_types;
+pub mod light_transport;
 pub mod materials;
 pub mod materials_ibl;
 pub mod meshes;
@@ -1088,6 +1089,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(exposure::scenes());
     scenes.extend(materials_ibl::scenes());
     scenes.push(far_origin::scene());
+    scenes.extend(light_transport::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());
