@@ -10,6 +10,7 @@
 //! rasterisation and the polyline overlay produced in the renderer's prepare
 //! draws instead.
 
+use crate::item_types::origin::{rel_model, rel_vec3};
 use viewport_lib::Colour;
 
 use super::pipeline;
@@ -184,7 +185,10 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         }
 
         let vp_idx = ctx.viewport_index;
-        let eye = ctx.camera.eye_position().to_array();
+        // The sort and the draw share the uniform, so both take the eye and
+        // the model relative to the world origin.
+        let origin = ctx.world_origin();
+        let eye = rel_vec3(ctx.camera.eye_position(), origin).to_array();
         let vp_w = ctx.viewport_size.x.max(1.0);
         let vp_h = ctx.viewport_size.y.max(1.0);
         let mut encoder: Option<gpu::CommandEncoder> = None;
@@ -227,7 +231,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 set,
                 sort,
                 eye,
-                item.model,
+                rel_model(item.model, origin),
                 vp_w,
                 vp_h,
                 item.settings.ignore_clip,
@@ -783,8 +787,8 @@ impl GaussianSplatPlugin {
                 gpu,
                 set,
                 ctx.viewport_index,
-                ctx.camera.eye_position().to_array(),
-                item.model,
+                rel_vec3(ctx.camera.eye_position(), ctx.world_origin()).to_array(),
+                rel_model(item.model, ctx.world_origin()),
                 viewport_size,
                 item.settings.ignore_clip,
             );
@@ -889,7 +893,7 @@ impl GaussianSplatPlugin {
                     usage: gpu::BufferUsages::VERTEX,
                 });
                 let uniform = PointDiscMaskUniform {
-                    model: item.model,
+                    model: rel_model(item.model, ctx.world_origin()),
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
@@ -960,7 +964,7 @@ impl GaussianSplatPlugin {
                     .fold(f32::NEG_INFINITY, f32::max)
                     .max(1.0);
                 let uniform = PointDiscMaskUniform {
-                    model: item.model,
+                    model: rel_model(item.model, ctx.world_origin()),
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
