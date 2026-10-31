@@ -349,7 +349,8 @@ impl<'a> ItemFrameContext<'a> {
     /// subtracts this in f64 before the cast to f32
     /// (`(DVec3::from(p) - ctx.world_origin()).as_vec3()`), and rewrites them
     /// when it moves. It is zero under
-    /// [`WorldOrigin::Zero`](crate::WorldOrigin::Zero), the default.
+    /// [`WorldOrigin::Zero`](crate::WorldOrigin::Zero); under the default
+    /// [`snapped`](crate::WorldOrigin::snapped) origin it follows the camera.
     ///
     /// A model matrix written each frame takes the relative translation
     /// directly. Data uploaded once can stay as it is: draw it with a per-item

@@ -91,9 +91,10 @@ pub struct RendererConfig {
     /// The point positions are measured from on their way to the GPU. A
     /// frame can replace it with
     /// [`SceneFrame::with_world_origin`](crate::SceneFrame::with_world_origin).
-    /// Default [`WorldOrigin::snapped`](crate::WorldOrigin::snapped): the
-    /// origin follows the camera, so precision does not fall away with
-    /// distance from the world origin.
+    /// Default [`WorldOrigin::default`](crate::WorldOrigin::default), which
+    /// is [`snapped`](crate::WorldOrigin::snapped): the origin follows the
+    /// camera, so precision does not fall away with distance from the world
+    /// origin.
     pub world_origin: crate::renderer::WorldOrigin,
 }
 
@@ -112,7 +113,7 @@ impl RendererConfig {
             device_lost_watcher: None,
             target_release_frames: None,
             scene_depth_format: None,
-            world_origin: crate::renderer::WorldOrigin::snapped(),
+            world_origin: crate::renderer::WorldOrigin::default(),
         }
     }
 

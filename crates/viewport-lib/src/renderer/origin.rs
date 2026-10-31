@@ -9,7 +9,7 @@ use glam::{DVec3, Mat4, Vec3};
 
 /// Where the coordinates the renderer sends to the GPU are measured from.
 ///
-/// Set it on [`RendererConfig::world_origin`](crate::RendererConfig::world_origin),
+/// The default is [`snapped`](WorldOrigin::snapped). Set it on [`RendererConfig::world_origin`](crate::RendererConfig::world_origin),
 /// or per frame with [`SceneFrame::with_world_origin`](crate::SceneFrame::with_world_origin).
 /// The renderer picks the origin once per scene prepare from the frame's
 /// camera, so every viewport over one scene shares it; a viewport far from
@@ -46,8 +46,9 @@ pub enum WorldOrigin {
 }
 
 impl Default for WorldOrigin {
+    /// [`WorldOrigin::snapped`]: the origin follows the camera.
     fn default() -> Self {
-        Self::Zero
+        Self::snapped()
     }
 }
 
