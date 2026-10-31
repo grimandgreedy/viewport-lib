@@ -103,6 +103,10 @@ pub fn mix_parts() -> Vec<Part> {
             name: "polyline",
             add: polyline,
         },
+        Part {
+            name: "world_overlays",
+            add: world_overlays,
+        },
     ]
 }
 
@@ -695,4 +699,20 @@ fn gpu_particles(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
         max_speed: 2.0,
     };
     scene.gpu_particle_systems.push(item);
+}
+
+/// A label and a marker hung from world positions: the overlay anchors.
+fn world_overlays(_ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
+    use viewport_lib::{Alignment, LabelItem, OverlayFill, OverlayShape, OverlayShapeItem};
+    scene.overlays.labels.push(
+        LabelItem::new("far")
+            .with_world_anchor(qp(at, [1.5, 1.5, 0.5]))
+            .with_font_size(14.0)
+            .with_align(Alignment::CENTRE),
+    );
+    let mut marker = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0])
+        .with_world_anchor(qp(at, [0.5, -0.5, 0.25]))
+        .with_fill(OverlayFill::Solid(Colour::linear(0.1, 0.9, 0.9, 1.0)));
+    marker.anchoring.align = Alignment::CENTRE;
+    scene.overlays.shapes.push(marker);
 }
