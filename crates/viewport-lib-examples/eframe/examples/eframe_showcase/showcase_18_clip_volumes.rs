@@ -578,7 +578,9 @@ impl App {
                 normal, distance, ..
             } = co.shape
             {
-                let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
+                let center = (glam::Vec3::from(normal).normalize_or_zero().as_dvec3() * -distance)
+                    .as_vec3()
+                    .to_array();
                 let model =
                     vpl::clip_plane::visual::plane_fill_transform(center, normal, PLANE_EXTENT);
                 let mut settings = ItemSettings::default();

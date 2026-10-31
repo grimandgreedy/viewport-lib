@@ -146,7 +146,7 @@ impl SphereWidget {
     pub fn clip_object(&self) -> ClipObject {
         ClipObject {
             shape: ClipShape::Sphere {
-                center: self.center.to_array(),
+                center: self.center.as_dvec3(),
                 radius: self.radius,
             },
             clip_geometry: false,

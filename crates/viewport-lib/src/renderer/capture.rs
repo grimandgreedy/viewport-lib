@@ -557,7 +557,10 @@ impl ViewportRenderer {
                     panorama.width,
                     panorama.height,
                 );
-                crate::resources::LightProbe { position, sh }
+                crate::resources::LightProbe {
+                    position: glam::Vec3::from(position).as_dvec3(),
+                    sh,
+                }
             })
             .collect();
         crate::resources::LightProbeSet::new(probes)
@@ -749,7 +752,8 @@ impl ViewportRenderer {
             // World-aligned and holding absolute radiance: no rotation and a
             // multiplier of 1.0, whatever the lighting environment uses.
             zones.push(crate::resources::EnvironmentZone::probe(
-                bounds,
+                bounds.center(),
+                bounds.half_extents(),
                 environment,
                 fade_distance,
             ));
@@ -1332,8 +1336,7 @@ mod tests {
                 mesh_id: mesh,
                 ..Default::default()
             };
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.settings.visibility_mask = 0b01;
             items.push(item);
         }

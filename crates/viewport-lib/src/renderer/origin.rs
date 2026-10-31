@@ -9,7 +9,7 @@ use glam::{DVec3, Mat4, Vec3};
 
 /// Where the coordinates the renderer sends to the GPU are measured from.
 ///
-/// Set it on [`RendererConfig::world_origin`](crate::RendererConfig::world_origin),
+/// The default is [`snapped`](WorldOrigin::snapped). Set it on [`RendererConfig::world_origin`](crate::RendererConfig::world_origin),
 /// or per frame with [`SceneFrame::with_world_origin`](crate::SceneFrame::with_world_origin).
 /// The renderer picks the origin once per scene prepare from the frame's
 /// camera, so every viewport over one scene shares it; a viewport far from
@@ -46,8 +46,9 @@ pub enum WorldOrigin {
 }
 
 impl Default for WorldOrigin {
+    /// [`WorldOrigin::snapped`]: the origin follows the camera.
     fn default() -> Self {
-        Self::Zero
+        Self::snapped()
     }
 }
 
@@ -167,6 +168,11 @@ impl OriginState {
         rel(p, self.origin)
     }
 
+    /// An f64 world position relative to the origin, cast to f32.
+    pub(crate) fn rel_d(&self, p: DVec3) -> Vec3 {
+        (p - self.origin).as_vec3()
+    }
+
     /// A model matrix with its translation made relative to the origin.
     /// Rotation and scale are unchanged.
     pub(crate) fn rel_model(&self, m: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
@@ -189,11 +195,8 @@ impl OriginState {
 
     /// A world-space plane `dot(n, p) + d = 0` moved into relative
     /// coordinates: returns the new `d`.
-    pub(crate) fn rel_plane_d(&self, normal: Vec3, d: f32) -> f32 {
-        if self.is_zero() {
-            return d;
-        }
-        (f64::from(d) + normal.as_dvec3().dot(self.origin)) as f32
+    pub(crate) fn rel_plane_d(&self, normal: Vec3, d: impl Into<f64>) -> f32 {
+        (d.into() + normal.as_dvec3().dot(self.origin)) as f32
     }
 }
 

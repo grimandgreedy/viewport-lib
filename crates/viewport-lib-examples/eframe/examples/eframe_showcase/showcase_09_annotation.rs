@@ -158,7 +158,7 @@ pub(crate) fn controls_annotation(app: &mut App, ui: &mut egui::Ui) {
         let status = if let vpl::OverlayOrigin::World(wa) = label.anchoring.origin {
             let view = app.camera.view_matrix();
             let proj = app.camera.proj_matrix();
-            let pos = glam::Vec3::from(wa);
+            let pos = wa.as_vec3();
             let clip = proj * view * pos.extend(1.0);
             let visible = clip.w > 0.0 && {
                 let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;

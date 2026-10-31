@@ -841,7 +841,7 @@ pub(super) fn clip_uniforms(
     let mut planes = [[0.0f32; 4]; 6];
     let mut count = 0u32;
     let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
-    let rel = |c: [f32; 3]| origin.rel(glam::Vec3::from(c)).to_array();
+    let rel = |c: glam::DVec3| origin.rel_d(c).to_array();
 
     for (i, normal, distance, _) in clipping_planes(viewport_fx) {
         let distance = origin.rel_plane_d(glam::Vec3::from(normal), distance);
@@ -903,7 +903,7 @@ fn clipping_objects<'a>(
 /// clip.
 fn clipping_planes<'a>(
     viewport_fx: &'a ViewportEffects<'_>,
-) -> impl Iterator<Item = (u32, [f32; 3], f32, Option<[f32; 4]>)> + 'a {
+) -> impl Iterator<Item = (u32, [f32; 3], f64, Option<[f32; 4]>)> + 'a {
     clipping_objects(viewport_fx)
         .filter_map(|o| match o.shape {
             ClipShape::Plane {
@@ -958,7 +958,7 @@ mod clip_plane_tests {
             ClipObject::plane([-1.0, 0.0, 0.0], 2.0),
         ]);
         let (_, vfx) = fx.split();
-        let planes: Vec<(u32, f32)> = clipping_planes(&vfx).map(|(i, _, d, _)| (i, d)).collect();
+        let planes: Vec<(u32, f64)> = clipping_planes(&vfx).map(|(i, _, d, _)| (i, d)).collect();
         assert_eq!(planes, vec![(0, 1.0), (1, 2.0)]);
         assert_eq!(clip_overflow(&vfx), None);
     }

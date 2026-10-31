@@ -66,8 +66,9 @@ impl ViewportRenderer {
         let packed: Vec<crate::resources::SingleLightUniform> = ranked
             .lights
             .iter()
-            .map(|(_, l)| lighting::build_single_light_uniform(l))
-            .map(|u| lighting::rel_light(u, &self.origin))
+            .map(|(_, l)| {
+                lighting::build_single_light_uniform(&lighting::rel_light_source(l, &self.origin))
+            })
             .collect();
 
         let header = lighting::lights_header(
@@ -296,8 +297,7 @@ impl ViewportRenderer {
             let lut = item
                 .colourmap_id
                 .filter(|id| id.0 < resources.content.colourmap_views.len());
-            let world_centre =
-                item.model.to_mat4().transform_point3(mesh.aabb.center());
+            let world_centre = item.model.to_mat4().transform_point3(mesh.aabb.center());
 
             for (indices, material_id) in ranges {
                 let m = resources.material_or_default(material_id);

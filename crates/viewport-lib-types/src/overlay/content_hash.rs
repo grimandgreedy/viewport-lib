@@ -214,7 +214,9 @@ impl OverlayContentHash for OverlayOrigin {
             }
             OverlayOrigin::World(p) => {
                 state.write_u8(1);
-                hash_floats(state, p);
+                for v in p.to_array() {
+                    hash_f64(state, v);
+                }
             }
         }
     }

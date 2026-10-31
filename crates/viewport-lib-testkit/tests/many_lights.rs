@@ -50,11 +50,12 @@ fn point_shadow_casters_are_capped_at_the_layer_budget() {
     for i in 0..200 {
         let mut s = LightSource::default();
         s.kind = LightKind::Point {
-            position: [
+            position: glam::Vec3::new(
                 (i % 20) as f32 * 5.0 - 47.5,
                 (i / 20) as f32 * 10.0 - 45.0,
                 12.0,
-            ],
+            )
+            .as_dvec3(),
             range: 20.0,
             radius: 0.0,
         };

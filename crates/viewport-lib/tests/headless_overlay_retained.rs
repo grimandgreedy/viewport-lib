@@ -664,8 +664,9 @@ fn retained_group_anchors_to_a_corner_and_a_world_point() {
     // A world anchor behind the camera culls the group rather than drawing it
     // at a projected-but-meaningless position.
     let mut behind = overlay_frame(size);
-    behind.overlays.retained =
-        vec![RetainedOverlay::new(id).with_anchor(OverlayOrigin::World([0.0, 0.0, -1000.0]))];
+    behind.overlays.retained = vec![
+        RetainedOverlay::new(id).with_anchor(OverlayOrigin::World([0.0, 0.0, -1000.0].into())),
+    ];
     let px = renderer.render_offscreen(&device, &queue, &behind, size, size);
     assert!(
         px.chunks_exact(4).all(|p| !is_red((p[0], p[1], p[2]))),

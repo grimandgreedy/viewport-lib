@@ -70,7 +70,7 @@ pub(super) fn select_shadow_casters(
                 _ => return None,
             };
             let key = key_of(source);
-            let d = (glam::Vec3::from(position) - eye).length();
+            let d = (position.as_vec3() - eye).length();
             let proximity = (range / (range + d)).clamp(0.0, 1.0);
             let mut score = l.importance.max(0.0) * proximity;
             if incumbent(key) {

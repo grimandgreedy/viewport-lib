@@ -205,7 +205,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
                     position, range, ..
                 } => {
                     let mut pl = sphere_wireframe_polyline(
-                        position,
+                        position.as_vec3().to_array(),
                         range,
                         48,
                         Colour::from_linear_array(outline_colour),
@@ -224,7 +224,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
                     ..
                 } => {
                     let mut pl = spot_cone_polyline(
-                        position,
+                        position.as_vec3().to_array(),
                         direction,
                         range,
                         outer_angle,

@@ -105,8 +105,10 @@ pub enum OverlayOrigin {
     /// screen-space placement.
     Viewport(Alignment),
     /// A 3D world position, projected to screen each frame. The item is skipped
-    /// for the frame when the point is behind the camera or off-screen.
-    World([f32; 3]),
+    /// for the frame when the point is behind the camera or off-screen. In f64,
+    /// so an anchor far from the world origin lands on the same pixel every
+    /// frame.
+    World(glam::DVec3),
 }
 
 impl Default for OverlayOrigin {
@@ -143,9 +145,9 @@ impl OverlayAnchoring {
     }
 
     /// Hang from a world position, projected to the screen each frame.
-    pub const fn world(pos: [f32; 3]) -> Self {
+    pub fn world(pos: impl crate::scene::IntoWorldPosition) -> Self {
         Self {
-            origin: OverlayOrigin::World(pos),
+            origin: OverlayOrigin::World(pos.into_world_position()),
             align: Alignment::TOP_LEFT,
         }
     }
@@ -194,11 +196,7 @@ pub fn resolve_anchor_origin_at(
     match anchor {
         OverlayOrigin::Viewport(a) => Some([a.x.coord(viewport[0]), a.y.coord(viewport[1])]),
         OverlayOrigin::World(w) => {
-            let p = if world_origin == glam::DVec3::ZERO {
-                glam::Vec3::from(*w)
-            } else {
-                (glam::Vec3::from(*w).as_dvec3() - world_origin).as_vec3()
-            };
+            let p = (*w - world_origin).as_vec3();
             let clip = *proj * *view * p.extend(1.0);
             if clip.w <= 0.0 {
                 return None;
@@ -419,12 +417,12 @@ mod tests {
     /// nearby origin, lands on the pixel the same anchor near zero does.
     #[test]
     fn a_far_world_anchor_resolves_relative_to_the_origin() {
-        let far = 1_048_576.0f32;
+        let far = 1_048_576.0f64;
         let proj = glam::Mat4::perspective_rh(1.0, 4.0 / 3.0, 0.1, 100.0);
         let offset = glam::Vec3::new(0.0, -3.0, 4.0);
         let local = glam::Mat4::look_at_rh(offset, glam::Vec3::ZERO, glam::Vec3::Z);
         let near = resolve_anchor_origin(
-            &OverlayOrigin::World([0.5, 0.25, 0.125]),
+            &OverlayOrigin::World(glam::DVec3::new(0.5, 0.25, 0.125)),
             [800.0, 600.0],
             &local,
             &proj,
@@ -432,9 +430,9 @@ mod tests {
         .unwrap();
         // The camera sits at the origin's offset, so its relative view is the
         // local one.
-        let origin = glam::DVec3::new(f64::from(far), f64::from(far), 0.0);
+        let origin = glam::DVec3::new(far, far, 0.0);
         let at = resolve_anchor_origin_at(
-            &OverlayOrigin::World([far + 0.5, far + 0.25, 0.125]),
+            &OverlayOrigin::World(glam::DVec3::new(far + 0.5, far + 0.25, 0.125)),
             [800.0, 600.0],
             &local,
             &proj,

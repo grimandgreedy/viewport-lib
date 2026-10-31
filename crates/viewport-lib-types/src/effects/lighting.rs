@@ -119,8 +119,9 @@ pub enum LightKind {
     },
     /// Omnidirectional point light with physical inverse-square falloff.
     Point {
-        /// World-space position of the light source.
-        position: [f32; 3],
+        /// World-space position of the light source, in f64 so a light far
+        /// from the world origin keeps its place.
+        position: glam::DVec3,
         /// Reach (world units): the falloff is windowed smoothly to zero at
         /// this distance and the light is culled beyond it. This bounds how far
         /// the light reaches; it does not scale brightness. Brightness comes
@@ -138,8 +139,9 @@ pub enum LightKind {
     },
     /// Cone-shaped spotlight with physical inverse-square falloff.
     Spot {
-        /// World-space position of the light source.
-        position: [f32; 3],
+        /// World-space position of the light source, in f64 as for
+        /// [`LightKind::Point::position`].
+        position: glam::DVec3,
         /// World-space direction the cone points toward.
         direction: [f32; 3],
         /// Reach (world units): see [`LightKind::Point::range`]. Bounds reach,
@@ -255,10 +257,15 @@ impl LightSource {
     /// A point light at `position` with luminous intensity in [`Candela`].
     /// `range` bounds reach (not brightness) and `radius` is the source size
     /// (clamps the near-field and sizes the penumbra). See [`LightKind::Point`].
-    pub fn point_candela(position: [f32; 3], intensity: Candela, range: f32, radius: f32) -> Self {
+    pub fn point_candela(
+        position: impl crate::scene::IntoWorldPosition,
+        intensity: Candela,
+        range: f32,
+        radius: f32,
+    ) -> Self {
         Self {
             kind: LightKind::Point {
-                position,
+                position: position.into_world_position(),
                 range,
                 radius,
             },
@@ -270,7 +277,12 @@ impl LightSource {
     /// A point light specified by its total luminous flux in [`Lumen`] (as
     /// printed on a bulb). The flux is converted to candela over the full sphere
     /// via [`Lumen::to_point_candela`].
-    pub fn point_lumens(position: [f32; 3], flux: Lumen, range: f32, radius: f32) -> Self {
+    pub fn point_lumens(
+        position: impl crate::scene::IntoWorldPosition,
+        flux: Lumen,
+        range: f32,
+        radius: f32,
+    ) -> Self {
         Self::point_candela(position, flux.to_point_candela(), range, radius)
     }
 
@@ -279,7 +291,7 @@ impl LightSource {
     /// `range`/`radius` behave as on [`LightKind::Spot`].
     #[allow(clippy::too_many_arguments)]
     pub fn spot_candela(
-        position: [f32; 3],
+        position: impl crate::scene::IntoWorldPosition,
         direction: [f32; 3],
         intensity: Candela,
         range: f32,
@@ -289,7 +301,7 @@ impl LightSource {
     ) -> Self {
         Self {
             kind: LightKind::Spot {
-                position,
+                position: position.into_world_position(),
                 direction,
                 range,
                 inner_angle,
@@ -306,7 +318,7 @@ impl LightSource {
     /// a narrower `outer_angle` yields a brighter beam for the same lumens.
     #[allow(clippy::too_many_arguments)]
     pub fn spot_lumens(
-        position: [f32; 3],
+        position: impl crate::scene::IntoWorldPosition,
         direction: [f32; 3],
         flux: Lumen,
         range: f32,

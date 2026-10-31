@@ -60,8 +60,7 @@ impl App {
             .map(|pos| {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.model =
-                    glam::Mat4::from_translation(glam::Vec3::from(*pos)).into();
+                item.model = glam::Mat4::from_translation(glam::Vec3::from(*pos)).into();
                 item
             })
             .collect()
@@ -142,7 +141,7 @@ pub(crate) fn scene(
             vec![{
                 let mut _t = vpl::LightSource::default();
                 _t.kind = vpl::LightKind::Point {
-                    position: [5.0, 5.0, 5.0],
+                    position: [5.0, 5.0, 5.0].into(),
                     range: 30.0,
                     radius: 0.1,
                 };

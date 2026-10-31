@@ -278,7 +278,7 @@ pub struct SceneStats {
 /// - Point: position comes from the world translation; stored position is ignored.
 /// - Spot: position from world translation, direction rotated by world rotation.
 fn resolve_light_to_world(src: &LightSource, world: &crate::Transform) -> LightSource {
-    let translation = world.translation.as_vec3();
+    let translation = world.translation;
     let kind = match &src.kind {
         LightKind::Directional { direction } => {
             let rotated = (world.rotation_scale * glam::Vec3::from(*direction)).normalize();
@@ -287,7 +287,7 @@ fn resolve_light_to_world(src: &LightSource, world: &crate::Transform) -> LightS
             }
         }
         LightKind::Point { range, radius, .. } => LightKind::Point {
-            position: translation.into(),
+            position: translation,
             range: *range,
             radius: *radius,
         },
@@ -301,7 +301,7 @@ fn resolve_light_to_world(src: &LightSource, world: &crate::Transform) -> LightS
         } => {
             let rotated = (world.rotation_scale * glam::Vec3::from(*direction)).normalize();
             LightKind::Spot {
-                position: translation.into(),
+                position: translation,
                 direction: rotated.into(),
                 range: *range,
                 inner_angle: *inner_angle,
