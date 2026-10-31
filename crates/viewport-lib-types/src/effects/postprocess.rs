@@ -363,8 +363,8 @@ pub struct PostProcessSettings {
     pub dof: DofSettings,
     /// Vignette (corner darkening) settings.
     pub vignette: VignetteSettings,
-    /// Colour-grading lookup texture, applied after tone mapping. `None` =
-    /// no grading.
+    /// Colour-grading lookup texture. `None` = no grading. Where it applies
+    /// and what its axes mean is set by [`grading_space`](Self::grading_space).
     ///
     /// The id must reference a strip LUT uploaded through the renderer's
     /// texture API: `n` slices of `n` x `n` laid out horizontally (width
@@ -373,6 +373,43 @@ pub struct PostProcessSettings {
     /// values pass through unmodified; texture ids registered as external
     /// views are ignored (the renderer cannot read their dimensions).
     pub grade_lut: Option<crate::ids::TextureId>,
+    /// Where [`grade_lut`](Self::grade_lut) applies. Default:
+    /// [`GradingSpace::Scene`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub grading_space: GradingSpace,
+}
+
+/// Where the colour-grading LUT ([`PostProcessSettings::grade_lut`]) applies
+/// in the view transform.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum GradingSpace {
+    /// Grade exposed radiance before the tone-map operator, through a fixed
+    /// log shaper. Each channel `c` (nits after exposure) is shaped as
+    ///
+    /// ```text
+    /// s = clamp((log2(max(c, 2^-14)) + 14) / 24, 0, 1)
+    /// ```
+    ///
+    /// which maps `[2^-14, 2^10]` to `[0, 1]`. The LUT is looked up at `s`
+    /// and its output, in the same shaped space, is mapped back to radiance
+    /// with `2^(s * 24 - 14)` before the operator. A LUT whose texels hold
+    /// their own coordinates is an identity. Values outside the range clamp
+    /// to its ends, negative channels included.
+    ///
+    /// A LUT's output steps are steps of the shaped value, so an 8-bit LUT
+    /// quantises radiance to about 1/11 of a stop; upload a scene-referred
+    /// LUT as a float texture ([`TextureData::hdr`]) to keep it smooth. The
+    /// background colour is a display-space value and is not graded.
+    ///
+    /// [`TextureData::hdr`]: crate::data::texture::TextureData::hdr
+    #[default]
+    Scene,
+    /// Grade the display-space result after the tone-map operator and the
+    /// background composite, with the LUT's axes in `[0, 1]` display values.
+    /// The background colour is graded with everything else.
+    Display,
 }
 
 impl Default for PostProcessSettings {
@@ -387,6 +424,7 @@ impl Default for PostProcessSettings {
             dof: DofSettings::default(),
             vignette: VignetteSettings::default(),
             grade_lut: None,
+            grading_space: GradingSpace::Scene,
         }
     }
 }
@@ -394,7 +432,8 @@ impl Default for PostProcessSettings {
 /// Vignette settings, grouped on [`PostProcessSettings::vignette`].
 ///
 /// Darkens the image toward the corners, applied at the very end of the
-/// tone-map composite (after grading), so it affects the background too.
+/// tone-map composite (after grading in either space), so it affects the
+/// background too.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

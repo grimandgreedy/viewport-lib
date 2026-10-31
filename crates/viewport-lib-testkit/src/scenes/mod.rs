@@ -16,6 +16,7 @@ use viewport_lib::Colour;
 pub mod exposure;
 pub mod fallbacks;
 pub mod far_origin;
+pub mod grading;
 pub mod item_types;
 pub mod light_transport;
 pub mod materials;
@@ -1090,6 +1091,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(materials_ibl::scenes());
     scenes.push(far_origin::scene());
     scenes.extend(light_transport::scenes());
+    scenes.extend(grading::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

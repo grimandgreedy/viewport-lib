@@ -101,6 +101,10 @@ fn expected(name: &str) -> Option<Expected> {
         "light_transport_recolor_physical" => e(3, 3, 3, 3, 4418),
         "light_transport_colormap_physical" => e(4, 4, 3, 3, 966),
         "light_transport_no_environment" => e(9, 9, 2, 2, 12162),
+        // Grading charts: the plate and the twelve cards, as the exposure
+        // charts.
+        "grade_scene_teal_orange" => e(13, 13, 2, 2, 26),
+        "grade_scene_teal_orange_sunny16" => e(13, 13, 2, 2, 26),
         "many_objects" => e(144, 144, 2, 2, 16992),
         "lights_eight" => e(4, 4, 2, 2, 2892),
         "game_mix" => e(85, 85, 4, 4, 2972),

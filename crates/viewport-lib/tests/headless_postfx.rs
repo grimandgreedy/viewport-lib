@@ -772,9 +772,9 @@ fn vignette_darkens_corners_only() {
     );
 }
 
-/// Colour-grading LUT: a strip LUT that zeroes the red channel must remove
-/// red from the output while leaving green essentially unchanged, and an
-/// unset `grade_lut` must not change the image.
+/// Display-referred colour-grading LUT: a strip LUT that zeroes the red
+/// channel must remove red from the background while leaving green
+/// essentially unchanged, and an unset `grade_lut` must not change the image.
 #[test]
 fn grade_lut_remaps_colour() {
     let Some((device, queue)) = headless_device() else {
@@ -812,6 +812,7 @@ fn grade_lut_remaps_colour() {
         let mut frame = tonemap_frame(size, bg);
         if grade {
             frame.effects.post_process.grade_lut = Some(lut_id);
+            frame.effects.post_process.grading_space = viewport_lib::GradingSpace::Display;
         }
         renderer.render_offscreen(&device, &queue, &frame, size, size)
     };

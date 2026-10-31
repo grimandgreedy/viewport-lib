@@ -24,9 +24,9 @@ pub(crate) mod slot {
     pub(crate) const DEPTH_SAMPLER: u32 = 7;
     pub(crate) const FOREGROUND_DEPTH: u32 = 8;
     pub(crate) const EXPOSURE: u32 = 9;
-    /// Colour-grading strip LUT, sampled after tone mapping. A neutral
-    /// placeholder is bound when grading is off (the shader gates on the
-    /// uniform's `grade_enabled`).
+    /// Colour-grading strip LUT, sampled before or after tone mapping by the
+    /// uniform's `grade_mode`. A neutral placeholder is bound when grading is
+    /// off.
     pub(crate) const GRADE_LUT: u32 = 10;
 }
 
