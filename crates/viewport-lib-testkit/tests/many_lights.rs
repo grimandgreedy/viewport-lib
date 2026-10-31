@@ -37,7 +37,7 @@ fn point_shadow_casters_are_capped_at_the_layer_budget() {
         .expect("material upload");
     let mut ball = SceneRenderItem::default();
     ball.mesh_id = ball_id;
-    ball.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 15.0)).to_cols_array_2d();
+    ball.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 15.0)).into();
     ball.material = h
         .renderer
         .resources_mut()

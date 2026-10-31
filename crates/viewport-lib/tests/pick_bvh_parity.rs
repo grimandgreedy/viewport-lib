@@ -57,7 +57,7 @@ fn bvh_cpu_pick_matches_gpu_pick_many_objects() {
             glam::Quat::IDENTITY,
             t,
         )
-        .to_cols_array_2d();
+        .into();
         item.settings.pick_id = PickId(id);
         items.push(item);
     }
@@ -166,7 +166,7 @@ fn bvh_cpu_rect_pick_matches_oracle() {
             glam::Quat::IDENTITY,
             t,
         )
-        .to_cols_array_2d();
+        .into();
         item.settings.pick_id = PickId(id);
         items.push(item);
     }

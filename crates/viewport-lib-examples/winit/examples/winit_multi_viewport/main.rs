@@ -140,7 +140,7 @@ impl AppState {
             .map(|&(pos, colour)| {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.mesh_id;
-                item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
                 item.settings.colour = Some(Colour::linear_rgb(colour[0], colour[1], colour[2]));
                 item
             })

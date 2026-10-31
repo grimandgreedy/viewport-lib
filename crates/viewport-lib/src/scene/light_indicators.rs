@@ -151,7 +151,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
         }
 
         let id = node.id();
-        let world = node.world_transform();
+        let world = node.world_transform().to_mat4();
         let translation = world.col(3).truncate();
         let is_selected = selection.contains(id);
 

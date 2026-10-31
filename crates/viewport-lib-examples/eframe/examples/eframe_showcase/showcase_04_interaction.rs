@@ -175,7 +175,7 @@ impl App {
             .collect::<Vec<_>>()
         {
             if let Some(node) = self.interact_state.scene.node(id) {
-                let cur = node.local_transform();
+                let cur = node.local_transform().to_mat4();
                 let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
                 self.interact_state.scene.set_local_transform(id, new_t);
             }
@@ -196,7 +196,7 @@ impl App {
             if let Some(node) = self.interact_state.scene.node(id) {
                 self.interact_state
                     .transforms_snapshot
-                    .insert(id, node.local_transform());
+                    .insert(id, node.local_transform().to_mat4());
             }
         }
     }
@@ -235,7 +235,7 @@ impl App {
 
         for nid in iter_nodes {
             if let Some(node) = self.interact_state.scene.node(nid) {
-                let t = node.world_transform();
+                let t = node.world_transform().to_mat4();
                 let pos = glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z);
                 min = min.min(pos - glam::Vec3::splat(0.6));
                 max = max.max(pos + glam::Vec3::splat(0.6));
@@ -580,7 +580,7 @@ pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
     app.interact_state.gizmo_center =
         vpl::gizmo::gizmo_center_from_selection(&app.interact_state.selection, |id| {
             app.interact_state.scene.node(id).map(|n| {
-                let t = n.world_transform();
+                let t = n.world_transform().to_mat4();
                 glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
             })
         });

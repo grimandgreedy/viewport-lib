@@ -200,7 +200,7 @@ fn pick_light_indicators_cpu(
             continue;
         }
         let world = node.world_transform();
-        let center = world.col(3).truncate();
+        let center = world.translation.as_vec3();
         let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, center, LIGHT_GLYPH_PICK_RADIUS)
         else {
             continue;

@@ -106,7 +106,7 @@ impl ViewportRenderer {
                     value,
                     visibility_mask: item.settings.visibility_mask,
                 });
-                state.models.push(origin.rel_model(item.model));
+                state.models.push(origin.rel_transform(&item.model));
             }
         }
 

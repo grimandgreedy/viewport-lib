@@ -25,7 +25,7 @@ fn cubes(mesh_id: MeshId, count: usize) -> SurfaceSubmission {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.5, 0.0, 0.0))
-                .to_cols_array_2d();
+                .into();
             item
         })
         .collect();

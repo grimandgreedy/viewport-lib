@@ -589,7 +589,7 @@ impl App {
                 settings.receive_shadows = false;
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.model = model;
+                item.model = model.into();
                 item.material = self.clipvol_state.fill_material;
                 item.settings = settings;
                 out.push(item);

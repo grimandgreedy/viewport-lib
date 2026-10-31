@@ -140,7 +140,7 @@ fn external_view_is_sampled_by_a_material() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     mat.texture_id = Some(tex);
     item.material = upload_material(&mut renderer, mat);

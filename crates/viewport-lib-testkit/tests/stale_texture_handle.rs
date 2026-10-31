@@ -58,7 +58,7 @@ fn shot(
     let quad = |x: f32| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         item.material = material;
         item.settings.unlit = true;
         item

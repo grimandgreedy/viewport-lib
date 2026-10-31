@@ -87,7 +87,7 @@ impl Scene {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.mesh;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).into();
             item.material = material;
             item.settings.opacity = opacity;
             item
@@ -335,7 +335,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
     let caster_at = |y: f32, material: MaterialId| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).into();
         it.material = material;
         it
     };
@@ -447,7 +447,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     let caster_at = |y: f32| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).into();
         it.material = caster;
         it
     };

@@ -160,7 +160,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
     // Deforming mesh: single item placed at origin.
     if let Some(mid) = app.pb_state.mesh_id {
         let mut item = SceneRenderItem::new(mid, app.pb_state.mesh_material);
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         items.push(item);
     }
 

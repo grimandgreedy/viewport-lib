@@ -1971,8 +1971,7 @@ impl ViewportRenderer {
         // sorted alpha blending against the foreground depth, not OIT.
         let eye = fg_camera.eye_position();
         let dist_from_eye = |item: &SceneRenderItem| -> f32 {
-            let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
-            (pos - eye).length()
+            (item.model.translation - glam::DVec3::from(eye)).length() as f32
         };
         let items = &frame.scene.foreground_items;
         let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();

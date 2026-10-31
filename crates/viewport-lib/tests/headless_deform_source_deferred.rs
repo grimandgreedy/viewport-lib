@@ -43,7 +43,7 @@ fn flat(
 ) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item.material = upload_material(
         renderer,
         Material::from_colour(Colour::linear_rgb(colour[0], colour[1], colour[2])),

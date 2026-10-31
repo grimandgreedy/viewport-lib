@@ -177,12 +177,12 @@ fn render_pair(fx: &mut Fixture, joint: glam::Mat4, material: MaterialId) -> [Ve
     ));
     let mut skinned = SceneRenderItem::default();
     skinned.mesh_id = fx.skinned;
-    skinned.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    skinned.model = glam::Mat4::IDENTITY.into();
     skinned.material = material;
     skinned.deform_instance = Some(0);
     let mut plain = SceneRenderItem::default();
     plain.mesh_id = fx.plain;
-    plain.model = joint.to_cols_array_2d();
+    plain.model = joint.into();
     plain.material = material;
 
     let mut out = Vec::new();

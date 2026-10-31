@@ -765,7 +765,7 @@ impl App {
             let mut ground = SceneRenderItem::default();
             ground.mesh_id = self.m_ground;
             ground.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
             ground.material = self.mats.ground;
             items.push(ground);
         }
@@ -774,7 +774,7 @@ impl App {
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = self.m_sphere;
         sphere.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).into();
         sphere.material = self.mats.sphere;
         items.push(sphere);
 
@@ -782,7 +782,7 @@ impl App {
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = self.m_cube;
         cube.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
         cube.material = self.mats.cube;
         items.push(cube);
 
@@ -791,7 +791,7 @@ impl App {
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = self.m_torus;
         torus.model =
-            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).into();
         torus.material = self.mats.torus;
         items.push(torus);
         items
@@ -805,7 +805,7 @@ impl App {
             let mut ground = SceneRenderItem::default();
             ground.mesh_id = self.m_ground2;
             ground.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
             ground.material = self.mats.ground2;
             items.push(ground);
         }
@@ -815,7 +815,7 @@ impl App {
         let mut clay = SceneRenderItem::default();
         clay.mesh_id = self.m_clay;
         clay.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).into();
         clay.material = self.mats.clay;
         items.push(clay);
 
@@ -824,7 +824,7 @@ impl App {
         let mut ceramic = SceneRenderItem::default();
         ceramic.mesh_id = self.m_ceramic;
         ceramic.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).into();
         ceramic.material = self.mats.ceramic;
         items.push(ceramic);
 
@@ -833,7 +833,7 @@ impl App {
         let mut metal = SceneRenderItem::default();
         metal.mesh_id = self.m_metal;
         metal.model =
-            glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).into();
         metal.material = self.mats.metal;
         items.push(metal);
 
@@ -841,7 +841,7 @@ impl App {
         let mut rough = SceneRenderItem::default();
         rough.mesh_id = self.m_rough;
         rough.model =
-            glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).into();
         rough.material = self.mats.rough;
         items.push(rough);
 
@@ -850,7 +850,7 @@ impl App {
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = self.m_cube2;
         cube.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).into();
         cube.material = self.mats.cube2;
         items.push(cube);
 
@@ -859,7 +859,7 @@ impl App {
         let mut percy = SceneRenderItem::default();
         percy.mesh_id = self.m_percy;
         percy.model =
-            glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).into();
         percy.material = self.mats.percy;
         items.push(percy);
         items

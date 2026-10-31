@@ -369,7 +369,7 @@ pub(crate) fn vcol_scene_items(app: &App) -> Vec<SceneRenderItem> {
 
     let make = |mesh_id: MeshId, origin: glam::Vec3| {
         let mut item = SceneRenderItem::new(mesh_id, s.material);
-        item.model = glam::Mat4::from_translation(origin).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(origin).into();
         item
     };
 

@@ -134,7 +134,7 @@ fn cube_scene(
                 let mut it = SceneRenderItem::default();
                 it.mesh_id = mesh;
                 it.model = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
-                    .to_cols_array_2d();
+                    .into();
                 it.material = material;
                 items.push(it);
                 if items.len() == count {

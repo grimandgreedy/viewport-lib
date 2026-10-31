@@ -43,7 +43,7 @@ fn frustum_cull_rejects_behind_camera() {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(Vec3::new(-47.5 + 5.0 * i as f32, 0.0, 0.0))
-                .to_cols_array_2d();
+                .into();
             item.material = grey;
             item
         })

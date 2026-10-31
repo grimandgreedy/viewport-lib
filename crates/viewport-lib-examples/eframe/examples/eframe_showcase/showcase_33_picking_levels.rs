@@ -1804,7 +1804,7 @@ pub(crate) fn pl_collect_scene_items(
     // TVM boundary surface rendered as an opaque mesh alongside the scene nodes.
     if let Some(tvm_mesh_id) = app.pl_state.tvm_mesh_id {
         let mut tvm_item = SceneRenderItem::new(tvm_mesh_id, app.pl_state.tvm_material);
-        tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        tvm_item.model = glam::Mat4::IDENTITY.into();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
         tvm_item.settings.unlit = false;

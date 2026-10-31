@@ -100,8 +100,8 @@ pub struct SceneNode {
     appearance: crate::scene::material::ItemSettings,
     visible: bool,
     show_normals: bool,
-    local_transform: glam::Mat4,
-    world_transform: glam::Mat4,
+    local_transform: crate::Transform,
+    world_transform: crate::Transform,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
     layer: LayerId,
@@ -184,12 +184,13 @@ impl SceneNode {
     }
 
     /// Local transform relative to this node's parent (or world if no parent).
-    pub fn local_transform(&self) -> glam::Mat4 {
+    pub fn local_transform(&self) -> crate::Transform {
         self.local_transform
     }
 
-    /// World-space transform. Updated by `Scene::update_transforms()`.
-    pub fn world_transform(&self) -> glam::Mat4 {
+    /// World-space transform, composed in f64. Updated by
+    /// `Scene::update_transforms()`.
+    pub fn world_transform(&self) -> crate::Transform {
         self.world_transform
     }
 
@@ -219,11 +220,11 @@ impl ViewportObject for SceneNode {
     }
 
     fn model_matrix(&self) -> glam::Mat4 {
-        self.world_transform
+        self.world_transform.to_mat4()
     }
 
     fn position(&self) -> glam::Vec3 {
-        self.world_transform.col(3).truncate()
+        self.world_transform.translation.as_vec3()
     }
 
     fn rotation(&self) -> glam::Quat {
@@ -276,13 +277,11 @@ pub struct SceneStats {
 /// - Directional: the stored direction is rotated by the node's world rotation.
 /// - Point: position comes from the world translation; stored position is ignored.
 /// - Spot: position from world translation, direction rotated by world rotation.
-fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
-    let translation = world.col(3).truncate();
+fn resolve_light_to_world(src: &LightSource, world: &crate::Transform) -> LightSource {
+    let translation = world.translation.as_vec3();
     let kind = match &src.kind {
         LightKind::Directional { direction } => {
-            let rotated = world
-                .transform_vector3(glam::Vec3::from(*direction))
-                .normalize();
+            let rotated = (world.rotation_scale * glam::Vec3::from(*direction)).normalize();
             LightKind::Directional {
                 direction: rotated.into(),
             }
@@ -300,9 +299,7 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
             radius,
             ..
         } => {
-            let rotated = world
-                .transform_vector3(glam::Vec3::from(*direction))
-                .normalize();
+            let rotated = (world.rotation_scale * glam::Vec3::from(*direction)).normalize();
             LightKind::Spot {
                 position: translation.into(),
                 direction: rotated.into(),
@@ -395,7 +392,7 @@ impl Scene {
     pub fn add(
         &mut self,
         mesh_id: Option<MeshId>,
-        transform: glam::Mat4,
+        transform: impl Into<crate::Transform>,
         material: MaterialId,
     ) -> NodeId {
         self.add_named("", mesh_id, transform, material)
@@ -406,9 +403,10 @@ impl Scene {
         &mut self,
         name: &str,
         mesh_id: Option<MeshId>,
-        transform: glam::Mat4,
+        transform: impl Into<crate::Transform>,
         material: MaterialId,
     ) -> NodeId {
+        let transform = transform.into();
         let id = self.next_id;
         self.next_id += 1;
         let node = SceneNode {
@@ -623,9 +621,9 @@ impl Scene {
     // -- Properties --
 
     /// Set the local transform of a node, marking it and its descendants dirty.
-    pub fn set_local_transform(&mut self, id: NodeId, transform: glam::Mat4) {
+    pub fn set_local_transform(&mut self, id: NodeId, transform: impl Into<crate::Transform>) {
         if let Some(node) = self.nodes.get_mut(&id) {
-            node.local_transform = transform;
+            node.local_transform = transform.into();
             node.dirty = true;
         }
         self.mark_descendants_dirty(id);
@@ -921,11 +919,11 @@ impl Scene {
         // self mutably while iterating, collect the root list first.
         let roots: Vec<NodeId> = self.roots.clone();
         for &root_id in &roots {
-            self.propagate_transform(root_id, glam::Mat4::IDENTITY);
+            self.propagate_transform(root_id, crate::Transform::IDENTITY);
         }
     }
 
-    fn propagate_transform(&mut self, id: NodeId, parent_world: glam::Mat4) {
+    fn propagate_transform(&mut self, id: NodeId, parent_world: crate::Transform) {
         let (dirty, local, children) = {
             let Some(node) = self.nodes.get(&id) else {
                 return;
@@ -934,7 +932,7 @@ impl Scene {
         };
 
         if dirty {
-            let world = parent_world * local;
+            let world = parent_world.mul_transform(&local);
             let node = self.nodes.get_mut(&id).unwrap();
             node.world_transform = world;
             node.dirty = false;
@@ -991,7 +989,7 @@ impl Scene {
             .filter(|n| n.visible && n.mesh_id.is_some())
             .filter_map(|n| {
                 let local_aabb = mesh_aabb_fn(n.mesh_id.unwrap())?;
-                let world_aabb = local_aabb.transformed(&n.world_transform);
+                let world_aabb = local_aabb.transformed(&n.world_transform.to_mat4());
                 Some((n.id, world_aabb))
             })
             .collect();
@@ -1011,7 +1009,7 @@ impl Scene {
                 }
                 let mesh_id = node.mesh_id?;
                 let local_aabb = mesh_aabb_fn(mesh_id)?;
-                Some(local_aabb.transformed(&node.world_transform))
+                Some(local_aabb.transformed(&node.world_transform.to_mat4()))
             });
             if let Some(aabb) = new_aabb {
                 self.spatial.insert_entry(id, aabb);
@@ -1072,7 +1070,7 @@ impl Scene {
             };
             items.push(SceneRenderItem {
                 mesh_id,
-                model: node.world_transform.to_cols_array_2d(),
+                model: node.world_transform,
                 settings: item_settings,
                 show_normals: node.show_normals,
                 material: node.material,
@@ -1161,7 +1159,7 @@ impl Scene {
                 };
                 items.push(SceneRenderItem {
                     mesh_id,
-                    model: node.world_transform.to_cols_array_2d(),
+                    model: node.world_transform,
                     settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
@@ -1202,7 +1200,7 @@ impl Scene {
 
                 // Frustum cull using world-space AABB.
                 if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
-                    let world_aabb = local_aabb.transformed(&node.world_transform);
+                    let world_aabb = local_aabb.transformed(&node.world_transform.to_mat4());
                     if frustum.cull_aabb(&world_aabb) {
                         stats.culled += 1;
                         continue;
@@ -1220,7 +1218,7 @@ impl Scene {
                 };
                 items.push(SceneRenderItem {
                     mesh_id,
-                    model: node.world_transform.to_cols_array_2d(),
+                    model: node.world_transform,
                     settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
@@ -1274,8 +1272,8 @@ impl Scene {
             appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
             show_normals: false,
-            local_transform: glam::Mat4::IDENTITY,
-            world_transform: glam::Mat4::IDENTITY,
+            local_transform: crate::Transform::IDENTITY,
+            world_transform: crate::Transform::IDENTITY,
             parent: None,
             children: Vec::new(),
             layer: DEFAULT_LAYER,
@@ -1317,7 +1315,7 @@ impl Scene {
             let Some(src) = &node.light else {
                 continue;
             };
-            out.push(resolve_light_to_world(src, node.world_transform));
+            out.push(resolve_light_to_world(src, &node.world_transform));
         }
         out
     }
@@ -1579,7 +1577,7 @@ mod tests {
         scene.update_transforms();
 
         let world = scene.node(child).unwrap().world_transform();
-        let pos = world.col(3).truncate();
+        let pos = world.translation.as_vec3();
         assert!((pos.x - 6.0).abs() < 1e-5, "expected x=6.0, got {}", pos.x);
     }
 
@@ -1610,8 +1608,8 @@ mod tests {
             .node(child)
             .unwrap()
             .world_transform()
-            .col(3)
-            .truncate();
+            .translation
+            .as_vec3();
         assert!(
             (child_pos.x - 12.0).abs() < 1e-5,
             "expected x=12.0, got {}",

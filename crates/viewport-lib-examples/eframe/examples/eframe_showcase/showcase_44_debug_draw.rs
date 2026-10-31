@@ -73,7 +73,7 @@ impl RuntimePlugin for DebugOverlayPlugin {
             let Some(node) = ctx.scene.node(id) else {
                 continue;
             };
-            let center = node.world_transform().col(3).truncate();
+            let center = node.world_transform().to_mat4().col(3).truncate();
             let half = glam::Vec3::splat(self.body_radius);
             dd.aabb(
                 center - half,

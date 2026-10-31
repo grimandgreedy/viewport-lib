@@ -161,7 +161,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let uniform = crate::resources::overlay::highlight::OutlineUniform {
-                    model: self.origin.rel_model(item.model),
+                    model: self.origin.rel_transform(&item.model),
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     has_position_override: 0,
@@ -297,7 +297,7 @@ impl ViewportRenderer {
                 .colourmap_id
                 .filter(|id| id.0 < resources.content.colourmap_views.len());
             let world_centre =
-                glam::Mat4::from_cols_array_2d(&item.model).transform_point3(mesh.aabb.center());
+                item.model.to_mat4().transform_point3(mesh.aabb.center());
 
             for (indices, material_id) in ranges {
                 let m = resources.material_or_default(material_id);
@@ -347,7 +347,7 @@ impl ViewportRenderer {
                 let e = m.emissive_nits();
                 let instance = records.len() as u32;
                 records.push(BasicInstance {
-                    model: self.origin.rel_model(item.model),
+                    model: self.origin.rel_transform(&item.model),
                     base_colour: [bc[0], bc[1], bc[2], item.settings.opacity],
                     emissive: [e[0], e[1], e[2], mask_cutoff.unwrap_or(0.5)],
                     material: [m.metallic, m.roughness, scalar_min, scalar_max],

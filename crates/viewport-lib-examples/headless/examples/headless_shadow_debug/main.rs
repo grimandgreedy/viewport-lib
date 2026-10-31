@@ -98,28 +98,28 @@ fn main() {
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = m_ground;
         ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         ground.material = ground_mat;
         items.push(ground);
 
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = m_sphere;
         sphere.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).into();
         sphere.material = sphere_mat;
         items.push(sphere);
 
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = m_cube;
         cube.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
         cube.material = cube_mat;
         items.push(cube);
 
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = m_torus;
         torus.model =
-            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).into();
         torus.material = torus_mat;
         items.push(torus);
         items

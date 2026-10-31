@@ -64,7 +64,7 @@ fn main() {
     camera.set_aspect_ratio(W as f32, H as f32);
 
     let mut item = SceneRenderItem::new(cube, material);
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
 
     let frame = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),

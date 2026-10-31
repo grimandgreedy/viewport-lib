@@ -70,7 +70,7 @@ fn camera() -> RenderCamera {
 fn flat(mesh: MeshId, translation: glam::Vec3, colour: [f32; 3]) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::from_translation(translation).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(translation).into();
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(
         colour[0], colour[1], colour[2],
     ));

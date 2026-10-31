@@ -173,6 +173,11 @@ impl OriginState {
         rel_model(m, self.origin)
     }
 
+    /// An item's placement as an f32 model matrix relative to the origin.
+    pub(crate) fn rel_transform(&self, t: &crate::Transform) -> [[f32; 4]; 4] {
+        t.to_mat4_relative(self.origin).to_cols_array_2d()
+    }
+
     /// The camera the GPU draws with: `camera` with its view and eye relative
     /// to the origin.
     pub(crate) fn camera(

@@ -33,11 +33,11 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
         .expect("material");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_mesh;
-    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -0.1)).to_cols_array_2d();
+    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -0.1)).into();
     ground.material = material;
     let mut cube = SceneRenderItem::default();
     cube.mesh_id = cube_mesh;
-    cube.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+    cube.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 0.5)).into();
     cube.material = material;
     vec![ground, cube]
 }
@@ -83,7 +83,7 @@ fn bounds_rebuild_only_when_the_instance_bounds_change() {
 
     // Moving the cube keeps the batch structure, so the instance buffer is
     // patched in place, and the bounds still have to follow it.
-    items[1].model = glam::Mat4::from_translation(Vec3::new(3.0, 2.0, 0.5)).to_cols_array_2d();
+    items[1].model = glam::Mat4::from_translation(Vec3::new(3.0, 2.0, 0.5)).into();
     let s = render(&mut h, &frame(&items, &camera, 3));
     assert_eq!(
         s.shadow_bounds_rebuilds, 1,
@@ -205,11 +205,11 @@ fn tall_caster_probe(h: &mut Harness) -> (f32, f32) {
         .expect("material");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_mesh;
-    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 40.0, -0.1)).to_cols_array_2d();
+    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 40.0, -0.1)).into();
     ground.material = material;
     let mut pillar = SceneRenderItem::default();
     pillar.mesh_id = pillar_mesh;
-    pillar.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 30.0)).to_cols_array_2d();
+    pillar.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 30.0)).into();
     pillar.material = material;
     let items = vec![ground, pillar];
 
@@ -279,11 +279,11 @@ fn shadow_past_the_distance(h: &mut Harness, fade_fraction: f32) -> (f32, f32) {
         .expect("material");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_mesh;
-    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 40.0, -0.1)).to_cols_array_2d();
+    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 40.0, -0.1)).into();
     ground.material = material;
     let mut fence = SceneRenderItem::default();
     fence.mesh_id = fence_mesh;
-    fence.model = glam::Mat4::from_translation(Vec3::new(0.0, 12.0, 1.0)).to_cols_array_2d();
+    fence.model = glam::Mat4::from_translation(Vec3::new(0.0, 12.0, 1.0)).into();
     fence.material = material;
     let items = vec![ground, fence];
 

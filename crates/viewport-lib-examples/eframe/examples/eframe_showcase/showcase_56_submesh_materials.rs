@@ -269,7 +269,7 @@ pub(crate) fn submesh_scene_items(app: &App) -> Vec<SceneRenderItem> {
         return vec![];
     }
     let mut item = SceneRenderItem::new(s.mesh_id, s.fallback_material);
-    item.model = glam::Mat4::from_rotation_z(s.angle).to_cols_array_2d();
+    item.model = glam::Mat4::from_rotation_z(s.angle).into();
     if s.per_range {
         item.submesh_materials = Some(s.range_materials.clone());
     }

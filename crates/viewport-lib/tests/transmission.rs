@@ -130,11 +130,11 @@ fn raster_centre(device: &wgpu::Device, queue: &wgpu::Queue, material: Material)
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(&mut renderer, material);
     let mut wall_item = SceneRenderItem::default();
     wall_item.mesh_id = wall;
-    wall_item.model = wall_model.to_cols_array_2d();
+    wall_item.model = wall_model.into();
     wall_item.material = upload_material(&mut renderer, backdrop_material());
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, wall_item].into());
     let px = renderer.render_offscreen(device, queue, &frame, SIZE, SIZE);

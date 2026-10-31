@@ -165,7 +165,7 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
         .map(|((&mesh_id, &colour), &tx)| {
             let mut item = SceneRenderItem::new(mesh_id, app.warp_state.material);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item.warp_attribute = Some("warp".to_string());
             item.warp_scale = app.warp_state.scale;

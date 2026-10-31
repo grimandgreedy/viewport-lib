@@ -89,7 +89,7 @@ fn main() -> eframe::Result {
             let item = |mesh_id: MeshId, x, z, colour: [f32; 3]| {
                 let mut s = SceneRenderItem::new(mesh_id, material);
                 s.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
+                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).into();
                 s.settings.colour = Some(Colour::from_linear_rgb_array(colour));
                 s
             };
@@ -114,7 +114,7 @@ fn main() -> eframe::Result {
                     let mut s = item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]);
                     s.model = (glam::Mat4::from_translation(glam::Vec3::new(cx[2], 0.0, rz[3]))
                         * glam::Mat4::from_rotation_x(std::f32::consts::PI))
-                    .to_cols_array_2d();
+                    .into();
                     s
                 },
                 item(m_arrow, cx[3], rz[3], [0.90, 0.25, 0.30]),

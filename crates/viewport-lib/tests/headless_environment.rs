@@ -56,7 +56,7 @@ fn sphere_frame(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(renderer, material);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
@@ -276,7 +276,7 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
         }
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = plane;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         centre(&renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE))[0]

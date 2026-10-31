@@ -273,7 +273,7 @@ fn main() {
                 it.mesh_id = mesh;
                 it.model =
                     glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 2.5 - 4.0, 0.0, 0.0))
-                        .to_cols_array_2d();
+                        .into();
                 it
             })
             .collect();

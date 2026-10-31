@@ -51,7 +51,7 @@ fn trio_frame(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool)
             mesh_id,
             upload_material(renderer, Material::pbr(colour, 0.2, 0.5)),
         );
-        item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
         item.settings.pick_id = PickId(pick);
         items.push(item);
     };

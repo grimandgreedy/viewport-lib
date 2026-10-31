@@ -61,7 +61,7 @@ impl App {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
                 item.model =
-                    glam::Mat4::from_translation(glam::Vec3::from(*pos)).to_cols_array_2d();
+                    glam::Mat4::from_translation(glam::Vec3::from(*pos)).into();
                 item
             })
             .collect()

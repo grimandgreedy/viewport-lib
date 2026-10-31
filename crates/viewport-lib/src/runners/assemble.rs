@@ -143,7 +143,7 @@ impl ViewportInstance {
         let mut count = 0.0f32;
         for &id in self.selection.iter() {
             if let Some(node) = self.scene.node(id) {
-                sum += node.world_transform().col(3).truncate();
+                sum += node.world_transform().translation.as_vec3();
                 count += 1.0;
             }
         }

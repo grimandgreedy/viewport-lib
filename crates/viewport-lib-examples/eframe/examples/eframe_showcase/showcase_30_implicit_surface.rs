@@ -249,7 +249,7 @@ impl App {
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, near_mat);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).into();
             items.push(item);
         }
 
@@ -257,7 +257,7 @@ impl App {
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, far_mat);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).into();
             items.push(item);
         }
 
@@ -265,7 +265,7 @@ impl App {
         if self.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
             if let Some(mc_id) = self.is_state.mc_mesh_id {
                 let mut item = SceneRenderItem::new(mc_id, mc_mat);
-                item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+                item.model = glam::Mat4::IDENTITY.into();
                 items.push(item);
             }
         }

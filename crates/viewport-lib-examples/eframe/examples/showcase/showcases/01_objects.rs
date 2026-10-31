@@ -123,7 +123,7 @@ impl Showcase for ObjectsShowcase {
                     let current = session
                         .scene()
                         .node(id)
-                        .map(|n| n.local_transform())
+                        .map(|n| n.local_transform().to_mat4())
                         .unwrap_or(Mat4::IDENTITY);
                     let to_pivot = Mat4::from_translation(-center);
                     let from_pivot = Mat4::from_translation(center);
@@ -143,7 +143,7 @@ impl Showcase for ObjectsShowcase {
                 // Idle: snapshot the selected node so cancel/constraint can restore it.
                 self.idle_transform = self
                     .selected
-                    .and_then(|id| session.scene().node(id).map(|n| n.local_transform()));
+                    .and_then(|id| session.scene().node(id).map(|n| n.local_transform().to_mat4()));
             }
             _ => {}
         }

@@ -44,7 +44,7 @@ fn box_behind_wall_is_occluded_and_box_in_front_is_not() {
     let placed = |m: Mat4| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.model = m.to_cols_array_2d();
+        item.model = m.into();
         item.material = grey;
         item
     };

@@ -382,7 +382,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
         for (node_id, _) in &node_ids {
             let node_id = *node_id;
             let (material, world) = match app.rt_state.scene.node(node_id) {
-                Some(n) => (n.material().clone(), n.world_transform()),
+                Some(n) => (n.material().clone(), n.world_transform().to_mat4()),
                 None => continue,
             };
             let model = if let Some(t) = app
@@ -397,7 +397,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
             };
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = model.to_cols_array_2d();
+            item.model = model.into();
             item.material = material;
             items.push(item);
         }

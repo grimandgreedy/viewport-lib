@@ -68,7 +68,7 @@ struct App {
     manip: ManipulationController,
     scene_items: Vec<SceneRenderItem>,
     selected: Option<usize>,
-    transforms_snapshot: Vec<[[f32; 4]; 4]>,
+    transforms_snapshot: Vec<viewport_lib::Transform>,
     // Per-frame drag/click state for ManipulationContext
     cursor_viewport: Option<glam::Vec2>,
     cursor_prev: Option<glam::Vec2>,
@@ -82,7 +82,7 @@ impl App {
     fn new(material: MaterialId, m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
         let make = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
             let mut item = SceneRenderItem::new(mesh_id, material);
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item
         };
@@ -235,8 +235,7 @@ impl App {
             .unwrap_or(glam::Vec2::ZERO);
 
         let selection_center = self.selected.map(|i| {
-            let col = self.scene_items[i].model[3];
-            glam::Vec3::new(col[0], col[1], col[2])
+            self.scene_items[i].model.translation.as_vec3()
         });
 
         let manip_ctx = ManipulationContext {
@@ -263,13 +262,13 @@ impl App {
         match self.manip.update(&action_frame, manip_ctx) {
             ManipResult::Update(delta) => {
                 if let Some(idx) = self.selected {
-                    let current = glam::Mat4::from_cols_array_2d(&self.scene_items[idx].model);
+                    let current = self.scene_items[idx].model.to_mat4();
                     let delta_mat = glam::Mat4::from_scale_rotation_translation(
                         delta.scale,
                         delta.rotation,
                         delta.translation,
                     );
-                    self.scene_items[idx].model = (delta_mat * current).to_cols_array_2d();
+                    self.scene_items[idx].model = (delta_mat * current).into();
                 }
             }
             ManipResult::Commit => {}

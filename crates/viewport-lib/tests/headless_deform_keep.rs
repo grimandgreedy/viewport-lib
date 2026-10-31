@@ -63,7 +63,7 @@ fn flat(
 ) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item.material = upload_material(
         renderer,
         Material::from_colour(viewport_lib::Colour::linear_rgb(
@@ -336,7 +336,7 @@ fn a_cut_caster_casts_no_shadow_from_its_removed_half() {
     );
     let mut caster = SceneRenderItem::default();
     caster.mesh_id = quad;
-    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
     let mut m = Material::from_colour(viewport_lib::Colour::linear_rgb(0.2, 0.2, 0.8));
     m.backface_policy = BackfacePolicy::Identical;
     caster.material = upload_material(&mut renderer, m);

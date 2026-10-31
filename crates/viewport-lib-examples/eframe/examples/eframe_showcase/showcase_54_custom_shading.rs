@@ -338,7 +338,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
             let mesh = if detail { detail_mesh } else { mesh_id };
             let mut item = SceneRenderItem::new(mesh, material);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.0)).into();
             item
         })
         .collect()

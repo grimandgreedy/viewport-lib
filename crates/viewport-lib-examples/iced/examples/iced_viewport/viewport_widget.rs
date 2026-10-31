@@ -281,7 +281,7 @@ impl shader::Primitive for ViewportPrimitive {
                 let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.model = model.to_cols_array_2d();
+                item.model = model.into();
                 Some(item)
             })
             .collect();

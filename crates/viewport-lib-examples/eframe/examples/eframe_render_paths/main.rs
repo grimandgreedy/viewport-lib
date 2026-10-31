@@ -627,7 +627,7 @@ impl App {
 
         let mut place = |mesh: MeshId, pick_id: u64, configure: &dyn Fn(&mut SceneRenderItem)| {
             let mut item = SceneRenderItem::new(mesh, mats[pick_id as usize]);
-            item.model = glam::Mat4::from_translation(grid_pos(pick_id)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(grid_pos(pick_id)).into();
             item.settings.pick_id = PickId(pick_id);
             item.settings.selected = self.selection.contains(&pick_id);
             configure(&mut item);
@@ -685,7 +685,7 @@ impl App {
         // Ground platform: instanced opaque, receives every object's shadow.
         let mut ground = SceneRenderItem::new(self.meshes.ground, mats[0]);
         ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         items.push(ground);
 
         items

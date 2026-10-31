@@ -330,7 +330,7 @@ impl App {
                     let mut item = SceneRenderItem::default();
                     item.mesh_id = self.eq_state.edge_mesh_ids[i];
                     item.model = glam::Mat4::from_translation(glam::vec3(offsets[i], 0.0, 0.0))
-                        .to_cols_array_2d();
+                        .into();
                     item.active_attribute = Some(AttributeRef {
                         name: names[i].into(),
                         kind: kinds[i],

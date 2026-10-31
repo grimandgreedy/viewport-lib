@@ -786,7 +786,7 @@ impl ViewportRenderer {
         // The instance reads the same deform table as the item's colour draw,
         // so a deformed mesh is picked where it is drawn.
         let to_instance = |item: &SceneRenderItem| {
-            let m = self.origin.rel_model(item.model);
+            let m = self.origin.rel_transform(&item.model);
             let record = self
                 .resources
                 .mesh_store
@@ -2328,7 +2328,7 @@ mod tests {
                 .expect("cube upload");
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
-            item.model = glam::Mat4::from_translation(centre).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(centre).into();
             item.settings.pick_id = PickId(3);
             let camera = RenderCamera::from_matrices(
                 glam::Mat4::look_at_rh(eye, centre, glam::Vec3::Z),

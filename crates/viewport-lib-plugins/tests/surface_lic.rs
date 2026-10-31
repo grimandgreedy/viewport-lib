@@ -59,7 +59,7 @@ fn quad_model(x: f32) -> [[f32; 4]; 4] {
 fn surface(mesh: MeshId, x: f32) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = quad_model(x);
+    item.model = quad_model(x).into();
     item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
     item.settings.unlit = true;
     item
@@ -184,7 +184,7 @@ fn streaks_are_clipped_with_the_surface() {
     let mut backdrop = surface(mesh, 0.5);
     backdrop.model = (glam::Mat4::from_translation(glam::Vec3::new(0.5, 0.0, -0.5))
         * glam::Mat4::from_scale(glam::Vec3::splat(2.0)))
-    .to_cols_array_2d();
+    .into();
     backdrop.settings.colour = Some(Colour::linear_rgb(0.4, 0.5, 0.6));
     backdrop.settings.ignore_clip = true;
 

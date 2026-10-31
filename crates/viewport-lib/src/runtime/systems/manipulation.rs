@@ -94,8 +94,7 @@ impl ManipulationSystem {
         // Compute gizmo center from selection.
         self.gizmo_center = gizmo::gizmo_center_from_selection(selection, |id| {
             scene.node(id).map(|n| {
-                let t = n.world_transform();
-                glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
+                n.world_transform().translation.as_vec3()
             })
         });
 
@@ -177,7 +176,7 @@ impl ManipulationSystem {
                 // converts the result back to local for writeback. Storing
                 // world here keeps that math consistent across drag and
                 // cancel.
-                self.transforms_snapshot.insert(id, node.world_transform());
+                self.transforms_snapshot.insert(id, node.world_transform().to_mat4());
             }
         }
     }
@@ -222,7 +221,7 @@ impl ManipulationSystem {
                 }
             } else {
                 match scene.node(id) {
-                    Some(n) => n.world_transform(),
+                    Some(n) => n.world_transform().to_mat4(),
                     None => continue,
                 }
             };
@@ -260,6 +259,6 @@ fn parent_world_of(scene: &Scene, id: NodeId) -> glam::Mat4 {
     };
     scene
         .node(parent_id)
-        .map(|n| n.world_transform())
+        .map(|n| n.world_transform().to_mat4())
         .unwrap_or(glam::Mat4::IDENTITY)
 }

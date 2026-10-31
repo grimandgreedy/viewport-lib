@@ -278,7 +278,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     };
 
     let mut item = SceneRenderItem::new(plane_id, water);
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = app.wave_state.select_surface;
 
     // The buoys are not scene items: they render as an external instance set

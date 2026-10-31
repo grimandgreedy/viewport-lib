@@ -75,7 +75,7 @@ fn lit_frame(
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     // Scale the unit quad up so it covers the whole 1:1 frame.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();
     item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame

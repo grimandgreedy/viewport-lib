@@ -135,7 +135,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
             let y = -half + i as f32 * (2.0 * half / (count as f32 - 1.0));
             let mut item = SceneRenderItem::default();
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = st.sphere_material;
             item.settings.pick_id = PickId(1000 + i as u64);
             if st.lod_enabled {

@@ -415,7 +415,7 @@ mod tests {
         );
 
         let node = scene.node(node_id).expect("node not found");
-        let pos = node.world_transform().col(3).truncate();
+        let pos = node.world_transform().translation.as_vec3();
         assert!(
             (pos - glam::Vec3::new(3.0, 4.0, 5.0)).length() < 1e-5,
             "pos was {pos:?}"
@@ -543,7 +543,7 @@ mod tests {
             &make_frame(&camera, &input, 1.0 / 60.0),
         );
 
-        let world = glam::Affine3A::from_mat4(scene.node(child).unwrap().world_transform());
+        let world = glam::Affine3A::from_mat4(scene.node(child).unwrap().world_transform().to_mat4());
         let expected = glam::Vec3::new(10.0, 2.0, 3.0);
         assert!((glam::Vec3::from(world.translation) - expected).length() < 1e-5);
 
@@ -2199,7 +2199,7 @@ impl ViewportRuntime {
             for op in &ops {
                 if let Some(node) = scene.node(op.id) {
                     self.snapshots
-                        .update(op.id, glam::Affine3A::from_mat4(node.world_transform()));
+                        .update(op.id, glam::Affine3A::from_mat4(node.world_transform().to_mat4()));
                 }
             }
         }
@@ -2222,7 +2222,7 @@ impl ViewportRuntime {
                 .or_else(|| {
                     scene
                         .node(id)
-                        .map(|n| n.world_transform().col(3).truncate())
+                        .map(|n| n.world_transform().translation.as_vec3())
                 });
             if let Some(pos) = pos {
                 output

@@ -334,12 +334,12 @@ impl ViewportRenderer {
             .iter()
             .find(|i| i.settings.pick_id.0 == id && !i.settings.hidden)
         {
-            return Some((it.mesh_id, it.model));
+            return Some((it.mesh_id, it.model.to_mat4().to_cols_array_2d()));
         }
         for vm in &frame.scene.volume_meshes {
             let ri = vm.to_render_item();
             if ri.settings.pick_id.0 == id && !ri.settings.hidden {
-                return Some((ri.mesh_id, ri.model));
+                return Some((ri.mesh_id, ri.model.to_mat4().to_cols_array_2d()));
             }
         }
         None

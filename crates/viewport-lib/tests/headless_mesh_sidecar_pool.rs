@@ -273,7 +273,7 @@ fn a_shadow_caster_follows_its_override_window() {
     caster_material.backface_policy = viewport_lib::BackfacePolicy::Identical;
     let mut caster = SceneRenderItem::default();
     caster.mesh_id = caster_mesh;
-    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, 1.0, 1.5)).to_cols_array_2d();
+    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, 1.0, 1.5)).into();
     caster.material = upload_material(&mut renderer, caster_material);
 
     let mut sun = LightSource::default();
@@ -393,7 +393,7 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
         let mut it = SceneRenderItem::default();
         it.mesh_id = quad;
         it.material = white;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         it.lightmap_placement = Some(viewport_lib::resources::LightmapPlacementId::from_index(
             placement,
         ));

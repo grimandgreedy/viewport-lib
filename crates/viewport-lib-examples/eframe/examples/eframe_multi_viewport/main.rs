@@ -660,7 +660,7 @@ impl App {
                     .enumerate()
                     .map(|(i, obj)| {
                         let mut item = SceneRenderItem::new(obj.mesh_id, self.material);
-                        item.model = obj.model.to_cols_array_2d();
+                        item.model = obj.model.into();
                         item.settings.colour = Some(Colour::from_linear_rgb_array(obj.colour));
                         item.settings.selected = self.selection.contains(i as u64);
                         item

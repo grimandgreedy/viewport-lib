@@ -143,7 +143,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let mut transparent = item.clone();
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, transparent].into());
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -908,7 +908,7 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
                         0.0,
                         0.0,
                     ))
-                    .to_cols_array_2d();
+                    .into();
                     item
                 })
                 .collect();
@@ -1157,7 +1157,7 @@ fn two_box_frame(mesh_id: MeshId, materials: &[MaterialId]) -> FrameData {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(x, x, 0.0),
             )
-            .to_cols_array_2d();
+            .into();
             it
         })
         .collect();

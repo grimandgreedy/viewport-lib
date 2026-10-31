@@ -102,7 +102,7 @@ impl ViewportRenderer {
                 continue;
             };
 
-            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let model = item.model.to_mat4();
             let size = crate::resources::projected_screen_size(&mesh.aabb, &model, camera);
 
             // Too small to bother drawing: hide it for this frame. Hidden items
@@ -317,7 +317,7 @@ impl ViewportRenderer {
         // measured the items where they are.
         if !self.origin.is_zero() {
             for item in &mut scene_items_owned {
-                item.model = self.origin.rel_model(item.model);
+                item.model.translation -= self.origin.origin();
             }
         }
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
@@ -1615,7 +1615,7 @@ mod lod_resolve_tests {
 
     fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> SceneRenderItem {
         let mut item = SceneRenderItem::default();
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).into();
         item.lod_group = Some(group);
         item.settings.pick_id = crate::renderer::PickId(pick);
         item

@@ -91,7 +91,7 @@ fn route_filler(renderer: &mut ViewportRenderer, mesh_id: MeshId) -> SceneRender
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).into();
     item.material = upload_material(
         renderer,
         Material::from_colour(Colour::linear_rgb(0.1, 0.9, 0.1)),
@@ -524,7 +524,7 @@ fn shadow_alpha_mask_matrix() {
                 let mut caster_mat = Material::default();
                 caster.mesh_id = caster_id;
                 caster.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).to_cols_array_2d();
+                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).into();
                 caster_mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 caster_mat.texture_id = Some(tex);
                 caster_mat.alpha_mode = AlphaMode::Mask(0.5);

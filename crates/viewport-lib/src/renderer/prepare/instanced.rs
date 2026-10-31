@@ -821,14 +821,19 @@ impl ViewportRenderer {
                 // spatially close instances adjacent in the buffer, which
                 // reduces GPU cache pressure through the visibility-index
                 // indirection in the culled draw path.
-                for col in [3, 0, 1, 2] {
-                    for row in 0..4 {
-                        let ord = a.item.model[col][row]
-                            .to_bits()
-                            .cmp(&b.item.model[col][row].to_bits());
-                        if ord != std::cmp::Ordering::Equal {
-                            return ord;
-                        }
+                let (ta, tb) = (a.item.model.translation, b.item.model.translation);
+                for (x, y) in ta.to_array().into_iter().zip(tb.to_array()) {
+                    let ord = x.to_bits().cmp(&y.to_bits());
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+                let ra = a.item.model.rotation_scale.to_cols_array();
+                let rb = b.item.model.rotation_scale.to_cols_array();
+                for (x, y) in ra.into_iter().zip(rb) {
+                    let ord = x.to_bits().cmp(&y.to_bits());
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
                     }
                 }
                 // Final tiebreaker: pick_id is a stable, application-assigned
@@ -918,7 +923,7 @@ impl ViewportRenderer {
                                 // supplies the rest.
                                 use crate::resources::mesh::instancing::instance_flags as f;
                                 InstanceData {
-                                    model: item.model,
+                                    model: item.model.to_mat4().to_cols_array_2d(),
                                     colour: [1.0, 1.0, 1.0, 1.0],
                                     flags: f::RECEIVE_SHADOWS
                                         | f::when(item.settings.ignore_clip, f::IGNORE_CLIP),
@@ -981,7 +986,7 @@ impl ViewportRenderer {
                             );
                             all_instances.push(record);
                             if let Some(aabb) = &mesh_aabb {
-                                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                                let model = item.model.to_mat4();
                                 let world_aabb = aabb.transformed(&model);
                                 bounds_min = bounds_min.min(world_aabb.min);
                                 bounds_max = bounds_max.max(world_aabb.max);

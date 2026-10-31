@@ -57,7 +57,7 @@ fn centre(
     frame.effects.environment = Some(EnvironmentLighting::new(sky));
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     let px = renderer.render_offscreen(device, queue, &frame, SIZE, SIZE);

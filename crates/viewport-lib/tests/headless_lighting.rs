@@ -46,7 +46,7 @@ fn capture_hdr_preserves_values_above_one() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -188,7 +188,7 @@ fn directional_lightmap_responds_to_normal() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         mat.normal_map_id = Some(nm);
         mat.normal_strength = 1.0;
@@ -295,7 +295,7 @@ fn shadowmask_attenuates_direct_light() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -360,7 +360,7 @@ fn hdr_lightmap_survives_above_one() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -465,7 +465,7 @@ fn multi_page_lightmap_selects_layer_per_vertex() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -574,7 +574,7 @@ fn scene_lightmap_addresses_shared_atlas_per_object() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -701,7 +701,7 @@ fn packed_scene_atlas_round_trips_through_the_packer() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -757,7 +757,7 @@ fn capture_equirect_maps_direction_like_the_shader() {
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     // Place the box along +X so it fills only the +X face from the origin.
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(8.0, 8.0, 8.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -824,7 +824,7 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(8.0, 8.0, 8.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -931,7 +931,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.shading_model = ShadingModel::Pbr;
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.indirect_light = IndirectLightSource::LightProbe;
@@ -1004,7 +1004,7 @@ fn probe_volume_lights_object_per_fragment() {
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     // Scale the unit box up so it spans the volume's X gradient.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
     mat.shading_model = ShadingModel::Pbr;
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.indirect_light = IndirectLightSource::ProbeVolume;
@@ -1064,7 +1064,7 @@ fn bake_light_probes_captures_directional_radiance() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(6.0, 6.0, 6.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1108,7 +1108,7 @@ fn capture_reflection_probe_bakes_a_parallax_zone() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(5.0, 5.0, 5.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1217,7 +1217,7 @@ fn environment_zones_select_the_second_zone() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
         &mut renderer,
         Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0),
@@ -1291,7 +1291,7 @@ fn render_spheres(
         .map(|(centre, material)| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
-            item.model = glam::Mat4::from_translation(*centre).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(*centre).into();
             item.material = upload_material(renderer, material.clone());
             item
         })
@@ -1361,7 +1361,7 @@ fn captured_probe_ignores_the_lighting_rotation() {
     let mut emitter = SceneRenderItem::default();
     let mut mat = Material::default();
     emitter.mesh_id = box_idx;
-    emitter.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
+    emitter.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(5.0, 5.0, 5.0);
     emitter.material = upload_material(&mut renderer, mat);
     capture_frame.scene.surfaces = SurfaceSubmission::Flat(vec![emitter].into());
@@ -1682,7 +1682,7 @@ fn environment_lit_sphere(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
         renderer,
         Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0),
@@ -1818,7 +1818,7 @@ fn capture_lit_box_max(
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.settings.visibility_mask = visibility_mask;
     item.material = upload_material(renderer, mat);
@@ -1928,7 +1928,7 @@ fn clustered_lighting_matches_the_per_light_fallback() {
             .collect();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         let lights = std::mem::take(&mut frame.effects.lighting.lights);
         frame.effects.lighting.lights = vec![lights[0].clone()];

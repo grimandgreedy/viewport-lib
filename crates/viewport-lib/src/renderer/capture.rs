@@ -1333,7 +1333,7 @@ mod tests {
                 ..Default::default()
             };
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.settings.visibility_mask = 0b01;
             items.push(item);
         }

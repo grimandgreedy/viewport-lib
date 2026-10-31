@@ -344,7 +344,7 @@ impl ViewportRenderer {
                 let override_buf = mesh.and_then(|m| m.position_override_buffer.as_ref());
                 let override_slice = mesh.and_then(|m| m.position_override_slice);
                 let uniform = OutlineUniform {
-                    model: origin.rel_model(item.model),
+                    model: origin.rel_transform(&item.model),
                     colour: [0.0; 4], // unused by mask shader
                     pixel_offset: 0.0,
                     has_position_override: if override_buf.is_some() { 1 } else { 0 },
@@ -432,7 +432,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let uniform = OutlineUniform {
-                    model: origin.rel_model(item.model),
+                    model: origin.rel_transform(&item.model),
                     colour: frame.interaction.xray_colour.to_linear_rgba(),
                     pixel_offset: 0.0,
                     has_position_override: 0,
@@ -511,7 +511,7 @@ impl ViewportRenderer {
                     let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                         continue;
                     };
-                    let rel_model = origin.rel_model(item.model);
+                    let rel_model = origin.rel_transform(&item.model);
                     let model = glam::Mat4::from_cols_array_2d(&rel_model);
                     let world_aabb = mesh.aabb.transformed(&model);
                     if !world_aabb.intersects_plane(plane_n, distance) {

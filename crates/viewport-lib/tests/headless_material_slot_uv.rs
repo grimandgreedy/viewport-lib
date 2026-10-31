@@ -42,7 +42,7 @@ fn render_emissive_box(
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     // Large enough that the measured centre of the frame is all cube.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();
     let mut m = Material::default();
     m.shading_model = ShadingModel::Pbr;
     m.base_colour = Colour::linear_rgb(0.0, 0.0, 0.0);

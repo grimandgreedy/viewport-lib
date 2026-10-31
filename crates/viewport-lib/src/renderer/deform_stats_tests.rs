@@ -33,8 +33,8 @@ fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
     .ok()
 }
 
-fn translate(x: f32) -> [[f32; 4]; 4] {
-    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, -6.0)).to_cols_array_2d()
+fn translate(x: f32) -> crate::Transform {
+    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, -6.0)).into()
 }
 
 /// `count` copies of one mesh, all visible, looking down -Z.

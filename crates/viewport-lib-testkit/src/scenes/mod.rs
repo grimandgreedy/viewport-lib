@@ -336,7 +336,7 @@ fn item_model(
     material: Material,
 ) -> SceneRenderItem {
     let mut it = SceneRenderItem::new(mesh, self::material(ctx, material));
-    it.model = model.to_cols_array_2d();
+    it.model = model.into();
     it
 }
 

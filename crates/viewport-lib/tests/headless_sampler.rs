@@ -78,7 +78,7 @@ fn material_sampler_wrap_mode_changes_tiling() {
 
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
-            item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            item.model = glam::Mat4::IDENTITY.into();
             let mut m = Material::default();
             m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             m.texture_id = Some(tex);

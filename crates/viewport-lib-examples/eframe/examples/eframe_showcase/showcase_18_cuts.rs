@@ -148,12 +148,12 @@ pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
 
     let mut column_item = SceneRenderItem::new(column, column_material);
     column_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).into();
     items.push(column_item);
 
     let mut torus_item = SceneRenderItem::new(torus, torus_material);
     torus_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).into();
     torus_item.deform_instance = Some(TORUS_INSTANCE);
     torus_item.settings.selected = state.outline;
     if state.shape == CutShape::HeightRange {
