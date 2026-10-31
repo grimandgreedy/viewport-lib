@@ -102,3 +102,76 @@ fn gpu_fixtures_run_in_priority_order() {
     assert_eq!(early.count("init_gpu"), 1);
     assert_eq!(late.count("init_gpu"), 1);
 }
+
+/// A removed GPU plugin receives no further calls, removal leaves the runtime
+/// initialised so the plugin that remains is not initialised again, and once
+/// no plugin of the type is left its timing entries are dropped.
+#[test]
+fn gpu_fixture_removed_plugin_is_not_called() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let gone_log = CallLog::new();
+    let kept_log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let gone = runtime.add_gpu_plugin(LoggingGpuPlugin::new(
+        gone_log.clone(),
+        gpu_phase::PRE_PREPARE,
+    ));
+    let kept = runtime.add_gpu_plugin(LoggingGpuPlugin::new(
+        kept_log.clone(),
+        gpu_phase::PRE_PREPARE,
+    ));
+    assert!(!runtime.gpu_initialized());
+    let (colour, depth) = probe_targets(&device, SIZE, COLOUR_FORMAT);
+
+    frame(&mut runtime, &device, &queue, &colour, &depth, 0);
+    assert!(runtime.gpu_initialized());
+    assert_eq!(gone_log.count("pre_prepare:0"), 1);
+    gone_log.clear();
+    kept_log.clear();
+
+    assert!(runtime.remove_gpu_plugin(gone).is_some());
+    assert!(
+        runtime.gpu_initialized(),
+        "removing a GPU plugin must not clear the initialised flag"
+    );
+    assert_eq!(runtime.gpu_plugin_ids().collect::<Vec<_>>(), vec![kept]);
+
+    frame(&mut runtime, &device, &queue, &colour, &depth, 1);
+    assert!(
+        gone_log.entries().is_empty(),
+        "a removed plugin was called: {:?}",
+        gone_log.entries()
+    );
+    kept_log.assert_take(&[
+        "pre_prepare:1",
+        &format!("post_paint:1:{COLOUR_FORMAT:?}:pick=false"),
+    ]);
+
+    let name = runtime
+        .remove_gpu_plugin(kept)
+        .expect("the id is registered")
+        .type_name();
+    let stats = runtime.last_stats();
+    assert!(!stats.pre_prepare_ms.contains_key(name));
+    assert!(!stats.post_paint_ms.contains_key(name));
+}
+
+/// Removing the middle of three same-priority GPU plugins keeps the other two
+/// in registration order (the order they run in), and a stale id returns
+/// `None`.
+#[test]
+fn gpu_fixture_removal_keeps_order_and_rejects_stale_ids() {
+    let log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let a = runtime.add_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
+    let b = runtime.add_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
+    let c = runtime.add_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
+
+    assert!(runtime.remove_gpu_plugin(b).is_some());
+    assert_eq!(runtime.gpu_plugin_ids().collect::<Vec<_>>(), vec![a, c]);
+    assert!(runtime.remove_gpu_plugin(b).is_none());
+    assert_eq!(runtime.gpu_plugin_count(), 2);
+}

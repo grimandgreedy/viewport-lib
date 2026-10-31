@@ -62,7 +62,7 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
-pub use gpu_plugin::{GpuFrameContext, GpuPlugin, PostPaintTargets, gpu_phase};
+pub use gpu_plugin::{GpuFrameContext, GpuPlugin, GpuPluginId, PostPaintTargets, gpu_phase};
 pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use output::{
     CameraCommand, CameraFollowTarget, NodeTransformOp, RuntimeOutput, SelectionOp,
@@ -73,6 +73,7 @@ pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
 pub use timestep::{DEFAULT_MAX_STEPS, FixedStepIter, FixedTimestep};
+pub use viewport_lib_types::plugin::RuntimePluginId;
 
 use crate::interaction::select::selection::Selection;
 use crate::scene::scene::Scene;
@@ -83,7 +84,7 @@ use crate::scene::scene::Scene;
 /// in the slice.
 #[allow(clippy::too_many_arguments)]
 fn run_range(
-    plugins: &mut Vec<Box<dyn RuntimePlugin>>,
+    plugins: &mut [(RuntimePluginId, Box<dyn RuntimePlugin>)],
     min: i32,
     max: i32,
     dt: f32,
@@ -94,7 +95,7 @@ fn run_range(
     resources: &mut RuntimeResources,
     timings: &mut std::collections::HashMap<&'static str, f32>,
 ) {
-    for plugin in plugins.iter_mut() {
+    for (_, plugin) in plugins.iter_mut() {
         let p = plugin.priority();
         if p >= min && p < max {
             let mut ctx = RuntimeStepContext {
@@ -1601,13 +1602,16 @@ mod tests {
 /// 4. `[SIMULATE, POST_SIM)` -- Simulate (600): once per fixed step or once at wall dt
 /// 5. `[POST_SIM, i32::MAX]` -- PostSim (700), Writeback (800): once at wall dt
 pub struct ViewportRuntime {
-    plugins: Vec<Box<dyn RuntimePlugin>>,
-    gpu_plugins: Vec<Box<dyn GpuPlugin>>,
+    plugins: Vec<(RuntimePluginId, Box<dyn RuntimePlugin>)>,
+    gpu_plugins: Vec<(GpuPluginId, Box<dyn GpuPlugin>)>,
+    /// Last id handed out to a runtime or GPU plugin; one counter for both.
+    last_plugin_id: u64,
     /// GPU plugins removed because the device did not meet their
     /// requirements, as `ViewportError::PluginUnsupported`.
     declined_gpu_plugins: Vec<crate::ViewportError>,
     /// False until every registered GPU plugin has had `init_gpu` called.
-    /// Cleared again when a new GPU plugin is registered.
+    /// Cleared again when a new GPU plugin is registered; removing one leaves
+    /// it as it is.
     gpu_initialized: bool,
     fixed_timestep: Option<FixedTimestep>,
     snapshots: TransformSnapshotTable,
@@ -1637,6 +1641,7 @@ impl ViewportRuntime {
         Self {
             plugins: Vec::new(),
             gpu_plugins: Vec::new(),
+            last_plugin_id: 0,
             declined_gpu_plugins: Vec::new(),
             gpu_initialized: false,
             fixed_timestep: None,
@@ -1696,18 +1701,53 @@ impl ViewportRuntime {
 
     /// Register a plugin. Plugins run in ascending priority order each frame.
     /// Plugins with equal priority run in registration order (stable sort).
+    ///
+    /// [`plugin_ids`](Self::plugin_ids) lists the id this plugin was given.
     pub fn with_plugin(mut self, plugin: impl RuntimePlugin) -> Self {
-        self.plugins.push(Box::new(plugin));
+        self.add_plugin(plugin);
         self
     }
 
-    /// Register a plugin on an existing runtime.
+    /// Register a plugin on an existing runtime and return its id.
     ///
     /// Same semantics as [`with_plugin`](Self::with_plugin) but takes
     /// `&mut self`, for hosts that need to add plugins after the runtime
-    /// has been constructed and possibly already run frames.
-    pub fn add_plugin(&mut self, plugin: impl RuntimePlugin) {
-        self.plugins.push(Box::new(plugin));
+    /// has been constructed and possibly already run frames. Pass the id to
+    /// [`remove_plugin`](Self::remove_plugin) to unregister it.
+    pub fn add_plugin(&mut self, plugin: impl RuntimePlugin) -> RuntimePluginId {
+        let id = RuntimePluginId::from_raw(self.next_plugin_id());
+        self.plugins.push((id, Box::new(plugin)));
+        id
+    }
+
+    /// Unregister a runtime plugin and hand it back, so a host can recover its
+    /// state. The plugins that remain keep their relative order. Returns
+    /// `None` for an id that is not registered (already removed, or from
+    /// another runtime).
+    pub fn remove_plugin(&mut self, id: RuntimePluginId) -> Option<Box<dyn RuntimePlugin>> {
+        let index = self.plugins.iter().position(|(i, _)| *i == id)?;
+        let (_, plugin) = self.plugins.remove(index);
+        let name = plugin.type_name();
+        if !self.plugins.iter().any(|(_, p)| p.type_name() == name) {
+            self.stats.step_ms.remove(name);
+        }
+        Some(plugin)
+    }
+
+    /// Ids of the registered runtime plugins, in the order they run (ascending
+    /// priority, registration order within a priority, as of the last step).
+    pub fn plugin_ids(&self) -> impl Iterator<Item = RuntimePluginId> + '_ {
+        self.plugins.iter().map(|(id, _)| *id)
+    }
+
+    /// Number of registered runtime plugins.
+    pub fn plugin_count(&self) -> usize {
+        self.plugins.len()
+    }
+
+    fn next_plugin_id(&mut self) -> u64 {
+        self.last_plugin_id += 1;
+        self.last_plugin_id
     }
 
     /// Register a GPU plugin. GPU plugins encode wgpu command buffers from
@@ -1718,19 +1758,77 @@ impl ViewportRuntime {
     /// Registering a plugin after the runtime has already run a frame re-runs
     /// every GPU plugin's `init_gpu` on the next `pre_prepare`. Implementations
     /// should be idempotent or guard their own one-time setup.
+    ///
+    /// [`gpu_plugin_ids`](Self::gpu_plugin_ids) lists the id this plugin was
+    /// given.
     pub fn with_gpu_plugin(mut self, plugin: impl GpuPlugin) -> Self {
-        self.gpu_plugins.push(Box::new(plugin));
-        self.gpu_initialized = false;
+        self.add_gpu_plugin(plugin);
         self
     }
 
-    /// Register a GPU plugin on an existing runtime.
+    /// Register a GPU plugin on an existing runtime and return its id.
     ///
     /// Same semantics as [`with_gpu_plugin`](Self::with_gpu_plugin) but
-    /// takes `&mut self`.
-    pub fn add_gpu_plugin(&mut self, plugin: impl GpuPlugin) {
-        self.gpu_plugins.push(Box::new(plugin));
+    /// takes `&mut self`. Pass the id to
+    /// [`remove_gpu_plugin`](Self::remove_gpu_plugin) to unregister it.
+    pub fn add_gpu_plugin(&mut self, plugin: impl GpuPlugin) -> GpuPluginId {
+        self.push_gpu_plugin(Box::new(plugin))
+    }
+
+    /// Register a GPU plugin scoped to a single viewport and return its id.
+    ///
+    /// Same semantics as
+    /// [`with_gpu_plugin_for_viewport`](Self::with_gpu_plugin_for_viewport)
+    /// but takes `&mut self`.
+    pub fn add_gpu_plugin_for_viewport(
+        &mut self,
+        viewport: crate::renderer::ViewportId,
+        plugin: impl GpuPlugin,
+    ) -> GpuPluginId {
+        self.push_gpu_plugin(Box::new(gpu_plugin::ViewportScopedPlugin {
+            viewport,
+            inner: plugin,
+        }))
+    }
+
+    fn push_gpu_plugin(&mut self, plugin: Box<dyn GpuPlugin>) -> GpuPluginId {
+        let id = GpuPluginId(self.next_plugin_id());
+        self.gpu_plugins.push((id, plugin));
         self.gpu_initialized = false;
+        id
+    }
+
+    /// Unregister a GPU plugin and hand it back. No hook runs: dropping the
+    /// box releases what the plugin built in `init_gpu`. The plugins that
+    /// remain keep their relative order and are not initialised again.
+    /// Returns `None` for an id that is not registered (already removed,
+    /// declined by the device, or from another runtime).
+    pub fn remove_gpu_plugin(&mut self, id: GpuPluginId) -> Option<Box<dyn GpuPlugin>> {
+        let index = self.gpu_plugins.iter().position(|(i, _)| *i == id)?;
+        let (_, plugin) = self.gpu_plugins.remove(index);
+        let name = plugin.type_name();
+        if !self.gpu_plugins.iter().any(|(_, p)| p.type_name() == name) {
+            self.stats.pre_prepare_ms.remove(name);
+            self.stats.post_paint_ms.remove(name);
+        }
+        Some(plugin)
+    }
+
+    /// Ids of the registered GPU plugins, in the order they run (ascending
+    /// priority, registration order within a priority, as of the last frame).
+    pub fn gpu_plugin_ids(&self) -> impl Iterator<Item = GpuPluginId> + '_ {
+        self.gpu_plugins.iter().map(|(id, _)| *id)
+    }
+
+    /// Number of registered GPU plugins.
+    pub fn gpu_plugin_count(&self) -> usize {
+        self.gpu_plugins.len()
+    }
+
+    /// True once every registered GPU plugin has had `init_gpu` called.
+    /// Registering a GPU plugin clears it until the next `pre_prepare`.
+    pub fn gpu_initialized(&self) -> bool {
+        self.gpu_initialized
     }
 
     /// Register a GPU plugin scoped to a single viewport.
@@ -1749,12 +1847,7 @@ impl ViewportRuntime {
         viewport: crate::renderer::ViewportId,
         plugin: impl GpuPlugin,
     ) -> Self {
-        let scoped = gpu_plugin::ViewportScopedPlugin {
-            viewport,
-            inner: plugin,
-        };
-        self.gpu_plugins.push(Box::new(scoped));
-        self.gpu_initialized = false;
+        self.add_gpu_plugin_for_viewport(viewport, plugin);
         self
     }
 
@@ -1791,7 +1884,7 @@ impl ViewportRuntime {
         if !self.gpu_initialized {
             let caps = crate::capabilities::Capabilities::from_device(device, None);
             let declined = &mut self.declined_gpu_plugins;
-            self.gpu_plugins.retain(|p| {
+            self.gpu_plugins.retain(|(_, p)| {
                 let missing = caps.missing_requirements(&p.requires());
                 if missing.is_empty() {
                     return true;
@@ -1807,19 +1900,19 @@ impl ViewportRuntime {
                 });
                 false
             });
-            for p in self.gpu_plugins.iter_mut() {
+            for (_, p) in self.gpu_plugins.iter_mut() {
                 p.init_gpu(device);
             }
             self.gpu_initialized = true;
         }
         // Stable sort: equal priorities preserve registration order. Same
         // contract as the CPU plugin list.
-        self.gpu_plugins.sort_by_key(|p| p.priority());
+        self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
         let mut timings: std::collections::HashMap<&'static str, f32> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        for p in self.gpu_plugins.iter_mut() {
+        for (_, p) in self.gpu_plugins.iter_mut() {
             let t = web_time::Instant::now();
             out.extend(p.pre_prepare(device, queue, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
@@ -1857,12 +1950,12 @@ impl ViewportRuntime {
         // Stable sort: equal priorities preserve registration order. The list
         // is already sorted if `pre_prepare` ran first this frame; sorting
         // again is cheap and keeps `post_paint` safe to call standalone.
-        self.gpu_plugins.sort_by_key(|p| p.priority());
+        self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
         let mut timings: std::collections::HashMap<&'static str, f32> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        for p in self.gpu_plugins.iter_mut() {
+        for (_, p) in self.gpu_plugins.iter_mut() {
             let t = web_time::Instant::now();
             out.extend(p.post_paint(device, queue, targets, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
@@ -1998,7 +2091,7 @@ impl ViewportRuntime {
                 // Take plugins out to avoid aliasing self while dispatching.
                 let mut plugins = std::mem::take(&mut self.plugins);
                 for event in &events {
-                    for plugin in plugins.iter_mut() {
+                    for (_, plugin) in plugins.iter_mut() {
                         let mut ctx = RuntimeStepContext {
                             priority: plugin.priority(),
                             dt: frame.dt,
@@ -2019,7 +2112,7 @@ impl ViewportRuntime {
         self.prev_node_ids = current_ids;
 
         // --- Sort plugins by priority (stable: preserves registration order within a band).
-        self.plugins.sort_by_key(|p| p.priority());
+        self.plugins.sort_by_key(|(_, p)| p.priority());
 
         // Take plugins out so we can access self freely during the step loop.
         let mut plugins = std::mem::take(&mut self.plugins);
@@ -2030,7 +2123,7 @@ impl ViewportRuntime {
             std::collections::HashMap::new();
 
         // --- Submit pass: all plugins in priority order ----------------------
-        for plugin in plugins.iter_mut() {
+        for (_, plugin) in plugins.iter_mut() {
             let ctx = RuntimeStepContext {
                 priority: plugin.priority(),
                 dt: frame.dt,
@@ -2152,7 +2245,7 @@ impl ViewportRuntime {
         );
 
         // --- Collect pass: all plugins in priority order ---------------------
-        for plugin in plugins.iter_mut() {
+        for (_, plugin) in plugins.iter_mut() {
             let mut ctx = RuntimeStepContext {
                 priority: plugin.priority(),
                 dt: frame.dt,
