@@ -142,11 +142,11 @@ fn main() -> eframe::Result {
             session.viewport_frame_mut().background_colour =
                 Some(Colour::linear(0.12, 0.12, 0.14, 1.0));
 
-            let cam = session.camera_mut();
-            cam.center =
-                glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7).as_dvec3();
-            cam.distance = 17.0;
-            cam.orientation = glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2);
+            session.camera_mut().set_orbit(
+                glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7).as_dvec3(),
+                17.0,
+                glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+            );
 
             Ok(Box::new(App {
                 session,

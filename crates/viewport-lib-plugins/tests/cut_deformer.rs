@@ -60,9 +60,7 @@ fn scene() -> Option<Scene> {
 
 fn camera() -> RenderCamera {
     let mut cam = Camera::default();
-    cam.orientation = glam::Quat::IDENTITY;
-    cam.center = glam::DVec3::ZERO;
-    cam.distance = 5.0;
+    cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
     cam.aspect = 1.0;
     RenderCamera::from_camera(&cam)
 }

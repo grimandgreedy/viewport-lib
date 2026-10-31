@@ -29,12 +29,7 @@ fn renderer(device: &wgpu::Device) -> ViewportRenderer {
 /// A frame for `vp` looking straight down -Z at the origin, black background,
 /// grid and axes indicator off.
 fn base_frame(vp: ViewportId, mode: PipelineMode) -> FrameData {
-    let cam = Camera {
-        center: glam::DVec3::ZERO,
-        distance: 10.0,
-        orientation: glam::Quat::IDENTITY,
-        ..Camera::default()
-    };
+    let cam = Camera::orbit(glam::DVec3::ZERO, 10.0, glam::Quat::IDENTITY);
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [W as f32, H as f32];

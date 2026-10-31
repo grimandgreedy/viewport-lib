@@ -29,7 +29,7 @@ fn render_sphere_with(
         .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 64, 32))
         .unwrap();
     let mut cam = Camera::default();
-    cam.set_distance(4.0);
+    cam.set_orbit_distance(4.0);
     cam.set_aspect_ratio(1.0, 1.0);
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
@@ -42,7 +42,7 @@ fn render_sphere_with(
     frame.effects.display.mode = mode;
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {
-        direction: (cam.eye_position() - cam.center).as_vec3().normalize().to_array(),
+        direction: (cam.eye() - cam.target()).as_vec3().normalize().to_array(),
     };
     light.intensity = intensity;
     light.cast_shadows = false;

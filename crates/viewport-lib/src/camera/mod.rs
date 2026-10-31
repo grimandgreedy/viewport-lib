@@ -1,4 +1,4 @@
-/// Arcball camera with perspective and orthographic projections.
+/// The camera: pose, projection and exposure.
 pub mod camera;
 /// Orbit, first-person, third-person, turntable, and fly-to camera controllers.
 /// Camera controllers. Live in the `viewport-lib-input` crate; re-exported here
@@ -13,5 +13,7 @@ pub mod view_preset;
 
 // Re-export the most-used types at the module level so that
 // `viewport_lib::camera::Camera` continues to resolve.
-pub use camera::{Camera, CameraTarget, Projection};
+pub use camera::{Camera, CameraTarget, PhysicalExposure, Pose, Projection};
+#[cfg(feature = "serde")]
+pub use viewport_lib_types::camera::camera_v0::{CameraV0, ProjectionV0};
 pub use viewport_lib_types::camera::look::{self, LookAngles};

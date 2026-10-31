@@ -81,7 +81,7 @@ fn main() {
                     orange,
                 );
 
-                session.camera_mut().distance = 8.0;
+                session.camera_mut().set_orbit_distance(8.0);
             },
             // Drive navigation ourselves so we can suppress it under the UI. The runner
             // stops auto-feeding events and driving orbit; this handler owns the input.

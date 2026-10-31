@@ -172,11 +172,7 @@ impl App {
         lighting.shadows.enabled = true;
 
         Self {
-            camera: Camera {
-                distance: 20.0,
-                zfar: 1000.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 20.0, Camera::default().orientation()),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             ground_id,
@@ -205,8 +201,7 @@ impl App {
             } else {
                 self.materials.ground_one_sided
             };
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).into();
             item
         };
 
@@ -234,8 +229,7 @@ impl App {
             item.mesh_id = self.sphere_id;
 
             item.material = self.materials.sphere;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).into();
             items.push(item);
         }
 
@@ -248,8 +242,7 @@ impl App {
                 item.mesh_id = self.unlit_sphere_id;
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_MAGENTA));
-                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
-                    .into();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)).into();
                 items.push(item);
             }
 
@@ -259,8 +252,7 @@ impl App {
 
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_CYAN));
-                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
-                    .into();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5)).into();
                 items.push(item);
             }
         }
@@ -315,9 +307,8 @@ impl eframe::App for App {
                 ui.separator();
                 ui.label("Camera");
 
-                let dist = self.camera.distance;
-                let eff_near = self.camera.effective_znear();
-                let eff_far = self.camera.effective_zfar();
+                let dist = self.camera.focus_distance();
+                let (eff_near, eff_far) = self.camera.depth_range();
                 let precision_limit = (2.0_f32 * eff_near * eff_far / (eff_far - eff_near)).sqrt();
                 ui.label(format!("distance:         {:.2}", dist));
                 ui.label(format!("znear (eff):      {:.4}", eff_near));
@@ -327,7 +318,7 @@ impl eframe::App for App {
 
                 ui.separator();
                 ui.label("Cascade splits (world depth)");
-                let shadow_far = (self.camera.distance * 3.0).max(10.0).min(eff_far);
+                let shadow_far = (self.camera.focus_distance() * 3.0).max(10.0).min(eff_far);
                 let splits =
                     cascade_splits(eff_near, shadow_far, self.lighting.shadows.cascade_count);
                 let mut prev = eff_near;

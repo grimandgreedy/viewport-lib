@@ -573,12 +573,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_volume_scene(renderer);
     app.ensure_surface_slice_mesh(renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        12.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------

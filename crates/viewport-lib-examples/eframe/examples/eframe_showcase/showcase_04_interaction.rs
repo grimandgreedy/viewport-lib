@@ -325,10 +325,14 @@ pub(crate) fn controls_interaction(app: &mut App, ui: &mut egui::Ui) {
                 if ui.button(label).clicked() {
                     app.interact_state.animator.fly_to_full(
                         &app.camera,
-                        app.camera.center,
-                        app.camera.distance,
+                        app.camera.target(),
+                        app.camera.focus_distance(),
                         preset.orientation(),
-                        preset.preferred_projection(),
+                        preset.prefers_orthographic().then(|| {
+                            app.camera
+                                .projection
+                                .to_orthographic(app.camera.focus_distance())
+                        }),
                         0.6,
                         Easing::EaseInOutCubic,
                     );
@@ -414,12 +418,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_interact_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        12.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -587,8 +590,8 @@ pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
     if let Some(center) = app.interact_state.gizmo_center {
         app.interact_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
             center,
-            app.camera.eye_position().as_vec3(),
-            app.camera.fov_y,
+            app.camera.eye().as_vec3(),
+            app.camera.fov_y(),
             cx.rect.height(),
         );
     }

@@ -128,12 +128,11 @@ pub(crate) fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     state.dirty = true;
     state.built = true;
 
-    app.camera = vpl::Camera {
-        center: glam::DVec3::new(0.0, 0.0, 0.9),
-        distance: 8.5,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.95),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 0.9),
+        8.5,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.95),
+    );
 }
 
 pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
@@ -147,13 +146,11 @@ pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
     items.push(SceneRenderItem::new(floor, floor_material));
 
     let mut column_item = SceneRenderItem::new(column, column_material);
-    column_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).into();
+    column_item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).into();
     items.push(column_item);
 
     let mut torus_item = SceneRenderItem::new(torus, torus_material);
-    torus_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).into();
+    torus_item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).into();
     torus_item.deform_instance = Some(TORUS_INSTANCE);
     torus_item.settings.selected = state.outline;
     if state.shape == CutShape::HeightRange {

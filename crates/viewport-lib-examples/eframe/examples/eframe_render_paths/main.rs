@@ -529,10 +529,7 @@ impl App {
         skin_pivot_z: f32,
     ) -> Self {
         Self {
-            camera: Camera {
-                distance: 22.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 22.0, Camera::default().orientation()),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             meshes,
@@ -684,8 +681,7 @@ impl App {
 
         // Ground platform: instanced opaque, receives every object's shadow.
         let mut ground = SceneRenderItem::new(self.meshes.ground, mats[0]);
-        ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
+        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         items.push(ground);
 
         items

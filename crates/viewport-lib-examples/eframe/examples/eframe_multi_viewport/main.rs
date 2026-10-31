@@ -36,10 +36,9 @@ use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
     GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, Material, MaterialId, MeshId, MouseButton,
-    OffscreenViewportTarget, OrbitCameraController, Projection, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
-    ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_center_for_pivot, picking::screen_to_ray,
-    primitives,
+    OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput, ViewportRenderer,
+    gizmo::compute_gizmo_scale, gizmo_center_for_pivot, picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -201,37 +200,27 @@ impl App {
         use std::f32::consts::FRAC_PI_2;
         let cameras = [
             // Perspective (TL)
-            Camera {
-                center: glam::DVec3::ZERO,
-                distance: 12.0,
-                orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-                ..Camera::default()
-            },
+            Camera::orbit(
+                glam::DVec3::ZERO,
+                12.0,
+                glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+            ),
             // Top (TR): looking down -Z, orthographic
-            Camera {
-                center: glam::DVec3::ZERO,
-                distance: 10.0,
-                orientation: glam::Quat::IDENTITY,
-                projection: Projection::Orthographic,
-                ..Camera::default()
-            },
+            Camera::orbit(glam::DVec3::ZERO, 10.0, glam::Quat::IDENTITY).orthographic(),
             // Front (BL): looking along -Y, orthographic
-            Camera {
-                center: glam::DVec3::ZERO,
-                distance: 10.0,
-                orientation: glam::Quat::from_rotation_x(FRAC_PI_2),
-                projection: Projection::Orthographic,
-                ..Camera::default()
-            },
+            Camera::orbit(
+                glam::DVec3::ZERO,
+                10.0,
+                glam::Quat::from_rotation_x(FRAC_PI_2),
+            )
+            .orthographic(),
             // Right (BR): looking along -X, orthographic
-            Camera {
-                center: glam::DVec3::ZERO,
-                distance: 10.0,
-                orientation: glam::Quat::from_rotation_z(-FRAC_PI_2)
-                    * glam::Quat::from_rotation_x(FRAC_PI_2),
-                projection: Projection::Orthographic,
-                ..Camera::default()
-            },
+            Camera::orbit(
+                glam::DVec3::ZERO,
+                10.0,
+                glam::Quat::from_rotation_z(-FRAC_PI_2) * glam::Quat::from_rotation_x(FRAC_PI_2),
+            )
+            .orthographic(),
         ];
 
         Self {
@@ -639,8 +628,8 @@ impl App {
                         let qr = quads[i];
                         self.gizmo_scales[i] = compute_gizmo_scale(
                             center,
-                            self.cameras[i].eye_position().as_vec3(),
-                            self.cameras[i].fov_y,
+                            self.cameras[i].eye().as_vec3(),
+                            self.cameras[i].fov_y(),
                             qr.height(),
                         );
                     }

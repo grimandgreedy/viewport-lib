@@ -59,12 +59,11 @@ pub struct ViewportState {
 impl Default for ViewportState {
     fn default() -> Self {
         Self {
-            camera: Camera {
-                center: glam::DVec3::ZERO,
-                distance: 12.0,
-                orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-                ..Camera::default()
-            },
+            camera: Camera::orbit(
+                glam::DVec3::ZERO,
+                12.0,
+                glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+            ),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(BindingPreset::Viewer),
             any_pressed: false,

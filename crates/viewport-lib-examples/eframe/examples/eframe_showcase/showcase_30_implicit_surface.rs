@@ -180,14 +180,12 @@ impl App {
             }
         }
 
-        self.camera = Camera {
-            center: glam::DVec3::new(0.0, 0.5, 0.0),
-            distance: 9.0,
-            orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
-            znear: Some(0.2),
-            zfar: 40.0,
-            ..Camera::default()
-        };
+        self.camera = Camera::orbit(
+            glam::DVec3::new(0.0, 0.5, 0.0),
+            9.0,
+            glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
+        );
+        self.camera.set_clip_planes(0.2, 40.0);
 
         self.is_state.built = true;
     }
@@ -248,16 +246,14 @@ impl App {
         // Near (blue): in front of the blob cloud.
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, near_mat);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).into();
             items.push(item);
         }
 
         // Far (orange): behind the blob cloud.
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, far_mat);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).into();
             items.push(item);
         }
 
@@ -312,7 +308,7 @@ impl App {
             max_steps: 128,
             step_scale: 0.85,
             hit_threshold: 5e-4,
-            max_distance: self.camera.zfar,
+            max_distance: self.camera.depth_range().1,
         };
         fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }

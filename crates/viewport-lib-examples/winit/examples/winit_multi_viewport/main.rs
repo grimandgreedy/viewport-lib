@@ -29,8 +29,8 @@ use viewport_lib::Colour;
 use vpl::wgpu;
 use vpl::{
     BindingPreset, Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController,
-    Projection, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
-    ViewportInput, ViewportRenderer, primitives,
+    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
+    ViewportRenderer, primitives,
 };
 use vpl::{ButtonState, MouseButton, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
@@ -248,40 +248,31 @@ impl ApplicationHandler for App {
         let vp3 = renderer.create_viewport(&device); // BottomRight: right (ortho)
 
         // Perspective camera : standard orbit view.
-        let cam_persp = Camera {
-            center: glam::DVec3::ZERO,
-            distance: 12.0,
-            orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-            ..Camera::default()
-        };
+        let cam_persp = Camera::orbit(
+            glam::DVec3::ZERO,
+            12.0,
+            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+        );
 
         // Top view: looking straight down (-Z direction).
-        let cam_top = Camera {
-            projection: Projection::Orthographic,
-            center: glam::DVec3::ZERO,
-            distance: 10.0,
-            // from_rotation_x(-PI/2) puts the camera directly above looking down.
-            orientation: glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-            ..Camera::default()
-        };
+        // from_rotation_x(-PI/2) puts the camera directly above looking down.
+        let cam_top = Camera::orbit(
+            glam::DVec3::ZERO,
+            10.0,
+            glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+        )
+        .orthographic();
 
         // Front view: looking along -Y.
-        let cam_front = Camera {
-            projection: Projection::Orthographic,
-            center: glam::DVec3::ZERO,
-            distance: 10.0,
-            orientation: glam::Quat::IDENTITY,
-            ..Camera::default()
-        };
+        let cam_front = Camera::orbit(glam::DVec3::ZERO, 10.0, glam::Quat::IDENTITY).orthographic();
 
         // Right view: looking along -X (rotate 90 degrees around Z then front).
-        let cam_right = Camera {
-            projection: Projection::Orthographic,
-            center: glam::DVec3::ZERO,
-            distance: 10.0,
-            orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
-            ..Camera::default()
-        };
+        let cam_right = Camera::orbit(
+            glam::DVec3::ZERO,
+            10.0,
+            glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
+        )
+        .orthographic();
 
         let make_controller = || {
             let mut c = OrbitCameraController::new_stateless();

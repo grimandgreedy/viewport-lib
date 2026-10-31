@@ -473,34 +473,28 @@ impl App {
         match self.lighting_state.sub {
             LightingSub::Presets => {
                 self.build_presets_scene(renderer);
-                self.camera = vpl::Camera {
-                    center: glam::DVec3::new(4.8, 0.4, 0.7),
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.2),
-                    ..vpl::Camera::default()
-                };
+                self.camera = vpl::Camera::orbit(
+                    glam::DVec3::new(4.8, 0.4, 0.7),
+                    16.0,
+                    glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+                );
             }
             LightingSub::Falloff => {
                 self.build_falloff_scene(renderer);
                 // Frame the row from the side so the near-to-far dimming reads.
-                self.camera = vpl::Camera {
-                    center: glam::DVec3::new(9.0, 0.0, 0.5),
-                    distance: 22.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.15),
-                    ..vpl::Camera::default()
-                };
+                self.camera = vpl::Camera::orbit(
+                    glam::DVec3::new(9.0, 0.0, 0.5),
+                    22.0,
+                    glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.15),
+                );
             }
             LightingSub::Exposure => {
                 self.build_exposure_scene(renderer);
-                self.camera = vpl::Camera {
-                    center: glam::DVec3::new(6.0, 0.4, 0.7),
-                    distance: 17.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.2),
-                    ..vpl::Camera::default()
-                };
+                self.camera = vpl::Camera::orbit(
+                    glam::DVec3::new(6.0, 0.4, 0.7),
+                    17.0,
+                    glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+                );
             }
         }
     }
@@ -898,9 +892,9 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // buffer path runs.
     fd.effects.display.exposure = app.lighting_state.exposure_settings();
     let cam = &app.camera;
-    let far = (cam.distance * 3.0).max(60.0);
+    let far = (cam.focus_distance() * 3.0).max(60.0);
     fd.camera.render_camera =
-        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.effective_znear(), far);
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
 }
 
 // ---------------------------------------------------------------------------

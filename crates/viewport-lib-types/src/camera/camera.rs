@@ -1,348 +1,424 @@
-/// A snapshot of camera position state (center, distance, orientation).
+use glam::{DVec3, Mat4, Quat, Vec2, Vec3};
+
+use super::exposure::PhysicalExposure;
+use super::pose::Pose;
+use super::projection::Projection;
+
+/// An orbit view: the point a camera turns about, its distance from the eye,
+/// and the camera orientation.
 ///
-/// Returned by framing helpers such as [`Camera::fit_sphere_target`] and
-/// [`Camera::fit_aabb_target`]. Useful for presets and animation targets: pass
-/// `target.center` / `target.distance` / `target.orientation` to
-/// `CameraAnimator::fly_to` (in the renderer crate).
-///
-/// The getters/setters on [`Camera`] (`center()`, `distance()`, `orientation()`)
-/// are provided as convenience accessors. Field access (`camera.center` etc.)
-/// works equally well.
-#[derive(Clone, Copy, Debug)]
+/// Orbit controllers keep one as their state, [`Camera::orbit_target`] reads
+/// one off a camera, and the framing helpers
+/// ([`Camera::fit_sphere_target`], [`Camera::fit_aabb_target`]) return one for
+/// a preset or a fly-to: pass `target.center` / `target.distance` /
+/// `target.orientation` to `CameraAnimator::fly_to`.
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CameraTarget {
-    /// Orbit target point in world space, in f64.
-    pub center: glam::DVec3,
-    /// Distance from center to eye.
+    /// Orbit centre in world space, in f64.
+    pub center: DVec3,
+    /// Distance from the centre to the eye.
     pub distance: f32,
     /// Camera orientation as a unit quaternion.
-    pub orientation: glam::Quat,
+    pub orientation: Quat,
 }
 
-/// Projection mode for the viewport camera.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+impl CameraTarget {
+    /// An orbit view from its parts.
+    pub fn new(center: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
+        Self {
+            center: center.into(),
+            distance,
+            orientation,
+        }
+    }
+
+    /// The camera pose this view describes.
+    pub fn pose(&self) -> Pose {
+        Pose::orbit(self.center, self.distance, self.orientation)
+    }
+
+    /// Eye position in world space.
+    pub fn eye(&self) -> DVec3 {
+        self.pose().position
+    }
+
+    /// Turn about the centre by `yaw` and `pitch` radians:
+    /// `Quat::from_rotation_z(-yaw) * orientation * Quat::from_rotation_x(-pitch)`.
+    /// Positive yaw turns counter-clockwise seen from above (Z-up), positive
+    /// pitch tilts up.
+    pub fn orbit(&mut self, yaw: f32, pitch: f32) {
+        self.orientation =
+            (Quat::from_rotation_z(-yaw) * self.orientation * Quat::from_rotation_x(-pitch))
+                .normalize();
+    }
+
+    /// Move the centre by world-space amounts along the view's right and up
+    /// axes. `right_delta` moves it left and `up_delta` up, so a drag to the
+    /// right moves the scene with the pointer.
+    pub fn pan_world(&mut self, right_delta: f32, up_delta: f32) {
+        self.center -= (self.orientation * Vec3::X * right_delta).as_dvec3();
+        self.center += (self.orientation * Vec3::Y * up_delta).as_dvec3();
+    }
+
+    /// Multiply the distance by `factor`, clamped to
+    /// `[Camera::MIN_DISTANCE, Camera::MAX_DISTANCE]`.
+    pub fn zoom_by_factor(&mut self, factor: f32) {
+        self.distance = (self.distance * factor).clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE);
+    }
+
+    /// Add `delta` to the distance, clamped to
+    /// `[Camera::MIN_DISTANCE, Camera::MAX_DISTANCE]`.
+    pub fn zoom_by_delta(&mut self, delta: f32) {
+        self.distance = (self.distance + delta).clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE);
+    }
+}
+
+/// The viewport camera: where it is, how it projects, and how it exposes.
+///
+/// [`pose`](Self::pose) places the eye in f64 world space and orients it.
+/// [`projection`](Self::projection) maps view space to the screen, and
+/// [`aspect`](Self::aspect) is the viewport's width over height, set each
+/// frame from the viewport size. [`exposure`](Self::exposure) carries the
+/// physical camera settings and the focus distance.
+///
+/// Build an orbit camera with [`Camera::orbit`] or a pointed one with
+/// [`Camera::look_at`]. The camera itself does not orbit: orbit controllers
+/// keep the centre and distance, and write the camera's pose. The focus
+/// distance doubles as the orbit distance, so [`target`](Self::target) is the
+/// orbit centre of a camera an orbit controller drives.
+///
+/// All matrices are right-handed (wgpu NDC convention).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub enum Projection {
-    /// Perspective projection : objects farther away appear smaller.
-    Perspective,
-    /// Orthographic projection : no foreshortening, parallel lines stay parallel.
-    Orthographic,
-}
-
-/// Arcball camera for the 3D viewport.
-///
-/// The camera orbits around a center point. `orientation` is a quaternion that
-/// maps camera-space axes to world-space: eye = center + orientation * (Z * distance).
-/// Pan translates the center in camera-space. Zoom adjusts the distance.
-///
-/// Using a quaternion avoids gimbal lock and allows full 360 deg orbit in any direction.
-/// All matrices are computed right-handed (wgpu NDC convention).
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Camera {
-    /// Projection mode (perspective or orthographic).
+    /// Eye position and orientation.
+    pub pose: Pose,
+    /// Projection.
     pub projection: Projection,
-    /// Orbit target point in world space. f64, so a camera far from the world
-    /// origin keeps its position exactly.
-    pub center: glam::DVec3,
-    /// Distance from center to eye (zoom).
-    pub distance: f32,
-    /// Camera orientation as a unit quaternion.
-    /// eye = center + orientation * (Vec3::Z * distance).
-    /// Identity = looking along -Z from +Z position (top view in a Z-up world).
-    pub orientation: glam::Quat,
-    /// Vertical field of view in radians.
-    pub fov_y: f32,
-    /// Viewport width / height ratio : updated each frame from viewport rect.
+    /// Physical exposure settings and focus distance. The renderer reads
+    /// exposure from `PostProcessSettings::exposure`, not from here; set it
+    /// from [`PhysicalExposure::to_exposure_mode`].
+    pub exposure: PhysicalExposure,
+    /// Viewport width / height ratio, updated each frame from the viewport rect.
     pub aspect: f32,
-    /// Near clipping plane distance. `None` (the default) lets the library
-    /// manage depth precision automatically. Set to `Some(value)` only when
-    /// you need exact control over the near plane, e.g. to avoid clipping
-    /// geometry that is very close to the camera.
-    pub znear: Option<f32>,
-    /// Far clipping plane distance.
-    pub zfar: f32,
 }
 
 impl Default for Camera {
+    /// An orbit camera 5 units from the origin, about 27 degrees above the
+    /// x-y plane, with a 45 degree perspective.
     fn default() -> Self {
-        Self {
-            projection: Projection::Perspective,
-            center: glam::DVec3::ZERO,
-            distance: 5.0,
-            // Default: eye slightly above the x-y plane (Z-up world), ~27 deg elevation.
-            // from_rotation_x(1.1) ~ 63 deg from top = 27 deg above horizontal.
-            orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-            fov_y: std::f32::consts::FRAC_PI_4,
-            aspect: 1.5,
-            znear: None,
-            zfar: 1000.0,
-        }
+        // from_rotation_x(1.1) is ~63 deg from the top, ~27 deg above horizontal.
+        Self::orbit(
+            DVec3::ZERO,
+            5.0,
+            Quat::from_rotation_z(0.6) * Quat::from_rotation_x(1.1),
+        )
     }
 }
 
 impl Camera {
-    /// Minimum allowed camera distance (zoom limit).
+    /// Minimum orbit distance the zoom helpers clamp to.
     pub const MIN_DISTANCE: f32 = 0.01;
 
-    /// Maximum allowed camera distance (zoom limit).
+    /// Maximum orbit distance the zoom helpers clamp to.
     pub const MAX_DISTANCE: f32 = 1.0e6;
 
     // -----------------------------------------------------------------------
-    // Getters and setters
+    // Construction
     // -----------------------------------------------------------------------
 
-    /// Return the orbit target center in world space.
-    pub fn center(&self) -> glam::DVec3 {
-        self.center
+    /// A camera with the given pose, the default perspective projection and
+    /// the default exposure.
+    pub fn new(pose: Pose) -> Self {
+        Self {
+            pose,
+            projection: Projection::default(),
+            exposure: PhysicalExposure::default(),
+            aspect: 1.5,
+        }
     }
 
-    /// Set the orbit target center in world space.
-    pub fn set_center(&mut self, center: impl Into<glam::DVec3>) {
-        self.center = center.into();
+    /// An orbit camera: the eye sits `distance` from `center` along the
+    /// orientation's local `+Z` (`eye = center + orientation * (Z * distance)`),
+    /// looking at `center`, which is also the focus point.
+    pub fn orbit(center: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
+        let mut camera = Self::new(Pose::orbit(center, distance, orientation));
+        camera.exposure.focus_distance = distance;
+        camera
     }
 
-    /// Return the camera distance (zoom).
-    pub fn distance(&self) -> f32 {
-        self.distance
+    /// A camera at `eye` looking at `target`, with `up` as close to the
+    /// screen's up as it can be. `target` is the focus point.
+    pub fn look_at(eye: impl Into<DVec3>, target: impl Into<DVec3>, up: Vec3) -> Self {
+        let (eye, target) = (eye.into(), target.into());
+        let mut camera = Self::new(Pose::look_at(eye, target, up));
+        camera.exposure.focus_distance = (target - eye).length() as f32;
+        camera
     }
 
-    /// Set the camera distance, clamped to `[MIN_DISTANCE, MAX_DISTANCE]`.
-    pub fn set_distance(&mut self, d: f32) {
-        self.distance = d.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+    /// Builder: set the projection.
+    pub fn with_projection(mut self, projection: Projection) -> Self {
+        self.projection = projection;
+        self
     }
 
-    /// Return the camera orientation quaternion.
-    pub fn orientation(&self) -> glam::Quat {
-        self.orientation
+    /// Builder: set the aspect ratio (width / height).
+    pub fn with_aspect(mut self, aspect: f32) -> Self {
+        self.aspect = aspect;
+        self
     }
 
-    /// Set the camera orientation, normalizing the quaternion.
-    pub fn set_orientation(&mut self, q: glam::Quat) {
-        self.orientation = q.normalize();
+    /// Builder: switch to the orthographic projection that frames the same
+    /// height at the focus distance; see [`set_orthographic`](Self::set_orthographic).
+    pub fn orthographic(mut self) -> Self {
+        self.set_orthographic(true);
+        self
     }
 
-    /// Set the vertical field of view in radians.
+    /// Builder: set the vertical field of view; see [`set_fov_y`](Self::set_fov_y).
+    pub fn with_fov_y(mut self, fov_y: f32) -> Self {
+        self.set_fov_y(fov_y);
+        self
+    }
+
+    /// Builder: set the exposure.
+    pub fn with_exposure(mut self, exposure: PhysicalExposure) -> Self {
+        self.exposure = exposure;
+        self
+    }
+
+    // -----------------------------------------------------------------------
+    // Pose
+    // -----------------------------------------------------------------------
+
+    /// Eye position in world space, in f64.
+    pub fn eye(&self) -> DVec3 {
+        self.pose.position
+    }
+
+    /// Camera orientation in f32.
+    pub fn orientation(&self) -> Quat {
+        self.pose.orientation_f32()
+    }
+
+    /// The direction the camera looks, in world space.
+    pub fn forward(&self) -> Vec3 {
+        self.pose.forward()
+    }
+
+    /// Camera right vector in world space.
+    pub fn right(&self) -> Vec3 {
+        self.pose.right()
+    }
+
+    /// Camera up vector in world space.
+    pub fn up(&self) -> Vec3 {
+        self.pose.up()
+    }
+
+    /// The point `distance` in front of the eye along the view direction.
+    pub fn target_at(&self, distance: f32) -> DVec3 {
+        self.pose.target_at(distance)
+    }
+
+    /// The focus point: [`focus_distance`](Self::focus_distance) in front of
+    /// the eye. For a camera an orbit controller drives, the orbit centre.
+    pub fn target(&self) -> DVec3 {
+        self.target_at(self.focus_distance())
+    }
+
+    /// Distance from the eye to the focus point.
+    pub fn focus_distance(&self) -> f32 {
+        self.exposure.focus_distance
+    }
+
+    /// Set the focus distance without moving the camera.
+    pub fn set_focus_distance(&mut self, distance: f32) {
+        self.exposure.focus_distance = distance;
+    }
+
+    /// Replace the pose.
+    pub fn set_pose(&mut self, pose: Pose) {
+        self.pose = pose;
+    }
+
+    /// The camera's orbit view: its focus point, focus distance and
+    /// orientation.
+    pub fn orbit_target(&self) -> CameraTarget {
+        CameraTarget {
+            center: self.target(),
+            distance: self.focus_distance(),
+            orientation: self.orientation(),
+        }
+    }
+
+    /// Place the camera on an orbit: the pose of [`Camera::orbit`], with the
+    /// focus distance set to `distance`. An orthographic view height scales
+    /// with the change in distance, so zooming frames the same way in both
+    /// projections.
+    pub fn set_orbit(&mut self, center: impl Into<DVec3>, distance: f32, orientation: Quat) {
+        let previous = self.focus_distance();
+        if let Projection::Orthographic { height, .. } = &mut self.projection {
+            if previous > 0.0 && distance != previous {
+                *height *= distance / previous;
+            }
+        }
+        self.pose = Pose::orbit(center, distance, orientation);
+        self.exposure.focus_distance = distance;
+    }
+
+    /// Move the orbit centre to `center`, keeping the distance and
+    /// orientation.
+    pub fn set_orbit_center(&mut self, center: impl Into<DVec3>) {
+        self.set_orbit(center, self.focus_distance(), self.orientation());
+    }
+
+    /// Move the eye to `distance` from the orbit centre, keeping the centre
+    /// and orientation. The distance is clamped to
+    /// `[MIN_DISTANCE, MAX_DISTANCE]`.
+    pub fn set_orbit_distance(&mut self, distance: f32) {
+        let distance = distance.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+        self.set_orbit(self.target(), distance, self.orientation());
+    }
+
+    /// Turn the camera to `orientation` (normalised) about the orbit centre,
+    /// keeping the centre and distance.
+    pub fn set_orbit_orientation(&mut self, orientation: Quat) {
+        self.set_orbit(
+            self.target(),
+            self.focus_distance(),
+            orientation.normalize(),
+        );
+    }
+
+    /// [`set_orbit`](Self::set_orbit) from a [`CameraTarget`].
+    pub fn set_orbit_target(&mut self, target: CameraTarget) {
+        self.set_orbit(target.center, target.distance, target.orientation);
+    }
+
+    // -----------------------------------------------------------------------
+    // Projection
+    // -----------------------------------------------------------------------
+
+    /// Vertical angle that frames the view at the focus distance: a
+    /// perspective camera's field of view, or the matching angle for an
+    /// orthographic one.
+    pub fn fov_y(&self) -> f32 {
+        self.projection.fov_y(self.focus_distance())
+    }
+
+    /// Set the vertical field of view in radians. An orthographic camera
+    /// takes the height that angle frames at the focus distance; a matrix
+    /// projection is left alone.
     pub fn set_fov_y(&mut self, fov_y: f32) {
-        self.fov_y = fov_y;
+        let distance = self.focus_distance();
+        match &mut self.projection {
+            Projection::Perspective { fov_y: f, .. } => *f = fov_y,
+            Projection::Orthographic { height, .. } => {
+                *height = 2.0 * (distance * (fov_y / 2.0).tan());
+            }
+            _ => {}
+        }
     }
 
-    /// Set the aspect ratio from pixel dimensions.
-    ///
-    /// If `height` is zero or negative, aspect is set to `1.0`.
+    /// Whether the projection is orthographic.
+    pub fn is_orthographic(&self) -> bool {
+        self.projection.is_orthographic()
+    }
+
+    /// Switch between perspective and orthographic, keeping the framing at
+    /// the focus distance. A matrix projection is left alone.
+    pub fn set_orthographic(&mut self, orthographic: bool) {
+        let distance = self.focus_distance();
+        self.projection = if orthographic {
+            self.projection.to_orthographic(distance)
+        } else {
+            self.projection.to_perspective(distance)
+        };
+    }
+
+    /// Set the aspect ratio from pixel dimensions. A zero or negative height
+    /// gives `1.0`.
     pub fn set_aspect_ratio(&mut self, width: f32, height: f32) {
         self.aspect = if height > 0.0 { width / height } else { 1.0 };
     }
 
-    /// Set the near and far clipping plane distances.
+    /// Set the near and far plane distances. On a matrix projection, sets the
+    /// culling range.
     pub fn set_clip_planes(&mut self, znear: f32, zfar: f32) {
-        self.znear = Some(znear);
-        self.zfar = zfar;
-    }
-
-    // -----------------------------------------------------------------------
-    // Operation methods
-    // -----------------------------------------------------------------------
-
-    /// Orbit the camera by `yaw` and `pitch` radians.
-    ///
-    /// Applies `Quat::from_rotation_z(-yaw) * orientation * Quat::from_rotation_x(-pitch)`.
-    /// The sign convention matches all examples: positive yaw rotates counter-clockwise
-    /// when viewed from above (Z-up), positive pitch tilts up.
-    pub fn orbit(&mut self, yaw: f32, pitch: f32) {
-        self.orientation = (glam::Quat::from_rotation_z(-yaw)
-            * self.orientation
-            * glam::Quat::from_rotation_x(-pitch))
-        .normalize();
-    }
-
-    /// Pan the camera by world-space deltas.
-    ///
-    /// `right_delta` subtracts from center along the camera right vector;
-    /// `up_delta` adds to center along the camera up vector. This sign
-    /// convention matches mouse pan: dragging right moves the scene left.
-    pub fn pan_world(&mut self, right_delta: f32, up_delta: f32) {
-        self.center -= (self.right() * right_delta).as_dvec3();
-        self.center += (self.up() * up_delta).as_dvec3();
-    }
-
-    /// Pan the camera by pixel-space deltas.
-    ///
-    /// Computes `pan_scale = 2 * distance * tan(fov_y/2) / viewport_height`
-    /// then delegates to [`pan_world`](Self::pan_world).
-    pub fn pan_pixels(&mut self, delta_pixels: glam::Vec2, viewport_height: f32) {
-        let pan_scale = 2.0 * self.distance * (self.fov_y / 2.0).tan() / viewport_height.max(1.0);
-        self.pan_world(delta_pixels.x * pan_scale, delta_pixels.y * pan_scale);
-    }
-
-    /// Zoom by multiplying the distance by `factor`, clamped to `[MIN_DISTANCE, MAX_DISTANCE]`.
-    pub fn zoom_by_factor(&mut self, factor: f32) {
-        self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
-    }
-
-    /// Zoom by adding `delta` to the distance, clamped to `[MIN_DISTANCE, MAX_DISTANCE]`.
-    pub fn zoom_by_delta(&mut self, delta: f32) {
-        self.distance = (self.distance + delta).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
-    }
-
-    // -----------------------------------------------------------------------
-    // Framing helpers
-    // -----------------------------------------------------------------------
-
-    /// Frame the camera to contain a bounding sphere, applying the result directly.
-    pub fn frame_sphere(&mut self, center: impl Into<glam::DVec3>, radius: f32) {
-        let (c, d) = self.fit_sphere(center, radius);
-        self.center = c;
-        self.set_distance(d);
-    }
-
-    /// Frame the camera to contain an AABB, applying the result directly.
-    pub fn frame_aabb(&mut self, aabb: &crate::scene::aabb::Aabb) {
-        let (c, d) = self.fit_aabb(aabb);
-        self.center = c;
-        self.set_distance(d);
-    }
-
-    /// Compute a [`CameraTarget`] that would frame a bounding sphere,
-    /// preserving the current orientation.
-    pub fn fit_sphere_target(&self, center: impl Into<glam::DVec3>, radius: f32) -> CameraTarget {
-        let (c, d) = self.fit_sphere(center, radius);
-        CameraTarget {
-            center: c,
-            distance: d,
-            orientation: self.orientation,
+        match &mut self.projection {
+            Projection::Perspective { near, far, .. }
+            | Projection::Orthographic { near, far, .. } => {
+                *near = Some(znear);
+                *far = Some(zfar);
+            }
+            Projection::Matrix { culling_range, .. } => *culling_range = (znear, zfar),
         }
     }
 
-    /// Compute a [`CameraTarget`] that would frame an AABB,
-    /// preserving the current orientation.
-    pub fn fit_aabb_target(&self, aabb: &crate::scene::aabb::Aabb) -> CameraTarget {
-        let (c, d) = self.fit_aabb(aabb);
-        CameraTarget {
-            center: c,
-            distance: d,
-            orientation: self.orientation,
-        }
+    /// `(near, far)` distances the camera culls between; see
+    /// [`Projection::depth_range`].
+    pub fn depth_range(&self) -> (f32, f32) {
+        self.projection.depth_range(self.focus_distance())
+    }
+
+    /// World-space height of the view at view depth `depth`.
+    pub fn view_height_at(&self, depth: f32) -> f32 {
+        self.projection.view_height_at(depth)
     }
 
     // -----------------------------------------------------------------------
-    // Internal helpers
+    // Matrices
     // -----------------------------------------------------------------------
-
-    /// Compute the eye offset from the orbit center in world space.
-    fn eye_offset(&self) -> glam::Vec3 {
-        self.orientation * (glam::Vec3::Z * self.distance)
-    }
-
-    /// Eye (camera) position in world space, in f64.
-    pub fn eye_position(&self) -> glam::DVec3 {
-        self.center + self.eye_offset().as_dvec3()
-    }
 
     /// Right-handed view matrix (world -> camera space), in f32 world
     /// coordinates. Far from the world origin its translation loses
     /// precision; the renderer rebuilds it from the f64 eye.
-    pub fn view_matrix(&self) -> glam::Mat4 {
-        let center = self.center.as_vec3();
-        let eye = center + self.eye_offset();
-        let up = self.orientation * glam::Vec3::Y;
-        glam::Mat4::look_at_rh(eye, center, up)
-    }
-
-    /// Effective far-plane distance : `zfar` floored to `distance * 3` so the
-    /// far plane always extends past the orbit centre regardless of zoom level.
-    pub fn effective_zfar(&self) -> f32 {
-        self.zfar.max(self.distance * 3.0)
-    }
-
-    /// Effective near-plane distance.
-    ///
-    /// Keeps the near/far ratio at most 10,000:1 regardless of how far the
-    /// camera has zoomed out. At close range the value is `znear` unchanged.
-    /// At large distances it grows automatically so that f32 depth precision
-    /// does not collapse and cause objects behind opaque surfaces to bleed
-    /// through. Consumers do not need to adjust znear themselves.
-    pub fn effective_znear(&self) -> f32 {
-        self.znear
-            .unwrap_or_else(|| self.effective_zfar() / 10_000.0)
-    }
-
-    /// The projection matrix the renderer draws with: right-handed with
-    /// reversed 0..1 depth, 1 at the near plane and 0 at the far plane.
-    ///
-    /// A perspective projection has no far plane: depth reaches 0 at
-    /// infinity. An orthographic projection keeps
-    /// [`effective_zfar`](Self::effective_zfar) as its far plane. In
-    /// orthographic mode the viewing volume is derived from `distance` and
-    /// `fov_y` so that switching between perspective and orthographic at the
-    /// same distance produces a similar framing.
-    ///
-    /// For frustum planes use [`culling_proj_matrix`](Self::culling_proj_matrix),
-    /// which has a far plane.
-    pub fn proj_matrix(&self) -> glam::Mat4 {
-        let near = self.effective_znear();
-        match self.projection {
-            Projection::Perspective => {
-                glam::Mat4::perspective_infinite_reverse_rh(self.fov_y, self.aspect, near)
-            }
-            Projection::Orthographic => {
-                let half_h = self.distance * (self.fov_y / 2.0).tan();
-                let half_w = half_h * self.aspect;
-                // Near and far swapped: depth 1 at the near plane.
-                glam::Mat4::orthographic_rh(
-                    -half_w,
-                    half_w,
-                    -half_h,
-                    half_h,
-                    self.effective_zfar(),
-                    near,
-                )
-            }
+    pub fn view_matrix(&self) -> Mat4 {
+        let orientation = self.orientation();
+        let distance = self.focus_distance();
+        let up = orientation * Vec3::Y;
+        if !(distance > 0.0 && distance.is_finite()) {
+            return Mat4::look_to_rh(self.eye().as_vec3(), self.forward(), up);
         }
+        // Built looking from the eye at the focus point, both rounded to f32
+        // from the f64 focus point, so an orbit camera's matrix depends only
+        // on its centre, distance and orientation.
+        let center = self.target().as_vec3();
+        let eye = center + orientation * (Vec3::Z * distance);
+        Mat4::look_at_rh(eye, center, up)
     }
 
-    /// A finite projection over the same view as [`proj_matrix`](Self::proj_matrix),
-    /// with standard depth (near at 0, far at 1) between
-    /// [`effective_znear`](Self::effective_znear) and
-    /// [`effective_zfar`](Self::effective_zfar).
-    ///
-    /// For CPU work that needs both a near and a far plane: frustum planes,
-    /// culling and cascade fitting. Do not draw with it.
-    pub fn culling_proj_matrix(&self) -> glam::Mat4 {
-        let effective_znear = self.effective_znear();
-        let effective_zfar = self.effective_zfar();
-        match self.projection {
-            Projection::Perspective => {
-                glam::Mat4::perspective_rh(self.fov_y, self.aspect, effective_znear, effective_zfar)
-            }
-            Projection::Orthographic => {
-                let half_h = self.distance * (self.fov_y / 2.0).tan();
-                let half_w = half_h * self.aspect;
-                glam::Mat4::orthographic_rh(
-                    -half_w,
-                    half_w,
-                    -half_h,
-                    half_h,
-                    effective_znear,
-                    effective_zfar,
-                )
-            }
-        }
+    /// The projection matrix the renderer draws with; see
+    /// [`Projection::proj_matrix`].
+    pub fn proj_matrix(&self) -> Mat4 {
+        self.projection
+            .proj_matrix(self.aspect, self.focus_distance())
     }
 
-    /// Combined view-projection matrix for use in the camera uniform buffer:
-    /// [`proj_matrix`](Self::proj_matrix) times the view matrix, so reversed
-    /// depth with no far plane for a perspective camera. Unproject screen
-    /// points with [`screen_ray`](Self::screen_ray) rather than through its
-    /// inverse at depth 0 and 1.
-    pub fn view_proj_matrix(&self) -> glam::Mat4 {
+    /// The finite culling projection; see [`Projection::culling_proj_matrix`].
+    pub fn culling_proj_matrix(&self) -> Mat4 {
+        self.projection
+            .culling_proj_matrix(self.aspect, self.focus_distance())
+    }
+
+    /// [`proj_matrix`](Self::proj_matrix) times the view matrix. Unproject
+    /// screen points with [`screen_ray`](Self::screen_ray) rather than through
+    /// its inverse at depth 0 and 1.
+    pub fn view_proj_matrix(&self) -> Mat4 {
         self.proj_matrix() * self.view_matrix()
     }
 
     /// [`culling_proj_matrix`](Self::culling_proj_matrix) times the view matrix.
-    pub fn culling_view_proj_matrix(&self) -> glam::Mat4 {
+    pub fn culling_view_proj_matrix(&self) -> Mat4 {
         self.culling_proj_matrix() * self.view_matrix()
+    }
+
+    /// The view frustum, from [`culling_view_proj_matrix`](Self::culling_view_proj_matrix).
+    pub fn frustum(&self) -> crate::camera::frustum::Frustum {
+        crate::camera::frustum::Frustum::from_view_proj(&self.culling_view_proj_matrix())
     }
 
     /// The world-space ray through a point on screen, as `(origin, direction)`
@@ -352,510 +428,90 @@ impl Camera {
     /// right and bottom to top. A perspective ray starts at the eye; an
     /// orthographic ray starts on the near plane and runs along
     /// [`forward`](Self::forward).
-    pub fn screen_ray(&self, ndc: glam::Vec2) -> (glam::Vec3, glam::Vec3) {
+    pub fn screen_ray(&self, ndc: Vec2) -> (Vec3, Vec3) {
         let forward = self.forward();
         let right = self.right();
         let up = self.up();
-        let tan_half = (self.fov_y / 2.0).tan();
-        match self.projection {
-            Projection::Perspective => {
-                let dir =
-                    forward + right * (ndc.x * tan_half * self.aspect) + up * (ndc.y * tan_half);
-                (self.eye_position().as_vec3(), dir.normalize())
-            }
-            Projection::Orthographic => {
-                let half_h = self.distance * tan_half;
-                let half_w = half_h * self.aspect;
-                let origin = self.eye_position().as_vec3()
-                    + right * (ndc.x * half_w)
-                    + up * (ndc.y * half_h)
-                    + forward * self.effective_znear();
-                (origin, forward)
-            }
+        let eye = self.eye().as_vec3();
+        if self.is_orthographic() {
+            let half_h = self.view_height_at(1.0) * 0.5;
+            let half_w = half_h * self.aspect;
+            let origin = eye
+                + right * (ndc.x * half_w)
+                + up * (ndc.y * half_h)
+                + forward * self.depth_range().0;
+            (origin, forward)
+        } else {
+            let tan_half = self.view_height_at(1.0) * 0.5;
+            let dir = forward + right * (ndc.x * tan_half * self.aspect) + up * (ndc.y * tan_half);
+            (eye, dir.normalize())
         }
     }
 
-    /// The direction the camera looks, in world space: from the eye toward
-    /// the centre.
-    pub fn forward(&self) -> glam::Vec3 {
-        -(self.orientation * glam::Vec3::Z)
+    // -----------------------------------------------------------------------
+    // Framing helpers
+    // -----------------------------------------------------------------------
+
+    /// Frame a bounding sphere, keeping the orientation.
+    pub fn frame_sphere(&mut self, center: impl Into<DVec3>, radius: f32) {
+        let (c, d) = self.fit_sphere(center, radius);
+        self.set_orbit(
+            c,
+            d.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE),
+            self.orientation(),
+        );
     }
 
-    /// Camera right vector in world space (used for pan).
-    pub fn right(&self) -> glam::Vec3 {
-        self.orientation * glam::Vec3::X
+    /// Frame an AABB, keeping the orientation.
+    pub fn frame_aabb(&mut self, aabb: &crate::scene::aabb::Aabb) {
+        let (c, d) = self.fit_aabb(aabb);
+        self.set_orbit(
+            c,
+            d.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE),
+            self.orientation(),
+        );
     }
 
-    /// Camera up vector in world space (used for pan).
-    pub fn up(&self) -> glam::Vec3 {
-        self.orientation * glam::Vec3::Y
+    /// The [`CameraTarget`] that frames a bounding sphere, keeping the
+    /// orientation.
+    pub fn fit_sphere_target(&self, center: impl Into<DVec3>, radius: f32) -> CameraTarget {
+        let (c, d) = self.fit_sphere(center, radius);
+        CameraTarget::new(c, d, self.orientation())
     }
 
-    /// The view frustum, from [`culling_view_proj_matrix`](Self::culling_view_proj_matrix).
-    pub fn frustum(&self) -> crate::camera::frustum::Frustum {
-        crate::camera::frustum::Frustum::from_view_proj(&self.culling_view_proj_matrix())
+    /// The [`CameraTarget`] that frames an AABB, keeping the orientation.
+    pub fn fit_aabb_target(&self, aabb: &crate::scene::aabb::Aabb) -> CameraTarget {
+        let (c, d) = self.fit_aabb(aabb);
+        CameraTarget::new(c, d, self.orientation())
     }
 
-    /// Compute `(center, distance)` that would frame a bounding sphere in view,
-    /// preserving the current orientation.
-    ///
-    /// A 1.2x padding factor is applied so the object doesn't touch the edges.
-    pub fn fit_sphere(&self, center: impl Into<glam::DVec3>, radius: f32) -> (glam::DVec3, f32) {
-        let center = center.into();
-        let distance = match self.projection {
-            Projection::Perspective => radius / (self.fov_y / 2.0).tan() * 1.2,
-            Projection::Orthographic => radius * 1.2,
+    /// `(center, distance)` that frames a bounding sphere, keeping the
+    /// orientation. Pads by 1.2x so the object does not touch the edges.
+    pub fn fit_sphere(&self, center: impl Into<DVec3>, radius: f32) -> (DVec3, f32) {
+        let distance = if self.is_orthographic() {
+            radius * 1.2
+        } else {
+            radius / (self.fov_y() / 2.0).tan() * 1.2
         };
-        (center, distance)
+        (center.into(), distance)
     }
 
-    /// Compute `(center, distance)` that would frame an AABB in view,
-    /// preserving the current orientation.
-    ///
-    /// Converts the AABB to a bounding sphere and delegates to [`fit_sphere`](Self::fit_sphere).
-    pub fn fit_aabb(&self, aabb: &crate::scene::aabb::Aabb) -> (glam::DVec3, f32) {
-        let center = aabb.center();
-        let radius = aabb.half_extents().length();
-        self.fit_sphere(center, radius)
+    /// `(center, distance)` that frames an AABB, through its bounding sphere.
+    pub fn fit_aabb(&self, aabb: &crate::scene::aabb::Aabb) -> (DVec3, f32) {
+        self.fit_sphere(aabb.center(), aabb.half_extents().length())
     }
 
-    /// Center the camera on a domain of the given extents, adjusting distance
-    /// and clipping planes so the entire domain is visible.
+    /// Centre the camera on a domain of the given extents, with the distance
+    /// and clipping planes set so all of it is visible.
     pub fn center_on_domain(&mut self, nx: f32, ny: f32, nz: f32) {
-        self.center = glam::Vec3::new(nx, ny, nz).as_dvec3() / 2.0;
+        let center = Vec3::new(nx, ny, nz).as_dvec3() / 2.0;
         let diagonal = (nx * nx + ny * ny + nz * nz).sqrt();
-        self.distance = (diagonal / 2.0) / (self.fov_y / 2.0).tan() * 1.2;
-        self.znear = Some((diagonal * 0.0001).max(0.01));
-        self.zfar = (diagonal * 10.0).max(1000.0);
+        let distance = (diagonal / 2.0) / (self.fov_y() / 2.0).tan() * 1.2;
+        self.set_orbit(center, distance, self.orientation());
+        self.set_clip_planes((diagonal * 0.0001).max(0.01), (diagonal * 10.0).max(1000.0));
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_eye_position() {
-        let cam = Camera::default();
-        let expected = cam.center + (cam.orientation * (glam::Vec3::Z * cam.distance)).as_dvec3();
-        let eye = cam.eye_position();
-        assert!(
-            (eye - expected).length() < 1e-5,
-            "eye={eye:?} expected={expected:?}"
-        );
-    }
-
-    #[test]
-    fn test_view_matrix_looks_at_center() {
-        let cam = Camera::default();
-        let view = cam.view_matrix();
-        // Center in view space should be near the negative Z axis.
-        let center_view = view.transform_point3(cam.center.as_vec3());
-        // X and Y should be near zero; Z should be negative (in front of camera).
-        assert!(
-            center_view.x.abs() < 1e-4,
-            "center_view.x={}",
-            center_view.x
-        );
-        assert!(
-            center_view.y.abs() < 1e-4,
-            "center_view.y={}",
-            center_view.y
-        );
-        assert!(
-            center_view.z < 0.0,
-            "center should be in front of camera, z={}",
-            center_view.z
-        );
-    }
-
-    #[test]
-    fn projection_is_reversed_and_culling_is_standard() {
-        for projection in [Projection::Perspective, Projection::Orthographic] {
-            let cam = Camera {
-                projection,
-                ..Camera::default()
-            };
-            let near = glam::Vec3::new(0.0, 0.0, -cam.effective_znear());
-            let far = glam::Vec3::new(0.0, 0.0, -cam.effective_zfar());
-            let p = cam.proj_matrix();
-            assert!(
-                (p.project_point3(near).z - 1.0).abs() < 1e-5,
-                "{projection:?}"
-            );
-            assert!(p.project_point3(far).z < 1e-3, "{projection:?}");
-            let c = cam.culling_proj_matrix();
-            assert!(c.project_point3(near).z.abs() < 1e-5, "{projection:?}");
-            assert!(
-                (c.project_point3(far).z - 1.0).abs() < 1e-4,
-                "{projection:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn screen_ray_through_the_centre_is_the_eye_and_forward() {
-        let cam = Camera::default();
-        let (origin, dir) = cam.screen_ray(glam::Vec2::ZERO);
-        assert!((origin - cam.eye_position().as_vec3()).length() < 1e-5);
-        assert!((dir - cam.forward()).length() < 1e-5);
-    }
-
-    #[test]
-    fn screen_ray_lands_on_its_screen_point() {
-        for projection in [Projection::Perspective, Projection::Orthographic] {
-            let cam = Camera {
-                projection,
-                ..Camera::default()
-            };
-            let ndc = glam::Vec2::new(0.6, -0.3);
-            let (origin, dir) = cam.screen_ray(ndc);
-            let p = cam
-                .culling_view_proj_matrix()
-                .project_point3(origin + dir * 3.0);
-            assert!(
-                (p.truncate() - ndc).length() < 1e-4,
-                "{projection:?}: {p:?} for {ndc:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn orthographic_screen_ray_starts_on_the_near_plane() {
-        let cam = Camera {
-            projection: Projection::Orthographic,
-            ..Camera::default()
-        };
-        let (origin, dir) = cam.screen_ray(glam::Vec2::new(-0.5, 0.25));
-        assert!((dir - cam.forward()).length() < 1e-6);
-        let depth = (origin - cam.eye_position().as_vec3()).dot(cam.forward());
-        assert!((depth - cam.effective_znear()).abs() < 1e-4, "{depth}");
-    }
-
-    #[test]
-    fn test_view_proj_roundtrip() {
-        let cam = Camera::default();
-        let vp = cam.view_proj_matrix();
-        let vp_inv = vp.inverse();
-        // NDC center (0,0,0.5) should unproject to somewhere near the center.
-        let world_pt = vp_inv.project_point3(glam::Vec3::new(0.0, 0.0, 0.5));
-        // The unprojected point should lie along the camera-to-center ray.
-        let eye = cam.eye_position();
-        let to_center = (cam.center - eye).as_vec3().normalize();
-        let to_pt = (world_pt - eye.as_vec3()).normalize();
-        let dot = to_center.dot(to_pt);
-        assert!(
-            dot > 0.99,
-            "dot={dot}, point should be along camera-to-center ray"
-        );
-    }
-
-    #[test]
-    fn test_center_on_domain() {
-        let mut cam = Camera::default();
-        cam.center_on_domain(10.0, 10.0, 10.0);
-        assert!((cam.center - glam::DVec3::splat(5.0)).length() < 1e-5);
-        assert!(cam.distance > 0.0);
-    }
-
-    #[test]
-    fn test_fit_sphere_perspective() {
-        let cam = Camera::default(); // perspective, fov_y = PI/4
-        let (center, dist) = cam.fit_sphere(glam::Vec3::ZERO, 5.0);
-        assert!((center - glam::DVec3::ZERO).length() < 1e-5);
-        let expected = 5.0 / (cam.fov_y / 2.0).tan() * 1.2;
-        assert!(
-            (dist - expected).abs() < 1e-4,
-            "dist={dist}, expected={expected}"
-        );
-    }
-
-    #[test]
-    fn test_fit_sphere_orthographic() {
-        let mut cam = Camera::default();
-        cam.projection = Projection::Orthographic;
-        let (_, dist) = cam.fit_sphere(glam::Vec3::ZERO, 5.0);
-        let expected = 5.0 * 1.2;
-        assert!(
-            (dist - expected).abs() < 1e-4,
-            "dist={dist}, expected={expected}"
-        );
-    }
-
-    #[test]
-    fn test_fit_aabb_unit_cube() {
-        let cam = Camera::default();
-        let aabb = crate::scene::aabb::Aabb {
-            min: glam::Vec3::splat(-0.5),
-            max: glam::Vec3::splat(0.5),
-        };
-        let (center, dist) = cam.fit_aabb(&aabb);
-        assert!(center.length() < 1e-5, "center should be origin");
-        assert!(dist > 0.0, "distance should be positive");
-        // Half-diagonal of unit cube = sqrt(0.75) ~ 0.866
-        let radius = aabb.half_extents().length();
-        let expected = radius / (cam.fov_y / 2.0).tan() * 1.2;
-        assert!(
-            (dist - expected).abs() < 1e-4,
-            "dist={dist}, expected={expected}"
-        );
-    }
-
-    #[test]
-    fn test_fit_aabb_preserves_padding() {
-        let cam = Camera::default();
-        let aabb = crate::scene::aabb::Aabb {
-            min: glam::Vec3::splat(-2.0),
-            max: glam::Vec3::splat(2.0),
-        };
-        let (_, dist) = cam.fit_aabb(&aabb);
-        // Without padding: radius / tan(fov/2)
-        let radius = aabb.half_extents().length();
-        let no_pad = radius / (cam.fov_y / 2.0).tan();
-        assert!(
-            dist > no_pad,
-            "padded distance ({dist}) should exceed unpadded ({no_pad})"
-        );
-    }
-
-    #[test]
-    fn test_right_up_orthogonal() {
-        let cam = Camera::default();
-        let dot = cam.right().dot(cam.up());
-        assert!(
-            dot.abs() < 1e-5,
-            "right and up should be orthogonal, dot={dot}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Tests for new methods (Task 1)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_constants() {
-        assert!((Camera::MIN_DISTANCE - 0.01).abs() < 1e-7);
-        assert!((Camera::MAX_DISTANCE - 1.0e6).abs() < 1.0);
-    }
-
-    #[test]
-    fn test_set_distance_clamps() {
-        let mut cam = Camera::default();
-        cam.set_distance(-1.0);
-        assert!(
-            (cam.distance - Camera::MIN_DISTANCE).abs() < 1e-7,
-            "negative distance should clamp to MIN_DISTANCE"
-        );
-        cam.set_distance(2.0e6);
-        assert!(
-            (cam.distance - Camera::MAX_DISTANCE).abs() < 1.0,
-            "too-large distance should clamp to MAX_DISTANCE"
-        );
-    }
-
-    #[test]
-    fn test_set_center_and_getter() {
-        let mut cam = Camera::default();
-        let target = glam::DVec3::new(1.0, 2.0, 3.0);
-        cam.set_center(target);
-        assert_eq!(cam.center(), target);
-        assert_eq!(cam.center, target);
-    }
-
-    #[test]
-    fn test_set_distance_getter() {
-        let mut cam = Camera::default();
-        cam.set_distance(7.5);
-        assert!((cam.distance() - 7.5).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_set_orientation_normalizes() {
-        let mut cam = Camera::default();
-        // Supply a non-unit quaternion.
-        let q = glam::Quat::from_xyzw(0.0, 0.707, 0.0, 0.707) * 2.0;
-        cam.set_orientation(q);
-        let len = (cam.orientation.x * cam.orientation.x
-            + cam.orientation.y * cam.orientation.y
-            + cam.orientation.z * cam.orientation.z
-            + cam.orientation.w * cam.orientation.w)
-            .sqrt();
-        assert!(
-            (len - 1.0).abs() < 1e-5,
-            "orientation should be normalized, len={len}"
-        );
-    }
-
-    #[test]
-    fn test_set_aspect_ratio_normal() {
-        let mut cam = Camera::default();
-        cam.set_aspect_ratio(800.0, 600.0);
-        let expected = 800.0 / 600.0;
-        assert!((cam.aspect - expected).abs() < 1e-5);
-    }
-
-    #[test]
-    fn test_set_aspect_ratio_zero_height() {
-        let mut cam = Camera::default();
-        cam.set_aspect_ratio(800.0, 0.0);
-        assert!(
-            (cam.aspect - 1.0).abs() < 1e-5,
-            "zero height should produce aspect=1.0"
-        );
-    }
-
-    #[test]
-    fn test_set_fov_y() {
-        let mut cam = Camera::default();
-        cam.set_fov_y(1.2);
-        assert!((cam.fov_y - 1.2).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_set_clip_planes() {
-        let mut cam = Camera::default();
-        cam.set_clip_planes(0.1, 500.0);
-        assert!((cam.znear.unwrap() - 0.1).abs() < 1e-6);
-        assert!((cam.zfar - 500.0).abs() < 1e-4);
-    }
-
-    #[test]
-    fn test_orbit_matches_manual() {
-        let mut cam = Camera::default();
-        let orig_orientation = cam.orientation;
-        let yaw = 0.1_f32;
-        let pitch = 0.2_f32;
-        let expected = (glam::Quat::from_rotation_z(-yaw)
-            * orig_orientation
-            * glam::Quat::from_rotation_x(-pitch))
-        .normalize();
-        cam.orbit(yaw, pitch);
-        let diff = (cam.orientation - expected).length();
-        assert!(diff < 1e-5, "orbit() result mismatch, diff={diff}");
-    }
-
-    #[test]
-    fn test_pan_world_moves_center() {
-        let mut cam = Camera::default();
-        cam.orientation = glam::Quat::IDENTITY;
-        let right = cam.right();
-        let up = cam.up();
-        let orig_center = cam.center;
-        cam.pan_world(1.0, 0.5);
-        let expected = orig_center - (right * 1.0 - up * 0.5).as_dvec3();
-        assert!(
-            (cam.center - expected).length() < 1e-5,
-            "pan_world center mismatch"
-        );
-    }
-
-    #[test]
-    fn test_pan_pixels_uses_correct_scale() {
-        let mut cam = Camera::default();
-        cam.orientation = glam::Quat::IDENTITY;
-        cam.distance = 10.0;
-        let viewport_h = 600.0_f32;
-        let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / viewport_h;
-        let dx = 100.0_f32;
-        let dy = 50.0_f32;
-        let orig_center = cam.center;
-        let right = cam.right();
-        let up = cam.up();
-        cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
-        let expected = orig_center - (right * dx * pan_scale - up * dy * pan_scale).as_dvec3();
-        assert!(
-            (cam.center - expected).length() < 1e-4,
-            "pan_pixels center mismatch"
-        );
-    }
-
-    #[test]
-    fn test_zoom_by_factor_clamps() {
-        let mut cam = Camera::default();
-        cam.distance = 1.0;
-        cam.zoom_by_factor(0.0);
-        assert!(
-            (cam.distance - Camera::MIN_DISTANCE).abs() < 1e-7,
-            "factor=0 should clamp to MIN_DISTANCE"
-        );
-
-        cam.distance = 1.0;
-        cam.zoom_by_factor(2.0e7);
-        assert!(
-            (cam.distance - Camera::MAX_DISTANCE).abs() < 1.0,
-            "large factor should clamp to MAX_DISTANCE"
-        );
-    }
-
-    #[test]
-    fn test_zoom_by_delta() {
-        let mut cam = Camera::default();
-        cam.distance = 5.0;
-        cam.zoom_by_delta(2.0);
-        assert!((cam.distance - 7.0).abs() < 1e-5);
-        cam.zoom_by_delta(-100.0);
-        assert!(
-            cam.distance >= Camera::MIN_DISTANCE,
-            "delta clamped to MIN_DISTANCE"
-        );
-    }
-
-    #[test]
-    fn test_frame_sphere_applies_result() {
-        let mut cam = Camera::default();
-        let sphere_center = glam::Vec3::new(1.0, 2.0, 3.0);
-        let radius = 5.0;
-        let (expected_c, expected_d) = cam.fit_sphere(sphere_center, radius);
-        cam.frame_sphere(sphere_center, radius);
-        assert!((cam.center - expected_c).length() < 1e-5);
-        assert!(
-            (cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs()
-                < 1e-5
-        );
-    }
-
-    #[test]
-    fn test_frame_aabb_applies_result() {
-        let mut cam = Camera::default();
-        let aabb = crate::scene::aabb::Aabb {
-            min: glam::Vec3::splat(-1.0),
-            max: glam::Vec3::splat(1.0),
-        };
-        let (expected_c, expected_d) = cam.fit_aabb(&aabb);
-        cam.frame_aabb(&aabb);
-        assert!((cam.center - expected_c).length() < 1e-5);
-        assert!(
-            (cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs()
-                < 1e-5
-        );
-    }
-
-    #[test]
-    fn test_fit_sphere_target() {
-        let cam = Camera::default();
-        let sphere_center = glam::Vec3::new(0.0, 1.0, 0.0);
-        let radius = 2.0;
-        let target = cam.fit_sphere_target(sphere_center, radius);
-        let (expected_c, expected_d) = cam.fit_sphere(sphere_center, radius);
-        assert!((target.center - expected_c).length() < 1e-5);
-        assert!((target.distance - expected_d).abs() < 1e-5);
-        // Orientation should be preserved.
-        let diff = (target.orientation - cam.orientation).length();
-        assert!(diff < 1e-5, "fit_sphere_target should preserve orientation");
-    }
-
-    #[test]
-    fn test_fit_aabb_target() {
-        let cam = Camera::default();
-        let aabb = crate::scene::aabb::Aabb {
-            min: glam::Vec3::splat(-2.0),
-            max: glam::Vec3::splat(2.0),
-        };
-        let target = cam.fit_aabb_target(&aabb);
-        let (expected_c, expected_d) = cam.fit_aabb(&aabb);
-        assert!((target.center - expected_c).length() < 1e-5);
-        assert!((target.distance - expected_d).abs() < 1e-5);
-        let diff = (target.orientation - cam.orientation).length();
-        assert!(diff < 1e-5, "fit_aabb_target should preserve orientation");
-    }
-}
+#[path = "camera_tests.rs"]
+mod tests;

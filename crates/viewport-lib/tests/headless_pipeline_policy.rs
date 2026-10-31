@@ -393,10 +393,11 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
             .upload_mesh_data(&device, &box_mesh())
             .unwrap();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = RenderCamera::from_camera(&Camera {
-            distance: 14.0,
-            ..Camera::default()
-        });
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
+            glam::DVec3::ZERO,
+            14.0,
+            Camera::default().orientation(),
+        ));
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;

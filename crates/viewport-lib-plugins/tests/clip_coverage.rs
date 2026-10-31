@@ -24,8 +24,8 @@
 #![cfg(feature = "item-types")]
 
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib::wgpu;
 use viewport_lib::vplg::volume::grid::VolumeData;
+use viewport_lib::wgpu;
 use viewport_lib::{
     CameraFrame, ClipObject, Colour, ColourSource, ColourmapId, Material, MeshId, PolylineItem,
     SceneFrame, SceneRenderItem, SizeSource, SurfaceSubmission, primitives,
@@ -63,12 +63,12 @@ fn plane_clip() -> ClipObject {
 }
 
 fn frame(scene: SceneFrame, clip: Option<ClipObject>) -> FrameData {
-    let mut camera = Camera {
-        distance: 7.0,
-        ..Camera::default()
-    };
+    let mut camera = Camera::orbit(glam::DVec3::ZERO, 7.0, Camera::default().orientation());
     camera.set_aspect_ratio(W as f32, H as f32);
-    let mut frame = FrameData::new(CameraFrame::from_camera(&camera, [W as f32, H as f32]), scene);
+    let mut frame = FrameData::new(
+        CameraFrame::from_camera(&camera, [W as f32, H as f32]),
+        scene,
+    );
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     if let Some(c) = clip {
@@ -98,7 +98,13 @@ macro_rules! one {
 
 /// The types whose shaders read `ignore_clip`. The rest are reported only
 /// (`clipping-coverage-uneven-across-item-types`).
-const HONOUR_IGNORE_CLIP: [&str; 5] = ["surface mesh", "polyline", "GPU implicit", "marching cubes", "Gaussian splats"];
+const HONOUR_IGNORE_CLIP: [&str; 5] = [
+    "surface mesh",
+    "polyline",
+    "GPU implicit",
+    "marching cubes",
+    "Gaussian splats",
+];
 
 /// Which pixels differ from the empty frame by more than a rounding step.
 fn drawn(base: &[u8], pixels: &[u8]) -> Vec<bool> {
@@ -169,7 +175,11 @@ fn write_mask(path: &str, mask: &[bool]) {
 }
 
 fn removed(full: usize, kept: usize) -> f32 {
-    if full == 0 { 0.0 } else { 100.0 * (1.0 - kept as f32 / full as f32) }
+    if full == 0 {
+        0.0
+    } else {
+        100.0 * (1.0 - kept as f32 / full as f32)
+    }
 }
 
 #[test]
@@ -194,22 +204,44 @@ fn clip_coverage_by_item_type() {
     scenes.push(("GPU implicit", one!(implicit())));
     scenes.push(("volume", one!(volume(&mut renderer, &device, &queue))));
     scenes.push(("vector field", one!(vector_field(&mut renderer, &device))));
-    scenes.push(("marching cubes", one!(marching_cubes(&mut renderer, &device, &queue))));
-    scenes.push(("Gaussian splats", one!(splats(&mut renderer, &device, &queue))));
+    scenes.push((
+        "marching cubes",
+        one!(marching_cubes(&mut renderer, &device, &queue)),
+    ));
+    scenes.push((
+        "Gaussian splats",
+        one!(splats(&mut renderer, &device, &queue)),
+    ));
 
-    let empty = renderer.render_offscreen(&device, &queue, &frame(SceneFrame::default(), None), W, H);
+    let empty =
+        renderer.render_offscreen(&device, &queue, &frame(SceneFrame::default(), None), W, H);
 
     let mut rows = Vec::new();
     for (name, scene) in scenes {
         let full_frame = frame(scene(false), None);
-        let full = drawn(&empty, &renderer.render_offscreen(&device, &queue, &full_frame, W, H));
+        let full = drawn(
+            &empty,
+            &renderer.render_offscreen(&device, &queue, &full_frame, W, H),
+        );
         let boxed_frame = frame(scene(false), Some(box_clip()));
-        let boxed = drawn(&empty, &renderer.render_offscreen(&device, &queue, &boxed_frame, W, H));
+        let boxed = drawn(
+            &empty,
+            &renderer.render_offscreen(&device, &queue, &boxed_frame, W, H),
+        );
         let planed_frame = frame(scene(false), Some(plane_clip()));
-        let planed = drawn(&empty, &renderer.render_offscreen(&device, &queue, &planed_frame, W, H));
+        let planed = drawn(
+            &empty,
+            &renderer.render_offscreen(&device, &queue, &planed_frame, W, H),
+        );
         let exempt = drawn(
             &empty,
-            &renderer.render_offscreen(&device, &queue, &frame(scene(true), Some(box_clip())), W, H),
+            &renderer.render_offscreen(
+                &device,
+                &queue,
+                &frame(scene(true), Some(box_clip())),
+                W,
+                H,
+            ),
         );
 
         // A pixel the box cut away, as far from the kept part as there is.
@@ -218,13 +250,28 @@ fn clip_coverage_by_item_type() {
             .max_by_key(|&i| i % W as usize);
         let (gpu_pick_in_cut, cpu_pick_in_cut) = match cut {
             Some(i) => {
-                let at = glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
+                let at =
+                    glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
                 let _ = renderer.pass().prepare(&device, &queue, &boxed_frame);
                 let gpu = renderer
-                    .pick_object(PickBackend::Gpu, at, &boxed_frame, &device, &queue, PickMask::OBJECT)
+                    .pick_object(
+                        PickBackend::Gpu,
+                        at,
+                        &boxed_frame,
+                        &device,
+                        &queue,
+                        PickMask::OBJECT,
+                    )
                     .is_some();
                 let cpu = renderer
-                    .pick_object(PickBackend::Cpu, at, &boxed_frame, &device, &queue, PickMask::OBJECT)
+                    .pick_object(
+                        PickBackend::Cpu,
+                        at,
+                        &boxed_frame,
+                        &device,
+                        &queue,
+                        PickMask::OBJECT,
+                    )
                     .is_some();
                 (Some(gpu), Some(cpu))
             }
@@ -235,19 +282,41 @@ fn clip_coverage_by_item_type() {
         let plane_cut = interior_pixel(&full, &planed);
         let (gpu_pick_in_plane_cut, gpu_pick_exempt, gpu_pick_unclipped) = match plane_cut {
             Some(i) => {
-                let at = glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
+                let at =
+                    glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
                 let _ = renderer.pass().prepare(&device, &queue, &full_frame);
                 let unclipped = renderer
-                    .pick_object(PickBackend::Gpu, at, &full_frame, &device, &queue, PickMask::OBJECT)
+                    .pick_object(
+                        PickBackend::Gpu,
+                        at,
+                        &full_frame,
+                        &device,
+                        &queue,
+                        PickMask::OBJECT,
+                    )
                     .is_some();
                 let _ = renderer.pass().prepare(&device, &queue, &planed_frame);
                 let clipped = renderer
-                    .pick_object(PickBackend::Gpu, at, &planed_frame, &device, &queue, PickMask::OBJECT)
+                    .pick_object(
+                        PickBackend::Gpu,
+                        at,
+                        &planed_frame,
+                        &device,
+                        &queue,
+                        PickMask::OBJECT,
+                    )
                     .is_some();
                 let exempt_frame = frame(scene(true), Some(plane_clip()));
                 let _ = renderer.pass().prepare(&device, &queue, &exempt_frame);
                 let exempt = renderer
-                    .pick_object(PickBackend::Gpu, at, &exempt_frame, &device, &queue, PickMask::OBJECT)
+                    .pick_object(
+                        PickBackend::Gpu,
+                        at,
+                        &exempt_frame,
+                        &device,
+                        &queue,
+                        PickMask::OBJECT,
+                    )
                     .is_some();
                 (Some(clipped), Some(exempt), Some(unclipped))
             }
@@ -257,13 +326,23 @@ fn clip_coverage_by_item_type() {
         let kept = (0..(W * H) as usize)
             .filter(|&i| boxed[i])
             .min_by_key(|&i| {
-                let (x, y) = ((i % W as usize) as i64 - W as i64 / 2, (i / W as usize) as i64 - H as i64 / 2);
+                let (x, y) = (
+                    (i % W as usize) as i64 - W as i64 / 2,
+                    (i / W as usize) as i64 - H as i64 / 2,
+                );
                 x * x + y * y
             });
         let cpu_pick_kept = kept.map(|i| {
             let at = glam::Vec2::new((i % W as usize) as f32 + 0.5, (i / W as usize) as f32 + 0.5);
             renderer
-                .pick_object(PickBackend::Cpu, at, &boxed_frame, &device, &queue, PickMask::OBJECT)
+                .pick_object(
+                    PickBackend::Cpu,
+                    at,
+                    &boxed_frame,
+                    &device,
+                    &queue,
+                    PickMask::OBJECT,
+                )
                 .is_some()
         });
 
@@ -325,9 +404,22 @@ fn clip_coverage_by_item_type() {
     }
     for r in &rows {
         assert!(r.full > 200, "{} drew {} pixels", r.name, r.full);
-        assert!(removed(r.full, r.boxed) > 10.0, "{}: a clip box removed nothing", r.name);
-        assert!(removed(r.full, r.planed) > 10.0, "{}: a clip plane removed nothing", r.name);
-        assert_eq!(r.gpu_pick_in_cut, Some(false), "{}: the GPU picked what the box cut away", r.name);
+        assert!(
+            removed(r.full, r.boxed) > 10.0,
+            "{}: a clip box removed nothing",
+            r.name
+        );
+        assert!(
+            removed(r.full, r.planed) > 10.0,
+            "{}: a clip plane removed nothing",
+            r.name
+        );
+        assert_eq!(
+            r.gpu_pick_in_cut,
+            Some(false),
+            "{}: the GPU picked what the box cut away",
+            r.name
+        );
         assert_eq!(
             r.gpu_pick_unclipped,
             Some(true),
@@ -340,12 +432,26 @@ fn clip_coverage_by_item_type() {
             "{}: the GPU picked what the plane cut away",
             r.name
         );
-        assert_ne!(r.cpu_pick_in_cut, Some(true), "{}: the CPU picked what the box cut away", r.name);
+        assert_ne!(
+            r.cpu_pick_in_cut,
+            Some(true),
+            "{}: the CPU picked what the box cut away",
+            r.name
+        );
         if CPU_PICKED.contains(&r.name) {
-            assert_eq!(r.cpu_pick_kept, Some(true), "{}: the CPU picked nothing where the box kept it", r.name);
+            assert_eq!(
+                r.cpu_pick_kept,
+                Some(true),
+                "{}: the CPU picked nothing where the box kept it",
+                r.name
+            );
         }
         if HONOUR_IGNORE_CLIP.contains(&r.name) {
-            assert!(removed(r.full, r.exempt) < 2.0, "{}: ignore_clip was not honoured", r.name);
+            assert!(
+                removed(r.full, r.exempt) < 2.0,
+                "{}: ignore_clip was not honoured",
+                r.name
+            );
         }
         if r.name == "surface mesh" {
             assert_eq!(
@@ -450,7 +556,11 @@ fn implicit() -> GpuImplicitItem {
     item
 }
 
-fn volume(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) -> VolumeItem {
+fn volume(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> VolumeItem {
     let n = 24u32;
     let c = (n - 1) as f32 * 0.5;
     let mut data = Vec::with_capacity((n * n * n) as usize);
@@ -462,7 +572,9 @@ fn volume(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::
             }
         }
     }
-    let volume_id = renderer.resources_mut().upload_volume(device, queue, &data, [n; 3]);
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(device, queue, &data, [n; 3]);
     let mut v = VolumeItem::default();
     v.volume_id = volume_id;
     v.colour_lut = Some(ColourmapId(0));
@@ -507,7 +619,8 @@ fn marching_cubes(
     for iz in 0..n {
         for iy in 0..n {
             for ix in 0..n {
-                let p = glam::Vec3::new(ix as f32, iy as f32, iz as f32) * step + glam::Vec3::from(origin);
+                let p = glam::Vec3::new(ix as f32, iy as f32, iz as f32) * step
+                    + glam::Vec3::from(origin);
                 data.push(1.3 - p.length());
             }
         }
@@ -518,7 +631,9 @@ fn marching_cubes(
         origin,
         spacing: [step; 3],
     };
-    let volume_id = renderer.upload_volume_for_mc(device, queue, &vol).expect("mc volume");
+    let volume_id = renderer
+        .upload_volume_for_mc(device, queue, &vol)
+        .expect("mc volume");
     let mut item = GpuMarchingCubesItem {
         volume_id,
         isovalue: 0.0,
@@ -530,7 +645,11 @@ fn marching_cubes(
     item
 }
 
-fn splats(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) -> GaussianSplatItem {
+fn splats(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> GaussianSplatItem {
     const SH0: f32 = 0.282_094_79;
     let mut sd = GaussianSplatData::default();
     sd.sh_degree = ShDegree::Zero;
@@ -541,8 +660,11 @@ fn splats(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::
         sd.scales.push([0.3; 3]);
         sd.rotations.push([0.0, 0.0, 0.0, 1.0]);
         sd.opacities.push(0.85);
-        sd.sh_coefficients
-            .extend_from_slice(&[(0.8 - 0.5) / SH0, (0.4 - 0.5) / SH0, (0.3 - 0.5) / SH0]);
+        sd.sh_coefficients.extend_from_slice(&[
+            (0.8 - 0.5) / SH0,
+            (0.4 - 0.5) / SH0,
+            (0.3 - 0.5) / SH0,
+        ]);
     }
     let source = renderer.upload(device, queue, &sd).expect("splats");
     let mut item = GaussianSplatItem::default();

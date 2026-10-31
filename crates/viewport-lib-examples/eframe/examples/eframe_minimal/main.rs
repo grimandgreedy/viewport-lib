@@ -84,7 +84,7 @@ fn main() -> eframe::Result {
                 glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)),
                 green,
             );
-            session.camera_mut().distance = 10.0;
+            session.camera_mut().set_orbit_distance(10.0);
 
             Ok(Box::new(App {
                 session,

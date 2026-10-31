@@ -120,12 +120,11 @@ fn a_first_person_camera_fits_the_cascades_to_the_scene() {
     // across it. The orbit radius is a token value with nothing to say about
     // how far the scene reaches.
     let eye = Vec3::new(0.0, -14.0, 1.7);
-    let camera = Camera {
-        center: (eye + Vec3::Y * 0.01).as_dvec3(),
-        distance: 0.01,
-        orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(
+        (eye + Vec3::Y * 0.01).as_dvec3(),
+        0.01,
+        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+    );
     let _ = render(&mut h, &frame(&items, &camera, 1));
     let splits = h.renderer.shadow_debug_stats().cascade_splits;
     // The ground runs about 29 m ahead of the eye; the camera far plane is
@@ -288,12 +287,11 @@ fn shadow_past_the_distance(h: &mut Harness, fade_fraction: f32) -> (f32, f32) {
     let items = vec![ground, fence];
 
     let eye = Vec3::new(0.0, 0.0, 1.7);
-    let camera = Camera {
-        center: (eye + Vec3::Y * 0.01).as_dvec3(),
-        distance: 0.01,
-        orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(
+        (eye + Vec3::Y * 0.01).as_dvec3(),
+        0.01,
+        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+    );
     let mut fd = frame(&items, &camera, 1);
     let mut sun = LightSource::default();
     sun.kind = LightKind::Directional {

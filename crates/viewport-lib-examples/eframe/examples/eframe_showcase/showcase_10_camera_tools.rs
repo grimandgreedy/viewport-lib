@@ -11,7 +11,7 @@ use crate::eframe::egui;
 use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{Easing, Material, Projection, ViewPreset, ViewportRenderer, scene::Scene};
+use vpl::{Easing, Material, ViewPreset, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State
@@ -103,10 +103,14 @@ pub(crate) fn controls_camera_tools(app: &mut App, ui: &mut egui::Ui) {
                 if ui.button(label).clicked() {
                     app.cam_animator.fly_to_full(
                         &app.camera,
-                        app.camera.center,
-                        app.camera.distance,
+                        app.camera.target(),
+                        app.camera.focus_distance(),
                         preset.orientation(),
-                        preset.preferred_projection(),
+                        preset.prefers_orthographic().then(|| {
+                            app.camera
+                                .projection
+                                .to_orthographic(app.camera.focus_distance())
+                        }),
                         0.6,
                         Easing::EaseInOutCubic,
                     );
@@ -117,33 +121,27 @@ pub(crate) fn controls_camera_tools(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Projection:");
     ui.horizontal(|ui| {
         if ui
-            .radio(
-                app.camera.projection == Projection::Perspective,
-                "Perspective",
-            )
+            .radio(!app.camera.is_orthographic(), "Perspective")
             .clicked()
         {
-            app.camera.projection = Projection::Perspective;
+            app.camera.set_orthographic(false);
         }
         if ui
-            .radio(
-                app.camera.projection == Projection::Orthographic,
-                "Orthographic",
-            )
+            .radio(app.camera.is_orthographic(), "Orthographic")
             .clicked()
         {
-            app.camera.projection = Projection::Orthographic;
+            app.camera.set_orthographic(true);
         }
     });
-    if app.camera.projection == Projection::Perspective {
+    if !app.camera.is_orthographic() {
         ui.separator();
-        let mut fov_deg = app.camera.fov_y.to_degrees();
+        let mut fov_deg = app.camera.fov_y().to_degrees();
         ui.label(format!("FOV: {fov_deg:.0}\u{b0}"));
         if ui
             .add(egui::Slider::new(&mut fov_deg, 20.0_f32..=120.0_f32).suffix("\u{b0}"))
             .changed()
         {
-            app.camera.fov_y = fov_deg.to_radians();
+            app.camera.set_fov_y(fov_deg.to_radians());
         }
     }
     ui.separator();
@@ -164,12 +162,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_camera_tools_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        12.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------

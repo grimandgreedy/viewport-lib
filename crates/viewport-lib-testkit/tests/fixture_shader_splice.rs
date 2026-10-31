@@ -291,7 +291,7 @@ fn surface_emissive_and_alpha(mode: viewport_lib::PipelineMode) {
 
     // Straight down `-Z` onto the quads, which face `+Z`.
     let mut camera = Camera::default();
-    camera.orientation = glam::Quat::IDENTITY;
+    camera.set_orbit_orientation(glam::Quat::IDENTITY);
     camera.aspect = 1.0;
     let render_camera = RenderCamera::from_camera(&camera);
     let view_proj = render_camera.view_proj();
@@ -657,8 +657,7 @@ fn three_quads(
         .map(|(&x, material)| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.material = harness
                 .renderer
                 .resources_mut()

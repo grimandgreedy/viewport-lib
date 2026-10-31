@@ -153,10 +153,7 @@ impl ApplicationHandler for App {
             make_item(m_cylinder, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
         ];
 
-        let camera = Camera {
-            distance: 10.0,
-            ..Camera::default()
-        };
+        let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
 
         // The controller applies a resolved frame; the bindings live on the
         // resolver beside it, which is the one place that decides what a gesture

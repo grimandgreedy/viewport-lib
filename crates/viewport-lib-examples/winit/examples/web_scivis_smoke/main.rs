@@ -541,10 +541,7 @@ async fn build_state(window: Arc<Window>) -> State {
         None => results.fail("CPU pick returned no hit against a surface on the ray"),
     }
 
-    let camera = Camera {
-        distance: 4.0,
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(glam::DVec3::ZERO, 4.0, Camera::default().orientation());
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
     input.begin_frame(ViewportContext {

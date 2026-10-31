@@ -291,23 +291,19 @@ pub(crate) fn update_rt_demo(app: &mut App, dt: f32) {
         match app.rt_state.demo {
             RuntimeDemo::Orbit => {
                 populate_orbit(app);
-                app.camera = Camera {
-                    center: glam::DVec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
+                app.camera = Camera::orbit(
+                    glam::DVec3::ZERO,
+                    14.0,
+                    glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+                );
             }
             RuntimeDemo::Simulation => {
                 populate_simulation(app);
-                app.camera = Camera {
-                    center: glam::DVec3::new(0.0, 0.0, 4.5),
-                    distance: 20.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
+                app.camera = Camera::orbit(
+                    glam::DVec3::new(0.0, 0.0, 4.5),
+                    20.0,
+                    glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+                );
             }
         }
         app.rt_state.active_demo = app.rt_state.demo;
@@ -361,7 +357,7 @@ fn step_simulation(app: &mut App, dt: f32) {
             .read::<vpl::runtime::CameraFollowTarget>()
             .next()
         {
-            app.camera.center = target.0.as_dvec3();
+            app.camera.set_orbit_center(target.0.as_dvec3());
         }
     }
 }
@@ -598,12 +594,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_rt_demo_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::DVec3::ZERO,
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        14.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -82,8 +82,7 @@ fn position_override_takes_effect_through_render_path() {
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
-    blue_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).into();
+    blue_item.model = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).into();
     blue_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0)),
@@ -475,8 +474,8 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
     for i in 0..4 {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_idx;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5))
-            .into();
+        item.model =
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5)).into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -672,8 +671,7 @@ fn multi_draw_collapse_is_pixel_identical() {
             item.mesh_id = mesh_id;
             let x = (i as f32 - 2.0) * 1.3;
             let y = inst as f32 * 1.1;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = materials[i];
             if i == 2 {
                 item.settings.opacity = 0.5;
@@ -823,10 +821,11 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
     let mut generation = 0;
     let mut draw = |items: Vec<SceneRenderItem>| {
         let mut frame = FrameData::default();
-        frame.camera.render_camera = RenderCamera::from_camera(&Camera {
-            distance: 6.0,
-            ..Camera::default()
-        });
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
+            glam::DVec3::ZERO,
+            6.0,
+            Camera::default().orientation(),
+        ));
         frame.camera.viewport_size = [W as f32, H as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -918,8 +917,7 @@ fn textured_casters_share_shadow_draw_runs() {
                 item.mesh_id = mesh_id;
                 let x = (i as f32 - MESHES as f32 / 2.0) * 1.3;
                 let y = inst as f32 * 1.1;
-                item.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
                 item.material = materials[i];
                 surfaces.push(item);
             }

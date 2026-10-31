@@ -183,8 +183,8 @@ impl ViewportInstance {
         };
         let scale = compute_gizmo_scale(
             center,
-            self.camera.eye_position().as_vec3(),
-            self.camera.fov_y,
+            self.camera.eye().as_vec3(),
+            self.camera.fov_y(),
             self.viewport_size[1],
         );
         self.frame.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(

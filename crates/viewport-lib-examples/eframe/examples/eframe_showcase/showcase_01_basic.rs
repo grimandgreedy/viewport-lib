@@ -4,7 +4,7 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{Projection, SceneRenderItem, ViewportRenderer};
+use vpl::{SceneRenderItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // State
@@ -75,22 +75,16 @@ pub(crate) fn controls_basic(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Projection:");
     ui.horizontal(|ui| {
         if ui
-            .radio(
-                app.camera.projection == Projection::Perspective,
-                "Perspective",
-            )
+            .radio(!app.camera.is_orthographic(), "Perspective")
             .clicked()
         {
-            app.camera.projection = Projection::Perspective;
+            app.camera.set_orthographic(false);
         }
         if ui
-            .radio(
-                app.camera.projection == Projection::Orthographic,
-                "Orthographic",
-            )
+            .radio(app.camera.is_orthographic(), "Orthographic")
             .clicked()
         {
-            app.camera.projection = Projection::Orthographic;
+            app.camera.set_orthographic(true);
         }
     });
     ui.separator();

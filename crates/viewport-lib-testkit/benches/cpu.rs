@@ -133,8 +133,8 @@ fn cube_scene(
             for z in 0..side {
                 let mut it = SceneRenderItem::default();
                 it.mesh_id = mesh;
-                it.model = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
-                    .into();
+                it.model =
+                    Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5).into();
                 it.material = material;
                 items.push(it);
                 if items.len() == count {
@@ -157,10 +157,7 @@ fn bench_prepare(c: &mut Criterion) {
         .upload_mesh_data(&harness.device, &primitives::cube(1.0))
         .expect("cube upload");
 
-    let camera = Camera {
-        distance: 200.0,
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(glam::DVec3::ZERO, 200.0, Camera::default().orientation());
 
     let mut g = c.benchmark_group("prepare");
     for &count in &[1usize, 100, 1_000] {

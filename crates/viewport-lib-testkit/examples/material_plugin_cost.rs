@@ -177,12 +177,11 @@ fn main() {
         })
         .collect();
 
-    let camera = Camera {
-        center: glam::DVec3::new(0.0, 0.0, 1.0),
-        distance: 15.0,
-        orientation: glam::Quat::from_rotation_x(1.1),
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        15.0,
+        glam::Quat::from_rotation_x(1.1),
+    );
     let mut sun = LightSource::default();
     sun.kind = LightKind::Directional {
         direction: [0.5, 0.35, 1.0],

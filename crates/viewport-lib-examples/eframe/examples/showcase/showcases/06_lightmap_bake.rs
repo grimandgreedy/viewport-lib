@@ -1285,8 +1285,8 @@ impl Showcase for LightmapBakeShowcase {
         );
 
         ctx.session.viewport_frame_mut().show_grid = false;
-        ctx.session.camera_mut().distance = 30.0;
-        ctx.session.camera_mut().orientation = glam::Quat::from_rotation_x(0.5);
+        let camera = ctx.session.camera_mut();
+        camera.set_orbit(camera.target(), 30.0, glam::Quat::from_rotation_x(0.5));
 
         self.rebuild(ctx.session);
         self.shown = Some(self.mode);

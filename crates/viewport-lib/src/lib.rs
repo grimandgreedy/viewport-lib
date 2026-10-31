@@ -234,7 +234,7 @@ pub use plugin_api::{
 };
 
 pub use camera::LookAngles;
-pub use camera::camera::{Camera, CameraTarget, Projection};
+pub use camera::camera::{Camera, CameraTarget, PhysicalExposure, Pose, Projection};
 pub use camera::controllers::TurntableController;
 pub use camera::controllers::{CameraAnimator, CameraDamping, Easing};
 pub use camera::frustum::{CullStats, Frustum};
@@ -242,7 +242,6 @@ pub use camera::track::{CameraTrack, interpolate_camera};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use vplt::scene::{IntoWorldPosition, Transform};
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
     ParamVisMode, PatternConfig, PluginParams, SamplerKey, ShadingModel, TextureFilter,
@@ -259,6 +258,7 @@ pub use vplt::data::texture::{
     AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRequirement,
     TextureRole, UploadSlot,
 };
+pub use vplt::scene::{IntoWorldPosition, Transform};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::mesh::isoline::{Isoline, extract_isolines, isoline_strips};
@@ -316,8 +316,8 @@ pub use interaction::widgets::axes_indicator::AxisView;
 
 pub use renderer::PipelineSet;
 pub use renderer::RendererConfig;
-pub use renderer::WorldOrigin;
 pub use renderer::ShadowDebugStats;
+pub use renderer::WorldOrigin;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
@@ -327,10 +327,9 @@ pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, CellSelectionInfo,
     ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
-    DisplaySettings,
-    DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity,
-    EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings, FillRule,
-    ForegroundPass, ForegroundProjection, FrameData, FrameTime, GlyphRunItem, GpuContext,
+    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
+    EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings,
+    FillRule, ForegroundPass, ForegroundProjection, FrameData, FrameTime, GlyphRunItem, GpuContext,
     GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame,
     LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture,
     LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
@@ -396,7 +395,7 @@ pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, GpuFrameContext,
     GpuPlugin, GpuPluginId, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp,
     PostPaintTargets, RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
-    RuntimePlugin, RuntimePluginId, RuntimeResources, RuntimeStats, RuntimeStepContext, SelectionOp,
-    SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
-    ViewportRuntime,
+    RuntimePlugin, RuntimePluginId, RuntimeResources, RuntimeStats, RuntimeStepContext,
+    SelectionOp, SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
+    TransformWriteback, ViewportRuntime,
 };

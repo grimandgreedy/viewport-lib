@@ -160,13 +160,11 @@ fn main() -> eframe::Result {
                 cursor_viewport: glam::Vec2::ZERO,
                 viewport_target: None,
                 mv_targets: Vec::new(),
-                camera: Camera {
-                    center: glam::DVec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                },
+                camera: Camera::orbit(
+                    glam::DVec3::ZERO,
+                    12.0,
+                    glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+                ),
                 controller: OrbitCameraController::new_stateless(),
                 input: ViewportInput::from_preset(BindingPreset::Default),
                 mode: ShowcaseMode::Basic,

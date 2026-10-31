@@ -149,10 +149,7 @@ impl ApplicationHandler for App {
             make_item(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
         ];
 
-        let camera = Camera {
-            distance: 10.0,
-            ..Camera::default()
-        };
+        let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
 
         let controller = OrbitCameraController::new_stateless();
         let mut input = ViewportInput::from_preset(BindingPreset::Viewer);

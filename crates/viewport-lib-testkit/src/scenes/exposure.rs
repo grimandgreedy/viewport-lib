@@ -10,8 +10,7 @@
 
 use glam::{Mat4, Vec3};
 use viewport_lib::{
-    AutoExposure, Colour, ExposureMode, ExposureSettings, LightingSettings, Material, Projection,
-    primitives,
+    AutoExposure, Colour, ExposureMode, ExposureSettings, LightingSettings, Material, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item_model, orbit_camera, upload};
@@ -108,7 +107,7 @@ fn build_auto_partial(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// Straight down, orthographic, so the chart fills the frame evenly.
 fn top_camera() -> Vec<NamedCamera> {
     let mut camera = orbit_camera(Vec3::ZERO, 7.5, 0.0, 0.0);
-    camera.projection = Projection::Orthographic;
+    camera.set_orthographic(true);
     camera.aspect = 4.0 / 3.0;
     vec![NamedCamera {
         name: "top",

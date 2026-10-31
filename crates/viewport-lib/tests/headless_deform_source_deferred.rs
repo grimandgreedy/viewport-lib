@@ -176,9 +176,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
     );
     let kept = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
     let mut cam = Camera::default();
-    cam.orientation = glam::Quat::IDENTITY;
-    cam.center = glam::DVec3::ZERO;
-    cam.distance = 5.0;
+    cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
     cam.aspect = W as f32 / H as f32;
     let mut frame = FrameData::new(
         CameraFrame::new(RenderCamera::from_camera(&cam), [W as f32, H as f32]),

@@ -8,7 +8,7 @@ use crate::interaction::select::selection::NodeId;
 /// and emits it as a [`super::CameraFollowTarget`] event on
 /// [`super::RuntimeOutput::events`]. The app reads the event by calling
 /// `output.events.read::<CameraFollowTarget>()` and applies the suggestion
-/// however fits the application (typically by setting `camera.center`).
+/// however fits the application (typically by making it the orbit centre).
 ///
 /// Set via [`super::ViewportRuntime::set_camera_follow`] or
 /// [`super::ViewportRuntime::with_camera_follow`].

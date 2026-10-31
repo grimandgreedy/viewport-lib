@@ -134,12 +134,11 @@ impl ApplicationHandler for App {
             .upload_mesh_data(&device, &primitives::cube(1.0))
             .expect("built-in mesh");
 
-        let camera = Camera {
-            center: glam::DVec3::ZERO,
-            distance: 12.0,
-            orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
-            ..Camera::default()
-        };
+        let camera = Camera::orbit(
+            glam::DVec3::ZERO,
+            12.0,
+            glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
+        );
 
         // Prime the resolver for the first frame of events.
         let controller = OrbitCameraController::new_stateless();
@@ -302,8 +301,7 @@ impl ApplicationHandler for App {
                     .map(|&pos| {
                         let mut item = SceneRenderItem::default();
                         item.mesh_id = state.mesh_id;
-                        item.model =
-                            glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
+                        item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
                         item
                     })
                     .collect();

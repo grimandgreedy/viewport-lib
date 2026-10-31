@@ -727,7 +727,7 @@ mod tests {
         session
             .scene_mut()
             .add(Some(cube), glam::Mat4::IDENTITY, material);
-        session.camera_mut().distance = 6.0;
+        session.camera_mut().set_orbit_distance(6.0);
 
         session.begin_frame(ctx());
         let mut orbit = OrbitCameraController::new_stateless();

@@ -82,7 +82,7 @@ fn main() -> eframe::Result {
                     * glam::Mat4::from_scale(glam::Vec3::splat(0.8)),
                 Material::from_colour([0.25, 0.4, 0.65]),
             );
-            session.camera_mut().distance = 8.0;
+            session.camera_mut().set_orbit_distance(8.0);
 
             let mut light = LightSource::default();
             light.kind = LightKind::Directional {

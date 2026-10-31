@@ -340,12 +340,11 @@ mod tests {
 
     /// Eye at the origin looking along +Y, Z up.
     fn camera() -> RenderCamera {
-        let cam = crate::camera::Camera {
-            center: glam::DVec3::Y * 0.01,
-            distance: 0.01,
-            orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ..Default::default()
-        };
+        let cam = crate::camera::Camera::orbit(
+            glam::DVec3::Y * 0.01,
+            0.01,
+            glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        );
         RenderCamera::from_camera(&cam)
     }
 

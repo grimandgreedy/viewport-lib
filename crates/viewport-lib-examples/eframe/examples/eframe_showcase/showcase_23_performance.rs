@@ -455,7 +455,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     }
     app.perf_state.scene = vpl::Scene::new();
     app.perf_state.selection.clear();
-    app.camera.distance = 80.0;
+    app.camera.set_orbit_distance(80.0);
 
     // Upload the random texture pool on the main thread (GPU access),
     // then hand the ids to the background build so each box can pick

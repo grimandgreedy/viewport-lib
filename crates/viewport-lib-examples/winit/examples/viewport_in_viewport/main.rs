@@ -103,7 +103,7 @@ impl Child {
         session
             .scene_mut()
             .add(Some(id), glam::Mat4::IDENTITY, material);
-        session.camera_mut().distance = 3.4;
+        session.camera_mut().set_orbit_distance(3.4);
         Self {
             session,
             target: OffscreenViewportTarget::new(device, surface_format, size),
@@ -157,8 +157,9 @@ impl Child {
         ));
         // Identity looks down -Z from +Z in this Z-up world, so tilt off the
         // pole and then spin about Z.
-        self.session.camera_mut().orientation =
-            glam::Quat::from_rotation_z(t * 0.6) * glam::Quat::from_rotation_x(1.1);
+        self.session.camera_mut().set_orbit_orientation(
+            glam::Quat::from_rotation_z(t * 0.6) * glam::Quat::from_rotation_x(1.1),
+        );
         // `frame` is the assemble entry for a consumer moving the camera itself
         // rather than through an orbit controller. It has to run before `render`,
         // which draws the retained frame as it stands: without it the instance
@@ -212,7 +213,7 @@ fn main() {
                         * glam::Mat4::from_scale(glam::Vec3::new(0.5, 0.5, 2.2));
                     vp.scene_mut().add(Some(bar), m, material);
                 }
-                vp.camera_mut().distance = 11.0;
+                vp.camera_mut().set_orbit_distance(11.0);
                 vp.viewport_frame_mut().background_colour =
                     Some(Colour::srgb_rgb(0.07, 0.08, 0.11));
             },

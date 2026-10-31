@@ -264,13 +264,10 @@ fn setup(
 
     // Orbit camera: Z-up, looking at the swarm centre from a 3/4 angle. Shared
     // by both views.
-    let mut camera = VplCamera {
-        distance: 55.0,
-        ..VplCamera::default()
-    };
-    camera.set_center(Vec3::ZERO);
+    let mut orbit = VplCamera::default().orbit_target();
+    orbit.orbit(0.7, 0.45);
+    let mut camera = VplCamera::orbit(glam::DVec3::ZERO, 55.0, orbit.orientation);
     camera.set_fov_y(FOV_Y);
-    camera.orbit(0.7, 0.45);
 
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
@@ -560,8 +557,8 @@ fn sync_camera3d(cam: Res<CamState>, mut q: Query<&mut Transform, With<MainCam3d
     let Ok(mut transform) = q.single_mut() else {
         return;
     };
-    let eye = BVec3::from_array(cam.camera.eye_position().as_vec3().to_array());
-    let center = BVec3::from_array(cam.camera.center().as_vec3().to_array());
+    let eye = BVec3::from_array(cam.camera.eye().as_vec3().to_array());
+    let center = BVec3::from_array(cam.camera.target().as_vec3().to_array());
     // Use viewport-lib's actual camera up (orientation * Y), not world Z, so the
     // orbit orientation matches exactly.
     let up = BVec3::from_array(cam.camera.up().to_array());
