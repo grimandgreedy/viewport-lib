@@ -321,8 +321,9 @@ fn pbr_ambient(
     } else {
         let hemi_t = clamp(vertex_normal.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-        let ambient_scale = (vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity)
-            * camera.exposure;
+        // The hemisphere is the whole ambient here: `object.ambient` is a
+        // Blinn-Phong coefficient and does not reach PBR shading.
+        let ambient_scale = hemi_colour * lights_uniform.hemisphere_intensity * camera.exposure;
         ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * diffuse_occ;
         ambient_lum = dot(ambient, lum_weights);
     }
@@ -382,8 +383,7 @@ fn pbr_layer_radiance(R: vec3<f32>, roughness: f32, refl_dr: f32) -> vec3<f32> {
     }
     let hemi_t = clamp(R.z * 0.5 + 0.5, 0.0, 1.0);
     let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-    return (vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity)
-        * camera.exposure;
+    return hemi_colour * lights_uniform.hemisphere_intensity * camera.exposure;
 }
 
 // Light refracted through a transmissive surface, before the scene behind it

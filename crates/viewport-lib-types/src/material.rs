@@ -596,7 +596,10 @@ pub struct Material {
     /// [`Colour::linear_rgb`](crate::colour::Colour::linear_rgb) for one already in
     /// linear space. Default is linear `[0.7, 0.7, 0.7]`.
     pub base_colour: crate::colour::Colour,
-    /// Ambient light coefficient. Default 0.15.
+    /// Ambient light coefficient of [`ShadingModel::Phong`] and
+    /// [`ShadingModel::Flat`], added to the hemisphere fill. PBR shading does
+    /// not read it: with image-based lighting off its ambient is the hemisphere
+    /// fill alone. Default 0.15.
     pub ambient: f32,
     /// Diffuse light coefficient. Default 0.75.
     pub diffuse: f32,

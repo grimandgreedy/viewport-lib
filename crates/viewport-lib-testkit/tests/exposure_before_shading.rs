@@ -25,7 +25,7 @@ const H: u32 = 300;
 /// radiance.
 const SETTLED_EV: [(&str, f32); 2] = [
     ("exposure_auto", 15.152_625),
-    ("exposure_auto_partial", 0.142_834_48),
+    ("exposure_auto_partial", 0.196_618_26),
 ];
 
 /// The linear multiplier of a manual EV100, as `ExposureSettings` resolves it.
@@ -308,7 +308,7 @@ fn viewports_over_one_scene_expose_independently() {
 
     // The EV 15 view sits in half-float subnormals, whose spacing is under a
     // percent of the value over this range.
-    let r = ratios(&lin0, &lin1, 0.1, 3.0);
+    let r = ratios(&lin0, &lin1, 0.25, 3.0);
     assert_ratios(
         "viewport ev 15 / viewport ev 0",
         &r,

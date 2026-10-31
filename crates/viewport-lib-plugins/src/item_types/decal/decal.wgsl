@@ -64,7 +64,7 @@ struct DecalUniform {
     has_emissive_tex:      u32,   // 1 when emissive_tex is bound
     // Edge fade and the ambient floor.
     edge_fade:             f32,   // [0, 0.5]: fraction of half-extent over which alpha fades
-    ambient:               f32,   // constant ambient coefficient, matching Material::ambient
+    ambient:               f32,   // constant ambient added to the hemisphere fill
     // Projection mode.
     projection:            u32,   // 0 = Planar, 1 = TriPlanar
     tri_blend_sharpness:   f32,

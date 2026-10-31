@@ -127,9 +127,9 @@ pub enum DecalAnimation {
 /// Three gaps to know about. Shadowing follows the primary directional light
 /// only: point-light shadow cubes are not sampled, so a decal inside a point
 /// light's shadow still takes that light. The ambient term is the hemisphere
-/// fill plus `ambient`; image-based lighting is not sampled, so in an IBL-lit
-/// scene a decal takes the hemisphere fill where the surface under it takes
-/// the environment. And the receiver normal the BRDF uses is reconstructed
+/// fill plus `ambient` (0 by default); image-based lighting is not sampled,
+/// so in an IBL-lit scene a decal takes the hemisphere fill where the surface
+/// under it takes the environment. And the receiver normal the BRDF uses is reconstructed
 /// from the depth buffer, so it is quantised: below roughness of about 0.3 the
 /// highlight is tight enough to land on those steps and band, worsening with
 /// distance as depth precision drops. Mirror-smooth decals are outside what
@@ -216,11 +216,10 @@ pub struct DecalItem {
     /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
     /// Range [0.0, 0.5]. Default: 0.0 (hard edge).
     pub edge_fade: f32,
-    /// Constant ambient coefficient added to the hemisphere fill when the decal is lit,
-    /// the same role [`Material::ambient`](viewport_lib_types::material::Material::ambient) plays for a
-    /// mesh. Default 0.15, matching `Material`'s default, so a decal on a default-material
-    /// surface picks up the same floor. Set it to the receiver material's `ambient` when
-    /// that has been changed, or to 0.0 to rely on the hemisphere fill alone.
+    /// Constant ambient added to the hemisphere fill when the decal is lit. Default 0.0,
+    /// which matches a PBR receiver: its ambient is the hemisphere fill alone. On a
+    /// Blinn-Phong receiver, set it to that material's
+    /// [`Material::ambient`](viewport_lib_types::material::Material::ambient) to match its floor.
     pub ambient: f32,
     /// How the decal texture is projected onto the receiver surface. Default: `Planar`.
     ///
@@ -266,7 +265,7 @@ impl Default for DecalItem {
             emissive: 0.0,
             emissive_texture_id: None,
             edge_fade: 0.0,
-            ambient: 0.15,
+            ambient: 0.0,
             projection: DecalProjection::Planar,
             channel_mask: !0,
             settings: ItemSettings::default(),

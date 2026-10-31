@@ -385,22 +385,25 @@ pub enum ShadowFilter {
 pub struct LightingSettings {
     /// Active light sources (max 8). Default: one directional light.
     pub lights: Vec<LightSource>,
-    /// Sky colour for the hemisphere ambient fill: the tint of light arriving
-    /// from above, with the magnitude in
+    /// Sky colour of the hemisphere fill: the tint of light arriving from
+    /// above, with the magnitude in
     /// [`hemisphere_intensity`](Self::hemisphere_intensity). Default white.
     ///
-    /// This is not the skybox, which comes from the environment map; with IBL
-    /// off, this and `ground_colour` are what a surface picks up as ambient.
+    /// This is not the skybox, which comes from the environment map. With
+    /// image-based lighting off, a surface's ambient blends from
+    /// `ground_colour` to this colour by the Z of its normal.
     pub sky_colour: crate::colour::Colour,
-    /// Ground colour for the hemisphere ambient fill: the tint of light bounced
-    /// from below. Default a neutral grey, a little darker than the sky.
+    /// Ground colour of the hemisphere fill: the tint of light arriving from
+    /// below, reached by a surface whose normal points down (-Z). Default a
+    /// neutral grey, a little darker than the sky.
     pub ground_colour: crate::colour::Colour,
-    /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
-    /// lights' lux/candela. `0.0` disables it. The default is a gentle fill so
-    /// shadowed surfaces stay readable rather than pitch black without washing
-    /// out a surface's own colour; scale it with your key light. (This term is a
-    /// provisional ambient approximation until image-based lighting carries
-    /// absolute nits.)
+    /// Radiance of the hemisphere fill in nits, scaling `sky_colour` and
+    /// `ground_colour`. With image-based lighting off it is the whole ambient
+    /// of a PBR material, so an upward-facing surface under a white sky
+    /// receives this times its albedo; a Blinn-Phong material adds its own
+    /// [`Material::ambient`](crate::material::Material::ambient) to it.
+    /// Default 0.55. `0.0` disables the fill, leaving surfaces dark where no
+    /// light reaches.
     pub hemisphere_intensity: f32,
     /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
     pub shadows: ShadowSettings,
@@ -435,7 +438,7 @@ impl Default for LightingSettings {
             lights: vec![LightSource::default()],
             sky_colour: crate::colour::Colour::WHITE,
             ground_colour: crate::colour::Colour::linear_rgb(0.6, 0.6, 0.6),
-            hemisphere_intensity: 0.4,
+            hemisphere_intensity: 0.55,
             shadows: ShadowSettings::default(),
             environment_intensity: Default::default(),
             multi_bounce_ao: true,
