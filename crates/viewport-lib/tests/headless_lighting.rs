@@ -845,8 +845,8 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
     let mut diff = 0.0f64;
     let mut mag = 0.0f64;
     let texels = (cpu.width * cpu.height) as usize;
-    let (mut cpu_best, mut cpu_i) = (f32::NEG_INFINITY, 0usize);
-    let (mut gpu_best, mut gpu_i) = (f32::NEG_INFINITY, 0usize);
+    let mut cpu_best = f32::NEG_INFINITY;
+    let mut gpu_best = f32::NEG_INFINITY;
     for i in 0..texels {
         let o = i * 4;
         let mut cl = 0.0f32;
@@ -859,14 +859,8 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
             cl += c;
             gl += g;
         }
-        if cl > cpu_best {
-            cpu_best = cl;
-            cpu_i = i;
-        }
-        if gl > gpu_best {
-            gpu_best = gl;
-            gpu_i = i;
-        }
+        cpu_best = cpu_best.max(cl);
+        gpu_best = gpu_best.max(gl);
     }
     let rel = diff / mag.max(1e-6);
     assert!(
@@ -874,15 +868,26 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
         "GPU resolve diverged from the CPU resolve: relative error {rel:.4}"
     );
 
-    // The brightest texel must land on the same equirect location (allow a
-    // one-texel slop for the bilinear difference).
-    let cx = (cpu_i as u32 % cpu.width) as i32;
-    let cy = (cpu_i as u32 / cpu.width) as i32;
-    let gx = (gpu_i as u32 % gpu.width) as i32;
-    let gy = (gpu_i as u32 / gpu.width) as i32;
+    // The emissive face is a near-flat plateau, so its brightest texel is
+    // decided by rounding. Compare the centre of the texels within 5% of the
+    // peak instead (allow a one-texel slop for the bilinear difference).
+    let lobe_centre = |rgba: &[f32], width: u32, best: f32| {
+        let (mut sx, mut sy, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        for i in 0..texels {
+            let l: f32 = rgba[i * 4..i * 4 + 3].iter().sum();
+            if l >= best * 0.95 {
+                sx += (i as u32 % width) as f64;
+                sy += (i as u32 / width) as f64;
+                n += 1.0;
+            }
+        }
+        (sx / n, sy / n)
+    };
+    let (cx, cy) = lobe_centre(&cpu.rgba, cpu.width, cpu_best);
+    let (gx, gy) = lobe_centre(&gpu.rgba, gpu.width, gpu_best);
     assert!(
-        (cx - gx).abs() <= 1 && (cy - gy).abs() <= 1,
-        "brightest texel moved: cpu ({cx}, {cy}) vs gpu ({gx}, {gy})"
+        (cx - gx).abs() <= 1.0 && (cy - gy).abs() <= 1.0,
+        "bright lobe moved: cpu ({cx:.1}, {cy:.1}) vs gpu ({gx:.1}, {gy:.1})"
     );
     assert!(
         gpu_best > 1.0,
