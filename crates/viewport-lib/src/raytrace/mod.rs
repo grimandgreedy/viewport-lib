@@ -252,6 +252,11 @@ pub struct RtMaterial {
     pub roughness: f32,
     /// Emitted radiance (may exceed 1.0). Linear; build with `Colour::linear`.
     pub emissive: crate::Colour,
+    /// How far the camera's exposure scales [`emissive`](Self::emissive), as
+    /// `Material::emissive_exposure_weight`: 1 exposes it with the scene, 0
+    /// keeps it display-relative. Default 1. The tracer has no exposure and
+    /// does not read it yet.
+    pub emissive_exposure_weight: f32,
     /// Dielectric transmission weight in [0, 1]. 0 is opaque; 1 is clear glass.
     /// Metals (`metallic > 0`) do not transmit; keep it 0 for them.
     pub transmission: f32,
@@ -304,6 +309,7 @@ impl Default for RtMaterial {
             metallic: 0.0,
             roughness: 0.5,
             emissive: crate::Colour::BLACK,
+            emissive_exposure_weight: 1.0,
             transmission: 0.0,
             ior: 1.5,
             reflectance: 0.5,

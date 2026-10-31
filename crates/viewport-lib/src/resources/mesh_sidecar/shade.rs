@@ -91,7 +91,8 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 ///   exposure. A hook that reads a light or the environment itself
 ///   (`lights_uniform`, the IBL textures) multiplies by `camera.exposure`.
 ///   The `emissive` a `shade_surface` returns is radiance in nits; the
-///   composer exposes it alongside the material's.
+///   composer adds it to the material's before the material's emissive
+///   exposure weight scales the sum.
 /// - `light.radiance` is unshadowed; the shadow factor is `light.shadow`.
 ///   OIT passes sample no shadows, so `light.shadow` is `1.0` there.
 /// - Lighting hook bodies run inside the light loop's non-uniform control
@@ -507,9 +508,7 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         s = rewrite_region(
             &s,
             "emissive",
-            &format!(
-                "    let {name}__exposed_emissive = {name}__hook_emissive * camera.exposure;\n    final_rgb += {name}__exposed_emissive;\n    dbg_emissive_lum += dot({name}__exposed_emissive, lum_weights);\n"
-            ),
+            &format!("    emissive += {name}__hook_emissive;\n"),
         )?;
     }
     if wire_alpha {
@@ -2206,7 +2205,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 "{shader}: missing emissive carrier"
             );
             assert!(
-                composed.contains("final_rgb += paint__exposed_emissive;"),
+                composed.contains("emissive += paint__hook_emissive;"),
                 "{shader}: missing emissive add"
             );
             assert!(

@@ -152,7 +152,7 @@ struct MaterialGpu {
     specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
     layers0: vec4<f32>,      // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
     layers1: vec4<f32>,      // (sheen colour rgb, sheen roughness)
-    volume0: vec4<f32>,      // (transmission, thickness, ior, 0)
+    volume0: vec4<f32>,      // (transmission, thickness, ior, emissive exposure weight)
     volume1: vec4<f32>,      // (absorption coefficient rgb, 0)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
@@ -1253,14 +1253,17 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // Per-instance custom data slots 0..3 add to emissive (nits); zero is a
     // no-op.
     emissive += custom_data0(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id).xyz;
-    // Emissive is radiance in nits: exposed like every other source.
-    emissive *= camera.exposure;
-    final_rgb += emissive;
-    var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here
     // in plugin-composed modules; inert in the base module.
     // <viewport-shade-slot:emissive>
     // </viewport-shade-slot:emissive>
+    // Emissive is radiance in nits. The material's exposure weight (volume0.w)
+    // sets how far exposure scales it: 1 with the scene, 0 display-relative.
+    // `mix(1, exposure, w)`, written so weight 1 is exactly the exposure.
+    let emissive_weight = material_gpu_buf[object.material_id].volume0.w;
+    emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
+    final_rgb += emissive;
+    let dbg_emissive_lum = dot(emissive, lum_weights);
 
     // #include "helpers/debug_vis.wgsl"
 

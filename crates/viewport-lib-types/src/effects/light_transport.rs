@@ -57,7 +57,7 @@
 //! # 3. Emissive
 //!
 //! Emissive is radiance in nits with an exposure weight `w` in `[0, 1]`,
-//! default 1. The shader sums the emissive terms (the material's colour,
+//! default 1 ([`Material::emissive_exposure_weight`]). The shader sums the emissive terms (the material's colour,
 //! strength and map, a surface hook's emissive, the custom-data slots) and
 //! multiplies the sum by `mix(1, exposure, w)`.
 //!
@@ -157,15 +157,14 @@
 //!
 //! # Current behaviour
 //!
-//! The renderer does not yet match clauses 3, 6 and 7 in full. There is no
-//! emissive weight: emissive is always exposed, which matches weight 1. With
-//! image-based lighting off, PBR ambient is `Material::ambient` plus the
-//! hemisphere fill, and the default fill is 0.4, so a white sky gives an
-//! upward-facing surface 0.15 + 0.4 times its albedo. The colour grade is
-//! applied only display-referred, after the operator and the background
-//! composite. Under [`ExposureMode::Automatic`] a frame shades with the
-//! exposure the previous frame metered, so the first frame after switching to
-//! it draws at the exposure the viewport held before.
+//! The renderer does not yet match clauses 6 and 7 in full. With image-based
+//! lighting off, PBR ambient is `Material::ambient` plus the hemisphere fill,
+//! and the default fill is 0.4, so a white sky gives an upward-facing surface
+//! 0.15 + 0.4 times its albedo. The colour grade is applied only
+//! display-referred, after the operator and the background composite. Under
+//! [`ExposureMode::Automatic`] a frame shades with the exposure the previous
+//! frame metered, so the first frame after switching to it draws at the
+//! exposure the viewport held before.
 //!
 //! [`ExposureMode`]: crate::effects::postprocess::ExposureMode
 //! [`ExposureMode::Passthrough`]: crate::effects::postprocess::ExposureMode::Passthrough
@@ -191,6 +190,7 @@
 //! [`LightmapMode::AmbientOcclusion`]: crate::effects::lightmap::LightmapMode::AmbientOcclusion
 //! [`Material::emissive`]: crate::material::Material::emissive
 //! [`Material::emissive_strength`]: crate::material::Material::emissive_strength
+//! [`Material::emissive_exposure_weight`]: crate::material::Material::emissive_exposure_weight
 //! [`Material::ambient`]: crate::material::Material::ambient
 //! [`ItemSettings::custom_data`]: crate::material::ItemSettings::custom_data
 //! [`ItemSettings::unlit`]: crate::material::ItemSettings::unlit

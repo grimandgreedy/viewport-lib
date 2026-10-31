@@ -71,7 +71,7 @@ impl TexTransformGpu {
 /// - `specular` = (dielectric F0 rgb, dielectric F90), see [`dielectric_specular`]
 /// - `layers0` = (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
 /// - `layers1` = (sheen colour rgb, sheen roughness)
-/// - `volume0` = (transmission, thickness, ior, 0)
+/// - `volume0` = (transmission, thickness, ior, emissive exposure weight)
 /// - `volume1` = (absorption coefficient rgb, 0), see [`volume_lanes`]
 ///
 /// A layer the material does not use has its lanes zeroed and its
@@ -142,7 +142,8 @@ pub(crate) struct MaterialGpu {
     pub(crate) layers0: [f32; 4],
     /// `(sheen_colour.rgb, sheen_roughness)`.
     pub(crate) layers1: [f32; 4],
-    /// `(transmission, thickness, ior, 0)`.
+    /// `(transmission, thickness, ior, emissive_exposure_weight)`. The weight
+    /// is written whether or not the material transmits.
     pub(crate) volume0: [f32; 4],
     /// `(absorption.rgb, 0)`: Beer-Lambert coefficient per world unit.
     pub(crate) volume1: [f32; 4],
@@ -227,7 +228,8 @@ pub(crate) fn absorption(colour: [f32; 3], distance: f32) -> [f32; 3] {
 /// `(volume0, volume1, flags)`. Zeros when the material does not transmit.
 /// The absorption coefficient is `-ln(attenuation_colour) /
 /// attenuation_distance` per channel, so white or a `f32::MAX` distance is
-/// none.
+/// none. `volume0.w` is left 0; the caller packs the emissive exposure weight
+/// into it.
 pub(crate) fn volume_lanes(m: &Material) -> ([f32; 4], [f32; 4], u32) {
     if !transmits(m) {
         return ([0.0; 4], [0.0; 4], 0);
@@ -507,7 +509,8 @@ impl MaterialGpu {
             m.anisotropy,
             m.anisotropy_rotation,
         );
-        let (volume0, volume1, volume_flags) = volume_lanes(m);
+        let (mut volume0, volume1, volume_flags) = volume_lanes(m);
+        volume0[3] = m.emissive_exposure_weight.clamp(0.0, 1.0);
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
         // Styled back-face policy and colour (the per-item Pattern world scale
@@ -902,7 +905,7 @@ mod tests {
             MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
         };
         let plain = block(&Material::default());
-        assert_eq!(plain.volume0, [0.0; 4]);
+        assert_eq!(plain.volume0, [0.0, 0.0, 0.0, 1.0]);
         assert_eq!(plain.volume1, [0.0; 4]);
         assert_eq!(plain.item_flags[0] & item_flags::HAS_TRANSMISSION, 0);
         // Volume fields without transmission change nothing.
@@ -923,7 +926,7 @@ mod tests {
             .with_attenuation(crate::Colour::linear_rgb(0.5, 1.0, 0.25), 2.0);
         glass.shading_model = crate::scene::material::ShadingModel::Pbr;
         let b = block(&glass);
-        assert_eq!(b.volume0, [0.75, 2.0, 1.33, 0.0]);
+        assert_eq!(b.volume0, [0.75, 2.0, 1.33, 1.0]);
         let ln2 = std::f32::consts::LN_2;
         assert!((b.volume1[0] - ln2 / 2.0).abs() < 1e-6);
         assert_eq!(b.volume1[1], 0.0);
@@ -932,6 +935,26 @@ mod tests {
         // The default distance absorbs nothing.
         glass.attenuation_distance = f32::MAX;
         assert_eq!(block(&glass).volume1, [0.0; 4]);
+    }
+
+    #[test]
+    fn emissive_exposure_weight_packs_into_volume_w() {
+        let block = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
+        };
+        assert_eq!(block(&Material::default()).volume0[3], 1.0);
+        let m = Material::default().with_emissive_exposure_weight(0.5);
+        assert_eq!(block(&m).volume0, [0.0, 0.0, 0.0, 0.5]);
+        let m = Material::default().with_emissive_exposure_weight(-2.0);
+        assert_eq!(block(&m).volume0[3], 0.0);
+        // A different weight is a different block.
+        assert_ne!(
+            bytes(&Material::default(), false),
+            bytes(
+                &Material::default().with_emissive_exposure_weight(0.0),
+                false
+            )
+        );
     }
 
     #[test]

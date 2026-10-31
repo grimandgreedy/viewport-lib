@@ -109,7 +109,7 @@ struct VertexIn {
     @location(10) emissive: vec4<f32>,
     // Metallic, roughness, scalar range min, scalar range max.
     @location(11) material: vec4<f32>,
-    // Flags, NaN colour (RGBA8), unused, unused.
+    // Flags, NaN colour (RGBA8), emissive exposure weight (f32 bits), unused.
     @location(12) params: vec4<u32>,
 };
 
@@ -124,6 +124,7 @@ struct VertexOut {
     @location(6) is_nan: f32,
     @location(7) @interpolate(flat) flags: u32,
     @location(8) @interpolate(flat) nan_colour: u32,
+    @location(9) @interpolate(flat) emissive_weight: f32,
 };
 
 fn vertex_common(in: VertexIn, scalar: f32, has_scalar: bool) -> VertexOut {
@@ -143,6 +144,7 @@ fn vertex_common(in: VertexIn, scalar: f32, has_scalar: bool) -> VertexOut {
     out.colour = in.base_colour * in.colour;
     out.uv = in.uv;
     out.emissive = in.emissive;
+    out.emissive_weight = bitcast<f32>(in.params.z);
     out.flags = in.params.x;
     out.nan_colour = in.params.y;
 
@@ -228,6 +230,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         n = -n;
     }
     let lit = apply_scene_lighting(n, base_colour, two_sided, in.world_pos, lights_uniform);
-    let rgb = min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb * camera.exposure;
+    // Emissive is in nits; the weight sets how far exposure scales it, 1 with
+    // the scene and 0 display-relative. Written so weight 1 is exactly the
+    // exposure.
+    let w = in.emissive_weight;
+    let emissive_scale = w * camera.exposure + (1.0 - w);
+    let rgb = min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb * emissive_scale;
     return vec4<f32>(rgb, colour.a);
 }
