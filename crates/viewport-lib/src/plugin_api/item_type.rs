@@ -350,6 +350,15 @@ impl<'a> ItemFrameContext<'a> {
     /// (`(DVec3::from(p) - ctx.world_origin()).as_vec3()`), and rewrites them
     /// when it moves. It is zero under
     /// [`WorldOrigin::Zero`](crate::WorldOrigin::Zero), the default.
+    ///
+    /// A model matrix written each frame takes the relative translation
+    /// directly. Data uploaded once can stay as it is: draw it with a per-item
+    /// offset, `(upload_origin - ctx.world_origin()).as_vec3()` where
+    /// `upload_origin` is the origin at the upload, or rewrite it only when
+    /// this value changes. CPU work that must agree with group 0 (a scissor
+    /// from a projected box, a reprojection matrix) builds the camera's view
+    /// relative to this origin rather than using [`camera`](Self::camera)
+    /// as it is.
     pub fn world_origin(&self) -> glam::DVec3 {
         self.world_origin
     }

@@ -13,6 +13,7 @@ use super::draw::{
 use super::pipeline::{CurveFrame, CurveMeshGpu};
 use super::types::StreamtubeId;
 use super::types::{StreamtubeItem, StreamtubeRefItem};
+use crate::item_types::origin::anchored_model;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, RectPickContext,
@@ -104,7 +105,16 @@ impl ItemTypePlugin for StreamtubePlugin {
                 continue;
             }
             gpu_data.pick_id = item.settings.pick_id;
-            gpu_data.model = item.model;
+            // The build wrote the model relative to zero; under a moved origin
+            // the uniform takes the relative one.
+            gpu_data.model = anchored_model(item.model, gpu_data.anchor, ctx.world_origin());
+            if ctx.world_origin() != glam::DVec3::ZERO {
+                queue.write_buffer(
+                    &gpu_data._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&gpu_data.model),
+                );
+            }
             gpu_data.cast_shadows = item.settings.cast_shadows;
             self.frame.push(build_frame(
                 device,
@@ -130,13 +140,13 @@ impl ItemTypePlugin for StreamtubePlugin {
             if gpu_data.index_count == 0 {
                 continue;
             }
+            gpu_data.model = anchored_model(ref_item.model, gpu_data.anchor, ctx.world_origin());
             queue.write_buffer(
                 &gpu_data._uniform_buf,
                 0,
-                bytemuck::bytes_of(&ref_item.model),
+                bytemuck::bytes_of(&gpu_data.model),
             );
             gpu_data.pick_id = ref_item.settings.pick_id;
-            gpu_data.model = ref_item.model;
             gpu_data.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             gpu_data.cast_shadows = ref_item.settings.cast_shadows;
             self.frame.push(build_frame(

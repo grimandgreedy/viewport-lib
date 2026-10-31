@@ -2,6 +2,7 @@
 //! the `gpu` feature.
 
 use super::*;
+use crate::item_types::origin::rel_model;
 use store::{PointCloudStore, build_point_cloud, resolve_bindings};
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::{
@@ -135,12 +136,17 @@ impl ItemTypePlugin for PointCloudPlugin {
             pipeline::PointCloudGpu::new(device, ctx.resources, bgl, streams)
         });
 
+        let origin = ctx.world_origin();
         for item in items {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, bgl, streams, item);
-            let draw = build_point_cloud(device, queue, &binds, item, 0).draw();
+            let data = build_point_cloud(device, queue, &binds, item, 0);
+            if origin != glam::DVec3::ZERO {
+                data.write_model(queue, &rel_model(item.model, origin));
+            }
+            let draw = data.draw();
             let pick_bind_group = (draw.pick_id != PickId::NONE)
                 .then(|| gpu.pick_bind_group(device, queue, draw.pick_id));
             self.frame.push(pipeline::PointCloudFrame {
@@ -160,7 +166,7 @@ impl ItemTypePlugin for PointCloudPlugin {
             let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
-            entry.write_model(queue, &ref_item.model);
+            entry.write_model(queue, &rel_model(ref_item.model, origin));
             let mut draw = entry.draw();
             // The pick id comes from the reference, not from the upload: the
             // same stored cloud can be drawn twice under two ids.
@@ -658,11 +664,12 @@ fn build_outlines(
         if item.settings.hidden || item.positions.is_empty() {
             continue;
         }
+        let model = rel_model(item.model, ctx.world_origin());
         let pixel_radius = (item.size.output_range().1 * 0.5).max(1.0);
         if item.settings.selected {
             outlines.push(gpu.outline_entry(
                 device,
-                item.model,
+                model,
                 ctx.viewport_size,
                 pixel_radius,
                 &item.positions,
@@ -687,7 +694,7 @@ fn build_outlines(
             }
             outlines.push(gpu.outline_entry(
                 device,
-                item.model,
+                model,
                 ctx.viewport_size,
                 pixel_radius,
                 &selected,

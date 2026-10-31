@@ -18,10 +18,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     vec![
         (
             "implicit.wgsl",
-            lit_shader(
-                &[shared_wgsl::SHARED_CLIP_WGSL],
-                wgsl_source!("implicit"),
-            ),
+            lit_shader(&[shared_wgsl::SHARED_CLIP_WGSL], wgsl_source!("implicit")),
         ),
         (
             "implicit_outline_mask.wgsl",
@@ -99,7 +96,8 @@ impl ItemTypePlugin for GpuImplicitPlugin {
             if item.settings.hidden || item.primitives.is_empty() {
                 continue;
             }
-            self.frame.push(gpu.upload_item(device, queue, item));
+            self.frame
+                .push(gpu.upload_item(device, queue, item, ctx.world_origin()));
             if item.settings.pick_id != PickId::NONE {
                 self.pick_items.push(ImplicitPickItem {
                     id: item.settings.pick_id.0,

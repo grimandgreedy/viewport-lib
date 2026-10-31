@@ -315,6 +315,7 @@ impl VolumeGpu {
         clip_objects: &[ClipObject],
         step_scale_multiplier: f32,
         wireframe: bool,
+        origin: glam::DVec3,
     ) -> Option<VolumeFrame> {
         let dims = resources.volume_dims(item.volume_id)?;
 
@@ -323,7 +324,8 @@ impl VolumeGpu {
         let bbox_max = glam::Vec3::from(item.bbox_max);
         let extent = bbox_max - bbox_min;
         let bbox_model = glam::Mat4::from_translation(bbox_min) * glam::Mat4::from_scale(extent);
-        let model = item_model * bbox_model;
+        // Relative to the world origin, the frame group 0 draws in.
+        let model = crate::item_types::origin::rel_product(item_model, bbox_model, origin);
         let inv_model = model.inverse();
 
         let max_dim = dims[0].max(dims[1]).max(dims[2]) as f32;
@@ -339,6 +341,7 @@ impl VolumeGpu {
                 normal, distance, ..
             } = obj.shape
             {
+                let distance = crate::item_types::origin::rel_plane_d(normal, distance, origin);
                 clip_plane_data[num_clip as usize] = [normal[0], normal[1], normal[2], distance];
                 num_clip += 1;
             }

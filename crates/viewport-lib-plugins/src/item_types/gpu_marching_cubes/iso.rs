@@ -102,14 +102,16 @@ struct McIsoRaw {
 }
 
 impl McIsoRaw {
-    fn new(field: &McField, isovalue: f32) -> Self {
+    /// `origin` is the frame's world origin; the box is placed relative to
+    /// it.
+    fn new(field: &McField, isovalue: f32, origin: glam::DVec3) -> Self {
         // Half a cell per step, so a crossing as thin as a cell is not
         // stepped over, and enough steps for the box's diagonal.
         let step = 0.5 * field.spacing.iter().copied().fold(f32::INFINITY, f32::min);
         let cells = glam::Vec3::from(field.dims.map(|d| d.saturating_sub(1) as f32));
         let max_steps = ((cells.length() * 2.0).ceil() as u32 + 2).min(4096);
         Self {
-            origin: field.origin,
+            origin: crate::item_types::origin::rel_point(field.origin, origin),
             isovalue,
             spacing: field.spacing,
             step,
@@ -247,6 +249,7 @@ impl McIsoGpu {
         device: &gpu::Device,
         volumes: &super::store::McVolumeStore,
         jobs: &[GpuMarchingCubesItem],
+        origin: glam::DVec3,
     ) -> Vec<McIsoFrame> {
         jobs.iter()
             .filter(|job| !job.settings.hidden)
@@ -259,7 +262,7 @@ impl McIsoGpu {
                 });
                 let iso = device.create_buffer_init(&gpu::util::BufferInitDescriptor {
                     label: Some("mc_isosurface_uniform"),
-                    contents: bytemuck::bytes_of(&McIsoRaw::new(field, job.isovalue)),
+                    contents: bytemuck::bytes_of(&McIsoRaw::new(field, job.isovalue, origin)),
                     usage: gpu::BufferUsages::UNIFORM,
                 });
                 let bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {

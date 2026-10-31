@@ -350,11 +350,25 @@ impl GlyphRunItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = crate::overlay::resolve_anchor_origin(
+        self.resolve_top_left_at(viewport_size, view, proj, glam::DVec3::ZERO)
+    }
+
+    /// [`resolve_top_left`](Self::resolve_top_left) for a camera drawn
+    /// relative to `world_origin`; see
+    /// [`resolve_anchor_origin_at`](crate::overlay::resolve_anchor_origin_at).
+    pub fn resolve_top_left_at(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+        world_origin: glam::DVec3,
+    ) -> Option<[f32; 2]> {
+        let origin = crate::overlay::resolve_anchor_origin_at(
             &self.anchoring.origin,
             viewport_size,
             view,
             proj,
+            world_origin,
         )?;
         let (min, size) = self.extent()?;
         Some([

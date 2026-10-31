@@ -444,6 +444,8 @@ pub(super) fn build_sprite(
             sprites,
             binds: binds.clone(),
             draw,
+            model: item.model,
+            origin: glam::DVec3::ZERO,
         }
     }
 }
@@ -461,9 +463,28 @@ pub(crate) struct StoredSprite {
     sprites: ContentBuffer,
     binds: SpriteBindings,
     pub(crate) draw: SpriteGpuData,
+    /// The batch's model matrix in world coordinates.
+    model: [[f32; 4]; 4],
+    /// The world origin the uniform's model matrix is relative to.
+    origin: glam::DVec3,
 }
 
 impl StoredSprite {
+    /// Rewrite the uniform's model matrix relative to `origin` when it is not
+    /// already.
+    pub(crate) fn rebase(&mut self, queue: &viewport_lib::gpu::Queue, origin: glam::DVec3) {
+        if origin == self.origin {
+            return;
+        }
+        self.origin = origin;
+        self.draw.uniform.model = crate::item_types::origin::rel_model(self.model, origin);
+        queue.write_buffer(
+            &self.draw._uniform_buf,
+            0,
+            bytemuck::bytes_of(&self.draw.uniform),
+        );
+    }
+
     /// Write positions or records at a sprite offset, keeping the draw count in
     /// step with the positions.
     pub(crate) fn write_channel(

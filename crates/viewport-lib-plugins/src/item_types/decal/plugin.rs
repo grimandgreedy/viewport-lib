@@ -2,6 +2,7 @@
 //! the `gpu` feature.
 
 use super::*;
+use crate::item_types::origin::{rel_model, rel_view_proj};
 use viewport_lib::plugin_api::pick_helpers::{ray_unit_box_toi, segment_in_rect};
 use viewport_lib::plugin_api::{
     EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext, ItemTypePlugin,
@@ -83,6 +84,8 @@ pub struct DecalPlugin {
     /// Behind a lock because `encode` runs from a shared borrow but the target
     /// set is rebuilt when the viewport resizes.
     outline_targets: std::sync::Mutex<Option<pipeline::DecalOutlineTargets>>,
+    /// The world origin of the last prepare, which the draws are relative to.
+    origin: glam::DVec3,
 }
 
 impl DecalPlugin {
@@ -129,6 +132,7 @@ impl ItemTypePlugin for DecalPlugin {
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         let decals = items.of::<DecalItem>();
         let res = ctx.resources;
+        self.origin = ctx.world_origin();
 
         self.draws.clear();
         self.pick_items.clear();
@@ -166,8 +170,11 @@ impl ItemTypePlugin for DecalPlugin {
                     continue;
                 }
                 // Apply appearance.opacity on top of the item's own alpha.
+                // The box is placed relative to the world origin, so a moved
+                // origin changes the key and rebuilds the entry.
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
+                effective.transform = rel_model(item.transform, ctx.world_origin());
                 let key = pipeline::hash_decal_item(&effective, &|id| res.has_texture(id));
                 match self.cache.entry(key) {
                     std::collections::hash_map::Entry::Occupied(e) => {
@@ -422,7 +429,7 @@ impl DecalPlugin {
         });
         pass.set_bind_group(0, ctx.camera_bind_group, &[]);
         pass.set_bind_group(1, depth_bg, &[]);
-        let view_proj = ctx.camera.view_proj();
+        let view_proj = rel_view_proj(ctx.camera, self.origin);
         for gpu in &self.draws {
             // Still compiling: this decal draws next frame.
             let Some(pl) = decal_gpu
@@ -528,7 +535,7 @@ impl DecalPlugin {
             pass.set_pipeline(mask_pl);
             pass.set_bind_group(0, ctx.camera_bind_group, &[]);
             pass.set_bind_group(1, depth_bg, &[]);
-            let view_proj = ctx.camera.view_proj();
+            let view_proj = rel_view_proj(ctx.camera, self.origin);
             for gpu in &self.draws {
                 if !gpu.selected || !decal_gpu.drawn(gpu.blend_mode) {
                     continue;

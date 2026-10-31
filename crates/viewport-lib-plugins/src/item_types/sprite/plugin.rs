@@ -493,6 +493,11 @@ impl ItemTypePlugin for SpritePlugin {
         self.outlines.clear();
         self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
+        let origin = ctx.world_origin();
+        let sets = self.sets.iter_mut().map(|(_, s)| s);
+        for stored in sets.chain(self.instance_sets.iter_mut().map(|(_, s)| s)) {
+            stored.rebase(queue, origin);
+        }
         let items = items.of::<SpriteItem>();
         let set_refs = ctx.refs_of::<SpriteSetRefItem>();
         let instance_refs = ctx.refs_of::<SpriteInstanceSetRefItem>();
@@ -517,7 +522,9 @@ impl ItemTypePlugin for SpritePlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let mut gd = build_sprite(device, queue, &binds, item, 0).draw;
+            let mut stored = build_sprite(device, queue, &binds, item, 0);
+            stored.rebase(queue, ctx.world_origin());
+            let mut gd = stored.draw;
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
             let frame_index = self.frame.len();
             self.frame.push(gd);

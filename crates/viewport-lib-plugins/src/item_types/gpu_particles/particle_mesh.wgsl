@@ -12,6 +12,8 @@ struct MeshDrawUniform {
     has_texture: u32,
     _pad0:       u32,
     _pad1:       u32,
+    // The simulation anchor relative to the world origin.
+    offset:      vec4<f32>,
 };
 
 struct Particle {
@@ -150,7 +152,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
     }
 
     let local = rot * (in.position * p.size);
-    let world_pos = p.position + local;
+    let world_pos = p.position + draw_ub.offset.xyz + local;
 
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.colour    = p.colour;

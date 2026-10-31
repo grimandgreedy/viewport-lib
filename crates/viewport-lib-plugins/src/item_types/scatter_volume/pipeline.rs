@@ -1323,8 +1323,12 @@ pub(crate) struct ScatterViewportState {
     /// True when the history slot opposite `parity` holds a usable
     /// previous-frame composite result.
     pub history_valid: bool,
-    /// Previous frame's view-projection (row-major mat4).
+    /// Previous frame's view-projection (row-major mat4), used until a
+    /// previous camera is recorded.
     pub prev_view_proj: [[f32; 4]; 4],
+    /// Previous frame's camera, in world coordinates. The reprojection
+    /// matrix is built from it relative to the current world origin.
+    pub prev_camera: Option<viewport_lib::RenderCamera>,
     /// Scene colour copy sampled by the refraction pass. Allocated on demand
     /// when at least one volume has refraction enabled. Matches the HDR
     /// target's size and format.
@@ -1388,6 +1392,7 @@ impl ScatterViewportState {
             parity: 0,
             history_valid: false,
             prev_view_proj: [[0.0; 4]; 4],
+            prev_camera: None,
             refraction_source_texture: None,
             refraction_source_view: None,
             refraction_source_size: [0, 0],

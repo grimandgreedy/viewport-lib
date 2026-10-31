@@ -86,7 +86,9 @@ impl ItemTypePlugin for ImageSlicePlugin {
             if item.settings.hidden {
                 continue;
             }
-            if let Some(entry) = gpu.upload_item(device, queue, ctx.resources, item) {
+            if let Some(entry) =
+                gpu.upload_item(device, queue, ctx.resources, item, ctx.world_origin())
+            {
                 self.frame.push(entry);
             }
         }
