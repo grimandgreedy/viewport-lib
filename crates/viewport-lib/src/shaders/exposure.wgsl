@@ -1,9 +1,11 @@
 // exposure.wgsl : GPU auto-exposure. A log-luminance histogram over the HDR
 // scene target, reduced to a percentile-clipped average, converted to a target
 // EV100 and eased into a persistent exposure buffer. Three entry points share
-// one bind group and run clear -> build -> resolve between the HDR pass and the
-// tone map, in the same submission, so a single dirty render is correctly
-// exposed on its own frame (no CPU readback, no cross-frame dependency).
+// one bind group and run clear -> build -> resolve after the HDR pass, in the
+// same submission, with no CPU readback. The scene shades with the exposure
+// the buffer held when the frame began (copied into the camera uniform), so
+// the build pass divides it back out and meters absolute radiance; the next
+// frame shades with what resolve writes.
 
 const HISTOGRAM_BINS: u32 = 256u;
 
@@ -31,8 +33,8 @@ struct ExposureParams {
     _pad2:             f32,
 };
 
-// Persistent adaptation state; `exposure` is the linear multiplier the tone map
-// reads (see `ExposureState` in Rust and `tone_map.wgsl`).
+// Persistent adaptation state; `exposure` is the linear multiplier the next
+// frame's camera uniform carries (see `ExposureState` in Rust).
 struct ExposureState {
     exposure:   f32,
     current_ev: f32,
@@ -104,7 +106,9 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         && texel.a < 0.001 {
         return;
     }
-    let lum = luminance(texel.rgb);
+    // The texel is exposed by the multiplier this frame shaded with, which
+    // resolve has not yet replaced; divide it out to meter absolute radiance.
+    let lum = luminance(texel.rgb) / max(state.exposure, 1e-30);
     let bin = bin_for_lum(lum);
     // Bin 0 is a raw (unweighted) count of lit texels, used by resolve_main as a
     // confidence signal (how much of the frame is scene content vs excluded
@@ -119,7 +123,8 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // Single invocation: reduce the histogram to an average log-luminance with a
 // low/high percentile clip, convert to a target EV, ease the persistent EV
-// toward it (dt<=0 snaps), then write the exposure multiplier the tone map reads.
+// toward it (dt<=0 snaps), then write the exposure multiplier the next frame
+// shades with.
 @compute @workgroup_size(1)
 fn resolve_main() {
     // Total lit pixels (bin 0 is near-black background / unlit, excluded).

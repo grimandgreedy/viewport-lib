@@ -114,11 +114,13 @@ fn instanced_frame(meshes: &Meshes) -> FrameData {
 
 type Setup = fn(&Meshes, &mut ViewportRenderer) -> FrameData;
 
+/// Render `frames` frames of `setup` and return the last.
 fn render_case(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
     setup: Setup,
     eager: bool,
+    frames: usize,
 ) -> Vec<u8> {
     let mut renderer = ViewportRenderer::new(device, FORMAT);
     if eager {
@@ -126,24 +128,34 @@ fn render_case(
     }
     let meshes = upload(&mut renderer, device);
     let frame = setup(&meshes, &mut renderer);
-    renderer.render_offscreen(device, queue, &frame, SIZE, SIZE)
+    let mut pixels = Vec::new();
+    for _ in 0..frames.max(1) {
+        pixels = renderer.render_offscreen(device, queue, &frame, SIZE, SIZE);
+    }
+    pixels
 }
 
 fn check(name: &str, setup: Setup, plain: Setup) {
+    check_frames(name, setup, plain, 1);
+}
+
+/// `check` on the last of `frames` frames, for a feature whose first frame
+/// prepares what a later one draws with.
+fn check_frames(name: &str, setup: Setup, plain: Setup, frames: usize) {
     for recommended in [true, false] {
         let Some((device, queue)) = device(recommended) else {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        let lazy = render_case(&device, &queue, setup, false);
-        let eager = render_case(&device, &queue, setup, true);
+        let lazy = render_case(&device, &queue, setup, false, frames);
+        let eager = render_case(&device, &queue, setup, true, frames);
         assert!(
             lazy == eager,
             "{name} (recommended device: {recommended}): the first frame on a fresh renderer \
              differs from the same frame with every pipeline prebuilt, so some pass did not \
              find its pipeline"
         );
-        let baseline = render_case(&device, &queue, plain, true);
+        let baseline = render_case(&device, &queue, plain, true, frames);
         assert!(
             eager != baseline,
             "{name} (recommended device: {recommended}): the feature changed nothing, so this \
@@ -165,7 +177,7 @@ fn check_mid_session(name: &str, first: Setup, then: Setup) {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        let fresh = render_case(&device, &queue, then, false);
+        let fresh = render_case(&device, &queue, then, false, 1);
 
         let mut renderer = ViewportRenderer::new(&device, FORMAT);
         let meshes = upload(&mut renderer, &device);
@@ -325,7 +337,9 @@ fn automatic_exposure() {
         frame.effects.display.exposure = crate::ExposureSettings::automatic();
         frame
     }
-    check("automatic exposure", setup, plain);
+    // A frame shades with the exposure the previous frame metered, so the
+    // meter's result reaches the image on the second frame.
+    check_frames("automatic exposure", setup, plain, 2);
 }
 
 #[test]

@@ -19,7 +19,9 @@ struct Camera {
     // Rgba16Float target ahead of tone mapping.
     lit_clamp: f32,
     forward: vec3<f32>,
-    _pad1: f32,
+    // The camera's exposure, applied to every radiance source where it is
+    // read.
+    exposure: f32,
     inv_view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     // View -> clip and its inverse.
@@ -1165,7 +1167,7 @@ fn compute_lit(
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
         let direct_rgb = base_colour * total_colour_contrib;
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
-        var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        var hemi_rgb = base_colour * ((ambient_contrib + hemi_ambient) * camera.exposure) * ao_factor;
         // Light-probe objects take their indirect diffuse from the SH field.
         if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             hemi_rgb = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
@@ -1251,6 +1253,8 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // Per-instance custom data slots 0..3 add to emissive (nits); zero is a
     // no-op.
     emissive += custom_data0(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id).xyz;
+    // Emissive is radiance in nits: exposed like every other source.
+    emissive *= camera.exposure;
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here

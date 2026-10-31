@@ -5,7 +5,9 @@
 //! (with `dt = 0`, i.e. snap) drives both to a comparable tone-mapped output,
 //! while a fixed `Manual` exposure leaves them far apart. This exercises the
 //! full GPU path: histogram compute over `Rgba16Float` -> resolve/adapt compute
-//! -> exposure buffer -> tone map, all in one submission.
+//! -> exposure buffer -> the next frame's camera uniform. A frame shades with
+//! the exposure the frame before it metered, so each automatic case renders
+//! twice and reads the second.
 
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
@@ -17,6 +19,19 @@ use viewport_lib::{
     AutoExposure, EnvironmentIntensity, EnvironmentLighting, EnvironmentMapId, ExposureMode,
     ExposureSettings,
 };
+
+/// Render `frame` twice and return the second, which shades with the
+/// exposure the first metered.
+fn render_settled(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &FrameData,
+    size: u32,
+) -> Vec<u8> {
+    let _ = renderer.render_offscreen(device, queue, frame, size, size);
+    renderer.render_offscreen(device, queue, frame, size, size)
+}
 
 /// A camera-facing quad (normal +Z) scaled to fill the frame, so metering sees
 /// the lit surface rather than the background.
@@ -148,7 +163,8 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             adaptation: 1.0,
             ..AutoExposure::default()
         };
-        renderer.render_offscreen(
+        render_settled(
+            &mut renderer,
             &device,
             &queue,
             &lit_frame(
@@ -158,7 +174,6 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
-            size,
             size,
         )
     };
@@ -184,7 +199,8 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             adaptation: 0.5,
             ..AutoExposure::default()
         };
-        renderer.render_offscreen(
+        render_settled(
+            &mut renderer,
             &device,
             &queue,
             &lit_frame(
@@ -194,7 +210,6 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
-            size,
             size,
         )
     };
@@ -264,11 +279,23 @@ fn auto_exposure_meters_the_skybox() {
 
     let size = 64u32;
     let dim = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &sky_frame(size, env, 5.0), size, size),
+        &render_settled(
+            &mut renderer,
+            &device,
+            &queue,
+            &sky_frame(size, env, 5.0),
+            size,
+        ),
         size,
     );
     let bright = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &sky_frame(size, env, 5000.0), size, size),
+        &render_settled(
+            &mut renderer,
+            &device,
+            &queue,
+            &sky_frame(size, env, 5000.0),
+            size,
+        ),
         size,
     );
     for (label, l) in [("dim", dim), ("bright", bright)] {

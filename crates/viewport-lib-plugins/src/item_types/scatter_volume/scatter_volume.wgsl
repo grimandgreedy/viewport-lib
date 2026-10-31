@@ -18,7 +18,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
     proj:          mat4x4<f32>,
@@ -419,19 +420,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let thickness = t_exit - t_enter;
     let dt = thickness / f32(steps);
 
-    // Lighting setup.
+    // Lighting setup. Every radiance term is exposed by the camera's exposure.
     var sun_dir = vec3<f32>(0.0, 0.0, 1.0);
     var sun_colour = vec3<f32>(0.0);
     if lights_uniform.count > 0u && lights_storage[0u].light_type == 0u {
         sun_dir = normalize(lights_storage[0u].pos_or_dir);
-        sun_colour = lights_storage[0u].colour * lights_storage[0u].intensity;
+        sun_colour = lights_storage[0u].colour * (lights_storage[0u].intensity * camera.exposure);
     }
     let cos_theta = dot(ray_dir, sun_dir);
     let phase = phase_hg(cos_theta, aniso);
     let ambient_top = lights_uniform.sky_colour * lights_uniform.hemisphere_intensity;
     let ambient_bot = lights_uniform.ground_colour * lights_uniform.hemisphere_intensity;
     let zenith = clamp(sun_dir.z * 0.5 + 0.5, 0.0, 1.0);
-    let ambient = mix(ambient_bot, ambient_top, zenith);
+    let ambient = mix(ambient_bot, ambient_top, zenith) * camera.exposure;
 
     let time = frame.time_pack.x;
     var jitter = 0.5;
@@ -493,7 +494,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         var emission = vec3<f32>(0.0);
         if emission_kind != EMISSION_NONE {
             let f = emission_factor(emission_kind, emission_param, local_density);
-            emission = local_colour * (emission_strength * f);
+            emission = local_colour * (emission_strength * f * camera.exposure);
         }
 
         let one_minus_acc = 1.0 - acc_a;

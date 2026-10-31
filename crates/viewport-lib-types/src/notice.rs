@@ -66,6 +66,9 @@ pub enum NoticeDetail {
     /// Transparent volume meshes were skipped because the LDR pipeline has no
     /// order-independent transparency pass.
     VolumeTransparencyOnLdr,
+    /// The frame asked for `ExposureMode::Automatic` on the LDR pipeline, which
+    /// has no HDR target to meter, so it was drawn at the passthrough exposure.
+    AutoExposureOnLdr,
     /// A cull submission needs more compaction scratch than the device binds as
     /// one storage buffer, so draws go out in cull-arrival order.
     CullPlanOverCapacity {
@@ -179,6 +182,12 @@ impl fmt::Display for NoticeDetail {
                 "transparent volume meshes are not drawn on the LDR pipeline \
                  (PipelineMode::Direct): they require the OIT pass, which only exists in the HDR \
                  pipeline. Set effects.display.mode = PipelineMode::Hdr.",
+            ),
+            Self::AutoExposureOnLdr => f.write_str(
+                "ExposureMode::Automatic has no meter on the LDR pipeline \
+                 (PipelineMode::Direct, or a host-owned render pass): the frame was drawn at the \
+                 passthrough exposure. Use a fixed exposure (Manual or PhysicalCamera) there, or \
+                 set effects.display.mode = PipelineMode::Hdr.",
             ),
             Self::CullPlanOverCapacity { batches, instances } => write!(
                 f,

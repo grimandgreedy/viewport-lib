@@ -95,7 +95,7 @@ fn stored_field_uniform(cam: &Camera) -> CameraUniform {
         forward: (cam.target().as_vec3() - eye.as_vec3())
             .normalize_or_zero()
             .to_array(),
-        _pad1: 0.0,
+        exposure: 1.0,
         inv_view_proj: vp.inverse().to_cols_array_2d(),
         view: view.to_cols_array_2d(),
         proj: proj.to_cols_array_2d(),

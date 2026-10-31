@@ -66,9 +66,10 @@ impl ViewportRenderer {
     /// face of an environment probe.
     ///
     /// `frame` supplies the scene, lighting, and environment. Its camera,
-    /// viewport size, pixels-per-point, post-process toggle, and SSAA factor are
-    /// overridden for the capture and restored before returning, so the caller's
-    /// `FrameData` is left unchanged. The HDR path is forced on regardless of the
+    /// viewport size, pixels-per-point, post-process toggle, SSAA factor and
+    /// exposure are overridden for the capture and restored before returning,
+    /// so the caller's `FrameData` is left unchanged. The exposure is forced to
+    /// passthrough, so the capture holds absolute radiance. The HDR path is forced on regardless of the
     /// caller's setting, because that is what raises the shader's `lit_clamp` to
     /// the `f16` maximum and lets radiance above 1.0 reach the `Rgba16Float`
     /// target this reads back.
@@ -130,6 +131,7 @@ impl ViewportRenderer {
         let saved_ppp = frame.camera.pixels_per_point;
         let saved_display_mode = frame.effects.display.mode;
         let saved_ssaa = frame.effects.post_process.ssaa_factor;
+        let saved_exposure = frame.effects.display.exposure;
         let saved_scale = self.current_render_scale;
 
         // Mark this an auxiliary render for its duration: it reads the resident
@@ -153,6 +155,9 @@ impl ViewportRenderer {
         frame.effects.display.mode = crate::renderer::types::PipelineMode::Hdr;
         frame.effects.post_process.ssaa_factor = 1;
         self.current_render_scale = 1.0;
+        // A capture holds absolute radiance whatever the frame's exposure, so
+        // a probe lights a scene the same under any camera.
+        frame.effects.display.exposure = crate::ExposureSettings::passthrough();
 
         // A throwaway output view for the tone-map pass, which we do not read.
         let target_format = self.resources.target_format;
@@ -192,6 +197,7 @@ impl ViewportRenderer {
         frame.camera.pixels_per_point = saved_ppp;
         frame.effects.display.mode = saved_display_mode;
         frame.effects.post_process.ssaa_factor = saved_ssaa;
+        frame.effects.display.exposure = saved_exposure;
         self.current_render_scale = saved_scale;
         self.render_mode = saved_render_mode;
         self.last_stats = saved_last_stats;

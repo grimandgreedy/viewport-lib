@@ -84,7 +84,14 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 /// - A hook module always shades on the PBR loop: `use_pbr` is ignored and
 ///   the alternate shading-model branches are stripped.
 /// - Bodies may read the group-0 `camera` uniform, including `camera.time`
-///   (from `FrameData::time`) and `camera.viewport`.
+///   (from `FrameData::time`), `camera.viewport` and `camera.exposure`.
+/// - Hooks see and return exposed radiance: `light.radiance`, the `Lo` and
+///   `ambient` a `recolor` receives, and what `shade_light`, `shade_ambient`
+///   and `recolor` return are all already multiplied by the camera's
+///   exposure. A hook that reads a light or the environment itself
+///   (`lights_uniform`, the IBL textures) multiplies by `camera.exposure`.
+///   The `emissive` a `shade_surface` returns is radiance in nits; the
+///   composer exposes it alongside the material's.
 /// - `light.radiance` is unshadowed; the shadow factor is `light.shadow`.
 ///   OIT passes sample no shadows, so `light.shadow` is `1.0` there.
 /// - Lighting hook bodies run inside the light loop's non-uniform control
@@ -501,7 +508,7 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             &s,
             "emissive",
             &format!(
-                "    final_rgb += {name}__hook_emissive;\n    dbg_emissive_lum += dot({name}__hook_emissive, lum_weights);\n"
+                "    let {name}__exposed_emissive = {name}__hook_emissive * camera.exposure;\n    final_rgb += {name}__exposed_emissive;\n    dbg_emissive_lum += dot({name}__exposed_emissive, lum_weights);\n"
             ),
         )?;
     }
@@ -2199,7 +2206,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
                 "{shader}: missing emissive carrier"
             );
             assert!(
-                composed.contains("final_rgb += paint__hook_emissive;"),
+                composed.contains("final_rgb += paint__exposed_emissive;"),
                 "{shader}: missing emissive add"
             );
             assert!(

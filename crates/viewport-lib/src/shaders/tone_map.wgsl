@@ -42,10 +42,10 @@ struct ToneMapUniform {
 // shows, so they are skipped there.
 @group(0) @binding(8) var foreground_depth: texture_2d<f32>;
 
-// Exposure state buffer (see exposure.wgsl / ExposureState in Rust). `exposure`
-// is the pre-tone-map linear multiplier, written CPU-side for manual/physical
-// exposure or by the auto-exposure resolve compute pass. Replaces the old
-// `ToneMapUniform.exposure` scalar so every exposure mode shares one path.
+// Exposure state buffer (see exposure.wgsl / ExposureState in Rust). The
+// composite does not apply it: the scene shaders multiply every radiance
+// source by the camera's exposure where they read it, so the HDR colour here
+// is already exposed. Bound so the layout matches the exposure producer's.
 struct ExposureState {
     exposure:   f32,
     current_ev: f32,
@@ -260,9 +260,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let edl_factor = 1.0 - exp(-params.edl_strength * edl_sum / 8.0);
         colour = colour * (1.0 - edl_factor);
     }
-
-    // Pre-tone-mapping exposure (from the exposure state buffer).
-    colour = colour * exposure_state.exposure;
 
     // Tone mapping.
     if params.mode == 0u {

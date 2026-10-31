@@ -13,7 +13,8 @@
 /// [`ExposureMode::Automatic`](crate::ExposureMode::Automatic).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExposureReadback {
-    /// The linear exposure multiplier currently applied before tone mapping.
+    /// The linear exposure multiplier the viewport's next frame shades with,
+    /// applied to every radiance source where the shaders read it.
     pub exposure: f32,
     /// The adapted EV100 in effect this frame.
     pub current_ev: f32,

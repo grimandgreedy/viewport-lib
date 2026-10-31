@@ -157,18 +157,15 @@
 //!
 //! # Current behaviour
 //!
-//! The renderer does not yet match clauses 2, 3, 4, 6 and 7 in full. Exposure
-//! is applied once, to the final HDR colour just before the tone-map operator,
-//! so shading, plugin hooks and post producers see unexposed radiance, and
-//! resolved colours (clause 4) are exposed along with everything else: an
-//! unlit item or a point cloud's colour map goes dark under a physical camera.
-//! There is no emissive weight: emissive is always exposed, which matches
-//! weight 1. [`PipelineMode::Direct`] applies no exposure in any mode. With
+//! The renderer does not yet match clauses 3, 6 and 7 in full. There is no
+//! emissive weight: emissive is always exposed, which matches weight 1. With
 //! image-based lighting off, PBR ambient is `Material::ambient` plus the
 //! hemisphere fill, and the default fill is 0.4, so a white sky gives an
 //! upward-facing surface 0.15 + 0.4 times its albedo. The colour grade is
 //! applied only display-referred, after the operator and the background
-//! composite.
+//! composite. Under [`ExposureMode::Automatic`] a frame shades with the
+//! exposure the previous frame metered, so the first frame after switching to
+//! it draws at the exposure the viewport held before.
 //!
 //! [`ExposureMode`]: crate::effects::postprocess::ExposureMode
 //! [`ExposureMode::Passthrough`]: crate::effects::postprocess::ExposureMode::Passthrough

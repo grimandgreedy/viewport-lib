@@ -377,6 +377,7 @@ impl ViewportRenderer {
             first_light: frame.effects.lighting.lights.first(),
             foreground_active: foreground,
             exposure: frame.effects.display.exposure,
+            presented: self.render_advances_state(),
         };
         // The composite reads what each enabled producer writes, except
         // while the effects throttle skips that producer: its target would

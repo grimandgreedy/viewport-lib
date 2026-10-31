@@ -114,10 +114,11 @@ impl ViewportRenderer {
             bytemuck::cast_slice(&[clip_vols_uniform]),
         );
         // The compatibility tier draws through the LDR path, which keeps the lit
-        // term in [0, 1].
-        let camera_uniform = frame
+        // term in [0, 1] and has no meter for an automatic exposure.
+        let mut camera_uniform = frame
             .camera
             .camera_uniform(&self.frame_clock.current(), &self.origin);
+        camera_uniform.exposure = viewport_interaction::frame_exposure(frame);
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
 

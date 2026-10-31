@@ -4,7 +4,8 @@
 //! Two extension points cover the two shapes a post effect can take:
 //!
 //! - A [`PostEffectProducer`] runs before tone mapping. It reads the HDR
-//!   scene colour and depth, encodes its own passes into the frame, and
+//!   scene colour, which is already exposed by the camera's exposure, and
+//!   depth, encodes its own passes into the frame, and
 //!   contributes the result to one named composite input
 //!   ([`PostEffectSlot`]): the same slots the built-in bloom, SSAO and
 //!   contact shadows fill. Registering a producer for a slot while

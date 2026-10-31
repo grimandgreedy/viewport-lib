@@ -352,7 +352,8 @@ impl RenderCamera {
             // LDR default; the per-viewport upload raises this on the HDR path.
             lit_clamp: 1.0,
             forward: self.pose.forward.to_array(),
-            _pad1: 0.0,
+            // No exposure; the per-viewport upload writes the frame's.
+            exposure: 1.0,
             inv_view_proj: vp.inverse().to_cols_array_2d(),
             view: self.view.to_cols_array_2d(),
             proj: self.projection.to_cols_array_2d(),

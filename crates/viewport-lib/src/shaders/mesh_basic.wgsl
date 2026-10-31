@@ -17,7 +17,9 @@ struct Camera {
     // Upper bound on the lit (pre-emissive) colour: 1.0 on the LDR path.
     lit_clamp: f32,
     forward: vec3<f32>,
-    _pad1: f32,
+    // The camera's exposure, applied to every radiance source where it is
+    // read.
+    exposure: f32,
     inv_view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     // View -> clip and its inverse.
@@ -226,6 +228,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         n = -n;
     }
     let lit = apply_scene_lighting(n, base_colour, two_sided, in.world_pos, lights_uniform);
-    let rgb = min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb;
+    let rgb = min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb * camera.exposure;
     return vec4<f32>(rgb, colour.a);
 }

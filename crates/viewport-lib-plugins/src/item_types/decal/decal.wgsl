@@ -14,7 +14,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -353,16 +354,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let hemi_t = clamp(N_final.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi   = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t)
                      * lights_uniform.hemisphere_intensity;
-        let ambient = (vec3<f32>(u.ambient) + hemi)
+        let ambient = ((vec3<f32>(u.ambient) + hemi) * camera.exposure)
                       * (albedo * (1.0 - metallic) + F0 * metallic);
 
         out_rgb = lo + ambient;
     }
 
-    // Emissive contribution: always additive on top of the blend result.
+    // Emissive contribution: always additive on top of the blend result. On
+    // the lit path the result is exposed radiance, so an emissive map is
+    // exposed to match; under Multiply it scales a factor and is not.
     if u.emissive > 0.0 {
+        let emissive_exposure = select(1.0, camera.exposure, u.blend_mode == 0u);
         let emissive_col = select(out_rgb,
-                                  textureSample(emissive_tex, decal_samp, uv).rgb,
+                                  textureSample(emissive_tex, decal_samp, uv).rgb * emissive_exposure,
                                   u.has_emissive_tex != 0u);
         out_rgb = out_rgb + emissive_col * u.emissive;
     }

@@ -15,7 +15,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -168,7 +169,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                 lights_uniform.ground_colour,
                 lights_uniform.sky_colour,
                 up_weight,
-            ) * lights_uniform.hemisphere_intensity;
+            ) * (lights_uniform.hemisphere_intensity * camera.exposure);
             let ambient_rgb = base_colour.rgb * ambient;
             shaded = mix(ambient_rgb, shaded, shadow_factor);
         }
