@@ -84,12 +84,12 @@ impl PickAccelerator {
                 continue;
             };
             if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
-                let world_aabb = local_aabb.transformed(&node.world_transform());
+                let world_aabb = local_aabb.transformed(&node.world_transform().to_mat4());
                 entries.push(BvhEntry {
                     aabb: world_aabb,
                     node_id: node.id(),
                     mesh_index: mesh_id.index(),
-                    world_transform: node.world_transform(),
+                    world_transform: node.world_transform().to_mat4(),
                 });
             }
         }
@@ -180,10 +180,10 @@ impl PickAccelerator {
             };
             if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
                 new_entries.push(BvhEntry {
-                    aabb: local_aabb.transformed(&node.world_transform()),
+                    aabb: local_aabb.transformed(&node.world_transform().to_mat4()),
                     node_id: node.id(),
                     mesh_index: mesh_id.index(),
-                    world_transform: node.world_transform(),
+                    world_transform: node.world_transform().to_mat4(),
                 });
             }
         }
@@ -236,7 +236,7 @@ impl PickAccelerator {
         Some(crate::renderer::PickHit {
             id: entry.node_id,
             sub_object: cast.sub_object,
-            world_pos: cast.world_pos,
+            world_pos: cast.world_pos.as_dvec3(),
             normal: cast.normal,
             scalar_value: None,
             sub_object_world_pos: None,

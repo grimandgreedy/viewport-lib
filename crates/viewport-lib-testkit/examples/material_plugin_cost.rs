@@ -166,7 +166,7 @@ fn main() {
             item.mesh_id = mesh_id;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 3.0 - 7.5, 0.0, 1.0))
-                    .to_cols_array_2d();
+                    .into();
             let mut material = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.3), 0.1, 0.55);
             material.shading_plugin = plugin;
             item.material = renderer
@@ -178,7 +178,7 @@ fn main() {
         .collect();
 
     let camera = Camera {
-        center: glam::Vec3::new(0.0, 0.0, 1.0),
+        center: glam::DVec3::new(0.0, 0.0, 1.0),
         distance: 15.0,
         orientation: glam::Quat::from_rotation_x(1.1),
         ..Camera::default()

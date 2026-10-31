@@ -200,7 +200,7 @@ fn main() -> eframe::Result {
                 item.mesh_id = mesh_id;
                 item.model = (glam::Mat4::from_translation(translation)
                     * glam::Mat4::from_scale(scale))
-                .to_cols_array_2d();
+                .into();
                 item.material = tvm_material;
                 item.settings.opacity = TVM_OPACITY;
                 tvm_items.push(item);
@@ -242,7 +242,7 @@ impl App {
     ) -> Self {
         Self {
             camera: Camera {
-                center: glam::Vec3::new(0.0, 0.0, 1.0),
+                center: glam::DVec3::new(0.0, 0.0, 1.0),
                 distance: 8.0,
                 ..Camera::default()
             },
@@ -257,11 +257,11 @@ impl App {
 
     fn build_items(&self) -> Vec<SceneRenderItem> {
         let mut floor = SceneRenderItem::new(self.floor.0, self.floor.1);
-        floor.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        floor.model = glam::Mat4::IDENTITY.into();
 
         let mut slab = SceneRenderItem::new(self.slab.0, self.slab.1);
         slab.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).to_cols_array_2d();
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).into();
 
         let mut items = vec![slab, floor];
         items.extend(self.tvm_items.iter().cloned());

@@ -560,8 +560,8 @@ fn sync_camera3d(cam: Res<CamState>, mut q: Query<&mut Transform, With<MainCam3d
     let Ok(mut transform) = q.single_mut() else {
         return;
     };
-    let eye = BVec3::from_array(cam.camera.eye_position().to_array());
-    let center = BVec3::from_array(cam.camera.center().to_array());
+    let eye = BVec3::from_array(cam.camera.eye_position().as_vec3().to_array());
+    let center = BVec3::from_array(cam.camera.center().as_vec3().to_array());
     // Use viewport-lib's actual camera up (orientation * Y), not world Z, so the
     // orbit orientation matches exactly.
     let up = BVec3::from_array(cam.camera.up().to_array());
@@ -739,7 +739,7 @@ fn render_swarm(
                 MaterialId::DEFAULT
             };
             let mut item = SceneRenderItem::new(sphere, material);
-            item.model = inst.model;
+            item.model = inst.model.into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(inst.color));
             item
         })

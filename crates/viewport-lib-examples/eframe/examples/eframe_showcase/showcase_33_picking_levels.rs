@@ -988,7 +988,7 @@ impl App {
                     record_hit!(
                         self.pl_node_name(hit.id),
                         "Mesh",
-                        hit.world_pos,
+                        hit.world_pos.as_vec3(),
                         hit.normal,
                         None,
                         None
@@ -1027,7 +1027,7 @@ impl App {
                     record_hit!(
                         self.pl_node_name(hit.id),
                         "Mesh",
-                        hit.world_pos,
+                        hit.world_pos.as_vec3(),
                         hit.normal,
                         hit.sub_object,
                         None
@@ -1055,7 +1055,7 @@ impl App {
                     }
                     let marker = vertex_sub
                         .and_then(|s| self.pl_vertex_world_pos(hit.id, s))
-                        .unwrap_or(hit.world_pos);
+                        .unwrap_or(hit.world_pos.as_vec3());
                     record_hit!(
                         self.pl_node_name(hit.id),
                         "Mesh",
@@ -1094,7 +1094,7 @@ impl App {
                     record_hit!(
                         "Volume".to_string(),
                         "Volume",
-                        hit.world_pos,
+                        hit.world_pos.as_vec3(),
                         hit.normal,
                         hit.sub_object,
                         hit.scalar_value
@@ -1123,7 +1123,7 @@ impl App {
                     record_hit!(
                         "Point Cloud".to_string(),
                         "Point Cloud",
-                        hit.world_pos,
+                        hit.world_pos.as_vec3(),
                         glam::Vec3::Y,
                         Some(sub),
                         None
@@ -1150,7 +1150,7 @@ impl App {
                     record_hit!(
                         "Gaussian Splats".to_string(),
                         "Gaussian Splat",
-                        hit.world_pos,
+                        hit.world_pos.as_vec3(),
                         glam::Vec3::Y,
                         Some(sub),
                         None
@@ -1176,7 +1176,7 @@ impl App {
                     record_hit!(
                         "Transparent Volume Mesh".to_string(),
                         "Volume Mesh",
-                        hit.world_pos,
+                        hit.world_pos.as_vec3(),
                         hit.normal,
                         Some(sub),
                         None
@@ -1469,12 +1469,12 @@ impl App {
         self.pl_state.last_hit = Some(PlHitInfo {
             object_name: self.pl_node_name(hit.id),
             object_type,
-            world_pos: hit.world_pos,
+            world_pos: hit.world_pos.as_vec3(),
             normal: hit.normal,
             sub_object: hit.sub_object,
             scalar_value: hit.scalar_value,
         });
-        self.pl_state.hit_marker = Some(hit.world_pos);
+        self.pl_state.hit_marker = Some(hit.world_pos.as_vec3());
     }
 
     /// Handle a rubber-band box selection using renderer.pick_rect_objects()
@@ -1804,7 +1804,7 @@ pub(crate) fn pl_collect_scene_items(
     // TVM boundary surface rendered as an opaque mesh alongside the scene nodes.
     if let Some(tvm_mesh_id) = app.pl_state.tvm_mesh_id {
         let mut tvm_item = SceneRenderItem::new(tvm_mesh_id, app.pl_state.tvm_material);
-        tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        tvm_item.model = glam::Mat4::IDENTITY.into();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
         tvm_item.settings.unlit = false;

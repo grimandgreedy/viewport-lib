@@ -129,7 +129,7 @@ fn two_bind_group_device_renders_without_validation_errors() {
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // LDR path.
@@ -275,7 +275,7 @@ fn items_select_distinct_records() {
         it.mesh_id = mesh_id;
         it.material = upload_material(&mut renderer, m);
         it.settings.unlit = true;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         it
     };
     frame.scene.surfaces = SurfaceSubmission::Flat(
@@ -343,7 +343,7 @@ fn renderer_fits_recommended_device_limits() {
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // HDR path builds the clustered lit / OIT pipeline layouts.

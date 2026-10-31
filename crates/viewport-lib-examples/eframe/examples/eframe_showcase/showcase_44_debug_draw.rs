@@ -73,7 +73,7 @@ impl RuntimePlugin for DebugOverlayPlugin {
             let Some(node) = ctx.scene.node(id) else {
                 continue;
             };
-            let center = node.world_transform().col(3).truncate();
+            let center = node.world_transform().to_mat4().col(3).truncate();
             let half = glam::Vec3::splat(self.body_radius);
             dd.aabb(
                 center - half,
@@ -352,7 +352,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_dbg_draw_scene(app, renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 4.0),
+        center: glam::DVec3::new(0.0, 0.0, 4.0),
         distance: 18.0,
         orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()

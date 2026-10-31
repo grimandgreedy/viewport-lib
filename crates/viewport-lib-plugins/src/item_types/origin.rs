@@ -89,7 +89,7 @@ pub(crate) fn rel_view(camera: &viewport_lib::RenderCamera, origin: DVec3) -> Ma
         return view;
     }
     let r = glam::Mat3::from_mat4(view).as_dmat3();
-    let t = -(r * (camera.eye_position().as_dvec3() - origin));
+    let t = -(r * (camera.eye_position() - origin));
     let mut out = view;
     out.w_axis = t.as_vec3().extend(view.w_axis.w);
     out

@@ -139,7 +139,7 @@ impl ApplicationHandler for App {
             material.emissive =
                 Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
             let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             item
         };
 

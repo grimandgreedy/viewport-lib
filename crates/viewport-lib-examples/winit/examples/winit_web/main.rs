@@ -251,7 +251,7 @@ impl ApplicationHandler<State> for App {
                 // Z-up: spin one item about the world up axis.
                 let t = state.start.elapsed().as_secs_f32();
                 state.scene_items[state.spin_item].model =
-                    glam::Mat4::from_rotation_z(t).to_cols_array_2d();
+                    glam::Mat4::from_rotation_z(t).into();
 
                 let mut frame_data = FrameData::new(
                     CameraFrame::from_camera(&state.camera, [w, h]),
@@ -384,7 +384,7 @@ async fn build_state(window: Arc<Window>) -> State {
         // A little emissive above 1.0 gives bloom some HDR energy to extract.
         material.emissive = Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
         let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
         item
     };
     let scene_items = vec![

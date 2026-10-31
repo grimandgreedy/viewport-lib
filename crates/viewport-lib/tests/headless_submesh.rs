@@ -51,7 +51,7 @@ fn submesh_frame(
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     // Unlit so pixels carry the raw material base colour.
     item.settings.unlit = true;
     mat.base_colour = Colour::linear_rgb(0.0, 0.0, 1.0);

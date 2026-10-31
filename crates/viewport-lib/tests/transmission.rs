@@ -54,7 +54,7 @@ fn camera() -> Camera {
 /// A square facing the camera, three units behind the sphere, large enough
 /// to fill the view behind it.
 fn backdrop() -> (MeshData, glam::Mat4) {
-    let to_eye = camera().eye_position().normalize();
+    let to_eye = camera().eye_position().as_vec3().normalize();
     let model = glam::Mat4::from_rotation_translation(
         glam::Quat::from_rotation_arc(glam::Vec3::Z, to_eye),
         -to_eye * 3.0,
@@ -130,11 +130,11 @@ fn raster_centre(device: &wgpu::Device, queue: &wgpu::Queue, material: Material)
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(&mut renderer, material);
     let mut wall_item = SceneRenderItem::default();
     wall_item.mesh_id = wall;
-    wall_item.model = wall_model.to_cols_array_2d();
+    wall_item.model = wall_model.into();
     wall_item.material = upload_material(&mut renderer, backdrop_material());
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, wall_item].into());
     let px = renderer.render_offscreen(device, queue, &frame, SIZE, SIZE);
@@ -257,7 +257,7 @@ mod parity {
         let cam = camera();
         let rt_cam = RtCamera {
             inv_view_proj: cam.view_proj_matrix().inverse(),
-            position: cam.eye_position(),
+            position: cam.eye_position().as_vec3(),
             width: SIZE,
             height: SIZE,
         };

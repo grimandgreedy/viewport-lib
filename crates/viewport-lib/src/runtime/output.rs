@@ -156,10 +156,10 @@ pub fn apply_camera_commands(events: &mut RuntimeEventBus, camera: &mut Camera) 
     for cmd in events.drain::<CameraCommand>() {
         match cmd {
             CameraCommand::SetCenter(c) => {
-                camera.center = c;
+                camera.center = c.as_dvec3();
             }
             CameraCommand::OffsetCenter(d) => {
-                camera.center += d;
+                camera.center += d.as_dvec3();
             }
             CameraCommand::SetDistance(d) => {
                 camera.set_distance(d);
@@ -169,7 +169,7 @@ pub fn apply_camera_commands(events: &mut RuntimeEventBus, camera: &mut Camera) 
             }
             CameraCommand::BlendToward { target, weight } => {
                 let w = weight.clamp(0.0, 1.0);
-                camera.center = camera.center.lerp(target.center, w);
+                camera.center = camera.center.lerp(target.center, f64::from(w));
                 camera.distance = camera.distance + (target.distance - camera.distance) * w;
                 camera.distance = camera.distance.max(0.001);
                 camera.orientation = camera

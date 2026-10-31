@@ -142,7 +142,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let make = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
         let mut item = SceneRenderItem::new(mesh_id, material);
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
         item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
         item
     };

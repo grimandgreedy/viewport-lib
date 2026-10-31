@@ -96,7 +96,7 @@ pub(crate) fn build_instance_record(
             let world_extent = mesh
                 .map(|m| {
                     m.aabb
-                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
+                        .transformed(&item.model.to_mat4())
                         .longest_side()
                 })
                 .unwrap_or(1.0)
@@ -211,13 +211,9 @@ pub(super) fn prepare_light_probe_sh(
                     if (count as usize) < crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
                         // Items arrive relative to the origin; probes are in
                         // world space.
-                        let rel =
-                            glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
-                        let center = if origin.is_zero() {
-                            rel.to_array()
-                        } else {
-                            origin.abs(rel).as_vec3().to_array()
-                        };
+                        let center = (item.model.translation + origin.origin())
+                            .as_vec3()
+                            .to_array();
                         sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
                         indices[idx] = Some(count);
                         count += 1;

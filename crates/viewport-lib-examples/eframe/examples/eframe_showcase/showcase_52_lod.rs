@@ -135,7 +135,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
             let y = -half + i as f32 * (2.0 * half / (count as f32 - 1.0));
             let mut item = SceneRenderItem::default();
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = st.sphere_material;
             item.settings.pick_id = PickId(1000 + i as u64);
             if st.lod_enabled {
@@ -301,7 +301,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_lod_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 48.0,
         orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()

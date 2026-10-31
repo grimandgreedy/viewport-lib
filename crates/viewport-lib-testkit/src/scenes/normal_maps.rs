@@ -283,7 +283,7 @@ fn front_ortho() -> Camera {
     let distance = 10.0;
     Camera {
         projection: Projection::Orthographic,
-        center: Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance,
         orientation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
         fov_y: 2.0 * (3.0f32 / distance).atan(),

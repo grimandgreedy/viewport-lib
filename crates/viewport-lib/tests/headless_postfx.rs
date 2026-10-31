@@ -64,7 +64,7 @@ fn transparent_over_empty_background_not_darker() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     // Cover the centre but leave the corners as background.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
     item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
@@ -126,7 +126,7 @@ fn bloom_glows_into_empty_background() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         // Small, so there is surrounding background for the halo to fall on.
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).into();
         item.material = glow;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
@@ -198,7 +198,7 @@ fn coloured_item(
         renderer,
         Material::from_colour(Colour::from_linear_rgb_array(colour)),
     );
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item
 }
 
@@ -269,7 +269,7 @@ fn foreground_override_projection_avoids_near_clip() {
 
     // A small box held 0.05 world units in front of the eye: inside the
     // scene near plane (0.1 for the default camera).
-    let eye = frame.camera.render_camera.eye_position();
+    let eye = frame.camera.render_camera.eye_position().as_vec3();
     let fwd = frame.camera.render_camera.forward();
     let model = glam::Mat4::from_translation(eye + fwd * 0.05)
         * glam::Mat4::from_scale(glam::Vec3::splat(0.02));
@@ -618,7 +618,7 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     // Ambient-only lighting: the hemisphere term is uniform per face, so a
@@ -696,7 +696,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     let mut mat = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
     mat.emissive = Colour::linear_rgb(400.0, 400.0, 400.0);
     item.material = upload_material(&mut renderer, mat);
@@ -1038,7 +1038,7 @@ fn post_effect_producer_fills_slot() {
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
         item.material = upload_material(
             &mut renderer,
             Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
@@ -1233,7 +1233,7 @@ fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
         item.material = upload_material(
             &mut renderer,
             Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)),

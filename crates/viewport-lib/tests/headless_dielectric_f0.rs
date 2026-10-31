@@ -42,7 +42,7 @@ fn render_sphere_with(
     frame.effects.display.mode = mode;
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {
-        direction: (cam.eye_position() - cam.center).normalize().to_array(),
+        direction: (cam.eye_position() - cam.center).as_vec3().normalize().to_array(),
     };
     light.intensity = intensity;
     light.cast_shadows = false;

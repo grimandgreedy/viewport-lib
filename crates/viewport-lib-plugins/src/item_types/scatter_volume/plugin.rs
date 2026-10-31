@@ -160,7 +160,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             return Vec::new();
         }
 
-        let eye = crate::item_types::origin::rel_vec3(ctx.camera.eye_position(), origin);
+        let eye = (ctx.camera.eye_position() - origin).as_vec3();
         sort_back_to_front(&mut self.draws, eye.to_array());
 
         let res = ctx.resources;

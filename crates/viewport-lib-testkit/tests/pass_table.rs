@@ -27,7 +27,7 @@ fn quad_frame(harness: &mut Harness) -> FrameData {
     let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
     item.material = harness
         .renderer
         .resources_mut()

@@ -822,10 +822,10 @@ impl Showcase for PickingShowcase {
                         self.last = Some(HitInfo {
                             name,
                             sub: sub_desc(hit.sub_object),
-                            pos: hit.world_pos,
+                            pos: hit.world_pos.as_vec3(),
                             scalar: hit.scalar_value,
                         });
-                        self.marker_pos = Some(hit.world_pos);
+                        self.marker_pos = Some(hit.world_pos.as_vec3());
                         self.rect_status = None;
                         self.clear_selection(session);
                         self.record(session, hit.id, hit.sub_object);

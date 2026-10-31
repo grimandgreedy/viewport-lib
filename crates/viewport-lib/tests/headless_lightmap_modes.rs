@@ -59,7 +59,7 @@ fn lightmap_replace_mode_recolors_object() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     let mut m = Material::default();
     m.shading_model = ShadingModel::Pbr;
     m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
@@ -116,7 +116,7 @@ fn lightmap_ao_mode_darkens_object() {
         frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = white;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame

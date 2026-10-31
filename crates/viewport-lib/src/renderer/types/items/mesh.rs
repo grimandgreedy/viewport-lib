@@ -7,8 +7,9 @@ use crate::scene::material::ItemSettings;
 pub struct SceneRenderItem {
     /// `MeshId` of the uploaded GPU mesh for this object.
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    /// World-space model matrix (Translation * Rotation * Scale).
-    pub model: [[f32; 4]; 4],
+    /// World-space placement: an f64 translation and an f32 rotation-scale.
+    /// Assign a `Mat4` with `.into()`.
+    pub model: crate::Transform,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
     /// Whether to render per-vertex normal visualization lines for this object.
@@ -118,7 +119,7 @@ impl Default for SceneRenderItem {
     fn default() -> Self {
         Self {
             mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            model: crate::Transform::IDENTITY,
             settings: ItemSettings::default(),
             show_normals: false,
             material: MaterialId::DEFAULT,

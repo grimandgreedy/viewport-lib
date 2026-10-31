@@ -69,7 +69,7 @@ fn render_batch(
             it.material = red;
             it.settings.unlit = true;
             it.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             it
         })
         .collect();

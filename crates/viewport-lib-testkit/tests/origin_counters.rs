@@ -36,7 +36,7 @@ fn items(harness: &mut Harness, mesh: MeshId, offset: glam::Vec3) -> Vec<SceneRe
             item.mesh_id = mesh;
             item.material = material;
             let at = glam::Vec3::new((i % 4) as f32 * 1.5, (i / 4) as f32 * 1.5, 0.0);
-            item.model = glam::Mat4::from_translation(offset + at).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(offset + at).into();
             item
         })
         .collect()

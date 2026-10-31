@@ -182,8 +182,8 @@ fn test_scene_collect_render_items_roundtrip() {
     assert_eq!(items[0].mesh_id, mesh_idx);
     assert!(items[0].settings.selected);
     // Verify position is in the model matrix.
-    let pos_x = items[0].model[3][0];
-    assert!((pos_x - 1.0).abs() < 1e-5, "model[3][0] = {pos_x}");
+    let pos_x = items[0].model.translation.x;
+    assert!((pos_x - 1.0).abs() < 1e-5, "translation.x = {pos_x}");
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn render_offscreen_produces_rgba_pixels() {
     // Add the box as a scene item.
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = false;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 

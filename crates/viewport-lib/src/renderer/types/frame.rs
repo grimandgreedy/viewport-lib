@@ -30,12 +30,16 @@ pub struct RenderCamera {
     /// Near and far read from `culling_projection`.
     culling_range: (f32, f32),
     depth_override: Option<(f32, f32)>,
+    /// World-to-view rotation built in f64 from an app-side camera's pose.
+    /// `view`'s rotation is built from f32 world positions and loses
+    /// precision far from the world origin; a relative camera uses this one.
+    exact_rotation: Option<glam::Mat3>,
 }
 
 /// Camera placement derived from the view matrix.
 #[derive(Debug, Clone, Copy)]
 struct CameraPose {
-    eye: glam::Vec3,
+    eye: glam::DVec3,
     orientation: glam::Quat,
     right: glam::Vec3,
     up: glam::Vec3,
@@ -46,7 +50,7 @@ impl CameraPose {
     fn from_view(view: glam::Mat4) -> Self {
         let m = view.inverse();
         Self {
-            eye: m.w_axis.truncate(),
+            eye: m.w_axis.truncate().as_dvec3(),
             orientation: glam::Quat::from_mat4(&m).normalize(),
             right: m.x_axis.truncate(),
             up: m.y_axis.truncate(),
@@ -150,6 +154,7 @@ impl RenderCamera {
             lens: CameraLens::from_projection(projection),
             culling_range: (0.0, 0.0),
             depth_override: None,
+            exact_rotation: None,
         };
         cam.derive_culling();
         cam
@@ -188,7 +193,10 @@ impl RenderCamera {
         // an orthographic matrix does not carry the framing angle at all.
         let eye = cam.eye_position();
         rc.pose.eye = eye;
-        rc.pose.forward = (cam.center - eye).normalize_or_zero();
+        rc.pose.forward = (cam.center.as_vec3() - eye.as_vec3()).normalize_or_zero();
+        let up = (cam.orientation * glam::Vec3::Y).as_dvec3();
+        let exact = glam::DMat4::look_at_rh(eye, cam.center, up);
+        rc.exact_rotation = Some(glam::DMat3::from_mat4(exact).as_mat3());
         rc.lens.fov_y = cam.fov_y;
         rc.culling_projection = cam.culling_proj_matrix();
         let culling = CameraLens::from_projection(rc.culling_projection);
@@ -225,6 +233,7 @@ impl RenderCamera {
     pub fn set_view(&mut self, view: glam::Mat4) {
         self.view = view;
         self.pose = CameraPose::from_view(view);
+        self.exact_rotation = None;
     }
 
     /// Replace the projection matrix, which must use reversed depth as
@@ -290,7 +299,7 @@ impl RenderCamera {
             (inv_view.transform_point3(on_near), dir)
         } else {
             let dir = inv_view.transform_vector3(on_near).normalize();
-            (self.pose.eye, dir)
+            (self.pose.eye.as_vec3(), dir)
         }
     }
 
@@ -301,8 +310,15 @@ impl RenderCamera {
     pub(crate) fn relative_to(&self, origin: glam::DVec3) -> RenderCamera {
         let mut cam = self.clone();
         if origin != glam::DVec3::ZERO {
-            cam.view = crate::renderer::origin::rel_view(self.view, self.pose.eye, origin);
-            cam.pose.eye = crate::renderer::origin::rel(self.pose.eye, origin);
+            let view = match self.exact_rotation {
+                Some(r) => {
+                    cam.pose.forward = -r.row(2);
+                    glam::Mat4::from_mat3(r)
+                }
+                None => self.view,
+            };
+            cam.view = crate::renderer::origin::rel_view(view, self.pose.eye, origin);
+            cam.pose.eye = self.pose.eye - origin;
         }
         cam
     }
@@ -312,7 +328,7 @@ impl RenderCamera {
         let vp = self.view_proj();
         CameraUniform {
             view_proj: vp.to_cols_array_2d(),
-            eye_pos: self.pose.eye.to_array(),
+            eye_pos: self.pose.eye.as_vec3().to_array(),
             // LDR default; the per-viewport upload raises this on the HDR path.
             lit_clamp: 1.0,
             forward: self.pose.forward.to_array(),
@@ -339,10 +355,10 @@ impl RenderCamera {
         self.projection * self.view
     }
 
-    /// Camera eye position in world space: the translation of `view.inverse()`,
-    /// or the camera's own eye for a camera built with
+    /// Camera eye position in world space, in f64: the translation of
+    /// `view.inverse()`, or the camera's own eye for a camera built with
     /// [`from_camera`](Self::from_camera).
-    pub fn eye_position(&self) -> glam::Vec3 {
+    pub fn eye_position(&self) -> glam::DVec3 {
         self.pose.eye
     }
 

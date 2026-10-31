@@ -43,7 +43,7 @@ fn flat(
 ) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item.material = upload_material(
         renderer,
         Material::from_colour(Colour::linear_rgb(colour[0], colour[1], colour[2])),
@@ -177,7 +177,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
     let kept = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
     let mut cam = Camera::default();
     cam.orientation = glam::Quat::IDENTITY;
-    cam.center = glam::Vec3::ZERO;
+    cam.center = glam::DVec3::ZERO;
     cam.distance = 5.0;
     cam.aspect = W as f32 / H as f32;
     let mut frame = FrameData::new(

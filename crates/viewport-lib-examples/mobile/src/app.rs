@@ -141,7 +141,7 @@ impl ApplicationHandler for App {
         let make_item = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             // The default material, coloured per item.
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item

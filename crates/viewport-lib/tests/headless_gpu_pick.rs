@@ -37,7 +37,7 @@ fn gpu_pick_returns_object_id_under_cursor() {
     // A single box at the origin with a nonzero pick id.
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -68,7 +68,7 @@ fn gpu_pick_async_begin_poll_returns_hit() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -135,7 +135,7 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -223,7 +223,7 @@ fn gpu_pick_object_honors_type_mask() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -572,7 +572,7 @@ fn gpu_pick_face_fills_geometric_normal() {
         "expected an axis-aligned box face normal, got {:?}",
         hit.normal
     );
-    let to_eye = frame.camera.render_camera.eye_position() - hit.world_pos;
+    let to_eye = frame.camera.render_camera.eye_position().as_vec3() - hit.world_pos.as_vec3();
     assert!(
         hit.normal.dot(to_eye) > 0.0,
         "face normal should point toward the camera, got {:?}",
@@ -738,7 +738,7 @@ fn gpu_snap_query_begin_poll_reaches_an_object_the_pixel_misses() {
     frame.viewport.show_axes_indicator = false;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -1560,7 +1560,7 @@ fn cpu_pick_hits_mesh_via_cached_trimesh() {
         .expect("upload box mesh");
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(111);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -1595,7 +1595,7 @@ fn cpu_pick_matches_gpu_pick_under_non_uniform_scale() {
     // Non-uniform scale: the cached TriMesh is mesh-local, so this exercises
     // the inverse-model ray transform and the inverse-transpose normal fix-up
     // in `renderer.pick()` section 1.
-    item.model = glam::Mat4::from_scale(glam::Vec3::new(1.0, 2.0, 3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::new(1.0, 2.0, 3.0)).into();
     item.settings.pick_id = PickId(222);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
@@ -1644,7 +1644,7 @@ fn cpu_pick_matches_gpu_pick_under_non_uniform_scale() {
     // the inverse-model ray transform and the inverse-transpose normal
     // fix-up, without depending on GPU pixel quantization.
     let model = glam::Mat4::from_scale(glam::Vec3::new(1.0, 2.0, 3.0));
-    let local_hit = model.inverse().transform_point3(cpu_hit.world_pos);
+    let local_hit = model.inverse().transform_point3(cpu_hit.world_pos.as_vec3());
     let max_component = local_hit
         .x
         .abs()
@@ -1675,13 +1675,13 @@ fn cpu_pick_reuses_cached_trimesh_across_instances() {
     // through screen centre; the nearer one (closer to the camera) should win.
     let mut near_item = SceneRenderItem::default();
     near_item.mesh_id = mesh_id;
-    near_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    near_item.model = glam::Mat4::IDENTITY.into();
     near_item.settings.pick_id = PickId(11);
 
     let mut far_item = SceneRenderItem::default();
     far_item.mesh_id = mesh_id;
     far_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.0)).into();
     far_item.settings.pick_id = PickId(22);
 
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![near_item, far_item].into());
@@ -1714,7 +1714,7 @@ fn cpu_pick_invalidates_cache_after_replace_mesh_data() {
         .expect("upload box mesh");
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(333);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 

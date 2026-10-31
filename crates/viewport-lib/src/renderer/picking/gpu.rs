@@ -786,7 +786,7 @@ impl ViewportRenderer {
         // The instance reads the same deform table as the item's colour draw,
         // so a deformed mesh is picked where it is drawn.
         let to_instance = |item: &SceneRenderItem| {
-            let m = self.origin.rel_model(item.model);
+            let m = self.origin.rel_transform(&item.model);
             let record = self
                 .resources
                 .mesh_store
@@ -1760,7 +1760,7 @@ impl ViewportRenderer {
             .snap_world_pos(object_id, sub_object, pixel_world, frame)
             .unwrap_or(pixel_world);
         Some(crate::renderer::picking::SnapHit {
-            world_pos,
+            world_pos: world_pos.as_dvec3(),
             object_id,
             sub_object,
         })
@@ -1899,7 +1899,7 @@ impl ViewportRenderer {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
         // The pass drew relative to the origin; put the hit back in world
         // coordinates.
-        hit.world_pos = pending.hit_world(gpu_hit.depth).as_vec3();
+        hit.world_pos = pending.hit_world(gpu_hit.depth);
         hit.sub_object = self.resolve_gpu_sub_object(
             gpu_hit.object_id.0,
             gpu_hit.sub_primitive,
@@ -1907,7 +1907,7 @@ impl ViewportRenderer {
             &pending.kinds,
             &pending.surface_meta,
             pending.primitive_index_supported,
-            Some(hit.world_pos),
+            Some(hit.world_pos.as_vec3()),
         );
         hit
     }
@@ -2300,8 +2300,9 @@ mod tests {
     use super::*;
     use crate::renderer::{CameraFrame, RenderCamera, SceneFrame, WorldOrigin};
 
-    /// A GPU pick of a surface 1,000 km from the world origin lands within a
-    /// millimetre of the true hit when drawn relative to a snapped origin.
+    /// A GPU pick of a surface 1,000 km from the world origin reports a
+    /// `PickHit::world_pos` within a millimetre of the true hit when drawn
+    /// relative to a snapped origin.
     #[test]
     fn pick_round_trip_far_from_origin() {
         let Some((device, queue)) = crate::resources::test_support::try_make_device() else {
@@ -2328,7 +2329,7 @@ mod tests {
                 .expect("cube upload");
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
-            item.model = glam::Mat4::from_translation(centre).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(centre).into();
             item.settings.pick_id = PickId(3);
             let camera = RenderCamera::from_matrices(
                 glam::Mat4::look_at_rh(eye, centre, glam::Vec3::Z),
@@ -2341,14 +2342,17 @@ mod tests {
             );
             let _ = renderer.render_offscreen(&device, &queue, &frame, w, h);
             let cursor = glam::Vec2::new(w as f32 * 0.5, h as f32 * 0.5);
-            let PickBegin::Pending(pending) =
-                renderer.pick_scene_gpu_begin(&device, &queue, cursor, &frame, PickMask::OBJECT)
-            else {
-                panic!("nothing to pick");
-            };
-            assert!(wait_for_pick(&device, &pending.submission, "test pick"));
-            let hit = pending.read_hit().expect("the cube is under the cursor");
-            (pending.hit_world(hit.depth) - truth).length()
+            let hit = renderer
+                .pick_object(
+                    crate::renderer::PickBackend::Gpu,
+                    cursor,
+                    &frame,
+                    &device,
+                    &queue,
+                    PickMask::OBJECT,
+                )
+                .expect("the cube is under the cursor");
+            (hit.world_pos - truth).length()
         };
 
         let snapped = error(WorldOrigin::snapped().with_cell(16.0));

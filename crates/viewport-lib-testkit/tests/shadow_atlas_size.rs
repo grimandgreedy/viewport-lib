@@ -39,7 +39,7 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.3, 0.3)))
         .expect("material upload");
-    ball.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 25.0)).to_cols_array_2d();
+    ball.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 25.0)).into();
     vec![ground, ball]
 }
 

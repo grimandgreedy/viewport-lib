@@ -101,7 +101,7 @@ impl App {
     /// Reset the camera to a good viewing angle for the annotation demo.
     pub(crate) fn reset_annotation_camera(&mut self) {
         self.camera = Camera {
-            center: glam::Vec3::new(0.0, 0.5, 1.0),
+            center: glam::DVec3::new(0.0, 0.5, 1.0),
             distance: 12.0,
             orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.1),
             ..Camera::default()

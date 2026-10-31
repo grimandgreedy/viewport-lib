@@ -27,7 +27,7 @@ fn frame(mesh: MeshId, material: MaterialId, yaw: f32, effects: bool) -> FrameDa
             item.mesh_id = mesh;
             item.material = material;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, x * 0.5, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, x * 0.5, 0.0)).into();
             item
         })
         .collect();

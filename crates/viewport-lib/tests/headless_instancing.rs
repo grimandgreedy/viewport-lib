@@ -74,7 +74,7 @@ fn position_override_takes_effect_through_render_path() {
     // side so it doesn't overdraw the red region we measure.
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
-    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    red_item.model = glam::Mat4::IDENTITY.into();
     red_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
@@ -83,7 +83,7 @@ fn position_override_takes_effect_through_render_path() {
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
     blue_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).into();
     blue_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0)),
@@ -183,7 +183,7 @@ fn outline_mask_follows_position_override() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
@@ -298,7 +298,7 @@ fn position_override_slice_reads_correct_pool_window() {
 
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
-    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    red_item.model = glam::Mat4::IDENTITY.into();
     red_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
@@ -403,7 +403,7 @@ fn occlusion_culling_render_path_runs() {
         let s = if i == 0 { 4.0 } else { 1.0 };
         item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
             * glam::Mat4::from_scale(glam::Vec3::splat(s)))
-        .to_cols_array_2d();
+        .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -476,7 +476,7 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_idx;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5))
-            .to_cols_array_2d();
+            .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -525,7 +525,7 @@ fn occlusion_culling_ldr_path_runs() {
         let s = if i == 0 { 4.0 } else { 1.0 };
         item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
             * glam::Mat4::from_scale(glam::Vec3::splat(s)))
-        .to_cols_array_2d();
+        .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -587,7 +587,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
     item.lod_group = Some(group);
     mat.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
     item.material = upload_material(&mut renderer, mat);
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
 
     // Empty scene baseline.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
@@ -673,7 +673,7 @@ fn multi_draw_collapse_is_pixel_identical() {
             let x = (i as f32 - 2.0) * 1.3;
             let y = inst as f32 * 1.1;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = materials[i];
             if i == 2 {
                 item.settings.opacity = 0.5;
@@ -814,7 +814,7 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
     let at = |x: f32, opacity: f32| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         item.settings.opacity = opacity;
         item
     };
@@ -919,7 +919,7 @@ fn textured_casters_share_shadow_draw_runs() {
                 let x = (i as f32 - MESHES as f32 / 2.0) * 1.3;
                 let y = inst as f32 * 1.1;
                 item.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                    glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
                 item.material = materials[i];
                 surfaces.push(item);
             }
@@ -991,7 +991,7 @@ fn direct_path_clip_plane_still_discards() {
         item.mesh_id = mesh_id;
         item.material = material;
         let x = (i as f32 - 2.5) * 1.2;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         surfaces.push(item);
     }
     let mut frame = FrameData::default();

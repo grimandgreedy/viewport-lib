@@ -92,7 +92,7 @@ impl ViewportRenderer {
                     continue;
                 };
 
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let model = item.model.to_mat4();
                 let mvp = view_proj * model;
                 let id = item.settings.pick_id.0;
                 let mut item_hit = false;

@@ -498,7 +498,7 @@ fn main() {
             .expect("upload cube");
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = renderer
             .resources_mut()
             .upload_material(vpl::Material::from_colour(Colour::linear_rgb(
@@ -535,7 +535,7 @@ fn main() {
             .expect("upload cube");
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = renderer
             .resources_mut()
             .upload_material(vpl::Material::from_colour(Colour::linear_rgb(

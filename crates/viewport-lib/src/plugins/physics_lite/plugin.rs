@@ -157,7 +157,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
             let Some(node) = ctx.scene.node(body.node_id) else {
                 continue;
             };
-            let world = node.world_transform();
+            let world = node.world_transform().to_mat4();
             let (scale, rotation, mut pos) = world.to_scale_rotation_translation();
 
             // Apply gravity.
@@ -280,8 +280,8 @@ mod tests {
             .node(node)
             .unwrap()
             .world_transform()
-            .col(3)
-            .truncate()
+            .translation
+            .as_vec3()
             .z;
         assert!(z < -0.5, "a body under gravity should fall; z = {z}");
     }

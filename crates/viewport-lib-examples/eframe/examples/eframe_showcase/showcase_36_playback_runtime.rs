@@ -160,7 +160,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
     // Deforming mesh: single item placed at origin.
     if let Some(mid) = app.pb_state.mesh_id {
         let mut item = SceneRenderItem::new(mid, app.pb_state.mesh_material);
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         items.push(item);
     }
 
@@ -641,7 +641,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_pb_scene(app, renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.0),
+        center: glam::DVec3::new(0.0, 0.0, 0.0),
         distance: 18.0,
         orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()

@@ -201,7 +201,7 @@ pub(super) fn fitted_range(
     let frustum = Frustum::from_view_proj(&camera.culling_view_proj());
     let p = &frustum.planes;
     let planes = [0, 1, 2, 3].map(|i| (p[i].normal, p[i].d));
-    let eye = camera.eye_position();
+    let eye = camera.eye_position().as_vec3();
     let mut span = (f32::MAX, f32::MIN);
     for casters in bounds.cells.iter().filter_map(|c| c.casters) {
         let shifted = Bounds {
@@ -341,7 +341,7 @@ mod tests {
     /// Eye at the origin looking along +Y, Z up.
     fn camera() -> RenderCamera {
         let cam = crate::camera::Camera {
-            center: Vec3::Y * 0.01,
+            center: glam::DVec3::Y * 0.01,
             distance: 0.01,
             orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
             ..Default::default()

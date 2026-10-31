@@ -206,7 +206,7 @@ impl App {
                 self.materials.ground_one_sided
             };
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).into();
             item
         };
 
@@ -224,7 +224,7 @@ impl App {
             item.mesh_id = self.box_id;
 
             item.material = self.materials.boxes;
-            item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(*pos).into();
             items.push(item);
         }
 
@@ -235,7 +235,7 @@ impl App {
 
             item.material = self.materials.sphere;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).into();
             items.push(item);
         }
 
@@ -249,7 +249,7 @@ impl App {
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_MAGENTA));
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
-                    .to_cols_array_2d();
+                    .into();
                 items.push(item);
             }
 
@@ -260,7 +260,7 @@ impl App {
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_CYAN));
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
-                    .to_cols_array_2d();
+                    .into();
                 items.push(item);
             }
         }

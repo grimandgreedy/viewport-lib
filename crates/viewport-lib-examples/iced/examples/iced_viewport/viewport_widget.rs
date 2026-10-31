@@ -60,7 +60,7 @@ impl Default for ViewportState {
     fn default() -> Self {
         Self {
             camera: Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 12.0,
                 orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
                 ..Camera::default()
@@ -281,7 +281,7 @@ impl shader::Primitive for ViewportPrimitive {
                 let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.model = model.to_cols_array_2d();
+                item.model = model.into();
                 Some(item)
             })
             .collect();

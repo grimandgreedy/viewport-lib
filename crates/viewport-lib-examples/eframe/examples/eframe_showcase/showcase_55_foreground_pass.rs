@@ -112,7 +112,7 @@ fn build_orbit_track() -> CameraTrack {
         track.push(
             (i as f64) * 2.5,
             CameraTarget {
-                center,
+                center: center.as_dvec3(),
                 distance,
                 orientation,
             },
@@ -308,7 +308,7 @@ pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
             * glam::Mat4::from_rotation_x(t * 0.6 + i as f32);
         let model = c2w * glam::Mat4::from_translation(glam::Vec3::from_array(*off)) * spin;
         let mut item = SceneRenderItem::new(app.fg_state.cube_mesh, app.fg_state.cube_materials[i]);
-        item.model = model.to_cols_array_2d();
+        item.model = model.into();
         item.settings.unlit = app.fg_state.unlit;
         cubes.push(item);
     }

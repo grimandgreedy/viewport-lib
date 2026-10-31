@@ -156,7 +156,7 @@ mod tests {
         cam.set_center(glam::Vec3::new(1.0, 2.0, 3.0));
         let mut tt = TurntableController::new(1.0, 1.0);
         tt.update(1.0, &mut cam);
-        assert!((cam.center() - glam::Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+        assert!((cam.center() - glam::DVec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
     }
 
     #[test]

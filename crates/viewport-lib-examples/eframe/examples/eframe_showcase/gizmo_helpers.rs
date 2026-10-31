@@ -17,7 +17,7 @@ pub(crate) fn gizmo_orientation(gizmo: &Gizmo, selection: &Selection, scene: &Sc
         GizmoSpace::Local => selection
             .primary()
             .and_then(|id| scene.node(id))
-            .map(|n| glam::Quat::from_mat4(&n.world_transform()))
+            .map(|n| glam::Quat::from_mat4(&n.world_transform().to_mat4()))
             .unwrap_or(glam::Quat::IDENTITY),
     }
 }

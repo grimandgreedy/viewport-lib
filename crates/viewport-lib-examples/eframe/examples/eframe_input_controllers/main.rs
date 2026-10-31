@@ -674,7 +674,7 @@ impl eframe::App for App {
                             .map(|obj| {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
-                                item.model = obj.model.to_cols_array_2d();
+                                item.model = obj.model.into();
                                 // The default material, coloured per item.
                                 item.settings.colour =
                                     Some(Colour::from_linear_rgb_array(obj.colour));
@@ -724,7 +724,7 @@ impl eframe::App for App {
                             .map(|obj| {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
-                                item.model = obj.model.to_cols_array_2d();
+                                item.model = obj.model.into();
                                 item.settings.colour =
                                     Some(Colour::from_linear_rgb_array(obj.colour));
                                 item
@@ -737,7 +737,7 @@ impl eframe::App for App {
                             let mut marker = SceneRenderItem::default();
                             marker.mesh_id = self.body_mesh;
                             let stand = self.body_pos + glam::Vec3::Z * (CAPSULE_HEIGHT * 0.5);
-                            marker.model = glam::Mat4::from_translation(stand).to_cols_array_2d();
+                            marker.model = glam::Mat4::from_translation(stand).into();
                             marker.settings.colour = Some(Colour::linear_rgb(0.85, 0.2, 0.3));
                             items.push(marker);
                         }
@@ -868,7 +868,7 @@ impl eframe::App for App {
                         if let Some(center) = self.gizmo_center {
                             self.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
                                 center,
-                                self.camera.eye_position(),
+                                self.camera.eye_position().as_vec3(),
                                 self.camera.fov_y,
                                 h,
                             );
@@ -881,7 +881,7 @@ impl eframe::App for App {
                             .map(|(i, obj)| {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
-                                item.model = obj.model.to_cols_array_2d();
+                                item.model = obj.model.into();
                                 item.settings.colour =
                                     Some(Colour::from_linear_rgb_array(obj.colour));
                                 item.settings.selected = self.selection.contains(i as u64);

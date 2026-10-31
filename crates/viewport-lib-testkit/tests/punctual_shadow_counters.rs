@@ -33,11 +33,11 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
         .expect("material");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_mesh;
-    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -0.1)).to_cols_array_2d();
+    ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -0.1)).into();
     ground.material = material;
     let mut cube = SceneRenderItem::default();
     cube.mesh_id = cube_mesh;
-    cube.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+    cube.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 0.5)).into();
     cube.material = material;
     vec![ground, cube]
 }

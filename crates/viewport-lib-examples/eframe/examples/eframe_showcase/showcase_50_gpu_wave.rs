@@ -278,7 +278,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     };
 
     let mut item = SceneRenderItem::new(plane_id, water);
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = app.wave_state.select_surface;
 
     // The buoys are not scene items: they render as an external instance set
@@ -572,7 +572,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_wave_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 14.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()

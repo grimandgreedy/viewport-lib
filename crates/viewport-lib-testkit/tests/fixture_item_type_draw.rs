@@ -152,7 +152,7 @@ fn triangle_fixture_is_dispatched_by_the_shadow_pass() {
                 .expect("upload probe quad");
             let mut floor = SceneRenderItem::default();
             floor.mesh_id = mesh_id;
-            floor.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
+            floor.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();
             frame.scene.surfaces = SurfaceSubmission::Flat(vec![floor].into());
         }
         frame

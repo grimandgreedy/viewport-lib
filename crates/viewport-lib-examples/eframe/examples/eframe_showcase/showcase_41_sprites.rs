@@ -1611,7 +1611,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, 2.0),
             )
-            .to_cols_array_2d();
+            .into();
             vec![item]
         }
         SpriteSubMode::Distortion => {
@@ -1634,7 +1634,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                 .iter()
                 .map(|m| {
                     let mut item = SceneRenderItem::new(app.sprite_state.wall_id, wall_mat);
-                    item.model = m.to_cols_array_2d();
+                    item.model = (*m).into();
                     item
                 })
                 .collect()
@@ -1652,7 +1652,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     glam::Quat::IDENTITY,
                     glam::Vec3::new(0.0, 0.0, -0.05),
                 )
-                .to_cols_array_2d();
+                .into();
                 item.settings.colour = Some(Colour::linear_rgb(0.18, 0.12, 0.08));
                 vec![item]
             }
@@ -1665,7 +1665,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     glam::Quat::IDENTITY,
                     glam::Vec3::new(0.0, 0.0, -0.5),
                 )
-                .to_cols_array_2d();
+                .into();
                 item.settings.colour = Some(Colour::linear_rgb(0.18, 0.22, 0.28));
                 vec![item]
             }
@@ -2118,7 +2118,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_sprite_scene(app, renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 10.0,
         orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()

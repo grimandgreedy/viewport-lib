@@ -1110,7 +1110,7 @@ impl App {
 
         if let Some(id) = state.base_mesh_id {
             let mut item = SceneRenderItem::new(id, state.flat_material);
-            item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            item.model = glam::Mat4::IDENTITY.into();
             item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
             items.push(item);
         }
@@ -1118,7 +1118,7 @@ impl App {
         if let Some(id) = state.loaded_mesh_id {
             let mut item = SceneRenderItem::new(id, state.flat_material);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
             item.settings.colour = Some(Colour::linear_rgb(0.4, 0.8, 0.4));
             items.push(item);
         }
@@ -1126,14 +1126,14 @@ impl App {
         if let (Some(mesh_id), Some(_)) = (state.base_mesh_id, state.loaded_texture_id) {
             let mut item = SceneRenderItem::new(mesh_id, state.textured_material);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
             items.push(item);
         }
 
         if let Some(id) = state.skin_target_mesh_id {
             let mut item = SceneRenderItem::new(id, state.flat_material);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).into();
             let colour = if state.skin_installed {
                 [0.9, 0.4, 0.9]
             } else {
@@ -2558,7 +2558,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_async_uploads_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 9.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()

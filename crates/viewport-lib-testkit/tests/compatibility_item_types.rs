@@ -487,7 +487,7 @@ fn compatibility_splats_sort_for_the_eye_and_follow_writes() {
     // The centre pixel's colour from an eye on one side of the origin or the
     // other, along the camera's own axis.
     let view = |yaw: f32| viewport_lib::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 4.0,
         orientation: glam::Quat::from_rotation_z(yaw) * glam::Quat::from_rotation_x(1.5708),
         ..viewport_lib::Camera::default()

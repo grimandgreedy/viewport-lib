@@ -74,7 +74,7 @@ pub(super) fn common_material(
 ) -> CommonMaterial {
     use crate::scene::material::TextureSlot::{Albedo, Ao, Normal};
     CommonMaterial {
-        model: item.model,
+        model: item.model.to_mat4().to_cols_array_2d(),
         colour: {
             // The item's own colour, when set, replaces the material's.
             let bc = item

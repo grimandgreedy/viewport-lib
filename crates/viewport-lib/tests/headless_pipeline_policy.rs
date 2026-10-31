@@ -32,11 +32,11 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
     }
     let mut opaque = SceneRenderItem::default();
     opaque.mesh_id = box_id;
-    opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).to_cols_array_2d();
+    opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).into();
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = sphere_id;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
     transparent.settings.opacity = 0.5;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
     frame
@@ -356,7 +356,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
                 let mut third = items[0].clone();
                 third.settings.selected = false;
                 third.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).to_cols_array_2d();
+                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).into();
                 items.push(third);
                 frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
             }
@@ -409,7 +409,7 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
                 item.mesh_id = mesh;
                 item.model =
                     glam::Mat4::from_translation(glam::Vec3::new((i as f32 - 3.5) * 1.2, 0.0, 0.0))
-                        .to_cols_array_2d();
+                        .into();
                 item
             })
             .collect();

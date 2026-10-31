@@ -67,28 +67,28 @@ impl Default for MvState {
             selection: Selection::new(),
             cameras: [
                 Camera {
-                    center: glam::Vec3::ZERO,
+                    center: glam::DVec3::ZERO,
                     distance: 12.0,
                     orientation: glam::Quat::from_rotation_z(0.6)
                         * glam::Quat::from_rotation_x(1.1),
                     ..Camera::default()
                 },
                 Camera {
-                    center: glam::Vec3::ZERO,
+                    center: glam::DVec3::ZERO,
                     distance: 10.0,
                     orientation: glam::Quat::IDENTITY,
                     projection: Projection::Orthographic,
                     ..Camera::default()
                 },
                 Camera {
-                    center: glam::Vec3::ZERO,
+                    center: glam::DVec3::ZERO,
                     distance: 10.0,
                     orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
                     projection: Projection::Orthographic,
                     ..Camera::default()
                 },
                 Camera {
-                    center: glam::Vec3::ZERO,
+                    center: glam::DVec3::ZERO,
                     distance: 10.0,
                     orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
                         * glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
@@ -455,7 +455,7 @@ impl App {
         // Update shared gizmo center and per-quad screen-space scales.
         self.mv_state.gizmo_center = gizmo_center_from_selection(&self.mv_state.selection, |id| {
             self.mv_state.scene.node(id).map(|n| {
-                let t = n.world_transform();
+                let t = n.world_transform().to_mat4();
                 glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
             })
         });
@@ -464,7 +464,7 @@ impl App {
                 let qr = quad_rects[i];
                 self.mv_state.gizmo_scales[i] = compute_gizmo_scale(
                     center,
-                    self.mv_state.cameras[i].eye_position(),
+                    self.mv_state.cameras[i].eye_position().as_vec3(),
                     self.mv_state.cameras[i].fov_y,
                     qr.height(),
                 );
@@ -792,7 +792,7 @@ impl crate::App {
 
         for id in self.mv_state.selection.iter().copied().collect::<Vec<_>>() {
             if let Some(node) = self.mv_state.scene.node(id) {
-                let cur = node.local_transform();
+                let cur = node.local_transform().to_mat4();
                 let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
                 self.mv_state.scene.set_local_transform(id, new_t);
             }
@@ -807,7 +807,7 @@ impl crate::App {
             if let Some(node) = self.mv_state.scene.node(id) {
                 self.mv_state
                     .transforms_snapshot
-                    .insert(id, node.local_transform());
+                    .insert(id, node.local_transform().to_mat4());
             }
         }
     }
@@ -839,7 +839,7 @@ fn mv_gizmo_orientation(
         GizmoSpace::Local => selection
             .primary()
             .and_then(|id| scene.node(id))
-            .map(|n| glam::Quat::from_mat4(&n.world_transform()))
+            .map(|n| glam::Quat::from_mat4(&n.world_transform().to_mat4()))
             .unwrap_or(glam::Quat::IDENTITY),
     }
 }

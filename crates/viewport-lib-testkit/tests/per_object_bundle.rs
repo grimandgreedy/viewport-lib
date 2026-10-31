@@ -34,7 +34,7 @@ fn bundle_replay_matches_immediate_draws() {
             it.mesh_id = ids[i];
             let (x, y) = ((i % 10) as f32 * 7.0 - 31.5, (i / 10) as f32 * 7.0 - 31.5);
             it.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, (i % 3) as f32 * 3.0))
-                .to_cols_array_2d();
+                .into();
             it.material = h
                 .renderer
                 .resources_mut()
@@ -114,7 +114,7 @@ fn plugin_batches_in_bundle(mode: viewport_lib::PipelineMode) {
                 .upload_mesh_data(&h.device, &data)
                 .expect("upload");
             let (x, y) = ((i % 10) as f32 * 7.0 - 31.5, (i / 10) as f32 * 7.0 - 31.5);
-            it.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+            it.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.2, 0.2));
             if i % 4 == 0 {
                 m.shading_plugin = Some(plugin_id);

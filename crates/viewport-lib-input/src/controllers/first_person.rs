@@ -113,7 +113,12 @@ impl FirstPersonCameraController {
     ///
     /// `eye_position` is the world-space eye point, typically the player body
     /// origin offset by eye height.
-    pub fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, eye_position: Vec3) {
+    pub fn apply(
+        &mut self,
+        camera: &mut Camera,
+        frame: &ActionFrame,
+        eye_position: impl Into<glam::DVec3>,
+    ) {
         let look = frame.navigation.orbit;
         // Mouse right -> yaw increases (turn right, clockwise from above).
         // Mouse down -> pitch decreases (look down).
@@ -122,7 +127,7 @@ impl FirstPersonCameraController {
         let look = self.look();
         // distance 1 keeps the orbit centre one unit ahead of the eye so the
         // view matrix is non-degenerate; it does not affect rendering.
-        camera.center = eye_position + look.direction();
+        camera.center = eye_position.into() + look.direction().as_dvec3();
         camera.distance = 1.0;
         camera.orientation = look.orientation();
     }
@@ -225,7 +230,7 @@ mod tests {
         let mut camera = Camera::default();
         let eye = Vec3::new(3.0, 4.0, 1.8);
         c.apply(&mut camera, &look(0.0, 0.0), eye);
-        assert!((camera.eye_position() - eye).length() < 1e-4);
+        assert!((camera.eye_position().as_vec3() - eye).length() < 1e-4);
     }
 
     #[test]

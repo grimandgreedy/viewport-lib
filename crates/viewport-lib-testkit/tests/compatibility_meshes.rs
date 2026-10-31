@@ -50,7 +50,7 @@ fn item(mesh_id: viewport_lib::MeshId, material: MaterialId, at: [f32; 3]) -> Sc
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.material = material;
-    item.model = glam::Mat4::from_translation(glam::Vec3::from(at)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::from(at)).into();
     item
 }
 
@@ -125,11 +125,11 @@ fn compatibility_tier_draws_lit_meshes() {
         Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
     );
     let opaque_at = glam::Vec3::new(1.4, 0.0, 0.0);
-    let towards_eye = (scene_camera().eye_position() - opaque_at).normalize();
+    let towards_eye = (scene_camera().eye_position().as_vec3() - opaque_at).normalize();
     let mut glass = item(cube, grey, (opaque_at + towards_eye * 1.3).to_array());
-    glass.model = (glam::Mat4::from_cols_array_2d(&glass.model)
+    glass.model = (glass.model.to_mat4()
         * glam::Mat4::from_scale(glam::Vec3::splat(0.6)))
-    .to_cols_array_2d();
+    .into();
     glass.settings.opacity = 0.4;
     glass.settings.colour = Some(Colour::linear_rgb(0.2, 0.4, 0.9));
     let frame = frame(vec![

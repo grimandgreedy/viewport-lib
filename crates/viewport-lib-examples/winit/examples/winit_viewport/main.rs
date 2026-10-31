@@ -135,7 +135,7 @@ impl ApplicationHandler for App {
             .expect("built-in mesh");
 
         let camera = Camera {
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 12.0,
             orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
             ..Camera::default()
@@ -303,7 +303,7 @@ impl ApplicationHandler for App {
                         let mut item = SceneRenderItem::default();
                         item.mesh_id = state.mesh_id;
                         item.model =
-                            glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
+                            glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
                         item
                     })
                     .collect();

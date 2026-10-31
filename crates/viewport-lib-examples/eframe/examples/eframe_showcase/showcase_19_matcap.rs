@@ -325,7 +325,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_matcap_scene(renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, -0.5),
+        center: glam::DVec3::new(0.0, 0.0, -0.5),
         distance: 14.0,
         orientation: glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.9),
         ..vpl::Camera::default()

@@ -181,7 +181,7 @@ impl App {
         }
 
         self.camera = Camera {
-            center: glam::Vec3::new(0.0, 0.5, 0.0),
+            center: glam::DVec3::new(0.0, 0.5, 0.0),
             distance: 9.0,
             orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
             znear: Some(0.2),
@@ -249,7 +249,7 @@ impl App {
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, near_mat);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).into();
             items.push(item);
         }
 
@@ -257,7 +257,7 @@ impl App {
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, far_mat);
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).into();
             items.push(item);
         }
 
@@ -265,7 +265,7 @@ impl App {
         if self.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
             if let Some(mc_id) = self.is_state.mc_mesh_id {
                 let mut item = SceneRenderItem::new(mc_id, mc_mat);
-                item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+                item.model = glam::Mat4::IDENTITY.into();
                 items.push(item);
             }
         }

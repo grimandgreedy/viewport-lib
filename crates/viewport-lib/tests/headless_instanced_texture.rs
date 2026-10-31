@@ -30,7 +30,7 @@ const C_SWAP: [u8; 4] = [200, 180, 160, 255];
 fn top_down_camera() -> Camera {
     let mut cam = Camera::default();
     cam.orientation = glam::Quat::IDENTITY; // identity = top view in a Z-up world
-    cam.center = glam::Vec3::ZERO;
+    cam.center = glam::DVec3::ZERO;
     cam.distance = 5.0;
     cam.aspect = W as f32 / H as f32;
     cam
@@ -100,7 +100,7 @@ fn upload_plane_material(renderer: &mut ViewportRenderer, tex: TextureId) -> Mat
 fn textured_plane(mesh: MeshId, material: MaterialId, x: f32) -> viewport_lib::SceneRenderItem {
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
     item.material = material;
     item.settings = unlit_settings();
     item
@@ -239,7 +239,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         let mut items = Vec::new();
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
-        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         g.material = ground_mat;
         items.push(g);
         if with_casters {
@@ -249,7 +249,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
                 let mut c = viewport_lib::SceneRenderItem::default();
                 c.mesh_id = caster_mesh;
                 c.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
+                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).into();
                 c.material = caster_mat;
                 items.push(c);
             }
@@ -258,7 +258,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
             distance: 16.0,
             ..Camera::default()
         };
-        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
+        cam.center = glam::DVec3::new(-4.0, 0.0, 0.0);
         cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
@@ -426,7 +426,7 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
     let mut untextured = viewport_lib::SceneRenderItem::default();
     untextured.mesh_id = mesh;
     untextured.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).into();
     untextured.material = upload_material(&mut renderer, untextured_mat);
     untextured.settings = unlit_settings();
 
@@ -1381,13 +1381,13 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         let mut items = Vec::new();
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
-        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         g.material = ground_mat;
         items.push(g);
         for x in [-1.0f32, 1.0] {
             let mut c = viewport_lib::SceneRenderItem::default();
             c.mesh_id = caster_mesh;
-            c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
+            c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).into();
             c.material = caster_mat;
             items.push(c);
         }
@@ -1395,7 +1395,7 @@ fn instanced_cutout_shadow_reflects_free_texture() {
             distance: 16.0,
             ..Camera::default()
         };
-        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
+        cam.center = glam::DVec3::new(-4.0, 0.0, 0.0);
         cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);

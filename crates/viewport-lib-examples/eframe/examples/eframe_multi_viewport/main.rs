@@ -202,14 +202,14 @@ impl App {
         let cameras = [
             // Perspective (TL)
             Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 12.0,
                 orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
                 ..Camera::default()
             },
             // Top (TR): looking down -Z, orthographic
             Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 10.0,
                 orientation: glam::Quat::IDENTITY,
                 projection: Projection::Orthographic,
@@ -217,7 +217,7 @@ impl App {
             },
             // Front (BL): looking along -Y, orthographic
             Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 10.0,
                 orientation: glam::Quat::from_rotation_x(FRAC_PI_2),
                 projection: Projection::Orthographic,
@@ -225,7 +225,7 @@ impl App {
             },
             // Right (BR): looking along -X, orthographic
             Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 10.0,
                 orientation: glam::Quat::from_rotation_z(-FRAC_PI_2)
                     * glam::Quat::from_rotation_x(FRAC_PI_2),
@@ -639,7 +639,7 @@ impl App {
                         let qr = quads[i];
                         self.gizmo_scales[i] = compute_gizmo_scale(
                             center,
-                            self.cameras[i].eye_position(),
+                            self.cameras[i].eye_position().as_vec3(),
                             self.cameras[i].fov_y,
                             qr.height(),
                         );
@@ -660,7 +660,7 @@ impl App {
                     .enumerate()
                     .map(|(i, obj)| {
                         let mut item = SceneRenderItem::new(obj.mesh_id, self.material);
-                        item.model = obj.model.to_cols_array_2d();
+                        item.model = obj.model.into();
                         item.settings.colour = Some(Colour::from_linear_rgb_array(obj.colour));
                         item.settings.selected = self.selection.contains(i as u64);
                         item

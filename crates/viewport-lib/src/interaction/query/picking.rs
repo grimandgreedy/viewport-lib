@@ -139,7 +139,7 @@ pub fn pick_scene_cpu(
                             let hit = PickHit {
                                 id: obj.id(),
                                 sub_object,
-                                world_pos,
+                                world_pos: world_pos.as_dvec3(),
                                 normal,
                                 scalar_value: None,
                                 sub_object_world_pos: None,
@@ -200,7 +200,7 @@ fn pick_light_indicators_cpu(
             continue;
         }
         let world = node.world_transform();
-        let center = world.col(3).truncate();
+        let center = world.translation.as_vec3();
         let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, center, LIGHT_GLYPH_PICK_RADIUS)
         else {
             continue;
@@ -352,7 +352,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                 let a = glam::Vec3::from(binding.positions[i0]);
                 let b = glam::Vec3::from(binding.positions[i1]);
                 let c = glam::Vec3::from(binding.positions[i2]);
-                let (u, v, w) = barycentric(hit.world_pos, a, b, c);
+                let (u, v, w) = barycentric(hit.world_pos.as_vec3(), a, b, c);
                 hit.scalar_value = Some(data[i0] * u + data[i1] * v + data[i2] * w);
             }
         }
@@ -379,7 +379,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                         let a = glam::Vec3::from(binding.positions[i0]);
                         let b = glam::Vec3::from(binding.positions[i1]);
                         let c = glam::Vec3::from(binding.positions[i2]);
-                        let (u, v, w) = barycentric(hit.world_pos, a, b, c);
+                        let (u, v, w) = barycentric(hit.world_pos.as_vec3(), a, b, c);
                         hit.scalar_value = Some(data[i0] * u + data[i1] * v + data[i2] * w);
                     }
                 }
@@ -722,7 +722,7 @@ pub fn pick_volume_cpu(
             return Some(PickHit {
                 id,
                 sub_object: Some(SubObjectRef::Voxel(flat)),
-                world_pos,
+                world_pos: world_pos.as_dvec3(),
                 normal: world_normal,
                 scalar_value: Some(scalar),
                 sub_object_world_pos: None,
@@ -871,7 +871,7 @@ pub fn nearest_vertex_on_hit(
         .iter()
         .map(|&i| {
             let p = model.transform_point3(glam::Vec3::from(positions[i]));
-            (i, p.distance(hit.world_pos))
+            (i, p.distance(hit.world_pos.as_vec3()))
         })
         .fold(
             (vi[0], f32::MAX),
@@ -942,7 +942,7 @@ pub fn pick_gaussian_splat_cpu(
     Some(PickHit {
         id,
         sub_object: Some(SubObjectRef::Point(idx)),
-        world_pos: best_world,
+        world_pos: best_world.as_dvec3(),
         normal: glam::Vec3::Y,
         scalar_value: None,
         sub_object_world_pos: None,
@@ -1090,7 +1090,7 @@ pub fn pick_transparent_volume_mesh_cpu(
     Some(PickHit {
         id,
         sub_object: Some(SubObjectRef::Cell(cell_idx)),
-        world_pos: world_hit,
+        world_pos: world_hit.as_dvec3(),
         normal: -ray_dir.normalize(),
         scalar_value: None,
         sub_object_world_pos: None,
@@ -1323,7 +1323,7 @@ mod tests {
         assert_eq!(pick.id, 42);
         assert!(pick.sub_object.is_none());
         assert!(pick.scalar_value.is_none());
-        assert!((pick.world_pos - glam::Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5);
+        assert!((pick.world_pos.as_vec3() - glam::Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5);
     }
 
     struct TestObject {
@@ -1916,6 +1916,7 @@ mod tests {
 
         let flat = hit.sub_object.unwrap().index();
         let (lo, hi) = super::voxel_world_aabb(flat, &volume, &item);
+        let (lo, hi) = (lo.as_dvec3(), hi.as_dvec3());
 
         let tol = 1e-3;
         assert!(

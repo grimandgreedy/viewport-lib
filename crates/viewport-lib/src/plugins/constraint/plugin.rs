@@ -103,7 +103,7 @@ impl RuntimePlugin for ConstraintPlugin {
             let Some(node) = ctx.scene.node(id) else {
                 continue;
             };
-            let world = node.world_transform();
+            let world = node.world_transform().to_mat4();
             let (scale, rotation, pos) = world.to_scale_rotation_translation();
             let vel = self.velocities.entry(id).or_insert(glam::Vec3::ZERO);
 
@@ -187,8 +187,8 @@ mod tests {
             .node(node)
             .unwrap()
             .world_transform()
-            .col(3)
-            .truncate()
+            .translation
+            .as_vec3()
             .x;
         assert!(x > 1.5, "spring should pull the node toward x = 3; x = {x}");
     }

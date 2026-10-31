@@ -104,7 +104,7 @@ fn contact_shadow_items(
         .unwrap();
     let mut ground_item = SceneRenderItem::default();
     ground_item.mesh_id = ground;
-    ground_item.model = glam::Mat4::from_scale(glam::Vec3::splat(8.0)).to_cols_array_2d();
+    ground_item.model = glam::Mat4::from_scale(glam::Vec3::splat(8.0)).into();
     ground_item.material = renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
@@ -113,7 +113,7 @@ fn contact_shadow_items(
     cube_item.mesh_id = cube;
     cube_item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.25))
         * glam::Mat4::from_scale(glam::Vec3::splat(0.4)))
-    .to_cols_array_2d();
+    .into();
     cube_item.material = renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.3, 0.2)))

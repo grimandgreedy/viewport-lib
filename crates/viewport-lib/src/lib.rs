@@ -242,6 +242,7 @@ pub use camera::track::{CameraTrack, interpolate_camera};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
+pub use vplt::scene::Transform;
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
     ParamVisMode, PatternConfig, PluginParams, SamplerKey, ShadingModel, TextureFilter,

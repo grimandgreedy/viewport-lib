@@ -46,7 +46,7 @@ fn frame(mesh: crate::MeshId, material: MaterialId, colour: Option<Colour>) -> F
             let mut item = SceneRenderItem::new(mesh, material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.3 - 1.3, 0.0, 0.0))
-                    .to_cols_array_2d();
+                    .into();
             item.settings.colour = colour;
             if i == 2 {
                 item.nan_colour = Some(Colour::linear_rgb(0.0, 1.0, 0.0));
@@ -218,7 +218,7 @@ fn foreground_items_on_cache_hit_frames_keep_the_scene_materials() {
         glam::Quat::IDENTITY,
         glam::Vec3::new(0.0, 0.0, 1.5),
     )
-    .to_cols_array_2d();
+    .into();
     f.scene.foreground_items = vec![fg];
 
     let first = renderer.render_offscreen(&device, &queue, &f, SIZE, SIZE);

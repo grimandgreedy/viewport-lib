@@ -82,7 +82,7 @@ fn upload(renderer: &mut ViewportRenderer, device: &crate::gpu::Device) -> Meshe
 fn cube_item(meshes: &Meshes, x: f32, colour: [f32; 3]) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = meshes.cube;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
     item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
     item
 }
@@ -413,7 +413,7 @@ fn custom_data_past_the_initial_capacity_draws_on_the_frame_that_grows_it() {
                         y * 0.08 - 1.2,
                         0.0,
                     )) * glam::Mat4::from_scale(glam::Vec3::splat(0.05)))
-                    .to_cols_array_2d();
+                    .into();
                     if custom {
                         // A distinct block per instance, read as added emissive.
                         item.settings.custom_data[0] = 0.5 + i as f32 * 0.001;
@@ -539,7 +539,7 @@ fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it
                         y * 0.2 - 1.0,
                         0.0,
                     )) * glam::Mat4::from_scale(glam::Vec3::splat(0.18)))
-                    .to_cols_array_2d();
+                    .into();
                     item.material = if offsets {
                         let half = if (i / 3) % 2 == 0 { 0.25 } else { 0.75 };
                         let mut own = material;

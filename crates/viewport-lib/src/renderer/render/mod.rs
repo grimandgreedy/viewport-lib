@@ -789,7 +789,7 @@ impl ViewportRenderer {
                 .filter(|item| item.transparency.is_none())
                 .map(|item| {
                     let mut item = item.to_render_item();
-                    item.model = origin.rel_model(item.model);
+                    item.model.translation -= origin.origin();
                     item
                 }),
         );

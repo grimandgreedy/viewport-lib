@@ -88,7 +88,7 @@ fn contour_lines_coincide_with_extracted_isolines() {
     let model = Mat4::IDENTITY;
     let mut surface = SceneRenderItem::default();
     surface.mesh_id = mesh_id;
-    surface.model = model.to_cols_array_2d();
+    surface.model = model.into();
     surface.material = h
         .renderer
         .resources_mut()

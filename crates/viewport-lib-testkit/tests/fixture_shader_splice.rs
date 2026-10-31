@@ -143,7 +143,7 @@ fn material_plugin_fixture_changes_shading() {
         let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).into();
         let mut red = Material::from_colour(Colour::linear_rgb(0.8, 0.1, 0.1));
         red.shading_plugin = shading;
         item.material = harness
@@ -319,7 +319,7 @@ fn surface_emissive_and_alpha(mode: viewport_lib::PipelineMode) {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
                 item.material = material;
-                item.model = glam::Mat4::from_translation(centre).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(centre).into();
                 item
             })
             .collect();
@@ -454,7 +454,7 @@ fn quad_frame(
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).into();
     item.material = harness
         .renderer
         .resources_mut()
@@ -658,7 +658,7 @@ fn three_quads(
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.material = harness
                 .renderer
                 .resources_mut()

@@ -1333,13 +1333,13 @@ mod tests {
                 ..Default::default()
             };
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.settings.visibility_mask = 0b01;
             items.push(item);
         }
 
         let cam = Camera {
-            center: glam::Vec3::ZERO,
+            center: glam::DVec3::ZERO,
             distance: 18.0,
             ..Camera::default()
         };
@@ -1433,7 +1433,7 @@ mod tests {
 
         let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
             let cam = Camera {
-                center: glam::Vec3::ZERO,
+                center: glam::DVec3::ZERO,
                 distance: 5.0,
                 ..Camera::default()
             };

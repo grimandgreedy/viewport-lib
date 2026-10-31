@@ -206,7 +206,7 @@ pub(super) fn handle_world_radius(
     viewport_height: f32,
     target_px: f32,
 ) -> f32 {
-    let eye = camera.eye_position();
+    let eye = camera.eye_position().as_vec3();
     let dist = (pos - eye).length().max(0.001);
     let world_per_px = 2.0 * (camera.fov_y() * 0.5).tan() * dist / viewport_height.max(1.0);
     world_per_px * target_px

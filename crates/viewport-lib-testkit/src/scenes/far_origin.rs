@@ -220,7 +220,7 @@ fn ground(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
             Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.58), 0.0, 0.8),
         ),
     );
-    item.model = at_model(at, Vec3::new(0.0, 0.0, -0.25));
+    item.model = at_model(at, Vec3::new(0.0, 0.0, -0.25)).into();
     scene.items.push(item);
 }
 
@@ -356,7 +356,7 @@ fn surface_contour(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
             Material::pbr(Colour::linear_rgb(0.4, 0.5, 0.7), 0.0, 0.6),
         ),
     );
-    item.model = model;
+    item.model = model.into();
     scene.items.push(item);
     scene.surface_contours.push(SurfaceContourItem::new(
         ball,
@@ -625,7 +625,7 @@ fn surface_lic(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
             Material::pbr(Colour::linear_rgb(0.55, 0.6, 0.7), 0.0, 0.7),
         ),
     );
-    item.model = model;
+    item.model = model.into();
     scene.items.push(item);
     scene
         .surface_lics

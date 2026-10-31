@@ -68,7 +68,7 @@ fn raster_centre(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(&mut renderer, material);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     let px = renderer.render_offscreen(device, queue, &frame, SIZE, SIZE);
@@ -154,7 +154,7 @@ mod parity {
         let cam = camera();
         let rt_cam = RtCamera {
             inv_view_proj: cam.view_proj_matrix().inverse(),
-            position: cam.eye_position(),
+            position: cam.eye_position().as_vec3(),
             width: SIZE,
             height: SIZE,
         };

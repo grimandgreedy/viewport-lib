@@ -292,7 +292,7 @@ pub(crate) fn update_rt_demo(app: &mut App, dt: f32) {
             RuntimeDemo::Orbit => {
                 populate_orbit(app);
                 app.camera = Camera {
-                    center: glam::Vec3::ZERO,
+                    center: glam::DVec3::ZERO,
                     distance: 14.0,
                     orientation: glam::Quat::from_rotation_z(0.6)
                         * glam::Quat::from_rotation_x(1.1),
@@ -302,7 +302,7 @@ pub(crate) fn update_rt_demo(app: &mut App, dt: f32) {
             RuntimeDemo::Simulation => {
                 populate_simulation(app);
                 app.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 4.5),
+                    center: glam::DVec3::new(0.0, 0.0, 4.5),
                     distance: 20.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.0),
@@ -361,7 +361,7 @@ fn step_simulation(app: &mut App, dt: f32) {
             .read::<vpl::runtime::CameraFollowTarget>()
             .next()
         {
-            app.camera.center = target.0;
+            app.camera.center = target.0.as_dvec3();
         }
     }
 }
@@ -382,7 +382,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
         for (node_id, _) in &node_ids {
             let node_id = *node_id;
             let (material, world) = match app.rt_state.scene.node(node_id) {
-                Some(n) => (n.material().clone(), n.world_transform()),
+                Some(n) => (n.material().clone(), n.world_transform().to_mat4()),
                 None => continue,
             };
             let model = if let Some(t) = app
@@ -397,7 +397,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
             };
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = model.to_cols_array_2d();
+            item.model = model.into();
             item.material = material;
             items.push(item);
         }
@@ -599,7 +599,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_rt_demo_scene(app, renderer);
     app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
+        center: glam::DVec3::ZERO,
         distance: 14.0,
         orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()

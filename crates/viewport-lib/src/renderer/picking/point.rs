@@ -125,7 +125,7 @@ impl ViewportRenderer {
                     continue;
                 };
 
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let model = item.model.to_mat4();
                 // Cast the ray in the mesh's local space instead of baking the
                 // model matrix into a fresh world-space vertex Vec every click:
                 // `trimesh` is cached per mesh_id (see `cached_pick_trimesh`), so
@@ -273,7 +273,7 @@ impl ViewportRenderer {
                         let hit = PickHit {
                             id: item.settings.pick_id.0,
                             sub_object,
-                            world_pos,
+                            world_pos: world_pos.as_dvec3(),
                             normal,
                             scalar_value: None,
                             sub_object_world_pos: None,
@@ -306,8 +306,8 @@ impl ViewportRenderer {
                     model,
                     data,
                 ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    let at = t_of(hit.world_pos);
+                    let toi = (hit.world_pos.as_vec3() - ray_origin).dot(ray_dir).max(0.0);
+                    let at = t_of(hit.world_pos.as_vec3());
                     let kept = if item.settings.ignore_clip { Some(whole) } else { span };
                     if !kept.is_some_and(|k| at >= k.start && at <= k.end) {
                         continue;
@@ -345,7 +345,7 @@ impl ViewportRenderer {
                     match plugin_span {
                         None => consider(t, hit),
                         Some(s) => {
-                            let at = t_of(hit.world_pos);
+                            let at = t_of(hit.world_pos.as_vec3());
                             let slack = (s.end - s.start).abs().min(1.0) * 1e-4;
                             if at >= s.start - slack && at <= s.end + slack {
                                 consider(at, hit);
@@ -413,7 +413,7 @@ impl QueryGeometry<3> for SurfaceGeom<'_> {
         let item = &self.items[self.entries[leaf].item_index];
         let mesh = self.mesh_store.get(item.mesh_id)?;
         let trimesh = mesh.cached_pick_trimesh()?;
-        let model = glam::Mat4::from_cols_array_2d(&item.model);
+        let model = item.model.to_mat4();
         let inv_model = model.inverse();
         let local_origin = inv_model.transform_point3(glam::Vec3::new(
             ray.origin[0],
@@ -459,10 +459,11 @@ impl ViewportRenderer {
             item.mesh_id.index().hash(&mut id_hasher);
             pickable.hash(&mut id_hasher);
             item.settings.pick_id.0.hash(&mut tf_hasher);
-            for row in &item.model {
-                for v in row {
-                    v.to_bits().hash(&mut tf_hasher);
-                }
+            for v in item.model.translation.to_array() {
+                v.to_bits().hash(&mut tf_hasher);
+            }
+            for v in item.model.rotation_scale.to_cols_array() {
+                v.to_bits().hash(&mut tf_hasher);
             }
         }
         let identity = id_hasher.finish();
@@ -607,7 +608,7 @@ impl ViewportRenderer {
             if mesh.cpu_positions.is_none() || mesh.cpu_indices.is_none() {
                 continue;
             }
-            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let model = item.model.to_mat4();
             let world = mesh.aabb.transformed(&model);
             entries.push(PickEntry {
                 item_index: i,
@@ -647,7 +648,7 @@ impl ViewportRenderer {
     fn refit_pick_bvh(&self, b: &mut PickSceneBvh) {
         for entry in &mut b.entries {
             let item = &self.pick_scene_items[entry.item_index];
-            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let model = item.model.to_mat4();
             if let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) {
                 let world = mesh.aabb.transformed(&model);
                 entry.world_aabb = SqAabb::new(

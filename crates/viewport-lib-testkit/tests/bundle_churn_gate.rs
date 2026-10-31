@@ -26,7 +26,7 @@ fn items(
             let x = (i % 16) as f32 * 2.0;
             let y = (i / 16) as f32 * 2.0;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.settings.pick_id = PickId(1 + u64::from(i));
             item.settings.hidden = hidden == Some(i);
             item
