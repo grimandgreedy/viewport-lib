@@ -15,6 +15,7 @@ use viewport_lib::Colour;
 // with this module.
 pub mod exposure;
 pub mod fallbacks;
+pub mod far_origin;
 pub mod item_types;
 pub mod materials;
 pub mod materials_ibl;
@@ -165,6 +166,9 @@ pub struct BuiltScene {
     /// show its interior, with the cap-fill flag. `None` leaves the frame's
     /// defaults alone.
     pub clip: Option<(Vec<viewport_lib::ClipObject>, bool)>,
+    /// World origin override, for a scene that draws far from zero. `None`
+    /// leaves the renderer's own setting.
+    pub world_origin: Option<viewport_lib::WorldOrigin>,
 }
 
 /// A catalogue entry: a name, the cameras to view it from, and a function that
@@ -261,6 +265,9 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.surface_contours.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
+    if let Some(origin) = scene.world_origin {
+        sf = sf.with_world_origin(origin);
+    }
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
     if let Some(scatter) = scene.scatter_settings.clone() {
@@ -1077,6 +1084,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(fallbacks::scenes());
     scenes.extend(exposure::scenes());
     scenes.extend(materials_ibl::scenes());
+    scenes.push(far_origin::scene());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());
