@@ -48,8 +48,9 @@ struct Material {
     layers0: vec4<f32>,
     // (sheen colour rgb, sheen roughness).
     layers1: vec4<f32>,
-    // (absorption coefficient rgb, 0): Beer-Lambert, per world unit, inside
-    // a transmissive mesh.
+    // (absorption coefficient rgb, emissive exposure weight): Beer-Lambert,
+    // per world unit, inside a transmissive mesh; the weight is read by
+    // `emitted`.
     volume: vec4<f32>,
 }
 
@@ -72,6 +73,7 @@ struct Frame {
     env_dist: vec4<f32>,  // env-IS: width, height, integral, enabled
     emit: vec4<u32>,      // area-light NEE: count, offset into env_tables, _, _
     inst: vec4<u32>,      // two-level BVH: instance count, offset into env_tables, _, _
+    exposure: vec4<f32>,  // x = exposure multiplier at the radiance sources; 1 for bakes
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -506,15 +508,30 @@ fn dir_to_equirect_uv(dir: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(0.5 + phi / (2.0 * PI), 0.5 - theta / PI);
 }
 
+// Radiance `c` scaled by the exposure factor `k`. A factor of exactly 1
+// returns `c` untouched, so the compiler cannot fold the multiply into the
+// arithmetic around it and an unexposed trace stays bit-exact.
+fn expose(c: vec3<f32>, k: f32) -> vec3<f32> {
+    if k == 1.0 { return c; }
+    return c * k;
+}
+
+// Exposed radiance on ray miss: the environment or the hemisphere gradient.
 fn sky(dir: vec3<f32>) -> vec3<f32> {
     if frame.params.w != 0u {
         // Equirect environment (image-based lighting).
         let uv = dir_to_equirect_uv(dir);
-        return textureSampleLevel(env_tex, env_samp, uv, 0.0).rgb;
+        return expose(textureSampleLevel(env_tex, env_samp, uv, 0.0).rgb, frame.exposure.x);
     }
     // Z-up hemisphere gradient.
     let t = clamp(dir.z * 0.5 + 0.5, 0.0, 1.0);
-    return mix(frame.sky_bottom.rgb, frame.sky_top.rgb, t);
+    return expose(mix(frame.sky_bottom.rgb, frame.sky_top.rgb, t), frame.exposure.x);
+}
+
+// A material's emitted radiance, exposed by its weight: `mix(1, exposure, w)`.
+// Weight 0 keeps it display-relative.
+fn emitted(m: Material) -> vec3<f32> {
+    return expose(m.emissive, 1.0 + m.volume.w * (frame.exposure.x - 1.0));
 }
 
 // ----- Environment importance sampling -----
@@ -701,7 +718,7 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
     for (var i = 0u; i < count; i = i + 1u) {
         let lt = lights[i];
         var l: vec3<f32>;
-        var radiance = lt.colour.rgb;
+        var radiance = expose(lt.colour.rgb, frame.exposure.x);
         var max_t = T_MAX;
         if lt.data.w < 0.5 {
             // Directional.
@@ -889,7 +906,7 @@ fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: 
     if cos_l < 1.0e-4 { return vec3<f32>(0.0); }
     if any_hit(pos + n * EPS, wi, dist - 1.0e-3) { return vec3<f32>(0.0); }
 
-    let le = materials[tri.mat].emissive;
+    let le = emitted(materials[tri.mat]);
     // Estimator: (f * cos_surface * Le) / pdf_sa, with the solid-angle pdf of
     // uniform-over-emitters, uniform-on-triangle sampling
     //   pdf_sa = dist^2 / (count * area * cos_light),  area = area2 / 2.
@@ -939,7 +956,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
         // scene m.emissive is zero and the gate falls back to counting always, so
         // scenes without emissive geometry are unchanged.
         if mis_bsdf_pdf < 0.0 || frame.emit.x == 0u {
-            radiance = radiance + throughput * mat.emissive;
+            radiance = radiance + throughput * emitted(mat);
         }
 
         // Leaving a transmissive volume through its back face: the segment
@@ -1171,7 +1188,7 @@ fn texel_direct(pos: vec3<f32>, n: vec3<f32>) -> DirectLighting {
     for (var i = 0u; i < count; i = i + 1u) {
         let lt = lights[i];
         var l: vec3<f32>;
-        var radiance = lt.colour.rgb;
+        var radiance = expose(lt.colour.rgb, frame.exposure.x);
         var max_t = T_MAX;
         if lt.data.w < 0.5 {
             l = normalize(lt.data.xyz);
@@ -1235,7 +1252,7 @@ fn texel_emitter_nee(pos: vec3<f32>, n: vec3<f32>, rng: ptr<function, u32>) -> D
     if any_hit(pos + n * EPS, wi, dist - 1.0e-3) { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
 
     // E = Le * cos_surface / pdf_sa, pdf_sa = dist^2 / (count * area * cos_light).
-    let le = materials[tri.mat].emissive;
+    let le = emitted(materials[tri.mat]);
     let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
     let contrib = le * ndl * inv_pdf;
     return DirectLighting(contrib, wi * luminance(contrib));

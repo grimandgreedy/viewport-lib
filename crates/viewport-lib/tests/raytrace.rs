@@ -692,3 +692,130 @@ fn pick_backend_defaults_to_software() {
         assert_eq!(backend, RtBackend::Software);
     }
 }
+
+/// Largest relative difference between `a` scaled by `k` and `b`, over the
+/// colour channels of `a` above `floor` (alpha is coverage, not radiance).
+fn worst_scaled_diff(a: &[f32], b: &[f32], k: f32, floor: f32) -> f32 {
+    a.chunks_exact(4)
+        .zip(b.chunks_exact(4))
+        .flat_map(|(x, y)| x[..3].iter().zip(&y[..3]))
+        .filter(|(x, _)| **x > floor)
+        .map(|(x, y)| (y / (x * k) - 1.0).abs())
+        .fold(0.0, f32::max)
+}
+
+/// The scene's exposure scales a trace lit by lights, the sky and an
+/// exposure-weighted emitter: every sample path is the same, so each pixel is
+/// the unexposed pixel times the multiplier.
+#[test]
+fn exposure_scales_every_radiance_source() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let build = |exposure: Option<f32>| {
+        let mut scene = RtScene::new();
+        add_quad(&mut scene, 1.5, RtMaterial::default());
+        scene.add_light(RtLight::Directional {
+            direction: [0.0, -0.4, 1.0],
+            colour: Colour::linear_rgb(3.0, 3.0, 3.0),
+        });
+        scene.add_light(RtLight::Point {
+            position: [0.5, -1.0, 0.5],
+            colour: Colour::linear_rgb(2.0, 1.0, 1.0),
+            range: 0.0,
+            radius: 0.1,
+        });
+        let p = [
+            Vec3::new(-0.3, -0.5, 0.8),
+            Vec3::new(0.3, -0.5, 0.8),
+            Vec3::new(0.3, -0.5, 1.2),
+            Vec3::new(-0.3, -0.5, 1.2),
+        ];
+        scene.add_mesh(
+            &p,
+            &[0, 1, 2, 0, 2, 3],
+            None,
+            RtMaterial {
+                base_colour: Colour::BLACK,
+                emissive: Colour::linear_rgb(6.0, 4.0, 2.0),
+                ..RtMaterial::default()
+            },
+        );
+        if let Some(e) = exposure {
+            scene.set_exposure(e);
+        }
+        scene
+    };
+    let cam = camera(48, 48);
+    let settings = RtSettings {
+        samples: 16,
+        max_bounces: 4,
+        denoise: false,
+        seed: 5,
+    };
+    let base = trace(&device, &queue, &build(None), &cam, &settings);
+    let unit = trace(&device, &queue, &build(Some(1.0)), &cam, &settings);
+    assert!(base.rgba == unit.rgba, "an exposure of 1 changed the trace");
+
+    let k = 1.0 / (1.2 * 2f32.powf(12.0));
+    let exposed = trace(&device, &queue, &build(Some(k)), &cam, &settings);
+    let worst = worst_scaled_diff(&base.rgba, &exposed.rgba, k, 1e-3);
+    assert!(
+        worst < 1e-4,
+        "exposed trace is off the multiplier by {worst}"
+    );
+
+    // A reused tracer takes a new exposure without a rebuild.
+    let mut tracer = Tracer::new(&device, &queue, &build(None));
+    tracer.set_exposure(k);
+    assert_eq!(tracer.exposure(), k);
+    let again = tracer.trace(&device, &queue, &cam, &settings);
+    let worst = worst_scaled_diff(&base.rgba, &again.rgba, k, 1e-3);
+    assert!(
+        worst < 1e-4,
+        "set_exposure trace is off the multiplier by {worst}"
+    );
+}
+
+/// An emitter's exposure weight sets how far the exposure reaches it: weight
+/// 0 is the same under any exposure, 0.5 takes `0.5 * k + 0.5`.
+#[test]
+fn emissive_exposure_weight_sets_the_emitter_scale() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let cam = camera(32, 32);
+    let settings = RtSettings {
+        samples: 8,
+        max_bounces: 2,
+        denoise: false,
+        seed: 0,
+    };
+    let k = 0.125;
+    for weight in [0.0f32, 0.5, 1.0] {
+        let render = |exposure: f32| {
+            let mut scene = RtScene::new();
+            scene.set_sky([0.0; 3], [0.0; 3]);
+            add_quad(
+                &mut scene,
+                1.5,
+                RtMaterial {
+                    base_colour: Colour::BLACK,
+                    emissive: Colour::linear_rgb(5.0, 5.0, 5.0),
+                    emissive_exposure_weight: weight,
+                    ..RtMaterial::default()
+                },
+            );
+            scene.set_exposure(exposure);
+            trace(&device, &queue, &scene, &cam, &settings)
+        };
+        let unexposed = render(1.0);
+        let exposed = render(k);
+        let expected = weight * k + (1.0 - weight);
+        let worst = worst_scaled_diff(&unexposed.rgba, &exposed.rgba, expected, 1e-3);
+        assert!(
+            worst < 1e-5,
+            "weight {weight}: emitter off its scale {expected} by {worst}"
+        );
+    }
+}
