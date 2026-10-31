@@ -278,7 +278,11 @@ impl ItemTypePlugin for SurfaceContourPlugin {
             .of::<SurfaceContourItem>()
             .iter()
             .filter(|item| !item.settings.hidden && !item.scalar_attribute.is_empty())
-            .filter_map(|item| Some((item, ContourUniform::new(item, viewport_width)?)))
+            .filter_map(|item| {
+                let mut block = ContourUniform::new(item, viewport_width)?;
+                block.model = crate::item_types::origin::rel_model(item.model, ctx.world_origin());
+                Some((item, block))
+            })
             .collect();
         if visible.is_empty() {
             return Vec::new();

@@ -419,7 +419,7 @@ impl ItemTypePlugin for SurfaceLicPlugin {
         let records: Vec<LicInstance> = visible
             .iter()
             .map(|item| LicInstance {
-                model: item.model,
+                model: crate::item_types::origin::rel_model(item.model, ctx.world_origin()),
                 params: [
                     (item.config.strength.max(0.0) / STRENGTH_MAX).min(1.0),
                     0.0,
