@@ -206,10 +206,21 @@ pub(crate) mod item_flags {
 /// non-zero transmission, in the opaque or mask alpha mode. A material
 /// plugin's shading and a blended material do not transmit.
 pub(crate) fn transmits(m: &Material) -> bool {
-    m.transmission > 0.0
-        && m.is_pbr()
-        && m.shading_plugin.is_none()
-        && !m.is_blend()
+    m.transmission > 0.0 && m.is_pbr() && m.shading_plugin.is_none() && !m.is_blend()
+}
+
+/// The Beer-Lambert absorption coefficient per world unit that turns white
+/// into `colour` over `distance`: `-ln(colour) / distance` per channel. None
+/// for a distance of `f32::MAX`, infinity or zero. Shared with the path
+/// tracer's material table.
+pub(crate) fn absorption(colour: [f32; 3], distance: f32) -> [f32; 3] {
+    colour.map(|c| {
+        if distance.is_finite() && distance > 0.0 && distance < f32::MAX {
+            (-(c.clamp(1.0e-4, 1.0)).ln() / distance).max(0.0)
+        } else {
+            0.0
+        }
+    })
 }
 
 /// A material's volume lanes and their `item_flags` bit:
@@ -221,14 +232,7 @@ pub(crate) fn volume_lanes(m: &Material) -> ([f32; 4], [f32; 4], u32) {
     if !transmits(m) {
         return ([0.0; 4], [0.0; 4], 0);
     }
-    let distance = m.attenuation_distance;
-    let sigma = m.attenuation_colour.to_linear_rgb().map(|c| {
-        if distance.is_finite() && distance > 0.0 && distance < f32::MAX {
-            (-(c.clamp(1.0e-4, 1.0)).ln() / distance).max(0.0)
-        } else {
-            0.0
-        }
-    });
+    let sigma = absorption(m.attenuation_colour.to_linear_rgb(), m.attenuation_distance);
     (
         [
             m.transmission.clamp(0.0, 1.0),

@@ -48,6 +48,9 @@ struct Material {
     layers0: vec4<f32>,
     // (sheen colour rgb, sheen roughness).
     layers1: vec4<f32>,
+    // (absorption coefficient rgb, 0): Beer-Lambert, per world unit, inside
+    // a transmissive mesh.
+    volume: vec4<f32>,
 }
 
 // data.xyz = direction (toward light, normalised) for kind 0, or position for
@@ -937,6 +940,12 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
         // scenes without emissive geometry are unchanged.
         if mis_bsdf_pdf < 0.0 || frame.emit.x == 0u {
             radiance = radiance + throughput * mat.emissive;
+        }
+
+        // Leaving a transmissive volume through its back face: the segment
+        // just travelled was inside it, so absorb over its length.
+        if !h.front && mat.transmission > 0.0 {
+            throughput = throughput * exp(-mat.volume.xyz * h.t);
         }
 
         let n = h.ns;
