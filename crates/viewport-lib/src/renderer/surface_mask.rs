@@ -52,7 +52,7 @@ impl SurfaceMaskState {
         }
     }
 
-    fn active(&self) -> bool {
+    pub(crate) fn active(&self) -> bool {
         !self.readers.is_empty() && (!self.mesh_stamps.is_empty() || self.plugin_stamps)
     }
 }

@@ -264,6 +264,8 @@ pub(crate) struct ViewportSlot {
     /// How long each of `hdr`'s targets has gone unused, for releasing them
     /// under `RendererConfig::target_release_frames`.
     pub(crate) target_idle: crate::resources::postprocess::targets::TargetIdle,
+    /// The HDR passes this viewport ran last frame.
+    pub(crate) pass_table: render::pass_table::PassTable,
 }
 
 /// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
@@ -3794,6 +3796,7 @@ impl ViewportRenderer {
                 ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
                 overlay_depth: None,
                 target_idle: Default::default(),
+                pass_table: Default::default(),
             });
         }
     }
@@ -4234,5 +4237,24 @@ impl ViewportRenderer {
             names.push("foreground_depth");
         }
         names
+    }
+
+    /// Viewport `viewport_index`'s HDR passes as last planned, in encode
+    /// order, each with whether it ran. Empty for a viewport that has not
+    /// drawn on the HDR path.
+    #[doc(hidden)]
+    pub fn viewport_pass_table(&self, viewport_index: usize) -> Vec<(&'static str, bool)> {
+        self.viewport_slots
+            .get(viewport_index)
+            .map_or_else(Vec::new, |slot| slot.pass_table.names())
+    }
+
+    /// The HDR passes that encoded work for viewport `viewport_index` last
+    /// frame, in encode order.
+    #[doc(hidden)]
+    pub fn debug_viewport_passes_ran(&self, viewport_index: usize) -> Vec<&'static str> {
+        self.viewport_slots
+            .get(viewport_index)
+            .map_or_else(Vec::new, |slot| slot.pass_table.ran_names())
     }
 }

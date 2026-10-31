@@ -254,6 +254,7 @@ macro_rules! emit_overlay_2d {
 mod hdr_path;
 mod ldr_path;
 mod paint_direct;
+pub(crate) mod pass_table;
 
 impl ViewportRenderer {
     /// Render the scene into an intermediate dyn-res texture for the LDR callback
@@ -847,6 +848,10 @@ impl ViewportRenderer {
                 G::LDR_DEPTH
             }
         };
+        if self.renders_hdr(frame) {
+            self.ensure_viewport_slot(device, vp_idx);
+            self.plan_hdr_passes(frame, scene_items, vp_idx, w.max(1), h.max(1), ssaa_factor);
+        }
         if self.resources.scene_tier.is_built() {
             self.ensure_viewport_hdr(
                 device,
