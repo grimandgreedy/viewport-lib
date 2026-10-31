@@ -141,8 +141,10 @@ impl Default for AutoExposure {
 
 /// Physical-camera exposure configuration for the HDR pipeline.
 ///
-/// Passed via `EffectsFrame::exposure`. `compensation` is a stops-of-bias
-/// applied on top of every mode (positive brightens the image).
+/// Passed via `DisplaySettings::exposure`. `compensation` is a stops-of-bias
+/// applied on top of every mode (positive brightens the image). Which values
+/// the exposure scales and which it leaves alone is set out in
+/// [`light_transport`](crate::effects::light_transport).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
