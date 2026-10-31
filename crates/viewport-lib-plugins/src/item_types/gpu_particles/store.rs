@@ -201,6 +201,14 @@ pub(crate) struct EmitState {
     /// per frame; the remainder rolls over so the long-term average emission
     /// matches the configured rate.
     pub spawn_accumulator: f32,
+    /// The point the simulation's coordinates are measured from: the world
+    /// origin on the system's first frame. Spawn shapes and attractors are
+    /// written relative to it, so particles far from zero simulate with the
+    /// precision of particles near it.
+    pub anchor: Option<glam::DVec3>,
+    /// The `anchor - origin` offset the draw uniform holds, or `None` when it
+    /// has not been written since the bindings were built.
+    pub drawn_offset: Option<[f32; 3]>,
 }
 
 /// One particle as it lives on the GPU. Layout matches `Particle` in
@@ -360,13 +368,17 @@ pub(crate) enum ParticleDrawRoute {
     },
 }
 
+/// `anchor` is the system's simulation anchor (see [`EmitState::anchor`]);
+/// spawn positions are written relative to it.
 pub(crate) fn build_emit_params(
     e: &super::types::EmitterConfig,
     capacity: u32,
     spawn_count: u32,
     frame_counter: u32,
     emit_cursor: u32,
+    anchor: glam::DVec3,
 ) -> EmitParamsGpu {
+    use crate::item_types::origin::rel_point;
     let mut out = EmitParamsGpu {
         spawn_min: [0.0; 3],
         spawn_kind: 0,
@@ -392,16 +404,16 @@ pub(crate) fn build_emit_params(
     match e.spawn_shape {
         SpawnShape::Point(p) => {
             out.spawn_kind = 0;
-            out.spawn_min = p;
+            out.spawn_min = rel_point(p, anchor);
         }
         SpawnShape::Box { min, max } => {
             out.spawn_kind = 1;
-            out.spawn_min = min;
-            out.spawn_max = max;
+            out.spawn_min = rel_point(min, anchor);
+            out.spawn_max = rel_point(max, anchor);
         }
         SpawnShape::Sphere { center, radius } => {
             out.spawn_kind = 2;
-            out.spawn_min = center;
+            out.spawn_min = rel_point(center, anchor);
             out.spawn_radius = radius;
         }
     }
@@ -433,10 +445,13 @@ pub(crate) fn build_emit_params(
     out
 }
 
+/// Attractor positions are written relative to `anchor`, as spawn positions
+/// are in [`build_emit_params`].
 pub(crate) fn build_sim_params(
     dt: f32,
     capacity: u32,
     forces: &[super::types::ForceField],
+    anchor: glam::DVec3,
 ) -> SimParamsGpu {
     let mut gpu_forces = [GpuForce {
         kind: 0,
@@ -462,7 +477,8 @@ pub(crate) fn build_sim_params(
                 falloff,
             } => {
                 gpu_forces[i].kind = 2;
-                gpu_forces[i].v0 = [position[0], position[1], position[2], strength];
+                let p = crate::item_types::origin::rel_point(position, anchor);
+                gpu_forces[i].v0 = [p[0], p[1], p[2], strength];
                 gpu_forces[i].v1 = [falloff, 0.0, 0.0, 0.0];
             }
         }
@@ -622,6 +638,7 @@ pub(super) fn build_particle_draw_bindings(
                 has_texture: u32,
                 _pad0: u32,
                 _pad1: u32,
+                offset: [f32; 4],
             }
             let align_u32 = match align {
                 ParticleMeshAlign::Identity => 0u32,
@@ -634,6 +651,7 @@ pub(super) fn build_particle_draw_bindings(
                 has_texture: texture_live as u32,
                 _pad0: 0,
                 _pad1: 0,
+                offset: [0.0; 4],
             };
             let uniform_buf =
                 device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {

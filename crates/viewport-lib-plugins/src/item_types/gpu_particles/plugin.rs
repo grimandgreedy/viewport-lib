@@ -2,6 +2,7 @@
 //! the `gpu` feature.
 
 use super::*;
+use crate::item_types::origin::anchor_offset;
 use store::{
     EmitParamsGpu, EmitState, GpuParticle, ParticleDrawRoute, ParticleLayouts, ParticleStore,
     ParticleSystem, SimParamsGpu, build_emit_params, build_sim_params,
@@ -277,6 +278,8 @@ impl GpuParticlesPlugin {
             system.draw_lit_normal_bg = bindings.draw_lit_normal_bg;
             system.draw_uniform_buf = bindings.draw_uniform_buf;
             system.draw_textures = bindings.draw_textures;
+            // The rebuilt uniform holds a zero offset again.
+            system.emit.lock().unwrap().drawn_offset = None;
             self.draw_bg_rebuilds += 1;
         }
     }
@@ -399,12 +402,13 @@ impl ItemTypePlugin for GpuParticlesPlugin {
 
             let capacity = system.capacity;
             let dt = item.time_step.max(0.0);
-            let spawn_count = {
+            let (spawn_count, anchor) = {
                 let mut emit = system.emit.lock().unwrap();
                 emit.spawn_accumulator += item.emitter.rate * dt;
                 let count = emit.spawn_accumulator.floor() as u32;
                 emit.spawn_accumulator -= count as f32;
                 emit.frame_counter = emit.frame_counter.wrapping_add(1);
+                let anchor = *emit.anchor.get_or_insert(ctx.world_origin());
                 if count > 0 {
                     let params = build_emit_params(
                         &item.emitter,
@@ -412,6 +416,7 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                         count,
                         emit.frame_counter,
                         emit.emit_cursor,
+                        anchor,
                     );
                     queue.write_buffer(&system.emit_params_buf, 0, bytemuck::bytes_of(&params));
                     // Next frame starts where this one stopped, so the buffer
@@ -420,9 +425,23 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                         emit.emit_cursor = (emit.emit_cursor + count) % capacity;
                     }
                 }
-                count
+                // Where the draw puts the simulation, written when it moves.
+                let offset = anchor_offset(anchor, ctx.world_origin()).to_array();
+                if emit.drawn_offset != Some(offset) {
+                    if let Some(buf) = &system.draw_uniform_buf {
+                        // The sprite route's model translation, or the mesh
+                        // route's offset.
+                        let at = match route {
+                            ParticleDrawRoute::Sprite { .. } => 48,
+                            ParticleDrawRoute::Mesh { .. } => 16,
+                        };
+                        queue.write_buffer(buf, at, bytemuck::cast_slice(&offset));
+                    }
+                    emit.drawn_offset = Some(offset);
+                }
+                (count, anchor)
             };
-            let sim_params = build_sim_params(item.time_step, capacity, &item.forces);
+            let sim_params = build_sim_params(item.time_step, capacity, &item.forces, anchor);
             queue.write_buffer(&system.sim_params_buf, 0, bytemuck::bytes_of(&sim_params));
 
             staged.push(Staged {
