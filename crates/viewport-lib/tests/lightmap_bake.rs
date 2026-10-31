@@ -723,3 +723,35 @@ fn a_dropped_bake_leaves_the_tracer_usable() {
     let again = tracer.bake_directional(&device, &queue, &surf, &settings(32));
     assert_eq!(again.irradiance, expected.irradiance);
 }
+
+/// A bake stores unexposed irradiance whatever the scene's exposure, so the
+/// rasteriser's exposure of lightmap texels is the only one applied.
+#[test]
+fn bake_ignores_the_scene_exposure() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let build = |exposure: f32| {
+        let mut scene = RtScene::new();
+        add_floor(&mut scene, 5.0, RtMaterial::default());
+        scene.add_light(RtLight::Directional {
+            direction: [0.2, 0.0, 1.0],
+            colour: Colour::linear_rgb(2.0, 2.0, 2.0),
+        });
+        scene.set_exposure(exposure);
+        scene
+    };
+    let (pos, nrm) = uniform_surfaces(16, 16, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 16,
+        height: 16,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let unexposed = bake_lightmap(&device, &queue, &build(1.0), &surf, &settings(32));
+    let exposed = bake_lightmap(&device, &queue, &build(0.01), &surf, &settings(32));
+    assert!(
+        unexposed.rgba == exposed.rgba,
+        "the scene's exposure reached the bake"
+    );
+}
