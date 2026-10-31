@@ -393,9 +393,9 @@ pub use resources::{
 
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, GpuFrameContext,
-    GpuPlugin, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp, PostPaintTargets,
-    RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase, RuntimePlugin,
-    RuntimeResources, RuntimeStats, RuntimeStepContext, SelectionOp, SelectionSystem,
-    SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
+    GpuPlugin, GpuPluginId, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp,
+    PostPaintTargets, RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
+    RuntimePlugin, RuntimePluginId, RuntimeResources, RuntimeStats, RuntimeStepContext, SelectionOp,
+    SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
     ViewportRuntime,
 };

@@ -151,6 +151,10 @@ impl<'a> GpuFrameContext<'a> {
 /// plugins. Registering two of the same type runs both in priority order; the
 /// runtime does not deduplicate. This is intentional and frozen behavior.
 ///
+/// [`ViewportRuntime::remove_gpu_plugin`](super::ViewportRuntime::remove_gpu_plugin)
+/// hands the plugin back without calling any hook: dropping the returned box
+/// releases the GPU resources it built in `init_gpu`.
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -253,6 +257,22 @@ pub trait GpuPlugin: Send + 'static {
         _ctx: &GpuFrameContext<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
+    }
+}
+
+/// Handle returned by
+/// [`ViewportRuntime::add_gpu_plugin`](super::ViewportRuntime::add_gpu_plugin);
+/// pass it to
+/// [`remove_gpu_plugin`](super::ViewportRuntime::remove_gpu_plugin) to
+/// unregister the plugin. Ids count up from one per runtime, shared with
+/// [`RuntimePluginId`](crate::RuntimePluginId)'s counter, and are never reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GpuPluginId(pub(crate) u64);
+
+impl GpuPluginId {
+    /// The raw id.
+    pub const fn raw(self) -> u64 {
+        self.0
     }
 }
 

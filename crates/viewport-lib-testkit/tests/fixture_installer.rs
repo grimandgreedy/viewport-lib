@@ -105,8 +105,9 @@ fn installer_fixture_fails_cleanly_without_a_runtime() {
 }
 
 /// Install, render, uninstall, render: after `uninstall` the renderer's
-/// registries read as they did before the install, the frame still renders,
-/// and the feature installs again under the same names.
+/// registries and the runtime's plugin list read as they did before the
+/// install, the removed runtime plugin is not stepped, the frame still
+/// renders, and the feature installs again under the same names.
 #[test]
 fn installer_fixture_uninstall_restores_the_registries() {
     use viewport_lib::{Colour, Material, SceneRenderItem, SurfaceSubmission, uninstall_plugin};
@@ -144,6 +145,7 @@ fn installer_fixture_uninstall_restores_the_registries() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let mut runtime = ViewportRuntime::new();
+    let runtime_never_installed = runtime.plugin_count();
     let log = CallLog::new();
     let handle = match install_plugin(
         DeformAndStepInstaller::new(log.clone()),
@@ -164,6 +166,7 @@ fn installer_fixture_uninstall_restores_the_registries() {
         never_installed,
         "install registered a piece"
     );
+    assert_eq!(runtime.plugin_count(), runtime_never_installed + 1);
     let installed = harness.render(&frame, 64, 64);
 
     uninstall_plugin::<DeformAndStepInstaller>(
@@ -178,6 +181,22 @@ fn installer_fixture_uninstall_restores_the_registries() {
         counts(&harness),
         never_installed,
         "uninstall must leave the registries as they were before the install"
+    );
+    assert_eq!(
+        runtime.plugin_count(),
+        runtime_never_installed,
+        "uninstall must remove the runtime plugin"
+    );
+    let mut scene = Scene::new();
+    let mut selection = Selection::new();
+    let mut step_frame = RuntimeFrameContext::default();
+    step_frame.dt = 1.0 / 60.0;
+    log.clear();
+    runtime.step(&mut scene, &mut selection, &step_frame);
+    assert!(
+        log.entries().is_empty(),
+        "the uninstalled runtime plugin was stepped: {:?}",
+        log.entries()
     );
     assert!(
         matches!(

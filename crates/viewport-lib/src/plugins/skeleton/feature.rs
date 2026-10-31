@@ -19,7 +19,7 @@ use crate::error::ViewportResult;
 use crate::plugin_api::{PluginInstallCtx, PluginInstaller};
 use crate::plugins::skinning::{SkinWeights, SkinnedPoseUpdate, SkinningPlugin};
 use crate::resources::DeviceResources;
-use crate::runtime::{RuntimeOutput, RuntimePlugin};
+use crate::runtime::{RuntimeOutput, RuntimePlugin, RuntimePluginId};
 
 /// Installs GPU skinning for one or more meshes in a single call.
 ///
@@ -63,13 +63,15 @@ impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
 
         let skinning = SkinningPlugin::install(ctx.renderer.resources_mut(), ctx.device)?;
 
-        ctx.runtime
+        let pose_plugin = ctx
+            .runtime
             .as_deref_mut()
             .expect("runtime presence checked above")
             .add_plugin(self.pose_plugin);
 
         Ok(SkinnedMeshHandle {
             skinning,
+            pose_plugin,
             weights: self.weights,
         })
     }
@@ -88,6 +90,7 @@ impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
 /// palette for each update.
 pub struct SkinnedMeshHandle {
     skinning: SkinningPlugin,
+    pose_plugin: RuntimePluginId,
     weights: HashMap<MeshId, SkinWeights>,
 }
 
@@ -98,14 +101,21 @@ impl SkinnedMeshHandle {
         &self.skinning
     }
 
-    /// Detach the skin weights of every mesh this handle skinned, consuming
-    /// it. See [`SkinningPlugin::uninstall`]: the skinning deformer itself
-    /// stays registered, so a later install reuses it. The runtime has no
-    /// call to remove a plugin, so the pose plugin stays on it and keeps
-    /// emitting updates that nothing drains.
+    /// The id of the pose plugin the feature added to the runtime.
+    pub fn pose_plugin(&self) -> RuntimePluginId {
+        self.pose_plugin
+    }
+
+    /// Detach the skin weights of every mesh this handle skinned and remove
+    /// the pose plugin from the runtime, consuming the handle. See
+    /// [`SkinningPlugin::uninstall`]: the skinning deformer itself stays
+    /// registered, so a later install reuses it.
     pub fn uninstall(self, ctx: &mut PluginInstallCtx<'_>) {
         self.skinning
             .uninstall(ctx.renderer.resources_mut(), ctx.device);
+        if let Some(runtime) = ctx.runtime.as_deref_mut() {
+            runtime.remove_plugin(self.pose_plugin);
+        }
     }
 
     /// Drain pose updates from `output` and upload them.
@@ -272,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_detaches_the_skinned_meshes() {
+    fn uninstall_detaches_the_meshes_and_removes_the_pose_plugin() {
         let Some((device, queue)) = headless() else {
             eprintln!("skipping: no wgpu adapter available");
             return;
@@ -299,10 +309,23 @@ mod tests {
         skinning.attach_weights(ctx.renderer.resources_mut(), &device, mesh_id, &weights);
         assert!(skinning.is_skinned_mesh(mesh_id));
 
+        let pose_plugin = handle.pose_plugin();
+        assert_eq!(
+            ctx.runtime
+                .as_deref()
+                .map(|r| r.plugin_ids().collect::<Vec<_>>()),
+            Some(vec![pose_plugin])
+        );
+
         SkinnedMeshFeature::<SkeletonPlugin>::uninstall(handle, &mut ctx).expect("uninstall");
         assert!(
             !skinning.is_skinned_mesh(mesh_id),
             "uninstall detached the mesh's skin weights"
+        );
+        assert_eq!(
+            ctx.runtime.as_deref().map(|r| r.plugin_count()),
+            Some(0),
+            "uninstall removed the pose plugin from the runtime"
         );
     }
 

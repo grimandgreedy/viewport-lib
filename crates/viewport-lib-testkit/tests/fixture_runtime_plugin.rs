@@ -120,3 +120,85 @@ fn runtime_fixture_receives_lifecycle_events() {
         log.entries()
     );
 }
+
+/// A removed plugin receives no further calls, the one left keeps running, and
+/// the removed plugin's timing entry is dropped straight away.
+#[test]
+fn runtime_fixture_removed_plugin_is_not_called() {
+    let log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let gone = runtime.add_plugin(LoggingRuntimePlugin::new(
+        log.clone(),
+        "gone",
+        phase::ANIMATE,
+    ));
+    let kept = runtime.add_plugin(LoggingRuntimePlugin::new(
+        log.clone(),
+        "kept",
+        phase::ANIMATE,
+    ));
+    assert_ne!(gone, kept);
+
+    let mut scene = Scene::new();
+    step(&mut runtime, &mut scene);
+    assert_eq!(log.count("gone:step"), 1);
+    assert!(runtime.last_stats().step_ms.contains_key("gone"));
+    log.clear();
+
+    let removed = runtime.remove_plugin(gone).expect("the id is registered");
+    assert_eq!(removed.type_name(), "gone");
+    assert!(!runtime.last_stats().step_ms.contains_key("gone"));
+    assert_eq!(runtime.plugin_ids().collect::<Vec<_>>(), vec![kept]);
+
+    step(&mut runtime, &mut scene);
+    log.assert_take(&["kept:submit", "kept:step", "kept:collect"]);
+}
+
+/// Removing the middle of three same-priority plugins keeps the other two in
+/// registration order.
+#[test]
+fn runtime_fixture_removal_keeps_order() {
+    let log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let a = runtime.add_plugin(LoggingRuntimePlugin::new(log.clone(), "a", phase::ANIMATE));
+    let b = runtime.add_plugin(LoggingRuntimePlugin::new(log.clone(), "b", phase::ANIMATE));
+    let c = runtime.add_plugin(LoggingRuntimePlugin::new(log.clone(), "c", phase::ANIMATE));
+
+    let mut scene = Scene::new();
+    step(&mut runtime, &mut scene);
+    log.clear();
+
+    assert!(runtime.remove_plugin(b).is_some());
+    assert_eq!(runtime.plugin_ids().collect::<Vec<_>>(), vec![a, c]);
+    step(&mut runtime, &mut scene);
+    log.assert_take(&[
+        "a:submit",
+        "c:submit",
+        "a:step",
+        "c:step",
+        "a:collect",
+        "c:collect",
+    ]);
+}
+
+/// Removing an id twice returns `None` the second time rather than panicking
+/// or taking another plugin.
+#[test]
+fn runtime_fixture_stale_id_returns_none() {
+    let log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let first = runtime.add_plugin(LoggingRuntimePlugin::new(
+        log.clone(),
+        "first",
+        phase::ANIMATE,
+    ));
+    let _second = runtime.add_plugin(LoggingRuntimePlugin::new(
+        log.clone(),
+        "second",
+        phase::ANIMATE,
+    ));
+
+    assert!(runtime.remove_plugin(first).is_some());
+    assert!(runtime.remove_plugin(first).is_none());
+    assert_eq!(runtime.plugin_count(), 1);
+}
