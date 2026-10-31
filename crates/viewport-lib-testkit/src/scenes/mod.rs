@@ -31,6 +31,7 @@ pub mod section_caps;
 pub mod shadows;
 pub mod skinning;
 pub mod textures;
+pub mod tone_mapping;
 
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
@@ -148,6 +149,9 @@ pub struct BuiltScene {
     /// Pipeline mode override, for a scene that exercises the direct (LDR)
     /// path. `None` leaves the default HDR pipeline.
     pub pipeline_mode: Option<viewport_lib::PipelineMode>,
+    /// Tone-map operator override, for a scene that exercises an operator.
+    /// `None` leaves the default operator.
+    pub operator: Option<viewport_lib::ToneMapping>,
     /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
     /// retained groups compiled during `build`.
     pub overlays: viewport_lib::OverlayFrame,
@@ -286,6 +290,9 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     }
     if let Some(mode) = scene.pipeline_mode {
         fd.effects.display.mode = mode;
+    }
+    if let Some(operator) = scene.operator {
+        fd.effects.display.operator = operator;
     }
     if let Some((objects, cap_fill)) = scene.clip.clone() {
         fd.effects.clip.objects = objects;
@@ -1092,6 +1099,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.push(far_origin::scene());
     scenes.extend(light_transport::scenes());
     scenes.extend(grading::scenes());
+    scenes.extend(tone_mapping::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());
