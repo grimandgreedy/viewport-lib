@@ -123,6 +123,8 @@ fn expected(name: &str) -> Option<Expected> {
         // These item-type scenes include mesh geometry (ground and receivers
         // for scatter and decals), so the mesh counters are live for them.
         "scatter_volume" => e(2, 2, 2, 2, 972),
+        // The slab and the contoured sphere, 2^20 m out under a snapped origin.
+        "item_types_far_origin" => e(2, 2, 2, 2, 972),
         // A fog box containing a dense sphere, downsampled: two volumes over a
         // slab and a pillar, so the back-to-front order has something to get
         // wrong.
