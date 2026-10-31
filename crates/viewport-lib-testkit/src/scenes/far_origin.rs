@@ -153,6 +153,10 @@ pub fn extra_parts() -> Vec<Part> {
             name: "external_instances",
             add: external_instances,
         },
+        Part {
+            name: "gpu_particles",
+            add: gpu_particles,
+        },
     ]
 }
 
@@ -653,4 +657,42 @@ fn external_instances(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) 
     item.scale = 0.375;
     item.colour = Colour::linear(0.8, 0.5, 0.3, 1.0);
     scene.external_instances.push(item);
+}
+
+fn gpu_particles(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
+    use viewport_lib_plugins::item_types::gpu_particles::{
+        GpuParticleSystemConfig, GpuParticleSystemItem, GpuParticleSystems, ParticleRender,
+        SpawnShape, VelocityDist,
+    };
+    let mut config = GpuParticleSystemConfig::default();
+    config.capacity = 512;
+    config.render = ParticleRender::Sprite {
+        texture_id: None,
+        blend: viewport_lib::SpriteBlend::AlphaBlend,
+        size_mode: SpriteSizeMode::WorldSpace,
+        depth_write: false,
+        lit: false,
+        lit_params: Default::default(),
+        normal_texture_id: None,
+    };
+    let system = ctx
+        .renderer
+        .create_gpu_particle_system(ctx.device, ctx.queue, &config)
+        .expect("gpu particles are registered");
+    let mut item = GpuParticleSystemItem::new(system, 0.25);
+    item.emitter.rate = 400.0;
+    item.emitter.lifetime = (4.0, 6.0);
+    item.emitter.size = 0.125;
+    item.emitter.colour = Colour::linear(1.0, 0.8, 0.4, 0.9);
+    item.emitter.spawn_shape = SpawnShape::Sphere {
+        center: qp(at, [0.0, 0.0, 0.25]),
+        radius: 0.25,
+    };
+    item.emitter.initial_velocity = VelocityDist::UniformCone {
+        axis: [0.0, 0.0, 1.0],
+        half_angle: 0.5,
+        min_speed: 1.0,
+        max_speed: 2.0,
+    };
+    scene.gpu_particle_systems.push(item);
 }
