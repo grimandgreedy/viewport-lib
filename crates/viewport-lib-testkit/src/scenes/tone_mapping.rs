@@ -7,7 +7,10 @@
 //! colour times its strength.
 
 use glam::{Mat4, Vec3};
-use viewport_lib::{AgxLook, Colour, LightingSettings, Material, PostProcessSettings, ToneMapping};
+use viewport_lib::{
+    AgxLook, Colour, GenericToneCurve, LightingSettings, Material, OperatorCurve,
+    PostProcessSettings, ToneMapping, VIEW_LUT_SHAPER, bake_view_transform_lut,
+};
 use viewport_lib::{Projection, primitives};
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item_model, orbit_camera, upload};
@@ -145,6 +148,32 @@ fn build_generic(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     chart(ctx, ToneMapping::Generic, PostProcessSettings::default())
 }
 
+/// A custom curve no built-in operator gives: a steep generic curve over a
+/// teal-orange grade, baked into one 32-slice view LUT.
+fn build_custom_baked(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut steep = PostProcessSettings::default();
+    steep.generic_tone_curve = GenericToneCurve::new(2.4, 0.18, 0.16, 24.0);
+    let curve = OperatorCurve::new(ToneMapping::Generic, &steep);
+    let grade = |c: [f32; 3]| {
+        let shaped = super::grading::teal_orange(c.map(|x| VIEW_LUT_SHAPER.shape(x)));
+        shaped.map(|s| VIEW_LUT_SHAPER.unshape(s))
+    };
+    let lut = ctx
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            bake_view_transform_lut(&curve, Some(&grade), 32),
+        )
+        .expect("view LUT upload");
+    chart(
+        ctx,
+        ToneMapping::Custom { lut },
+        PostProcessSettings::default(),
+    )
+}
+
 /// Straight down, orthographic, framing the chart.
 fn top_camera() -> Vec<NamedCamera> {
     let mut camera = orbit_camera(Vec3::ZERO, 8.0, 0.0, 0.0);
@@ -168,5 +197,6 @@ pub fn scenes() -> Vec<NamedScene> {
         scene("tone_agx_punchy", build_agx_punchy),
         scene("tone_aces_rrt", build_aces_rrt),
         scene("tone_generic", build_generic),
+        scene("tone_custom_baked", build_custom_baked),
     ]
 }
