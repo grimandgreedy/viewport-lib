@@ -64,6 +64,9 @@ fn expected(name: &str) -> Option<Expected> {
         "lobes_clearcoat" => e(25, 25, 1, 1, 55200),
         "lobes_sheen" => e(25, 25, 1, 1, 55200),
         "lobes_anisotropy" => e(25, 25, 1, 1, 55200),
+        // A checker floor and four glass spheres. Each transmissive item is
+        // its own batch so the transmission pass can sort them by depth.
+        "transmission_checker" => e(5, 5, 5, 5, 15874),
         // Material grids: half the items are pinned per-object, which no
         // longer splits a batch, so each pinned copy shares its batch with
         // its twin by mesh and texture set. The alpha grid's backdrop wall
