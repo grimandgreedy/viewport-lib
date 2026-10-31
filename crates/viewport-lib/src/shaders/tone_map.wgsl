@@ -3,7 +3,8 @@
 
 struct ToneMapUniform {
     exposure:                f32,
-    mode:                    u32,  // 0=Reinhard, 1=ACES, 2=KhronosNeutral
+    // 0 Reinhard, 1 ACES fit, 2 Khronos Neutral, 3 AgX, 4 ACES RRT, 5 generic.
+    mode:                    u32,
     bloom_enabled:           u32,
     ssao_enabled:            u32,
     contact_shadows_enabled: u32,
@@ -25,8 +26,12 @@ struct ToneMapUniform {
     // 0 = no grading, 1 = display-referred, 2 = scene-referred.
     grade_mode:              u32,
     grade_lut_size:          f32,
-    _pad0:                   u32,
-    _pad1:                   u32,
+    // 0 = Rec.709, 1 = Rec.2020.
+    working_space:           u32,
+    // 0 = none, 1 = punchy, 2 = golden.
+    agx_look:                u32,
+    // Generic curve: contrast, input scale, output scale, unused.
+    generic_curve:           vec4<f32>,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -62,9 +67,28 @@ struct ExposureState {
 
 // #include "helpers/depth_texel.wgsl"
 // #include "helpers/depth.wgsl"
+// #include "helpers/tone_operators.wgsl"
 
 const GRADE_DISPLAY: u32 = 1u;
 const GRADE_SCENE: u32 = 2u;
+
+const WORKING_REC2020: u32 = 1u;
+
+// The working-space colour in Rec.2020, for the operators that run there.
+fn to_rec2020(colour: vec3<f32>, rec2020: bool) -> vec3<f32> {
+    if rec2020 {
+        return colour;
+    }
+    return SRGB_TO_REC2020 * colour;
+}
+
+// An operator's Rec.2020 result back in the working space, negatives at 0.
+fn from_rec2020(colour: vec3<f32>, rec2020: bool) -> vec3<f32> {
+    if rec2020 {
+        return max(colour, vec3<f32>(0.0));
+    }
+    return max(REC2020_TO_SRGB * colour, vec3<f32>(0.0));
+}
 
 // Scene-referred shaper: log2 of exposed radiance over [2^-14, 2^10] mapped
 // to [0, 1]. Kept in step with the `GradingSpace::Scene` documentation.
@@ -278,6 +302,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour * (1.0 - edl_factor);
     }
 
+    // Into the working space for the grade and the operator.
+    let rec2020 = params.working_space == WORKING_REC2020;
+    if rec2020 {
+        colour = SRGB_TO_REC2020 * colour;
+    }
+
     // Scene-referred grading, on exposed radiance before the operator.
     if params.grade_mode == GRADE_SCENE {
         colour = grade_scene(colour);
@@ -291,6 +321,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = aces(colour);
     } else if params.mode == 2u {
         colour = khronos_neutral(colour);
+    } else if params.mode == 3u {
+        colour = from_rec2020(agx(to_rec2020(colour, rec2020), params.agx_look), rec2020);
+    } else if params.mode == 4u {
+        colour = from_rec2020(aces_rrt(to_rec2020(colour, rec2020)), rec2020);
+    } else if params.mode == 5u {
+        let g = params.generic_curve;
+        colour = generic_curve(colour, g.x, g.y, g.z);
+    }
+
+    // Back to Rec.709 for the display-space composite.
+    if rec2020 {
+        colour = max(REC2020_TO_SRGB * colour, vec3<f32>(0.0));
     }
 
     // Composite transparent HDR content over the background. Without this, a

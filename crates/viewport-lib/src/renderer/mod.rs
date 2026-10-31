@@ -92,13 +92,13 @@ mod prepare_timing_tests;
 pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
-    Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
+    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, ClipObject,
     ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
     DofSettings,
     EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
     ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
-    FrameTime, GlyphRunItem, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode,
+    FrameTime, GlyphRunItem, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode,
     IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
@@ -111,7 +111,7 @@ pub use self::types::{
     ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
     ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
     TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame,
-    VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
+    VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace, aabb_wireframe_polyline,
     obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 

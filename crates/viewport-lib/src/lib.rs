@@ -324,13 +324,13 @@ pub use renderer::stats::{
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
-    Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
+    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, CellSelectionInfo,
     ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
     DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
     EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings,
     FillRule, ForegroundPass, ForegroundProjection, FrameData, FrameTime, GlyphRunItem, GpuContext,
-    GpuPickHit, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    GpuPickHit, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame,
     LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture,
     LightingSettings, LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice,
@@ -345,7 +345,7 @@ pub use renderer::{
     ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
     SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
     TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency, WorkingSpace,
     aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
