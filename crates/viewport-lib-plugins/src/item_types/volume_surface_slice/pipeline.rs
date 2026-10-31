@@ -264,25 +264,28 @@ impl SliceGpu {
         self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
-    /// Build the per-item uniform and bind group, or `None` when the item's
-    /// volume or mesh is not resident.
+    /// Build the per-item uniform and bind group, with the surface and the box
+    /// placed relative to `origin`, or `None` when the item's volume or mesh
+    /// is not resident.
     pub(super) fn upload_item(
         &self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         resources: &DeviceResources,
         item: &VolumeSurfaceSliceItem,
+        origin: glam::DVec3,
     ) -> Option<SliceFrame> {
+        use crate::item_types::origin::{rel_model, rel_point};
         let vol_view = resources.volume_view(item.volume_id)?;
         // A stale mesh id draws nothing, so drop the item rather than build
         // state for a mesh that cannot be bound.
         resources.mesh_index_count(item.mesh_id)?;
 
         let uniform_data = SliceUniform {
-            model: item.model,
-            bbox_min: item.bbox_min,
+            model: rel_model(item.model, origin),
+            bbox_min: rel_point(item.bbox_min, origin),
             scalar_min: item.scalar_range.0,
-            bbox_max: item.bbox_max,
+            bbox_max: rel_point(item.bbox_max, origin),
             scalar_max: item.scalar_range.1,
             // ItemSettings.opacity multiplies into the type's own opacity field
             // so consumers can drive transparency through the standard per-item
