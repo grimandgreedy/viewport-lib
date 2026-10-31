@@ -543,7 +543,8 @@ mod tests {
             &make_frame(&camera, &input, 1.0 / 60.0),
         );
 
-        let world = glam::Affine3A::from_mat4(scene.node(child).unwrap().world_transform().to_mat4());
+        let world =
+            glam::Affine3A::from_mat4(scene.node(child).unwrap().world_transform().to_mat4());
         let expected = glam::Vec3::new(10.0, 2.0, 3.0);
         assert!((glam::Vec3::from(world.translation) - expected).length() < 1e-5);
 

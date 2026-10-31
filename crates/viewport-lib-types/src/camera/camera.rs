@@ -422,7 +422,7 @@ impl Camera {
     /// Center the camera on a domain of the given extents, adjusting distance
     /// and clipping planes so the entire domain is visible.
     pub fn center_on_domain(&mut self, nx: f32, ny: f32, nz: f32) {
-        self.center = glam::DVec3::new(f64::from(nx) / 2.0, f64::from(ny) / 2.0, f64::from(nz) / 2.0);
+        self.center = glam::Vec3::new(nx, ny, nz).as_dvec3() / 2.0;
         let diagonal = (nx * nx + ny * ny + nz * nz).sqrt();
         self.distance = (diagonal / 2.0) / (self.fov_y / 2.0).tan() * 1.2;
         self.znear = Some((diagonal * 0.0001).max(0.01));

@@ -10,7 +10,7 @@
 //! rasterisation and the polyline overlay produced in the renderer's prepare
 //! draws instead.
 
-use crate::item_types::origin::{rel_model, rel_vec3};
+use crate::item_types::origin::rel_model;
 use viewport_lib::Colour;
 
 use super::pipeline;

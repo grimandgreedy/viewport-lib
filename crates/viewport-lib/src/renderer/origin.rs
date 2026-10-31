@@ -195,11 +195,6 @@ impl OriginState {
         }
         (f64::from(d) + normal.as_dvec3().dot(self.origin)) as f32
     }
-
-    /// `p`, a point relative to the origin, back in world coordinates.
-    pub(crate) fn abs(&self, p: Vec3) -> DVec3 {
-        p.as_dvec3() + self.origin
-    }
 }
 
 /// `p - origin` in f64, cast to f32.
