@@ -219,6 +219,8 @@ fn tall_caster_probe(h: &mut Harness) -> (f32, f32) {
         direction: [0.0, -1.0, 1.0],
     };
     fd.effects.lighting.lights = vec![sun];
+    // A fixed fill, so the shadow's contrast does not follow the default.
+    fd.effects.lighting.hemisphere_intensity = 0.4;
     let lit = h.render(&fd, W, H);
     fd.effects.lighting.shadows.enabled = false;
     let unshadowed = h.render(&fd, W, H);
@@ -298,6 +300,8 @@ fn shadow_past_the_distance(h: &mut Harness, fade_fraction: f32) -> (f32, f32) {
         direction: [0.0, 0.5, 1.0],
     };
     fd.effects.lighting.lights = vec![sun];
+    // A fixed fill, so the shadow's contrast does not follow the default.
+    fd.effects.lighting.hemisphere_intensity = 0.4;
     fd.effects.lighting.shadows.shadow_distance = Some(10.0);
     fd.effects.lighting.shadows.fade_fraction = fade_fraction;
 
