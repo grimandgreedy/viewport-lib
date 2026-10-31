@@ -38,6 +38,27 @@ pub(crate) fn rel_model(mut m: [[f32; 4]; 4], origin: DVec3) -> [[f32; 4]; 4] {
     m
 }
 
+/// A plane `dot(n, p) + d = 0` in world space moved relative to `origin`:
+/// returns the new `d`, `d + dot(n, origin)` in f64.
+pub(crate) fn rel_plane_d(normal: [f32; 3], d: f32, origin: DVec3) -> f32 {
+    if origin == DVec3::ZERO {
+        return d;
+    }
+    (f64::from(d) + Vec3::from(normal).as_dvec3().dot(origin)) as f32
+}
+
+/// `a * b`, with the product's translation made relative to `origin`. The
+/// product is taken in f64 off zero, so a large translation in either
+/// factor does not round the result before the subtraction.
+pub(crate) fn rel_product(a: Mat4, b: Mat4, origin: DVec3) -> Mat4 {
+    if origin == DVec3::ZERO {
+        return a * b;
+    }
+    let mut m = a.as_dmat4() * b.as_dmat4();
+    m.w_axis -= origin.extend(0.0);
+    m.as_mat4()
+}
+
 /// [`rel_model`] for a `Mat4`.
 pub(crate) fn rel_mat4(m: Mat4, origin: DVec3) -> Mat4 {
     if origin == DVec3::ZERO {

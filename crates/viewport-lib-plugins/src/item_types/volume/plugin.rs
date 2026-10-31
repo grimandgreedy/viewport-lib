@@ -106,6 +106,7 @@ impl ItemTypePlugin for VolumePlugin {
                 ctx.clip_objects,
                 step_multiplier,
                 wireframe,
+                ctx.world_origin(),
             ));
         }
         Vec::new()
