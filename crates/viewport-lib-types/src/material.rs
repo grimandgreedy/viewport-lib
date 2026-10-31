@@ -807,9 +807,9 @@ pub struct Material {
     #[cfg_attr(feature = "serde", serde(default = "default_specular_colour"))]
     pub specular_colour: crate::colour::Colour,
     /// Index of refraction, for refraction and transmission only. Default 1.5.
-    /// The rasteriser does not read it: F0 comes from
-    /// [`reflectance`](Self::reflectance), which [`with_ior`](Self::with_ior)
-    /// sets together with this field.
+    /// It bends the light [`transmission`](Self::transmission) lets through;
+    /// F0 comes from [`reflectance`](Self::reflectance), which
+    /// [`with_ior`](Self::with_ior) sets together with this field.
     #[cfg_attr(feature = "serde", serde(default = "default_ior"))]
     pub ior: f32,
     /// Strength of a clear coat layered over the base, 0..1, as glTF
@@ -840,6 +840,37 @@ pub struct Material {
     /// bitangent, in radians. Default 0.
     #[cfg_attr(feature = "serde", serde(default))]
     pub anisotropy_rotation: f32,
+    /// Fraction of light that passes through the surface rather than being
+    /// diffusely reflected, 0..1, as glTF `KHR_materials_transmission`'s
+    /// `transmissionFactor`. Default 0 (opaque). The transmitted light is
+    /// tinted by the base colour and refracted by [`ior`](Self::ior). PBR
+    /// shading in the opaque or mask alpha mode only; metals do not transmit.
+    ///
+    /// An opaque-mode transmissive mesh draws after the opaque scene and reads
+    /// a copy of it, blurred by roughness. It sees opaque geometry only: a
+    /// transmissive surface behind another shows through as the environment.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub transmission: f32,
+    /// Thickness of the volume under the surface, in world units, as glTF
+    /// `KHR_materials_volume`'s `thicknessFactor`. Default 0 (a thin wall that
+    /// does not bend what is behind it). Sets how far the refracted ray
+    /// travels before it reads the scene behind, and the path length for
+    /// [`attenuation_colour`](Self::attenuation_colour).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub thickness: f32,
+    /// Colour white light becomes after travelling
+    /// [`attenuation_distance`](Self::attenuation_distance) through the
+    /// volume, as `KHR_materials_volume`'s `attenuationColor`. Default linear
+    /// white (no absorption).
+    #[cfg_attr(feature = "serde", serde(default = "default_attenuation_colour"))]
+    pub attenuation_colour: crate::colour::Colour,
+    /// Distance in world units over which light is absorbed to
+    /// [`attenuation_colour`](Self::attenuation_colour), as
+    /// `KHR_materials_volume`'s `attenuationDistance`. Default `f32::MAX`
+    /// (no absorption); `f32::MAX` rather than infinity so the value survives
+    /// formats without infinities.
+    #[cfg_attr(feature = "serde", serde(default = "default_attenuation_distance"))]
+    pub attenuation_distance: f32,
 }
 
 /// A material's values for its plugin's declared parameters, keyed by name.
@@ -1017,6 +1048,16 @@ fn default_ior() -> f32 {
 }
 
 #[cfg(feature = "serde")]
+fn default_attenuation_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0)
+}
+
+#[cfg(feature = "serde")]
+fn default_attenuation_distance() -> f32 {
+    f32::MAX
+}
+
+#[cfg(feature = "serde")]
 fn default_sheen_colour() -> crate::colour::Colour {
     crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0)
 }
@@ -1064,6 +1105,10 @@ impl Default for Material {
             sheen_roughness: 0.0,
             anisotropy: 0.0,
             anisotropy_rotation: 0.0,
+            transmission: 0.0,
+            thickness: 0.0,
+            attenuation_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
+            attenuation_distance: f32::MAX,
         }
     }
 }
@@ -1156,6 +1201,23 @@ impl Material {
     pub fn with_anisotropy(mut self, strength: f32, rotation: f32) -> Self {
         self.anisotropy = strength;
         self.anisotropy_rotation = rotation;
+        self
+    }
+
+    /// Let `transmission` (0..1) of the light through a volume `thickness`
+    /// world units deep. See [`transmission`](Self::transmission).
+    pub fn with_transmission(mut self, transmission: f32, thickness: f32) -> Self {
+        self.transmission = transmission;
+        self.thickness = thickness;
+        self
+    }
+
+    /// Absorb light inside the volume so white becomes `colour` after
+    /// `distance` world units. See
+    /// [`attenuation_colour`](Self::attenuation_colour).
+    pub fn with_attenuation(mut self, colour: crate::colour::Colour, distance: f32) -> Self {
+        self.attenuation_colour = colour;
+        self.attenuation_distance = distance;
         self
     }
 

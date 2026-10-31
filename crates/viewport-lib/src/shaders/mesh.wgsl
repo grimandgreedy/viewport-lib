@@ -166,6 +166,8 @@ struct MaterialGpu {
     specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
     layers0: vec4<f32>,      // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
     layers1: vec4<f32>,      // (sheen colour rgb, sheen roughness)
+    volume0: vec4<f32>,      // (transmission, thickness, ior, 0)
+    volume1: vec4<f32>,      // (absorption coefficient rgb, 0)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -181,6 +183,7 @@ const MAT_UV_TRANSFORM: u32 = 128u;
 const MAT_HAS_CLEARCOAT: u32 = 256u;
 const MAT_HAS_SHEEN: u32 = 512u;
 const MAT_HAS_ANISOTROPY: u32 = 1024u;
+const MAT_HAS_TRANSMISSION: u32 = 2048u;
 
 // A transformed UV plus its screen-space derivatives, for textureSampleGrad.
 struct SlotUv {
@@ -279,6 +282,9 @@ struct ClipVolumeUB {
 // plugin hook still read `object.FIELD` unchanged.
 @group(1) @binding(0) var<storage, read> instances: array<InstanceData>;
 var<private> object: Object;
+// The fragment's transmission, written by compute_lit for the transmission
+// entry points to finish.
+var<private> transmission_out: PbrTransmission;
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
 @group(1) @binding(3) var normal_map: texture_2d<f32>;
@@ -307,6 +313,7 @@ override FEAT_LIGHT_PROBE: bool = true;
 override FEAT_CLEARCOAT: bool = true;
 override FEAT_SHEEN: bool = true;
 override FEAT_ANISOTROPY: bool = true;
+override FEAT_TRANSMISSION: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
@@ -1254,6 +1261,19 @@ fn compute_lit(
                                     material_gpu_buf[mid].item_flags.x, saa_kernel);
         }
 
+        // Transmission: the diffuse lobe gives way to light refracted through
+        // the surface. The environment along the refracted ray stands in for
+        // the scene behind; the transmission pass replaces it.
+        if FEAT_TRANSMISSION {
+            let mid = object.material_id;
+            if (material_gpu_buf[mid].item_flags.x & MAT_HAS_TRANSMISSION) != 0u {
+                transmission_out = pbr_transmission(px, N, V, in.world_pos,
+                                                    material_gpu_buf[mid].volume0,
+                                                    material_gpu_buf[mid].volume1, refl_dr);
+                px.diffuse_colour *= 1.0 - transmission_out.amount;
+            }
+        }
+
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.
@@ -1333,6 +1353,9 @@ fn compute_lit(
                               in.lightmap_uv, in.lightmap_page, refl_dr,
                               last_shadow_sample.factor);
         var ambient: vec3<f32> = amb.ambient;
+        if FEAT_TRANSMISSION && transmission_out.enabled {
+            ambient += transmission_out.fallback;
+        }
         dbg_ibl_diff_lum = dot(amb.ibl_diffuse, lum_weights);
         dbg_ibl_spec_lum = dot(amb.ibl_specular, lum_weights);
         dbg_ambient_lum  = amb.ambient_lum;
@@ -1450,6 +1473,62 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
 fn fs_main_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     return fs_body(from_plain(p), is_front);
 }
+
+// BEGIN_TRANSMISSION_PASS
+// A device with fewer than four bind groups compiles the module without this
+// region; it has no transmission pass.
+// ALT(NO_TRANSMISSION_PASS):
+// `fs_main` for a transmissive surface, drawn after the opaque scene with a
+// copy of it bound at group 3: the scene behind replaces the environment
+// that stood in for it.
+@fragment
+fn fs_main_transmission(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return transmission_resolve(fs_body(in, is_front), in.clip_pos.z);
+}
+
+@fragment
+fn fs_main_transmission_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let in = from_plain(p);
+    return transmission_resolve(fs_body(in, is_front), in.clip_pos.z);
+}
+
+// The opaque scene colour, its mips blurred for rough surfaces, with the
+// scene depth in alpha at mip 0.
+@group(3) @binding(0) var transmission_scene: texture_2d<f32>;
+@group(3) @binding(1) var transmission_sampler: sampler;
+
+// Swap the environment stand-in in `colour` for the scene behind the
+// surface. Kept where the exit point leaves the screen, lands on the
+// background, or lands on opaque geometry nearer than the surface at
+// `frag_depth` (depth is reversed: larger is nearer).
+fn transmission_resolve(colour: vec4<f32>, frag_depth: f32) -> vec4<f32> {
+    let t = transmission_out;
+    if !t.enabled {
+        return colour;
+    }
+    let clip = camera.view_proj * vec4<f32>(t.exit_pos, 1.0);
+    if clip.w <= 0.0 {
+        return colour;
+    }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
+        return colour;
+    }
+    let size = textureDimensions(transmission_scene, 0);
+    let texel = min(vec2<u32>(uv * vec2<f32>(size)), size - vec2<u32>(1u));
+    let behind_depth = textureLoad(transmission_scene, texel, 0).a;
+    if behind_depth <= 0.0 || behind_depth > frag_depth {
+        return colour;
+    }
+    // The copy has one mip per halving of its shorter side; derived from the
+    // size, since GLSL ES has no level-count query.
+    let top_mip = floor(log2(f32(max(min(size.x, size.y), 1u))));
+    let lod = t.roughness * top_mip;
+    let behind = textureSampleLevel(transmission_scene, transmission_sampler, uv, lod).rgb;
+    return vec4<f32>(colour.rgb + t.weight * behind - t.fallback, colour.a);
+}
+// END_TRANSMISSION_PASS
 
 fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     object = load_object(in.obj_idx);

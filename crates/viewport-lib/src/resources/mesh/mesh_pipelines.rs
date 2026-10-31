@@ -265,6 +265,62 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     )
 }
 
+/// One transmissive `mesh.wgsl` pipeline: the `fs_main_transmission`
+/// entries, depth-tested against the opaque scene without writing it, over a
+/// layout whose group 3 holds the opaque scene copy.
+pub(crate) fn hdr_transmission_pipeline(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
+    label: &str,
+    two_sided: bool,
+    constants: &[(&str, f64)],
+) -> crate::gpu::RenderPipeline {
+    let plain = plain_entries(constants);
+    let lean = lean_entries(constants);
+    crate::resources::builders::render_pipeline_with_constants(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: mesh_vertex_entry(false, plain, lean),
+            vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(false), lean),
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some(if plain {
+                    "fs_main_transmission_plain"
+                } else {
+                    "fs_main_transmission"
+                }),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format: crate::gpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: (!two_sided).then_some(crate::gpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                depth_format,
+                false,
+                crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
+            )),
+            multisample: crate::gpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
+        },
+        constants,
+    )
+}
+
 /// One OIT accumulate pipeline from `mesh_oit.wgsl`, with a label and values
 /// for the module's `override` constants.
 pub(crate) fn build_oit_pipeline_with(

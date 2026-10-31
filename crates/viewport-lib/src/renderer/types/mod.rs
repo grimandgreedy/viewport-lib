@@ -28,6 +28,10 @@ pub(crate) struct InstancedBatch {
     pub instance_offset: u32,
     pub instance_count: u32,
     pub is_transparent: bool,
+    /// `true` when the batch draws in the HDR transmission pass rather than
+    /// the opaque scene: one transmissive record, opaque-mode, on a device
+    /// with the pass. Never set with `is_transparent`.
+    pub is_transmissive: bool,
     /// `true` when the batch's material uses the `Identical` backface policy, so
     /// it must be drawn with the two-sided (`cull_mode: None`) instanced pipeline.
     pub two_sided: bool,
@@ -262,6 +266,8 @@ pub(crate) enum BatchPass<'a> {
     },
     /// The weighted-blended OIT pass.
     Oit,
+    /// The HDR transmission pass. Groups 2 and 3 are the caller's to bind.
+    Transmission,
 }
 
 /// Draw one batch: bind its group-1 bind group and the geometry its
@@ -348,6 +354,20 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
             } else {
                 let key = opaque_key(resources, batch, *clipping_active);
                 (take(family.opaque_features(key, feats)), None)
+            }
+        }
+        BatchPass::Transmission => {
+            if lines || batch.shading_plugin.is_some() {
+                (None, None)
+            } else {
+                (
+                    take(resources.transmission.mesh_features(
+                        batch.two_sided,
+                        feats,
+                        batch.bindless,
+                    )),
+                    None,
+                )
             }
         }
         BatchPass::Oit => {
@@ -636,9 +656,10 @@ pub(crate) fn draw_culled_batches(
 
 impl InstancedBatch {
     /// Whether the batch draws from the GPU cull's indirect args when the
-    /// cull runs: an indexed draw of its mesh or a submesh range.
+    /// cull runs: an indexed draw of its mesh or a submesh range. A
+    /// transmissive batch draws directly in its own pass.
     pub(crate) fn draws_culled(&self) -> bool {
-        matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..))
+        matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..)) && !self.is_transmissive
     }
 
     /// Whether the batch can join a GPU-driven draw group: a culled draw

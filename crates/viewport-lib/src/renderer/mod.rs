@@ -266,6 +266,10 @@ pub(crate) struct ViewportSlot {
     pub(crate) target_idle: crate::resources::postprocess::targets::TargetIdle,
     /// The HDR passes this viewport ran last frame.
     pub(crate) pass_table: render::pass_table::PassTable,
+    /// The opaque scene copy transmissive meshes read, sized on the first
+    /// frame that draws one.
+    pub(crate) transmission:
+        Option<crate::resources::postprocess::transmission::TransmissionTarget>,
 }
 
 /// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
@@ -3797,6 +3801,7 @@ impl ViewportRenderer {
                 overlay_depth: None,
                 target_idle: Default::default(),
                 pass_table: Default::default(),
+                transmission: None,
             });
         }
     }

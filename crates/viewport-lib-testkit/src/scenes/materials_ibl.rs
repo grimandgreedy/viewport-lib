@@ -197,6 +197,40 @@ fn build_lobes_anisotropy(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     environment_scene(items, env)
 }
 
+/// Glass spheres over a checker floor. From the left: a thin wall (no
+/// bending), a solid sphere (thickness its diameter), the same at roughness
+/// 0.35, and a solid sphere absorbing toward blue. The floor shows through
+/// each, refracted by the solid ones and blurred by the rough one.
+fn build_transmission_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let env = upload_environment(ctx);
+    let checker = textures::checker(384, 12, [235, 235, 235], [30, 30, 40]);
+    let checker = upload_texture(
+        ctx,
+        TextureData::srgb(checker.width, checker.height, checker.rgba),
+    );
+    let floor = upload(ctx, &primitives::plane(6.0, 6.0));
+    let sphere = upload(ctx, &primitives::sphere(0.5, 64, 32));
+    let floor_material = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.8)
+        .with_texture(TextureSlot::Albedo, checker);
+    let mut items = vec![item(ctx, floor, Vec3::new(0.0, 0.0, -0.6), floor_material)];
+    let glass = |roughness: f32, thickness: f32| {
+        Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, roughness)
+            .with_transmission(1.0, thickness)
+            .with_ior(1.5)
+    };
+    let spheres = [
+        glass(0.0, 0.0),
+        glass(0.0, 1.0),
+        glass(0.35, 1.0),
+        glass(0.0, 1.0).with_attenuation(Colour::linear_rgb(0.2, 0.5, 1.0), 0.6),
+    ];
+    for (i, material) in spheres.into_iter().enumerate() {
+        let x = i as f32 * 1.5 - 2.25;
+        items.push(item(ctx, sphere, Vec3::new(x, 0.0, 0.0), material));
+    }
+    environment_scene(items, env)
+}
+
 /// The environment-lit material scenes.
 pub fn scenes() -> Vec<NamedScene> {
     vec![
@@ -219,6 +253,14 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "lobes_anisotropy",
             cameras: grid_camera(-2.0, 7.0),
             build: build_lobes_anisotropy,
+        },
+        NamedScene {
+            name: "transmission_checker",
+            cameras: vec![super::NamedCamera {
+                name: "iso",
+                camera: super::orbit_camera(Vec3::new(0.0, 0.0, -0.3), 5.0, 0.0, 0.9),
+            }],
+            build: build_transmission_checker,
         },
     ]
 }

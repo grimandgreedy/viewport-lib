@@ -91,6 +91,16 @@ impl DeviceResources {
         if self.pipeline_compiler.policy() == crate::resources::PipelineCompilation::Blocking {
             return true;
         }
+        if batch.is_transmissive {
+            let feats = if self.mesh_universal {
+                crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+            } else {
+                batch.features
+            };
+            return self
+                .transmission
+                .mesh_ready(batch.two_sided, feats, batch.bindless);
+        }
         // Either the
         // discarding pipeline or its discard-free twin counts as ready,
         // whichever the draw site picks.

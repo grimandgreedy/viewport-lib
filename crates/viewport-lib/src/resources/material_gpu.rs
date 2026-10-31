@@ -71,6 +71,8 @@ impl TexTransformGpu {
 /// - `specular` = (dielectric F0 rgb, dielectric F90), see [`dielectric_specular`]
 /// - `layers0` = (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
 /// - `layers1` = (sheen colour rgb, sheen roughness)
+/// - `volume0` = (transmission, thickness, ior, 0)
+/// - `volume1` = (absorption coefficient rgb, 0), see [`volume_lanes`]
 ///
 /// A layer the material does not use has its lanes zeroed and its
 /// `item_flags` bit clear, so a material without layers interns to the same
@@ -140,10 +142,14 @@ pub(crate) struct MaterialGpu {
     pub(crate) layers0: [f32; 4],
     /// `(sheen_colour.rgb, sheen_roughness)`.
     pub(crate) layers1: [f32; 4],
+    /// `(transmission, thickness, ior, 0)`.
+    pub(crate) volume0: [f32; 4],
+    /// `(absorption.rgb, 0)`: Beer-Lambert coefficient per world unit.
+    pub(crate) volume1: [f32; 4],
 }
 
 /// Size in bytes of one [`MaterialGpu`] block.
-pub(crate) const MATERIAL_GPU_BYTES: usize = 656;
+pub(crate) const MATERIAL_GPU_BYTES: usize = 688;
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
 
 /// A dielectric's specular reflectance at normal and grazing incidence,
@@ -192,6 +198,51 @@ pub(crate) mod item_flags {
     pub(crate) const HAS_SHEEN: u32 = 1 << 9;
     /// The base specular lobe is anisotropic (`layers0.zw`).
     pub(crate) const HAS_ANISOTROPY: u32 = 1 << 10;
+    /// Light passes through the surface (`volume0`, `volume1`).
+    pub(crate) const HAS_TRANSMISSION: u32 = 1 << 11;
+}
+
+/// Whether `m` draws as a transmissive surface: PBR built-in shading with a
+/// non-zero transmission, in the opaque or mask alpha mode. A material
+/// plugin's shading and a blended material do not transmit.
+pub(crate) fn transmits(m: &Material) -> bool {
+    m.transmission > 0.0 && m.is_pbr() && m.shading_plugin.is_none() && !m.is_blend()
+}
+
+/// The Beer-Lambert absorption coefficient per world unit that turns white
+/// into `colour` over `distance`: `-ln(colour) / distance` per channel. None
+/// for a distance of `f32::MAX`, infinity or zero. Shared with the path
+/// tracer's material table.
+pub(crate) fn absorption(colour: [f32; 3], distance: f32) -> [f32; 3] {
+    colour.map(|c| {
+        if distance.is_finite() && distance > 0.0 && distance < f32::MAX {
+            (-(c.clamp(1.0e-4, 1.0)).ln() / distance).max(0.0)
+        } else {
+            0.0
+        }
+    })
+}
+
+/// A material's volume lanes and their `item_flags` bit:
+/// `(volume0, volume1, flags)`. Zeros when the material does not transmit.
+/// The absorption coefficient is `-ln(attenuation_colour) /
+/// attenuation_distance` per channel, so white or a `f32::MAX` distance is
+/// none.
+pub(crate) fn volume_lanes(m: &Material) -> ([f32; 4], [f32; 4], u32) {
+    if !transmits(m) {
+        return ([0.0; 4], [0.0; 4], 0);
+    }
+    let sigma = absorption(m.attenuation_colour.to_linear_rgb(), m.attenuation_distance);
+    (
+        [
+            m.transmission.clamp(0.0, 1.0),
+            m.thickness.max(0.0),
+            m.ior.max(1.0),
+            0.0,
+        ],
+        [sigma[0], sigma[1], sigma[2], 0.0],
+        item_flags::HAS_TRANSMISSION,
+    )
 }
 
 /// A material's layer lanes and their `item_flags` bits:
@@ -456,6 +507,7 @@ impl MaterialGpu {
             m.anisotropy,
             m.anisotropy_rotation,
         );
+        let (volume0, volume1, volume_flags) = volume_lanes(m);
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
         // Styled back-face policy and colour (the per-item Pattern world scale
@@ -542,7 +594,8 @@ impl MaterialGpu {
                         | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX)
                         | on(xf.iter().any(|x| x.rot_tc[1] > 0.5), f::USES_UV1)
                         | on(xf.iter().any(|x| !x.is_identity()), f::UV_TRANSFORM)
-                        | layer_flags,
+                        | layer_flags
+                        | volume_flags,
                     mode,
                     0,
                     0,
@@ -556,6 +609,8 @@ impl MaterialGpu {
             ),
             layers0,
             layers1,
+            volume0,
+            volume1,
         }
     }
 }
@@ -839,6 +894,44 @@ mod tests {
         assert_ne!(f & item_flags::HAS_CLEARCOAT, 0);
         assert_ne!(f & item_flags::HAS_SHEEN, 0);
         assert_ne!(f & item_flags::HAS_ANISOTROPY, 0);
+    }
+
+    #[test]
+    fn volume_packs_only_when_transmitting() {
+        let block = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
+        };
+        let plain = block(&Material::default());
+        assert_eq!(plain.volume0, [0.0; 4]);
+        assert_eq!(plain.volume1, [0.0; 4]);
+        assert_eq!(plain.item_flags[0] & item_flags::HAS_TRANSMISSION, 0);
+        // Volume fields without transmission change nothing.
+        let idle = Material::default()
+            .with_attenuation(crate::Colour::linear_rgb(0.5, 0.5, 0.5), 1.0)
+            .with_transmission(0.0, 2.0);
+        assert_eq!(bytes(&idle, false), bytes(&Material::default(), false));
+        // Phong shading does not transmit.
+        let phong = Material::default().with_transmission(1.0, 1.0);
+        assert_eq!(
+            block(&phong).item_flags[0] & item_flags::HAS_TRANSMISSION,
+            0
+        );
+
+        let mut glass = Material::default()
+            .with_transmission(0.75, 2.0)
+            .with_ior(1.33)
+            .with_attenuation(crate::Colour::linear_rgb(0.5, 1.0, 0.25), 2.0);
+        glass.shading_model = crate::scene::material::ShadingModel::Pbr;
+        let b = block(&glass);
+        assert_eq!(b.volume0, [0.75, 2.0, 1.33, 0.0]);
+        let ln2 = std::f32::consts::LN_2;
+        assert!((b.volume1[0] - ln2 / 2.0).abs() < 1e-6);
+        assert_eq!(b.volume1[1], 0.0);
+        assert!((b.volume1[2] - ln2).abs() < 1e-6);
+        assert_ne!(b.item_flags[0] & item_flags::HAS_TRANSMISSION, 0);
+        // The default distance absorbs nothing.
+        glass.attenuation_distance = f32::MAX;
+        assert_eq!(block(&glass).volume1, [0.0; 4]);
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub(crate) mod composite;
 pub(crate) mod oit;
 pub(crate) mod producer;
 pub(crate) mod targets;
+pub(crate) mod transmission;
 pub(crate) mod uniforms;
 
 pub(crate) use self::targets::TargetGroups;

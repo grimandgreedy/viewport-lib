@@ -657,6 +657,9 @@ pub struct DeviceResources {
     // size live on ViewportHdrState; only the shared pipelines and layout sit here.
     /// Weighted-blended OIT pipelines and composite layout.
     pub(crate) oit: crate::resources::postprocess::OitResources,
+    /// Transmission pipelines and layouts; the per-viewport scene copy lives
+    /// on the viewport slot.
+    pub(crate) transmission: crate::resources::postprocess::transmission::TransmissionResources,
 
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.

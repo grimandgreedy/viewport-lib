@@ -285,6 +285,16 @@ pub struct RtMaterial {
     /// Rotation of the anisotropy direction in radians, as
     /// `Material::anisotropy_rotation`. Default 0.
     pub anisotropy_rotation: f32,
+    /// Colour white light becomes after travelling
+    /// [`attenuation_distance`](Self::attenuation_distance) inside a
+    /// transmissive surface, as `Material::attenuation_colour`. Default
+    /// linear white (no absorption). The tracer measures the path through
+    /// the mesh itself, so it has no thickness field.
+    pub attenuation_colour: crate::Colour,
+    /// Distance over which light is absorbed to
+    /// [`attenuation_colour`](Self::attenuation_colour), as
+    /// `Material::attenuation_distance`. Default `f32::MAX` (none).
+    pub attenuation_distance: f32,
 }
 
 impl Default for RtMaterial {
@@ -305,6 +315,8 @@ impl Default for RtMaterial {
             sheen_roughness: 0.0,
             anisotropy: 0.0,
             anisotropy_rotation: 0.0,
+            attenuation_colour: crate::Colour::linear_rgb(1.0, 1.0, 1.0),
+            attenuation_distance: f32::MAX,
         }
     }
 }
@@ -691,6 +703,9 @@ struct GpuMaterial {
     layers0: [f32; 4],
     /// `(sheen_colour.rgb, sheen_roughness)`; zero without a sheen.
     layers1: [f32; 4],
+    /// `(absorption.rgb, 0)`: the Beer-Lambert coefficient per world unit
+    /// inside a transmissive mesh.
+    volume: [f32; 4],
 }
 
 #[repr(C)]
@@ -1128,6 +1143,13 @@ impl Tracer {
                     ),
                     layers0,
                     layers1,
+                    volume: {
+                        let s = crate::resources::material_gpu::absorption(
+                            m.attenuation_colour.to_linear_rgb(),
+                            m.attenuation_distance,
+                        );
+                        [s[0], s[1], s[2], 0.0]
+                    },
                 }
             })
             .collect();
@@ -1144,6 +1166,7 @@ impl Tracer {
                 dielectric: [0.04, 0.04, 0.04, 1.0],
                 layers0: [0.0; 4],
                 layers1: [0.0; 4],
+                volume: [0.0; 4],
             });
         }
 

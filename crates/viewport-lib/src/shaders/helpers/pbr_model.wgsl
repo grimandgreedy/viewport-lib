@@ -383,6 +383,68 @@ fn pbr_layer_radiance(R: vec3<f32>, roughness: f32, refl_dr: f32) -> vec3<f32> {
     return vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
 }
 
+// Light refracted through a transmissive surface, before the scene behind it
+// is known. `pbr_transmission` fills it; the caller adds `fallback` (the
+// environment along `direction`) and the transmission pass swaps it for the
+// scene seen at `exit_pos`.
+struct PbrTransmission {
+    enabled: bool,
+    // The share of the diffuse lobe given to transmission:
+    // transmission * (1 - metallic).
+    amount: f32,
+    // Radiance from behind is scaled by this: the base colour tint, the
+    // light the specular lobe did not reflect (1 - the split-sum specular
+    // albedo) and the Beer-Lambert absorption over the thickness.
+    weight: vec3<f32>,
+    // Where the refracted ray leaves the volume and the direction it leaves
+    // in. A thin wall (zero thickness) does not bend the ray.
+    exit_pos: vec3<f32>,
+    direction: vec3<f32>,
+    // The environment radiance along `direction` times `weight`.
+    fallback: vec3<f32>,
+    // Perceptual roughness, which blurs the scene seen through the surface.
+    roughness: f32,
+};
+
+// Resolve the transmission of `px` at `world_pos` from the material's volume
+// lanes: `volume0` (transmission, thickness, ior, 0) and `volume1`
+// (absorption coefficient rgb, 0). A thick surface refracts into a sphere of
+// the given thickness and out of its far side.
+fn pbr_transmission(
+    px: PbrPixel,
+    N: vec3<f32>,
+    V: vec3<f32>,
+    world_pos: vec3<f32>,
+    volume0: vec4<f32>,
+    volume1: vec4<f32>,
+    refl_dr: f32,
+) -> PbrTransmission {
+    var t: PbrTransmission;
+    t.enabled = true;
+    t.amount = clamp(volume0.x, 0.0, 1.0) * (1.0 - px.metallic);
+    let thickness = max(volume0.y, 0.0);
+    let eta = 1.0 / max(volume0.z, 1.0);
+    t.exit_pos = world_pos;
+    t.direction = -V;
+    if thickness > 0.0 {
+        let r = refract(-V, N, eta);
+        if dot(r, r) > 1e-6 {
+            let n_dot_r = dot(N, r);
+            t.exit_pos = world_pos + r * (thickness * -n_dot_r);
+            let n_out = normalize(n_dot_r * r - N * 0.5);
+            let out_dir = refract(r, n_out, 1.0 / eta);
+            t.direction = select(r, normalize(out_dir), dot(out_dir, out_dir) > 1e-6);
+        }
+    }
+    let specular_albedo = px.f0 * px.dfg.x + vec3<f32>(px.f90 * px.dfg.y);
+    let absorption = exp(-max(volume1.xyz, vec3<f32>(0.0)) * thickness);
+    t.weight = px.diffuse_colour * clamp(vec3<f32>(1.0) - specular_albedo, vec3<f32>(0.0), vec3<f32>(1.0))
+        * absorption * t.amount;
+    t.roughness = px.perceptual_roughness;
+    t.fallback = t.weight * pbr_layer_radiance(t.direction, t.roughness, refl_dr);
+    return t;
+}
+
 // The layers over the indirect term: the sheen dims the base and adds its
 // own reflection, then the coat dims both and adds its reflection, each
 // taking the specular occlusion. Environment zones and probes light the

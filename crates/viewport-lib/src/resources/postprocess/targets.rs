@@ -125,6 +125,9 @@ pub(crate) enum TargetId {
     ContactShadow,
     Exposure,
     FxaaInput,
+    /// The opaque scene copy, with its mip chain, that transmissive meshes
+    /// read.
+    OpaqueCopy,
     /// The frame's output view.
     Output,
 }
@@ -166,7 +169,7 @@ impl TargetSet {
 
     /// The target groups that hold these targets. Targets allocated outside
     /// the groups (OIT, the foreground depth, the outline, Hi-Z, exposure,
-    /// the output) contribute nothing.
+    /// the opaque copy, the output) contribute nothing.
     pub(crate) fn groups(self) -> TargetGroups {
         use TargetId as T;
         TargetGroups::when(
