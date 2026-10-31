@@ -16,7 +16,11 @@ impl ViewportRenderer {
 
     /// Size viewport `vp_idx`'s scene copy when the frame has transmissive
     /// meshes. Runs before the frame's encoder borrows the slot.
-    pub(super) fn ensure_transmission_target(&mut self, device: &crate::gpu::Device, vp_idx: usize) {
+    pub(super) fn ensure_transmission_target(
+        &mut self,
+        device: &crate::gpu::Device,
+        vp_idx: usize,
+    ) {
         if !self.has_transmissive_batches() {
             return;
         }

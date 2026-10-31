@@ -156,7 +156,10 @@ impl TransmissionResources {
     pub(crate) fn mip_pipelines(
         &self,
     ) -> Option<(&crate::gpu::RenderPipeline, &crate::gpu::RenderPipeline)> {
-        Some((self.copy.as_ref()?.get(0)?, self.downsample.as_ref()?.get(0)?))
+        Some((
+            self.copy.as_ref()?.get(0)?,
+            self.downsample.as_ref()?.get(0)?,
+        ))
     }
 
     /// Fill `target`'s mip 0 from the scene colour and depth, then each
@@ -289,24 +292,23 @@ impl TransmissionResources {
                 })
             })
             .collect();
-        let texture_group = |label: &str,
-                             layout: &crate::gpu::BindGroupLayout,
-                             view: &crate::gpu::TextureView| {
-            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some(label),
-                layout,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(linear),
-                    },
-                ],
-            })
-        };
+        let texture_group =
+            |label: &str, layout: &crate::gpu::BindGroupLayout, view: &crate::gpu::TextureView| {
+                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some(label),
+                    layout,
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(view),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(linear),
+                        },
+                    ],
+                })
+            };
         let downsample_groups = mip_views[..mip_views.len() - 1]
             .iter()
             .map(|view| texture_group("transmission_downsample_bind_group", downsample_bgl, view))
@@ -358,7 +360,8 @@ impl crate::resources::DeviceResources {
                 b::nearest_sampler_entry(2, fragment),
             ],
         });
-        let downsample_bgl = b::texture_sampler_bgl(device, "transmission_downsample_bgl", fragment);
+        let downsample_bgl =
+            b::texture_sampler_bgl(device, "transmission_downsample_bgl", fragment);
         let scene_bgl = b::texture_sampler_bgl(device, "transmission_scene_bgl", fragment);
         let empty_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("transmission_empty_bgl"),
