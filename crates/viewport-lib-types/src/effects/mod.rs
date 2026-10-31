@@ -4,6 +4,7 @@
 //! [`light_transport`] documents the units and the exposure contract these
 //! settings follow.
 
+pub mod colour_space;
 pub mod debug;
 pub mod environment;
 pub mod ground;
@@ -12,3 +13,4 @@ pub mod lighting;
 pub mod lightmap;
 pub mod postprocess;
 pub mod scatter;
+pub mod tone_operators;

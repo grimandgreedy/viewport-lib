@@ -1,12 +1,21 @@
 //! Post-process configuration such as tone mapping applied at display time.
 
 /// Tone mapping operator used by the HDR pipeline.
+///
+/// A named operator keeps its curve: a corrected or retuned curve is a new
+/// variant. The AgX and ACES operators follow the reference implementations'
+/// constants; [`tone_operators`](crate::effects::tone_operators) holds a CPU
+/// version of each.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ToneMapping {
     /// Reinhard tone mapping (simple, good for scenes without extreme HDR).
     Reinhard,
-    /// ACES filmic tone mapping (cinematic look, strong colour shift).
+    /// Narkowicz's fit of the ACES filmic curve, applied per channel in the
+    /// working space: a cheap approximation with a strong colour shift in
+    /// saturated highlights. See [`AcesRrt`](Self::AcesRrt) for the fuller
+    /// model.
     Aces,
     /// Khronos Neutral tone mapping (perceptually uniform, minimal colour shift).
     ///
@@ -14,6 +23,147 @@ pub enum ToneMapping {
     /// is done on HDR values above 1.0. This is the default.
     #[default]
     KhronosNeutral,
+    /// AgX: a log encoding and sigmoid in a set of inset Rec.2020 primaries,
+    /// which desaturates bright colours smoothly towards white. Takes a look
+    /// from [`PostProcessSettings::agx_look`].
+    Agx,
+    /// An approximation of the ACES reference rendering and output
+    /// transforms (RRT and ODT, 100 nit display) with the glow, red
+    /// modifier and desaturation stages, evaluated in AP0 and AP1.
+    ///
+    /// Colours move to AP0 without adapting the white point, as the
+    /// reference does, so a neutral grey comes out slightly blue in the
+    /// shadows and warm in the highlights.
+    AcesRrt,
+    /// A configurable per-channel curve through a mid-grey point and a
+    /// white point, shaped by [`PostProcessSettings::generic_tone_curve`].
+    Generic,
+}
+
+impl ToneMapping {
+    /// The operator's index in the renderer's composite uniform.
+    #[doc(hidden)]
+    pub const fn composite_index(self) -> u32 {
+        match self {
+            ToneMapping::Reinhard => 0,
+            ToneMapping::Aces => 1,
+            ToneMapping::KhronosNeutral => 2,
+            ToneMapping::Agx => 3,
+            ToneMapping::AcesRrt => 4,
+            ToneMapping::Generic => 5,
+        }
+    }
+}
+
+/// A creative look applied inside the AgX operator, after its sigmoid
+/// ([`ToneMapping::Agx`]).
+///
+/// A look is a slope and power per channel (an ASC CDL) followed by a
+/// saturation scale about Rec.709 luma.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AgxLook {
+    /// The base curve with no look.
+    #[default]
+    None,
+    /// More contrast and saturation: power 1.35, saturation 1.4.
+    Punchy,
+    /// A warm grade: slope (1.0, 0.9, 0.5), power 0.8, saturation 1.3.
+    Golden,
+}
+
+impl AgxLook {
+    /// The `(slope, power, saturation)` of the look's CDL.
+    pub fn cdl(self) -> ([f32; 3], [f32; 3], f32) {
+        match self {
+            AgxLook::None => ([1.0; 3], [1.0; 3], 1.0),
+            AgxLook::Punchy => ([1.0; 3], [1.35; 3], 1.4),
+            AgxLook::Golden => ([1.0, 0.9, 0.5], [0.8; 3], 1.3),
+        }
+    }
+}
+
+/// The curve of [`ToneMapping::Generic`].
+///
+/// Each channel `x` maps to `output_scale * x^c / (x^c + input_scale)`, with
+/// the two scales chosen so `mid_grey_in` maps to `mid_grey_out` and
+/// `hdr_max` maps to 1. See [`scales`](Self::scales).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GenericToneCurve {
+    /// The exponent `c`: higher is more contrast. Default: `1.55`.
+    pub contrast: f32,
+    /// The input value treated as mid-grey. Default: `0.18`.
+    pub mid_grey_in: f32,
+    /// The display value mid-grey maps to. Default: `0.215`.
+    pub mid_grey_out: f32,
+    /// The input value that maps to display white. Default: `10.0`.
+    pub hdr_max: f32,
+}
+
+impl Default for GenericToneCurve {
+    fn default() -> Self {
+        Self {
+            contrast: 1.55,
+            mid_grey_in: 0.18,
+            mid_grey_out: 0.215,
+            hdr_max: 10.0,
+        }
+    }
+}
+
+impl GenericToneCurve {
+    /// A curve from its four parameters.
+    pub fn new(contrast: f32, mid_grey_in: f32, mid_grey_out: f32, hdr_max: f32) -> Self {
+        Self {
+            contrast,
+            mid_grey_in,
+            mid_grey_out,
+            hdr_max,
+        }
+    }
+
+    /// The contrast exponent and the `(input_scale, output_scale)` pair, after
+    /// clamping the parameters to their valid ranges: contrast at least
+    /// `1e-5`, both mid-grey values in `[1e-5, 1]`, `hdr_max` at least 1.
+    ///
+    /// With `a = mid_grey_in^c`, `b = hdr_max^c` and
+    /// `k = a - mid_grey_out * b`, `input_scale = a * b * (mid_grey_out - 1) / k`
+    /// and `output_scale = mid_grey_out * (a - b) / k`.
+    pub fn scales(&self) -> (f32, f32, f32) {
+        let c = self.contrast.max(1e-5);
+        let mid_in = self.mid_grey_in.clamp(1e-5, 1.0);
+        let mid_out = self.mid_grey_out.clamp(1e-5, 1.0);
+        let hdr_max = self.hdr_max.max(1.0);
+        let a = mid_in.powf(c);
+        let b = hdr_max.powf(c);
+        let k = a - mid_out * b;
+        (c, a * b * (mid_out - 1.0) / k, mid_out * (a - b) / k)
+    }
+}
+
+/// The primaries the scene-referred grade and the tone-map operator work in.
+///
+/// Exposed radiance arrives in Rec.709 (sRGB) primaries and the display
+/// output is Rec.709. [`ToneMapping::Agx`] and [`ToneMapping::AcesRrt`]
+/// always convert to their own internal space and back, clamping negative
+/// channels to 0 on the way back, whatever the working space.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum WorkingSpace {
+    /// Grade and tone map in Rec.709 primaries. The default.
+    #[default]
+    Rec709,
+    /// Convert exposed radiance to Rec.2020 before the scene-referred grade,
+    /// evaluate the grade's log shaper and the operator there, and convert
+    /// the result back to Rec.709 (negative channels clamped to 0) before
+    /// the background composite. A per-channel operator such as
+    /// [`ToneMapping::Reinhard`] then compresses saturated colours
+    /// differently, and a scene-referred LUT reads Rec.2020 values.
+    Rec2020,
 }
 
 /// The EV100 whose exposure multiplier is exactly `1.0`: `-log2(1.2)`.
@@ -281,7 +431,7 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
 /// (`Manual`, `PhysicalCamera`) applies on `Direct` as on `Hdr`, with lit
 /// radiance clamped to 1.0. Transparent volume
 /// meshes (`SceneFrame::transparent_volume_meshes`) require `Hdr`.
-// NOT #[non_exhaustive]: a closed, consumer-selected binary (cf. `ToneMapping`).
+// NOT #[non_exhaustive]: a closed, consumer-selected binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PipelineMode {
@@ -377,6 +527,17 @@ pub struct PostProcessSettings {
     /// [`GradingSpace::Scene`].
     #[cfg_attr(feature = "serde", serde(default))]
     pub grading_space: GradingSpace,
+    /// The look [`ToneMapping::Agx`] applies. Default: [`AgxLook::None`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub agx_look: AgxLook,
+    /// The curve [`ToneMapping::Generic`] applies. Default:
+    /// [`GenericToneCurve::default`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub generic_tone_curve: GenericToneCurve,
+    /// The primaries the scene-referred grade and the operator work in.
+    /// Default: [`WorkingSpace::Rec709`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub working_space: WorkingSpace,
 }
 
 /// Where the colour-grading LUT ([`PostProcessSettings::grade_lut`]) applies
@@ -425,6 +586,9 @@ impl Default for PostProcessSettings {
             vignette: VignetteSettings::default(),
             grade_lut: None,
             grading_space: GradingSpace::Scene,
+            agx_look: AgxLook::None,
+            generic_tone_curve: GenericToneCurve::default(),
+            working_space: WorkingSpace::Rec709,
         }
     }
 }

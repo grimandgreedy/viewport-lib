@@ -5,7 +5,9 @@
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ToneMapUniform {
     pub(crate) exposure: f32,
-    pub(crate) mode: u32, // 0=Reinhard, 1=ACES, 2=KhronosNeutral
+    /// Operator: 0 Reinhard, 1 ACES fit, 2 Khronos Neutral, 3 AgX,
+    /// 4 ACES RRT, 5 generic curve.
+    pub(crate) mode: u32,
     pub(crate) bloom_enabled: u32,
     pub(crate) ssao_enabled: u32,
     pub(crate) contact_shadows_enabled: u32,
@@ -35,10 +37,15 @@ pub(crate) struct ToneMapUniform {
     pub(crate) grade_mode: u32,
     /// Slice count / height of the strip LUT (its texture height).
     pub(crate) grade_lut_size: f32,
-    pub(crate) _pad: [u32; 2],
+    /// Working space of the grade and operator: 0 = Rec.709, 1 = Rec.2020.
+    pub(crate) working_space: u32,
+    /// AgX look: 0 = none, 1 = punchy, 2 = golden.
+    pub(crate) agx_look: u32,
+    /// Generic curve: contrast, input scale, output scale, unused.
+    pub(crate) generic_curve: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 96);
+const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 112);
 
 /// Bloom pass uniform (16 bytes).
 #[repr(C)]

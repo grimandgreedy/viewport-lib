@@ -132,11 +132,16 @@
 //! 6. the vignette.
 //!
 //! The default operator is [`ToneMapping::KhronosNeutral`], Khronos' PBR
-//! Neutral curve. The working primaries are Rec.709 (sRGB); radiance outside
-//! that gamut is carried as negative or above-one channels and is not
-//! gamut-mapped. A wider working space would need the operator and the
-//! scene-referred grade's log shaper evaluated in it, and the result converted
-//! to the display's primaries at the end of the composite.
+//! Neutral curve. Exposed radiance arrives in Rec.709 (sRGB) primaries;
+//! radiance outside that gamut is carried as negative or above-one channels
+//! and is not gamut-mapped. [`PostProcessSettings::working_space`] chooses the
+//! primaries steps 2 and 3 work in: under [`WorkingSpace::Rec709`], the
+//! default, nothing is converted; under [`WorkingSpace::Rec2020`] the colour
+//! is converted to Rec.2020 before step 2 and back to Rec.709, negative
+//! channels clamped to 0, after step 3. [`ToneMapping::Agx`] and
+//! [`ToneMapping::AcesRrt`] work in their own spaces under either setting:
+//! they convert from the working space and back, clamping negative channels
+//! to 0 on the way back.
 //!
 //! A named curve does not change: a corrected or retuned curve is a new
 //! [`ToneMapping`] variant, so a scene that names an operator keeps its look.
@@ -152,6 +157,7 @@
 //! - the exposure mode and compensation ([`DisplaySettings::exposure`]);
 //! - the tone-map operator ([`DisplaySettings::operator`]);
 //! - where a colour grade is applied ([`PostProcessSettings::grading_space`]);
+//! - the working space ([`PostProcessSettings::working_space`]);
 //! - the hemisphere fill ([`LightingSettings::hemisphere_intensity`]) and its
 //!   sky and ground colours.
 //!
@@ -179,6 +185,11 @@
 //! [`GradingSpace::Display`]: crate::effects::postprocess::GradingSpace::Display
 //! [`PostProcessSettings::grade_lut`]: crate::effects::postprocess::PostProcessSettings::grade_lut
 //! [`PostProcessSettings::grading_space`]: crate::effects::postprocess::PostProcessSettings::grading_space
+//! [`PostProcessSettings::working_space`]: crate::effects::postprocess::PostProcessSettings::working_space
+//! [`WorkingSpace::Rec709`]: crate::effects::postprocess::WorkingSpace::Rec709
+//! [`WorkingSpace::Rec2020`]: crate::effects::postprocess::WorkingSpace::Rec2020
+//! [`ToneMapping::Agx`]: crate::effects::postprocess::ToneMapping::Agx
+//! [`ToneMapping::AcesRrt`]: crate::effects::postprocess::ToneMapping::AcesRrt
 //! [`PhysicalExposure`]: crate::camera::PhysicalExposure
 //! [`PhysicalExposure::to_exposure_mode`]: crate::camera::PhysicalExposure::to_exposure_mode
 //! [`Lux`]: crate::effects::lighting::Lux

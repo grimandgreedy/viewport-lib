@@ -467,11 +467,8 @@ impl ViewportRenderer {
         }
 
         // Upload tone map uniform into the per-viewport buffer.
-        let mode = match frame.effects.display.operator {
-            crate::renderer::ToneMapping::Reinhard => 0u32,
-            crate::renderer::ToneMapping::Aces => 1u32,
-            crate::renderer::ToneMapping::KhronosNeutral => 2u32,
-        };
+        let mode = frame.effects.display.operator.composite_index();
+        let (contrast, input_scale, output_scale) = pp.generic_tone_curve.scales();
         let tm_uniform = crate::resources::ToneMapUniform {
             // Exposure is applied from the per-viewport exposure state buffer
             // (the composite's exposure slot), not this field; kept at 1.0 for
@@ -507,7 +504,16 @@ impl ViewportRenderer {
                 (Some(_), _) => 2,
             },
             grade_lut_size,
-            _pad: [0; 2],
+            working_space: match pp.working_space {
+                crate::renderer::WorkingSpace::Rec2020 => 1,
+                _ => 0,
+            },
+            agx_look: match pp.agx_look {
+                crate::renderer::AgxLook::Punchy => 1,
+                crate::renderer::AgxLook::Golden => 2,
+                _ => 0,
+            },
+            generic_curve: [contrast, input_scale, output_scale, 0.0],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
