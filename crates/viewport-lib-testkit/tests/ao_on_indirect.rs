@@ -1,16 +1,21 @@
-//! Ambient occlusion and contact shadows darken indirect light only.
+//! Ambient occlusion darkens indirect light, contact shadows direct light.
 //!
-//! The scene pass writes the indirect share of each pixel's light, and the
-//! composite scales both screen-space occlusion terms by it. A box floats just
-//! above a plane under an overhead sun: with the hemisphere fill off every
-//! pixel is direct or black, so turning either term on changes nothing; with
-//! the fill on, the shadowed plane under the box is lit by the fill alone and
-//! darkens. An emissive card in the plane's place, whose light is all direct,
-//! is unchanged.
+//! The scene pass writes how each pixel's light splits into indirect, direct
+//! and emitted, and the composite scales ambient occlusion by the indirect
+//! share and contact shadows by the direct share. A box floats just above a
+//! plane under an overhead sun.
 //!
-//! The tests read back a half-float target through Reinhard, which inverts in
-//! closed form, so a lit pixel's darkening can be bounded by its indirect
-//! share.
+//! - SSAO: with the hemisphere fill off every pixel is direct or black, so
+//!   turning it on changes nothing; with the fill on, the shadowed plane under
+//!   the box is lit by the fill alone and darkens.
+//! - Contact shadows: the sun casts no shadow map, so the plane under the box
+//!   is sunlit and darkens; with the sun off every pixel is indirect and
+//!   nothing changes, and with both on the fill-only pixels do not change.
+//!
+//! In both, an emissive card in the plane's place is unchanged, and a sunlit
+//! pixel beyond the box's reach is bit-identical. The tests read back a
+//! half-float target through Reinhard, which inverts in closed form, so a
+//! pixel's darkening can be bounded by its share of the light.
 
 use viewport_lib::{
     CameraFrame, Colour, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
@@ -39,6 +44,8 @@ enum Ground {
 
 struct Scene {
     ssaa_factor: u32,
+    /// Whether the sun casts a shadow map.
+    sun_shadows: bool,
     plane: viewport_lib::MeshId,
     cube: viewport_lib::MeshId,
     grey: viewport_lib::MaterialId,
@@ -47,7 +54,7 @@ struct Scene {
 }
 
 impl Scene {
-    fn upload(h: &mut Harness, ssaa_factor: u32) -> Self {
+    fn upload(h: &mut Harness, ssaa_factor: u32, sun_shadows: bool) -> Self {
         let res = h.renderer.resources_mut();
         let plane = res
             .upload_mesh_data(
@@ -71,6 +78,7 @@ impl Scene {
         let card = res.upload_material(emissive).expect("card");
         Self {
             ssaa_factor,
+            sun_shadows,
             plane,
             cube,
             grey,
@@ -79,9 +87,16 @@ impl Scene {
         }
     }
 
-    /// The box and plane under an overhead sun, with the hemisphere fill at
-    /// `fill` and `occlusion` on when given.
-    fn frame(&mut self, ground: Ground, fill: f32, occlusion: Option<Occlusion>) -> FrameData {
+    /// The box and plane under an overhead sun at `sun` times its default
+    /// intensity, with the hemisphere fill at `fill` and `occlusion` on when
+    /// given.
+    fn frame(
+        &mut self,
+        ground: Ground,
+        sun: f32,
+        fill: f32,
+        occlusion: Option<Occlusion>,
+    ) -> FrameData {
         let mut plane = SceneRenderItem::default();
         plane.mesh_id = self.plane;
         plane.material = match ground {
@@ -101,11 +116,13 @@ impl Scene {
             SceneFrame::from_surface_items(vec![plane, cube]).with_generation(self.generation),
         );
         let mut lighting = LightingSettings::default();
-        let mut sun = LightSource::default();
-        sun.kind = LightKind::Directional {
+        let mut light = LightSource::default();
+        light.kind = LightKind::Directional {
             direction: [0.0, 0.0, 1.0],
         };
-        lighting.lights = vec![sun];
+        light.intensity *= sun;
+        light.cast_shadows = self.sun_shadows;
+        lighting.lights = if sun > 0.0 { vec![light] } else { Vec::new() };
         lighting.hemisphere_intensity = fill;
         frame.effects.lighting = lighting;
         frame.effects.display.operator = ToneMapping::Reinhard;
@@ -169,125 +186,108 @@ fn luminance(p: [f32; 4]) -> f32 {
     0.2126 * linear(p[0]) + 0.7152 * linear(p[1]) + 0.0722 * linear(p[2])
 }
 
+/// One lighting setup rendered with the term off and on.
+struct Pair {
+    off: Vec<[f32; 4]>,
+    on: Vec<[f32; 4]>,
+}
+
+impl Pair {
+    fn changed(&self, i: usize) -> bool {
+        self.off[i] != self.on[i]
+    }
+
+    /// The pixels in `of` that darken by more than 3%.
+    fn darkened(&self, of: &[usize]) -> Vec<usize> {
+        of.iter()
+            .copied()
+            .filter(|&i| luminance(self.on[i]) < luminance(self.off[i]) * 0.97)
+            .collect()
+    }
+}
+
 /// The renders one test compares, all over the same harness.
 struct Renders {
-    /// Sun only, occlusion off and on.
-    sun_off: Vec<[f32; 4]>,
-    sun_on: Vec<[f32; 4]>,
-    /// Sun and fill, occlusion off and on.
-    fill_off: Vec<[f32; 4]>,
-    fill_on: Vec<[f32; 4]>,
-    /// The emissive card under sun and fill, occlusion off and on.
-    card_off: Vec<[f32; 4]>,
-    card_on: Vec<[f32; 4]>,
+    /// Sun alone.
+    sun: Pair,
+    /// Fill alone.
+    fill: Pair,
+    /// Sun and fill.
+    both: Pair,
+    /// The emissive card under sun and fill.
+    card: Pair,
 }
 
 const FILL: f32 = 0.55;
 
-fn render(occlusion: Occlusion, ssaa_factor: u32) -> Option<Renders> {
+fn render(occlusion: Occlusion, ssaa_factor: u32, sun_shadows: bool) -> Option<Renders> {
     let mut h = Harness::with_target_format(Harness::FLOAT_TARGET_FORMAT)?;
-    let mut scene = Scene::upload(&mut h, ssaa_factor);
-    let mut pair = |h: &mut Harness, ground, fill| {
-        let off = scene.frame(ground, fill, None);
+    let mut scene = Scene::upload(&mut h, ssaa_factor, sun_shadows);
+    let mut pair = |h: &mut Harness, ground, sun, fill| {
+        let off = scene.frame(ground, sun, fill, None);
         let off = h.render_float(&off, W, H);
-        let on = scene.frame(ground, fill, Some(occlusion));
+        let on = scene.frame(ground, sun, fill, Some(occlusion));
         // A second frame, so a term that settles over frames has settled.
         h.render_float(&on, W, H);
-        let on = scene.frame(ground, fill, Some(occlusion));
-        (off, h.render_float(&on, W, H))
+        let on = scene.frame(ground, sun, fill, Some(occlusion));
+        Pair {
+            off,
+            on: h.render_float(&on, W, H),
+        }
     };
-    let (sun_off, sun_on) = pair(&mut h, Ground::Diffuse, 0.0);
-    let (fill_off, fill_on) = pair(&mut h, Ground::Diffuse, FILL);
-    let (card_off, card_on) = pair(&mut h, Ground::EmissiveCard, FILL);
     Some(Renders {
-        sun_off,
-        sun_on,
-        fill_off,
-        fill_on,
-        card_off,
-        card_on,
+        sun: pair(&mut h, Ground::Diffuse, 1.0, 0.0),
+        fill: pair(&mut h, Ground::Diffuse, 0.0, FILL),
+        both: pair(&mut h, Ground::Diffuse, 1.0, FILL),
+        card: pair(&mut h, Ground::EmissiveCard, 1.0, FILL),
     })
 }
 
 /// Pixels the sun lights.
 fn sunlit(r: &Renders) -> Vec<usize> {
-    (0..r.sun_off.len())
-        .filter(|&i| luminance(r.sun_off[i]) > 0.05)
+    (0..r.sun.off.len())
+        .filter(|&i| luminance(r.sun.off[i]) > 0.05)
         .collect()
 }
 
-/// Pixels the sun does not reach but the fill does: the shadowed plane and
-/// the box's sides.
+/// Pixels the sun does not reach but the fill does.
 fn fill_only(r: &Renders) -> Vec<usize> {
-    (0..r.sun_off.len())
-        .filter(|&i| luminance(r.sun_off[i]) < 1e-4 && luminance(r.fill_off[i]) > 0.02)
+    (0..r.sun.off.len())
+        .filter(|&i| luminance(r.sun.off[i]) < 1e-4 && luminance(r.both.off[i]) > 0.02)
         .collect()
 }
 
-fn check(occlusion: Occlusion, ssaa_factor: u32) {
-    let Some(r) = render(occlusion, ssaa_factor) else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let lit = sunlit(&r);
-    let shade = fill_only(&r);
-    assert!(
-        lit.len() > 10_000,
-        "{occlusion:?}: only {} sunlit pixels",
-        lit.len()
-    );
-    assert!(
-        shade.len() > 300,
-        "{occlusion:?}: only {} fill-only pixels",
-        shade.len()
-    );
+fn count_changed(p: &Pair) -> usize {
+    (0..p.off.len()).filter(|&i| p.changed(i)).count()
+}
 
-    // Sun alone: every pixel is direct light or black, so the term changes
-    // nothing, bit for bit.
-    let changed = (0..r.sun_off.len())
-        .filter(|&i| r.sun_off[i] != r.sun_on[i])
-        .count();
-    assert_eq!(
-        changed, 0,
-        "{occlusion:?} changed {changed} pixels lit by the sun alone"
-    );
-
-    // Sun and fill: the shadowed pixels, lit by the fill alone, darken.
-    let darkened: Vec<usize> = shade
-        .iter()
-        .copied()
-        .filter(|&i| luminance(r.fill_on[i]) < luminance(r.fill_off[i]) * 0.97)
-        .collect();
+fn report(label: &str, darkened: &[usize], of: usize, p: &Pair) {
     let deepest = darkened
         .iter()
-        .map(|&i| luminance(r.fill_on[i]) / luminance(r.fill_off[i]))
+        .map(|&i| luminance(p.on[i]) / luminance(p.off[i]))
         .fold(1.0f32, f32::min);
     eprintln!(
-        "{occlusion:?}: {} of {} fill-only pixels darken, deepest to {deepest:.3}",
-        darkened.len(),
-        shade.len()
+        "{label}: {} of {of} pixels darken, deepest to {deepest:.3}",
+        darkened.len()
     );
-    assert!(
-        darkened.len() > 40,
-        "{occlusion:?} darkened only {} of {} fill-only pixels",
-        darkened.len(),
-        shade.len()
-    );
+}
 
-    // A sunlit pixel loses at most its indirect share, the fill's part of it,
-    // and one beyond the reach of the box is bit-identical.
+/// With sun and fill, every sunlit pixel loses at most its share of the light
+/// the term applies to (`direct` picks the share) and one beyond the reach of
+/// the box is bit-identical. Returns how many changed.
+fn bound_sunlit(label: &str, r: &Renders, lit: &[usize], direct: bool) -> usize {
     let reach = reach_rect(0.6);
-    let mut lit_changed = 0usize;
-    let mut lit_outside = 0usize;
+    let mut changed = 0usize;
+    let mut outside = 0usize;
     let mut worst = 0.0f32;
-    for &i in &lit {
-        let (off, on, sun) = (r.fill_off[i], r.fill_on[i], r.sun_off[i]);
+    for &i in lit {
+        let (off, on) = (r.both.off[i], r.both.on[i]);
         if !inside(reach, i) {
-            lit_outside += 1;
+            outside += 1;
             assert_eq!(
                 off,
                 on,
-                "{occlusion:?} changed sunlit pixel {} {} beyond the box",
+                "{label} changed sunlit pixel {} {} beyond the box",
                 i as u32 % W,
                 i as u32 / W
             );
@@ -295,71 +295,166 @@ fn check(occlusion: Occlusion, ssaa_factor: u32) {
         if off == on {
             continue;
         }
-        lit_changed += 1;
-        let indirect_share = (1.0 - luminance(sun) / luminance(off)).clamp(0.0, 1.0);
+        changed += 1;
+        let direct_share = (luminance(r.sun.off[i]) / luminance(off)).clamp(0.0, 1.0);
+        let share = if direct {
+            direct_share
+        } else {
+            1.0 - direct_share
+        };
         let lost = 1.0 - luminance(on) / luminance(off);
-        worst = worst.max(lost - indirect_share);
+        worst = worst.max(lost - share);
     }
     eprintln!(
-        "{occlusion:?}: {lit_changed} of {} sunlit pixels change with the fill on, \
-         {lit_outside} beyond the box all unchanged",
+        "{label}: {changed} of {} sunlit pixels change with sun and fill, \
+         {outside} beyond the box all unchanged",
         lit.len()
     );
     assert!(
-        lit_outside > 10_000,
-        "{occlusion:?}: only {lit_outside} sunlit pixels beyond the box"
+        outside > 10_000,
+        "{label}: only {outside} sunlit pixels beyond the box"
     );
     assert!(
         worst <= 0.01,
-        "{occlusion:?}: a sunlit pixel lost {worst:.3} more than its indirect share"
+        "{label}: a sunlit pixel lost {worst:.3} more than its share"
     );
+    changed
+}
 
-    // The emissive card: its light is direct, so it is unchanged everywhere,
-    // under the box included.
-    let card: Vec<usize> = (0..r.card_off.len())
+/// The emissive card is unchanged everywhere, including over `darkened`, the
+/// pixels where the grey plane darkened.
+fn card_unchanged(label: &str, r: &Renders, darkened: &[usize]) {
+    let card: Vec<usize> = (0..r.card.off.len())
         .filter(|&i| {
-            let p = r.card_off[i];
+            let p = r.card.off[i];
             p[1] > 0.05 && p[0] < 1e-3 && p[2] < 1e-3
         })
         .collect();
-    let darkened: std::collections::HashSet<usize> = darkened.into_iter().collect();
-    let card_under_box = card.iter().filter(|i| darkened.contains(i)).count();
+    let darkened: std::collections::HashSet<usize> = darkened.iter().copied().collect();
+    let under = card.iter().filter(|i| darkened.contains(i)).count();
     eprintln!(
-        "{occlusion:?}: {} card pixels, {card_under_box} where the grey plane darkened",
+        "{label}: {} card pixels, {under} where the grey plane darkened",
         card.len()
     );
     assert!(
         card.len() > 10_000,
-        "{occlusion:?}: only {} card pixels",
+        "{label}: only {} card pixels",
         card.len()
     );
     assert!(
-        card_under_box > 20,
-        "{occlusion:?}: only {card_under_box} card pixels where the grey plane darkened"
+        under > 20,
+        "{label}: only {under} card pixels where the grey plane darkened"
     );
-    let card_changed = card
-        .iter()
-        .filter(|&&i| r.card_off[i] != r.card_on[i])
-        .count();
+    let changed = card.iter().filter(|&&i| r.card.changed(i)).count();
     assert_eq!(
-        card_changed, 0,
-        "{occlusion:?} changed {card_changed} pixels of the emissive card"
+        changed, 0,
+        "{label} changed {changed} pixels of the emissive card"
     );
+}
+
+fn check_ssao(ssaa_factor: u32) {
+    let label = format!("Ssao x{ssaa_factor}");
+    let Some(r) = render(Occlusion::Ssao, ssaa_factor, true) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let lit = sunlit(&r);
+    let shade = fill_only(&r);
+    assert!(
+        lit.len() > 10_000,
+        "{label}: only {} sunlit pixels",
+        lit.len()
+    );
+    assert!(
+        shade.len() > 300,
+        "{label}: only {} fill-only pixels",
+        shade.len()
+    );
+
+    // Sun alone: every pixel is direct light or black, so nothing changes.
+    let changed = count_changed(&r.sun);
+    assert_eq!(
+        changed, 0,
+        "{label} changed {changed} pixels lit by the sun alone"
+    );
+
+    // Sun and fill: the shadowed pixels, lit by the fill alone, darken.
+    let darkened = r.both.darkened(&shade);
+    report(
+        &format!("{label} fill-only"),
+        &darkened,
+        shade.len(),
+        &r.both,
+    );
+    assert!(
+        darkened.len() > 40,
+        "{label} darkened only {} fill-only pixels",
+        darkened.len()
+    );
+    bound_sunlit(&label, &r, &lit, false);
+    card_unchanged(&label, &r, &darkened);
+}
+
+fn check_contact_shadows() {
+    let label = "ContactShadows";
+    // No shadow map, so the plane under the box is sunlit and the contact
+    // shadow is the only thing that shades it.
+    let Some(r) = render(Occlusion::ContactShadows, 1, false) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let lit = sunlit(&r);
+    let shade = fill_only(&r);
+    assert!(
+        lit.len() > 10_000,
+        "{label}: only {} sunlit pixels",
+        lit.len()
+    );
+    assert!(
+        shade.len() > 300,
+        "{label}: only {} fill-only pixels",
+        shade.len()
+    );
+
+    // Fill alone: every pixel is indirect light, so nothing changes.
+    let changed = count_changed(&r.fill);
+    assert_eq!(
+        changed, 0,
+        "{label} changed {changed} pixels lit by the fill alone"
+    );
+
+    // Sun and fill: sunlit pixels under the box darken, fill-only ones do not.
+    let darkened = r.both.darkened(&lit);
+    report(&format!("{label} sunlit"), &darkened, lit.len(), &r.both);
+    assert!(
+        darkened.len() > 40,
+        "{label} darkened only {} sunlit pixels",
+        darkened.len()
+    );
+    let shade_changed = shade.iter().filter(|&&i| r.both.changed(i)).count();
+    assert_eq!(
+        shade_changed,
+        0,
+        "{label} changed {shade_changed} of {} fill-only pixels",
+        shade.len()
+    );
+    bound_sunlit(label, &r, &lit, true);
+    card_unchanged(label, &r, &darkened);
 }
 
 #[test]
 fn ssao_darkens_indirect_light_only() {
-    check(Occlusion::Ssao, 1);
+    check_ssao(1);
 }
 
 #[test]
-fn contact_shadows_darken_indirect_light_only() {
-    check(Occlusion::ContactShadows, 1);
+fn contact_shadows_darken_direct_light_only() {
+    check_contact_shadows();
 }
 
-/// Under SSAA the scene pass writes a supersampled fraction, which the resolve
+/// Under SSAA the scene pass writes a supersampled split, which the resolve
 /// averages down with the colour.
 #[test]
 fn ssao_under_ssaa_darkens_indirect_light_only() {
-    check(Occlusion::Ssao, 2);
+    check_ssao(2);
 }
