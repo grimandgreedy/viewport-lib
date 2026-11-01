@@ -231,7 +231,7 @@ impl ViewportRenderer {
             return;
         };
         let resources = &self.resources;
-        let eye = frame.camera.render_camera.eye_position().as_vec3();
+        let eye = frame.camera.render_camera.eye_position();
 
         let mut records: Vec<BasicInstance> = Vec::new();
         let mut opaque: Vec<BasicMeshDraw> = Vec::new();
@@ -298,7 +298,9 @@ impl ViewportRenderer {
             let lut = item
                 .colourmap_id
                 .filter(|id| id.0 < resources.content.colourmap_views.len());
-            let world_centre = item.model.to_mat4().transform_point3(mesh.aabb.center());
+            // Eye-relative in f64, so the sort holds far from the world origin.
+            let centre =
+                (item.model.transform_point3(mesh.aabb.center().as_dvec3()) - eye).as_vec3();
 
             for (indices, material_id) in ranges {
                 let m = resources.material_or_default(material_id);
@@ -377,7 +379,7 @@ impl ViewportRenderer {
                     edges,
                 };
                 if blend {
-                    blended.push((world_centre.distance_squared(eye), draw));
+                    blended.push((centre.length_squared(), draw));
                 } else {
                     opaque.push(draw);
                 }
