@@ -36,6 +36,8 @@ mod store;
 #[cfg(feature = "gpu")]
 mod streamtube;
 #[cfg(feature = "gpu")]
+mod sweep;
+#[cfg(feature = "gpu")]
 mod tube;
 #[cfg(feature = "gpu")]
 mod uploads;
