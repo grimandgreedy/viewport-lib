@@ -125,8 +125,8 @@ pub use crate::gpu as wgpu;
 
 /// winit, re-exported so a consumer of the built-in runners uses the exact winit
 /// version they do (via `viewport_lib::winit`) rather than adding a second,
-/// possibly-mismatched winit dependency. Available whenever the `from_winit` adapter
-/// or a winit runner is compiled in.
+/// possibly-mismatched winit dependency. Available whenever the winit adapter or a
+/// winit runner is compiled in.
 #[cfg(feature = "winit-adapter")]
 pub use ::winit;
 

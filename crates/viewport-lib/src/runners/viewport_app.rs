@@ -52,7 +52,8 @@ use ::winit::window::{
     CursorIcon, Fullscreen, Window, WindowAttributes, WindowId as WinitWindowId,
 };
 
-use crate::interaction::input::adapters::{from_winit_device, from_winit_into};
+use crate::interaction::input::adapters::AdapterCtx;
+use crate::interaction::input::adapters::winit::{translate, translate_device};
 use crate::interaction::input::{
     CursorShape, InputOwnership, KeyboardOwnership, PointerOwnership, ViewportContext,
     ViewportEvent,
@@ -1494,6 +1495,16 @@ impl ApplicationHandler for AppHandler {
                 if let Some(state) = self.windows.get_mut(&id) {
                     state.focused = focused;
                     state.session.set_input_ownership(state.ownership());
+                    // Losing focus becomes FocusLost, which releases held keys and
+                    // buttons: their releases go to whichever window took focus.
+                    let mut evs = Vec::new();
+                    translate(&event, &AdapterCtx::default(), &mut evs);
+                    for ev in evs {
+                        if state.input.is_none() {
+                            state.session.handle_event(ev.clone());
+                        }
+                        state.events.push(ev);
+                    }
                     state.window.request_redraw();
                 }
             }
@@ -1541,7 +1552,7 @@ impl ApplicationHandler for AppHandler {
                     // layout, shift and dead keys into it.
                     let scale = state.window.scale_factor() as f32;
                     let mut evs = Vec::new();
-                    from_winit_into(&other, scale, &mut evs);
+                    translate(&other, &AdapterCtx::new(scale, glam::Vec2::ZERO), &mut evs);
                     if !evs.is_empty() {
                         for ev in evs {
                             if state.input.is_none() {
@@ -1564,14 +1575,18 @@ impl ApplicationHandler for AppHandler {
     ) {
         // Raw motion is not tied to a window; route it to the focused one, since
         // mouselook targets the window with keyboard focus.
-        let Some(ev) = from_winit_device(&event) else {
+        let mut evs = Vec::new();
+        translate_device(&event, &mut evs);
+        if evs.is_empty() {
             return;
-        };
+        }
         if let Some(state) = self.windows.values_mut().find(|s| s.focused) {
-            if state.input.is_none() {
-                state.session.handle_event(ev.clone());
+            for ev in evs {
+                if state.input.is_none() {
+                    state.session.handle_event(ev.clone());
+                }
+                state.events.push(ev);
             }
-            state.events.push(ev);
             state.window.request_redraw();
         }
     }

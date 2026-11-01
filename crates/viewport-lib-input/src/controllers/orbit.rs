@@ -47,17 +47,20 @@ use super::movement::wish_from_actions;
 ///
 /// ```text
 /// // --- update() ---
-/// let pointer = if response.hovered() { PointerOwnership::Owned } else { PointerOwnership::Elsewhere };
-/// let keyboard = if response.hovered() && !ui.ctx().wants_keyboard_input() {
-///     KeyboardOwnership::Owned
-/// } else {
-///     KeyboardOwnership::Elsewhere
-/// };
-/// controller.begin_frame(ViewportContext::new(
-///     InputOwnership { pointer, keyboard },
-///     [rect.width(), rect.height()],
-/// ));
-/// // push each event in ui.input(|i| { ... }) through from_egui_into
+/// use viewport_lib_input::input::adapters::{AdapterCtx, egui};
+/// let ownership = egui::ownership(&response, ui.ctx(), rect, session_active);
+/// controller.begin_frame(ViewportContext::new(ownership, [rect.width(), rect.height()]));
+/// let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+/// let mut events = Vec::new();
+/// ui.input(|i| {
+///     egui::begin_frame(i, &actx, &mut events);
+///     for ev in &i.events {
+///         egui::translate(ev, &actx, &mut events);
+///     }
+/// });
+/// for ev in events {
+///     controller.push_event(ev);
+/// }
 /// controller.apply_to_camera(&mut self.camera);
 /// ```
 pub struct OrbitCameraController {

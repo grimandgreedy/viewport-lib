@@ -1,5 +1,6 @@
 //! winit -> [`ViewportEvent`] translation.
 
+use super::AdapterCtx;
 use crate::input::{
     ButtonState, ImeEvent, InputOwnership, KeyCode, KeyboardOwnership, Modifiers, MouseButton,
     PointerOwnership, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent,
@@ -51,28 +52,61 @@ pub fn ownership(
     InputOwnership { pointer, keyboard }
 }
 
-/// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
-/// [`ViewportEvent`], or `None` for events the viewport does not consume.
+/// Translate a winit [`WindowEvent`](::winit::event::WindowEvent), appending what
+/// it means for the viewport to `out`.
 ///
-/// This covers window events (pointer, buttons, wheel, keys, modifiers, focus,
-/// gestures, theme, occlusion, file drag-and-drop). Raw relative pointer motion for
-/// mouselook arrives as a device event instead; translate that with
-/// [`from_winit_device`]. A key press's typed text is not included: use
-/// [`from_winit_into`] to get it as [`ViewportEvent::Character`] events.
+/// Covers window events: pointer, buttons, wheel, keys and the text they type,
+/// modifiers, focus loss, trackpad gestures, touch, theme, occlusion, file
+/// drag-and-drop and input method composition. A key press is followed by one
+/// [`ViewportEvent::Character`] per character it typed, control characters left
+/// out. Events the viewport has no use for append nothing. Raw relative motion
+/// for mouselook arrives as a device event: see [`translate_device`].
 ///
-/// winit reports cursor positions in physical pixels; `scale_factor`
-/// (`window.scale_factor()`) divides them down to logical points, the space the
-/// viewport's screen-space math and `viewport_size` use. Pass `1.0` to keep
-/// positions in physical pixels. For a window hosting a single full-window
-/// viewport the result is already viewport-local; an embedded winit viewport
-/// should offset by the viewport rect origin as well.
+/// winit reports positions in physical pixels; they are divided by
+/// `ctx.scale_factor` (`window.scale_factor()`) and offset by
+/// `ctx.viewport_origin`, so they come out in viewport-local logical points.
+pub fn translate(
+    event: &::winit::event::WindowEvent,
+    ctx: &AdapterCtx,
+    out: &mut Vec<ViewportEvent>,
+) {
+    out.extend(translate_one(event, ctx));
+    if let ::winit::event::WindowEvent::KeyboardInput { event: key, .. } = event {
+        typed_text(key.state, key.text.as_deref(), out);
+    }
+}
+
+/// Translate a winit [`DeviceEvent`](::winit::event::DeviceEvent), appending what
+/// it means for the viewport to `out`.
+///
+/// Raw relative pointer motion arrives as a device event, not a window event, so
+/// a runner routes its `device_event` callback through here (typically to the
+/// focused window) to get [`ViewportEvent::RawMotion`] for mouselook.
+pub fn translate_device(event: &::winit::event::DeviceEvent, out: &mut Vec<ViewportEvent>) {
+    use ::winit::event::DeviceEvent;
+    if let DeviceEvent::MouseMotion { delta } = event {
+        out.push(ViewportEvent::RawMotion {
+            delta: glam::Vec2::new(delta.0 as f32, delta.1 as f32),
+        });
+    }
+}
+
+/// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into one
+/// [`ViewportEvent`], or `None` for events the viewport does not consume. A key
+/// press's typed text is not included.
+#[deprecated(note = "use translate, which also emits the text a key press types")]
 pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Option<ViewportEvent> {
+    translate_one(event, &AdapterCtx::new(scale_factor, glam::Vec2::ZERO))
+}
+
+/// The one event a window event maps to, without the text a key types.
+fn translate_one(event: &::winit::event::WindowEvent, ctx: &AdapterCtx) -> Option<ViewportEvent> {
     use ::winit::event::{MouseScrollDelta, WindowEvent};
 
-    let inv_scale = 1.0 / scale_factor.max(0.001);
+    let inv_scale = 1.0 / ctx.scale_factor.max(0.001);
     match event {
         WindowEvent::CursorMoved { position, .. } => Some(ViewportEvent::PointerMoved {
-            position: glam::Vec2::new(position.x as f32, position.y as f32) * inv_scale,
+            position: ctx.local(position.x as f32, position.y as f32),
         }),
         WindowEvent::CursorLeft { .. } => Some(ViewportEvent::PointerLeft),
         WindowEvent::MouseInput { state, button, .. } => Some(ViewportEvent::MouseButton {
@@ -92,15 +126,12 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
             modifiers_from_winit(mods.state()),
         )),
         WindowEvent::Focused(false) => Some(ViewportEvent::FocusLost),
-        WindowEvent::KeyboardInput { event, .. } => {
-            let key = map_key(&event.physical_key)?;
-            Some(ViewportEvent::Key {
-                key,
-                state: map_state(event.state),
-                repeat: event.repeat,
-                logical: logical_char(event),
-            })
-        }
+        WindowEvent::KeyboardInput { event, .. } => key_event(
+            &event.physical_key,
+            logical_char(event),
+            event.state,
+            event.repeat,
+        ),
         WindowEvent::ThemeChanged(theme) => Some(ViewportEvent::ThemeChanged(match theme {
             ::winit::window::Theme::Light => Theme::Light,
             ::winit::window::Theme::Dark => Theme::Dark,
@@ -121,7 +152,7 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
         WindowEvent::Touch(touch) => Some(ViewportEvent::Touch {
             id: TouchId(touch.id),
             phase: map_touch_phase(touch.phase),
-            position: glam::Vec2::new(touch.location.x as f32, touch.location.y as f32) * inv_scale,
+            position: ctx.local(touch.location.x as f32, touch.location.y as f32),
         }),
         WindowEvent::DroppedFile(path) => Some(ViewportEvent::FileDropped(path.clone())),
         WindowEvent::HoveredFile(path) => Some(ViewportEvent::FileHovered(path.clone())),
@@ -136,6 +167,41 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
             ::winit::event::Ime::Disabled => ImeEvent::Disabled,
         })),
         _ => None,
+    }
+}
+
+/// A key event from its parts, or `None` for a physical key with no `KeyCode`.
+/// Split out of `translate_one` because winit's `KeyEvent` cannot be built
+/// outside winit, so this is what the tests reach.
+fn key_event(
+    physical: &::winit::keyboard::PhysicalKey,
+    logical: Option<char>,
+    state: ::winit::event::ElementState,
+    repeat: bool,
+) -> Option<ViewportEvent> {
+    Some(ViewportEvent::Key {
+        key: map_key(physical)?,
+        state: map_state(state),
+        repeat,
+        logical,
+    })
+}
+
+/// The characters a key press typed, control characters left out.
+fn typed_text(
+    state: ::winit::event::ElementState,
+    text: Option<&str>,
+    out: &mut Vec<ViewportEvent>,
+) {
+    if state != ::winit::event::ElementState::Pressed {
+        return;
+    }
+    if let Some(text) = text {
+        out.extend(
+            text.chars()
+                .filter(|c| !c.is_control())
+                .map(ViewportEvent::Character),
+        );
     }
 }
 
@@ -192,48 +258,6 @@ fn single_lower_char(key: &::winit::keyboard::Key) -> Option<char> {
     let mut lower = c.to_lowercase();
     let l = lower.next()?;
     lower.next().is_none().then_some(l)
-}
-
-/// As [`from_winit`], appending to `out`, plus the text a key press types.
-///
-/// A pressed key whose `KeyEvent::text` is set is followed by one
-/// [`ViewportEvent::Character`] per character, control characters left out. Use
-/// this rather than `from_winit` when a text field or manipulation numeric entry
-/// needs typed text; `ViewportApp` does.
-pub fn from_winit_into(
-    event: &::winit::event::WindowEvent,
-    scale_factor: f32,
-    out: &mut Vec<ViewportEvent>,
-) {
-    out.extend(from_winit(event, scale_factor));
-    if let ::winit::event::WindowEvent::KeyboardInput { event: key, .. } = event {
-        if key.state == ::winit::event::ElementState::Pressed {
-            if let Some(text) = &key.text {
-                out.extend(
-                    text.chars()
-                        .filter(|c| !c.is_control())
-                        .map(ViewportEvent::Character),
-                );
-            }
-        }
-    }
-}
-
-/// Translate a winit [`DeviceEvent`](::winit::event::DeviceEvent) into a
-/// [`ViewportEvent`], or `None` for events the viewport does not consume.
-///
-/// This is the device-level counterpart to [`from_winit`]: raw relative pointer
-/// motion arrives as a `DeviceEvent`, not a `WindowEvent`, so a runner routes its
-/// `device_event` callback through here (typically to the focused window) to get
-/// [`ViewportEvent::RawMotion`] for mouselook.
-pub fn from_winit_device(event: &::winit::event::DeviceEvent) -> Option<ViewportEvent> {
-    use ::winit::event::DeviceEvent;
-    match event {
-        DeviceEvent::MouseMotion { delta } => Some(ViewportEvent::RawMotion {
-            delta: glam::Vec2::new(delta.0 as f32, delta.1 as f32),
-        }),
-        _ => None,
-    }
 }
 
 fn map_state(state: ::winit::event::ElementState) -> ButtonState {
@@ -394,6 +418,14 @@ fn map_key(key: &::winit::keyboard::PhysicalKey) -> Option<KeyCode> {
 mod tests {
     use super::*;
     use ::winit::event::{ElementState, MouseButton as WinitMouseButton};
+
+    /// The single event `event` translates to, if any.
+    fn one(event: &::winit::event::WindowEvent) -> Option<ViewportEvent> {
+        let mut out = Vec::new();
+        translate(event, &AdapterCtx::default(), &mut out);
+        assert!(out.len() <= 1, "{out:?}");
+        out.pop()
+    }
     use ::winit::keyboard::{KeyCode as Wk, PhysicalKey};
 
     // One pairs list, expanded into both the full list of library keys and the
@@ -543,19 +575,19 @@ mod tests {
         use ::winit::window::Theme as WinitTheme;
 
         assert!(matches!(
-            from_winit(&WindowEvent::ThemeChanged(WinitTheme::Dark), 1.0),
+            one(&WindowEvent::ThemeChanged(WinitTheme::Dark)),
             Some(ViewportEvent::ThemeChanged(Theme::Dark))
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::ThemeChanged(WinitTheme::Light), 1.0),
+            one(&WindowEvent::ThemeChanged(WinitTheme::Light)),
             Some(ViewportEvent::ThemeChanged(Theme::Light))
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::Occluded(true), 1.0),
+            one(&WindowEvent::Occluded(true)),
             Some(ViewportEvent::Occluded(true))
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::Occluded(false), 1.0),
+            one(&WindowEvent::Occluded(false)),
             Some(ViewportEvent::Occluded(false))
         ));
     }
@@ -583,27 +615,23 @@ mod tests {
         use ::winit::event::{Ime, WindowEvent};
 
         assert!(matches!(
-            from_winit(&WindowEvent::Ime(Ime::Enabled), 1.0),
+            one(&WindowEvent::Ime(Ime::Enabled)),
             Some(ViewportEvent::Ime(ImeEvent::Enabled))
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::Ime(Ime::Preedit("ni".into(), Some((2, 2)))), 1.0),
+            one(&WindowEvent::Ime(Ime::Preedit("ni".into(), Some((2, 2))))),
             Some(ViewportEvent::Ime(ImeEvent::Preedit { text, cursor: Some((2, 2)) })) if text == "ni"
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::Ime(Ime::Commit("\u{65e5}".into())), 1.0),
+            one(&WindowEvent::Ime(Ime::Commit("\u{65e5}".into()))),
             Some(ViewportEvent::Ime(ImeEvent::Commit(text))) if text == "\u{65e5}"
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::Ime(Ime::Disabled), 1.0),
+            one(&WindowEvent::Ime(Ime::Disabled)),
             Some(ViewportEvent::Ime(ImeEvent::Disabled))
         ));
     }
 
-    // The trackpad gesture events (RotationGesture / PinchGesture / PanGesture) carry
-    // an opaque winit DeviceId with no public constructor, so they cannot be built in
-    // a unit test; their translation is covered by the build and the winit_viewport
-    // example. File drag-and-drop events have no DeviceId and are tested here.
     #[test]
     fn file_drag_and_drop_translates() {
         use ::winit::event::WindowEvent;
@@ -611,15 +639,15 @@ mod tests {
 
         let path = PathBuf::from("/tmp/model.obj");
         assert!(matches!(
-            from_winit(&WindowEvent::DroppedFile(path.clone()), 1.0),
+            one(&WindowEvent::DroppedFile(path.clone())),
             Some(ViewportEvent::FileDropped(p)) if p == path
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::HoveredFile(path.clone()), 1.0),
+            one(&WindowEvent::HoveredFile(path.clone())),
             Some(ViewportEvent::FileHovered(p)) if p == path
         ));
         assert!(matches!(
-            from_winit(&WindowEvent::HoveredFileCancelled, 1.0),
+            one(&WindowEvent::HoveredFileCancelled),
             Some(ViewportEvent::FileHoverCancelled)
         ));
     }
@@ -641,16 +669,170 @@ mod tests {
     #[test]
     fn raw_device_motion_translates() {
         use ::winit::event::DeviceEvent;
+        let mut out = Vec::new();
+        translate_device(&DeviceEvent::MouseMotion { delta: (3.0, -4.0) }, &mut out);
         assert!(matches!(
-            from_winit_device(&DeviceEvent::MouseMotion { delta: (3.0, -4.0) }),
-            Some(ViewportEvent::RawMotion { delta }) if delta == glam::Vec2::new(3.0, -4.0)
+            out.as_slice(),
+            [ViewportEvent::RawMotion { delta }] if *delta == glam::Vec2::new(3.0, -4.0)
         ));
-        // A device event the viewport does not consume translates to None.
-        assert!(
-            from_winit_device(&DeviceEvent::MouseWheel {
-                delta: ::winit::event::MouseScrollDelta::LineDelta(0.0, 1.0)
-            })
-            .is_none()
+        // A device event the viewport does not consume appends nothing.
+        translate_device(
+            &DeviceEvent::MouseWheel {
+                delta: ::winit::event::MouseScrollDelta::LineDelta(0.0, 1.0),
+            },
+            &mut out,
         );
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn positions_are_scaled_then_made_viewport_local() {
+        use ::winit::dpi::PhysicalPosition;
+        use ::winit::event::{DeviceId, WindowEvent};
+        let ctx = AdapterCtx::new(2.0, glam::Vec2::new(10.0, 20.0));
+        let mut out = Vec::new();
+        translate(
+            &WindowEvent::CursorMoved {
+                device_id: DeviceId::dummy(),
+                position: PhysicalPosition::new(100.0, 80.0),
+            },
+            &ctx,
+            &mut out,
+        );
+        assert!(matches!(
+            out.as_slice(),
+            [ViewportEvent::PointerMoved { position }] if *position == glam::Vec2::new(40.0, 20.0)
+        ));
+    }
+
+    #[test]
+    fn a_key_carries_its_layout_character_and_then_its_text() {
+        use ::winit::keyboard::Key;
+        // AZERTY: the key in the US Q position types 'a'.
+        let mut out = Vec::new();
+        out.extend(key_event(
+            &PhysicalKey::Code(Wk::KeyQ),
+            single_lower_char(&Key::Character("A".into())),
+            ElementState::Pressed,
+            false,
+        ));
+        typed_text(ElementState::Pressed, Some("A\r"), &mut out);
+        assert!(matches!(
+            out.as_slice(),
+            [
+                ViewportEvent::Key {
+                    key: KeyCode::Q,
+                    logical: Some('a'),
+                    state: ButtonState::Pressed,
+                    repeat: false,
+                },
+                ViewportEvent::Character('A'),
+            ]
+        ));
+        // A release types nothing.
+        typed_text(ElementState::Released, Some("a"), &mut out);
+        assert_eq!(out.len(), 2);
+    }
+
+    /// Every `ViewportEvent` variant is either produced from a winit event here or
+    /// listed as one winit cannot produce. A new variant fails this until it is
+    /// one or the other.
+    #[test]
+    fn every_viewport_event_is_carried_or_listed() {
+        use ::winit::dpi::PhysicalPosition;
+        use ::winit::event::{
+            DeviceEvent, DeviceId, Ime, MouseScrollDelta, Touch, TouchPhase as W, WindowEvent,
+        };
+        use ::winit::keyboard::{Key, ModifiersState};
+        use std::path::PathBuf;
+
+        /// Variants no winit event maps to.
+        const UNREPRESENTABLE: &[&str] = &[];
+
+        let d = DeviceId::dummy();
+        let windows = [
+            WindowEvent::CursorMoved {
+                device_id: d,
+                position: PhysicalPosition::new(1.0, 2.0),
+            },
+            WindowEvent::MouseInput {
+                device_id: d,
+                state: ElementState::Pressed,
+                button: WinitMouseButton::Left,
+            },
+            WindowEvent::MouseWheel {
+                device_id: d,
+                delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+                phase: W::Moved,
+            },
+            WindowEvent::ModifiersChanged(ModifiersState::SHIFT.into()),
+            WindowEvent::CursorLeft { device_id: d },
+            WindowEvent::Focused(false),
+            WindowEvent::RotationGesture {
+                device_id: d,
+                delta: 1.0,
+                phase: W::Moved,
+            },
+            WindowEvent::PinchGesture {
+                device_id: d,
+                delta: 0.1,
+                phase: W::Moved,
+            },
+            WindowEvent::PanGesture {
+                device_id: d,
+                delta: PhysicalPosition::new(1.0, 1.0),
+                phase: W::Moved,
+            },
+            WindowEvent::Touch(Touch {
+                device_id: d,
+                phase: W::Started,
+                location: PhysicalPosition::new(1.0, 1.0),
+                force: None,
+                id: 1,
+            }),
+            WindowEvent::ThemeChanged(::winit::window::Theme::Dark),
+            WindowEvent::Occluded(true),
+            WindowEvent::DroppedFile(PathBuf::from("a")),
+            WindowEvent::HoveredFile(PathBuf::from("a")),
+            WindowEvent::HoveredFileCancelled,
+            WindowEvent::Ime(Ime::Commit("x".into())),
+        ];
+        let ctx = AdapterCtx::default();
+        let mut out = Vec::new();
+        for ev in &windows {
+            translate(ev, &ctx, &mut out);
+        }
+        translate_device(&DeviceEvent::MouseMotion { delta: (1.0, 1.0) }, &mut out);
+        // winit's KeyEvent cannot be built outside winit; these are the two
+        // functions its KeyboardInput arm calls.
+        out.extend(key_event(
+            &PhysicalKey::Code(Wk::KeyZ),
+            single_lower_char(&Key::Character("y".into())),
+            ElementState::Pressed,
+            false,
+        ));
+        typed_text(ElementState::Pressed, Some("y"), &mut out);
+
+        let produced: std::collections::HashSet<&str> =
+            out.iter().map(ViewportEvent::variant_name).collect();
+        for name in ViewportEvent::VARIANTS {
+            let listed = UNREPRESENTABLE.contains(name);
+            assert!(
+                produced.contains(name) != listed,
+                "{name}: produced {}, listed {listed}",
+                produced.contains(name)
+            );
+        }
+        let key = out
+            .iter()
+            .find(|e| matches!(e, ViewportEvent::Key { .. }))
+            .unwrap();
+        assert!(matches!(
+            key,
+            ViewportEvent::Key {
+                logical: Some('y'),
+                ..
+            }
+        ));
     }
 }

@@ -4,8 +4,8 @@
 //! whichever egui its framework pins, so the mapping below is written once and
 //! generated per supported egui version. Enable the adapter feature matching
 //! your egui (`egui-adapter` for 0.33, `egui-adapter-035`, `egui-adapter-036`)
-//! and call [`from_egui`] as normal: the enabled version's copy is what gets
-//! re-exported.
+//! and call [`translate`], [`begin_frame`] and [`ownership`] as normal: the
+//! enabled version's copy is what gets re-exported.
 
 #[cfg(any(
     all(feature = "egui-adapter", feature = "egui-adapter-035"),
@@ -26,9 +26,10 @@ macro_rules! egui_adapter {
     ($egui:ident) => {
         use $egui as egui;
 
+        use super::super::AdapterCtx;
         use crate::input::{
-            ButtonState, InputOwnership, KeyCode, KeyboardOwnership, Modifiers, MouseButton,
-            PointerOwnership, ScrollUnits, TouchId, TouchPhase, ViewportEvent,
+            ButtonState, ImeEvent, InputOwnership, KeyCode, KeyboardOwnership, Modifiers,
+            MouseButton, PointerOwnership, ScrollUnits, TouchId, TouchPhase, ViewportEvent,
         };
 
         /// Who owns the input for a viewport drawn as an egui widget.
@@ -105,31 +106,94 @@ macro_rules! egui_adapter {
             (chars.next().is_none() && c.is_ascii_graphic()).then(|| c.to_ascii_lowercase())
         }
 
-        /// Translate an `egui::Event` into a [`ViewportEvent`], or `None` for
-        /// events the viewport does not consume.
+        /// Translate an `egui::Event`, appending what it means for the viewport
+        /// to `out`.
         ///
-        /// `viewport_origin` is the top-left of the viewport rectangle in egui
-        /// points (logical coordinates); it is subtracted from pointer positions
-        /// to make them viewport-local. Coordinates stay in logical points, which
-        /// is the space the viewport's screen-space math and `viewport_size` use;
-        /// HiDPI sharpness comes from the render-target size and
-        /// `pixels_per_point`, not from the pointer coordinates. Modifier state is
-        /// not carried on `ViewportEvent`; push a
-        /// [`ViewportEvent::ModifiersChanged`] from the frame's `InputState`
-        /// separately.
+        /// Call [`begin_frame`] first each frame, then this for every event in
+        /// the frame's `InputState::events`. Typed text (`Event::Text`) becomes
+        /// one [`ViewportEvent::Character`] per character, control characters
+        /// left out. Window focus is left to `begin_frame`, which turns its loss
+        /// into [`ViewportEvent::FocusLost`]. Events the viewport has no use for
+        /// append nothing.
+        ///
+        /// Positions are divided by `ctx.scale_factor` (`1.0` for egui, whose
+        /// points are already logical) and offset by `ctx.viewport_origin`, the
+        /// viewport rectangle's top-left in egui points, so they come out
+        /// viewport-local.
         ///
         /// `ViewportEvent::Key` carries the key's position (its US-layout name),
-        /// taken from the event's `physical_key`. A host that leaves
-        /// `physical_key` empty gets egui's layout-following `key` instead.
+        /// taken from the event's `physical_key`, and the layout character from
+        /// egui's layout-following `key`. A host that leaves `physical_key`
+        /// empty gets the layout key for both.
+        pub fn translate(event: &egui::Event, ctx: &AdapterCtx, out: &mut Vec<ViewportEvent>) {
+            if let egui::Event::Text(text) = event {
+                out.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .map(ViewportEvent::Character),
+                );
+            } else {
+                out.extend(translate_one(event, ctx));
+            }
+        }
+
+        /// The events egui reports as frame state rather than as events: the
+        /// modifier state as a [`ViewportEvent::ModifiersChanged`], a
+        /// [`ViewportEvent::FocusLost`] when the window lost focus this frame
+        /// (which releases held keys and buttons), and a
+        /// [`ViewportEvent::FileDropped`] per file dropped this frame.
+        ///
+        /// Call it once per frame, before [`translate`]ing the frame's events.
+        /// Nothing it emits carries a position, so `ctx` is not read.
+        pub fn begin_frame(
+            input: &egui::InputState,
+            ctx: &AdapterCtx,
+            out: &mut Vec<ViewportEvent>,
+        ) {
+            let _ = ctx;
+            out.push(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                &input.modifiers,
+            )));
+            if input
+                .events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(false)))
+            {
+                out.push(ViewportEvent::FocusLost);
+            }
+            #[cfg(not(feature = "egui-adapter-036"))]
+            let dropped = input.raw.dropped_files.iter().filter_map(|f| f.path.clone());
+            #[cfg(feature = "egui-adapter-036")]
+            let dropped = input
+                .raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf());
+            out.extend(dropped.map(ViewportEvent::FileDropped));
+        }
+
+        /// Translate an `egui::Event` into one [`ViewportEvent`], or `None` for
+        /// events the viewport does not consume. Typed text is not included.
+        #[deprecated(note = "use translate, which also emits typed text, and begin_frame")]
         pub fn from_egui(
             event: &egui::Event,
             viewport_origin: glam::Vec2,
         ) -> Option<ViewportEvent> {
+            translate_one(event, &AdapterCtx::new(1.0, viewport_origin))
+        }
+
+        /// The one event an egui event maps to, without typed text.
+        #[allow(deprecated)] // egui 0.35 deprecates the IME enable and disable events.
+        fn translate_one(event: &egui::Event, ctx: &AdapterCtx) -> Option<ViewportEvent> {
             use egui::Event;
 
             match event {
                 Event::PointerMoved(pos) => Some(ViewportEvent::PointerMoved {
-                    position: glam::Vec2::new(pos.x, pos.y) - viewport_origin,
+                    position: ctx.local(pos.x, pos.y),
+                }),
+                // Unaccelerated motion, the counterpart of winit's device motion.
+                Event::MouseMoved(delta) => Some(ViewportEvent::RawMotion {
+                    delta: glam::Vec2::new(delta.x, delta.y),
                 }),
                 Event::PointerButton {
                     button, pressed, ..
@@ -172,11 +236,12 @@ macro_rules! egui_adapter {
                 Event::Touch { id, phase, pos, .. } => Some(ViewportEvent::Touch {
                     id: TouchId(id.0),
                     phase: map_touch_phase(*phase),
-                    position: glam::Vec2::new(pos.x, pos.y) - viewport_origin,
+                    position: ctx.local(pos.x, pos.y),
                 }),
-                // The key position, as `from_winit` reports it, so a binding means
-                // the same key through either adapter. egui's `key` follows the
-                // layout; it is the fallback when the host gives no physical key.
+                // The key position, as the winit adapter reports it, so a binding
+                // means the same key through either adapter. egui's `key` follows
+                // the layout; it is the fallback when the host gives no physical
+                // key.
                 Event::Key {
                     key,
                     physical_key,
@@ -193,30 +258,30 @@ macro_rules! egui_adapter {
                     repeat: *repeat,
                     logical: logical_char(*key),
                 }),
+                #[cfg(feature = "egui-adapter-036")]
+                Event::ModifiersChanged(m) => {
+                    Some(ViewportEvent::ModifiersChanged(modifiers_from_egui(m)))
+                }
+                Event::Ime(ime) => Some(ViewportEvent::Ime(match ime {
+                    egui::ImeEvent::Enabled => ImeEvent::Enabled,
+                    #[cfg(feature = "egui-adapter")]
+                    egui::ImeEvent::Preedit(text) => preedit(text),
+                    #[cfg(not(feature = "egui-adapter"))]
+                    egui::ImeEvent::Preedit { text, .. } => preedit(text),
+                    egui::ImeEvent::Commit(text) => ImeEvent::Commit(text.clone()),
+                    egui::ImeEvent::Disabled => ImeEvent::Disabled,
+                    #[allow(unreachable_patterns)]
+                    _ => return None,
+                })),
                 _ => None,
             }
         }
 
-        /// As [`from_egui`], appending to `out`, plus typed text.
-        ///
-        /// An `egui::Event::Text` becomes one [`ViewportEvent::Character`] per
-        /// character, control characters left out. The resolver keeps characters
-        /// only while the viewport is focused, so every event can go through
-        /// here. Use this rather than `from_egui` when manipulation numeric entry
-        /// or anything else reading typed text should work.
-        pub fn from_egui_into(
-            event: &egui::Event,
-            viewport_origin: glam::Vec2,
-            out: &mut Vec<ViewportEvent>,
-        ) {
-            if let egui::Event::Text(text) = event {
-                out.extend(
-                    text.chars()
-                        .filter(|c| !c.is_control())
-                        .map(ViewportEvent::Character),
-                );
-            } else {
-                out.extend(from_egui(event, viewport_origin));
+        /// A preedit with the caret at its end: egui does not report one.
+        fn preedit(text: &str) -> ImeEvent {
+            ImeEvent::Preedit {
+                text: text.to_owned(),
+                cursor: Some((text.len(), text.len())),
             }
         }
 
@@ -337,6 +402,39 @@ macro_rules! egui_adapter {
             use super::*;
             use egui::{Event, Key as E, Modifiers, MouseWheelUnit, PointerButton, Pos2};
 
+            /// A file dropped this frame, in the shape this egui version uses.
+            #[cfg(not(feature = "egui-adapter-036"))]
+            fn dropped(path: &str) -> egui::DroppedFile {
+                egui::DroppedFile {
+                    path: Some(path.into()),
+                    ..Default::default()
+                }
+            }
+
+            #[cfg(feature = "egui-adapter-036")]
+            fn dropped(path: &str) -> egui::DroppedFileHandle {
+                #[derive(Debug)]
+                struct File(std::path::PathBuf);
+                impl egui::DroppedFile for File {
+                    fn path(&self) -> &std::path::Path {
+                        &self.0
+                    }
+                    fn bytes(&self) -> Result<Vec<u8>, String> {
+                        Ok(Vec::new())
+                    }
+                }
+                std::sync::Arc::new(File(path.into()))
+            }
+
+            /// The single event `event` translates to with the viewport at
+            /// `origin`, if any.
+            fn one(event: &Event, origin: glam::Vec2) -> Option<ViewportEvent> {
+                let mut out = Vec::new();
+                translate(event, &AdapterCtx::new(1.0, origin), &mut out);
+                assert!(out.len() <= 1, "{out:?}");
+                out.pop()
+            }
+
             /// egui keys the adapter maps, and the library key each must produce.
             /// egui's key set is a superset of what the viewport models (it also
             /// carries Copy / Paste / punctuation the viewport has no binding
@@ -395,7 +493,7 @@ macro_rules! egui_adapter {
 
             #[test]
             fn pointer_moved_is_made_viewport_local() {
-                let ev = from_egui(
+                let ev = one(
                     &Event::PointerMoved(Pos2::new(100.0, 80.0)),
                     glam::Vec2::new(10.0, 20.0),
                 );
@@ -409,7 +507,7 @@ macro_rules! egui_adapter {
 
             #[test]
             fn pointer_buttons_map_with_state() {
-                let press = from_egui(
+                let press = one(
                     &Event::PointerButton {
                         pos: Pos2::ZERO,
                         button: PointerButton::Secondary,
@@ -426,7 +524,7 @@ macro_rules! egui_adapter {
                     })
                 ));
 
-                let release = from_egui(
+                let release = one(
                     &Event::PointerButton {
                         pos: Pos2::ZERO,
                         button: PointerButton::Primary,
@@ -446,7 +544,7 @@ macro_rules! egui_adapter {
 
             #[test]
             fn extra_pointer_buttons_drop() {
-                let ev = from_egui(
+                let ev = one(
                     &Event::PointerButton {
                         pos: Pos2::ZERO,
                         button: PointerButton::Extra1,
@@ -466,7 +564,7 @@ macro_rules! egui_adapter {
                     (MouseWheelUnit::Page, ScrollUnits::Pages),
                 ];
                 for (unit, expected) in cases {
-                    let ev = from_egui(
+                    let ev = one(
                         &Event::MouseWheel {
                             unit,
                             delta: egui::Vec2::new(1.0, -2.0),
@@ -496,23 +594,23 @@ macro_rules! egui_adapter {
             fn a_pinch_becomes_the_viewport_log_scale_delta() {
                 // egui hands us a factor; the viewport speaks winit's additive delta.
                 // A factor of 1.0 is no change, so it must resolve to zero.
-                match from_egui(&Event::Zoom(1.0), glam::Vec2::ZERO) {
+                match one(&Event::Zoom(1.0), glam::Vec2::ZERO) {
                     Some(ViewportEvent::TrackpadPinch(d)) => assert!(d.abs() < 1e-6),
                     other => panic!("expected TrackpadPinch, got {other:?}"),
                 }
                 // Spreading (factor > 1) zooms in, which is a positive delta.
-                match from_egui(&Event::Zoom(std::f32::consts::E), glam::Vec2::ZERO) {
+                match one(&Event::Zoom(std::f32::consts::E), glam::Vec2::ZERO) {
                     Some(ViewportEvent::TrackpadPinch(d)) => assert!((d - 1.0).abs() < 1e-5),
                     other => panic!("expected TrackpadPinch, got {other:?}"),
                 }
                 // Pinching together is negative.
-                match from_egui(&Event::Zoom(0.5), glam::Vec2::ZERO) {
+                match one(&Event::Zoom(0.5), glam::Vec2::ZERO) {
                     Some(ViewportEvent::TrackpadPinch(d)) => assert!(d < 0.0),
                     other => panic!("expected TrackpadPinch, got {other:?}"),
                 }
                 // A zero or negative factor has no logarithm; drop it rather than
                 // feed the resolver an infinity.
-                assert!(from_egui(&Event::Zoom(0.0), glam::Vec2::ZERO).is_none());
+                assert!(one(&Event::Zoom(0.0), glam::Vec2::ZERO).is_none());
             }
 
             #[test]
@@ -520,7 +618,7 @@ macro_rules! egui_adapter {
                 // egui's positive angle is winit's negative one. Getting this wrong
                 // makes twist spin opposite ways depending on the host, which is the
                 // whole reason the adapter converts rather than passing through.
-                match from_egui(&Event::Rotate(0.25), glam::Vec2::ZERO) {
+                match one(&Event::Rotate(0.25), glam::Vec2::ZERO) {
                     Some(ViewportEvent::TrackpadRotate(r)) => assert!((r + 0.25).abs() < 1e-6),
                     other => panic!("expected TrackpadRotate, got {other:?}"),
                 }
@@ -528,7 +626,7 @@ macro_rules! egui_adapter {
 
             #[test]
             fn a_touch_keeps_its_id_and_is_made_viewport_local() {
-                let ev = from_egui(
+                let ev = one(
                     &Event::Touch {
                         device_id: egui::TouchDeviceId(0),
                         id: egui::TouchId(7),
@@ -568,7 +666,7 @@ macro_rules! egui_adapter {
             #[test]
             fn pointer_gone_becomes_pointer_left() {
                 assert!(matches!(
-                    from_egui(&Event::PointerGone, glam::Vec2::ZERO),
+                    one(&Event::PointerGone, glam::Vec2::ZERO),
                     Some(ViewportEvent::PointerLeft)
                 ));
             }
@@ -577,7 +675,7 @@ macro_rules! egui_adapter {
             // position, as through winit.
             #[test]
             fn key_event_uses_the_physical_key() {
-                let ev = from_egui(
+                let ev = one(
                     &Event::Key {
                         key: E::Z,
                         physical_key: Some(E::W),
@@ -611,7 +709,7 @@ macro_rules! egui_adapter {
 
             #[test]
             fn key_event_carries_state_and_repeat() {
-                let ev = from_egui(
+                let ev = one(
                     &Event::Key {
                         key: E::W,
                         physical_key: None,
@@ -747,9 +845,146 @@ macro_rules! egui_adapter {
             }
 
             #[test]
+            fn begin_frame_reports_modifiers_focus_loss_and_drops() {
+                let mut input = egui::InputState::default();
+                input.modifiers = Modifiers {
+                    shift: true,
+                    ..Default::default()
+                };
+                let mut out = Vec::new();
+                begin_frame(&input, &AdapterCtx::default(), &mut out);
+                assert!(matches!(
+                    out.as_slice(),
+                    [ViewportEvent::ModifiersChanged(m)] if m.shift && !m.ctrl
+                ));
+
+                input.events.push(Event::WindowFocused(false));
+                input.raw.dropped_files.push(dropped("model.obj"));
+                out.clear();
+                begin_frame(&input, &AdapterCtx::default(), &mut out);
+                assert!(matches!(
+                    out.as_slice(),
+                    [
+                        ViewportEvent::ModifiersChanged(_),
+                        ViewportEvent::FocusLost,
+                        ViewportEvent::FileDropped(p),
+                    ] if p.as_os_str() == "model.obj"
+                ));
+
+                // Focus loss is begin_frame's to report, so it is not reported twice.
+                out.clear();
+                translate(
+                    &Event::WindowFocused(false),
+                    &AdapterCtx::default(),
+                    &mut out,
+                );
+                assert!(out.is_empty());
+            }
+
+            #[test]
+            fn positions_are_scaled_then_made_viewport_local() {
+                let mut out = Vec::new();
+                translate(
+                    &Event::PointerMoved(Pos2::new(100.0, 80.0)),
+                    &AdapterCtx::new(2.0, glam::Vec2::new(10.0, 20.0)),
+                    &mut out,
+                );
+                assert!(matches!(
+                    out.as_slice(),
+                    [ViewportEvent::PointerMoved { position }]
+                        if *position == glam::Vec2::new(40.0, 20.0)
+                ));
+            }
+
+            /// Every `ViewportEvent` variant is either produced from egui here
+            /// (by `translate` or `begin_frame`) or listed as one egui cannot
+            /// produce. A new variant fails this until it is one or the other.
+            #[test]
+            fn every_viewport_event_is_carried_or_listed() {
+                /// Variants egui has no event for, with the reason.
+                const UNREPRESENTABLE: &[(&str, &str)] = &[
+                    ("TrackpadPan", "egui folds a trackpad pan into MouseWheel"),
+                    ("ThemeChanged", "egui reports the theme as state, not a change"),
+                    ("Occluded", "egui reports occlusion as viewport state"),
+                    ("FileHovered", "egui reports hovered files as state, with no cancel"),
+                    ("FileHoverCancelled", "egui reports hovered files as state"),
+                ];
+
+                let mut input = egui::InputState::default();
+                input.events.push(Event::WindowFocused(false));
+                input.raw.dropped_files.push(dropped("a"));
+                let ctx = AdapterCtx::default();
+                let mut out = Vec::new();
+                begin_frame(&input, &ctx, &mut out);
+                let events = [
+                    Event::PointerMoved(Pos2::new(1.0, 2.0)),
+                    Event::MouseMoved(egui::vec2(1.0, 1.0)),
+                    Event::PointerButton {
+                        pos: Pos2::ZERO,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::default(),
+                    },
+                    Event::PointerGone,
+                    Event::MouseWheel {
+                        unit: MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, 1.0),
+                        #[cfg(any(feature = "egui-adapter-035", feature = "egui-adapter-036"))]
+                        phase: egui::TouchPhase::Move,
+                        modifiers: Modifiers::default(),
+                    },
+                    Event::Zoom(1.5),
+                    Event::Rotate(0.5),
+                    Event::Touch {
+                        device_id: egui::TouchDeviceId(0),
+                        id: egui::TouchId(1),
+                        phase: egui::TouchPhase::Start,
+                        pos: Pos2::ZERO,
+                        force: None,
+                    },
+                    // QWERTZ: the key in the US Y position is labelled Z.
+                    Event::Key {
+                        key: E::Z,
+                        physical_key: Some(E::Y),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::default(),
+                    },
+                    Event::Text("z".into()),
+                    Event::Ime(egui::ImeEvent::Commit("x".into())),
+                ];
+                for ev in &events {
+                    translate(ev, &ctx, &mut out);
+                }
+
+                let produced: std::collections::HashSet<&str> =
+                    out.iter().map(ViewportEvent::variant_name).collect();
+                for name in ViewportEvent::VARIANTS {
+                    let listed = UNREPRESENTABLE.iter().any(|(n, _)| n == name);
+                    assert!(
+                        produced.contains(name) != listed,
+                        "{name}: produced {}, listed {listed}",
+                        produced.contains(name)
+                    );
+                }
+                let key = out
+                    .iter()
+                    .find(|e| matches!(e, ViewportEvent::Key { .. }))
+                    .unwrap();
+                assert!(matches!(
+                    key,
+                    ViewportEvent::Key {
+                        key: KeyCode::Y,
+                        logical: Some('z'),
+                        ..
+                    }
+                ));
+            }
+
+            #[test]
             fn text_becomes_one_character_per_char() {
                 let mut out = Vec::new();
-                from_egui_into(&Event::Text("2.5\t".into()), glam::Vec2::ZERO, &mut out);
+                translate(&Event::Text("2.5\t".into()), &AdapterCtx::default(), &mut out);
                 let chars: Vec<char> = out
                     .iter()
                     .map(|ev| match ev {
@@ -763,8 +998,8 @@ macro_rules! egui_adapter {
             #[test]
             fn into_appends_the_translated_event() {
                 let mut out = vec![ViewportEvent::PointerLeft];
-                from_egui_into(&Event::PointerGone, glam::Vec2::ZERO, &mut out);
-                from_egui_into(&Event::Copy, glam::Vec2::ZERO, &mut out);
+                translate(&Event::PointerGone, &AdapterCtx::default(), &mut out);
+                translate(&Event::Copy, &AdapterCtx::default(), &mut out);
                 assert_eq!(out.len(), 2);
                 assert!(matches!(out[1], ViewportEvent::PointerLeft));
             }
@@ -777,18 +1012,21 @@ mod v033 {
     egui_adapter!(egui033);
 }
 #[cfg(feature = "egui-adapter")]
-pub use v033::{from_egui, from_egui_into, modifiers_from_egui, ownership};
+#[allow(deprecated)]
+pub use v033::{begin_frame, from_egui, modifiers_from_egui, ownership, translate};
 
 #[cfg(feature = "egui-adapter-035")]
 mod v035 {
     egui_adapter!(egui035);
 }
 #[cfg(feature = "egui-adapter-035")]
-pub use v035::{from_egui, from_egui_into, modifiers_from_egui, ownership};
+#[allow(deprecated)]
+pub use v035::{begin_frame, from_egui, modifiers_from_egui, ownership, translate};
 
 #[cfg(feature = "egui-adapter-036")]
 mod v036 {
     egui_adapter!(egui036);
 }
 #[cfg(feature = "egui-adapter-036")]
-pub use v036::{from_egui, from_egui_into, modifiers_from_egui, ownership};
+#[allow(deprecated)]
+pub use v036::{begin_frame, from_egui, modifiers_from_egui, ownership, translate};

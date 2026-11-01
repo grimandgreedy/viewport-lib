@@ -148,12 +148,12 @@ pub enum ViewportEvent {
     /// A character was typed (Unicode): the text a key press produced after
     /// layout, Shift and dead keys.
     ///
-    /// winit puts it in `KeyEvent::text`, which `from_winit` drops;
-    /// `from_winit_into` emits it after the key's [`Key`](ViewportEvent::Key)
-    /// event, and `ViewportApp` uses that. egui sends it as `Event::Text`, which
-    /// `from_egui_into` turns into one `Character` per character. The resolver
-    /// keeps it only while the viewport is focused, like a key, and a
-    /// manipulation session reads its digits, `.` and `-` for numeric entry.
+    /// winit puts it in `KeyEvent::text`, and the winit adapter's `translate`
+    /// emits it after the key's [`Key`](ViewportEvent::Key) event. egui sends it
+    /// as `Event::Text`, which the egui adapter's `translate` turns into one
+    /// `Character` per character. The resolver keeps it only while the viewport
+    /// owns the keyboard, like a key, and a manipulation session reads its
+    /// digits, `.` and `-` for numeric entry.
     Character(char),
 
     /// Two-finger trackpad rotation gesture.
@@ -249,6 +249,50 @@ pub enum ViewportEvent {
     Ime(ImeEvent),
 }
 
+/// The variant names of [`ViewportEvent`], listed once so the name table and the
+/// match in `variant_name` cannot drift apart. The match has no wildcard, so a new
+/// variant fails to compile here until it is listed.
+macro_rules! viewport_event_variants {
+    ($($name:ident),* $(,)?) => {
+        impl ViewportEvent {
+            /// Every variant's name, for tests that walk the event vocabulary (an
+            /// adapter checking it carries each one).
+            #[doc(hidden)]
+            pub const VARIANTS: &'static [&'static str] = &[$(stringify!($name)),*];
+
+            /// This event's variant name, one of [`VARIANTS`](Self::VARIANTS).
+            #[doc(hidden)]
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(ViewportEvent::$name { .. } => stringify!($name),)*
+                }
+            }
+        }
+    };
+}
+
+viewport_event_variants! {
+    PointerMoved,
+    MouseButton,
+    Wheel,
+    Key,
+    ModifiersChanged,
+    PointerLeft,
+    FocusLost,
+    Character,
+    TrackpadRotate,
+    TrackpadPinch,
+    TrackpadPan,
+    Touch,
+    RawMotion,
+    ThemeChanged,
+    Occluded,
+    FileDropped,
+    FileHovered,
+    FileHoverCancelled,
+    Ime,
+}
+
 impl ViewportEvent {
     /// Whether this event would be claimed by both the viewport and anything drawn
     /// over it, so at most one of them may act on it.
@@ -336,6 +380,15 @@ impl ViewportEvent {
 #[cfg(test)]
 mod contested_tests {
     use super::*;
+
+    #[test]
+    fn every_variant_has_a_listed_name() {
+        assert!(ViewportEvent::VARIANTS.contains(&ViewportEvent::PointerLeft.variant_name()));
+        assert_eq!(ViewportEvent::FocusLost.variant_name(), "FocusLost");
+        assert_eq!(ViewportEvent::Character('a').variant_name(), "Character");
+        let unique: std::collections::HashSet<_> = ViewportEvent::VARIANTS.iter().collect();
+        assert_eq!(unique.len(), ViewportEvent::VARIANTS.len());
+    }
 
     #[test]
     fn only_positions_are_offset() {

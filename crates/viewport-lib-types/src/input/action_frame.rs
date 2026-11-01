@@ -103,11 +103,11 @@ pub struct ActionFrame {
     pub navigation: NavigationActions,
     /// General action states resolved this frame (key presses, holds, etc.).
     pub actions: HashMap<Action, ResolvedActionState>,
-    /// Characters typed this frame while the viewport was focused, control
-    /// characters left out.
+    /// Characters typed this frame while the viewport owned the keyboard,
+    /// control characters left out.
     ///
-    /// Filled from [`super::event::ViewportEvent::Character`] events, which
-    /// `from_winit_into` and `from_egui_into` produce. A manipulation session reads
+    /// Filled from [`super::event::ViewportEvent::Character`] events, which the
+    /// winit and egui adapters' `translate` produce. A manipulation session reads
     /// the digits, `.` and `-` in it for numeric entry and ignores the rest.
     pub typed_chars: Vec<char>,
     /// Cursor position, pointer delta, and click-vs-drag flags for this frame.
