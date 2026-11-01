@@ -1,14 +1,10 @@
-//! Sweeping polyline strips into a closed tube mesh on the CPU, shared by the
-//! streamtube and tube builders.
+//! Sweeping polyline strips into meshes on the CPU: closed tubes for the
+//! streamtube and tube builders, flat strips for the ribbon builder.
 //!
-//! Each strip gets one ring of vertices per point, oriented by a parallel
-//! transport frame, with quads between consecutive rings and a flat fan cap
-//! at each end.
-//!
-//! Consecutive points that coincide (submitted twice, or rounded together by
-//! f32 far from the origin) sweep a zero-length segment: its rings take the
-//! tangent of the nearest segment that has a length, so the rest of the strip
-//! still draws.
+//! Both orient each point by a parallel transport frame. Consecutive points
+//! that coincide (submitted twice, or rounded together by f32 far from the
+//! origin) sweep a zero-length segment: its points take the tangent of the
+//! nearest segment that has a length, so the rest of the strip still draws.
 
 use glam::Vec3;
 use viewport_lib::plugin_api::builders::Vertex;
@@ -17,7 +13,7 @@ use viewport_lib::plugin_api::builders::Vertex;
 /// lockstep with `indices` so a GPU pick's `primitive_index` resolves to a
 /// segment or strip.
 #[derive(Default)]
-pub(super) struct SweptTube {
+pub(super) struct SweptMesh {
     pub verts: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub tri_segment: Vec<u32>,
@@ -35,8 +31,8 @@ pub(super) fn sweep_tube(
     sides: usize,
     radius_at: impl Fn(usize) -> f32,
     colour_at: impl Fn(usize) -> [f32; 4],
-) -> SweptTube {
-    let mut out = SweptTube::default();
+) -> SweptMesh {
+    let mut out = SweptMesh::default();
     let mut seg_acc: u32 = 0;
     let mut strip_start = 0usize;
 
@@ -192,6 +188,127 @@ pub(super) fn sweep_tube(
     out
 }
 
+/// Sweep every strip of `positions` into a flat ribbon: two vertices per
+/// point, `half_width_at` either side along the frame's lateral, joined by
+/// two triangles per segment and no caps.
+///
+/// `uv.x` runs along the strip, from `u_attribute` when it is not empty and
+/// otherwise the arc length normalised to [0, 1]; `uv.y` picks the edge. A
+/// `twist` vector at a point turns the lateral towards it. The index closures
+/// and the segment numbering work as in [`sweep_tube`].
+pub(super) fn sweep_ribbon(
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+    u_attribute: &[f32],
+    twist: Option<&[[f32; 3]]>,
+    half_width_at: impl Fn(usize) -> f32,
+    colour_at: impl Fn(usize) -> [f32; 4],
+) -> SweptMesh {
+    let mut out = SweptMesh::default();
+    let mut seg_acc: u32 = 0;
+    let mut strip_start = 0usize;
+
+    for (strip_idx, &strip_len) in strip_lengths.iter().enumerate() {
+        let strip_idx = strip_idx as u32;
+        let strip_len = strip_len as usize;
+        let seg_base = seg_acc;
+        seg_acc += strip_len.saturating_sub(1) as u32;
+        let strip_end = (strip_start + strip_len).min(positions.len());
+        let pts: Vec<Vec3> = positions[strip_start..strip_end]
+            .iter()
+            .map(|&p| Vec3::from(p))
+            .collect();
+        let first = strip_start;
+        strip_start += strip_len;
+
+        if pts.len() < 2 {
+            continue;
+        }
+
+        let Some(t0) = pts.windows(2).find_map(|w| direction(w[1] - w[0])) else {
+            continue;
+        };
+        let ref_v = if t0.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+        let mut u = t0.cross(ref_v).normalize();
+
+        let mut strip_u: Vec<f32> = Vec::with_capacity(pts.len());
+        if u_attribute.is_empty() {
+            let mut cum = 0.0_f32;
+            strip_u.push(0.0);
+            for k in 1..pts.len() {
+                cum += (pts[k] - pts[k - 1]).length();
+                strip_u.push(cum);
+            }
+            let total = strip_u.last().copied().unwrap_or(1.0).max(1e-6);
+            for v in &mut strip_u {
+                *v /= total;
+            }
+        } else {
+            for k in 0..pts.len() {
+                strip_u.push(*u_attribute.get(first + k).unwrap_or(&0.0));
+            }
+        }
+
+        let base = out.verts.len() as u32;
+        let mut t_prev = t0;
+
+        for (k, &pt) in pts.iter().enumerate() {
+            let diff = if k + 1 < pts.len() {
+                pts[k + 1] - pt
+            } else {
+                pt - pts[k - 1]
+            };
+            let tangent = direction(diff).unwrap_or(t_prev);
+
+            if k > 0 {
+                let axis = t_prev.cross(tangent);
+                let sin_a = axis.length().min(1.0);
+                if sin_a > 1e-6 {
+                    let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
+                    let ax = axis / sin_a;
+                    u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
+                    u = u.normalize_or_zero();
+                }
+            }
+            t_prev = tangent;
+
+            let mut lateral = u;
+            if let Some(&tv) = twist.and_then(|t| t.get(first + k)) {
+                let tv = Vec3::from(tv);
+                let proj = tv - tangent * tangent.dot(tv);
+                if proj.length_squared() > 1e-10 {
+                    lateral = proj.normalize();
+                }
+            }
+
+            let normal = tangent.cross(lateral).normalize_or_zero();
+            let half_w = half_width_at(first + k);
+            let colour = colour_at(first + k);
+            let uval = strip_u[k];
+            for (position, edge) in [(pt + lateral * half_w, 0.0), (pt - lateral * half_w, 1.0)] {
+                out.verts.push(Vertex {
+                    position: position.to_array(),
+                    normal: normal.to_array(),
+                    colour,
+                    uv: [uval, edge],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                });
+            }
+
+            if k > 0 {
+                let r0 = base + ((k - 1) * 2) as u32;
+                let r1 = base + (k * 2) as u32;
+                out.indices
+                    .extend_from_slice(&[r0, r0 + 1, r1, r0 + 1, r1 + 1, r1]);
+                let seg = seg_base + (k - 1) as u32;
+                out.tri_segment.extend_from_slice(&[seg, seg]);
+                out.tri_strip.extend_from_slice(&[strip_idx, strip_idx]);
+            }
+        }
+    }
+    out
+}
+
 /// `v` normalised, or `None` when it has no usable length.
 fn direction(v: Vec3) -> Option<Vec3> {
     let d = v.normalize_or_zero();
@@ -292,6 +409,40 @@ mod tests {
         for (a, b) in swept.verts[6..17 * 6].iter().zip(&plain.verts[..16 * 6]) {
             assert_eq!(a.position, b.position);
             assert_eq!(a.normal, b.normal);
+        }
+    }
+
+    fn ribbon(positions: &[[f32; 3]], len: u32) -> SweptMesh {
+        sweep_ribbon(positions, &[len], &[], None, |_| 0.125, |_| WHITE)
+    }
+
+    #[test]
+    fn a_ribbon_whose_first_points_coincide_still_draws() {
+        let pts = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let mesh = ribbon(&pts, 3);
+        assert_eq!(mesh.verts.len(), 6);
+        assert_eq!(mesh.indices.len(), 2 * 2 * 3);
+        for v in &mesh.verts {
+            assert!(Vec3::from(v.position).is_finite());
+            assert!((Vec3::from(v.normal).length() - 1.0).abs() < 1e-3);
+        }
+        let (lo, hi) = bounds(&mesh.verts);
+        assert!((hi.x - lo.x - 2.0).abs() < 1e-6);
+        assert!(((hi - lo).length() - (4.0f32 + 0.0625).sqrt()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn near_points_sweep_the_same_ribbon_with_and_without_a_repeat() {
+        let pts = helix(0.0, 16);
+        let plain = ribbon(&pts, 16);
+        let mut doubled = pts.clone();
+        doubled.insert(0, pts[0]);
+        let swept = ribbon(&doubled, 17);
+        assert_eq!(swept.verts.len(), plain.verts.len() + 2);
+        for (a, b) in swept.verts[2..].iter().zip(&plain.verts) {
+            assert_eq!(a.position, b.position);
+            assert_eq!(a.normal, b.normal);
+            assert_eq!(a.uv, b.uv);
         }
     }
 

@@ -254,7 +254,7 @@ pub(super) fn build_streamtube(
 
         let (anchor, local) = crate::item_types::origin::anchored(&item.positions);
         let positions: &[[f32; 3]] = local.as_deref().unwrap_or(&item.positions);
-        let super::sweep::SweptTube {
+        let super::sweep::SweptMesh {
             verts,
             indices,
             tri_segment,
@@ -451,7 +451,7 @@ pub(super) fn build_tube(
                 .unwrap_or(item.radius)
                 .max(f32::EPSILON)
         };
-        let super::sweep::SweptTube {
+        let super::sweep::SweptMesh {
             verts,
             indices,
             tri_segment,
@@ -644,152 +644,30 @@ pub(super) fn build_ribbon(
             }
         };
 
-        let mut verts: Vec<Vertex> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
-        // Per-triangle segment / strip maps (see the streamtube builder for the
-        // numbering convention). Ribbons emit two triangles per segment and no
-        // caps.
-        let mut tri_segment: Vec<u32> = Vec::new();
-        let mut tri_strip: Vec<u32> = Vec::new();
-        let mut seg_acc: u32 = 0;
-
         let (anchor, local) = crate::item_types::origin::anchored(&item.positions);
         let positions: &[[f32; 3]] = local.as_deref().unwrap_or(&item.positions);
-        let mut strip_start = 0usize;
-
-        for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
-            let strip_idx = strip_idx as u32;
-            let strip_len = strip_len as usize;
-            let seg_base = seg_acc;
-            seg_acc += strip_len.saturating_sub(1) as u32;
-            let strip_end = (strip_start + strip_len).min(positions.len());
-            let pts: Vec<glam::Vec3> = positions[strip_start..strip_end]
-                .iter()
-                .map(|&p| glam::Vec3::from(p))
-                .collect();
-            let pts_start = strip_start;
-            strip_start += strip_len;
-
-            if pts.len() < 2 {
-                continue;
-            }
-
-            // Build parallel transport frame.
-            let t0 = (pts[1] - pts[0]).normalize_or_zero();
-            if t0.length_squared() < 1e-10 {
-                continue;
-            }
-            let ref_v = if t0.x.abs() < 0.9 {
-                glam::Vec3::X
-            } else {
-                glam::Vec3::Y
-            };
-            let mut u = t0.cross(ref_v).normalize();
-
-            // Per-vertex u along the strip. Defaults to cumulative-arc-length
-            // normalised to [0, 1] when the host did not supply a `u_attribute`.
-            let mut strip_u: Vec<f32> = Vec::with_capacity(pts.len());
-            if item.u_attribute.is_empty() {
-                let mut cum = 0.0_f32;
-                strip_u.push(0.0);
-                for k in 1..pts.len() {
-                    cum += (pts[k] - pts[k - 1]).length();
-                    strip_u.push(cum);
-                }
-                let total = strip_u.last().copied().unwrap_or(1.0).max(1e-6);
-                for v in &mut strip_u {
-                    *v /= total;
-                }
-            } else {
-                for k in 0..pts.len() {
-                    strip_u.push(*item.u_attribute.get(pts_start + k).unwrap_or(&0.0));
-                }
-            }
-
-            let base = verts.len() as u32;
-
-            for (k, &pt) in pts.iter().enumerate() {
-                let tangent = if k + 1 < pts.len() {
-                    (pts[k + 1] - pt).normalize_or_zero()
-                } else {
-                    (pt - pts[k - 1]).normalize_or_zero()
-                };
-
-                // Parallel transport: rotate u to stay perpendicular to new tangent.
-                if k > 0 {
-                    let t_prev = (pts[k] - pts[k - 1]).normalize_or_zero();
-                    let axis = t_prev.cross(tangent);
-                    let sin_a = axis.length().min(1.0);
-                    if sin_a > 1e-6 {
-                        let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
-                        let ax = axis / sin_a;
-                        u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
-                        u = u.normalize_or_zero();
-                    }
-                }
-
-                // If twist_attribute provided, align u with projection of that vector onto
-                // the plane perpendicular to the tangent.
-                let mut lateral = u;
-                if let Some(ref twist) = item.twist_attribute {
-                    if let Some(&tv) = twist.get(pts_start + k) {
-                        let tv = glam::Vec3::from(tv);
-                        let proj = tv - tangent * tangent.dot(tv);
-                        if proj.length_squared() > 1e-10 {
-                            lateral = proj.normalize();
-                        }
-                    }
-                }
-
-                let normal = tangent.cross(lateral).normalize_or_zero();
-                let half_w = item
-                    .width_attribute
-                    .as_ref()
-                    .and_then(|wa| wa.get(pts_start + k).copied())
-                    .unwrap_or(item.width)
-                    * 0.5;
-                let colour = scalar_to_colour(pts_start + k);
-
-                let uval = strip_u[k];
-                // Left edge vertex. `uv.x` runs along the strip; `uv.y` is the
-                // cross-strip coordinate that picks the left or right edge.
-                verts.push(Vertex {
-                    position: (pt + lateral * half_w).to_array(),
-                    normal: normal.to_array(),
-                    colour,
-                    uv: [uval, 0.0],
-                    tangent: [1.0, 0.0, 0.0, 1.0],
-                });
-                // Right edge vertex.
-                verts.push(Vertex {
-                    position: (pt - lateral * half_w).to_array(),
-                    normal: normal.to_array(),
-                    colour,
-                    uv: [uval, 1.0],
-                    tangent: [1.0, 0.0, 0.0, 1.0],
-                });
-
-                // Connect to previous pair as two triangles.
-                if k > 0 {
-                    let r0 = base + ((k - 1) * 2) as u32;
-                    let r1 = base + (k * 2) as u32;
-                    // Triangle 1: r0+0, r0+1, r1+0
-                    indices.push(r0);
-                    indices.push(r0 + 1);
-                    indices.push(r1);
-                    // Triangle 2: r0+1, r1+1, r1+0
-                    indices.push(r0 + 1);
-                    indices.push(r1 + 1);
-                    indices.push(r1);
-
-                    let seg = seg_base + (k - 1) as u32;
-                    tri_segment.push(seg);
-                    tri_segment.push(seg);
-                    tri_strip.push(strip_idx);
-                    tri_strip.push(strip_idx);
-                }
-            }
-        }
+        // Per-point half width from width_attribute if provided, else the
+        // uniform width.
+        let half_width_at = |idx: usize| {
+            item.width_attribute
+                .as_ref()
+                .and_then(|wa| wa.get(idx).copied())
+                .unwrap_or(item.width)
+                * 0.5
+        };
+        let super::sweep::SweptMesh {
+            verts,
+            indices,
+            tri_segment,
+            tri_strip,
+        } = super::sweep::sweep_ribbon(
+            positions,
+            &item.strip_lengths,
+            &item.u_attribute,
+            item.twist_attribute.as_deref(),
+            half_width_at,
+            scalar_to_colour,
+        );
 
         // Upload vertex + index buffers.
         let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
