@@ -545,7 +545,7 @@ pub fn clear_environment_zones(resources: &mut crate::resources::DeviceResources
 /// Largest finite half float. Environment textures are `Rgba16Float`, so a
 /// brighter texel (a sun disc in an HDRI can exceed it) would turn infinite and
 /// spread through the convolutions.
-const F16_MAX: f32 = 65504.0;
+pub(crate) const F16_MAX: f32 = 65504.0;
 
 /// Upload an equirectangular environment, bake its lighting, and return its
 /// handle. Blocks until the bake finishes.

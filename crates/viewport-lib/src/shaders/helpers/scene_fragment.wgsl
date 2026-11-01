@@ -32,9 +32,11 @@ fn scene_light_split(indirect: vec3<f32>, direct: vec3<f32>, emitted: vec3<f32>)
     scene_direct_fraction = d / total;
 }
 
+// The colour is clamped to 65504, the largest finite half float, so an
+// unbounded radiance cannot write an infinity into the Rgba16Float target.
 fn scene_fragment(colour: vec4<f32>) -> SceneFragment {
     return SceneFragment(
-        colour,
+        vec4<f32>(min(colour.rgb, vec3<f32>(65504.0)), colour.a),
         vec4<f32>(scene_indirect_fraction, scene_direct_fraction, 0.0, colour.a),
     );
 }

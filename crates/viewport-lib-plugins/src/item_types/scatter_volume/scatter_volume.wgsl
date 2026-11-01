@@ -503,5 +503,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         if acc_a > 0.995 { break; }
     }
 
-    return vec4<f32>(acc_rgb, acc_a);
+    // The largest finite half float: the emission strength is unbounded.
+    return vec4<f32>(min(acc_rgb, vec3<f32>(65504.0)), acc_a);
 }

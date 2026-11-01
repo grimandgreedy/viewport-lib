@@ -157,6 +157,11 @@ struct MaterialGpu {
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
+// Largest finite half float. The shaded colour and each accumulation write
+// are clamped to it: the weight reaches 3e3, so a bright exposed colour would
+// otherwise write an infinity into the Rgba16Float accumulation target.
+const OIT_ACCUM_MAX: f32 = 65504.0;
+
 // `item_flags.x` bits of MaterialGpu (mirrors the Rust `item_flags` module).
 const MAT_USE_NAN_COLOUR: u32 = 1u;
 const MAT_USE_MATCAP: u32 = 2u;
@@ -901,7 +906,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         let alpha = fc.a * object.colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
-        out.out_oit.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
+        out.out_oit.accum  = min(vec4<f32>(fc.rgb * alpha, alpha) * w, vec4<f32>(OIT_ACCUM_MAX));
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -916,7 +921,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
             let z = viewport_depth_from_near(in.clip_pos.z);
             let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
             out.resolved = true;
-            out.out_oit.accum  = vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w);
+            out.out_oit.accum  = min(vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w), vec4<f32>(OIT_ACCUM_MAX));
             out.out_oit.reveal = alpha;
             return out;
         }
@@ -937,7 +942,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         // alpha_mode == 3 means the colour is already premultiplied by alpha, so
         // it is weighted directly; straight blend premultiplies here.
         let premult_rgb = select(base_colour * alpha, base_colour, object.alpha_mode == 3u);
-        out.out_oit.accum  = vec4<f32>(premult_rgb, alpha) * w;
+        out.out_oit.accum  = min(vec4<f32>(premult_rgb, alpha) * w, vec4<f32>(OIT_ACCUM_MAX));
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -948,7 +953,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
-        out.out_oit.accum  = vec4<f32>(vis * alpha, alpha) * w;
+        out.out_oit.accum  = min(vec4<f32>(vis * alpha, alpha) * w, vec4<f32>(OIT_ACCUM_MAX));
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -1262,7 +1267,7 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // `mix(1, exposure, w)`, written so weight 1 is exactly the exposure.
     let emissive_weight = material_gpu_buf[object.material_id].volume0.w;
     emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
-    final_rgb += emissive;
+    final_rgb = min(final_rgb + emissive, vec3<f32>(OIT_ACCUM_MAX));
     let dbg_emissive_lum = dot(emissive, lum_weights);
 
     // #include "helpers/debug_vis.wgsl"
@@ -1283,7 +1288,7 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // alpha_mode == 3 (BlendPremultiplied): final_rgb already carries the alpha
     // premultiply, so weight it as-is. Straight blend applies `* alpha` here.
     let premult_rgb = select(final_rgb * alpha, final_rgb, object.alpha_mode == 3u);
-    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
+    out.accum  = min(vec4<f32>(premult_rgb * w, alpha * w), vec4<f32>(OIT_ACCUM_MAX));
     out.reveal = alpha;
     return out;
 }

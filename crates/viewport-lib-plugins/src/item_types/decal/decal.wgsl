@@ -371,5 +371,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         out_rgb = out_rgb + emissive_col * u.emissive;
     }
 
-    return vec4<f32>(out_rgb, alpha);
+    // The largest finite half float: the emissive multiplier is unbounded.
+    return vec4<f32>(min(out_rgb, vec3<f32>(65504.0)), alpha);
 }
