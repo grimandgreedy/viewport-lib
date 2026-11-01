@@ -59,6 +59,29 @@ impl Frustum {
         Self { planes }
     }
 
+    /// Extract a world-space frustum from `vp_rel`, a view-projection for
+    /// points relative to `eye` (its view carries no translation).
+    ///
+    /// Far from the world origin an absolute view-projection carries the
+    /// eye's distance in every row, and the far plane is the difference of
+    /// two nearly equal rows, so [`from_view_proj`](Self::from_view_proj)
+    /// loses about `far / near` f32 steps of that distance: kilometres at
+    /// 6 400 km. Here the planes are extracted where the numbers are small
+    /// and each plane's distance is moved back to world space in f64, then
+    /// rounded to f32 once. A world-space frustum built this way is as
+    /// precise as an f32 world position at the eye's distance, half a metre
+    /// at 6 400 km; test positions relative to the eye for anything finer.
+    pub fn from_eye_relative(vp_rel: &glam::Mat4, eye: glam::DVec3) -> Self {
+        let mut frustum = Self::from_view_proj(vp_rel);
+        if eye != glam::DVec3::ZERO {
+            // dot(n, p - eye) + d = 0  ->  dot(n, p) + (d - dot(n, eye)) = 0
+            for plane in &mut frustum.planes {
+                plane.d = (f64::from(plane.d) - plane.normal.as_dvec3().dot(eye)) as f32;
+            }
+        }
+        frustum
+    }
+
     /// Test whether a sphere should be culled.
     ///
     /// Returns `true` if the sphere is fully outside at least one plane. The
@@ -162,6 +185,30 @@ pub struct CullStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Planes extracted relative to an eye 6 400 km out keep a point 5 m in
+    /// front of it inside; the absolute matrix puts the far plane behind it.
+    #[test]
+    fn eye_relative_planes_hold_far_from_origin() {
+        let eye = glam::DVec3::new(0.0, 6.4e6, 3.0);
+        let target = eye + glam::DVec3::new(0.0, 4.0, -3.0);
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_3, 1.0, 0.05, 1000.0);
+        let rel_view = glam::Mat4::look_to_rh(
+            glam::Vec3::ZERO,
+            (target - eye).as_vec3().normalize(),
+            glam::Vec3::Z,
+        );
+        let frustum = Frustum::from_eye_relative(&(proj * rel_view), eye);
+        let point = |p: glam::DVec3| Aabb::from_positions(&[p.as_vec3().to_array()]);
+        assert!(!frustum.cull_aabb(&point(target)));
+        let forward = (target - eye).normalize();
+        assert!(frustum.cull_aabb(&point(eye - forward * 20.0)));
+        assert!(frustum.cull_aabb(&point(eye + forward * 1020.0)));
+        // The same frustum from the absolute matrix, for contrast.
+        let abs_view = glam::Mat4::look_at_rh(eye.as_vec3(), target.as_vec3(), glam::Vec3::Z);
+        let absolute = Frustum::from_view_proj(&(proj * abs_view));
+        assert!(absolute.cull_aabb(&point(target)));
+    }
 
     fn test_camera_vp() -> glam::Mat4 {
         let view = glam::Mat4::look_at_rh(

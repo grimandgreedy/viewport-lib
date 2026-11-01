@@ -408,3 +408,33 @@ fn matrix_projection_culls_over_its_range() {
     assert_eq!(rc.depth_range(), (0.05, 500.0));
     assert!(close(rc.vertical_fov().unwrap(), 0.8));
 }
+
+/// A point 5 m in front of a camera 6 400 km from the world origin tests
+/// inside the culling frustum, and points past each side of it outside.
+#[test]
+fn culling_frustum_far_from_origin_keeps_what_is_in_view() {
+    for base in [glam::DVec3::ZERO, glam::DVec3::new(6.4e6, 6.4e6, 0.0)] {
+        let camera = Camera::orbit(
+            base,
+            5.0,
+            glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.8),
+        );
+        let rc = RenderCamera::from_camera(&camera);
+        let frustum = rc.culling_frustum();
+        let at = |p: glam::DVec3| {
+            let p = p.as_vec3();
+            crate::scene::aabb::Aabb::from_positions(&[p.to_array()])
+        };
+        let (_, far) = rc.depth_range();
+        let eye = camera.eye();
+        let forward = camera.forward().as_dvec3();
+        let right = camera.right().as_dvec3();
+        assert!(!frustum.cull_aabb(&at(base)), "the target at {base}");
+        let behind = eye - forward * 20.0;
+        let beyond = eye + forward * (f64::from(far) + 20.0);
+        let aside = base + right * 50.0;
+        for (name, p) in [("behind", behind), ("beyond", beyond), ("aside", aside)] {
+            assert!(frustum.cull_aabb(&at(p)), "{name} at {base}");
+        }
+    }
+}
