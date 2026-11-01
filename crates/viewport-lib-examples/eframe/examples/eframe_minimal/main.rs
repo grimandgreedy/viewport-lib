@@ -3,7 +3,7 @@
 //! The session renders into an app-owned offscreen texture, which egui displays
 //! as an image. This keeps the whole session model (renderer, scene, camera,
 //! input) behind one object; the app only owns the texture and translates events
-//! with `viewport_lib::input::adapters::from_egui`. The egui paint-callback route
+//! with `viewport_lib::input::adapters::egui::translate`. The egui paint-callback route
 //! is not used here because it requires the session to live in egui's
 //! `Send + Sync` callback resources, which a session carrying a runtime is not.
 //!
@@ -18,11 +18,10 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
-    InputOwnership, KeyboardOwnership, Material, NodeId, OffscreenViewportTarget,
-    OrbitCameraController, PointerOwnership, RendererConfig, ViewportContext, ViewportEvent,
-    ViewportInstance, primitives,
+    Material, NodeId, OffscreenViewportTarget, OrbitCameraController, RendererConfig,
+    ViewportContext, ViewportInstance, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -181,35 +180,23 @@ impl App {
                 // Screen-space state (viewport size, cursor) stays in logical
                 // points; pixels_per_point sizes the physical render target and
                 // keeps overlays and the axes indicator crisp on HiDPI.
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
                 self.session.begin_frame(ViewportContext::new(
-                    InputOwnership {
-                        pointer: if response.hovered() {
-                            PointerOwnership::Owned
-                        } else {
-                            PointerOwnership::Elsewhere
-                        },
-                        keyboard: if response.hovered()
-                            && ui.ctx().memory(|m| m.focused().is_none())
-                        {
-                            KeyboardOwnership::Owned
-                        } else {
-                            KeyboardOwnership::Elsewhere
-                        },
-                    },
+                    ownership,
                     [rect.width(), rect.height()],
                 ));
                 self.session.set_pixels_per_point(ppp);
-                let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.session.handle_event(ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.session.handle_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.session.handle_event(ev);
+                }
 
                 // Z-up: spin the cube about the world up axis, before assembly.
                 let spin = glam::Mat4::from_rotation_z(time);

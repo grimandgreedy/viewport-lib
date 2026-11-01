@@ -30,12 +30,11 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
-    AnchorY, InputOwnership, KeyboardOwnership, LabelItem, Material, OffscreenViewportTarget,
-    OrbitCameraController, OverlayFill, OverlayGeometryId, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, PointerOwnership, RetainedOverlay, ViewportContext,
-    ViewportEvent, ViewportInstance, primitives,
+    AnchorY, LabelItem, Material, OffscreenViewportTarget, OrbitCameraController, OverlayFill,
+    OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
+    RetainedOverlay, ViewportContext, ViewportInstance, primitives,
 };
 
 /// Panel geometry, in the panel's own logical-pixel space (top-left origin near
@@ -231,35 +230,24 @@ impl App {
                 }
                 let target = self.target.as_ref().unwrap();
 
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
                 self.session.begin_frame(ViewportContext::new(
-                    InputOwnership {
-                        pointer: if response.hovered() {
-                            PointerOwnership::Owned
-                        } else {
-                            PointerOwnership::Elsewhere
-                        },
-                        keyboard: if response.hovered()
-                            && ui.ctx().memory(|m| m.focused().is_none())
-                        {
-                            KeyboardOwnership::Owned
-                        } else {
-                            KeyboardOwnership::Elsewhere
-                        },
-                    },
+                    ownership,
                     [rect.width(), rect.height()],
                 ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, origin);
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.session.handle_event(ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.session.handle_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.session.handle_event(ev);
+                }
 
                 // Compile the two panel groups once, now that ppp is known.
                 if self.background.is_none() {

@@ -10,17 +10,17 @@
 //!   Scroll                    : zoom
 
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 mod viewport_callback;
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    ButtonState, Camera, CameraFrame, FrameData, InputOwnership, KeyboardOwnership,
-    LightingSettings, ManipResult, ManipulationContext, ManipulationController, Material,
-    MaterialId, MeshId, OrbitCameraController, PointerOwnership, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
+    ManipulationContext, ManipulationController, Material, MaterialId, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -145,31 +145,18 @@ impl App {
         self.drag_started = false;
         self.clicked = false;
 
+        let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, self.manip.is_active());
         self.input.begin_frame(ViewportContext::new(
-            InputOwnership {
-                pointer: if response.hovered() {
-                    PointerOwnership::Owned
-                } else {
-                    PointerOwnership::Elsewhere
-                },
-                keyboard: if response.hovered() && ui.ctx().memory(|m| m.focused().is_none()) {
-                    KeyboardOwnership::Owned
-                } else {
-                    KeyboardOwnership::Elsewhere
-                },
-            },
+            ownership,
             [rect.width(), rect.height()],
         ));
         // Pan reads the viewport height off the controller.
         self.controller
             .set_viewport_size([rect.width(), rect.height()]);
 
+        let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+        let mut events = Vec::new();
         ui.input(|i| {
-            self.input
-                .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                    &i.modifiers,
-                )));
-
             // Cursor position in viewport-local space.
             let local_pos = i
                 .pointer
@@ -177,65 +164,37 @@ impl App {
                 .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
             self.cursor_prev = self.cursor_viewport;
             self.cursor_viewport = local_pos;
-            if let Some(pos) = local_pos {
-                self.input
-                    .push_event(ViewportEvent::PointerMoved { position: pos });
-            }
 
+            vpl_egui::begin_frame(i, &actx, &mut events);
             for event in &i.events {
-                match event {
-                    egui::Event::PointerButton {
-                        button, pressed, ..
-                    } => {
-                        let vp_button = match button {
-                            egui::PointerButton::Primary => vpl::MouseButton::Left,
-                            egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                            egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                            _ => continue,
-                        };
-                        self.input.push_event(ViewportEvent::MouseButton {
-                            button: vp_button,
-                            state: if *pressed {
-                                ButtonState::Pressed
-                            } else {
-                                ButtonState::Released
-                            },
-                        });
-
-                        if *button == egui::PointerButton::Primary {
-                            if *pressed {
-                                self.left_held = true;
-                                self.press_origin = self.cursor_viewport;
-                                self.drag_started = true;
-                            } else {
-                                let is_click = self
-                                    .press_origin
-                                    .zip(self.cursor_viewport)
-                                    .map(|(o, c)| (c - o).length() < 5.0)
-                                    .unwrap_or(false);
-                                if is_click {
-                                    self.clicked = true;
-                                }
-                                self.left_held = false;
-                                self.press_origin = None;
-                            }
-                        }
-                    }
-                    egui::Event::MouseWheel { unit, delta, .. } => {
-                        let units = match unit {
-                            egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                            egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                            egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                        };
-                        self.input.push_event(ViewportEvent::Wheel {
-                            delta: glam::Vec2::new(delta.x, delta.y),
-                            units,
-                        });
-                    }
-                    _ => {}
-                }
+                vpl_egui::translate(event, &actx, &mut events);
             }
         });
+        for ev in events {
+            if let ViewportEvent::MouseButton {
+                button: vpl::MouseButton::Left,
+                state,
+            } = ev
+            {
+                if state == ButtonState::Pressed {
+                    self.left_held = true;
+                    self.press_origin = self.cursor_viewport;
+                    self.drag_started = true;
+                } else {
+                    let is_click = self
+                        .press_origin
+                        .zip(self.cursor_viewport)
+                        .map(|(o, c)| (c - o).length() < 5.0)
+                        .unwrap_or(false);
+                    if is_click {
+                        self.clicked = true;
+                    }
+                    self.left_held = false;
+                    self.press_origin = None;
+                }
+            }
+            self.input.push_event(ev);
+        }
 
         let w = rect.width();
         let h = rect.height();

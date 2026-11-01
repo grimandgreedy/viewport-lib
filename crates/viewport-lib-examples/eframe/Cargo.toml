@@ -39,7 +39,7 @@ viewport-lib-lightbake = { version = "0.1.0" }
 
 [features]
 # Each leg pairs viewport-lib's wgpu leg with the eframe version that embeds the
-# same wgpu, and with the matching egui version of viewport-lib's `from_egui`
+# same wgpu, and with the matching egui version of viewport-lib's egui
 # adapter.
 # `showcase` is on by default so the path-tracer and lightmap-bake showcase
 # builds in a plain `cargo build --all-targets` instead of being silently
@@ -56,9 +56,8 @@ showcase = ["viewport-lib/raytrace", "viewport-lib/raytrace-hardware", "viewport
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
 
-# The leg-portable minimal example: it translates egui events itself instead of
-# using viewport-lib's `from_egui` (whose egui is pinned to 0.33), so one source
-# builds on all three legs. Replaces the old eframe-minimal-wgpu29 / -wgpu30 pair.
+# The leg-portable minimal example on egui's paint callback; one source builds
+# on all three legs. Replaces the old eframe-minimal-wgpu29 / -wgpu30 pair.
 [[example]]
 name = "eframe-minimal-callback"
 path = "examples/eframe_minimal_callback/main.rs"

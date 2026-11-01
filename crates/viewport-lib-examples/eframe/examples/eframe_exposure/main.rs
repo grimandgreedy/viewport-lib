@@ -15,7 +15,7 @@
 //!
 //! Structure mirrors `eframe_minimal`: a `ViewportInstance` renders into an
 //! app-owned offscreen texture that egui displays as an image, and events come
-//! through the standard `from_egui` adapter driving an `OrbitCameraController`
+//! through the standard egui adapter driving an `OrbitCameraController`
 //! (left/middle drag orbit, right drag pan, scroll zoom). The offscreen texture
 //! is the sRGB variant of egui's format so the tone map's linear output gets the
 //! hardware linear->sRGB encode on write; egui runs on a non-sRGB surface, and
@@ -31,11 +31,11 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
-    AutoExposure, ExposureMode, ExposureSettings, InputOwnership, ItemSettings, KeyboardOwnership,
-    LightKind, LightSource, LightingSettings, Lumen, Lux, Material, OrbitCameraController,
-    PointerOwnership, ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    AutoExposure, ExposureMode, ExposureSettings, ItemSettings, LightKind, LightSource,
+    LightingSettings, Lumen, Lux, Material, OrbitCameraController, ViewportContext,
+    ViewportInstance, primitives,
 };
 
 const COLUMNS: usize = 6;
@@ -497,33 +497,24 @@ impl eframe::App for App {
 
                 // Screen-space state stays in logical points; pixels_per_point
                 // sizes the physical render target and keeps overlays crisp.
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
                 self.session.begin_frame(ViewportContext::new(
-                    InputOwnership {
-                        pointer: if response.hovered() {
-                            PointerOwnership::Owned
-                        } else {
-                            PointerOwnership::Elsewhere
-                        },
-                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
-                            KeyboardOwnership::Owned
-                        } else {
-                            KeyboardOwnership::Elsewhere
-                        },
-                    },
+                    ownership,
                     [rect.width(), rect.height()],
                 ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, origin);
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.session.handle_event(ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.session.handle_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.session.handle_event(ev);
+                }
 
                 // Per-frame exposure + lighting (both driven by live controls),
                 // selected by the active tab.

@@ -6,7 +6,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
-use vpl::{InputOwnership, KeyboardOwnership, PointerOwnership, ViewportContext, ViewportInstance};
+use vpl::{InputOwnership, ViewportContext, ViewportInstance};
 
 use crate::camera::{CameraRig, MoveKeys};
 
@@ -36,9 +36,9 @@ pub struct ShowcaseCtx<'a> {
     pub pixels_per_point: f32,
     /// Seconds since the previous frame.
     pub dt: f32,
-    /// Whether the viewport rect is hovered / focused this frame.
-    pub hovered: bool,
-    pub focused: bool,
+    /// Who owns the pointer and keyboard this frame (what `begin_frame` was
+    /// given).
+    pub ownership: InputOwnership,
     /// Viewport size in logical points (what `begin_frame` was given).
     pub viewport_size: [f32; 2],
     keys_pressed: &'a [egui::Key],
@@ -54,8 +54,7 @@ impl<'a> ShowcaseCtx<'a> {
         queue: &'a wgpu::Queue,
         pixels_per_point: f32,
         dt: f32,
-        hovered: bool,
-        focused: bool,
+        ownership: InputOwnership,
         viewport_size: [f32; 2],
         keys_pressed: &'a [egui::Key],
         keys_down: &'a [egui::Key],
@@ -67,8 +66,7 @@ impl<'a> ShowcaseCtx<'a> {
             queue,
             pixels_per_point,
             dt,
-            hovered,
-            focused,
+            ownership,
             viewport_size,
             keys_pressed,
             keys_down,
@@ -97,21 +95,7 @@ impl<'a> ShowcaseCtx<'a> {
             left: self.key_down(egui::Key::ArrowLeft),
             right: self.key_down(egui::Key::ArrowRight),
         };
-        let view_ctx = ViewportContext::new(
-            InputOwnership {
-                pointer: if self.hovered {
-                    PointerOwnership::Owned
-                } else {
-                    PointerOwnership::Elsewhere
-                },
-                keyboard: if self.focused {
-                    KeyboardOwnership::Owned
-                } else {
-                    KeyboardOwnership::Elsewhere
-                },
-            },
-            self.viewport_size,
-        );
+        let view_ctx = ViewportContext::new(self.ownership, self.viewport_size);
         self.camera
             .drive(&mut *self.session, self.dt, view_ctx, toggle, move_keys);
     }

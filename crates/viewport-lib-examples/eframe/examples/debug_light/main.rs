@@ -21,13 +21,12 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, KeyboardOwnership,
-    LightingSettings, Material, MaterialId, MeshData, MeshId, MouseButton, OffscreenViewportTarget,
-    OrbitCameraController, PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId,
+    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
+    ViewportContext, ViewportInput, ViewportRenderer, primitives,
 };
 
 const SLAB_HALF_EXTENTS: [f32; 3] = [0.5, 0.5, 0.005];
@@ -294,73 +293,26 @@ impl App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
             self.input.begin_frame(ViewportContext::new(
-                InputOwnership {
-                    pointer: if response.hovered() {
-                        PointerOwnership::Owned
-                    } else {
-                        PointerOwnership::Elsewhere
-                    },
-                    keyboard: if response.hovered() && ui.ctx().memory(|m| m.focused().is_none()) {
-                        KeyboardOwnership::Owned
-                    } else {
-                        KeyboardOwnership::Elsewhere
-                    },
-                },
+                ownership,
                 [rect.width(), rect.height()],
             ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);
 
+            let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.input
-                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
-                let local = i
-                    .pointer
-                    .interact_pos()
-                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-                if let Some(pos) = local {
-                    self.input
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
-                }
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            let vp_btn = match button {
-                                egui::PointerButton::Primary => MouseButton::Left,
-                                egui::PointerButton::Secondary => MouseButton::Right,
-                                egui::PointerButton::Middle => MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.input.push_event(ViewportEvent::MouseButton {
-                                button: vp_btn,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.input.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.input.push_event(ev);
+            }
 
             let action_frame = self.input.resolve();
             let dt = ui.input(|i| i.stable_dt);

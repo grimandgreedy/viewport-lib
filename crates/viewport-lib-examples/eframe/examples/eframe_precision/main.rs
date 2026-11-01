@@ -43,14 +43,14 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use viewport_lib_plugins::item_types::decal::{DecalBlendMode, DecalItem};
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, Camera, CameraFrame, ClipObject, ClipShape, FrameData, InputOwnership,
-    KeyboardOwnership, LabelItem, LightKind, LightSource, LightingSettings, Material, MaterialId,
-    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, PointerOwnership,
-    PostEffectContext, PostEffectResizeContext, PostEffectStage, Selection, TextureId, Transform,
-    ViewportContext, ViewportInput, ViewportRenderer, WorldOrigin, scene::Scene,
+    BindingPreset, Camera, CameraFrame, ClipObject, ClipShape, FrameData, LabelItem, LightKind,
+    LightSource, LightingSettings, Material, MaterialId, OffscreenViewportTarget,
+    OrbitCameraController, PickBackend, PickMask, PostEffectContext, PostEffectResizeContext,
+    PostEffectStage, Selection, TextureId, Transform, ViewportContext, ViewportInput,
+    ViewportRenderer, WorldOrigin, scene::Scene,
 };
 
 /// The distances the selector steps through, in metres.
@@ -763,32 +763,21 @@ impl eframe::App for App {
 
                 // Camera input. A capture tour keeps the opening camera.
                 let size = [rect.width(), rect.height()];
-                self.input.begin_frame(ViewportContext::new(
-                    InputOwnership {
-                        pointer: if response.hovered() {
-                            PointerOwnership::Owned
-                        } else {
-                            PointerOwnership::Elsewhere
-                        },
-                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
-                            KeyboardOwnership::Owned
-                        } else {
-                            KeyboardOwnership::Elsewhere
-                        },
-                    },
-                    size,
-                ));
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+                self.input
+                    .begin_frame(ViewportContext::new(ownership, size));
                 let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, origin);
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.input.push_event(vpl::ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.input.push_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.input.push_event(ev);
+                }
                 let dt = ctx.input(|i| i.stable_dt).min(0.1);
                 if self.capture.is_none() {
                     if self.drift {

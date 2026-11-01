@@ -16,11 +16,10 @@ use viewport_lib as vpl;
 use viewport_lib_post_effects::{
     ContactShadowEffect, ContactShadowEffectSettings, SettingsHandle, VfxSettings, vfx_stack,
 };
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
-    InputOwnership, KeyboardOwnership, LightKind, LightSource, Material, OffscreenViewportTarget,
-    OrbitCameraController, PointerOwnership, ViewportContext, ViewportEvent, ViewportInstance,
-    primitives,
+    LightKind, LightSource, Material, OffscreenViewportTarget, OrbitCameraController,
+    ViewportContext, ViewportInstance, primitives,
 };
 
 /// Slanted key light: also fed to the external contact-shadow effect, which
@@ -224,33 +223,24 @@ impl eframe::App for App {
                 }
                 let target = self.target.as_ref().unwrap();
 
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
                 self.session.begin_frame(ViewportContext::new(
-                    InputOwnership {
-                        pointer: if response.hovered() {
-                            PointerOwnership::Owned
-                        } else {
-                            PointerOwnership::Elsewhere
-                        },
-                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
-                            KeyboardOwnership::Owned
-                        } else {
-                            KeyboardOwnership::Elsewhere
-                        },
-                    },
+                    ownership,
                     [rect.width(), rect.height()],
                 ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, origin);
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.session.handle_event(ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.session.handle_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.session.handle_event(ev);
+                }
                 self.session.update_orbit(&mut self.orbit, dt);
 
                 let cmd = self

@@ -25,11 +25,8 @@ mod ui;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
-use vpl::{
-    InputOwnership, ManipulationController, OffscreenViewportTarget, PointerOwnership,
-    ViewportContext, ViewportEvent, ViewportInstance,
-};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
+use vpl::{ManipulationController, OffscreenViewportTarget, ViewportContext, ViewportInstance};
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -265,15 +262,12 @@ impl App {
             let target = self.target.as_ref().unwrap();
 
             // Logical viewport size + pixels_per_point; cursor stays logical.
-            // A viewport-local rect never takes egui keyboard focus, so treat
-            // it as focused while hovered, or the input resolver drops key
-            // events (G/R/S, WASD).
+            // The viewport has the keyboard (G/R/S, WASD) while it has the
+            // pointer and no egui widget has focus.
+            let ownership =
+                vpl_egui::ownership(&response, ui.ctx(), rect, self.session.is_manipulating());
             self.session.begin_frame(ViewportContext::new(
-                InputOwnership::pointer_only(if response.hovered() {
-                    PointerOwnership::Owned
-                } else {
-                    PointerOwnership::Elsewhere
-                }),
+                ownership,
                 [rect.width(), rect.height()],
             ));
             self.session.set_pixels_per_point(ppp);
@@ -281,11 +275,10 @@ impl App {
             let origin = glam::Vec2::new(rect.left(), rect.top());
             let mut keys_pressed = Vec::new();
             let keys_down: Vec<egui::Key> = ui.input(|i| i.keys_down.iter().copied().collect());
+            let actx = AdapterCtx::new(1.0, origin);
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
                     if let egui::Event::Key {
                         key,
@@ -296,11 +289,12 @@ impl App {
                     {
                         keys_pressed.push(*key);
                     }
-                    if let Some(ev) = from_egui(event, origin) {
-                        self.session.handle_event(ev);
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.session.handle_event(ev);
+            }
 
             {
                 let mut sctx = ShowcaseCtx::new(
@@ -310,8 +304,7 @@ impl App {
                     &rs.queue,
                     ppp,
                     dt,
-                    response.hovered(),
-                    response.hovered(),
+                    ownership,
                     [rect.width(), rect.height()],
                     &keys_pressed,
                     &keys_down,

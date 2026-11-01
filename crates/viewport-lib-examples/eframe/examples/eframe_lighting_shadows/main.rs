@@ -13,7 +13,7 @@
 //!
 //! Structure mirrors `eframe_exposure`: a `ViewportInstance` renders into an
 //! app-owned offscreen texture that egui displays as an image, and events come
-//! through the `from_egui` adapter driving an `OrbitCameraController`. The
+//! through the egui adapter driving an `OrbitCameraController`. The
 //! offscreen texture is the sRGB variant of egui's format so the tone map's
 //! linear output gets the hardware linear->sRGB encode on write. The scene items
 //! are rebuilt per frame (per-tab geometry, live material toggles) and injected
@@ -28,15 +28,14 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
-    InputOwnership, KeyboardOwnership, LightKind, LightSource, LightingSettings, Lumen, Lux,
-    MatcapId, Material, MaterialId, MeshId, OrbitCameraController, PipelineMode, PointerOwnership,
-    SceneFrame, SceneRenderItem, ShadowDebugStats, ShadowFilter, ToneMapping, ViewportContext,
-    ViewportEvent, ViewportId, ViewportInstance, primitives,
+    LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
+    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
+    ShadowFilter, ToneMapping, ViewportContext, ViewportId, ViewportInstance, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -916,34 +915,24 @@ impl eframe::App for App {
             let target = self.target.as_ref().unwrap();
 
             // Feed input to the instance's own input pipeline via the egui adapter.
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
             self.session.begin_frame(ViewportContext::new(
-                InputOwnership {
-                    pointer: if response.hovered() {
-                        PointerOwnership::Owned
-                    } else {
-                        PointerOwnership::Elsewhere
-                    },
-                    keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
-                        KeyboardOwnership::Owned
-                    } else {
-                        KeyboardOwnership::Elsewhere
-                    },
-                },
+                ownership,
                 [rect.width(), rect.height()],
             ));
             self.session.set_pixels_per_point(ppp);
             let origin = glam::Vec2::new(rect.left(), rect.top());
+            let actx = AdapterCtx::new(1.0, origin);
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    if let Some(ev) = from_egui(event, origin) {
-                        self.session.handle_event(ev);
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.session.handle_event(ev);
+            }
 
             // Frame time for auto-exposure smoothing. Exposure lives outside the
             // scene, so a control change would not dirty anything: request a
