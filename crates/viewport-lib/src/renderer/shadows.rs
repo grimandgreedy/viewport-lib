@@ -88,7 +88,7 @@ pub(super) fn cascade_z_range(
 /// Uses bounding-sphere fitting (not AABB) so the cascade XY extents are constant
 /// for a given split pair regardless of camera orientation. This prevents shadows
 /// from shifting on static geometry when the camera rotates. Texel-snapping the
-/// sphere center eliminates sub-texel shimmer during camera translation.
+/// sphere centre eliminates sub-texel shimmer during camera translation.
 /// The depth range is the slice's own light-space depth, widened toward the
 /// light to take in the casters `caster_max_z` reports for the cascade's
 /// light view and its `[min_x, min_y, max_x, max_y]` light-space rect (see
@@ -124,7 +124,7 @@ pub(super) fn compute_cascade_matrix(
         }
     }
 
-    let center = corners_world
+    let centre = corners_world
         .iter()
         .copied()
         .fold(glam::Vec3::ZERO, |a, b| a + b)
@@ -134,13 +134,13 @@ pub(super) fn compute_cascade_matrix(
     // not camera orientation, so the cascade XY footprint stays constant as camera rotates.
     let radius = corners_world
         .iter()
-        .map(|c| (*c - center).length())
+        .map(|c| (*c - centre).length())
         .fold(0.0f32, f32::max);
 
-    // Build a FIXED light view (anchored at world origin, not the frustum center).
-    // This gives center_ls a non-zero, varying position as the camera moves, so
+    // Build a FIXED light view (anchored at world origin, not the frustum centre).
+    // This gives centre_ls a non-zero, varying position as the camera moves, so
     // texel snapping actually discretises the cascade's world-space position.
-    // If we build look_at around `center`, center_ls is always (0,0,-500) and
+    // If we build look_at around `centre`, centre_ls is always (0,0,-500) and
     // snapping it to texels does nothing -- the cascade slides continuously.
     let dir = light_dir.normalize();
     let light_up = if dir.z.abs() > 0.99 {
@@ -150,20 +150,20 @@ pub(super) fn compute_cascade_matrix(
     };
     let light_view = glam::Mat4::look_at_rh(dir * 500.0, glam::Vec3::ZERO, light_up);
 
-    // Project the frustum sphere center through the fixed light view, then snap
+    // Project the frustum sphere centre through the fixed light view, then snap
     // its XY to texel boundaries.  The cascade only shifts in whole-texel steps,
     // which eliminates shadow shimmer on static geometry as the camera moves.
     let texel_size = (radius * 2.0) / tile_size;
-    let center_ls = light_view.transform_point3(center);
+    let centre_ls = light_view.transform_point3(centre);
     let snapped_cx = if texel_size > 0.0 {
-        (center_ls.x / texel_size).floor() * texel_size
+        (centre_ls.x / texel_size).floor() * texel_size
     } else {
-        center_ls.x
+        centre_ls.x
     };
     let snapped_cy = if texel_size > 0.0 {
-        (center_ls.y / texel_size).floor() * texel_size
+        (centre_ls.y / texel_size).floor() * texel_size
     } else {
-        center_ls.y
+        centre_ls.y
     };
 
     let min_x = snapped_cx - radius;

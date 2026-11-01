@@ -30,7 +30,7 @@ use vpl::{
     ManipulationController, Material, MouseButton, NodeId, OrbitCameraController, PickBackend,
     PickMask, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer,
-    gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
+    gizmo::{compute_gizmo_scale, gizmo_centre_from_selection},
 };
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ pub(crate) struct MvState {
     /// Deferred pick request `(quad, cursor_local)`, set on a click and consumed
     /// at the render site with that quad's frame via the unified GPU picker.
     pub pending_pick: Option<(usize, glam::Vec2)>,
-    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_centre: Option<glam::Vec3>,
     pub gizmo_scales: [f32; 4],
     pub manip: ManipulationController,
     pub transforms_snapshot: std::collections::HashMap<NodeId, glam::Mat4>,
@@ -104,7 +104,7 @@ impl Default for MvState {
             hovered_quad: 0,
             cursor_local: glam::Vec2::ZERO,
             pending_pick: None,
-            gizmo_center: None,
+            gizmo_centre: None,
             gizmo_scales: [1.0; 4],
             manip: ManipulationController::new(),
             transforms_snapshot: std::collections::HashMap::new(),
@@ -141,7 +141,7 @@ impl App {
             [0.60, 0.50, 0.05],
             [0.75, 0.28, 0.05],
         ];
-        let names = ["Center", "Right", "Left", "Front", "Back", "Top"];
+        let names = ["Centre", "Right", "Left", "Front", "Back", "Top"];
 
         for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
@@ -335,7 +335,7 @@ impl App {
 
             // Per-frame gizmo hover when no session is active.
             if !self.mv_state.manip.is_active() {
-                if let Some(center) = self.mv_state.gizmo_center {
+                if let Some(centre) = self.mv_state.gizmo_centre {
                     let cam = &self.mv_state.cameras[hq];
                     let cursor = self.mv_state.cursor_local;
                     let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
@@ -349,7 +349,7 @@ impl App {
                     self.mv_state.gizmo.hovered_axis = self.mv_state.gizmo.hit_test_oriented(
                         ray_origin,
                         ray_dir,
-                        center,
+                        centre,
                         self.mv_state.gizmo_scales[hq],
                         orient,
                     );
@@ -364,8 +364,8 @@ impl App {
                 &self.mv_state.selection,
                 &self.mv_state.scene,
             );
-            let gizmo_info = self.mv_state.gizmo_center.map(|center| GizmoInfo {
-                center,
+            let gizmo_info = self.mv_state.gizmo_centre.map(|centre| GizmoInfo {
+                centre,
                 scale: self.mv_state.gizmo_scales[hq],
                 orientation: orient,
                 mode: self.mv_state.gizmo.mode,
@@ -379,7 +379,7 @@ impl App {
                 viewport_size,
                 cursor_viewport: Some(self.mv_state.cursor_local),
                 pointer_delta,
-                selection_center: self.mv_state.gizmo_center,
+                selection_centre: self.mv_state.gizmo_centre,
                 gizmo: gizmo_info,
                 drag_started: response.drag_started(),
                 dragging: self.mv_state.left_held,
@@ -442,18 +442,18 @@ impl App {
             }
         }
 
-        // Update shared gizmo center and per-quad screen-space scales.
-        self.mv_state.gizmo_center = gizmo_center_from_selection(&self.mv_state.selection, |id| {
+        // Update shared gizmo centre and per-quad screen-space scales.
+        self.mv_state.gizmo_centre = gizmo_centre_from_selection(&self.mv_state.selection, |id| {
             self.mv_state.scene.node(id).map(|n| {
                 let t = n.world_transform().to_mat4();
                 glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
             })
         });
         for i in 0..4 {
-            if let Some(center) = self.mv_state.gizmo_center {
+            if let Some(centre) = self.mv_state.gizmo_centre {
                 let qr = quad_rects[i];
                 self.mv_state.gizmo_scales[i] = compute_gizmo_scale(
-                    center,
+                    centre,
                     self.mv_state.cameras[i].eye().as_vec3(),
                     self.mv_state.cameras[i].fov_y(),
                     qr.height(),
@@ -478,7 +478,7 @@ impl App {
         let scene_gen = self.mv_state.scene.version();
         let sel_gen = self.mv_state.selection.version();
         let has_selection = !self.mv_state.selection.is_empty();
-        let gizmo_center = self.mv_state.gizmo_center;
+        let gizmo_centre = self.mv_state.gizmo_centre;
         let gizmo_scales = self.mv_state.gizmo_scales;
         let gizmo_mode = self.mv_state.gizmo.mode;
         let gizmo_hovered_axis = if let Some(state) = self.mv_state.manip.state() {
@@ -515,12 +515,12 @@ impl App {
             fd.interaction.selection_generation = sel_gen;
 
             // Gizmo : appears in every viewport with its own screen-space scale.
-            if let Some(center) = gizmo_center {
+            if let Some(centre) = gizmo_centre {
                 let scale = gizmo_scales[i];
                 fd.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
                     glam::Vec3::splat(scale),
                     gizmo_orient,
-                    center,
+                    centre,
                 ));
                 fd.interaction.gizmo_mode = gizmo_mode;
                 fd.interaction.gizmo_space_orientation = gizmo_orient;
@@ -742,7 +742,7 @@ pub(crate) fn controls_mv(app: &mut App, ui: &mut egui::Ui) {
 impl crate::App {
     /// Apply a [`viewport_lib::TransformDelta`] to all selected mv scene nodes.
     pub(crate) fn apply_mv_delta(&mut self, delta: vpl::TransformDelta, hq: usize) {
-        let Some(center) = self.mv_state.gizmo_center else {
+        let Some(centre) = self.mv_state.gizmo_centre else {
             return;
         };
 
@@ -777,8 +777,8 @@ impl crate::App {
         let rot_mat = glam::Mat4::from_quat(delta.rotation);
         let scale_mat = glam::Mat4::from_scale(scale);
         let translate_mat = glam::Mat4::from_translation(translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
+        let to_pivot = glam::Mat4::from_translation(-centre);
+        let from_pivot = glam::Mat4::from_translation(centre);
 
         for id in self.mv_state.selection.iter().copied().collect::<Vec<_>>() {
             if let Some(node) = self.mv_state.scene.node(id) {

@@ -234,7 +234,7 @@ pub fn hit_test(
     // Derive view axes from orientation quaternion.
     let view_right = orientation * glam::Vec3::X;
     let view_up = orientation * glam::Vec3::Y;
-    let view_fwd = orientation * glam::Vec3::Z; // from center toward eye
+    let view_fwd = orientation * glam::Vec3::Z; // from centre toward eye
 
     let project = |world_axis: glam::Vec3| -> (f32, f32) {
         let sx = world_axis.dot(view_right);

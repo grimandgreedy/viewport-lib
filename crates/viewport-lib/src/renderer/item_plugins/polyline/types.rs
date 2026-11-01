@@ -187,7 +187,7 @@ pub fn obb_wireframe_polyline(
 /// centre, each sampled at `segments` points. Pass `colour` as RGBA in linear
 /// space. Used as the selection outline for `ScatterShape::Sphere`.
 pub fn sphere_wireframe_polyline(
-    center: [f32; 3],
+    centre: [f32; 3],
     radius: f32,
     segments: u32,
     colour: impl Into<crate::Colour>,
@@ -196,9 +196,9 @@ pub fn sphere_wireframe_polyline(
     let n = segments.max(8) as usize;
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(3 * (n + 1));
     let two_pi = std::f32::consts::TAU;
-    let cx = center[0];
-    let cy = center[1];
-    let cz = center[2];
+    let cx = centre[0];
+    let cy = centre[1];
+    let cz = centre[2];
     // XY plane circle
     for i in 0..=n {
         let t = i as f32 / n as f32 * two_pi;

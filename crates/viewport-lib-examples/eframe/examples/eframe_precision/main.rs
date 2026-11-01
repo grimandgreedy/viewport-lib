@@ -332,7 +332,7 @@ impl App {
         self.place();
         self.last_pick = None;
         let centre = self.base() + DVec3::new(0.0, 0.0, 1.0);
-        self.camera.set_orbit_center(centre);
+        self.camera.set_orbit_centre(centre);
     }
 
     /// The frame for this tick: the scene plus everything placed per frame.

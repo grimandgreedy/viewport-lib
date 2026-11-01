@@ -83,7 +83,7 @@ impl ManipulationController {
     /// 4. Update constraints and numeric input
     /// 5. Compute and return [`ManipResult::Update`]
     /// 6. Gizmo drag start -> begins session, returns [`ManipResult::None`] this frame
-    /// 7. G/R/S keys (when `selection_center` is `Some`) -> begins session
+    /// 7. G/R/S keys (when `selection_centre` is `Some`) -> begins session
     /// 8. Otherwise -> [`ManipResult::None`]
     pub fn update(&mut self, frame: &ActionFrame, ctx: ManipulationContext) -> ManipResult {
         let snap = self.snap.clone();
@@ -166,7 +166,7 @@ impl ManipulationController {
                         pointer_delta,
                         session.axis,
                         session.exclude_axis,
-                        session.gizmo_center,
+                        session.gizmo_centre,
                         &ctx.camera,
                         ctx.viewport_size,
                     );
@@ -207,12 +207,12 @@ impl ManipulationController {
                             };
                             glam::Quat::from_axis_angle(chosen_axis, drag_angle + twist)
                         } else {
-                            // Constrained to a single axis: angular sweep around screen center.
+                            // Constrained to a single axis: angular sweep around screen centre.
                             let axis_world = solvers::gizmo_axis_to_vec3(ax);
                             let angle = solvers::angular_rotation_from_cursor(
                                 ctx.cursor_viewport,
                                 pointer_delta,
-                                session.gizmo_center,
+                                session.gizmo_centre,
                                 axis_world,
                                 view_proj,
                                 ctx.viewport_size,
@@ -250,8 +250,8 @@ impl ManipulationController {
 
                 ManipulationKind::Scale => {
                     // Project the pivot into viewport-pixel space.
-                    let ndc = view_proj.project_point3(session.gizmo_center);
-                    let center_screen = glam::Vec2::new(
+                    let ndc = view_proj.project_point3(session.gizmo_centre);
+                    let centre_screen = glam::Vec2::new(
                         (ndc.x + 1.0) * 0.5 * ctx.viewport_size.x,
                         (1.0 - ndc.y) * 0.5 * ctx.viewport_size.y,
                     );
@@ -261,8 +261,8 @@ impl ManipulationController {
                     // and out the other side) grows.
                     let cumulative = match (ctx.cursor_viewport, session.cursor_anchor) {
                         (Some(cursor), Some(anchor)) => {
-                            let dist_anchor = (anchor - center_screen).length();
-                            let dist_now = (cursor - center_screen).length();
+                            let dist_anchor = (anchor - centre_screen).length();
+                            let dist_now = (cursor - centre_screen).length();
                             if dist_anchor > 2.0 {
                                 (dist_now / dist_anchor).max(0.001)
                             } else {
@@ -311,8 +311,8 @@ impl ManipulationController {
 
         // 6. Gizmo drag start.
         if ctx.drag_started {
-            if let (Some(gizmo_info), Some(center), Some(cursor)) =
-                (&ctx.gizmo, ctx.selection_center, ctx.cursor_viewport)
+            if let (Some(gizmo_info), Some(centre), Some(cursor)) =
+                (&ctx.gizmo, ctx.selection_centre, ctx.cursor_viewport)
             {
                 // Build a ray from the cursor position.
                 let (ray_origin, ray_dir) =
@@ -330,7 +330,7 @@ impl ManipulationController {
                 let hit = temp_gizmo.hit_test_oriented(
                     ray_origin,
                     ray_dir,
-                    gizmo_info.center,
+                    gizmo_info.centre,
                     gizmo_info.scale,
                     gizmo_info.orientation,
                 );
@@ -344,7 +344,7 @@ impl ManipulationController {
                         exclude_axis,
                         numeric: None,
                         is_gizmo_drag: true,
-                        gizmo_center: center,
+                        gizmo_centre: centre,
                         cursor_anchor: ctx.cursor_viewport,
                         cursor_last_total: glam::Vec2::ZERO,
                         last_scale_factor: 1.0,
@@ -356,7 +356,7 @@ impl ManipulationController {
         }
 
         // 7. G/R/S keyboard shortcuts.
-        if let Some(center) = ctx.selection_center {
+        if let Some(centre) = ctx.selection_centre {
             let kind = if frame.is_active(Action::BeginMove) {
                 Some(ManipulationKind::Move)
             } else if frame.is_active(Action::BeginRotate) {
@@ -374,7 +374,7 @@ impl ManipulationController {
                     exclude_axis: false,
                     numeric: None,
                     is_gizmo_drag: false,
-                    gizmo_center: center,
+                    gizmo_centre: centre,
                     cursor_anchor: ctx.cursor_viewport,
                     cursor_last_total: glam::Vec2::ZERO,
                     last_scale_factor: 1.0,
@@ -406,7 +406,7 @@ impl ManipulationController {
     /// Force-begin a manipulation (e.g. from a UI button).
     ///
     /// No-op if a session is already active.
-    pub fn begin(&mut self, kind: ManipulationKind, center: glam::Vec3) {
+    pub fn begin(&mut self, kind: ManipulationKind, centre: glam::Vec3) {
         if self.session.is_some() {
             return;
         }
@@ -416,7 +416,7 @@ impl ManipulationController {
             exclude_axis: false,
             numeric: None,
             is_gizmo_drag: false,
-            gizmo_center: center,
+            gizmo_centre: centre,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
@@ -492,7 +492,7 @@ mod tests {
             viewport_size: glam::Vec2::new(800.0, 600.0),
             cursor_viewport: None,
             pointer_delta: glam::Vec2::ZERO,
-            selection_center: None,
+            selection_centre: None,
             gizmo: None,
             drag_started: false,
             dragging: false,
@@ -512,7 +512,7 @@ mod tests {
             exclude_axis: false,
             numeric: None,
             is_gizmo_drag: false,
-            gizmo_center: glam::Vec3::ZERO,
+            gizmo_centre: glam::Vec3::ZERO,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
@@ -552,8 +552,8 @@ mod tests {
     #[test]
     fn numeric_input_bootstraps_on_first_digit() {
         let mut ctrl = ManipulationController::new();
-        let center = glam::Vec3::new(1.0, 0.0, 0.0);
-        ctrl.begin(ManipulationKind::Move, center);
+        let centre = glam::Vec3::new(1.0, 0.0, 0.0);
+        ctrl.begin(ManipulationKind::Move, centre);
         assert!(ctrl.is_active());
 
         // First digit: bootstrap numeric state.
@@ -623,17 +623,17 @@ mod tests {
         // Axis = +Z, camera at +Z => axis points toward camera (axis_z_cam > 0).
         // CW screen motion (cursor sweeps CW) should produce positive world angle.
         let (camera_view, view_proj) = make_view_proj_looking_neg_z();
-        let gizmo_center = glam::Vec3::ZERO;
+        let gizmo_centre = glam::Vec3::ZERO;
         let viewport_size = glam::Vec2::new(800.0, 600.0);
 
-        // Place cursor to the right of center, move it upward (CW sweep).
-        let cursor = glam::Vec2::new(500.0, 300.0); // right of screen center
+        // Place cursor to the right of centre, move it upward (CW sweep).
+        let cursor = glam::Vec2::new(500.0, 300.0); // right of screen centre
         let pointer_delta = glam::Vec2::new(0.0, -20.0); // upward = CW for right-side cursor
 
         let angle = solvers::angular_rotation_from_cursor(
             Some(cursor),
             pointer_delta,
-            gizmo_center,
+            gizmo_centre,
             glam::Vec3::Z,
             view_proj,
             viewport_size,
@@ -649,7 +649,7 @@ mod tests {
     fn angular_rotation_neg_z_away_from_camera_cw_is_negative() {
         // Axis = -Z points away from camera.  Same CW cursor motion should give negative angle.
         let (camera_view, view_proj) = make_view_proj_looking_neg_z();
-        let gizmo_center = glam::Vec3::ZERO;
+        let gizmo_centre = glam::Vec3::ZERO;
         let viewport_size = glam::Vec2::new(800.0, 600.0);
 
         let cursor = glam::Vec2::new(500.0, 300.0);
@@ -658,7 +658,7 @@ mod tests {
         let angle = solvers::angular_rotation_from_cursor(
             Some(cursor),
             pointer_delta,
-            gizmo_center,
+            gizmo_centre,
             glam::Vec3::NEG_Z,
             view_proj,
             viewport_size,
@@ -706,9 +706,9 @@ mod tests {
     }
 
     #[test]
-    fn controller_no_session_without_selection_center() {
+    fn controller_no_session_without_selection_centre() {
         let mut ctrl = ManipulationController::new();
-        // No selection_center -> G/R/S should not start a session.
+        // No selection_centre -> G/R/S should not start a session.
         let mut frame = ActionFrame::default();
         frame.actions.insert(
             crate::interaction::input::Action::BeginMove,
@@ -728,7 +728,7 @@ mod tests {
             crate::interaction::input::ResolvedActionState::Pressed,
         );
         let mut ctx = idle_ctx();
-        ctx.selection_center = Some(glam::Vec3::new(1.0, 2.0, 3.0));
+        ctx.selection_centre = Some(glam::Vec3::new(1.0, 2.0, 3.0));
 
         let result = ctrl.update(&frame, ctx);
         assert_eq!(result, ManipResult::None); // None on first frame

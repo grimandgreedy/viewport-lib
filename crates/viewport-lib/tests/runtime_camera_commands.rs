@@ -27,25 +27,25 @@ fn step(runtime: &mut ViewportRuntime, camera: &Camera) -> RuntimeOutput {
 
 // --- Plugins -----------------------------------------------------------------
 
-struct SetCenterPlugin(glam::Vec3);
+struct SetCentrePlugin(glam::Vec3);
 
-impl RuntimePlugin for SetCenterPlugin {
+impl RuntimePlugin for SetCentrePlugin {
     fn priority(&self) -> i32 {
         phase::ANIMATE
     }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        ctx.output.events.emit(CameraCommand::SetCenter(self.0));
+        ctx.output.events.emit(CameraCommand::SetCentre(self.0));
     }
 }
 
-struct OffsetCenterPlugin(glam::Vec3);
+struct OffsetCentrePlugin(glam::Vec3);
 
-impl RuntimePlugin for OffsetCenterPlugin {
+impl RuntimePlugin for OffsetCentrePlugin {
     fn priority(&self) -> i32 {
         phase::POST_SIM
     }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        ctx.output.events.emit(CameraCommand::OffsetCenter(self.0));
+        ctx.output.events.emit(CameraCommand::OffsetCentre(self.0));
     }
 }
 
@@ -80,9 +80,9 @@ impl RuntimePlugin for BlendPlugin {
 // --- Tests -------------------------------------------------------------------
 
 #[test]
-fn set_center_applies_to_camera() {
+fn set_centre_applies_to_camera() {
     let mut runtime =
-        ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::new(1.0, 2.0, 3.0)));
+        ViewportRuntime::new().with_plugin(SetCentrePlugin(glam::Vec3::new(1.0, 2.0, 3.0)));
     let camera = Camera::default();
     let mut output = step(&mut runtime, &camera);
 
@@ -92,12 +92,12 @@ fn set_center_applies_to_camera() {
 }
 
 #[test]
-fn offset_center_adds_to_current_position() {
+fn offset_centre_adds_to_current_position() {
     let mut camera = Camera::default();
-    camera.set_orbit_center(glam::DVec3::new(5.0, 0.0, 0.0));
+    camera.set_orbit_centre(glam::DVec3::new(5.0, 0.0, 0.0));
 
     let mut runtime =
-        ViewportRuntime::new().with_plugin(OffsetCenterPlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
+        ViewportRuntime::new().with_plugin(OffsetCentrePlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
     let mut output = step(&mut runtime, &camera);
 
     apply_camera_commands(&mut output.events, &mut camera);
@@ -118,7 +118,7 @@ fn set_distance_applies() {
 #[test]
 fn blend_toward_interpolates() {
     let target = CameraTarget {
-        center: glam::DVec3::new(10.0, 0.0, 0.0),
+        centre: glam::DVec3::new(10.0, 0.0, 0.0),
         distance: 20.0,
         orientation: glam::Quat::IDENTITY,
     };
@@ -140,7 +140,7 @@ fn blend_toward_interpolates() {
 #[test]
 fn blend_at_weight_one_snaps_to_target() {
     let target = CameraTarget {
-        center: glam::DVec3::new(7.0, 8.0, 9.0),
+        centre: glam::DVec3::new(7.0, 8.0, 9.0),
         distance: 5.0,
         orientation: glam::Quat::IDENTITY,
     };
@@ -161,8 +161,8 @@ fn blend_at_weight_one_snaps_to_target() {
 #[test]
 fn commands_applied_in_emission_order() {
     let mut runtime = ViewportRuntime::new()
-        .with_plugin(SetCenterPlugin(glam::Vec3::new(10.0, 0.0, 0.0)))
-        .with_plugin(OffsetCenterPlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
+        .with_plugin(SetCentrePlugin(glam::Vec3::new(10.0, 0.0, 0.0)))
+        .with_plugin(OffsetCentrePlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
 
     let camera = Camera::default();
     let mut output = step(&mut runtime, &camera);
@@ -177,19 +177,19 @@ fn commands_applied_in_emission_order() {
 fn no_commands_leaves_camera_unchanged() {
     let mut runtime = ViewportRuntime::new();
     let camera = Camera::default();
-    let original_center = camera.target();
+    let original_centre = camera.target();
     let original_distance = camera.focus_distance();
     let mut output = step(&mut runtime, &camera);
 
     let mut cam = camera.clone();
     apply_camera_commands(&mut output.events, &mut cam);
-    assert_eq!(cam.target(), original_center);
+    assert_eq!(cam.target(), original_centre);
     assert_eq!(cam.focus_distance(), original_distance);
 }
 
 #[test]
 fn camera_commands_cleared_each_frame() {
-    let mut runtime = ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::ONE));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetCentrePlugin(glam::Vec3::ONE));
     let camera = Camera::default();
     step(&mut runtime, &camera);
     let output2 = step(&mut runtime, &camera);
@@ -198,7 +198,7 @@ fn camera_commands_cleared_each_frame() {
 
 #[test]
 fn camera_follow_target_independent_of_commands() {
-    let mut runtime = ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::ONE));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetCentrePlugin(glam::Vec3::ONE));
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
     assert_eq!(output.events.read::<CameraFollowTarget>().count(), 0);
@@ -207,7 +207,7 @@ fn camera_follow_target_independent_of_commands() {
 
 #[test]
 fn default_output_fields_empty() {
-    let mut runtime = ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::ZERO));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetCentrePlugin(glam::Vec3::ZERO));
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
     assert!(output.selection_ops.is_empty());

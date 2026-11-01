@@ -107,15 +107,15 @@ fn vs_main(
                        + cam_up    * (corner.y * half);
         out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
-        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px = p.size * 0.5;
         let ndc_off = corner * half_px
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         out.clip_pos = vec4<f32>(
-            center.x + ndc_off.x * center.w,
-            center.y + ndc_off.y * center.w,
-            center.z,
-            center.w,
+            centre.x + ndc_off.x * centre.w,
+            centre.y + ndc_off.y * centre.w,
+            centre.z,
+            centre.w,
         );
         quad_world_pos = world_pos + cam_right * corner.x + cam_up * corner.y;
     }

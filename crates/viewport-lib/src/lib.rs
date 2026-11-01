@@ -271,7 +271,7 @@ pub use interaction::input::{
     MouseButton, NavigationMode,
 };
 pub use interaction::manipulation::gizmo::{
-    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot,
+    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_centre_for_pivot,
 };
 // New input pipeline : re-exported at crate root for convenience.
 pub use camera::controllers::{

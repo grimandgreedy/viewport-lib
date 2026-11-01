@@ -931,7 +931,7 @@ mod decal_scissor_tests {
     }
 
     #[test]
-    fn centered_box_yields_subrect() {
+    fn centred_box_yields_subrect() {
         let model = Mat4::from_scale(Vec3::splat(1.0));
         match decal_scissor(&model, &view_proj(), 1920, 1080) {
             DecalScissor::Rect(x, y, w, h) => {
@@ -945,7 +945,7 @@ mod decal_scissor_tests {
                     "rect must stay within the target"
                 );
             }
-            _ => panic!("expected a sub-rect for a centered box"),
+            _ => panic!("expected a sub-rect for a centred box"),
         }
     }
 

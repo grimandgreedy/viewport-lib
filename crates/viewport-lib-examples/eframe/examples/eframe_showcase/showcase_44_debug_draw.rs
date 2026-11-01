@@ -73,15 +73,15 @@ impl RuntimePlugin for DebugOverlayPlugin {
             let Some(node) = ctx.scene.node(id) else {
                 continue;
             };
-            let center = node.world_transform().to_mat4().col(3).truncate();
+            let centre = node.world_transform().to_mat4().col(3).truncate();
             let half = glam::Vec3::splat(self.body_radius);
             dd.aabb(
-                center - half,
-                center + half,
+                centre - half,
+                centre + half,
                 Colour::linear(0.3, 0.9, 0.4, 1.0),
             );
             dd.label(
-                center + glam::Vec3::Z * (self.body_radius + 0.12),
+                centre + glam::Vec3::Z * (self.body_radius + 0.12),
                 format!("body {}", i),
                 Colour::linear(1.0, 1.0, 1.0, 0.85),
             );

@@ -900,7 +900,7 @@ fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
             ui.add(egui::Slider::new(&mut st.auto.low_percent, 0.0..=0.9).text("Meter low clip"));
             ui.add(egui::Slider::new(&mut st.auto.high_percent, 0.1..=1.0).text("Meter high clip"));
             ui.add(
-                egui::Slider::new(&mut st.auto.center_weight, 0.0..=1.0).text("Center weighting"),
+                egui::Slider::new(&mut st.auto.centre_weight, 0.0..=1.0).text("Centre weighting"),
             );
             ui.label("Metering the HDR target holds the image steady while the scene brightness moves. dt <= 0 snaps; smoothing eases over time.");
         }

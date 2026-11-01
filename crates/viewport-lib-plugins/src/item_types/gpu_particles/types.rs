@@ -160,8 +160,8 @@ pub enum SpawnShape {
     },
     /// Spawn uniformly inside a sphere.
     Sphere {
-        /// Sphere center in world space.
-        center: [f32; 3],
+        /// Sphere centre in world space.
+        centre: [f32; 3],
         /// Sphere radius.
         radius: f32,
     },
@@ -188,7 +188,7 @@ pub enum ForceField {
         position: [f32; 3],
         /// Acceleration coefficient. Negative values repel.
         strength: f32,
-        /// Distance offset that softens the singularity at the center.
+        /// Distance offset that softens the singularity at the centre.
         falloff: f32,
     },
 }

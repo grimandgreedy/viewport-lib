@@ -41,7 +41,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -192,24 +192,24 @@ fn vs_main(in: VertexIn) -> VertexOut {
                        + local_up    * (rotated.y * half);
         out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
-        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px = inst.size * 0.5;
         let inv_vp  = vec2<f32>(1.0, 1.0)
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         if sprite_ub.orientation == 0u {
             let ndc_off = rotated * half_px * inv_vp;
             out.clip_pos = vec4<f32>(
-                center.x + ndc_off.x * center.w,
-                center.y + ndc_off.y * center.w,
-                center.z,
-                center.w,
+                centre.x + ndc_off.x * centre.w,
+                centre.y + ndc_off.y * centre.w,
+                centre.z,
+                centre.w,
             );
         } else {
             let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
             let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
             let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
                             + up_clip    * (rotated.y * half_px * inv_vp.y);
-            out.clip_pos = center + offset_clip * center.w;
+            out.clip_pos = centre + offset_clip * centre.w;
         }
         quad_world_pos = world_pos
                        + local_right * (rotated.x * stretch_x)

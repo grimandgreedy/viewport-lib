@@ -326,21 +326,21 @@ fn spot_cone_polyline(
     let up = right.cross(dir).normalize_or_zero();
 
     let rim_radius = range * outer_angle.sin();
-    let rim_center = apex_v + dir * range * outer_angle.cos();
+    let rim_centre = apex_v + dir * range * outer_angle.cos();
 
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n + 1 + 4 * 2);
     let mut strips: Vec<u32> = Vec::with_capacity(5);
 
     for i in 0..=n {
         let t = i as f32 / n as f32 * std::f32::consts::TAU;
-        let p = rim_center + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
+        let p = rim_centre + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
         positions.push(p.into());
     }
     strips.push((n + 1) as u32);
 
     for k in 0..4 {
         let t = k as f32 / 4.0 * std::f32::consts::TAU;
-        let rim = rim_center + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
+        let rim = rim_centre + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
         positions.push(apex);
         positions.push(rim.into());
         strips.push(2);

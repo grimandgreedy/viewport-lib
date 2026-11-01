@@ -121,15 +121,15 @@ impl SelectionOp {
 pub enum CameraCommand {
     /// Set the orbit centre (the camera's focus point) to an absolute world
     /// position.
-    SetCenter(glam::Vec3),
+    SetCentre(glam::Vec3),
     /// Add a world-space delta to the orbit centre.
-    OffsetCenter(glam::Vec3),
+    OffsetCentre(glam::Vec3),
     /// Set the camera distance from the orbit centre (its focus distance),
     /// keeping the centre. Clamped to a small positive value.
     SetDistance(f32),
     /// Set the camera orientation.
     SetOrientation(glam::Quat),
-    /// Blend center, distance, and orientation toward a target state.
+    /// Blend centre, distance, and orientation toward a target state.
     ///
     /// `weight` is in `[0, 1]`. At `1.0` the camera snaps to `target` immediately.
     /// Smaller values produce smooth motion when emitted every frame.
@@ -141,7 +141,7 @@ pub enum CameraCommand {
     },
 }
 
-/// Suggested camera center computed from the active [`super::CameraFollow`]
+/// Suggested camera centre computed from the active [`super::CameraFollow`]
 /// binding. Emitted onto [`RuntimeOutput::events`] when a follow target is
 /// resolved this step. Make it the orbit centre (`camera.set_orbit`) for
 /// orbit-camera follow behaviour.
@@ -158,11 +158,11 @@ pub fn apply_camera_commands(events: &mut RuntimeEventBus, camera: &mut Camera) 
     for cmd in events.drain::<CameraCommand>() {
         let mut orbit = camera.orbit_target();
         match cmd {
-            CameraCommand::SetCenter(c) => {
-                orbit.center = c.as_dvec3();
+            CameraCommand::SetCentre(c) => {
+                orbit.centre = c.as_dvec3();
             }
-            CameraCommand::OffsetCenter(d) => {
-                orbit.center += d.as_dvec3();
+            CameraCommand::OffsetCentre(d) => {
+                orbit.centre += d.as_dvec3();
             }
             CameraCommand::SetDistance(d) => {
                 orbit.distance = d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE);
@@ -172,7 +172,7 @@ pub fn apply_camera_commands(events: &mut RuntimeEventBus, camera: &mut Camera) 
             }
             CameraCommand::BlendToward { target, weight } => {
                 let w = weight.clamp(0.0, 1.0);
-                orbit.center = orbit.center.lerp(target.center, f64::from(w));
+                orbit.centre = orbit.centre.lerp(target.centre, f64::from(w));
                 orbit.distance = orbit.distance + (target.distance - orbit.distance) * w;
                 orbit.distance = orbit.distance.max(0.001);
                 orbit.orientation = orbit

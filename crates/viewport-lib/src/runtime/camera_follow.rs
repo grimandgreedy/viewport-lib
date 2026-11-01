@@ -4,7 +4,7 @@ use crate::interaction::select::selection::NodeId;
 
 /// Camera tracking mode for [`super::ViewportRuntime`].
 ///
-/// When set, the runtime computes a suggested camera center after each step
+/// When set, the runtime computes a suggested camera centre after each step
 /// and emits it as a [`super::CameraFollowTarget`] event on
 /// [`super::RuntimeOutput::events`]. The app reads the event by calling
 /// `output.events.read::<CameraFollowTarget>()` and applies the suggestion
@@ -16,7 +16,7 @@ use crate::interaction::select::selection::NodeId;
 pub enum CameraFollow {
     /// Track a scene node.
     ///
-    /// The suggested center is `node_world_pos + offset`. Orbit camera distance
+    /// The suggested centre is `node_world_pos + offset`. Orbit camera distance
     /// and orientation are unaffected; the camera pivots around the moving target.
     Node {
         /// Node to follow.

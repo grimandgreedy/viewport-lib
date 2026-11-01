@@ -116,14 +116,14 @@ impl ViewportInstance {
             self.last_manip = ManipResult::None;
             return;
         }
-        let selection_center = self.selection_center();
+        let selection_centre = self.selection_centre();
         let pointer = self.action.pointer;
         let ctx = ManipulationContext {
             camera: self.camera.clone(),
             viewport_size: glam::Vec2::from(self.viewport_size),
             cursor_viewport: pointer.cursor,
             pointer_delta: pointer.delta,
-            selection_center,
+            selection_centre,
             gizmo: None,
             drag_started: pointer.pressed,
             dragging: pointer.dragging,
@@ -134,8 +134,8 @@ impl ViewportInstance {
     }
 
     /// World-space centroid of the selected nodes, or `None` when nothing is
-    /// selected. Feeds `ManipulationContext::selection_center`, which gates G/R/S.
-    fn selection_center(&self) -> Option<glam::Vec3> {
+    /// selected. Feeds `ManipulationContext::selection_centre`, which gates G/R/S.
+    fn selection_centre(&self) -> Option<glam::Vec3> {
         if self.selection.is_empty() {
             return None;
         }
@@ -178,11 +178,11 @@ impl ViewportInstance {
     /// centroid so it follows a translating object. Nothing selected ->
     /// `gizmo_model` stays `None` and no gizmo is drawn.
     fn stamp_gizmo(&mut self) {
-        let Some(center) = self.selection_center() else {
+        let Some(centre) = self.selection_centre() else {
             return;
         };
         let scale = compute_gizmo_scale(
-            center,
+            centre,
             self.camera.eye().as_vec3(),
             self.camera.fov_y(),
             self.viewport_size[1],
@@ -190,7 +190,7 @@ impl ViewportInstance {
         self.frame.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(scale),
             glam::Quat::IDENTITY,
-            center,
+            centre,
         ));
         let state = self.manip.as_ref().and_then(|m| m.state());
         self.frame.interaction.gizmo_mode = state

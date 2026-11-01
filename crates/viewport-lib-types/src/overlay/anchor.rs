@@ -11,7 +11,7 @@ pub enum AnchorX {
     /// Left edge sits at the anchor; the box extends right (default).
     #[default]
     Left,
-    /// Centered horizontally on the anchor.
+    /// Centred horizontally on the anchor.
     Middle,
     /// Right edge sits at the anchor; the box extends left.
     Right,
@@ -28,7 +28,7 @@ pub enum AnchorY {
     /// Top edge sits at the anchor (default).
     #[default]
     Top,
-    /// Centered vertically on the anchor.
+    /// Centred vertically on the anchor.
     Middle,
     /// Bottom edge sits at the anchor.
     Bottom,

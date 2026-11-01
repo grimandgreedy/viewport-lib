@@ -294,11 +294,12 @@ pub struct AutoExposure {
     /// specular highlights so a stray hot pixel does not drive exposure.
     /// Default: `0.95`.
     pub high_percent: f32,
-    /// Center-weighting of the meter, in `[0, 1]`. `0` meters the whole frame
+    /// Centre-weighting of the meter, in `[0, 1]`. `0` meters the whole frame
     /// uniformly (exposure then swings as bright content enters/leaves the frame
     /// on zoom/pan); `1` weights the centre strongly so a centred subject drives
     /// exposure and framing barely moves it. Default: `0.85`.
-    pub center_weight: f32,
+    #[cfg_attr(feature = "serde", serde(alias = "center_weight"))]
+    pub centre_weight: f32,
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
     /// metered scene. `1` (the default) is full auto-exposure, driving the metered
     /// value to middle grey so the scene is correctly exposed regardless of its
@@ -321,7 +322,7 @@ impl Default for AutoExposure {
             dt: 0.0,
             low_percent: 0.65,
             high_percent: 0.95,
-            center_weight: 0.85,
+            centre_weight: 0.85,
             adaptation: 1.0,
         }
     }

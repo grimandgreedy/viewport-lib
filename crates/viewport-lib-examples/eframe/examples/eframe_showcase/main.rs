@@ -857,7 +857,7 @@ impl eframe::App for App {
                                 {
                                     let local =
                                         glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                                    if let Some(center) = self.clipvol_state.gizmo_center {
+                                    if let Some(centre) = self.clipvol_state.gizmo_centre {
                                         let w = rect.width();
                                         let h = rect.height();
                                         let vp_inv = self.camera.view_proj_matrix().inverse();
@@ -870,7 +870,7 @@ impl eframe::App for App {
                                         let hit = self.clipvol_state.gizmo.hit_test_oriented(
                                             ray_origin,
                                             ray_dir,
-                                            center,
+                                            centre,
                                             self.clipvol_state.gizmo_scale,
                                             orient,
                                         );
@@ -1096,7 +1096,7 @@ impl App {
                     );
                     self.cam_animator.fly_to(
                         &self.camera,
-                        t.center,
+                        t.centre,
                         t.distance,
                         t.orientation,
                         0.8,
@@ -1572,8 +1572,8 @@ impl App {
         // Gizmo matrices for Interaction and ClipVolumes modes.
         let (gizmo_model, gizmo_mode, gizmo_space_orient, gizmo_hovered) =
             if self.mode == ShowcaseMode::Interaction {
-                let center = self.interact_state.gizmo_center;
-                let model = center.map(|c| {
+                let centre = self.interact_state.gizmo_centre;
+                let model = centre.map(|c| {
                     glam::Mat4::from_scale_rotation_translation(
                         glam::Vec3::splat(self.interact_state.gizmo_scale),
                         glam::Quat::IDENTITY,
@@ -1592,9 +1592,9 @@ impl App {
                 };
                 (model, self.interact_state.gizmo.mode, orient, hovered)
             } else if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
-                let center = self.clipvol_state.gizmo_center;
+                let centre = self.clipvol_state.gizmo_centre;
                 let orient = self.clipvol_gizmo_orient();
-                let model = center.map(|c| {
+                let model = centre.map(|c| {
                     glam::Mat4::from_scale_rotation_translation(
                         glam::Vec3::splat(self.clipvol_state.gizmo_scale),
                         glam::Quat::IDENTITY,

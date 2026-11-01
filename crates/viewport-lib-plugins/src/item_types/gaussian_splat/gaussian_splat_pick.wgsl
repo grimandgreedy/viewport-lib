@@ -170,16 +170,16 @@ fn vs_main(
     out.sigma_inv_c =  s00 * inv_det;
     out.opacity = opacity;
 
-    let clip_center = camera.view_proj * vec4<f32>(world_pos, 1.0);
-    let w_inv = 1.0 / clip_center.w;
-    let ndc_xy = clip_center.xy * w_inv;
+    let clip_centre = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let w_inv = 1.0 / clip_centre.w;
+    let ndc_xy = clip_centre.xy * w_inv;
     let corner = QUAD_UV[vi];
     let offset_px = corner * radius_px;
     let offset_ndc = vec2<f32>(offset_px.x * 2.0 / vp_w, offset_px.y * 2.0 / vp_h);
     out.uv = offset_px;
 
     let ndc_final = ndc_xy + offset_ndc;
-    out.clip_pos = vec4<f32>(ndc_final * clip_center.w, clip_center.z, clip_center.w);
+    out.clip_pos = vec4<f32>(ndc_final * clip_centre.w, clip_centre.z, clip_centre.w);
     // Forward the de-sorted splat index, not the sorted draw position: the
     // primitive channel must name the actual splat so the pick resolves to a
     // stable SubObjectRef::Splat regardless of the back-to-front sort order.

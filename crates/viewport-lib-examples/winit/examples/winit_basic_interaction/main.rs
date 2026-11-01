@@ -146,16 +146,16 @@ fn main() {
                     )
                     .with_fill(OverlayFill::Solid(Colour::linear(0.7, 0.2, 0.2, 0.9))),
                 );
-                // Center the label in the quit box: anchor at the box center, then
-                // Center alignment centers horizontally and the anchor is already the
-                // text's vertical center.
-                let quit_center = [
+                // Centre the label in the quit box: anchor at the box centre, then
+                // Centre alignment centres horizontally and the anchor is already the
+                // text's vertical centre.
+                let quit_centre = [
                     QUIT_POS[0] + QUIT_SIZE[0] * 0.5,
                     QUIT_POS[1] + QUIT_SIZE[1] * 0.5,
                 ];
                 overlays.labels.push(
                     LabelItem::new("click to quit")
-                        .with_screen_anchor(quit_center)
+                        .with_screen_anchor(quit_centre)
                         .with_align_x(LabelAnchor::Middle)
                         .with_font_size(22.0),
                 );

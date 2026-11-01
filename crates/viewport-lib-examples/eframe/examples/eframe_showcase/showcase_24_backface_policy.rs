@@ -2,7 +2,7 @@
 //!
 //! Four rows of shapes demonstrate every [`BackfacePolicy`] variant:
 //! - **Row 1 : Toruses** clipped through the ring.
-//! - **Row 2 : Spheres** clipped through the center.
+//! - **Row 2 : Spheres** clipped through the centre.
 //! - **Row 3 : Cones** clipped through the middle.
 //! - **Row 4 : Springs** clipped through the coils.
 //! - **Row 5 : Spheres** (normal winding) -- zoom inside to see back faces with each policy.

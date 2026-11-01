@@ -72,6 +72,6 @@ impl RuntimePlugin for LoggingRuntimePlugin {
         ctx.output.events.emit(ProbeEvent { label: self.label });
         ctx.output
             .events
-            .emit(CameraCommand::OffsetCenter(glam::Vec3::Z));
+            .emit(CameraCommand::OffsetCentre(glam::Vec3::Z));
     }
 }

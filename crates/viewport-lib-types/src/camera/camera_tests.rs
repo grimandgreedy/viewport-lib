@@ -34,9 +34,9 @@ fn orbit_eye_lies_along_the_local_z_axis() {
 fn orbit_view_matrix_is_built_from_the_centre() {
     let c = DVec3::new(0.0, 0.0, 0.5);
     let (d, q) = (8.0, Quat::from_rotation_z(0.7) * Quat::from_rotation_x(1.0));
-    let center = c.as_vec3();
-    let eye = center + q * (Vec3::Z * d);
-    let expected = Mat4::look_at_rh(eye, center, q * Vec3::Y);
+    let centre = c.as_vec3();
+    let eye = centre + q * (Vec3::Z * d);
+    let expected = Mat4::look_at_rh(eye, centre, q * Vec3::Y);
     assert_eq!(Camera::orbit(c, d, q).view_matrix(), expected);
 }
 
@@ -52,12 +52,12 @@ fn look_at_faces_the_target() {
 }
 
 #[test]
-fn test_view_matrix_looks_at_center() {
+fn test_view_matrix_looks_at_centre() {
     let cam = Camera::default();
-    let center_view = cam.view_matrix().transform_point3(cam.target().as_vec3());
-    assert!(center_view.x.abs() < 1e-4, "{center_view:?}");
-    assert!(center_view.y.abs() < 1e-4, "{center_view:?}");
-    assert!(center_view.z < 0.0, "{center_view:?}");
+    let centre_view = cam.view_matrix().transform_point3(cam.target().as_vec3());
+    assert!(centre_view.x.abs() < 1e-4, "{centre_view:?}");
+    assert!(centre_view.y.abs() < 1e-4, "{centre_view:?}");
+    assert!(centre_view.z < 0.0, "{centre_view:?}");
 }
 
 #[test]
@@ -121,15 +121,15 @@ fn test_view_proj_roundtrip() {
         .inverse()
         .project_point3(Vec3::new(0.0, 0.0, 0.5));
     let eye = cam.eye();
-    let to_center = (cam.target() - eye).as_vec3().normalize();
+    let to_centre = (cam.target() - eye).as_vec3().normalize();
     let to_pt = (world_pt - eye.as_vec3()).normalize();
-    assert!(to_center.dot(to_pt) > 0.99);
+    assert!(to_centre.dot(to_pt) > 0.99);
 }
 
 #[test]
-fn test_center_on_domain() {
+fn test_centre_on_domain() {
     let mut cam = Camera::default();
-    cam.center_on_domain(10.0, 10.0, 10.0);
+    cam.centre_on_domain(10.0, 10.0, 10.0);
     assert!((cam.target() - DVec3::splat(5.0)).length() < 1e-5);
     assert!(cam.focus_distance() > 0.0);
 }
@@ -137,8 +137,8 @@ fn test_center_on_domain() {
 #[test]
 fn test_fit_sphere_perspective() {
     let cam = Camera::default();
-    let (center, dist) = cam.fit_sphere(Vec3::ZERO, 5.0);
-    assert!(center.length() < 1e-5);
+    let (centre, dist) = cam.fit_sphere(Vec3::ZERO, 5.0);
+    assert!(centre.length() < 1e-5);
     let expected = 5.0 / (cam.fov_y() / 2.0).tan() * 1.2;
     assert!((dist - expected).abs() < 1e-4, "dist={dist}");
 }
@@ -156,8 +156,8 @@ fn test_fit_aabb_unit_cube() {
         min: Vec3::splat(-0.5),
         max: Vec3::splat(0.5),
     };
-    let (center, dist) = cam.fit_aabb(&aabb);
-    assert!(center.length() < 1e-5);
+    let (centre, dist) = cam.fit_aabb(&aabb);
+    assert!(centre.length() < 1e-5);
     let radius = aabb.half_extents().length();
     let expected = radius / (cam.fov_y() / 2.0).tan() * 1.2;
     assert!((dist - expected).abs() < 1e-4);
@@ -174,7 +174,7 @@ fn set_orbit_scales_an_orthographic_height() {
     let mut cam = ortho();
     let h = cam.view_height_at(1.0);
     let t = cam.orbit_target();
-    cam.set_orbit(t.center, t.distance * 2.0, t.orientation);
+    cam.set_orbit(t.centre, t.distance * 2.0, t.orientation);
     assert!((cam.view_height_at(1.0) - 2.0 * h).abs() < 1e-4);
     assert_eq!(cam.focus_distance(), t.distance * 2.0);
 }
@@ -212,10 +212,10 @@ fn target_orbit_matches_manual() {
 }
 
 #[test]
-fn target_pan_world_moves_center() {
+fn target_pan_world_moves_centre() {
     let mut t = CameraTarget::new(DVec3::ZERO, 5.0, Quat::IDENTITY);
     t.pan_world(1.0, 0.5);
-    assert!((t.center - DVec3::new(-1.0, 0.5, 0.0)).length() < 1e-6);
+    assert!((t.centre - DVec3::new(-1.0, 0.5, 0.0)).length() < 1e-6);
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn test_fit_aabb_target() {
     };
     let target = cam.fit_aabb_target(&aabb);
     let (expected_c, expected_d) = cam.fit_aabb(&aabb);
-    assert!((target.center - expected_c).length() < 1e-5);
+    assert!((target.centre - expected_c).length() < 1e-5);
     assert!((target.distance - expected_d).abs() < 1e-5);
     assert_eq!(target.orientation, cam.orientation());
 }

@@ -200,14 +200,14 @@ fn pick_light_indicators_cpu(
             continue;
         }
         let world = node.world_transform();
-        let center = world.translation.as_vec3();
-        let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, center, LIGHT_GLYPH_PICK_RADIUS)
+        let centre = world.translation.as_vec3();
+        let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, centre, LIGHT_GLYPH_PICK_RADIUS)
         else {
             continue;
         };
         if best.as_ref().map(|(t, _)| toi < *t).unwrap_or(true) {
             let world_pos = ray_origin + ray_dir * toi;
-            let normal = (world_pos - center).normalize_or_zero();
+            let normal = (world_pos - centre).normalize_or_zero();
             best = Some((toi, PickHit::object_hit(node.id(), world_pos, normal)));
         }
     }
@@ -219,10 +219,10 @@ fn pick_light_indicators_cpu(
 fn ray_sphere_intersect(
     origin: glam::Vec3,
     dir: glam::Vec3,
-    center: glam::Vec3,
+    centre: glam::Vec3,
     radius: f32,
 ) -> Option<f32> {
-    let oc = origin - center;
+    let oc = origin - centre;
     let a = dir.dot(dir);
     if a <= 0.0 {
         return None;
@@ -897,7 +897,7 @@ pub fn nearest_vertex_on_hit(
 /// # Arguments
 /// * `click_pos`     - screen-space click in viewport pixels (top-left origin)
 /// * `id`            - object identifier embedded in the returned [`PickHit`]
-/// * `positions`     - local-space splat center positions
+/// * `positions`     - local-space splat centre positions
 /// * `model`         - world transform for the splat object
 /// * `view_proj`     - combined view x projection matrix
 /// * `viewport_size` - viewport width x height in pixels
@@ -1128,7 +1128,7 @@ fn in_rect(sx: f32, sy: f32, rect_min: glam::Vec2, rect_max: glam::Vec2) -> bool
 
 /// Rect-select above-threshold voxels from a volume object.
 ///
-/// Projects each voxel center through `view_proj` and collects those that fall
+/// Projects each voxel centre through `view_proj` and collects those that fall
 /// inside the selection rectangle and have a scalar value within
 /// `[region.threshold_min, region.threshold_max]`.
 ///
@@ -1171,9 +1171,9 @@ pub fn pick_volume_rect(
                 {
                     continue;
                 }
-                let local_center = bbox_min
+                let local_centre = bbox_min
                     + cell * glam::Vec3::new(ix as f32 + 0.5, iy as f32 + 0.5, iz as f32 + 0.5);
-                let Some((sx, sy)) = project_to_screen(mvp, local_center, viewport_size) else {
+                let Some((sx, sy)) = project_to_screen(mvp, local_centre, viewport_size) else {
                     continue;
                 };
                 if in_rect(sx, sy, rect_min, rect_max) {
@@ -1264,7 +1264,7 @@ pub fn pick_transparent_volume_mesh_rect(
 /// # Arguments
 /// * `rect_min/max`  - selection rectangle in viewport pixels (top-left origin)
 /// * `id`            - object identifier used as the key in the result
-/// * `positions`     - local-space splat center positions
+/// * `positions`     - local-space splat centre positions
 /// * `model`         - world transform for the splat object
 /// * `view_proj`     - combined view x projection matrix
 /// * `viewport_size` - viewport width x height in pixels
@@ -1357,7 +1357,7 @@ mod tests {
         }
     }
 
-    /// Unit cube centered at origin: 8 vertices, 12 triangles.
+    /// Unit cube centred at origin: 8 vertices, 12 triangles.
     fn unit_cube_mesh() -> (Vec<[f32; 3]>, Vec<u32>) {
         let positions = vec![
             [-0.5, -0.5, -0.5],
@@ -1381,8 +1381,8 @@ mod tests {
     }
 
     #[test]
-    fn test_screen_to_ray_center() {
-        // Identity view-proj: screen center should produce a ray along -Z.
+    fn test_screen_to_ray_centre() {
+        // Identity view-proj: screen centre should produce a ray along -Z.
         let vp_inv = glam::Mat4::IDENTITY;
         let (origin, dir) = screen_to_ray(
             glam::Vec2::new(400.0, 300.0),
@@ -1735,7 +1735,7 @@ mod tests {
     #[test]
     fn test_pick_volume_basic_hit() {
         // 3x3x3 volume, bbox [0,0,0]->[3,3,3], all scalars 0.8.
-        // Ray from +y: hits the top-center voxel (ix=1, iy=2, iz=1).
+        // Ray from +y: hits the top-centre voxel (ix=1, iy=2, iz=1).
         let item = make_volume_item([0.0; 3], [3.0, 3.0, 3.0], 0.5, 1.0);
         let volume = make_volume_data([3, 3, 3], 0.8);
 

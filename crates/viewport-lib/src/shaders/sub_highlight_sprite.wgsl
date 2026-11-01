@@ -51,16 +51,16 @@ fn vs_main(
     @builtin(vertex_index) vi: u32,
     @location(0)           position: vec3<f32>,
 ) -> VsOut {
-    let center     = camera.view_proj * vec4<f32>(position, 1.0);
+    let centre     = camera.view_proj * vec4<f32>(position, 1.0);
     let corner     = quad_corner(vi);
     let half_size  = hl.vertex_size * 0.5;
     let ndc_offset = corner * half_size
                      / vec2<f32>(hl.viewport_width, hl.viewport_height);
     let clip = vec4<f32>(
-        center.x + ndc_offset.x * center.w,
-        center.y + ndc_offset.y * center.w,
-        center.z,
-        center.w,
+        centre.x + ndc_offset.x * centre.w,
+        centre.y + ndc_offset.y * centre.w,
+        centre.z,
+        centre.w,
     );
     return VsOut(clip, corner);
 }

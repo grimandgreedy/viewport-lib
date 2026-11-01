@@ -127,8 +127,8 @@ pub enum DebugPrim {
     },
     /// A sphere wireframe drawn as three great circles.
     Sphere {
-        /// Center position in world space.
-        center: glam::Vec3,
+        /// Centre position in world space.
+        centre: glam::Vec3,
         /// Sphere radius in world-space units.
         radius: f32,
         /// RGBA colour in linear space.
@@ -364,34 +364,34 @@ impl DebugDraw {
     /// The sphere is drawn as three great circles (XY, XZ, and YZ planes).
     pub fn sphere(
         &mut self,
-        center: glam::Vec3,
+        centre: glam::Vec3,
         radius: f32,
         colour: impl Into<crate::Colour>,
     ) -> &mut Self {
-        self.sphere_layer(center, radius, colour, DebugLayer::Dev)
+        self.sphere_layer(centre, radius, colour, DebugLayer::Dev)
     }
 
     /// Submit a sphere wireframe on the [`DebugLayer::Overlay`] layer.
     pub fn sphere_overlay(
         &mut self,
-        center: glam::Vec3,
+        centre: glam::Vec3,
         radius: f32,
         colour: impl Into<crate::Colour>,
     ) -> &mut Self {
-        self.sphere_layer(center, radius, colour, DebugLayer::Overlay)
+        self.sphere_layer(centre, radius, colour, DebugLayer::Overlay)
     }
 
     /// Submit a sphere wireframe on a specific layer.
     pub fn sphere_layer(
         &mut self,
-        center: glam::Vec3,
+        centre: glam::Vec3,
         radius: f32,
         colour: impl Into<crate::Colour>,
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
             self.transient.push(DebugPrim::Sphere {
-                center,
+                centre,
                 radius,
                 colour: colour.into(),
                 layer,
@@ -570,7 +570,7 @@ impl DebugDraw {
                     strips.extend_from_slice(strip_lens);
                 }
                 DebugPrim::Sphere {
-                    center,
+                    centre,
                     radius,
                     colour,
                     ..
@@ -586,19 +586,19 @@ impl DebugDraw {
                             let (s, c) = (t.sin(), t.cos());
                             let p = match circle_axis {
                                 0 => glam::Vec3::new(
-                                    c * *radius + center.x,
-                                    s * *radius + center.y,
-                                    center.z,
+                                    c * *radius + centre.x,
+                                    s * *radius + centre.y,
+                                    centre.z,
                                 ),
                                 1 => glam::Vec3::new(
-                                    c * *radius + center.x,
-                                    center.y,
-                                    s * *radius + center.z,
+                                    c * *radius + centre.x,
+                                    centre.y,
+                                    s * *radius + centre.z,
                                 ),
                                 _ => glam::Vec3::new(
-                                    center.x,
-                                    c * *radius + center.y,
-                                    s * *radius + center.z,
+                                    centre.x,
+                                    c * *radius + centre.y,
+                                    s * *radius + centre.z,
                                 ),
                             };
                             positions.push(p.into());
@@ -797,7 +797,7 @@ mod tests {
         dd.add_persistent(
             42,
             DebugPrim::Sphere {
-                center: glam::Vec3::ZERO,
+                centre: glam::Vec3::ZERO,
                 radius: 1.0,
                 colour: Colour::from_linear_array(green()),
                 layer: DebugLayer::Dev,
@@ -828,7 +828,7 @@ mod tests {
         dd.add_persistent(
             1,
             DebugPrim::Sphere {
-                center: glam::Vec3::ZERO,
+                centre: glam::Vec3::ZERO,
                 radius: 1.0,
                 colour: Colour::from_linear_array(green()),
                 layer: DebugLayer::Dev,

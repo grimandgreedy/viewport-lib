@@ -26,7 +26,7 @@ pub struct ManipulationSystem {
     controller: ManipulationController,
     transforms_snapshot: HashMap<NodeId, glam::Mat4>,
     pub(crate) gizmo: Gizmo,
-    pub(crate) gizmo_center: Option<glam::Vec3>,
+    pub(crate) gizmo_centre: Option<glam::Vec3>,
     pub(crate) gizmo_scale: f32,
 }
 
@@ -43,7 +43,7 @@ impl ManipulationSystem {
             controller: ManipulationController::new(),
             transforms_snapshot: HashMap::new(),
             gizmo: Gizmo::default(),
-            gizmo_center: None,
+            gizmo_centre: None,
             gizmo_scale: 1.0,
         }
     }
@@ -53,9 +53,9 @@ impl ManipulationSystem {
         self.controller.is_active()
     }
 
-    /// World-space center of the current selection, or None if selection is empty.
-    pub fn gizmo_center(&self) -> Option<glam::Vec3> {
-        self.gizmo_center
+    /// World-space centre of the current selection, or None if selection is empty.
+    pub fn gizmo_centre(&self) -> Option<glam::Vec3> {
+        self.gizmo_centre
     }
 
     /// Screen-size scale factor for the gizmo arms.
@@ -75,8 +75,8 @@ impl ManipulationSystem {
 
     /// Build a GizmoInfo from current state, suitable for InteractionFrame.
     pub fn gizmo_info(&self) -> Option<GizmoInfo> {
-        self.gizmo_center.map(|center| GizmoInfo {
-            center,
+        self.gizmo_centre.map(|centre| GizmoInfo {
+            centre,
             scale: self.gizmo_scale,
             orientation: glam::Quat::IDENTITY,
             mode: self.gizmo.mode,
@@ -91,17 +91,17 @@ impl ManipulationSystem {
         writeback: &mut TransformWriteback,
         _output: &mut RuntimeOutput,
     ) {
-        // Compute gizmo center from selection.
-        self.gizmo_center = gizmo::gizmo_center_from_selection(selection, |id| {
+        // Compute gizmo centre from selection.
+        self.gizmo_centre = gizmo::gizmo_centre_from_selection(selection, |id| {
             scene
                 .node(id)
                 .map(|n| n.world_transform().translation.as_vec3())
         });
 
         // Compute gizmo scale.
-        if let Some(center) = self.gizmo_center {
+        if let Some(centre) = self.gizmo_centre {
             self.gizmo_scale = gizmo::compute_gizmo_scale(
-                center,
+                centre,
                 frame.camera.eye().as_vec3(),
                 frame.camera.fov_y(),
                 frame.viewport_size.y,
@@ -110,7 +110,7 @@ impl ManipulationSystem {
 
         // Gizmo hover hit-test (only when no session is active).
         if !self.controller.is_active() {
-            if let (Some(center), Some(cursor)) = (self.gizmo_center, frame.cursor_viewport) {
+            if let (Some(centre), Some(cursor)) = (self.gizmo_centre, frame.cursor_viewport) {
                 let w = frame.viewport_size.x.max(1.0);
                 let h = frame.viewport_size.y.max(1.0);
                 let ndc_x = (cursor.x / w) * 2.0 - 1.0;
@@ -119,7 +119,7 @@ impl ManipulationSystem {
                 self.gizmo.hovered_axis = self.gizmo.hit_test_oriented(
                     ray_origin,
                     ray_dir,
-                    center,
+                    centre,
                     self.gizmo_scale,
                     glam::Quat::IDENTITY,
                 );
@@ -129,8 +129,8 @@ impl ManipulationSystem {
         }
 
         // Build ManipulationContext.
-        let gizmo_info = self.gizmo_center.map(|center| GizmoInfo {
-            center,
+        let gizmo_info = self.gizmo_centre.map(|centre| GizmoInfo {
+            centre,
             scale: self.gizmo_scale,
             orientation: glam::Quat::IDENTITY,
             mode: self.gizmo.mode,
@@ -140,7 +140,7 @@ impl ManipulationSystem {
             viewport_size: frame.viewport_size,
             cursor_viewport: frame.cursor_viewport,
             pointer_delta: frame.pointer_delta,
-            selection_center: self.gizmo_center,
+            selection_centre: self.gizmo_centre,
             gizmo: gizmo_info,
             drag_started: frame.drag_started,
             dragging: frame.dragging,
@@ -197,7 +197,7 @@ impl ManipulationSystem {
         selection: &Selection,
         writeback: &mut TransformWriteback,
     ) {
-        let Some(center) = self.gizmo_center else {
+        let Some(centre) = self.gizmo_centre else {
             return;
         };
 
@@ -207,8 +207,8 @@ impl ManipulationSystem {
         let rot_mat = glam::Mat4::from_quat(delta.rotation);
         let scale_mat = glam::Mat4::from_scale(delta.scale);
         let translate_mat = glam::Mat4::from_translation(delta.translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
+        let to_pivot = glam::Mat4::from_translation(-centre);
+        let from_pivot = glam::Mat4::from_translation(centre);
 
         for &id in selection.iter() {
             // Operate in WORLD space so the pivot-centred rotation lands

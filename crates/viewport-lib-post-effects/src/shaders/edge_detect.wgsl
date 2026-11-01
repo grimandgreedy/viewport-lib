@@ -44,7 +44,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let edge_color = u.params1.rgb;
 
     let texel = u.inv_viewport_size;
-    let center = textureSample(input_color, input_sampler, in.uv);
+    let centre = textureSample(input_color, input_sampler, in.uv);
     let left = textureSample(input_color, input_sampler, in.uv + vec2<f32>(-texel.x, 0.0));
     let right = textureSample(input_color, input_sampler, in.uv + vec2<f32>(texel.x, 0.0));
     let up = textureSample(input_color, input_sampler, in.uv + vec2<f32>(0.0, -texel.y));
@@ -65,5 +65,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         + abs(luminance(up.rgb) - luminance(down.rgb));
     let depth_edge = abs(d_left - d_right) + abs(d_up - d_down);
     let edge = smoothstep(threshold, threshold * 2.0, color_edge * color_strength + depth_edge * depth_strength);
-    return vec4<f32>(mix(center.rgb, edge_color, edge), center.a);
+    return vec4<f32>(mix(centre.rgb, edge_color, edge), centre.a);
 }

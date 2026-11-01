@@ -31,7 +31,7 @@ use vpl::{
     ManipResult, ManipulationContext, ManipulationController, ManipulationKind, MeshId,
     OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
     ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_default_bindings,
+    ViewportInput, ViewportRenderer, gizmo_centre_for_pivot, primitives, viewport_default_bindings,
     wish_xy_from_actions,
 };
 
@@ -189,7 +189,7 @@ struct App {
     objects: Vec<Object>,
     selection: Selection,
     gizmo: Gizmo,
-    gizmo_center: Option<glam::Vec3>,
+    gizmo_centre: Option<glam::Vec3>,
     gizmo_scale: f32,
     manip: ManipulationController,
     active_manip_kind: ManipulationKind,
@@ -247,7 +247,7 @@ impl App {
             ],
             selection: Selection::new(),
             gizmo: Gizmo::new(),
-            gizmo_center: None,
+            gizmo_centre: None,
             gizmo_scale: 1.0,
             manip: ManipulationController::new(),
             active_manip_kind: ManipulationKind::Move,
@@ -269,7 +269,7 @@ impl App {
     ///
     /// Rotation and scale pivot depends on the current `PivotMode`:
     /// - `IndividualOrigins` : each object transforms around its own centre.
-    /// - Everything else : all objects transform around the shared `gizmo_center`.
+    /// - Everything else : all objects transform around the shared `gizmo_centre`.
     /// Apply a `TransformDelta` to all selected objects.
     ///
     /// When `position_override` or `scale_override` is set (numeric input mode),
@@ -304,7 +304,7 @@ impl App {
         };
 
         let pivot_mode = self.gizmo.pivot_mode;
-        let gizmo_center = self.gizmo_center.unwrap_or(glam::Vec3::ZERO);
+        let gizmo_centre = self.gizmo_centre.unwrap_or(glam::Vec3::ZERO);
 
         let rot_mat = glam::Mat4::from_quat(delta.rotation);
         let scale_mat = glam::Mat4::from_scale(scale);
@@ -315,7 +315,7 @@ impl App {
 
             let pivot = match pivot_mode {
                 PivotMode::IndividualOrigins => obj.position(),
-                _ => gizmo_center,
+                _ => gizmo_centre,
             };
 
             let to_pivot = glam::Mat4::from_translation(-pivot);
@@ -340,8 +340,8 @@ impl App {
         }
     }
 
-    fn recompute_gizmo_center(&mut self) {
-        self.gizmo_center = gizmo_center_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
+    fn recompute_gizmo_centre(&mut self) {
+        self.gizmo_centre = gizmo_centre_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
             Some(self.objects[id as usize].position())
         });
     }
@@ -383,7 +383,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         // Drain GPU pick result from the previous frame's prepare callback.
         // Extract while holding the lock, then drop the guard before calling
-        // &mut self methods (recompute_gizmo_center requires exclusive access).
+        // &mut self methods (recompute_gizmo_centre requires exclusive access).
         let pick_raw: Option<u64> = self
             .pick_result
             .lock()
@@ -394,7 +394,7 @@ impl eframe::App for App {
             if raw_id == 0 {
                 if !self.shift_held {
                     self.selection.clear();
-                    self.recompute_gizmo_center();
+                    self.recompute_gizmo_centre();
                     self.selection_generation += 1;
                 }
             } else {
@@ -410,7 +410,7 @@ impl eframe::App for App {
                         self.selection.clear();
                         self.selection.select_one(idx as u64);
                     }
-                    self.recompute_gizmo_center();
+                    self.recompute_gizmo_centre();
                     self.selection_generation += 1;
                 }
             }
@@ -777,19 +777,19 @@ impl eframe::App for App {
                             } else {
                                 self.gizmo.cycle_pivot_backward();
                             }
-                            self.recompute_gizmo_center();
+                            self.recompute_gizmo_centre();
                             if self.manip.is_active() {
                                 self.manip.reset();
                                 self.restore_snapshots();
-                                if let Some(center) = self.gizmo_center {
-                                    self.manip.begin(self.active_manip_kind, center);
+                                if let Some(centre) = self.gizmo_centre {
+                                    self.manip.begin(self.active_manip_kind, centre);
                                 }
                             }
                         }
 
                         // Update gizmo hover from the current cursor position.
-                        if let (Some(cursor), Some(center)) =
-                            (self.cursor_viewport, self.gizmo_center)
+                        if let (Some(cursor), Some(centre)) =
+                            (self.cursor_viewport, self.gizmo_centre)
                         {
                             if !self.manip.is_active() {
                                 let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
@@ -799,15 +799,15 @@ impl eframe::App for App {
                                 self.gizmo.hovered_axis = self.gizmo.hit_test(
                                     ray_origin,
                                     ray_dir,
-                                    center,
+                                    centre,
                                     self.gizmo_scale,
                                 );
                             }
                         }
 
                         // Build ManipulationContext.
-                        let gizmo_info = self.gizmo_center.map(|center| GizmoInfo {
-                            center,
+                        let gizmo_info = self.gizmo_centre.map(|centre| GizmoInfo {
+                            centre,
                             scale: self.gizmo_scale,
                             orientation: glam::Quat::IDENTITY,
                             mode: self.gizmo.mode,
@@ -818,7 +818,7 @@ impl eframe::App for App {
                             viewport_size,
                             cursor_viewport: self.cursor_viewport,
                             pointer_delta,
-                            selection_center: self.gizmo_center,
+                            selection_centre: self.gizmo_centre,
                             gizmo: gizmo_info,
                             drag_started: self.drag_started,
                             dragging: self.left_held,
@@ -829,15 +829,15 @@ impl eframe::App for App {
                             ManipResult::Update(delta) => {
                                 // Delta is incremental : accumulate, do NOT restore snapshot.
                                 self.apply_delta(delta);
-                                self.recompute_gizmo_center();
+                                self.recompute_gizmo_centre();
                             }
                             ManipResult::Cancel | ManipResult::ConstraintChanged => {
                                 self.restore_snapshots();
-                                self.recompute_gizmo_center();
+                                self.recompute_gizmo_centre();
                             }
                             ManipResult::Commit => {
                                 self.save_snapshots();
-                                self.recompute_gizmo_center();
+                                self.recompute_gizmo_centre();
                                 // If a click confirmed the session, consume it so
                                 // click-to-select doesn't fire on the same frame.
                                 self.clicked = false;
@@ -862,9 +862,9 @@ impl eframe::App for App {
                         }
 
                         // Recompute gizmo scale each frame so it stays screen-size-stable.
-                        if let Some(center) = self.gizmo_center {
+                        if let Some(centre) = self.gizmo_centre {
                             self.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
-                                center,
+                                centre,
                                 self.camera.eye().as_vec3(),
                                 self.camera.fov_y(),
                                 h,
@@ -906,11 +906,11 @@ impl eframe::App for App {
 
                 // Gizmo rendering (Mode 2 only).
                 if self.mode == Mode::All {
-                    if let Some(center) = self.gizmo_center {
+                    if let Some(centre) = self.gizmo_centre {
                         let gizmo_model = glam::Mat4::from_scale_rotation_translation(
                             glam::Vec3::splat(self.gizmo_scale),
                             glam::Quat::IDENTITY,
-                            center,
+                            centre,
                         );
                         let mut interaction = InteractionFrame::default();
                         interaction.gizmo_model = Some(gizmo_model);

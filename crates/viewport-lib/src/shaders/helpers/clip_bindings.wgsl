@@ -1,4 +1,4 @@
-// @viewport-wgsl-version: 1
+// @viewport-wgsl-version: 2
 // Section-view clipping: the clip-plane and clip-volume uniforms at group 0
 // bindings 4 and 6, and the tests a fragment stage discards on.
 //
@@ -19,7 +19,7 @@ struct ClipVolumeEntry {
     _pad_a:       u32,
     _pad_b:       u32,
     _pad_c:       u32,
-    center:       vec3<f32>,
+    centre:       vec3<f32>,
     radius:       f32,
     half_extents: vec3<f32>,
     _pad1:        f32,
@@ -62,7 +62,7 @@ fn viewport_pass_clip_volumes(world_pos: vec3<f32>) -> bool {
     for (var i = 0u; i < clip_volume.count; i = i + 1u) {
         let e = clip_volume.volumes[i];
         if e.volume_type == 2u {
-            let d = world_pos - e.center;
+            let d = world_pos - e.centre;
             let local = vec3<f32>(dot(d, e.col0), dot(d, e.col1), dot(d, e.col2));
             if abs(local.x) > e.half_extents.x
                 || abs(local.y) > e.half_extents.y
@@ -70,11 +70,11 @@ fn viewport_pass_clip_volumes(world_pos: vec3<f32>) -> bool {
                 return false;
             }
         } else if e.volume_type == 3u {
-            let ds = world_pos - e.center;
+            let ds = world_pos - e.centre;
             if dot(ds, ds) > e.radius * e.radius { return false; }
         } else if e.volume_type == 4u {
             let axis = e.col0;
-            let d = world_pos - e.center;
+            let d = world_pos - e.centre;
             let along = dot(d, axis);
             if abs(along) > e.half_extents.x { return false; }
             let radial = d - axis * along;

@@ -300,7 +300,7 @@ impl ViewportRenderer {
                 .filter(|id| id.0 < resources.content.colourmap_views.len());
             // Eye-relative in f64, so the sort holds far from the world origin.
             let centre =
-                (item.model.transform_point3(mesh.aabb.center().as_dvec3()) - eye).as_vec3();
+                (item.model.transform_point3(mesh.aabb.centre().as_dvec3()) - eye).as_vec3();
 
             for (indices, material_id) in ranges {
                 let m = resources.material_or_default(material_id);

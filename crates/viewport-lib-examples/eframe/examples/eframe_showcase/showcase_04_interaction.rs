@@ -25,7 +25,7 @@ pub(crate) struct InteractState {
     pub transforms_snapshot: HashMap<NodeId, glam::Mat4>,
     pub left_held: bool,
     pub built: bool,
-    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_centre: Option<glam::Vec3>,
     pub gizmo_scale: f32,
     pub spline: vpl::SplineWidget,
     /// Unit sphere the spline's control-point handles are drawn with.
@@ -44,7 +44,7 @@ impl Default for InteractState {
             transforms_snapshot: HashMap::new(),
             left_held: false,
             built: false,
-            gizmo_center: None,
+            gizmo_centre: None,
             gizmo_scale: 1.0,
             spline: vpl::SplineWidget::new(vec![
                 glam::Vec3::new(-2.0, 0.0, 1.5),
@@ -85,7 +85,7 @@ impl App {
             [0.10, 0.26, 0.68],
             [0.60, 0.50, 0.05],
         ];
-        let names = ["Center", "Right", "Left", "Front", "Back"];
+        let names = ["Centre", "Right", "Left", "Front", "Back"];
 
         for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
@@ -113,13 +113,13 @@ impl App {
 impl App {
     /// Apply a [`viewport_lib::TransformDelta`] to all selected scene nodes.
     ///
-    /// Rotation and scale pivot around `interact_gizmo_center`.
+    /// Rotation and scale pivot around `interact_gizmo_centre`.
     /// When a numeric override is set (position, rotation, or scale), the snapshot
     /// is restored first and the override applied relative to it. Whether numeric
     /// input reads as relative or absolute is an app-side choice: this reference
     /// applies it relative to the drag-start transform.
     pub(crate) fn apply_interact_delta(&mut self, delta: vpl::TransformDelta) {
-        let Some(center) = self.interact_state.gizmo_center else {
+        let Some(centre) = self.interact_state.gizmo_centre else {
             return;
         };
 
@@ -164,8 +164,8 @@ impl App {
         let rot_mat = glam::Mat4::from_quat(rotation);
         let scale_mat = glam::Mat4::from_scale(scale);
         let translate_mat = glam::Mat4::from_translation(translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
+        let to_pivot = glam::Mat4::from_translation(-centre);
+        let from_pivot = glam::Mat4::from_translation(centre);
 
         for id in self
             .interact_state
@@ -248,7 +248,7 @@ impl App {
             let target = self.camera.fit_aabb_target(&aabb);
             self.interact_state.animator.fly_to(
                 &self.camera,
-                target.center,
+                target.centre,
                 target.distance,
                 target.orientation,
                 0.6,
@@ -579,17 +579,17 @@ pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
-    // ----- Update gizmo_center cache for next frame's hit-testing -----
-    app.interact_state.gizmo_center =
-        vpl::gizmo::gizmo_center_from_selection(&app.interact_state.selection, |id| {
+    // ----- Update gizmo_centre cache for next frame's hit-testing -----
+    app.interact_state.gizmo_centre =
+        vpl::gizmo::gizmo_centre_from_selection(&app.interact_state.selection, |id| {
             app.interact_state.scene.node(id).map(|n| {
                 let t = n.world_transform().to_mat4();
                 glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
             })
         });
-    if let Some(center) = app.interact_state.gizmo_center {
+    if let Some(centre) = app.interact_state.gizmo_centre {
         app.interact_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
-            center,
+            centre,
             app.camera.eye().as_vec3(),
             app.camera.fov_y(),
             cx.rect.height(),
@@ -620,7 +620,7 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
 
         // Per-frame gizmo hover when no session is active.
         if !app.interact_state.manip.is_active() {
-            if let Some(center) = app.interact_state.gizmo_center {
+            if let Some(centre) = app.interact_state.gizmo_centre {
                 let cursor = app.cursor_viewport;
                 let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
                 let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
@@ -633,7 +633,7 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
                 app.interact_state.gizmo.hovered_axis = app.interact_state.gizmo.hit_test_oriented(
                     ray_origin,
                     ray_dir,
-                    center,
+                    centre,
                     app.interact_state.gizmo_scale,
                     orient,
                 );
@@ -650,9 +650,9 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
         );
         let gizmo_info = app
             .interact_state
-            .gizmo_center
-            .map(|center| vpl::GizmoInfo {
-                center,
+            .gizmo_centre
+            .map(|centre| vpl::GizmoInfo {
+                centre,
                 scale: app.interact_state.gizmo_scale,
                 orientation: orient,
                 mode: app.interact_state.gizmo.mode,
@@ -667,7 +667,7 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
             viewport_size,
             cursor_viewport: Some(app.cursor_viewport),
             pointer_delta,
-            selection_center: app.interact_state.gizmo_center,
+            selection_centre: app.interact_state.gizmo_centre,
             gizmo: gizmo_info,
             drag_started: cx.response.drag_started(),
             dragging: app.interact_state.left_held,

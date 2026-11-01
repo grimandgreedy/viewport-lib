@@ -12,7 +12,7 @@ use crate::camera::camera::{Camera, CameraTarget};
 /// [`interpolate_camera`] each frame to get a smoothly interpolated
 /// [`CameraTarget`] that you can apply to a [`Camera`].
 ///
-/// Center and distance are interpolated with a Catmull-Rom spline.
+/// Centre and distance are interpolated with a Catmull-Rom spline.
 /// Orientation is interpolated with spherical linear interpolation (slerp)
 /// between adjacent keyframes.
 #[derive(Clone, Debug, Default)]
@@ -72,7 +72,7 @@ impl CameraTrack {
 
 /// Interpolate a [`CameraTarget`] from a [`CameraTrack`] at time `t`.
 ///
-/// - Center and distance use Catmull-Rom spline interpolation.
+/// - Centre and distance use Catmull-Rom spline interpolation.
 /// - Orientation uses spherical linear interpolation between the two
 ///   surrounding keyframes.
 ///
@@ -84,7 +84,7 @@ pub fn interpolate_camera(track: &CameraTrack, t: f64) -> CameraTarget {
 
     match kfs.len() {
         0 => CameraTarget {
-            center: glam::DVec3::ZERO,
+            centre: glam::DVec3::ZERO,
             distance: 5.0,
             orientation: glam::Quat::IDENTITY,
         },
@@ -118,7 +118,7 @@ pub fn interpolate_camera(track: &CameraTrack, t: f64) -> CameraTarget {
             } else {
                 // Phantom: reflect p2 through p1.
                 CameraTarget {
-                    center: p1.center * 2.0 - p2.center,
+                    centre: p1.centre * 2.0 - p2.centre,
                     distance: p1.distance * 2.0 - p2.distance,
                     orientation: p1.orientation, // kept simple for boundary
                 }
@@ -128,14 +128,14 @@ pub fn interpolate_camera(track: &CameraTrack, t: f64) -> CameraTarget {
             } else {
                 // Phantom: reflect p1 through p2.
                 CameraTarget {
-                    center: p2.center * 2.0 - p1.center,
+                    centre: p2.centre * 2.0 - p1.centre,
                     distance: p2.distance * 2.0 - p1.distance,
                     orientation: p2.orientation,
                 }
             };
 
             CameraTarget {
-                center: catmull_rom_dvec3(p0.center, p1.center, p2.center, p3.center, s),
+                centre: catmull_rom_dvec3(p0.centre, p1.centre, p2.centre, p3.centre, s),
                 distance: catmull_rom_f32(p0.distance, p1.distance, p2.distance, p3.distance, s)
                     .max(Camera::MIN_DISTANCE),
                 orientation: p1.orientation.slerp(p2.orientation, s).normalize(),
@@ -185,7 +185,7 @@ mod tests {
 
     fn target(x: f32, d: f32) -> CameraTarget {
         CameraTarget {
-            center: glam::DVec3::new(f64::from(x), 0.0, 0.0),
+            centre: glam::DVec3::new(f64::from(x), 0.0, 0.0),
             distance: d,
             orientation: glam::Quat::IDENTITY,
         }
@@ -203,7 +203,7 @@ mod tests {
         let mut track = CameraTrack::new();
         track.push(0.0, target(3.0, 7.0));
         let t = interpolate_camera(&track, 5.0);
-        assert!((t.center.x - 3.0).abs() < 1e-5);
+        assert!((t.centre.x - 3.0).abs() < 1e-5);
         assert!((t.distance - 7.0).abs() < 1e-5);
     }
 
@@ -213,7 +213,7 @@ mod tests {
         track.push(1.0, target(1.0, 1.0));
         track.push(2.0, target(2.0, 2.0));
         let t = interpolate_camera(&track, 0.0);
-        assert!((t.center.x - 1.0).abs() < 1e-5);
+        assert!((t.centre.x - 1.0).abs() < 1e-5);
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod tests {
         track.push(1.0, target(1.0, 1.0));
         track.push(2.0, target(2.0, 2.0));
         let t = interpolate_camera(&track, 5.0);
-        assert!((t.center.x - 2.0).abs() < 1e-5);
+        assert!((t.centre.x - 2.0).abs() < 1e-5);
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         // At exactly t=0.5, Catmull-Rom with phantom endpoints on a linear
         // sequence should give the midpoint.
         let t = interpolate_camera(&track, 0.5);
-        assert!((t.center.x - 1.0).abs() < 0.05, "center.x={}", t.center.x);
+        assert!((t.centre.x - 1.0).abs() < 0.05, "centre.x={}", t.centre.x);
         assert!((t.distance - 6.0).abs() < 0.1, "distance={}", t.distance);
     }
 
@@ -245,7 +245,7 @@ mod tests {
         track.push(2.0, target(10.0, 5.0));
         // At t=1.0 exactly we should be at the second keyframe.
         let t = interpolate_camera(&track, 1.0);
-        assert!((t.center.x - 5.0).abs() < 1e-4, "center.x={}", t.center.x);
+        assert!((t.centre.x - 5.0).abs() < 1e-4, "centre.x={}", t.centre.x);
         assert!((t.distance - 3.0).abs() < 1e-4, "distance={}", t.distance);
     }
 

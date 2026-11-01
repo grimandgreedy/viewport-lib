@@ -7,15 +7,15 @@ use crate::camera::camera::Camera;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, project_drag_onto_axis};
 
 /// Compute the signed rotation angle (radians) produced by the cursor sweeping around the
-/// screen-projected gizmo center.
+/// screen-projected gizmo centre.
 ///
-/// Returns 0.0 when the cursor is within `MIN_RADIUS` pixels of the center, or when
+/// Returns 0.0 when the cursor is within `MIN_RADIUS` pixels of the centre, or when
 /// `cursor_viewport` is `None`.
 ///
 /// # Arguments
 /// * `cursor_viewport` : current cursor position in viewport-local pixels (Y-down).
 /// * `pointer_delta` : mouse movement since last frame in pixels.
-/// * `gizmo_center` : world-space rotation pivot.
+/// * `gizmo_centre` : world-space rotation pivot.
 /// * `axis_world` : world-space rotation axis (unit vector).
 /// * `view_proj` : camera view-projection matrix.
 /// * `viewport_size` : viewport dimensions in pixels.
@@ -23,7 +23,7 @@ use crate::interaction::manipulation::gizmo::{GizmoAxis, project_drag_onto_axis}
 pub fn angular_rotation_from_cursor(
     cursor_viewport: Option<glam::Vec2>,
     pointer_delta: glam::Vec2,
-    gizmo_center: glam::Vec3,
+    gizmo_centre: glam::Vec3,
     axis_world: glam::Vec3,
     view_proj: glam::Mat4,
     viewport_size: glam::Vec2,
@@ -36,14 +36,14 @@ pub fn angular_rotation_from_cursor(
         None => return 0.0,
     };
 
-    // Project gizmo center into viewport pixel space (Y-down).
-    let ndc = view_proj.project_point3(gizmo_center);
-    let center_screen = glam::Vec2::new(
+    // Project gizmo centre into viewport pixel space (Y-down).
+    let ndc = view_proj.project_point3(gizmo_centre);
+    let centre_screen = glam::Vec2::new(
         (ndc.x + 1.0) * 0.5 * viewport_size.x,
         (1.0 - ndc.y) * 0.5 * viewport_size.y,
     );
 
-    let r_curr = cursor - center_screen;
+    let r_curr = cursor - centre_screen;
     let r_prev = r_curr - pointer_delta;
 
     if r_curr.length() < MIN_RADIUS || r_prev.length() < MIN_RADIUS {
@@ -76,7 +76,7 @@ pub fn angular_rotation_from_cursor(
 /// * `pointer_delta` : mouse movement in pixels since last frame.
 /// * `axis` : optional axis constraint. `None` = free camera-plane movement.
 /// * `exclude_axis` : if `true`, `axis` names the axis to *exclude*; movement is in the perpendicular plane.
-/// * `gizmo_center` : world-space pivot (used for axis projection).
+/// * `gizmo_centre` : world-space pivot (used for axis projection).
 /// * `camera` : current camera (provides right, up and the view height at the
 ///   focus distance).
 /// * `viewport_size` : viewport dimensions in pixels.
@@ -84,7 +84,7 @@ pub fn constrained_translation(
     pointer_delta: glam::Vec2,
     axis: Option<GizmoAxis>,
     exclude_axis: bool,
-    gizmo_center: glam::Vec3,
+    gizmo_centre: glam::Vec3,
     camera: &Camera,
     viewport_size: glam::Vec2,
 ) -> glam::Vec3 {
@@ -119,7 +119,7 @@ pub fn constrained_translation(
                     pointer_delta,
                     axis_world,
                     view_proj,
-                    gizmo_center,
+                    gizmo_centre,
                     viewport_size,
                 );
                 axis_world * amount
@@ -306,16 +306,16 @@ mod tests {
     }
 
     #[test]
-    fn angular_rotation_near_center_returns_zero() {
-        // Cursor very close to the projected center (within MIN_RADIUS=10)
+    fn angular_rotation_near_centre_returns_zero() {
+        // Cursor very close to the projected centre (within MIN_RADIUS=10)
         let cam = make_camera();
         let vp = cam.proj_matrix() * cam.view_matrix();
-        // Project the origin to find center, then place cursor near it
+        // Project the origin to find centre, then place cursor near it
         let ndc = vp.project_point3(glam::Vec3::ZERO);
         let cx = (ndc.x + 1.0) * 0.5 * 800.0;
         let cy = (1.0 - ndc.y) * 0.5 * 600.0;
         let angle = angular_rotation_from_cursor(
-            Some(glam::Vec2::new(cx + 2.0, cy)), // 2px from center < MIN_RADIUS
+            Some(glam::Vec2::new(cx + 2.0, cy)), // 2px from centre < MIN_RADIUS
             glam::Vec2::new(1.0, 0.0),
             glam::Vec3::ZERO,
             glam::Vec3::Z,

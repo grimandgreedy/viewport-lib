@@ -356,16 +356,16 @@ impl DecalCoverageShowcase {
 
         // GPU implicit: two smooth-blended spheres.
         {
-            let centers = [[10.3_f32, 5.0, 0.0], [11.7, 5.0, 0.0]];
+            let centres = [[10.3_f32, 5.0, 0.0], [11.7, 5.0, 0.0]];
             let colours = [[0.68_f32, 0.22, 0.06, 1.0], [0.12, 0.28, 0.68, 1.0]];
             let mut item = GpuImplicitItem::default();
             for i in 0..2 {
                 let mut prim = ImplicitPrimitive::zeroed();
                 prim.kind = 1; // sphere
                 prim.blend = 0.8;
-                prim.params[0] = centers[i][0];
-                prim.params[1] = centers[i][1];
-                prim.params[2] = centers[i][2];
+                prim.params[0] = centres[i][0];
+                prim.params[1] = centres[i][1];
+                prim.params[2] = centres[i][2];
                 prim.params[3] = 1.1; // radius
                 prim.colour = Colour::from_linear_array(colours[i]);
                 item.primitives.push(prim);

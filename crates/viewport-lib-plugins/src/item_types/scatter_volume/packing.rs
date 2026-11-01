@@ -16,7 +16,7 @@ pub(crate) struct GpuRefractionVolume {
     pub _pad1: u32,
     /// Padding to keep the following `vec4<f32>` 16-byte aligned.
     pub _pad2: u32,
-    /// Box: `min.xyz, _`. Sphere: `center.xyz, radius`.
+    /// Box: `min.xyz, _`. Sphere: `centre.xyz, radius`.
     pub p0: [f32; 4],
     /// Box: `max.xyz, _`. Sphere: unused.
     pub p1: [f32; 4],
@@ -38,8 +38,8 @@ impl GpuRefractionVolume {
                 [b.min.x, b.min.y, b.min.z, 0.0],
                 [b.max.x, b.max.y, b.max.z, 0.0],
             ),
-            ScatterShape::Sphere { center, radius } => {
-                (1u32, [center[0], center[1], center[2], radius], [0.0; 4])
+            ScatterShape::Sphere { centre, radius } => {
+                (1u32, [centre[0], centre[1], centre[2], radius], [0.0; 4])
             }
         };
         Some(Self {
@@ -77,7 +77,7 @@ pub(crate) struct GpuScatterVolume {
     pub remap_kind: u32,
     /// Emission kind: 0 = None, 1 = Linear, 2 = Power, 3 = Threshold.
     pub emission_kind: u32,
-    /// Box: `min.xyz`, `_`. Sphere: `center.xyz, radius`.
+    /// Box: `min.xyz`, `_`. Sphere: `centre.xyz, radius`.
     pub p0: [f32; 4],
     /// Box: `max.xyz, _`. Sphere: unused.
     pub p1: [f32; 4],
@@ -88,7 +88,7 @@ pub(crate) struct GpuScatterVolume {
     /// y = emission_strength, z = emission_curve_param, w = step_budget
     /// (per-volume march steps; 0 = use global default).
     pub params: [f32; 4],
-    /// Per-remap centre + a leading scalar: `(center.x, center.y, center.z, a)`.
+    /// Per-remap centre + a leading scalar: `(centre.x, centre.y, centre.z, a)`.
     /// Smoothstep: `a = lo`. ExpFalloff: `a = falloff`. Identity: unused.
     pub remap_data: [f32; 4],
     /// Per-remap overflow: `x = hi` for Smoothstep; unused otherwise.
@@ -140,8 +140,8 @@ impl GpuScatterVolume {
                 [b.min.x, b.min.y, b.min.z, 0.0],
                 [b.max.x, b.max.y, b.max.z, 0.0],
             ),
-            ScatterShape::Sphere { center, radius } => {
-                (1u32, [center[0], center[1], center[2], radius], [0.0; 4])
+            ScatterShape::Sphere { centre, radius } => {
+                (1u32, [centre[0], centre[1], centre[2], radius], [0.0; 4])
             }
         };
         let anisotropy = volume.anisotropy.clamp(-0.95, 0.95);
@@ -150,7 +150,7 @@ impl GpuScatterVolume {
                 let c = (b.min + b.max) * 0.5;
                 [c.x, c.y, c.z]
             }
-            ScatterShape::Sphere { center, .. } => center,
+            ScatterShape::Sphere { centre, .. } => centre,
         };
         let (remap_kind, remap_data, remap_data2) = match volume.density_remap {
             DensityRemap::Identity => (0u32, [0.0; 4], [0.0; 4]),
@@ -159,8 +159,8 @@ impl GpuScatterVolume {
                 [centre[0], centre[1], centre[2], lo],
                 [hi, 0.0, 0.0, 0.0],
             ),
-            DensityRemap::ExpFalloff { center, falloff } => {
-                (2u32, [center[0], center[1], center[2], falloff], [0.0; 4])
+            DensityRemap::ExpFalloff { centre, falloff } => {
+                (2u32, [centre[0], centre[1], centre[2], falloff], [0.0; 4])
             }
         };
         let (emission_kind, emission_strength, emission_param) = match volume.emission {
@@ -229,8 +229,8 @@ pub(crate) fn ray_intersect(
 ) -> Option<(f32, f32)> {
     match shape {
         ScatterShape::Box(b) => ray_box(b, origin, dir),
-        ScatterShape::Sphere { center, radius } => {
-            ray_sphere(glam::Vec3::from(*center), *radius, origin, dir)
+        ScatterShape::Sphere { centre, radius } => {
+            ray_sphere(glam::Vec3::from(*centre), *radius, origin, dir)
         }
     }
 }
@@ -385,7 +385,7 @@ mod tests {
     fn ray_sphere_misses() {
         let hit = ray_intersect(
             &ScatterShape::Sphere {
-                center: [0.0, 0.0, 0.0],
+                centre: [0.0, 0.0, 0.0],
                 radius: 1.0,
             },
             glam::Vec3::new(2.0, 0.0, -5.0),
@@ -398,7 +398,7 @@ mod tests {
     fn ray_sphere_camera_inside_starts_at_zero() {
         let hit = ray_intersect(
             &ScatterShape::Sphere {
-                center: [0.0, 0.0, 0.0],
+                centre: [0.0, 0.0, 0.0],
                 radius: 1.0,
             },
             glam::Vec3::ZERO,

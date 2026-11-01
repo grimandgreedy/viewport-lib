@@ -107,8 +107,8 @@ pub struct ManipulationState {
     pub exclude_axis: bool,
     /// Whether the session began from a gizmo drag (vs keyboard G/R/S).
     pub is_gizmo_drag: bool,
-    /// World-space center of the manipulation (selection centroid at session start).
-    pub center: glam::Vec3,
+    /// World-space centre of the manipulation (selection centroid at session start).
+    pub centre: glam::Vec3,
     /// Numeric input display string for HUD rendering, e.g. "X: 2.50 Y: _ Z: _".
     pub numeric_display: Option<String>,
 }
@@ -118,8 +118,8 @@ pub struct ManipulationState {
 /// Pass `None` to skip gizmo drag detection.
 #[derive(Debug, Clone, Copy)]
 pub struct GizmoInfo {
-    /// World-space center of the gizmo.
-    pub center: glam::Vec3,
+    /// World-space centre of the gizmo.
+    pub centre: glam::Vec3,
     /// World-space arm length (screen-size scale factor).
     pub scale: f32,
     /// Gizmo orientation (for local-space gizmos).
@@ -139,8 +139,8 @@ pub struct ManipulationContext {
     pub cursor_viewport: Option<glam::Vec2>,
     /// Mouse movement in pixels since last frame.
     pub pointer_delta: glam::Vec2,
-    /// World-space center of the current selection. `None` disables G/R/S and gizmo drag.
-    pub selection_center: Option<glam::Vec3>,
+    /// World-space centre of the current selection. `None` disables G/R/S and gizmo drag.
+    pub selection_centre: Option<glam::Vec3>,
     /// Gizmo state for this frame. `None` disables gizmo drag detection.
     pub gizmo: Option<GizmoInfo>,
     /// `true` on the frame to try grabbing what is under the cursor: the

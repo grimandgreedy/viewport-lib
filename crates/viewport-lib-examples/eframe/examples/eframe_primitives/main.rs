@@ -151,7 +151,7 @@ impl App {
             renderer,
             target: None,
             // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
-            // orientation * Y ~ world Z (screen up), orientation * Z points from center to eye.
+            // orientation * Y ~ world Z (screen up), orientation * Z points from centre to eye.
             camera: Camera::orbit(
                 glam::DVec3::ZERO,
                 28.0,

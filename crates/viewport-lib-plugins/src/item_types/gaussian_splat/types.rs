@@ -46,7 +46,7 @@ impl ShDegree {
 #[derive(Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GaussianSplatData {
-    /// Object-space center positions, one `[f32; 3]` per splat.
+    /// Object-space centre positions, one `[f32; 3]` per splat.
     pub positions: Vec<[f32; 3]>,
     /// Scale (positive floats, world-space metres) per splat, one `[f32; 3]`.
     pub scales: Vec<[f32; 3]>,

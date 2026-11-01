@@ -1,4 +1,4 @@
-//! Disk widget: a bounded circular plane with center, normal, and radius handles.
+//! Disk widget: a bounded circular plane with centre, normal, and radius handles.
 
 use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
@@ -13,14 +13,14 @@ use super::{
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DiskHandle {
-    Center,
+    Centre,
     NormalTip,
     Radius,
 }
 
-/// An interactive disk widget: a bounded circular plane with center, normal, and radius.
+/// An interactive disk widget: a bounded circular plane with centre, normal, and radius.
 ///
-/// Three handles: center (moves freely), normal tip (orbits the normal), and a radius
+/// Three handles: centre (moves freely), normal tip (orbits the normal), and a radius
 /// handle on the disk rim (scales the radius).
 ///
 /// # Usage
@@ -35,8 +35,8 @@ enum DiskHandle {
 /// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct DiskWidget {
-    /// World-space center of the disk.
-    pub center: glam::Vec3,
+    /// World-space centre of the disk.
+    pub centre: glam::Vec3,
     /// Unit normal vector of the disk plane.
     pub normal: glam::Vec3,
     /// Radius in world units.
@@ -45,7 +45,7 @@ pub struct DiskWidget {
     pub colour: crate::Colour,
     /// RGBA colour for the drag handles. Non-zero alpha overrides LUT colouring.
     pub handle_colour: crate::Colour,
-    /// Distance from center to the normal-tip handle sphere.
+    /// Distance from centre to the normal-tip handle sphere.
     pub normal_display_length: f32,
 
     hovered_handle: Option<DiskHandle>,
@@ -59,7 +59,7 @@ impl DiskWidget {
     /// Create a new disk widget.
     ///
     /// `normal` is normalized internally; if zero, defaults to `Vec3::Z`.
-    pub fn new(center: glam::Vec3, normal: glam::Vec3, radius: f32) -> Self {
+    pub fn new(centre: glam::Vec3, normal: glam::Vec3, radius: f32) -> Self {
         let len = normal.length();
         let normal = if len > 1e-6 {
             normal / len
@@ -67,7 +67,7 @@ impl DiskWidget {
             glam::Vec3::Z
         };
         Self {
-            center,
+            centre,
             normal,
             radius: radius.max(0.01),
             colour: Colour::linear(0.9, 0.6, 0.1, 1.0),
@@ -101,7 +101,7 @@ impl DiskWidget {
         if ctx.drag_started {
             if let Some(handle) = self.hovered_handle {
                 let anchor = match handle {
-                    DiskHandle::Center => self.center,
+                    DiskHandle::Centre => self.centre,
                     DiskHandle::NormalTip => self.normal_tip_pos(),
                     DiskHandle::Radius => self.radius_handle_pos(),
                 };
@@ -121,16 +121,16 @@ impl DiskWidget {
                 ray_plane_intersection(ro, rd, self.drag_plane_normal, self.drag_plane_d)
             {
                 match handle {
-                    DiskHandle::Center => {
+                    DiskHandle::Centre => {
                         let delta = hit - self.drag_anchor;
                         if delta.length_squared() > 1e-10 {
-                            self.center += delta;
+                            self.centre += delta;
                             self.drag_anchor = hit;
                             updated = true;
                         }
                     }
                     DiskHandle::NormalTip => {
-                        let dir = hit - self.center;
+                        let dir = hit - self.centre;
                         let len = dir.length();
                         if len > 1e-3 {
                             let new_normal = dir / len;
@@ -141,7 +141,7 @@ impl DiskWidget {
                         }
                     }
                     DiskHandle::Radius => {
-                        let new_r = (hit - self.center).length().max(0.01);
+                        let new_r = (hit - self.centre).length().max(0.01);
                         if (new_r - self.radius).abs() > 1e-5 {
                             self.radius = new_r;
                             updated = true;
@@ -160,11 +160,11 @@ impl DiskWidget {
 
     /// Build a `PolylineItem` for the wireframe circle and normal indicator.
     ///
-    /// The circle uses 32 segments. A line from center to the normal tip is also included.
+    /// The circle uses 32 segments. A line from centre to the normal tip is also included.
     pub fn wireframe_item(&self, id: u64) -> PolylineItem {
         const STEPS: usize = 32;
         let (u, v) = any_perpendicular_pair(self.normal);
-        let c = self.center;
+        let c = self.centre;
         let r = self.radius;
 
         let mut positions: Vec<[f32; 3]> = Vec::with_capacity(STEPS + 1 + 2);
@@ -201,14 +201,14 @@ impl DiskWidget {
             }
         };
         HandleMarkers {
-            positions: vec![self.center, tip, rh],
+            positions: vec![self.centre, tip, rh],
             radii: vec![
-                handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(self.centre, &ctx.camera, ctx.viewport_size.y, 10.0),
                 handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0),
                 handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0),
             ],
             colours: vec![
-                handle_colour(self.handle_colour, hot(DiskHandle::Center)),
+                handle_colour(self.handle_colour, hot(DiskHandle::Centre)),
                 handle_colour(self.handle_colour, hot(DiskHandle::NormalTip)),
                 handle_colour(self.handle_colour, hot(DiskHandle::Radius)),
             ],
@@ -221,12 +221,12 @@ impl DiskWidget {
     // -----------------------------------------------------------------------
 
     fn normal_tip_pos(&self) -> glam::Vec3 {
-        self.center + self.normal * self.normal_display_length
+        self.centre + self.normal * self.normal_display_length
     }
 
     fn radius_handle_pos(&self) -> glam::Vec3 {
         // Radius handle sits on the disk rim along any perpendicular direction.
-        self.center + any_perpendicular(self.normal) * self.radius
+        self.centre + any_perpendicular(self.normal) * self.radius
     }
 
     fn hit_test(
@@ -243,12 +243,12 @@ impl DiskWidget {
             Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
         );
 
-        let rc = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
+        let rc = handle_world_radius(self.centre, &ctx.camera, ctx.viewport_size.y, 10.0);
         let rt = handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0);
         let rr = handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0);
 
         let handles = [
-            (DiskHandle::Center, self.center, rc),
+            (DiskHandle::Centre, self.centre, rc),
             (DiskHandle::NormalTip, tip, rt),
             (DiskHandle::Radius, rh, rr),
         ];
@@ -278,9 +278,9 @@ mod tests {
     use glam::{Vec2, Vec3};
 
     #[test]
-    fn new_sets_center_normal_radius() {
+    fn new_sets_centre_normal_radius() {
         let w = DiskWidget::new(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 2.0), 3.0);
-        assert_eq!(w.center, Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(w.centre, Vec3::new(0.0, 1.0, 0.0));
         assert!((w.normal.length() - 1.0).abs() < 1e-5);
         assert_eq!(w.radius, 3.0);
         assert!(!w.is_active());
@@ -295,10 +295,10 @@ mod tests {
     }
 
     #[test]
-    fn drag_center_moves_and_radius_stays_positive() {
+    fn drag_centre_moves_and_radius_stays_positive() {
         let ctx = ctx_at(CENTRE);
-        let center = point_on_cursor_ray(&ctx, 12.0);
-        let mut w = DiskWidget::new(center, Vec3::Z, 2.0);
+        let centre = point_on_cursor_ray(&ctx, 12.0);
+        let mut w = DiskWidget::new(centre, Vec3::Z, 2.0);
         w.update(&ctx);
         let mut begin = ctx.clone();
         begin.drag_started = true;
@@ -307,7 +307,7 @@ mod tests {
         let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
         drag.dragging = true;
         w.update(&drag);
-        assert_ne!(w.center, center);
+        assert_ne!(w.centre, centre);
         assert!(w.radius > 0.0);
         let mut rel = drag.clone();
         rel.released = true;

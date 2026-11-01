@@ -1154,20 +1154,20 @@ fn sprite_quad_outlines_polyline(
                 pts.push(p.to_array());
             }
         } else {
-            let clip_center = view_proj * world_pos.extend(1.0);
-            if clip_center.w <= 0.0 {
+            let clip_centre = view_proj * world_pos.extend(1.0);
+            if clip_centre.w <= 0.0 {
                 // Behind camera -- skip this sprite.
                 ok = false;
             } else {
-                let ndc_center =
-                    glam::Vec3::new(clip_center.x, clip_center.y, clip_center.z) / clip_center.w;
+                let ndc_centre =
+                    glam::Vec3::new(clip_centre.x, clip_centre.y, clip_centre.z) / clip_centre.w;
                 for (cx, cy) in CORNERS {
                     let rx = cos_r * cx - sin_r * cy;
                     let ry = sin_r * cx + cos_r * cy;
                     let ndc = glam::Vec3::new(
-                        ndc_center.x + rx * half / vw,
-                        ndc_center.y + ry * half / vh,
-                        ndc_center.z,
+                        ndc_centre.x + rx * half / vw,
+                        ndc_centre.y + ry * half / vh,
+                        ndc_centre.z,
                     );
                     let world_h = inv_view_proj * ndc.extend(1.0);
                     if world_h.w.abs() < 1e-7 {

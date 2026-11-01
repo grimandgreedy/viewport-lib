@@ -30,7 +30,7 @@ pub(crate) fn gizmo_orientation(gizmo: &Gizmo, selection: &Selection, scene: &Sc
 // ---------------------------------------------------------------------------
 
 impl App {
-    pub(crate) fn clip_gizmo_center(&self) -> Option<glam::Vec3> {
+    pub(crate) fn clip_gizmo_centre(&self) -> Option<glam::Vec3> {
         None
     }
 

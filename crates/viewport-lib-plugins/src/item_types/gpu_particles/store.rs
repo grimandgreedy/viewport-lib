@@ -411,9 +411,9 @@ pub(crate) fn build_emit_params(
             out.spawn_min = rel_point(min, anchor);
             out.spawn_max = rel_point(max, anchor);
         }
-        SpawnShape::Sphere { center, radius } => {
+        SpawnShape::Sphere { centre, radius } => {
             out.spawn_kind = 2;
-            out.spawn_min = rel_point(center, anchor);
+            out.spawn_min = rel_point(centre, anchor);
             out.spawn_radius = radius;
         }
     }

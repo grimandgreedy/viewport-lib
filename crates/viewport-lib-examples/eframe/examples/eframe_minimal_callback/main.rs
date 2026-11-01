@@ -236,7 +236,7 @@ impl App {
             .map(|(c, p)| c - p)
             .unwrap_or(glam::Vec2::ZERO);
 
-        let selection_center = self
+        let selection_centre = self
             .selected
             .map(|i| self.scene_items[i].model.translation.as_vec3());
 
@@ -245,7 +245,7 @@ impl App {
             viewport_size: glam::Vec2::new(w, h),
             cursor_viewport: self.cursor_viewport,
             pointer_delta,
-            selection_center,
+            selection_centre,
             gizmo: None,
             drag_started: self.drag_started,
             dragging: self.left_held,

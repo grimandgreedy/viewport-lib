@@ -449,9 +449,9 @@ impl App {
             }
         }
         if s.fire_enabled {
-            let center = [-4.0_f32, 0.0, 1.2];
+            let centre = [-4.0_f32, 0.0, 1.2];
             let mut v = ScatterVolume::sphere_uniform(
-                center,
+                centre,
                 s.fire_radius,
                 s.fire_density,
                 Colour::from_linear_rgb_array(s.fire_colour),
@@ -464,7 +464,7 @@ impl App {
                 curve: EmissionCurve::Power(2.0),
             };
             v.density_remap = DensityRemap::ExpFalloff {
-                center,
+                centre,
                 falloff: s.fire_falloff,
             };
             if s.fire_animate {

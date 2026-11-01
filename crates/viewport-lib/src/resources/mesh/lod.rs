@@ -166,13 +166,13 @@ impl LodGroup {
 /// or behind the near plane are clamped to the near distance.
 pub fn projected_screen_size(local_aabb: &Aabb, model: &glam::Mat4, camera: &RenderCamera) -> f32 {
     let world = local_aabb.transformed(model);
-    let center = world.center();
+    let centre = world.centre();
     let radius = (world.max - world.min).length() * 0.5;
     if radius <= 0.0 {
         return 0.0;
     }
     let eye = camera.eye_position().as_vec3();
-    let distance = (center - eye).length().max(camera.depth_range().0);
+    let distance = (centre - eye).length().max(camera.depth_range().0);
     let half_fov_tan = (camera.fov_y() * 0.5).tan().max(1e-4);
     radius / (distance * half_fov_tan)
 }

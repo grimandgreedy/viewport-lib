@@ -41,7 +41,7 @@ const SLAB_COLOUR: [f32; 3] = [0.85, 0.55, 0.35];
 const TVM_COLOUR: [f32; 3] = [0.45, 0.75, 0.95];
 const TVM_OPACITY: f32 = 0.18;
 
-/// A lattice of tetrahedra filling a cube centered at the origin.
+/// A lattice of tetrahedra filling a cube centred at the origin.
 ///
 /// `n` cells per axis, each split into five tets with orientation alternating
 /// by cell parity so shared diagonals match across neighbours. This mirrors
@@ -159,7 +159,7 @@ fn main() -> eframe::Result {
             // A handful of translucent tet volumes floating above the floor,
             // rendered as face soup (all tet faces, flat normals) through the
             // OIT pass exactly as viewport-lib-mesh-assembly's `TetVolume` does.
-            // Each lattice is built centered at the origin and placed via the
+            // Each lattice is built centred at the origin and placed via the
             // render item's model matrix.
             let tvm_specs: [(usize, f32, glam::Vec3); 3] = [
                 // The cube: the shape in the original report (matches material_lab).

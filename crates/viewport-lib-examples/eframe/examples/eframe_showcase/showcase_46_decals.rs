@@ -309,14 +309,14 @@ fn make_fire_texture(size: u32) -> Vec<u8> {
                 continue;
             }
 
-            // Edge fade: 1.0 at center, 0.0 at silhouette edge.
+            // Edge fade: 1.0 at centre, 0.0 at silhouette edge.
             let edge = 1.0 - (dx / half_w).min(1.0);
 
             // Turbulence from two overlapping sine waves, breaks up the smooth shape.
             let turb = ((tx * 8.7 + ty * 12.3).sin() * 0.5 + 0.5)
                 * ((ty * 9.1 - tx * 5.6).cos() * 0.5 + 0.5);
 
-            // Core brightness: strong at the base and center, fades at tip and edges.
+            // Core brightness: strong at the base and centre, fades at tip and edges.
             let core = (heat.powf(0.5) * edge * (0.65 + 0.35 * turb)).clamp(0.0, 1.0);
 
             if core < 0.02 {
@@ -706,7 +706,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     app.decal46_state.ground_mesh = Some(ground_id);
 
     // column (cylinder) standing on the ground, right side.
-    // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
+    // radius=0.3, height=3.0, centre at (2.5, 0.5, 1.5).
     res.ensure_matcaps_initialized(&app.device, &app.queue);
     let column_data = vpl::primitives::cylinder(0.3, 3.0, 24);
     app.decal46_state.column_cpu_mesh =
@@ -717,7 +717,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     app.decal46_state.column_mesh = Some(column_id);
 
     // non-receiver box mounted on the wall face.
-    // cuboid(0.6, 0.25, 0.6): sticks 0.25 out from the wall, center y = 0.125.
+    // cuboid(0.6, 0.25, 0.6): sticks 0.25 out from the wall, centre y = 0.125.
     let wall_obstacle_data = vpl::primitives::cuboid(0.6, 0.25, 0.6);
     let wall_obstacle_id = res
         .upload_mesh_data(&app.device, &wall_obstacle_data)
@@ -752,8 +752,8 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     );
     app.decal46_state.column_node = Some(column_node);
 
-    // Wall obstacle: mounted on the wall face at left-center.
-    // center y = 0.125 puts its back face flush against y = 0.
+    // Wall obstacle: mounted on the wall face at left-centre.
+    // centre y = 0.125 puts its back face flush against y = 0.
     let wall_obstacle_node = scene.add(
         Some(wall_obstacle_id),
         glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.125, 2.0)),
@@ -868,7 +868,7 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
 
     // Scroll animation: always-on black/white stripe across the full width of the wall top.
     // Wall: 6 wide (X), 4 tall (Z), face at y=0, normal +Y.
-    // Top 1/6th of wall height = 0.67 tall, centered at z = 3.67.
+    // Top 1/6th of wall height = 0.67 tall, centred at z = 3.67.
     // tangent = -X, bitangent = +Z (derived from n=+Y, ref_up=+Z).
     if st.scroll_handle.is_none() {
         if let Some(stripe) = st.stripe_tex {
@@ -1031,7 +1031,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         .items_mut::<DecalItem>()
         .extend(st.live_decals.collect());
 
-    // glowing rune on the wall, center-right.
+    // glowing rune on the wall, centre-right.
     if st.show_rune {
         if let Some(rune) = st.rune_tex {
             let transform =

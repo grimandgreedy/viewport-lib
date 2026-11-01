@@ -60,8 +60,8 @@ pub struct ExposureParams {
     pub tex_width: f32,
     /// HDR target height in texels.
     pub tex_height: f32,
-    /// Center-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
-    pub center_weight: f32,
+    /// Centre-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
+    pub centre_weight: f32,
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
     /// metered scene. `1` drives the metered value to middle grey (full
     /// auto-exposure); `0` holds a fixed exposure; between, the image keeps some

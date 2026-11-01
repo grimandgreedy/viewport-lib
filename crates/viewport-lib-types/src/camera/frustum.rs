@@ -88,9 +88,9 @@ impl Frustum {
     /// test is conservative: spheres straddling a plane are kept. The CPU
     /// light cull uses this to drop point and spot lights whose entire range
     /// is off-screen before they reach the GPU cluster build.
-    pub fn cull_sphere(&self, center: glam::Vec3, radius: f32) -> bool {
+    pub fn cull_sphere(&self, centre: glam::Vec3, radius: f32) -> bool {
         for plane in &self.planes {
-            if plane.normal.dot(center) + plane.d < -radius {
+            if plane.normal.dot(centre) + plane.d < -radius {
                 return true;
             }
         }

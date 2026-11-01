@@ -112,9 +112,9 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
     );
     let orientation = glam::Quat::from_mat3(&rot).normalize();
     let distance = (f.near * 0.5_f32).max(0.01);
-    let center = eye + orientation * (-glam::Vec3::Z) * distance;
+    let centre = eye + orientation * (-glam::Vec3::Z) * distance;
     vpl::CameraTarget {
-        center: center.as_dvec3(),
+        centre: centre.as_dvec3(),
         distance,
         orientation,
     }
@@ -123,7 +123,7 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
 /// Build the default demo track: overview -> A -> B -> C -> overview.
 fn build_demo_track(frustums: &[FrustumData]) -> CameraTrack {
     let overview = CameraTarget {
-        center: glam::DVec3::new(0.0, 0.0, 0.5),
+        centre: glam::DVec3::new(0.0, 0.0, 0.5),
         distance: 30.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
     };
@@ -410,7 +410,7 @@ fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
         Some(AuxAction::LookThrough(i)) => {
             let t = frustum_view_target(&app.aux_state.frustums[i]);
             app.cam_animator
-                .fly_to(&app.camera, t.center, t.distance, t.orientation, 1.2);
+                .fly_to(&app.camera, t.centre, t.distance, t.orientation, 1.2);
             app.aux_state.active_frustum = Some(i);
         }
         Some(AuxAction::Overview) => {
@@ -449,7 +449,7 @@ fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
 fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new("Turntable Camera").strong());
     ui.label(
-        "Continuously orbits around the scene center at a fixed elevation. \
+        "Continuously orbits around the scene centre at a fixed elevation. \
              Adjust speed and tilt, then press Start.",
     );
     ui.add_space(4.0);
@@ -558,7 +558,7 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
             app.aux_state.track_playing = false;
             // Apply scrubbed position immediately.
             let target = interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-            app.camera.set_orbit_center(target.center);
+            app.camera.set_orbit_centre(target.centre);
             app.camera.set_orbit_distance(target.distance);
             app.camera.set_orbit_orientation(target.orientation);
         }
@@ -584,7 +584,7 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
         if ui.button("Add current view").clicked() {
             let t = if duration > 0.0 { duration + 2.5 } else { 0.0 };
             let target = CameraTarget {
-                center: app.camera.target(),
+                centre: app.camera.target(),
                 distance: app.camera.focus_distance(),
                 orientation: app.camera.orientation(),
             };
@@ -710,7 +710,7 @@ pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
                 app.aux_state.track_t = 0.0;
             }
             let target = vpl::interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-            app.camera.set_orbit_center(target.center);
+            app.camera.set_orbit_centre(target.centre);
             app.camera.set_orbit_distance(target.distance);
             app.camera.set_orbit_orientation(target.orientation);
         }

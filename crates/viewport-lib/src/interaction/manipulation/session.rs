@@ -101,8 +101,8 @@ pub(super) struct ManipulationSession {
     pub(super) numeric: Option<NumericInputState>,
     /// Whether this session began from a gizmo drag.
     pub(super) is_gizmo_drag: bool,
-    /// World-space center captured when the session began.
-    pub(super) gizmo_center: glam::Vec3,
+    /// World-space centre captured when the session began.
+    pub(super) gizmo_centre: glam::Vec3,
     /// Viewport-local cursor position when the session started or the constraint last changed.
     ///
     /// Used to compute true per-frame increments from the absolute cursor position,
@@ -141,7 +141,7 @@ impl Default for ManipulationSession {
             exclude_axis: false,
             numeric: None,
             is_gizmo_drag: false,
-            gizmo_center: glam::Vec3::ZERO,
+            gizmo_centre: glam::Vec3::ZERO,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
@@ -166,7 +166,7 @@ impl ManipulationSession {
             axis: self.axis,
             exclude_axis: self.exclude_axis,
             is_gizmo_drag: self.is_gizmo_drag,
-            center: self.gizmo_center,
+            centre: self.gizmo_centre,
             numeric_display,
         }
     }
@@ -351,7 +351,7 @@ mod tests {
             exclude_axis: false,
             numeric: None,
             is_gizmo_drag: false,
-            gizmo_center: glam::Vec3::ZERO,
+            gizmo_centre: glam::Vec3::ZERO,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
@@ -370,7 +370,7 @@ mod tests {
             exclude_axis: false,
             numeric: None,
             is_gizmo_drag: false,
-            gizmo_center: glam::Vec3::ZERO,
+            gizmo_centre: glam::Vec3::ZERO,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
@@ -389,7 +389,7 @@ mod tests {
             exclude_axis: false,
             numeric: Some(NumericInputState::new(Some(GizmoAxis::X), false)),
             is_gizmo_drag: false,
-            gizmo_center: glam::Vec3::ZERO,
+            gizmo_centre: glam::Vec3::ZERO,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,

@@ -51,9 +51,9 @@ const BEAM_HALF_L: f32 = 4.0; // X: -4 to +4
 const BEAM_HALF_H: f32 = 1.0; // Z depth: 2.0 total
 const BEAM_HALF_W: f32 = 0.5; // Y width: 1.0 total
 
-/// Z center for the upper (volume mesh) region.
+/// Z centre for the upper (volume mesh) region.
 const Z_TOP: f32 = 3.5;
-/// Z center for the lower (tensor field) region.
+/// Z centre for the lower (tensor field) region.
 const Z_BOT: f32 = -3.5;
 
 // ---------------------------------------------------------------------------
@@ -141,10 +141,10 @@ fn beam_stress(cx: f32, cz_rel: f32) -> (f32, f32) {
     let x_norm = cx / BEAM_HALF_L; // -1 at left support, +1 at right support
     let y_norm = cz_rel / BEAM_HALF_H; // -1 at bottom fiber, +1 at top fiber
 
-    // Triangular bending moment: peaks at center, zero at supports.
+    // Triangular bending moment: peaks at centre, zero at supports.
     let moment = 1.0 - x_norm.abs();
 
-    // Constant shear on each half-span (step function, zero exactly at center).
+    // Constant shear on each half-span (step function, zero exactly at centre).
     let shear = if cx < 0.0 { 0.5 } else { -0.5 };
 
     // Bending stress: linear through depth.
@@ -222,7 +222,7 @@ fn vid(ix: usize, iy: usize, iz: usize) -> u32 {
 // Build the beam VolumeMeshData
 // ---------------------------------------------------------------------------
 
-fn build_beam_mesh(z_center: f32) -> VolumeMeshData {
+fn build_beam_mesh(z_centre: f32) -> VolumeMeshData {
     // Vertex positions. iy indexes Z (depth, up-down), iz indexes Y (width).
     let mut positions = Vec::with_capacity((NX + 1) * (NY + 1) * (NZ + 1));
     for iy in 0..=NY {
@@ -230,7 +230,7 @@ fn build_beam_mesh(z_center: f32) -> VolumeMeshData {
             for ix in 0..=NX {
                 let x = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * ix as f32 / NX as f32;
                 let y = -BEAM_HALF_W + 2.0 * BEAM_HALF_W * iz as f32 / NZ as f32;
-                let z = z_center + (-BEAM_HALF_H + 2.0 * BEAM_HALF_H * iy as f32 / NY as f32);
+                let z = z_centre + (-BEAM_HALF_H + 2.0 * BEAM_HALF_H * iy as f32 / NY as f32);
                 positions.push([x, y, z]);
             }
         }

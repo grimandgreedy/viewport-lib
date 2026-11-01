@@ -3,7 +3,7 @@
 //! Three objects each carrying a different procedural scalar attribute:
 //!   Object 0 : Sphere,    attribute "height"   (world Z of each vertex, 0..1 range)
 //!   Object 1 : Wave Grid, attribute "wave"      (sine-derived 2-D wave, -1..1 range)
-//!   Object 2 : Box,       attribute "distance"  (distance from center, with NaN below 0.3)
+//!   Object 2 : Box,       attribute "distance"  (distance from centre, with NaN below 0.3)
 
 use crate::App;
 use crate::eframe::egui;
@@ -141,7 +141,7 @@ impl App {
         self.scalar_state.pick_indices[1] = wave_mesh.indices.clone();
         self.scalar_state.values[1] = wave_scalars;
 
-        // ---- Object 2: Box with distance-from-center scalar (NaN below threshold) ----
+        // ---- Object 2: Box with distance-from-centre scalar (NaN below threshold) ----
         let (box_mesh, box_scalars) = make_box_with_distance_scalar();
         let box_id = renderer
             .resources_mut()

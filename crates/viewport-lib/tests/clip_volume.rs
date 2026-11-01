@@ -54,7 +54,7 @@ fn clip_objects_construct_and_assign() {
     // Box variant
     let mut obj = ClipObject::default();
     obj.shape = ClipShape::Box {
-        center: [1.0, 2.0, 3.0].into(),
+        centre: [1.0, 2.0, 3.0].into(),
         half_extents: [0.5, 0.5, 0.5],
         orientation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     };
@@ -68,7 +68,7 @@ fn clip_objects_construct_and_assign() {
     // Sphere variant
     let mut obj = ClipObject::default();
     obj.shape = ClipShape::Sphere {
-        center: [0.0, 0.0, 0.0].into(),
+        centre: [0.0, 0.0, 0.0].into(),
         radius: 2.5,
     };
     frame.effects.clip.objects.push(obj);
@@ -89,7 +89,7 @@ fn clip_volume_entry_from_box() {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     );
     assert_eq!(entry.volume_type, 2);
-    assert_eq!(entry.center, [1.0, 2.0, 3.0]);
+    assert_eq!(entry.centre, [1.0, 2.0, 3.0]);
     assert_eq!(entry.half_extents, [0.5, 1.0, 1.5]);
     assert_eq!(entry.col0, [1.0, 0.0, 0.0]);
     assert_eq!(entry.col1, [0.0, 1.0, 0.0]);
@@ -100,7 +100,7 @@ fn clip_volume_entry_from_box() {
 fn clip_volume_entry_from_sphere() {
     let entry = ClipVolumeEntry::from_sphere([5.0, 0.0, -2.0], 3.14);
     assert_eq!(entry.volume_type, 3);
-    assert_eq!(entry.center, [5.0, 0.0, -2.0]);
+    assert_eq!(entry.centre, [5.0, 0.0, -2.0]);
     assert!((entry.radius - 3.14).abs() < 1e-5);
 }
 

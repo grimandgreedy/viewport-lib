@@ -309,9 +309,9 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                         &b,
                         Colour::from_linear_array(colour),
                     ),
-                    ScatterShape::Sphere { center, radius } => {
+                    ScatterShape::Sphere { centre, radius } => {
                         viewport_lib::renderer::sphere_wireframe_polyline(
-                            center,
+                            centre,
                             radius,
                             48,
                             Colour::from_linear_array(colour),
@@ -401,7 +401,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             let world_pos = ray.origin + ray.direction * toi;
             let centre = match item.volume.shape {
                 ScatterShape::Box(b) => (b.min + b.max) * 0.5,
-                ScatterShape::Sphere { center, .. } => glam::Vec3::from(center),
+                ScatterShape::Sphere { centre, .. } => glam::Vec3::from(centre),
             };
             let normal = (world_pos - centre)
                 .try_normalize()
@@ -742,12 +742,12 @@ impl ScatterVolumePlugin {
                         ScatterProxyShape::Box,
                     )
                 }
-                volume::ScatterShape::Sphere { center, radius } => {
+                volume::ScatterShape::Sphere { centre, radius } => {
                     if radius <= 0.0 {
                         continue;
                     }
                     (
-                        glam::Mat4::from_translation(glam::Vec3::from(center))
+                        glam::Mat4::from_translation(glam::Vec3::from(centre))
                             * glam::Mat4::from_scale(glam::Vec3::splat(radius)),
                         ScatterProxyShape::Sphere,
                     )
@@ -889,14 +889,14 @@ fn relative_volume(volume: &ScatterVolume, origin: glam::DVec3) -> ScatterVolume
                 max: rel_vec3(b.max, origin),
             })
         }
-        volume::ScatterShape::Sphere { center, radius } => volume::ScatterShape::Sphere {
-            center: rel_point(center, origin),
+        volume::ScatterShape::Sphere { centre, radius } => volume::ScatterShape::Sphere {
+            centre: rel_point(centre, origin),
             radius,
         },
     };
-    if let volume::DensityRemap::ExpFalloff { center, falloff } = volume.density_remap {
+    if let volume::DensityRemap::ExpFalloff { centre, falloff } = volume.density_remap {
         out.density_remap = volume::DensityRemap::ExpFalloff {
-            center: rel_point(center, origin),
+            centre: rel_point(centre, origin),
             falloff,
         };
     }

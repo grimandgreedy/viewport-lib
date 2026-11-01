@@ -416,7 +416,7 @@ impl EnvironmentZone {
     /// A zone covering a world-space [`Aabb`](crate::scene::aabb::Aabb), with
     /// the defaults of [`new`](Self::new).
     pub fn from_aabb(bounds: crate::scene::aabb::Aabb, environment: EnvironmentMapId) -> Self {
-        Self::new(bounds.center(), bounds.half_extents(), environment)
+        Self::new(bounds.centre(), bounds.half_extents(), environment)
     }
 
     /// Set the outer falloff band, in world units.
@@ -442,7 +442,7 @@ impl EnvironmentZone {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct EnvZoneGpu {
-    center: [f32; 3],
+    centre: [f32; 3],
     layer: u32,
     half_extents: [f32; 3],
     fade: f32,
@@ -510,7 +510,7 @@ pub(crate) fn write_environment_zones(
         .iter()
         .filter(|z| ibl.is_baked(z.environment))
         .map(|z| EnvZoneGpu {
-            center: origin.rel_d(z.centre).into(),
+            centre: origin.rel_d(z.centre).into(),
             layer: z.environment.index(),
             half_extents: z.half_extents.into(),
             fade: z.fade_distance,

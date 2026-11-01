@@ -378,7 +378,7 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
     for i in 0..=major_segs {
         let phi = TAU * i as f32 / major_segs as f32;
         let (sp, cp) = phi.sin_cos();
-        let center = glam::Vec3::new(cp * major_r, sp * major_r, 0.0);
+        let centre = glam::Vec3::new(cp * major_r, sp * major_r, 0.0);
         // Radial direction (points outward from the torus axis in the XY plane).
         let radial = glam::Vec3::new(cp, sp, 0.0);
 
@@ -387,7 +387,7 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
             let (st, ct) = theta.sin_cos();
             // Local normal in the plane of the tube cross-section.
             let local_n = radial * ct + glam::Vec3::Z * st;
-            let pos = center + local_n * minor_r;
+            let pos = centre + local_n * minor_r;
             positions.push(pos.to_array());
             normals.push(local_n.to_array());
         }
@@ -435,9 +435,9 @@ fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
         // For a torus with axis Z and major circle in XY:
         //   radial direction = (cx, cy, 0) / major_r  (from tube centre projected to XY)
         //   poloidal tangent = (-ry, rx, 0)             (90 deg rotation of radial in XY)
-        let tube_center_xy = Vec3::new(centroid.x, centroid.y, 0.0);
-        let poloidal = if tube_center_xy.length_squared() > 1e-6 {
-            let radial = tube_center_xy.normalize() * major_r;
+        let tube_centre_xy = Vec3::new(centroid.x, centroid.y, 0.0);
+        let poloidal = if tube_centre_xy.length_squared() > 1e-6 {
+            let radial = tube_centre_xy.normalize() * major_r;
             Vec3::new(-radial.y / major_r, radial.x / major_r, 0.0)
         } else {
             Vec3::X

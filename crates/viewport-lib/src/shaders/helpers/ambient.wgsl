@@ -291,18 +291,18 @@ fn sample_ibl_prefiltered_layer(R: vec3<f32>, roughness: f32, rotation: f32, dr:
 }
 
 /// Box-projection parallax correction (Lagarde 2012). Re-aim direction `dir`
-/// from `world_pos` so it samples a local environment captured at `center` with
-/// proxy box `[center - half, center + half]`: intersect the ray with the box
+/// from `world_pos` so it samples a local environment captured at `centre` with
+/// proxy box `[centre - half, centre + half]`: intersect the ray with the box
 /// (slab test, furthest positive face) and point from the centre to the hit.
 /// Direct here because this is a forward renderer with world position in hand.
-fn parallax_box(dir: vec3<f32>, world_pos: vec3<f32>, center: vec3<f32>, half: vec3<f32>) -> vec3<f32> {
+fn parallax_box(dir: vec3<f32>, world_pos: vec3<f32>, centre: vec3<f32>, half: vec3<f32>) -> vec3<f32> {
     let inv = 1.0 / dir; // dir components near 0 -> inf, dropped by the min below
-    let t1 = (center - half - world_pos) * inv;
-    let t2 = (center + half - world_pos) * inv;
+    let t1 = (centre - half - world_pos) * inv;
+    let t2 = (centre + half - world_pos) * inv;
     let tmax = max(t1, t2);
     let t = min(min(tmax.x, tmax.y), tmax.z);
     let hit = world_pos + dir * t;
-    return normalize(hit - center);
+    return normalize(hit - centre);
 }
 
 /// Specular occlusion from AO, N.V and the GGX `alpha`
@@ -323,7 +323,7 @@ fn ao_occlusion(v: f32, albedo: vec3<f32>, multi_bounce: bool) -> vec3<f32> {
 /// Full IBL ambient (diffuse irradiance + specular split-sum) for environment
 /// `layer`, with the occlusion terms of `ibl_ambient_grad`. When
 /// `parallax != 0`, box-projects the reflection vector and irradiance normal
-/// against the proxy box `[center +/- half]` (a local reflection probe).
+/// against the proxy box `[centre +/- half]` (a local reflection probe).
 /// The split-sum bias term, the grazing reflection, is scaled by `f90`. The
 /// reflection is taken about `Nr`.
 fn ibl_ambient_layer_grad(
@@ -342,7 +342,7 @@ fn ibl_ambient_layer_grad(
     dr: f32,
     layer: i32,
     world_pos: vec3<f32>,
-    box_center: vec3<f32>,
+    box_centre: vec3<f32>,
     box_half: vec3<f32>,
     parallax: u32,
     dfg: vec2<f32>,
@@ -356,7 +356,7 @@ fn ibl_ambient_layer_grad(
     // Diffuse IBL. Parallax-correct the sampling normal for a local probe.
     var Nd = N;
     if parallax != 0u {
-        Nd = parallax_box(N, world_pos, box_center, box_half);
+        Nd = parallax_box(N, world_pos, box_centre, box_half);
     }
     let irradiance = sample_ibl_irradiance_layer(Nd, rotation, layer);
     let diffuse_ibl = kD * irradiance * base_colour * diffuse_occ * intensity;
@@ -364,7 +364,7 @@ fn ibl_ambient_layer_grad(
     // Specular IBL. Parallax-correct the reflection vector for a local probe.
     var R = reflect(-V, Nr);
     if parallax != 0u {
-        R = parallax_box(R, world_pos, box_center, box_half);
+        R = parallax_box(R, world_pos, box_centre, box_half);
     }
     let prefiltered = sample_ibl_prefiltered_layer(R, roughness, rotation, dr, layer);
     let specular_ibl = prefiltered * (F * dfg.x + dfg.y * f90) * ec * spec_occ * intensity;
@@ -409,7 +409,7 @@ fn apply_lightmap(ambient: vec3<f32>, base_colour: vec3<f32>, ao: vec3<f32>, lm:
 /// box, smoothly falling to 0 across `z.fade` beyond it. `env_zones` and the
 /// `EnvZone` struct are declared in scene_lighting.wgsl.
 fn env_zone_weight(p: vec3<f32>, z: EnvZone) -> f32 {
-    let d = abs(p - z.center) - z.half_extents;
+    let d = abs(p - z.centre) - z.half_extents;
     let outside = length(max(d, vec3<f32>(0.0)));
     return 1.0 - smoothstep(0.0, max(z.fade, 1e-4), outside);
 }
@@ -451,7 +451,7 @@ fn ibl_ambient_zoned(
         }
         let c = ibl_ambient_layer_grad(
             N, Nr, V, base_colour, metallic, roughness, F0, f90, diffuse_occ, spec_occ, z.intensity,
-            z.rotation, dr, i32(z.layer), world_pos, z.center, z.half_extents, z.parallax, dfg, ec,
+            z.rotation, dr, i32(z.layer), world_pos, z.centre, z.half_extents, z.parallax, dfg, ec,
         );
         diffuse = diffuse + c.diffuse * w;
         specular = specular + c.specular * w;

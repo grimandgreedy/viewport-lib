@@ -100,7 +100,7 @@ impl Default for ForegroundState {
 /// A looping orbit around the scene, six keyframes closing back on the first.
 fn build_orbit_track() -> CameraTrack {
     let mut track = CameraTrack::new();
-    let center = glam::Vec3::new(0.0, 0.0, 1.1);
+    let centre = glam::Vec3::new(0.0, 0.0, 1.1);
     let tilt = 1.02;
     let steps = 6;
     for i in 0..=steps {
@@ -112,7 +112,7 @@ fn build_orbit_track() -> CameraTrack {
         track.push(
             (i as f64) * 2.5,
             CameraTarget {
-                center: center.as_dvec3(),
+                centre: centre.as_dvec3(),
                 distance,
                 orientation,
             },
@@ -208,7 +208,7 @@ impl App {
 
         // Start the camera on the track.
         let target = interpolate_camera(&self.fg_state.track, 0.0);
-        self.camera.set_orbit_center(target.center);
+        self.camera.set_orbit_centre(target.centre);
         self.camera.set_orbit_distance(target.distance);
         self.camera.set_orbit_orientation(target.orientation);
 
@@ -253,7 +253,7 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
                 app.fg_state.track_t -= dur;
             }
             let target = interpolate_camera(&app.fg_state.track, app.fg_state.track_t);
-            app.camera.set_orbit_center(target.center);
+            app.camera.set_orbit_centre(target.centre);
             app.camera.set_orbit_distance(target.distance);
             app.camera.set_orbit_orientation(target.orientation);
         }

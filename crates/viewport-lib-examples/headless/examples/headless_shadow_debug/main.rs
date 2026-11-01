@@ -122,7 +122,7 @@ fn main() {
     };
 
     // Camera: orbit distance 18 looking down at the scene by default; optional
-    // args 5..=10 override center xyz, distance, and rz/rx orientation angles.
+    // args 5..=10 override centre xyz, distance, and rz/rx orientation angles.
     let f = |i: usize, d: f32| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
     let mut camera = Camera::orbit(
         glam::Vec3::new(f(5, 0.0), f(6, 0.0), f(7, 0.0)).as_dvec3(),

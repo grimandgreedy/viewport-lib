@@ -1043,7 +1043,7 @@ fn row_anim(
     );
     x5 += 100.0 + gap;
 
-    // Center border on a circle.
+    // Centre border on a circle.
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Circle,

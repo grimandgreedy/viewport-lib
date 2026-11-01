@@ -689,7 +689,7 @@ fn gpu_particles(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
     item.emitter.size = 0.125;
     item.emitter.colour = Colour::linear(1.0, 0.8, 0.4, 0.9);
     item.emitter.spawn_shape = SpawnShape::Sphere {
-        center: qp(at, [0.0, 0.0, 0.25]),
+        centre: qp(at, [0.0, 0.0, 0.25]),
         radius: 0.25,
     };
     item.emitter.initial_velocity = VelocityDist::UniformCone {

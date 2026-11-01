@@ -31,12 +31,12 @@ impl Aabb {
         Self { min, max }
     }
 
-    /// Center of the bounding box.
-    pub fn center(&self) -> glam::Vec3 {
+    /// Centre of the bounding box.
+    pub fn centre(&self) -> glam::Vec3 {
         (self.min + self.max) * 0.5
     }
 
-    /// Half-extents (distance from center to each face).
+    /// Half-extents (distance from centre to each face).
     pub fn half_extents(&self) -> glam::Vec3 {
         (self.max - self.min) * 0.5
     }
@@ -107,11 +107,11 @@ impl Aabb {
     /// Returns true if the plane (defined by unit normal + signed distance)
     /// intersects this AABB : i.e., the AABB spans both sides of the plane.
     pub fn intersects_plane(&self, normal: glam::Vec3, distance: f32) -> bool {
-        let center = self.center();
+        let centre = self.centre();
         let extents = self.half_extents();
         let r =
             extents.x * normal.x.abs() + extents.y * normal.y.abs() + extents.z * normal.z.abs();
-        let d = normal.dot(center) + distance;
+        let d = normal.dot(centre) + distance;
         d.abs() <= r
     }
 }
@@ -167,9 +167,9 @@ mod tests {
     }
 
     #[test]
-    fn test_aabb_center_and_extents() {
+    fn test_aabb_centre_and_extents() {
         let aabb = Aabb::from_positions(&unit_cube_positions());
-        assert!(aabb.center().length() < 1e-5);
+        assert!(aabb.centre().length() < 1e-5);
         assert!((aabb.half_extents() - glam::Vec3::splat(0.5)).length() < 1e-5);
     }
 
@@ -181,9 +181,9 @@ mod tests {
     }
 
     #[test]
-    fn test_intersects_plane_through_center() {
+    fn test_intersects_plane_through_centre() {
         let aabb = Aabb::from_positions(&unit_cube_positions());
-        // YZ plane at x=0 cuts right through center
+        // YZ plane at x=0 cuts right through centre
         assert!(aabb.intersects_plane(glam::Vec3::X, 0.0));
     }
 

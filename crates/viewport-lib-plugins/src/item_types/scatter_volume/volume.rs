@@ -99,13 +99,13 @@ impl ScatterVolume {
 
     /// Convenience: a uniform-density sphere volume with flat colour.
     pub fn sphere_uniform(
-        center: [f32; 3],
+        centre: [f32; 3],
         radius: f32,
         density: f32,
         colour: impl Into<Colour>,
     ) -> Self {
         Self {
-            shape: ScatterShape::Sphere { center, radius },
+            shape: ScatterShape::Sphere { centre, radius },
             density,
             colour: ColourSource::Flat(colour.into()),
             ..Default::default()
@@ -116,8 +116,8 @@ impl ScatterVolume {
     pub fn world_aabb(&self) -> Aabb {
         match self.shape {
             ScatterShape::Box(b) => b,
-            ScatterShape::Sphere { center, radius } => {
-                let c = glam::Vec3::from(center);
+            ScatterShape::Sphere { centre, radius } => {
+                let c = glam::Vec3::from(centre);
                 let r = glam::Vec3::splat(radius);
                 Aabb {
                     min: c - r,
@@ -134,7 +134,7 @@ impl ScatterVolume {
                 let c = (b.min + b.max) * 0.5;
                 [c.x, c.y, c.z]
             }
-            ScatterShape::Sphere { center, .. } => center,
+            ScatterShape::Sphere { centre, .. } => centre,
         }
     }
 }
@@ -145,10 +145,10 @@ impl ScatterVolume {
 pub enum ScatterShape {
     /// Axis-aligned box.
     Box(Aabb),
-    /// Sphere defined by world-space center and radius.
+    /// Sphere defined by world-space centre and radius.
     Sphere {
-        /// World-space center.
-        center: [f32; 3],
+        /// World-space centre.
+        centre: [f32; 3],
         /// World-space radius.
         radius: f32,
     },
@@ -206,7 +206,7 @@ pub enum DensityRemap {
     /// Exponential falloff from a centre point.
     ExpFalloff {
         /// World-space falloff origin.
-        center: [f32; 3],
+        centre: [f32; 3],
         /// Falloff coefficient in inverse world units.
         falloff: f32,
     },

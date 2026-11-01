@@ -725,7 +725,7 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     item.emitter.colour = Colour::linear(1.0, 1.0, 1.0, 0.9);
     item.emitter.spawn_shape =
         viewport_lib_plugins::item_types::gpu_particles::SpawnShape::Sphere {
-            center: [0.0, 0.0, -1.8],
+            centre: [0.0, 0.0, -1.8],
             radius: 0.25,
         };
     item.emitter.initial_velocity =

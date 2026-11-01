@@ -75,12 +75,12 @@ impl Default for CameraDamping {
 /// An in-progress fly-to animation.
 #[derive(Clone, Debug)]
 struct CameraFlight {
-    start_center: glam::DVec3,
+    start_centre: glam::DVec3,
     start_distance: f32,
     start_orientation: glam::Quat,
     #[allow(dead_code)]
     start_projection: Projection,
-    target_center: glam::DVec3,
+    target_centre: glam::DVec3,
     target_distance: f32,
     target_orientation: glam::Quat,
     target_projection: Option<Projection>,
@@ -186,14 +186,14 @@ impl CameraAnimator {
     pub fn fly_to(
         &mut self,
         camera: &Camera,
-        target_center: impl Into<glam::DVec3>,
+        target_centre: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         duration: f32,
     ) {
         self.fly_to_full(
             camera,
-            target_center,
+            target_centre,
             target_distance,
             target_orientation,
             None,
@@ -206,7 +206,7 @@ impl CameraAnimator {
     pub fn fly_to_with_easing(
         &mut self,
         camera: &Camera,
-        target_center: impl Into<glam::DVec3>,
+        target_centre: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         duration: f32,
@@ -214,7 +214,7 @@ impl CameraAnimator {
     ) {
         self.fly_to_full(
             camera,
-            target_center,
+            target_centre,
             target_distance,
             target_orientation,
             None,
@@ -228,7 +228,7 @@ impl CameraAnimator {
     pub fn fly_to_full(
         &mut self,
         camera: &Camera,
-        target_center: impl Into<glam::DVec3>,
+        target_centre: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         target_projection: Option<Projection>,
@@ -241,11 +241,11 @@ impl CameraAnimator {
         self.zoom_velocity = 0.0;
 
         self.flight = Some(CameraFlight {
-            start_center: camera.target(),
+            start_centre: camera.target(),
             start_distance: camera.focus_distance(),
             start_orientation: camera.orientation(),
             start_projection: camera.projection,
-            target_center: target_center.into(),
+            target_centre: target_centre.into(),
             target_distance,
             target_orientation,
             target_projection,
@@ -273,7 +273,7 @@ impl CameraAnimator {
         let mut out = camera.clone();
         if let Some(flight) = &self.flight {
             out.set_orbit(
-                flight.target_center,
+                flight.target_centre,
                 flight
                     .target_distance
                     .clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE),
@@ -310,7 +310,7 @@ impl CameraAnimator {
             let distance =
                 flight.start_distance + (flight.target_distance - flight.start_distance) * t;
             camera.set_orbit(
-                flight.start_center.lerp(flight.target_center, f64::from(t)),
+                flight.start_centre.lerp(flight.target_centre, f64::from(t)),
                 distance.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE),
                 flight
                     .start_orientation
@@ -443,18 +443,18 @@ mod tests {
     fn test_fly_to_reaches_target() {
         let mut anim = CameraAnimator::with_default_damping();
         let mut cam = default_camera();
-        let target_center = glam::Vec3::new(10.0, 20.0, 30.0);
+        let target_centre = glam::Vec3::new(10.0, 20.0, 30.0);
         let target_dist = 15.0;
         let target_orient = glam::Quat::from_rotation_y(std::f32::consts::PI);
-        anim.fly_to(&cam, target_center, target_dist, target_orient, 0.5);
+        anim.fly_to(&cam, target_centre, target_dist, target_orient, 0.5);
 
         // Advance well past the duration.
         for _ in 0..120 {
             anim.update(1.0 / 60.0, &mut cam);
         }
         assert!(
-            (cam.target() - target_center.as_dvec3()).length() < 1e-4,
-            "center should match target: {:?}",
+            (cam.target() - target_centre.as_dvec3()).length() < 1e-4,
+            "centre should match target: {:?}",
             cam.target()
         );
         assert!(

@@ -66,7 +66,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -129,7 +129,7 @@ fn apply_model(p: vec3<f32>) -> vec3<f32> {
 }
 
 // Project a position to screen pixels after applying the model matrix.
-// Returns vec2 in pixel coordinates (origin at viewport center).
+// Returns vec2 in pixel coordinates (origin at viewport centre).
 fn to_screen(p: vec3<f32>) -> vec2<f32> {
     let world = apply_model(p);
     let clip = camera.view_proj * vec4<f32>(world, 1.0);

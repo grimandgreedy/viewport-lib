@@ -112,12 +112,12 @@ impl Showcase for ObjectsShowcase {
         let session = &mut *ctx.session;
         match session.last_manip() {
             ManipResult::Update(delta) => {
-                // Rotate and scale pivot around the session center (the object's
+                // Rotate and scale pivot around the session centre (the object's
                 // own position at session start), not the world origin, so the
                 // object turns and grows in place. Translation just adds.
-                let center = session
+                let centre = session
                     .manip_state()
-                    .map(|s| s.center)
+                    .map(|s| s.centre)
                     .unwrap_or(Vec3::ZERO);
                 if let Some(id) = self.selected {
                     let current = session
@@ -125,8 +125,8 @@ impl Showcase for ObjectsShowcase {
                         .node(id)
                         .map(|n| n.local_transform().to_mat4())
                         .unwrap_or(Mat4::IDENTITY);
-                    let to_pivot = Mat4::from_translation(-center);
-                    let from_pivot = Mat4::from_translation(center);
+                    let to_pivot = Mat4::from_translation(-centre);
+                    let from_pivot = Mat4::from_translation(centre);
                     let rot = Mat4::from_quat(delta.rotation);
                     let scale = Mat4::from_scale(delta.scale);
                     let translate = Mat4::from_translation(delta.translation);

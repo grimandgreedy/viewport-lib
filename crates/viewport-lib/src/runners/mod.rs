@@ -418,7 +418,7 @@ impl ViewportInstance {
     }
 
     /// Snapshot of the active manipulation session, or `None` when idle. The
-    /// `center` field is the pivot to rotate and scale about when applying a
+    /// `centre` field is the pivot to rotate and scale about when applying a
     /// [`last_manip`](Self::last_manip) delta to the selection.
     pub fn manip_state(&self) -> Option<crate::interaction::manipulation::ManipulationState> {
         self.manip.as_ref().and_then(|m| m.state())

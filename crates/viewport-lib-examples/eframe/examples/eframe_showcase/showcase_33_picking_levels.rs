@@ -182,7 +182,7 @@ fn make_pl_decal_texture() -> (u32, u32, Vec<u8>) {
 
 /// Build a hex mesh of a capsule (pill) shape.
 ///
-/// The pill is centered at (0, -3.5, 0) and elongated along world Y.
+/// The pill is centred at (0, -3.5, 0) and elongated along world Y.
 /// Uses a 5x5 cross-section grid with an elliptic square-to-disk mapping,
 /// giving 128 hex cells across 8 axial layers.
 fn make_pl_tvm_data() -> VolumeMeshData {
@@ -191,7 +191,7 @@ fn make_pl_tvm_data() -> VolumeMeshData {
 
     let radius = 0.7_f32;
     let cyl_half = 1.2_f32;
-    let center = [4.0, 0.0, -4.0];
+    let centre = [4.0, 0.0, -4.0];
     let z_extent = cyl_half + radius;
 
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(N * N * NZ);
@@ -215,7 +215,7 @@ fn make_pl_tvm_data() -> VolumeMeshData {
                 // Elliptic disk mapping: corners of [-1,1]^2 map to the unit circle.
                 let dx = r * u * (1.0 - v * v / 2.0).sqrt();
                 let dz = r * v * (1.0 - u * u / 2.0).sqrt();
-                positions.push([center[0] + dx, center[1] + axial, center[2] + dz]);
+                positions.push([centre[0] + dx, centre[1] + axial, centre[2] + dz]);
             }
         }
     }
@@ -254,7 +254,7 @@ fn make_pl_tvm_data() -> VolumeMeshData {
 }
 
 /// Build a hex cylinder: 3 rings of 6 hex cells each (18 cells total),
-/// centered at (-7, 0, 0) and elongated along Y.
+/// centred at (-7, 0, 0) and elongated along Y.
 ///
 /// Used in the transparent-volume-mesh picking demonstration in showcase 33.
 fn make_pl_tvm_tet_data() -> VolumeMeshData {
@@ -266,15 +266,15 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
     const HALF_H: f32 = 1.2;
 
     // Vertex rings: for each axial layer we have an inner ring (collapsed to
-    // center) and an outer ring.  With N_SECTORS=6 and N_LAYERS=3 we get
-    // (N_LAYERS+1) slices, each with 1 center + N_SECTORS outer = 7 verts.
+    // centre) and an outer ring.  With N_SECTORS=6 and N_LAYERS=3 we get
+    // (N_LAYERS+1) slices, each with 1 centre + N_SECTORS outer = 7 verts.
     let n_slices = N_LAYERS + 1;
     let verts_per_slice = 1 + N_SECTORS;
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n_slices * verts_per_slice);
 
     for sl in 0..n_slices {
         let y = -HALF_H + 2.0 * HALF_H * sl as f32 / N_LAYERS as f32;
-        // Center vertex.
+        // Centre vertex.
         positions.push([CX, y, CZ]);
         // Outer ring.
         for s in 0..N_SECTORS {
@@ -294,7 +294,7 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
         let top = layer + 1;
         for s in 0..N_SECTORS {
             let s_next = (s + 1) % N_SECTORS;
-            // Each wedge: bottom triangle (center, outer_s, outer_s+1) at the
+            // Each wedge: bottom triangle (centre, outer_s, outer_s+1) at the
             // current layer and a matching top triangle at layer+1. Encoded in
             // the 6-index wedge slot with CELL_SENTINEL padding so the
             // projected-tet decomposition picks the 3-tet wedge path instead
@@ -625,7 +625,7 @@ impl App {
         });
 
         // --- Surface slice mesh: flat XZ-plane inside the volume bbox (pick_id=51) ---
-        // The plane is 3.6x3.6, centered at (0, 1, -4) so it sits within the
+        // The plane is 3.6x3.6, centred at (0, 1, -4) so it sits within the
         // volume's world bbox of (-2,-1,-6) to (2,3,-2).
         let plane_mesh = vpl::primitives::plane(3.6, 3.6);
         if let Ok(plane_id) = renderer
@@ -635,7 +635,7 @@ impl App {
             self.pl_state.surface_slice_mesh_id = Some(plane_id);
         }
 
-        // --- GPU MC volume: 32^3 gyroid field centered near (13, 0, -5) (pick_id=54) ---
+        // --- GPU MC volume: 32^3 gyroid field centred near (13, 0, -5) (pick_id=54) ---
         // The volume spans one full gyroid period (2pi) in each axis so the
         // isovalue=0 surface fills the box.
         {
@@ -788,7 +788,7 @@ impl App {
         // group reads as a connected sequence rather than isolated dots.
         {
             let n = 8;
-            let arc_center = [0.0_f32, 0.0, 6.0];
+            let arc_centre = [0.0_f32, 0.0, 6.0];
             let arc_radius = 4.0_f32;
             let arc_start = std::f32::consts::FRAC_PI_4;
             let arc_sweep = std::f32::consts::PI * 0.5;
@@ -799,9 +799,9 @@ impl App {
                 let t = i as f32 / (n - 1) as f32;
                 let angle = arc_start + arc_sweep * t;
                 positions.push([
-                    arc_center[0] + arc_radius * angle.cos(),
-                    arc_center[1],
-                    arc_center[2] + arc_radius * angle.sin(),
+                    arc_centre[0] + arc_radius * angle.cos(),
+                    arc_centre[1],
+                    arc_centre[2] + arc_radius * angle.sin(),
                 ]);
                 // Small to large along the arc.
                 sizes.push(14.0 + 22.0 * t);
@@ -2207,16 +2207,16 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     }
     // GPU implicit (pick_id=53): two smooth-blended spheres.
     {
-        let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
+        let centres: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
         let colours: [[f32; 4]; 2] = [[0.75, 0.28, 0.05, 1.0], [0.10, 0.26, 0.68, 1.0]];
         let mut item = GpuImplicitItem::default();
         for i in 0..2 {
             let mut prim = ImplicitPrimitive::zeroed();
             prim.kind = 1; // sphere
             prim.blend = 0.8;
-            prim.params[0] = centers[i][0];
-            prim.params[1] = centers[i][1];
-            prim.params[2] = centers[i][2];
+            prim.params[0] = centres[i][0];
+            prim.params[1] = centres[i][1];
+            prim.params[2] = centres[i][2];
             prim.params[3] = 1.2; // radius
             prim.colour = Colour::from_linear_array(colours[i]);
             item.primitives.push(prim);

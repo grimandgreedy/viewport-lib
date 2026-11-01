@@ -774,7 +774,7 @@ pub(crate) struct OverlayShadowLayerGpu {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ClipShapeGpu {
     /// Mask centre in framebuffer pixels.
-    pub center: [f32; 2],
+    pub centre: [f32; 2],
     /// Mask half-extents in framebuffer pixels.
     pub half_size: [f32; 2],
     /// Shape-specific radii, matching the draw encoding (length terms scaled to

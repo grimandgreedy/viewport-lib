@@ -526,7 +526,7 @@ fn build_clip_shapes(
         } else if st == 7 {
             radii[0] *= ppp;
         }
-        let center = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
+        let centre = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
         let half = [hw * ppp, hh * ppp];
         let parent = s
             .clip
@@ -534,7 +534,7 @@ fn build_clip_shapes(
             .and_then(|pid| index_of.get(&pid).copied())
             .unwrap_or(-1);
         out.push(crate::resources::ClipShapeGpu {
-            center,
+            centre,
             half_size: half,
             radii,
             params: [shape_type, s.transform.rotation, parent as f32, 0.0],
@@ -554,7 +554,7 @@ fn build_clip_shapes(
 /// Written in place of an empty clip list, so the clip binding always has an
 /// element to point at.
 static NO_CLIP: [crate::resources::ClipShapeGpu; 1] = [crate::resources::ClipShapeGpu {
-    center: [0.0, 0.0],
+    centre: [0.0, 0.0],
     half_size: [0.0, 0.0],
     radii: [0.0; 4],
     params: [0.0, 0.0, -1.0, 0.0],
@@ -2813,7 +2813,7 @@ mod clip_registry_tests {
         assert_eq!(map[&20], 1);
 
         // Parent: centre and half-size scaled by ppp, corner radius scaled, no parent.
-        assert_eq!(gpu[0].center, [400.0, 200.0]);
+        assert_eq!(gpu[0].centre, [400.0, 200.0]);
         assert_eq!(gpu[0].half_size, [200.0, 100.0]);
         assert_eq!(gpu[0].radii, [16.0, 16.0, 16.0, 16.0]);
         assert_eq!(gpu[0].params[0], 0.0); // rect/rounded shape type

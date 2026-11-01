@@ -386,9 +386,9 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 scales.iter().map(|s| s[0].max(s[1]).max(s[2])).sum::<f32>() / scales.len() as f32
             };
             let world_radius = mean_max_scale * 3.0;
-            let center_w = model.transform_point3(glam::Vec3::ZERO);
-            let p0_clip = ctx.view_proj * center_w.extend(1.0);
-            let p1_clip = ctx.view_proj * (center_w + glam::Vec3::X * world_radius).extend(1.0);
+            let centre_w = model.transform_point3(glam::Vec3::ZERO);
+            let p0_clip = ctx.view_proj * centre_w.extend(1.0);
+            let p1_clip = ctx.view_proj * (centre_w + glam::Vec3::X * world_radius).extend(1.0);
             let radius_px = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                 let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
                 let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
@@ -838,12 +838,12 @@ impl GaussianSplatPlugin {
         let (vp_w, vp_h) = (ctx.viewport_size.x, ctx.viewport_size.y);
         let cam_right = ctx.camera.view().row(0).truncate().normalize();
 
-        // Project a world-space radius at `center_w` to a pixel half-size,
+        // Project a world-space radius at `centre_w` to a pixel half-size,
         // offsetting along the camera right vector so the measurement never
         // collapses when looking down an axis.
-        let radius_px = |center_w: glam::Vec3, world_radius: f32| -> f32 {
-            let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
-            let p1_world = center_w + cam_right * world_radius;
+        let radius_px = |centre_w: glam::Vec3, world_radius: f32| -> f32 {
+            let p0_clip = view_proj * glam::Vec4::new(centre_w.x, centre_w.y, centre_w.z, 1.0);
+            let p1_world = centre_w + cam_right * world_radius;
             let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
             if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                 let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
@@ -883,8 +883,8 @@ impl GaussianSplatPlugin {
                 };
                 let world_radius = mean_max_scale * 3.0;
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let center_w = model.transform_point3(glam::Vec3::ZERO);
-                let pixel_radius = radius_px(center_w, world_radius).max(1.0);
+                let centre_w = model.transform_point3(glam::Vec3::ZERO);
+                let pixel_radius = radius_px(centre_w, world_radius).max(1.0);
 
                 let position_buf = device.create_buffer_init(&gpu::util::BufferInitDescriptor {
                     label: Some("splat_outline_pos_buf"),
@@ -949,8 +949,8 @@ impl GaussianSplatPlugin {
                         } else {
                             0.15
                         };
-                        let center_w = model.transform_point3(glam::Vec3::from(pos));
-                        sizes.push(radius_px(center_w, world_radius).max(1.0));
+                        let centre_w = model.transform_point3(glam::Vec3::from(pos));
+                        sizes.push(radius_px(centre_w, world_radius).max(1.0));
                     }
                 }
                 if positions.is_empty() {

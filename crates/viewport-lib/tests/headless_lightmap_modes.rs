@@ -125,7 +125,7 @@ fn lightmap_ao_mode_darkens_object() {
     let (w, h) = (64u32, 64u32);
     // Mean over the central region, which the box fills, so the AO multiply on
     // the box's ambient is not diluted by the sky background.
-    let center_mean = |pixels: &[u8]| -> f64 {
+    let centre_mean = |pixels: &[u8]| -> f64 {
         let (mut sum, mut n) = (0.0f64, 0u64);
         for y in (h / 4)..(3 * h / 4) {
             for x in (w / 4)..(3 * w / 4) {
@@ -137,7 +137,7 @@ fn lightmap_ao_mode_darkens_object() {
         sum / n as f64
     };
 
-    let baseline = center_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
+    let baseline = centre_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
 
     // Dark occlusion factor (0.1) multiplies the ambient term.
     let dark = vec![[26u8, 26, 26, 255]; 16].concat();
@@ -160,7 +160,7 @@ fn lightmap_ao_mode_darkens_object() {
         )
         .expect("set lightmap");
 
-    let occluded = center_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
+    let occluded = centre_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
 
     assert!(
         occluded < baseline * 0.75,

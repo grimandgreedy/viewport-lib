@@ -2030,7 +2030,7 @@ impl ViewportRuntime {
 
     /// Set a camera follow binding (builder style).
     ///
-    /// Each call to [`step`](Self::step) will compute a suggested camera center
+    /// Each call to [`step`](Self::step) will compute a suggested camera centre
     /// from the followed node and emit it as a [`CameraFollowTarget`] event on
     /// [`RuntimeOutput::events`].
     pub fn with_camera_follow(mut self, follow: CameraFollow) -> Self {

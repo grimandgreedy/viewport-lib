@@ -77,7 +77,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
 
     let world_pos = (pc_uniform.model * vec4<f32>(in.position, 1.0)).xyz;
-    let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
     let idx = in.instance_index;
     let point_size = select(
@@ -91,10 +91,10 @@ fn vs_main(in: VertexIn) -> VertexOut {
                      / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
 
     out.clip_pos = vec4<f32>(
-        center.x + ndc_offset.x * center.w,
-        center.y + ndc_offset.y * center.w,
-        center.z,
-        center.w,
+        centre.x + ndc_offset.x * centre.w,
+        centre.y + ndc_offset.y * centre.w,
+        centre.z,
+        centre.w,
     );
     out.world_pos = world_pos;
     out.uv = corner;

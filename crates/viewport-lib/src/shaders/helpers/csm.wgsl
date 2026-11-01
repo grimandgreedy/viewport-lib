@@ -37,9 +37,9 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
 );
 
 // Dedicated 8-point disk for the low-tap loops: a golden-angle (Vogel)
-// spiral, re-centered to exactly zero mean and normalized to unit radius.
+// spiral, re-centred to exactly zero mean and normalized to unit radius.
 // The first 8 entries of POISSON_DISK are not usable here: that subset is
-// rim-heavy and its mean sits off-center, which shifts the filtered edge
+// rim-heavy and its mean sits off-centre, which shifts the filtered edge
 // and reads as directional smearing.
 const VOGEL_DISK_8: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
     vec2<f32>( 0.31464070,  0.04091435),

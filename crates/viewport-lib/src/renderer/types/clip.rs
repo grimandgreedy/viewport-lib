@@ -22,7 +22,8 @@ pub enum ClipShape {
     /// Oriented box : fragments inside the box are kept.
     Box {
         /// World-space centre of the box.
-        center: glam::DVec3,
+        #[cfg_attr(feature = "serde", serde(alias = "center"))]
+        centre: glam::DVec3,
         /// Half-extents along each local axis.
         half_extents: [f32; 3],
         /// 3x3 rotation matrix columns.
@@ -31,14 +32,16 @@ pub enum ClipShape {
     /// Sphere : fragments inside the sphere are kept.
     Sphere {
         /// World-space centre of the sphere.
-        center: glam::DVec3,
+        #[cfg_attr(feature = "serde", serde(alias = "center"))]
+        centre: glam::DVec3,
         /// Radius of the sphere.
         radius: f32,
     },
     /// Cylinder : fragments inside the cylinder are kept.
     Cylinder {
         /// World-space centre (midpoint of the axis segment).
-        center: glam::DVec3,
+        #[cfg_attr(feature = "serde", serde(alias = "center"))]
+        centre: glam::DVec3,
         /// Unit axis direction.
         axis: [f32; 3],
         /// Radius.
@@ -110,13 +113,13 @@ impl ClipObject {
     }
     /// Create an oriented box clip object.
     pub fn box_shape(
-        center: impl crate::IntoWorldPosition,
+        centre: impl crate::IntoWorldPosition,
         half_extents: [f32; 3],
         orientation: [[f32; 3]; 3],
     ) -> Self {
         Self {
             shape: ClipShape::Box {
-                center: center.into_world_position(),
+                centre: centre.into_world_position(),
                 half_extents,
                 orientation,
             },
@@ -124,10 +127,10 @@ impl ClipObject {
         }
     }
     /// Create a sphere clip object.
-    pub fn sphere(center: impl crate::IntoWorldPosition, radius: f32) -> Self {
+    pub fn sphere(centre: impl crate::IntoWorldPosition, radius: f32) -> Self {
         Self {
             shape: ClipShape::Sphere {
-                center: center.into_world_position(),
+                centre: centre.into_world_position(),
                 radius,
             },
             ..Default::default()
@@ -138,14 +141,14 @@ impl ClipObject {
     ///
     /// `axis` must be a unit vector.
     pub fn cylinder(
-        center: impl crate::IntoWorldPosition,
+        centre: impl crate::IntoWorldPosition,
         axis: [f32; 3],
         radius: f32,
         half_length: f32,
     ) -> Self {
         Self {
             shape: ClipShape::Cylinder {
-                center: center.into_world_position(),
+                centre: centre.into_world_position(),
                 axis,
                 radius,
                 half_length,

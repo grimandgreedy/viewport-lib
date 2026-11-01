@@ -38,11 +38,11 @@ impl Pose {
         }
     }
 
-    /// The pose of an orbit camera: the eye sits `distance` from `center`
-    /// along the orientation's local `+Z`, so `eye = center + orientation * (Z * distance)`.
-    pub fn orbit(center: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
+    /// The pose of an orbit camera: the eye sits `distance` from `centre`
+    /// along the orientation's local `+Z`, so `eye = centre + orientation * (Z * distance)`.
+    pub fn orbit(centre: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
         Self {
-            position: center.into() + eye_offset(orientation, distance),
+            position: centre.into() + eye_offset(orientation, distance),
             orientation: orientation.as_dquat(),
         }
     }

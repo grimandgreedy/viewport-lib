@@ -38,7 +38,7 @@ use vpl::{
     ManipulationContext, ManipulationController, Material, MaterialId, MeshId, MouseButton,
     OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
     Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput, ViewportRenderer,
-    gizmo::compute_gizmo_scale, gizmo_center_for_pivot, picking::screen_to_ray, primitives,
+    gizmo::compute_gizmo_scale, gizmo_centre_for_pivot, picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -168,7 +168,7 @@ struct App {
     /// routed to it. The controllers keep only their sensitivities.
     inputs: [ViewportInput; 4],
     gizmo: Gizmo,
-    gizmo_center: Option<glam::Vec3>,
+    gizmo_centre: Option<glam::Vec3>,
     gizmo_scales: [f32; 4],
     manip: ManipulationController,
 
@@ -245,7 +245,7 @@ impl App {
                 ViewportInput::from_preset(BindingPreset::Default),
             ],
             gizmo: Gizmo::new(),
-            gizmo_center: None,
+            gizmo_centre: None,
             gizmo_scales: [1.0; 4],
             manip: ManipulationController::new(),
             vp_ids,
@@ -279,7 +279,7 @@ impl App {
     }
 
     fn apply_delta(&mut self, delta: vpl::TransformDelta) {
-        let Some(center) = self.gizmo_center else {
+        let Some(centre) = self.gizmo_centre else {
             return;
         };
 
@@ -313,8 +313,8 @@ impl App {
         let rot_mat = glam::Mat4::from_quat(delta.rotation);
         let scale_mat = glam::Mat4::from_scale(scale);
         let translate_mat = glam::Mat4::from_translation(translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
+        let to_pivot = glam::Mat4::from_translation(-centre);
+        let from_pivot = glam::Mat4::from_translation(centre);
 
         for &id in self.selection.iter().copied().collect::<Vec<_>>().iter() {
             if let Some(obj) = self.objects.get_mut(id as usize) {
@@ -334,9 +334,9 @@ impl App {
         let mut best_id: Option<u64> = None;
 
         for (i, obj) in self.objects.iter().enumerate() {
-            let center = obj.position();
+            let centre = obj.position();
             let r = obj.pick_radius;
-            let oc = ray_origin - center;
+            let oc = ray_origin - centre;
             let b = oc.dot(ray_dir);
             let c = oc.dot(oc) - r * r;
             let discriminant = b * b - c;
@@ -520,7 +520,7 @@ impl App {
 
                 // Gizmo hit test in the hovered quad (only when no session is active).
                 if !self.manip.is_active() {
-                    if let Some(center) = self.gizmo_center {
+                    if let Some(centre) = self.gizmo_centre {
                         let cam = &self.cameras[hq];
                         let qr = quads[hq];
                         let w = qr.width();
@@ -530,15 +530,15 @@ impl App {
                         let (ray_origin, ray_dir) = cam.screen_ray(glam::Vec2::new(ndc_x, ndc_y));
                         self.gizmo.hovered_axis =
                             self.gizmo
-                                .hit_test(ray_origin, ray_dir, center, self.gizmo_scales[hq]);
+                                .hit_test(ray_origin, ray_dir, centre, self.gizmo_scales[hq]);
                     } else {
                         self.gizmo.hovered_axis = GizmoAxis::None;
                     }
                 }
 
                 let orient = self.gizmo_orientation();
-                let gizmo_info = self.gizmo_center.map(|center| GizmoInfo {
-                    center,
+                let gizmo_info = self.gizmo_centre.map(|centre| GizmoInfo {
+                    centre,
                     scale: self.gizmo_scales[hq],
                     orientation: orient,
                     mode: self.gizmo.mode,
@@ -552,7 +552,7 @@ impl App {
                     viewport_size: glam::Vec2::new(qr.width(), qr.height()),
                     cursor_viewport: Some(self.cursor_local),
                     pointer_delta,
-                    selection_center: self.gizmo_center,
+                    selection_centre: self.gizmo_centre,
                     gizmo: gizmo_info,
                     drag_started: ui.input(|i| i.pointer.any_pressed()),
                     dragging: self.left_held,
@@ -618,16 +618,16 @@ impl App {
                     }
                 }
 
-                // Update gizmo center and per-viewport gizmo scales.
-                self.gizmo_center =
-                    gizmo_center_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
+                // Update gizmo centre and per-viewport gizmo scales.
+                self.gizmo_centre =
+                    gizmo_centre_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
                         self.position_of(id)
                     });
                 for i in 0..4 {
-                    if let Some(center) = self.gizmo_center {
+                    if let Some(centre) = self.gizmo_centre {
                         let qr = quads[i];
                         self.gizmo_scales[i] = compute_gizmo_scale(
-                            center,
+                            centre,
                             self.cameras[i].eye().as_vec3(),
                             self.cameras[i].fov_y(),
                             qr.height(),
@@ -656,7 +656,7 @@ impl App {
                     })
                     .collect();
 
-                let gizmo_center = self.gizmo_center;
+                let gizmo_centre = self.gizmo_centre;
                 let gizmo_scales = self.gizmo_scales;
                 let gizmo_mode = self.gizmo.mode;
                 let has_selection = !self.selection.is_empty();
@@ -682,13 +682,13 @@ impl App {
                     fd.interaction.selection_generation = sel_gen;
 
                     // Gizmo: rendered in every viewport with its own screen-space scale.
-                    if let Some(center) = gizmo_center {
+                    if let Some(centre) = gizmo_centre {
                         let scale = gizmo_scales[i];
                         fd.interaction.gizmo_model =
                             Some(glam::Mat4::from_scale_rotation_translation(
                                 glam::Vec3::splat(scale),
                                 orient,
-                                center,
+                                centre,
                             ));
                         fd.interaction.gizmo_mode = gizmo_mode;
                         fd.interaction.gizmo_space_orientation = orient;

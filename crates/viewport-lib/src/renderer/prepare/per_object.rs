@@ -211,10 +211,10 @@ pub(super) fn prepare_light_probe_sh(
                     if (count as usize) < crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
                         // Items arrive relative to the origin; probes are in
                         // world space.
-                        let center = (item.model.translation + origin.origin())
+                        let centre = (item.model.translation + origin.origin())
                             .as_vec3()
                             .to_array();
-                        sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
+                        sh_gpu.extend_from_slice(&probes.blend_sh_at(centre).to_gpu());
                         indices[idx] = Some(count);
                         count += 1;
                     }

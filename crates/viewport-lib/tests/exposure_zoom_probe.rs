@@ -40,7 +40,7 @@ fn sphere_scene(
     items
 }
 
-fn center_luma(px: &[u8], size: u32) -> f32 {
+fn centre_luma(px: &[u8], size: u32) -> f32 {
     let lo = size / 2 - size / 10;
     let hi = size / 2 + size / 10;
     let (mut sum, mut n) = (0.0f32, 0.0f32);
@@ -68,7 +68,7 @@ fn auto_exposure_stable_across_zoom() {
 
     let size = 160u32;
     let mut evs: Vec<f32> = Vec::new();
-    eprintln!("distance |  center_luma |  metered_EV | mult");
+    eprintln!("distance |  centre_luma |  metered_EV | mult");
     for &dist in &[6.0f32, 10.0, 16.0, 26.0, 40.0] {
         let cam = Camera::orbit(glam::DVec3::ZERO, dist, Camera::default().orientation());
         let mut frame = FrameData::default();
@@ -95,7 +95,7 @@ fn auto_exposure_stable_across_zoom() {
             .unwrap_or((f32::NAN, f32::NAN));
         eprintln!(
             "{dist:7.1} | {:11.1} | {ev:10.3} | {mult:.4}",
-            center_luma(&px, size)
+            centre_luma(&px, size)
         );
         evs.push(ev);
     }

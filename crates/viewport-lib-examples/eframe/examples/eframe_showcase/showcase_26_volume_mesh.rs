@@ -326,7 +326,7 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 ]);
 
                 let [cx, cy, cz] = cell_centroid_raw(ix, iy, iz);
-                // Clamp to avoid division by zero for the center cell whose
+                // Clamp to avoid division by zero for the centre cell whose
                 // centroid sits exactly at the origin.
                 let raw_len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-6);
 
@@ -555,12 +555,12 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
 // Pyramid mesh builder
 // ---------------------------------------------------------------------------
 //
-// Each cube is split into 6 pyramids by adding a center vertex and connecting
+// Each cube is split into 6 pyramids by adding a centre vertex and connecting
 // it to each of the 6 quad faces.  Adjacent cubes share quad faces correctly
 // because the shared face uses the same 4 corner vertices in both cubes.
 //
 // Face winding follows the hex face table (outward from the cube face toward
-// the center), relying on the extractor's geometric winding correction.
+// the centre), relying on the extractor's geometric winding correction.
 
 fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let n_cells = GRID_N * GRID_N * GRID_N * 6;
@@ -586,7 +586,7 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                     vid(ix, iy + 1, iz + 1),
                 ];
 
-                // Center vertex: average of the 8 projected sphere positions.
+                // Centre vertex: average of the 8 projected sphere positions.
                 let mut px = 0.0f32;
                 let mut py_sum = 0.0f32;
                 let mut pz = 0.0f32;
@@ -596,7 +596,7 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                     py_sum += p[1];
                     pz += p[2];
                 }
-                let center_idx = all_positions.len() as u32;
+                let centre_idx = all_positions.len() as u32;
                 all_positions.push([px / 8.0, py_sum / 8.0, pz / 8.0]);
 
                 let [rcx, rcy, rcz] = cell_centroid_raw(ix, iy, iz);
@@ -610,12 +610,12 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
 
                 // 6 pyramids: one per hex face.  Base quad winding matches the
                 // hex face table so outward normals face away from the cube.
-                data.push_pyramid([c[0], c[1], c[2], c[3]], center_idx); // bottom
-                data.push_pyramid([c[4], c[7], c[6], c[5]], center_idx); // top
-                data.push_pyramid([c[0], c[4], c[5], c[1]], center_idx); // front
-                data.push_pyramid([c[2], c[6], c[7], c[3]], center_idx); // back
-                data.push_pyramid([c[0], c[3], c[7], c[4]], center_idx); // left
-                data.push_pyramid([c[1], c[5], c[6], c[2]], center_idx); // right
+                data.push_pyramid([c[0], c[1], c[2], c[3]], centre_idx); // bottom
+                data.push_pyramid([c[4], c[7], c[6], c[5]], centre_idx); // top
+                data.push_pyramid([c[0], c[4], c[5], c[1]], centre_idx); // front
+                data.push_pyramid([c[2], c[6], c[7], c[3]], centre_idx); // back
+                data.push_pyramid([c[0], c[3], c[7], c[4]], centre_idx); // left
+                data.push_pyramid([c[1], c[5], c[6], c[2]], centre_idx); // right
 
                 for _ in 0..6 {
                     lat_scalars.push(lat);

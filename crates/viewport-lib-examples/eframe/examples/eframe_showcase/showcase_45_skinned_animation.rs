@@ -758,7 +758,7 @@ fn build_runtime_for_demo(
 const CROWD_SPACING: f32 = 3.0;
 
 /// Compute a world-space translation for one crowd actor placed on a roughly
-/// square grid centered on the origin.
+/// square grid centred on the origin.
 fn crowd_translation(actor_idx: usize, total: usize) -> glam::Vec3 {
     let cols = (total as f32).sqrt().ceil().max(1.0) as usize;
     let row = (actor_idx / cols) as f32;

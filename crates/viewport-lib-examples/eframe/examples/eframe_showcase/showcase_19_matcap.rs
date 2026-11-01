@@ -67,7 +67,7 @@ impl App {
     /// Layout:
     ///   Top row    (z = +1.5): Clay | Wax | Candy | Flat           : blendable
     ///   Bottom row (z = -1.5): Ceramic | Jade | Mud | Normal       : static
-    ///   Center-front (y = -3.5): Custom procedural matcap upload demo
+    ///   Centre-front (y = -3.5): Custom procedural matcap upload demo
     pub(crate) fn build_matcap_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.matcap_state.scene = Scene::new();
 

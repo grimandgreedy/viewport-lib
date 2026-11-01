@@ -10,13 +10,14 @@ use super::projection::Projection;
 /// Orbit controllers keep one as their state, [`Camera::orbit_target`] reads
 /// one off a camera, and the framing helpers
 /// ([`Camera::fit_sphere_target`], [`Camera::fit_aabb_target`]) return one for
-/// a preset or a fly-to: pass `target.center` / `target.distance` /
+/// a preset or a fly-to: pass `target.centre` / `target.distance` /
 /// `target.orientation` to `CameraAnimator::fly_to`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CameraTarget {
     /// Orbit centre in world space, in f64.
-    pub center: DVec3,
+    #[cfg_attr(feature = "serde", serde(alias = "center"))]
+    pub centre: DVec3,
     /// Distance from the centre to the eye.
     pub distance: f32,
     /// Camera orientation as a unit quaternion.
@@ -25,9 +26,9 @@ pub struct CameraTarget {
 
 impl CameraTarget {
     /// An orbit view from its parts.
-    pub fn new(center: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
+    pub fn new(centre: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
         Self {
-            center: center.into(),
+            centre: centre.into(),
             distance,
             orientation,
         }
@@ -35,7 +36,7 @@ impl CameraTarget {
 
     /// The camera pose this view describes.
     pub fn pose(&self) -> Pose {
-        Pose::orbit(self.center, self.distance, self.orientation)
+        Pose::orbit(self.centre, self.distance, self.orientation)
     }
 
     /// Eye position in world space.
@@ -57,8 +58,8 @@ impl CameraTarget {
     /// axes. `right_delta` moves it left and `up_delta` up, so a drag to the
     /// right moves the scene with the pointer.
     pub fn pan_world(&mut self, right_delta: f32, up_delta: f32) {
-        self.center -= (self.orientation * Vec3::X * right_delta).as_dvec3();
-        self.center += (self.orientation * Vec3::Y * up_delta).as_dvec3();
+        self.centre -= (self.orientation * Vec3::X * right_delta).as_dvec3();
+        self.centre += (self.orientation * Vec3::Y * up_delta).as_dvec3();
     }
 
     /// Multiply the distance by `factor`, clamped to
@@ -140,11 +141,11 @@ impl Camera {
         }
     }
 
-    /// An orbit camera: the eye sits `distance` from `center` along the
-    /// orientation's local `+Z` (`eye = center + orientation * (Z * distance)`),
-    /// looking at `center`, which is also the focus point.
-    pub fn orbit(center: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
-        let mut camera = Self::new(Pose::orbit(center, distance, orientation));
+    /// An orbit camera: the eye sits `distance` from `centre` along the
+    /// orientation's local `+Z` (`eye = centre + orientation * (Z * distance)`),
+    /// looking at `centre`, which is also the focus point.
+    pub fn orbit(centre: impl Into<DVec3>, distance: f32, orientation: Quat) -> Self {
+        let mut camera = Self::new(Pose::orbit(centre, distance, orientation));
         camera.exposure.focus_distance = distance;
         camera
     }
@@ -248,7 +249,7 @@ impl Camera {
     /// orientation.
     pub fn orbit_target(&self) -> CameraTarget {
         CameraTarget {
-            center: self.target(),
+            centre: self.target(),
             distance: self.focus_distance(),
             orientation: self.orientation(),
         }
@@ -258,21 +259,21 @@ impl Camera {
     /// focus distance set to `distance`. An orthographic view height scales
     /// with the change in distance, so zooming frames the same way in both
     /// projections.
-    pub fn set_orbit(&mut self, center: impl Into<DVec3>, distance: f32, orientation: Quat) {
+    pub fn set_orbit(&mut self, centre: impl Into<DVec3>, distance: f32, orientation: Quat) {
         let previous = self.focus_distance();
         if let Projection::Orthographic { height, .. } = &mut self.projection {
             if previous > 0.0 && distance != previous {
                 *height *= distance / previous;
             }
         }
-        self.pose = Pose::orbit(center, distance, orientation);
+        self.pose = Pose::orbit(centre, distance, orientation);
         self.exposure.focus_distance = distance;
     }
 
-    /// Move the orbit centre to `center`, keeping the distance and
+    /// Move the orbit centre to `centre`, keeping the distance and
     /// orientation.
-    pub fn set_orbit_center(&mut self, center: impl Into<DVec3>) {
-        self.set_orbit(center, self.focus_distance(), self.orientation());
+    pub fn set_orbit_centre(&mut self, centre: impl Into<DVec3>) {
+        self.set_orbit(centre, self.focus_distance(), self.orientation());
     }
 
     /// Move the eye to `distance` from the orbit centre, keeping the centre
@@ -295,7 +296,7 @@ impl Camera {
 
     /// [`set_orbit`](Self::set_orbit) from a [`CameraTarget`].
     pub fn set_orbit_target(&mut self, target: CameraTarget) {
-        self.set_orbit(target.center, target.distance, target.orientation);
+        self.set_orbit(target.centre, target.distance, target.orientation);
     }
 
     // -----------------------------------------------------------------------
@@ -386,9 +387,9 @@ impl Camera {
         // Built looking from the eye at the focus point, both rounded to f32
         // from the f64 focus point, so an orbit camera's matrix depends only
         // on its centre, distance and orientation.
-        let center = self.target().as_vec3();
-        let eye = center + orientation * (Vec3::Z * distance);
-        Mat4::look_at_rh(eye, center, up)
+        let centre = self.target().as_vec3();
+        let eye = centre + orientation * (Vec3::Z * distance);
+        Mat4::look_at_rh(eye, centre, up)
     }
 
     /// The projection matrix the renderer draws with; see
@@ -460,8 +461,8 @@ impl Camera {
     // -----------------------------------------------------------------------
 
     /// Frame a bounding sphere, keeping the orientation.
-    pub fn frame_sphere(&mut self, center: impl Into<DVec3>, radius: f32) {
-        let (c, d) = self.fit_sphere(center, radius);
+    pub fn frame_sphere(&mut self, centre: impl Into<DVec3>, radius: f32) {
+        let (c, d) = self.fit_sphere(centre, radius);
         self.set_orbit(
             c,
             d.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE),
@@ -481,8 +482,8 @@ impl Camera {
 
     /// The [`CameraTarget`] that frames a bounding sphere, keeping the
     /// orientation.
-    pub fn fit_sphere_target(&self, center: impl Into<DVec3>, radius: f32) -> CameraTarget {
-        let (c, d) = self.fit_sphere(center, radius);
+    pub fn fit_sphere_target(&self, centre: impl Into<DVec3>, radius: f32) -> CameraTarget {
+        let (c, d) = self.fit_sphere(centre, radius);
         CameraTarget::new(c, d, self.orientation())
     }
 
@@ -492,29 +493,29 @@ impl Camera {
         CameraTarget::new(c, d, self.orientation())
     }
 
-    /// `(center, distance)` that frames a bounding sphere, keeping the
+    /// `(centre, distance)` that frames a bounding sphere, keeping the
     /// orientation. Pads by 1.2x so the object does not touch the edges.
-    pub fn fit_sphere(&self, center: impl Into<DVec3>, radius: f32) -> (DVec3, f32) {
+    pub fn fit_sphere(&self, centre: impl Into<DVec3>, radius: f32) -> (DVec3, f32) {
         let distance = if self.is_orthographic() {
             radius * 1.2
         } else {
             radius / (self.fov_y() / 2.0).tan() * 1.2
         };
-        (center.into(), distance)
+        (centre.into(), distance)
     }
 
-    /// `(center, distance)` that frames an AABB, through its bounding sphere.
+    /// `(centre, distance)` that frames an AABB, through its bounding sphere.
     pub fn fit_aabb(&self, aabb: &crate::scene::aabb::Aabb) -> (DVec3, f32) {
-        self.fit_sphere(aabb.center(), aabb.half_extents().length())
+        self.fit_sphere(aabb.centre(), aabb.half_extents().length())
     }
 
     /// Centre the camera on a domain of the given extents, with the distance
     /// and clipping planes set so all of it is visible.
-    pub fn center_on_domain(&mut self, nx: f32, ny: f32, nz: f32) {
-        let center = Vec3::new(nx, ny, nz).as_dvec3() / 2.0;
+    pub fn centre_on_domain(&mut self, nx: f32, ny: f32, nz: f32) {
+        let centre = Vec3::new(nx, ny, nz).as_dvec3() / 2.0;
         let diagonal = (nx * nx + ny * ny + nz * nz).sqrt();
         let distance = (diagonal / 2.0) / (self.fov_y() / 2.0).tan() * 1.2;
-        self.set_orbit(center, distance, self.orientation());
+        self.set_orbit(centre, distance, self.orientation());
         self.set_clip_planes((diagonal * 0.0001).max(0.01), (diagonal * 10.0).max(1000.0));
     }
 }

@@ -207,7 +207,7 @@ impl App {
         let mut out = Vec::new();
         let cx = vp_w * 0.5; // viewport centre X
 
-        // -- Title (centered at top) --
+        // -- Title (centred at top) --
         if self.lbl_state.show_hud_labels {
             out.push(
                 LabelItem::new("Gearbox Assembly: Exploded View")
@@ -223,7 +223,7 @@ impl App {
                     .with_z_order(200),
             );
 
-            // Legend (centered at bottom).
+            // Legend (centred at bottom).
             out.push(
                 LabelItem::new("Grey=Casing  Gold=Gears  Blue=Bearings  Yellow=Shafts")
                     .with_screen_anchor([cx, vp_h - 24.0])

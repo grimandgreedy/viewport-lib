@@ -86,7 +86,7 @@ fn clip_ray_box(
     t_near_in: f32,
     t_far_in: f32,
 ) -> vec2<f32> {
-    let d = ray_origin - e.center;
+    let d = ray_origin - e.centre;
     let local_origin = vec3<f32>(dot(d, e.col0), dot(d, e.col1), dot(d, e.col2));
     let local_dir = vec3<f32>(dot(ray_dir, e.col0), dot(ray_dir, e.col1), dot(ray_dir, e.col2));
     let he = e.half_extents;
@@ -122,7 +122,7 @@ fn clip_ray_sphere(
     t_near_in: f32,
     t_far_in: f32,
 ) -> vec2<f32> {
-    let oc = ray_origin - e.center;
+    let oc = ray_origin - e.centre;
     let b  = dot(oc, ray_dir);
     let c  = dot(oc, oc) - e.radius * e.radius;
     let discriminant = b * b - c;
@@ -144,7 +144,7 @@ fn clip_ray_cylinder(
 ) -> vec2<f32> {
     let axis     = e.col0;
     let half_len = e.half_extents.x;
-    let oc       = ray_origin - e.center;
+    let oc       = ray_origin - e.centre;
     let d_dot_a  = dot(ray_dir, axis);
     let oc_dot_a = dot(oc, axis);
     let d_perp   = ray_dir - axis * d_dot_a;

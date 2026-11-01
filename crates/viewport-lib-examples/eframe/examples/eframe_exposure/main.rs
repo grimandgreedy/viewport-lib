@@ -640,10 +640,10 @@ impl App {
                         .text("Meter high clip"),
                 );
                 ui.add(
-                    egui::Slider::new(&mut self.auto.center_weight, 0.0..=1.0)
-                        .text("Center weighting"),
+                    egui::Slider::new(&mut self.auto.centre_weight, 0.0..=1.0)
+                        .text("Centre weighting"),
                 );
-                ui.label("Metering holds the image steady while scene brightness moves. dt<=0 snaps; smoothing eases. Center weighting keeps exposure stable on zoom/pan (set 0 to meter the whole frame).");
+                ui.label("Metering holds the image steady while scene brightness moves. dt<=0 snaps; smoothing eases. Centre weighting keeps exposure stable on zoom/pan (set 0 to meter the whole frame).");
             }
         }
 

@@ -1845,7 +1845,7 @@ fn gpu_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
         max_speed: 4.5,
     };
     item.emitter.spawn_shape = SpawnShape::Sphere {
-        center: [0.0, 0.0, 0.0],
+        centre: [0.0, 0.0, 0.0],
         radius: 0.2,
     };
     item.emitter.colour = Colour::linear(1.0, 0.55, 0.15, 1.0);
@@ -1884,7 +1884,7 @@ fn gpu_mesh_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
         max_speed: 7.0,
     };
     item.emitter.spawn_shape = SpawnShape::Sphere {
-        center: [0.0, 0.0, 0.0],
+        centre: [0.0, 0.0, 0.0],
         radius: 0.3,
     };
     item.emitter.colour = Colour::linear(0.85, 0.7, 0.5, 1.0);
@@ -1897,7 +1897,7 @@ fn gpu_mesh_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
 /// Sprite items for the `Orientations` sub-mode.
 ///
 /// Each focus picks the scene that orientation is actually for:
-/// camera-facing for world-space labels over a centerpiece, velocity-stretched
+/// camera-facing for world-space labels over a centrepiece, velocity-stretched
 /// for falling rain, axis-locked for vertical grass on a ground plane.
 fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
     match app.sprite_state.orientation_focus {

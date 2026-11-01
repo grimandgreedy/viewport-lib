@@ -279,8 +279,8 @@ impl App {
             return;
         }
 
-        // Centers and radius matching blob_sdf.
-        const CENTERS: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
+        // Centres and radius matching blob_sdf.
+        const CENTRES: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
         const COLOURS: [[f32; 4]; 3] = [
             [0.75, 0.28, 0.05, 1.0], // red-orange
             [0.10, 0.26, 0.68, 1.0], // blue
@@ -293,9 +293,9 @@ impl App {
             prim.kind = 1; // sphere
             prim.blend = 0.9;
             // params[0..4] = (cx, cy, cz, radius)
-            prim.params[0] = CENTERS[i][0];
-            prim.params[1] = CENTERS[i][1];
-            prim.params[2] = CENTERS[i][2];
+            prim.params[0] = CENTRES[i][0];
+            prim.params[1] = CENTRES[i][1];
+            prim.params[2] = CENTRES[i][2];
             prim.params[3] = 1.3;
             prim.colour = Colour::from_linear_array(COLOURS[i]);
             primitives.push(prim);

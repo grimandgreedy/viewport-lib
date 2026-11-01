@@ -34,12 +34,12 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[b, next, t_next, b, t_next, t]);
     }
 
-    // Cap centers
-    let bottom_center = positions.len() as u32;
+    // Cap centres
+    let bottom_centre = positions.len() as u32;
     positions.push([0.0, 0.0, -half_h]);
     normals.push([0.0, 0.0, -1.0]);
 
-    let top_center = positions.len() as u32;
+    let top_centre = positions.len() as u32;
     positions.push([0.0, 0.0, half_h]);
     normals.push([0.0, 0.0, 1.0]);
 
@@ -62,9 +62,9 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
         // Bottom
-        indices.extend_from_slice(&[bottom_center, bottom_rim_start + next, bottom_rim_start + j]);
+        indices.extend_from_slice(&[bottom_centre, bottom_rim_start + next, bottom_rim_start + j]);
         // Top
-        indices.extend_from_slice(&[top_center, top_rim_start + j, top_rim_start + next]);
+        indices.extend_from_slice(&[top_centre, top_rim_start + j, top_rim_start + next]);
     }
 
     // UVs follow the same vertex order as the position build above.
@@ -76,8 +76,8 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     for j in 0..sectors {
         uvs.push([j as f32 / sectors as f32, 1.0]);
     }
-    uvs.push([0.5, 0.5]); // bottom center
-    uvs.push([0.5, 0.5]); // top center
+    uvs.push([0.5, 0.5]); // bottom centre
+    uvs.push([0.5, 0.5]); // top centre
     for j in 0..sectors {
         let a = j as f32 * step;
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
@@ -129,7 +129,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     }
 
     // Bottom cap
-    let bottom_center = positions.len() as u32;
+    let bottom_centre = positions.len() as u32;
     positions.push([0.0, 0.0, -half_h]);
     normals.push([0.0, 0.0, -1.0]);
 
@@ -141,7 +141,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[bottom_center, rim_start + next, rim_start + j]);
+        indices.extend_from_slice(&[bottom_centre, rim_start + next, rim_start + j]);
     }
 
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(4 * sectors as usize + 1);
@@ -154,7 +154,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         uvs.push([a0 / tau, 0.0]); // base left
         uvs.push([a1 / tau, 0.0]); // base right
     }
-    uvs.push([0.5, 0.5]); // bottom center
+    uvs.push([0.5, 0.5]); // bottom centre
     for j in 0..sectors {
         let a = j as f32 * step;
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
@@ -202,7 +202,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
 
     // Shaft bottom cap
-    let sb_center = positions.len() as u32;
+    let sb_centre = positions.len() as u32;
     positions.push([0.0, 0.0, shaft_bot]);
     normals.push([0.0, 0.0, -1.0]);
     let sb_rim = positions.len() as u32;
@@ -213,7 +213,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[sb_center, sb_rim + next, sb_rim + j]);
+        indices.extend_from_slice(&[sb_centre, sb_rim + next, sb_rim + j]);
     }
 
     // Cone head side (one duplicated tip per sector)
@@ -239,7 +239,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
 
     // Cone base cap
-    let hb_center = positions.len() as u32;
+    let hb_centre = positions.len() as u32;
     positions.push([0.0, 0.0, head_bot]);
     normals.push([0.0, 0.0, -1.0]);
     let hb_rim = positions.len() as u32;
@@ -250,7 +250,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[hb_center, hb_rim + next, hb_rim + j]);
+        indices.extend_from_slice(&[hb_centre, hb_rim + next, hb_rim + j]);
     }
 
     // V is proportional to Z: shaft_bot -> 0, head_top -> 1.
@@ -263,7 +263,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     for j in 0..sectors {
         uvs.push([j as f32 / sectors as f32, v_shaft_top]);
     }
-    uvs.push([0.5, 0.5]); // sb_center
+    uvs.push([0.5, 0.5]); // sb_centre
     for j in 0..sectors {
         let a = j as f32 * step;
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
@@ -276,7 +276,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         uvs.push([a0 / tau, v_shaft_top]);
         uvs.push([a1 / tau, v_shaft_top]);
     }
-    uvs.push([0.5, 0.5]); // hb_center
+    uvs.push([0.5, 0.5]); // hb_centre
     for j in 0..sectors {
         let a = j as f32 * step;
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);

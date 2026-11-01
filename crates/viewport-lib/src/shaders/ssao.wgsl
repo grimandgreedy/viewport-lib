@@ -3,7 +3,7 @@
 // and estimates per-pixel ambient occlusion.
 //
 // Point cloud fallback: point cloud billboards render all pixels with the same
-// depth (constant clip-space Z from the billboard center). The hemisphere kernel
+// depth (constant clip-space Z from the billboard centre). The hemisphere kernel
 // produces unreliable results for these fragments because samples land on
 // background or distant other billboards. When the 8-neighbor depth neighborhood
 // shows a constant-depth region (billboard interior), a depth-cavity test is used
@@ -73,7 +73,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Detect point cloud billboard pixels: sample 8 immediate neighbors and
-    // count how many have the same depth as the center within a tight tolerance.
+    // count how many have the same depth as the centre within a tight tolerance.
     // Billboard quads render all pixels at the same clip-space Z, so interior
     // pixels have exactly equal depth. Mesh surfaces have smoothly varying depth.
     let depth_eps = 0.000005;
@@ -104,7 +104,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // standard NDC depth).  We only need relative comparison so use a simple proxy:
         // shallower depth value (smaller number) = closer to camera.
         //
-        // Sample 8 neighbors at a wider radius (~3 px). If the center is notably
+        // Sample 8 neighbors at a wider radius (~3 px). If the centre is notably
         // deeper (further) than most of its neighbors, it sits in a cavity between
         // point clusters and should be darkened.
         let ring = 3;
@@ -116,14 +116,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let nd = depth_texel(depth_tex, depth_samp, np);
             if !viewport_depth_is_background(nd) {
                 valid_count = valid_count + 1.0;
-                // Smaller depth value = closer; if neighbor is shallower than center
-                // by more than threshold, the center is in a cavity.
+                // Smaller depth value = closer; if neighbor is shallower than centre
+                // by more than threshold, the centre is in a cavity.
                 if nd < depth - cavity_thresh {
                     closer_count = closer_count + 1.0;
                 }
             }
         }
-        // Fraction of neighbors that are shallower (center is deeper = in cavity).
+        // Fraction of neighbors that are shallower (centre is deeper = in cavity).
         let cavity_ratio = select(0.0, closer_count / valid_count, valid_count > 0.0);
         let ao = 1.0 - cavity_ratio;
         return vec4<f32>(ao, ao, ao, 1.0);

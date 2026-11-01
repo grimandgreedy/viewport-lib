@@ -46,12 +46,12 @@ impl ClipSpan {
                     half_space(origin, direction, glam::Vec3::from(normal), distance)
                 }
                 ClipShape::Box {
-                    center,
+                    centre,
                     half_extents,
                     orientation,
                 } if volumes < CLIP_VOLUME_MAX => {
                     volumes += 1;
-                    let d = (origin.as_dvec3() - center).as_vec3();
+                    let d = (origin.as_dvec3() - centre).as_vec3();
                     let axes = orientation.map(glam::Vec3::from);
                     let mut s = ClipSpan::FREE;
                     for (axis, half) in axes.into_iter().zip(half_extents) {
@@ -59,9 +59,9 @@ impl ClipSpan {
                     }
                     Some(s)
                 }
-                ClipShape::Sphere { center, radius } if volumes < CLIP_VOLUME_MAX => {
+                ClipShape::Sphere { centre, radius } if volumes < CLIP_VOLUME_MAX => {
                     volumes += 1;
-                    let d = (origin.as_dvec3() - center).as_vec3();
+                    let d = (origin.as_dvec3() - centre).as_vec3();
                     quadratic(
                         direction.dot(direction),
                         2.0 * d.dot(direction),
@@ -69,14 +69,14 @@ impl ClipSpan {
                     )
                 }
                 ClipShape::Cylinder {
-                    center,
+                    centre,
                     axis,
                     radius,
                     half_length,
                 } if volumes < CLIP_VOLUME_MAX => {
                     volumes += 1;
                     let a = glam::Vec3::from(axis);
-                    let d = (origin.as_dvec3() - center).as_vec3();
+                    let d = (origin.as_dvec3() - centre).as_vec3();
                     let along = slab(d, direction, a, half_length)?;
                     // The distance from the axis, squared, as a quadratic in t.
                     let dr = d - a * d.dot(a);
@@ -239,7 +239,7 @@ mod tests {
         assert!(close(s.start, 8.0) && close(s.end, 12.0), "{s:?}");
         let cylinder = ClipObject {
             shape: ClipShape::Cylinder {
-                center: [0.0, 0.0, 0.0].into(),
+                centre: [0.0, 0.0, 0.0].into(),
                 axis: [0.0, 0.0, 1.0],
                 radius: 1.0,
                 half_length: 3.0,

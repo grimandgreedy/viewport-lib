@@ -18,10 +18,11 @@ pub struct CameraV0 {
     /// Perspective or orthographic.
     pub projection: ProjectionV0,
     /// Orbit centre in world space.
-    pub center: DVec3,
+    #[serde(rename = "center")]
+    pub centre: DVec3,
     /// Distance from the centre to the eye.
     pub distance: f32,
-    /// Camera orientation: `eye = center + orientation * (Z * distance)`.
+    /// Camera orientation: `eye = centre + orientation * (Z * distance)`.
     pub orientation: Quat,
     /// Vertical field of view in radians. An orthographic camera framed the
     /// height this angle covers at `distance`.
@@ -58,7 +59,7 @@ impl From<CameraV0> for Camera {
             ProjectionV0::Perspective => perspective,
             ProjectionV0::Orthographic => perspective.to_orthographic(v0.distance),
         };
-        Camera::orbit(v0.center, v0.distance, v0.orientation)
+        Camera::orbit(v0.centre, v0.distance, v0.orientation)
             .with_projection(projection)
             .with_aspect(v0.aspect)
     }
@@ -78,7 +79,8 @@ struct AnyCamera {
     exposure: Option<PhysicalExposure>,
     projection: Option<AnyProjection>,
     aspect: Option<f32>,
-    center: Option<DVec3>,
+    #[serde(rename = "center")]
+    centre: Option<DVec3>,
     distance: Option<f32>,
     orientation: Option<Quat>,
     fov_y: Option<f32>,
@@ -113,7 +115,7 @@ impl<'de> Deserialize<'de> for Camera {
             return Ok(camera);
         }
 
-        if any.center.is_none() && any.distance.is_none() && any.orientation.is_none() {
+        if any.centre.is_none() && any.distance.is_none() && any.orientation.is_none() {
             return Err(required("pose"));
         }
         let projection = match any.projection {
@@ -128,7 +130,7 @@ impl<'de> Deserialize<'de> for Camera {
         };
         Ok(Camera::from(CameraV0 {
             projection,
-            center: any.center.ok_or_else(|| required("center"))?,
+            centre: any.centre.ok_or_else(|| required("center"))?,
             distance: any.distance.ok_or_else(|| required("distance"))?,
             orientation: any.orientation.ok_or_else(|| required("orientation"))?,
             fov_y: any.fov_y.ok_or_else(|| required("fov_y"))?,
@@ -159,12 +161,12 @@ mod tests {
     fn orbit_form_loads_to_the_same_eye_and_orientation() {
         let camera: Camera = serde_json::from_str(ORBIT_FORM).unwrap();
         let q = Quat::from_xyzw(0.3, 0.1, 0.2, 0.927);
-        let center = DVec3::new(1.5, -2.0, 0.25);
-        // The orbit form placed the eye at center + orientation * (Z * distance).
-        let eye = center + (q * (glam::Vec3::Z * 12.0)).as_dvec3();
+        let centre = DVec3::new(1.5, -2.0, 0.25);
+        // The orbit form placed the eye at centre + orientation * (Z * distance).
+        let eye = centre + (q * (glam::Vec3::Z * 12.0)).as_dvec3();
         assert_eq!(camera.eye(), eye);
         assert_eq!(camera.orientation(), q);
-        assert_eq!(camera.target(), center);
+        assert_eq!(camera.target(), centre);
         assert_eq!(camera.focus_distance(), 12.0);
         assert_eq!(camera.aspect, 1.6);
         assert_eq!(camera.projection, Projection::perspective(0.9));

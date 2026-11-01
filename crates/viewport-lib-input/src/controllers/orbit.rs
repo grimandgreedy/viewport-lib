@@ -369,7 +369,7 @@ impl OrbitCameraController {
                     self.fly_speed
                 };
                 // Translate the centre (and so the eye) without turning or zooming.
-                t.center += (wish * speed * dt).as_dvec3();
+                t.centre += (wish * speed * dt).as_dvec3();
             }
 
             // NavigationMode is non_exhaustive; no-op for modes not handled here.
@@ -462,7 +462,7 @@ fn apply_fly_look(view: &mut CameraTarget, yaw: f32, pitch: f32) {
         .turned(yaw, -pitch)
         .with_pitch_clamped(-POLE_LIMIT, POLE_LIMIT);
     view.orientation = look.orientation();
-    view.center = eye + (look.direction() * view.distance).as_dvec3();
+    view.centre = eye + (look.direction() * view.distance).as_dvec3();
 }
 
 #[cfg(test)]
@@ -631,7 +631,7 @@ mod tests {
         ctrl.fly_speed = 60.0;
         ctrl.begin_frame(make_ctx());
         let mut cam = camera_facing(glam::Quat::IDENTITY);
-        let center_before = cam.target();
+        let centre_before = cam.target();
         ctrl.push_event(ViewportEvent::Key {
             key: KeyCode::W,
             state: ButtonState::Pressed,
@@ -640,8 +640,8 @@ mod tests {
         });
         ctrl.apply_to_camera(&mut cam);
         assert!(
-            (cam.target() - center_before).length() > 0.5,
-            "FlyForward should move camera center"
+            (cam.target() - centre_before).length() > 0.5,
+            "FlyForward should move camera centre"
         );
     }
 
@@ -670,7 +670,7 @@ mod tests {
         let mut frame = ActionFrame::default();
         frame.navigation.orbit = glam::Vec2::new(10.0, 0.0);
         ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
-        assert_eq!(ctrl.target().unwrap().center, DVec3::ZERO);
+        assert_eq!(ctrl.target().unwrap().centre, DVec3::ZERO);
 
         // A preset or fly-to moves the camera; the next drag orbits about the
         // new focus point at the new distance.
@@ -679,7 +679,7 @@ mod tests {
         ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
         assert!((cam.target() - centre).length() < 1e-4);
         assert_eq!(cam.focus_distance(), 4.0);
-        assert_eq!(ctrl.target().unwrap().center, centre);
+        assert_eq!(ctrl.target().unwrap().centre, centre);
     }
 
     #[test]

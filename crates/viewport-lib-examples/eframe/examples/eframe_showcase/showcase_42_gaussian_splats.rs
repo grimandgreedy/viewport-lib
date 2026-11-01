@@ -227,7 +227,7 @@ fn generate_tgv() -> GaussianSplatData {
                     max_mag = mag;
                 }
 
-                // Shift to center at origin for display.
+                // Shift to centre at origin for display.
                 pts.push(([x - PI, y - PI, z - PI], [ox, oy, oz]));
             }
         }

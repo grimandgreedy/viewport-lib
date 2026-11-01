@@ -155,7 +155,7 @@ pub enum ClipPlaneHit {
 pub fn hit_test_plane_quad(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
-    plane_center: glam::Vec3,
+    plane_centre: glam::Vec3,
     plane_normal: glam::Vec3,
     extent: f32,
 ) -> ClipPlaneHit {
@@ -163,12 +163,12 @@ pub fn hit_test_plane_quad(
     if denom.abs() < 1e-6 {
         return ClipPlaneHit::None;
     }
-    let t = plane_normal.dot(plane_center - ray_origin) / denom;
+    let t = plane_normal.dot(plane_centre - ray_origin) / denom;
     if t < 0.0 {
         return ClipPlaneHit::None;
     }
     let hit_point = ray_origin + ray_dir * t;
-    let local = hit_point - plane_center;
+    let local = hit_point - plane_centre;
     let (t1, t2) = plane_tangents(plane_normal);
     let u = local.dot(t1);
     let v = local.dot(t2);
@@ -181,19 +181,19 @@ pub fn hit_test_plane_quad(
 
 /// Test whether a ray hits the normal-axis indicator handle (a thin cylinder).
 ///
-/// The cylinder runs from `plane_center` to `plane_center + plane_normal * handle_length`
+/// The cylinder runs from `plane_centre` to `plane_centre + plane_normal * handle_length`
 /// with the given radius.
 pub fn hit_test_normal_handle(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
-    plane_center: glam::Vec3,
+    plane_centre: glam::Vec3,
     plane_normal: glam::Vec3,
     handle_length: f32,
     handle_radius: f32,
 ) -> ClipPlaneHit {
     // Decompose the ray into components parallel and perpendicular to the cylinder axis.
     let d = ray_dir - plane_normal * ray_dir.dot(plane_normal);
-    let offset = ray_origin - plane_center;
+    let offset = ray_origin - plane_centre;
     let e = offset - plane_normal * offset.dot(plane_normal);
 
     let a = d.dot(d);
@@ -223,7 +223,7 @@ pub fn hit_test_normal_handle(
 
     // Verify the hit point lies within the finite cylinder length.
     let hit_point = ray_origin + ray_dir * t;
-    let h = (hit_point - plane_center).dot(plane_normal);
+    let h = (hit_point - plane_centre).dot(plane_normal);
     if h >= 0.0 && h <= handle_length {
         ClipPlaneHit::NormalHandle { t }
     } else {
@@ -410,7 +410,7 @@ impl ClipPlaneController {
                 return ClipPlaneResult::None;
             };
             let plane_normal = glam::Vec3::from(plane_normal_arr);
-            let plane_center = (plane_normal.as_dvec3() * plane_dist).as_vec3();
+            let plane_centre = (plane_normal.as_dvec3() * plane_dist).as_vec3();
             let handle_length = ctx.plane_extent * 0.4;
             let handle_radius = ctx.plane_extent * 0.04;
 
@@ -419,7 +419,7 @@ impl ClipPlaneController {
                 let nh = hit_test_normal_handle(
                     ray_origin,
                     ray_dir,
-                    plane_center,
+                    plane_centre,
                     plane_normal,
                     handle_length,
                     handle_radius,
@@ -430,7 +430,7 @@ impl ClipPlaneController {
                     hit_test_plane_quad(
                         ray_origin,
                         ray_dir,
-                        plane_center,
+                        plane_centre,
                         plane_normal,
                         ctx.plane_extent,
                     )
@@ -625,7 +625,7 @@ mod tests {
     // --- Hit-test tests ---
 
     #[test]
-    fn hit_test_quad_center_hit() {
+    fn hit_test_quad_centre_hit() {
         let result = hit_test_plane_quad(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),

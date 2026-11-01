@@ -149,11 +149,11 @@ mod tests {
         );
 
         // At midpoint in all axes.
-        let center = trilinear_sample(&vol, [0.5, 0.5, 0.5]);
+        let centre = trilinear_sample(&vol, [0.5, 0.5, 0.5]);
         assert!(
-            (center - 0.5).abs() < 0.01,
-            "Expected 0.5 at center, got {}",
-            center
+            (centre - 0.5).abs() < 0.01,
+            "Expected 0.5 at centre, got {}",
+            centre
         );
     }
 }

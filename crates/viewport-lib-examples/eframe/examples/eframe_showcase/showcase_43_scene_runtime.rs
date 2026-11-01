@@ -2,7 +2,7 @@
 //!
 //! Two demos showing the ViewportRuntime layer.
 //!
-//! Orbit: five bodies orbit a common center driven by an external RuntimePlugin
+//! Orbit: five bodies orbit a common centre driven by an external RuntimePlugin
 //! that writes transforms via TransformWriteback. All other phases are empty.
 //!
 //! Simulation: five spheres fall and bounce under gravity (PhysicsLitePlugin);
@@ -357,7 +357,7 @@ fn step_simulation(app: &mut App, dt: f32) {
             .read::<vpl::runtime::CameraFollowTarget>()
             .next()
         {
-            app.camera.set_orbit_center(target.0.as_dvec3());
+            app.camera.set_orbit_centre(target.0.as_dvec3());
         }
     }
 }
@@ -438,7 +438,7 @@ pub(crate) fn controls_rt_demo(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn controls_orbit(app: &mut App, ui: &mut egui::Ui) {
-    ui.label("Five bodies orbit a common center, driven by an external RuntimePlugin.");
+    ui.label("Five bodies orbit a common centre, driven by an external RuntimePlugin.");
     ui.add_space(6.0);
 
     ui.label("Simulation fps:");
@@ -577,7 +577,7 @@ fn controls_simulation(app: &mut App, ui: &mut egui::Ui) {
     ui.label("What this shows:");
     ui.label("- PhysicsLitePlugin: gravity, velocity integration, bounded reflection.");
     ui.label("- AnimationPlugin: keyframed looping path.");
-    ui.label("- CameraFollow: orbit camera center tracks a physics body.");
+    ui.label("- CameraFollow: orbit camera centre tracks a physics body.");
     ui.label("- FixedTimestep + interpolation: smooth rendering at any display fps.");
 }
 

@@ -10,9 +10,9 @@
 #[non_exhaustive]
 pub enum Action {
     // -- Viewport navigation --
-    /// Rotate the camera around the orbit center (arcball).
+    /// Rotate the camera around the orbit centre (arcball).
     Orbit,
-    /// Translate the orbit center in the camera plane.
+    /// Translate the orbit centre in the camera plane.
     Pan,
     /// Zoom in/out by adjusting camera distance.
     Zoom,

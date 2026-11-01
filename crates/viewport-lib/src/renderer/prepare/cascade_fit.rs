@@ -100,7 +100,7 @@ impl ViewportRenderer {
         // The single map a camera with no view matrix gets: the override
         // around the origin, or the casters' light-space half-extent around
         // their centre.
-        let (shadow_center, shadow_extent) = match (
+        let (shadow_centre, shadow_extent) = match (
             lighting.shadows.extent_override,
             light.csm_direction,
             bounds.casters,
@@ -146,7 +146,7 @@ impl ViewportRenderer {
                 }
             } else {
                 cascade_view_projs[0] =
-                    compute_shadow_matrix(light_dir, shadow_center, shadow_extent);
+                    compute_shadow_matrix(light_dir, shadow_centre, shadow_extent);
                 cascade_split_distances[0] = camera_far;
             }
         }
@@ -295,11 +295,11 @@ fn pcss_max_radius_world(cascade0_view_proj: glam::Mat4, tile_size: f32) -> f32 
 }
 
 /// A single orthographic shadow map for a directional light, covering
-/// `shadow_extent` around `shadow_center`. Used in place of the cascades when
+/// `shadow_extent` around `shadow_centre`. Used in place of the cascades when
 /// the camera has no view matrix to fit them to.
 fn compute_shadow_matrix(
     direction: glam::Vec3,
-    shadow_center: glam::Vec3,
+    shadow_centre: glam::Vec3,
     shadow_extent: f32,
 ) -> glam::Mat4 {
     let dir = direction.normalize();
@@ -308,8 +308,8 @@ fn compute_shadow_matrix(
     } else {
         glam::Vec3::Z
     };
-    let light_pos = shadow_center + dir * shadow_extent * 2.0;
-    let light_view = glam::Mat4::look_at_rh(light_pos, shadow_center, light_up);
+    let light_pos = shadow_centre + dir * shadow_extent * 2.0;
+    let light_view = glam::Mat4::look_at_rh(light_pos, shadow_centre, light_up);
     let light_proj = glam::Mat4::orthographic_rh(
         -shadow_extent,
         shadow_extent,

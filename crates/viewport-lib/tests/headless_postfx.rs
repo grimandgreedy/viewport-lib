@@ -78,7 +78,7 @@ fn transparent_over_empty_background_not_darker() {
         let i = ((y * size + x) * 4) as usize;
         px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
     };
-    let center = luma(size / 2, size / 2);
+    let centre = luma(size / 2, size / 2);
     let corner = luma(1, 1);
 
     // Corner must be the pure grey background (guards against the quad covering
@@ -89,8 +89,8 @@ fn transparent_over_empty_background_not_darker() {
     );
     // Centre (transparent quad over background) must not be darker than it.
     assert!(
-        center >= corner,
-        "transparent quad centre {center} darker than background {corner}"
+        centre >= corner,
+        "transparent quad centre {centre} darker than background {corner}"
     );
 }
 

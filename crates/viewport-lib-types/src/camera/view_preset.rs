@@ -53,7 +53,7 @@ impl ViewPreset {
 
     /// Target camera orientation quaternion.
     ///
-    /// Convention: eye = center + orientation * Vec3::Z * distance.
+    /// Convention: eye = centre + orientation * Vec3::Z * distance.
     /// Identity = looking down from +Z (top view in Z-up world).
     pub fn orientation(self) -> glam::Quat {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};

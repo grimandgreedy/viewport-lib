@@ -93,7 +93,7 @@ struct Lights {
 const AO_FLAG_MULTI_BOUNCE: u32 = 1u;
 const AO_FLAG_MICRO_SHADOW: u32 = 2u;
 
-// One environment-selection zone: a world-space box (center + half_extents) that
+// One environment-selection zone: a world-space box (centre + half_extents) that
 // selects array layer `layer`, with `fade` the outer falloff band. `parallax`
 // is 1 for a local reflection probe (box-project the reflection against this box)
 // and 0 for a distant environment. `rotation` (radians about +Z) and `intensity`
@@ -105,7 +105,7 @@ const AO_FLAG_MICRO_SHADOW: u32 = 2u;
 // round the struct up to 64 and break the array stride against the 48-byte
 // Rust upload.
 struct EnvZone {
-    center:       vec3<f32>,   // offset 0
+    centre:       vec3<f32>,   // offset 0
     layer:        u32,         // offset 12
     half_extents: vec3<f32>,   // offset 16
     fade:         f32,         // offset 28

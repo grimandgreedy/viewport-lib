@@ -54,16 +54,16 @@ pub(crate) enum ActiveClip {
         distance: f32,
     },
     Box {
-        center: [f32; 3],
+        centre: [f32; 3],
         half_extents: [f32; 3],
         yaw: f32,
     },
     Sphere {
-        center: [f32; 3],
+        centre: [f32; 3],
         radius: f32,
     },
     Cylinder {
-        center: [f32; 3],
+        centre: [f32; 3],
         axis_yaw: f32,
         axis_pitch: f32,
         radius: f32,
@@ -107,7 +107,7 @@ pub(crate) struct ClipVolState {
     pub show_overlay: bool,
     /// Gizmo retained for main.rs compatibility (not used for clip editing).
     pub gizmo: Gizmo,
-    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_centre: Option<glam::Vec3>,
     pub gizmo_scale: f32,
     pub gizmo_drag_active: bool,
 }
@@ -129,7 +129,7 @@ impl Default for ClipVolState {
             }],
             show_overlay: true,
             gizmo: Gizmo::new(),
-            gizmo_center: None,
+            gizmo_centre: None,
             gizmo_scale: 1.0,
             gizmo_drag_active: false,
         }
@@ -283,20 +283,20 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
         }
         if ui.button("+ Box").clicked() {
             s.clips.push(ActiveClip::Box {
-                center: [0.0; 3],
+                centre: [0.0; 3],
                 half_extents: [2.5, 2.5, 2.5],
                 yaw: 0.0,
             });
         }
         if ui.button("+ Sphere").clicked() {
             s.clips.push(ActiveClip::Sphere {
-                center: [0.0; 3],
+                centre: [0.0; 3],
                 radius: 2.8,
             });
         }
         if ui.button("+ Cylinder").clicked() {
             s.clips.push(ActiveClip::Cylinder {
-                center: [0.0; 3],
+                centre: [0.0; 3],
                 axis_yaw: 0.0,
                 axis_pitch: 0.0,
                 radius: 1.5,
@@ -333,23 +333,23 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
                 controls_plane(ui, elevation, azimuth, distance);
             }
             ActiveClip::Box {
-                center,
+                centre,
                 half_extents,
                 yaw,
             } => {
-                controls_box(ui, center, half_extents, yaw);
+                controls_box(ui, centre, half_extents, yaw);
             }
-            ActiveClip::Sphere { center, radius } => {
-                controls_sphere(ui, center, radius);
+            ActiveClip::Sphere { centre, radius } => {
+                controls_sphere(ui, centre, radius);
             }
             ActiveClip::Cylinder {
-                center,
+                centre,
                 axis_yaw,
                 axis_pitch,
                 radius,
                 half_length,
             } => {
-                controls_cylinder(ui, center, axis_yaw, axis_pitch, radius, half_length);
+                controls_cylinder(ui, centre, axis_yaw, axis_pitch, radius, half_length);
             }
         }
     }
@@ -415,18 +415,18 @@ fn controls_plane(ui: &mut egui::Ui, elevation: &mut f32, azimuth: &mut f32, dis
 
 fn controls_box(
     ui: &mut egui::Ui,
-    center: &mut [f32; 3],
+    centre: &mut [f32; 3],
     half_extents: &mut [f32; 3],
     yaw: &mut f32,
 ) {
-    ui.label("Center:");
+    ui.label("Centre:");
     ui.horizontal(|ui| {
         ui.label("X:");
-        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[0]).speed(0.05));
         ui.label("Y:");
-        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[1]).speed(0.05));
         ui.label("Z:");
-        ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[2]).speed(0.05));
     });
     ui.label("Half-extents:");
     ui.horizontal(|ui| {
@@ -453,15 +453,15 @@ fn controls_box(
     ui.add(egui::Slider::new(yaw, -180.0..=180.0).suffix(" deg"));
 }
 
-fn controls_sphere(ui: &mut egui::Ui, center: &mut [f32; 3], radius: &mut f32) {
-    ui.label("Center:");
+fn controls_sphere(ui: &mut egui::Ui, centre: &mut [f32; 3], radius: &mut f32) {
+    ui.label("Centre:");
     ui.horizontal(|ui| {
         ui.label("X:");
-        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[0]).speed(0.05));
         ui.label("Y:");
-        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[1]).speed(0.05));
         ui.label("Z:");
-        ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[2]).speed(0.05));
     });
     ui.label("Radius:");
     ui.add(egui::Slider::new(radius, 0.5..=8.0).step_by(0.1));
@@ -469,20 +469,20 @@ fn controls_sphere(ui: &mut egui::Ui, center: &mut [f32; 3], radius: &mut f32) {
 
 fn controls_cylinder(
     ui: &mut egui::Ui,
-    center: &mut [f32; 3],
+    centre: &mut [f32; 3],
     axis_yaw: &mut f32,
     axis_pitch: &mut f32,
     radius: &mut f32,
     half_length: &mut f32,
 ) {
-    ui.label("Center:");
+    ui.label("Centre:");
     ui.horizontal(|ui| {
         ui.label("X:");
-        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[0]).speed(0.05));
         ui.label("Y:");
-        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[1]).speed(0.05));
         ui.label("Z:");
-        ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
+        ui.add(egui::DragValue::new(&mut centre[2]).speed(0.05));
     });
     ui.label("Axis (yaw / pitch):");
     ui.horizontal(|ui| {
@@ -536,18 +536,18 @@ impl App {
                     ClipObject::plane(normal, *distance)
                 }
                 ActiveClip::Box {
-                    center,
+                    centre,
                     half_extents,
                     yaw,
                 } => {
                     let yaw_rad = yaw.to_radians();
                     let (sin_y, cos_y) = yaw_rad.sin_cos();
                     let orient = [[cos_y, sin_y, 0.0], [-sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]];
-                    ClipObject::box_shape(*center, *half_extents, orient)
+                    ClipObject::box_shape(*centre, *half_extents, orient)
                 }
-                ActiveClip::Sphere { center, radius } => ClipObject::sphere(*center, *radius),
+                ActiveClip::Sphere { centre, radius } => ClipObject::sphere(*centre, *radius),
                 ActiveClip::Cylinder {
-                    center,
+                    centre,
                     axis_yaw,
                     axis_pitch,
                     radius,
@@ -556,7 +556,7 @@ impl App {
                     let (sy, cy) = axis_yaw.to_radians().sin_cos();
                     let (sp, cp) = axis_pitch.to_radians().sin_cos();
                     let axis = [cp * cy, cp * sy, sp];
-                    ClipObject::cylinder(*center, axis, *radius, *half_length)
+                    ClipObject::cylinder(*centre, axis, *radius, *half_length)
                 }
             })
             .collect()
@@ -578,11 +578,11 @@ impl App {
                 normal, distance, ..
             } = co.shape
             {
-                let center = (glam::Vec3::from(normal).normalize_or_zero().as_dvec3() * -distance)
+                let centre = (glam::Vec3::from(normal).normalize_or_zero().as_dvec3() * -distance)
                     .as_vec3()
                     .to_array();
                 let model =
-                    vpl::clip_plane::visual::plane_fill_transform(center, normal, PLANE_EXTENT);
+                    vpl::clip_plane::visual::plane_fill_transform(centre, normal, PLANE_EXTENT);
                 let mut settings = ItemSettings::default();
                 settings.unlit = true;
                 settings.opacity = 0.15;
@@ -775,14 +775,14 @@ pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
     if app.clipvol_state.tab == ClipsCutsTab::Cuts {
-        app.clipvol_state.gizmo_center = None;
+        app.clipvol_state.gizmo_centre = None;
         return;
     }
     if app.clipvol_state.built {
-        app.clipvol_state.gizmo_center = app.clip_gizmo_center();
-        if let Some(center) = app.clipvol_state.gizmo_center {
+        app.clipvol_state.gizmo_centre = app.clip_gizmo_centre();
+        if let Some(centre) = app.clipvol_state.gizmo_centre {
             app.clipvol_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
-                center,
+                centre,
                 app.camera.eye().as_vec3(),
                 app.camera.fov_y(),
                 cx.rect.height(),

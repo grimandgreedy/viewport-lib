@@ -67,7 +67,7 @@ fn expand_point(p: PointInputs, vertex_index: u32) -> VertexOut {
     var out: VertexOut;
 
     let world_pos = (pc_uniform.model * vec4<f32>(p.position, 1.0)).xyz;
-    let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
     // Expand to a screen-space quad. corner is in [-1,1]^2, mapped to pixels via
     // half_size. The NDC offset is scaled by w so the division in the rasteriser
@@ -78,10 +78,10 @@ fn expand_point(p: PointInputs, vertex_index: u32) -> VertexOut {
     let ndc_offset  = corner * half_size
                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
     out.clip_pos  = vec4<f32>(
-        center.x + ndc_offset.x * center.w,
-        center.y + ndc_offset.y * center.w,
-        center.z,
-        center.w,
+        centre.x + ndc_offset.x * centre.w,
+        centre.y + ndc_offset.y * centre.w,
+        centre.z,
+        centre.w,
     );
     out.world_pos = world_pos;
     out.uv        = corner;

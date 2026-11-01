@@ -34,7 +34,7 @@ pub fn generate_edge_indices(triangle_indices: &[u32]) -> Vec<u32> {
 // Procedural unit cube mesh (24 vertices, 4 per face, 36 indices)
 // ---------------------------------------------------------------------------
 
-/// Generate a unit cube centered at the origin.
+/// Generate a unit cube centred at the origin.
 ///
 /// 24 vertices (4 per face with shared normals), 36 indices (2 triangles per face).
 /// All vertices are white [1,1,1,1].

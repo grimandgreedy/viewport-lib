@@ -962,7 +962,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
 /// APV: an object marked `IndirectLightSource::ProbeVolume` takes its indirect
 /// diffuse from the uploaded volume, sampled per fragment. A volume bright on one
 /// X side must light that side of a large object; flipping which side is bright
-/// must move the bright region. A per-object (center-sampled) path would render
+/// must move the bright region. A per-object (centre-sampled) path would render
 /// both the same, so the two images differing proves the lookup is per-fragment.
 #[test]
 fn probe_volume_lights_object_per_fragment() {
@@ -1033,7 +1033,7 @@ fn probe_volume_lights_object_per_fragment() {
     );
 
     // Flipping the bright side must change the image: sum the per-pixel red
-    // difference. A center-sampled (per-object) path would leave the two
+    // difference. A centre-sampled (per-object) path would leave the two
     // identical.
     let red_diff: u64 = a
         .chunks_exact(4)

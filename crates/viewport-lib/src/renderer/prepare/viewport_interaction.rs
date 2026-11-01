@@ -869,19 +869,19 @@ pub(super) fn clip_uniforms(
         let idx = clip_vols_uniform.count as usize;
         let entry = match obj.shape {
             ClipShape::Box {
-                center,
+                centre,
                 half_extents,
                 orientation,
-            } => ClipVolumeEntry::from_box(rel(center), half_extents, orientation),
-            ClipShape::Sphere { center, radius } => {
-                ClipVolumeEntry::from_sphere(rel(center), radius)
+            } => ClipVolumeEntry::from_box(rel(centre), half_extents, orientation),
+            ClipShape::Sphere { centre, radius } => {
+                ClipVolumeEntry::from_sphere(rel(centre), radius)
             }
             ClipShape::Cylinder {
-                center,
+                centre,
                 axis,
                 radius,
                 half_length,
-            } => ClipVolumeEntry::from_cylinder(rel(center), axis, radius, half_length),
+            } => ClipVolumeEntry::from_cylinder(rel(centre), axis, radius, half_length),
             _ => continue,
         };
         clip_vols_uniform.volumes[idx] = entry;

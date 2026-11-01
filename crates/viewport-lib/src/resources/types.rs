@@ -469,8 +469,8 @@ pub const CLIP_VOLUME_MAX: usize = 4;
 ///
 /// `volume_type` selects the active shape:
 /// - 0 = None (slot unused)
-/// - 2 = Box (oriented AABB : center, half-extents, three orientation columns)
-/// - 3 = Sphere (center + radius packed into `center` and `radius`)
+/// - 2 = Box (oriented AABB : centre, half-extents, three orientation columns)
+/// - 3 = Sphere (centre + radius packed into `centre` and `radius`)
 ///
 /// Layout mirrors the WGSL `ClipVolumeEntry` struct in each geometry shader.
 #[repr(C)]
@@ -480,8 +480,8 @@ pub struct ClipVolumeEntry {
     pub volume_type: u32,
     #[doc(hidden)]
     pub _pad: [u32; 3],
-    /// Box center (world space) or sphere center. Occupies the xyz components.
-    pub center: [f32; 3],
+    /// Box centre (world space) or sphere centre. Occupies the xyz components.
+    pub centre: [f32; 3],
     /// Sphere radius. Unused for boxes.
     pub radius: f32,
     /// Box half-extents. Unused for spheres.
@@ -504,12 +504,12 @@ pub struct ClipVolumeEntry {
 // 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
 
 impl ClipVolumeEntry {
-    /// Build a box entry from center, half-extents, and orientation columns.
-    pub fn from_box(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
+    /// Build a box entry from centre, half-extents, and orientation columns.
+    pub fn from_box(centre: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
         Self {
             volume_type: 2,
             _pad: [0; 3],
-            center,
+            centre,
             radius: 0.0,
             half_extents,
             _pad1: 0.0,
@@ -522,26 +522,26 @@ impl ClipVolumeEntry {
         }
     }
 
-    /// Build a sphere entry from center and radius.
-    pub fn from_sphere(center: [f32; 3], radius: f32) -> Self {
+    /// Build a sphere entry from centre and radius.
+    pub fn from_sphere(centre: [f32; 3], radius: f32) -> Self {
         Self {
             volume_type: 3,
             _pad: [0; 3],
-            center,
+            centre,
             radius,
             ..bytemuck::Zeroable::zeroed()
         }
     }
 
-    /// Build a cylinder entry from center, unit axis, radius, and half-length.
+    /// Build a cylinder entry from centre, unit axis, radius, and half-length.
     ///
     /// The cylinder extends `half_length` units in each direction along `axis`
-    /// from `center`. `axis` must be a unit vector.
-    pub fn from_cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
+    /// from `centre`. `axis` must be a unit vector.
+    pub fn from_cylinder(centre: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
         Self {
             volume_type: 4,
             _pad: [0; 3],
-            center,
+            centre,
             radius,
             half_extents: [half_length, 0.0, 0.0],
             _pad1: 0.0,

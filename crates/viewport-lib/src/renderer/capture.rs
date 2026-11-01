@@ -743,9 +743,9 @@ impl ViewportRenderer {
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let mut zones = Vec::with_capacity(probes.len());
         for &(bounds, fade_distance) in probes {
-            let center = bounds.center().to_array();
+            let centre = bounds.centre().to_array();
             let panorama =
-                self.capture_equirect(device, queue, frame, center, face_size, equirect_height);
+                self.capture_equirect(device, queue, frame, centre, face_size, equirect_height);
             // Resources-level upload does not rebuild bind groups; we rebuild once
             // after the whole batch below.
             let environment = crate::resources::material::environment::upload_environment(
@@ -758,7 +758,7 @@ impl ViewportRenderer {
             // World-aligned and holding absolute radiance: no rotation and a
             // multiplier of 1.0, whatever the lighting environment uses.
             zones.push(crate::resources::EnvironmentZone::probe(
-                bounds.center(),
+                bounds.centre(),
                 bounds.half_extents(),
                 environment,
                 fade_distance,
@@ -855,7 +855,7 @@ impl ViewportRenderer {
 fn sample_face_bilinear(face: &CapturedHdr, u: f32, v: f32) -> [f32; 4] {
     let w = face.width as usize;
     let h = face.height as usize;
-    // Map to texel-center space and clamp.
+    // Map to texel-centre space and clamp.
     let fx = (u.clamp(0.0, 1.0) * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
     let fy = (v.clamp(0.0, 1.0) * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
     let x0 = fx.floor() as usize;

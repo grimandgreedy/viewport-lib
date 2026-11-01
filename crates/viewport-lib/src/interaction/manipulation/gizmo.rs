@@ -19,7 +19,7 @@
 //! then compare against a threshold. This avoids the parry3d dependency in the gizmo
 //! module itself (the gizmo vertices are already in gizmo-local space).
 
-/// Pivot point mode for the gizmo : determines where the transform center is.
+/// Pivot point mode for the gizmo : determines where the transform centre is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum PivotMode {
@@ -75,10 +75,10 @@ impl PivotMode {
     }
 }
 
-/// Compute the gizmo center based on the given `PivotMode`, selection, and position resolver.
+/// Compute the gizmo centre based on the given `PivotMode`, selection, and position resolver.
 ///
 /// Returns `None` if the selection is empty or positions are unavailable.
-pub fn gizmo_center_for_pivot(
+pub fn gizmo_centre_for_pivot(
     pivot: &PivotMode,
     selection: &crate::interaction::select::selection::Selection,
     position_fn: impl Fn(crate::interaction::select::selection::NodeId) -> Option<glam::Vec3>,
@@ -153,7 +153,7 @@ pub struct Gizmo {
     pub active_axis: GizmoAxis,
     /// Mouse position (in viewport-local pixels) at drag start.
     pub drag_start_mouse: Option<glam::Vec2>,
-    /// Pivot point mode : determines the transform center for multi-selections.
+    /// Pivot point mode : determines the transform centre for multi-selections.
     pub pivot_mode: PivotMode,
 }
 
@@ -197,7 +197,7 @@ impl Gizmo {
         }
     }
 
-    /// Hit test: given a ray in world space, the gizmo's center position, and
+    /// Hit test: given a ray in world space, the gizmo's centre position, and
     /// the selected object's orientation, return which handle is under the cursor.
     ///
     /// Uses closest-approach distance from ray to axis line segment for axis
@@ -207,19 +207,19 @@ impl Gizmo {
     ///
     /// * `ray_origin` : world-space origin of the picking ray
     /// * `ray_dir` : world-space direction of the picking ray (normalized)
-    /// * `gizmo_center` : world-space position of the gizmo (== selected object position)
+    /// * `gizmo_centre` : world-space position of the gizmo (== selected object position)
     /// * `gizmo_scale` : world-space length of each axis arm
     pub fn hit_test(
         &self,
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
-        gizmo_center: glam::Vec3,
+        gizmo_centre: glam::Vec3,
         gizmo_scale: f32,
     ) -> GizmoAxis {
         self.hit_test_oriented(
             ray_origin,
             ray_dir,
-            gizmo_center,
+            gizmo_centre,
             gizmo_scale,
             glam::Quat::IDENTITY,
         )
@@ -230,7 +230,7 @@ impl Gizmo {
         &self,
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
-        gizmo_center: glam::Vec3,
+        gizmo_centre: glam::Vec3,
         gizmo_scale: f32,
         object_orientation: glam::Quat,
     ) -> GizmoAxis {
@@ -253,13 +253,13 @@ impl Gizmo {
                     if denom.abs() < 1e-6 {
                         continue;
                     }
-                    let t = (gizmo_center - ray_origin).dot(normal) / denom;
+                    let t = (gizmo_centre - ray_origin).dot(normal) / denom;
                     if t < 0.0 {
                         continue;
                     }
                     let hit_point = ray_origin + ray_dir * t;
-                    let dist_from_center = (hit_point - gizmo_center).length();
-                    if (dist_from_center - ring_radius).abs() < ring_tolerance
+                    let dist_from_centre = (hit_point - gizmo_centre).length();
+                    if (dist_from_centre - ring_radius).abs() < ring_tolerance
                         && (best.is_none() || t < best.unwrap().1)
                     {
                         best = Some((axis_ids[i], t));
@@ -272,13 +272,13 @@ impl Gizmo {
                 // Translate / Scale modes: arrows + plane handles + screen handle.
                 let hit_radius = gizmo_scale * 0.18;
 
-                // --- Screen handle (center square): check first, highest priority ---
+                // --- Screen handle (centre square): check first, highest priority ---
                 let screen_size = gizmo_scale * 0.15;
-                let to_center = gizmo_center - ray_origin;
-                let t_center = to_center.dot(ray_dir);
-                if t_center > 0.0 {
-                    let closest = ray_origin + ray_dir * t_center;
-                    let offset = closest - gizmo_center;
+                let to_centre = gizmo_centre - ray_origin;
+                let t_centre = to_centre.dot(ray_dir);
+                if t_centre > 0.0 {
+                    let closest = ray_origin + ray_dir * t_centre;
+                    let offset = closest - gizmo_centre;
                     if offset.length() < screen_size {
                         return GizmoAxis::Screen;
                     }
@@ -296,17 +296,17 @@ impl Gizmo {
 
                 let mut best_plane: Option<(GizmoAxis, f32)> = None;
                 for (axis, dir_a, dir_b, normal) in &plane_handles {
-                    let quad_center = gizmo_center + *dir_a * plane_offset + *dir_b * plane_offset;
+                    let quad_centre = gizmo_centre + *dir_a * plane_offset + *dir_b * plane_offset;
                     let denom = ray_dir.dot(*normal);
                     if denom.abs() < 1e-6 {
                         continue;
                     }
-                    let t = (quad_center - ray_origin).dot(*normal) / denom;
+                    let t = (quad_centre - ray_origin).dot(*normal) / denom;
                     if t < 0.0 {
                         continue;
                     }
                     let hit_point = ray_origin + ray_dir * t;
-                    let local = hit_point - quad_center;
+                    let local = hit_point - quad_centre;
                     let a_dist = local.dot(*dir_a).abs();
                     let b_dist = local.dot(*dir_b).abs();
                     if a_dist < plane_size
@@ -325,10 +325,10 @@ impl Gizmo {
                 let mut best: Option<(GizmoAxis, f32)> = None;
 
                 for i in 0..3 {
-                    let arm_end = gizmo_center + dirs[i] * gizmo_scale;
-                    let dist = ray_to_segment_distance(ray_origin, ray_dir, gizmo_center, arm_end);
+                    let arm_end = gizmo_centre + dirs[i] * gizmo_scale;
+                    let dist = ray_to_segment_distance(ray_origin, ray_dir, gizmo_centre, arm_end);
                     if dist < hit_radius {
-                        let t = ray_segment_t(ray_origin, ray_dir, gizmo_center, arm_end);
+                        let t = ray_segment_t(ray_origin, ray_dir, gizmo_centre, arm_end);
                         if best.is_none() || t < best.unwrap().1 {
                             best = Some((axis_ids[i], t));
                         }
@@ -520,18 +520,18 @@ pub(crate) const SCREEN_HANDLE_SIZE: f32 = 0.08;
 /// Compute the world-space scale for the gizmo so it appears at a consistent
 /// screen size regardless of camera distance.
 ///
-/// `gizmo_center_world` : position of the gizmo (selected object)
+/// `gizmo_centre_world` : position of the gizmo (selected object)
 /// `camera_eye` : camera eye position
 /// `fov_y` : camera vertical field of view (radians)
 /// `viewport_height` : viewport height in pixels
 /// Target: gizmo should be approximately 100px tall on screen.
 pub fn compute_gizmo_scale(
-    gizmo_center_world: glam::Vec3,
+    gizmo_centre_world: glam::Vec3,
     camera_eye: glam::Vec3,
     fov_y: f32,
     viewport_height: f32,
 ) -> f32 {
-    let dist = (gizmo_center_world - camera_eye).length();
+    let dist = (gizmo_centre_world - camera_eye).length();
     // world_units_per_pixel at distance = 2 * tan(fov_y/2) * dist / viewport_height
     let world_per_px = 2.0 * (fov_y * 0.5).tan() * dist / viewport_height;
     // Target: 100 pixels = gizmo total length.
@@ -551,18 +551,18 @@ pub fn compute_gizmo_scale(
 /// * `drag_delta` : mouse movement in pixels since drag start (egui drag_delta())
 /// * `axis_world` : world-space axis direction (X, Y, or Z unit vector)
 /// * `view_proj` : camera view-projection matrix
-/// * `gizmo_center` : world-space gizmo center (selected object position)
+/// * `gizmo_centre` : world-space gizmo centre (selected object position)
 /// * `viewport_size` : viewport size in pixels
 pub fn project_drag_onto_axis(
     drag_delta: glam::Vec2,
     axis_world: glam::Vec3,
     view_proj: glam::Mat4,
-    gizmo_center: glam::Vec3,
+    gizmo_centre: glam::Vec3,
     viewport_size: glam::Vec2,
 ) -> f32 {
     // Project the axis tip and base to screen space.
-    let base_ndc = view_proj.project_point3(gizmo_center);
-    let tip_ndc = view_proj.project_point3(gizmo_center + axis_world);
+    let base_ndc = view_proj.project_point3(gizmo_centre);
+    let tip_ndc = view_proj.project_point3(gizmo_centre + axis_world);
 
     // Convert NDC to screen pixels.
     let base_screen = glam::Vec2::new(
@@ -628,13 +628,13 @@ pub fn project_drag_onto_plane(
     axis_a: glam::Vec3,
     axis_b: glam::Vec3,
     view_proj: glam::Mat4,
-    gizmo_center: glam::Vec3,
+    gizmo_centre: glam::Vec3,
     viewport_size: glam::Vec2,
 ) -> glam::Vec3 {
     let a_amount =
-        project_drag_onto_axis(drag_delta, axis_a, view_proj, gizmo_center, viewport_size);
+        project_drag_onto_axis(drag_delta, axis_a, view_proj, gizmo_centre, viewport_size);
     let b_amount =
-        project_drag_onto_axis(drag_delta, axis_b, view_proj, gizmo_center, viewport_size);
+        project_drag_onto_axis(drag_delta, axis_b, view_proj, gizmo_centre, viewport_size);
     axis_a * a_amount + axis_b * b_amount
 }
 
@@ -646,7 +646,7 @@ pub fn project_drag_onto_screen_plane(
     camera_right: glam::Vec3,
     camera_up: glam::Vec3,
     view_proj: glam::Mat4,
-    gizmo_center: glam::Vec3,
+    gizmo_centre: glam::Vec3,
     viewport_size: glam::Vec2,
 ) -> glam::Vec3 {
     project_drag_onto_plane(
@@ -654,15 +654,15 @@ pub fn project_drag_onto_screen_plane(
         camera_right,
         camera_up,
         view_proj,
-        gizmo_center,
+        gizmo_centre,
         viewport_size,
     )
 }
 
-/// Compute the gizmo center from a multi-selection by averaging positions.
+/// Compute the gizmo centre from a multi-selection by averaging positions.
 ///
 /// Thin wrapper around `Selection::centroid()` for discoverability in gizmo workflows.
-pub fn gizmo_center_from_selection(
+pub fn gizmo_centre_from_selection(
     selection: &crate::interaction::select::selection::Selection,
     position_fn: impl Fn(crate::interaction::select::selection::NodeId) -> Option<glam::Vec3>,
 ) -> Option<glam::Vec3> {
@@ -680,12 +680,12 @@ mod tests {
     #[test]
     fn test_hit_test_x_axis() {
         let g = gizmo();
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         let axis = g.hit_test(
             glam::Vec3::new(0.5, 0.5, 0.0),
             glam::Vec3::new(0.0, -1.0, 0.0),
-            center,
+            centre,
             scale,
         );
         assert_eq!(axis, GizmoAxis::X);
@@ -694,12 +694,12 @@ mod tests {
     #[test]
     fn test_hit_test_y_axis() {
         let g = gizmo();
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         let axis = g.hit_test(
             glam::Vec3::new(0.5, 0.5, 0.0),
             glam::Vec3::new(-1.0, 0.0, 0.0),
-            center,
+            centre,
             scale,
         );
         assert_eq!(axis, GizmoAxis::Y);
@@ -708,12 +708,12 @@ mod tests {
     #[test]
     fn test_hit_test_z_axis() {
         let g = gizmo();
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         let axis = g.hit_test(
             glam::Vec3::new(0.0, 0.5, 0.5),
             glam::Vec3::new(0.0, -1.0, 0.0),
-            center,
+            centre,
             scale,
         );
         assert_eq!(axis, GizmoAxis::Z);
@@ -722,12 +722,12 @@ mod tests {
     #[test]
     fn test_hit_test_miss() {
         let g = gizmo();
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         let axis = g.hit_test(
             glam::Vec3::new(10.0, 10.0, 10.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
-            center,
+            centre,
             scale,
         );
         assert_eq!(axis, GizmoAxis::None);
@@ -736,13 +736,13 @@ mod tests {
     #[test]
     fn test_hit_test_plane_handle_xy() {
         let g = gizmo();
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         // Ray coming from +Z, hitting the XY plane handle area (at ~0.25, 0.25).
         let axis = g.hit_test_oriented(
             glam::Vec3::new(0.25, 0.25, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
-            center,
+            centre,
             scale,
             glam::Quat::IDENTITY,
         );
@@ -753,7 +753,7 @@ mod tests {
     fn test_hit_test_local_orientation() {
         let mut g = gizmo();
         g.space = GizmoSpace::Local;
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         // Rotate the object 90 deg around Y: local X -> world -Z, local Z -> world +X.
         let rot = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -763,7 +763,7 @@ mod tests {
         let axis = g.hit_test_oriented(
             glam::Vec3::new(0.0, 0.5, -0.5),
             glam::Vec3::new(0.0, -1.0, 0.0),
-            center,
+            centre,
             scale,
             rot,
         );
@@ -784,13 +784,13 @@ mod tests {
         let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
         let viewport_size = glam::Vec2::new(800.0, 600.0);
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
 
         let result = project_drag_onto_axis(
             glam::Vec2::new(100.0, 0.0),
             glam::Vec3::X,
             vp,
-            center,
+            centre,
             viewport_size,
         );
         assert!(result > 0.0, "expected positive drag along X, got {result}");
@@ -806,14 +806,14 @@ mod tests {
         let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
         let viewport_size = glam::Vec2::new(800.0, 600.0);
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
 
         let result = project_drag_onto_plane(
             glam::Vec2::new(100.0, 0.0),
             glam::Vec3::X,
             glam::Vec3::Z,
             vp,
-            center,
+            centre,
             viewport_size,
         );
         // Should have components along X and Z.
@@ -830,19 +830,19 @@ mod tests {
     #[test]
     fn test_screen_handle_hit() {
         let g = gizmo();
-        let center = glam::Vec3::ZERO;
+        let centre = glam::Vec3::ZERO;
         let scale = 1.0;
         // Ray aimed directly at origin from +Z.
         let axis = g.hit_test(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
-            center,
+            centre,
             scale,
         );
         assert_eq!(
             axis,
             GizmoAxis::Screen,
-            "ray at center should hit Screen handle"
+            "ray at centre should hit Screen handle"
         );
     }
 
@@ -859,28 +859,28 @@ mod tests {
     }
 
     #[test]
-    fn test_gizmo_center_single_selection() {
+    fn test_gizmo_centre_single_selection() {
         let mut sel = crate::interaction::select::selection::Selection::new();
         sel.select_one(1);
-        let center = gizmo_center_from_selection(&sel, |id| match id {
+        let centre = gizmo_centre_from_selection(&sel, |id| match id {
             1 => Some(glam::Vec3::new(3.0, 0.0, 0.0)),
             _ => None,
         });
-        let c = center.unwrap();
+        let c = centre.unwrap();
         assert!((c.x - 3.0).abs() < 1e-5);
     }
 
     #[test]
-    fn test_gizmo_center_multi_selection() {
+    fn test_gizmo_centre_multi_selection() {
         let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         sel.add(2);
-        let center = gizmo_center_from_selection(&sel, |id| match id {
+        let centre = gizmo_centre_from_selection(&sel, |id| match id {
             1 => Some(glam::Vec3::new(0.0, 0.0, 0.0)),
             2 => Some(glam::Vec3::new(4.0, 0.0, 0.0)),
             _ => None,
         });
-        let c = center.unwrap();
+        let c = centre.unwrap();
         assert!((c.x - 2.0).abs() < 1e-5);
     }
 
@@ -896,8 +896,8 @@ mod tests {
             2 => Some(glam::Vec3::new(4.0, 0.0, 0.0)),
             _ => None,
         };
-        let centroid = gizmo_center_from_selection(&sel, pos_fn);
-        let pivot = gizmo_center_for_pivot(&PivotMode::SelectionCentroid, &sel, pos_fn);
+        let centroid = gizmo_centre_from_selection(&sel, pos_fn);
+        let pivot = gizmo_centre_for_pivot(&PivotMode::SelectionCentroid, &sel, pos_fn);
         assert_eq!(centroid, pivot);
     }
 
@@ -905,7 +905,7 @@ mod tests {
     fn test_pivot_world_origin_returns_zero() {
         let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
-        let result = gizmo_center_for_pivot(&PivotMode::WorldOrigin, &sel, |_| {
+        let result = gizmo_centre_for_pivot(&PivotMode::WorldOrigin, &sel, |_| {
             Some(glam::Vec3::new(5.0, 0.0, 0.0))
         });
         assert_eq!(result, Some(glam::Vec3::ZERO));
@@ -914,7 +914,7 @@ mod tests {
     #[test]
     fn test_pivot_world_origin_empty_selection_returns_none() {
         let sel = crate::interaction::select::selection::Selection::new();
-        let result = gizmo_center_for_pivot(&PivotMode::WorldOrigin, &sel, |_| None);
+        let result = gizmo_centre_for_pivot(&PivotMode::WorldOrigin, &sel, |_| None);
         assert_eq!(result, None);
     }
 
@@ -923,7 +923,7 @@ mod tests {
         let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         sel.add(2); // primary = 2
-        let result = gizmo_center_for_pivot(&PivotMode::IndividualOrigins, &sel, |id| match id {
+        let result = gizmo_centre_for_pivot(&PivotMode::IndividualOrigins, &sel, |id| match id {
             1 => Some(glam::Vec3::new(1.0, 0.0, 0.0)),
             2 => Some(glam::Vec3::new(9.0, 0.0, 0.0)),
             _ => None,
@@ -946,7 +946,7 @@ mod tests {
             2 => Some(glam::Vec3::new(6.0, 0.0, 0.0)),
             _ => None,
         };
-        let result = gizmo_center_for_pivot(&PivotMode::MedianPoint, &sel, pos_fn);
+        let result = gizmo_centre_for_pivot(&PivotMode::MedianPoint, &sel, pos_fn);
         let c = result.unwrap();
         assert!((c.x - 3.0).abs() < 1e-5);
     }
@@ -956,7 +956,7 @@ mod tests {
         let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         let cursor = glam::Vec3::new(7.0, 2.0, 3.0);
-        let result = gizmo_center_for_pivot(&PivotMode::Cursor3D(cursor), &sel, |_| {
+        let result = gizmo_centre_for_pivot(&PivotMode::Cursor3D(cursor), &sel, |_| {
             Some(glam::Vec3::ZERO)
         });
         assert_eq!(result, Some(cursor));
@@ -966,7 +966,7 @@ mod tests {
     fn test_pivot_cursor3d_empty_selection_returns_none() {
         let sel = crate::interaction::select::selection::Selection::new();
         let cursor = glam::Vec3::new(1.0, 2.0, 3.0);
-        let result = gizmo_center_for_pivot(&PivotMode::Cursor3D(cursor), &sel, |_| None);
+        let result = gizmo_centre_for_pivot(&PivotMode::Cursor3D(cursor), &sel, |_| None);
         assert_eq!(result, None);
     }
 

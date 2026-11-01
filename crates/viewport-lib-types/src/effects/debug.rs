@@ -139,7 +139,7 @@ pub struct DebugVis {
     /// Use values > 1.0 to bring small quantities (e.g. bias in world units) into visible range.
     pub scale: f32,
     /// Split position for `SplitScreen` mode, in normalised viewport coordinates (0..1).
-    /// 0.5 = center. Ignored unless mode is `SplitScreen`.
+    /// 0.5 = centre. Ignored unless mode is `SplitScreen`.
     pub split_x: f32,
 }
 
