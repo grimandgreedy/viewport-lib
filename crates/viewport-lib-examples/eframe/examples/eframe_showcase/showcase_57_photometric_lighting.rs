@@ -11,8 +11,27 @@
 //! - **Falloff** - a row of identical spheres receding from a punctual light, so
 //!   the physical inverse-square falloff reads directly. `range` is reach (not
 //!   brightness); `radius` clamps the near-field.
-//! - **Exposure** - one lit scene under Manual EV / Physical camera / Automatic,
-//!   with the resulting EV100 read out.
+//! - **Exposure** - one lit scene under Passthrough / Manual EV / Physical
+//!   camera / Automatic, with the resulting EV100 read out.
+//! - **Exposure contract** - which values the camera's exposure scales and
+//!   which it leaves alone, on a row of subjects under full daylight: a
+//!   Lambert 18% card, a PBR sphere, a 200 nit emitter at
+//!   `Material::emissive_exposure_weight` 1, 0.5 and 0, an
+//!   `ItemSettings::unlit` card, a colour-mapped point cloud, a matcap sphere
+//!   and a sphere shaded through a `recolor` material plugin. Moving from
+//!   Passthrough to sunny-16 darkens the lit subjects and the weight-1
+//!   emitter; the weight-0 emitter, the unlit card, the colour map and the
+//!   matcap stay put. The tab also renders through `PipelineMode::Direct`
+//!   (where `Automatic` falls back and reports
+//!   `NoticeDetail::AutoExposureOnLdr`), splits the view across two viewports
+//!   with their own exposures (`create_viewport`, `prepare_scene`,
+//!   `prepare_viewport`, `render_viewport`), and captures a panorama with
+//!   `capture_equirect`, which renders at the passthrough exposure whatever
+//!   the camera's.
+//!
+//! The physical camera is the camera's own `Camera::exposure`
+//! (`PhysicalExposure`), handed to the frame through
+//! `PhysicalExposure::to_exposure_mode` on `DisplaySettings::exposure`.
 
 use crate::App;
 use crate::eframe::egui;
@@ -22,8 +41,12 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
-    Lux, Material, ViewportRenderer, scene::Scene,
+    Lux, Material, PhysicalExposure, ViewportRenderer, scene::Scene,
 };
+
+#[path = "../plugins/recolor_tint_plugin.rs"]
+mod recolor_tint_plugin;
+use recolor_tint_plugin::RecolorTintPlugin;
 
 /// Which facet of photometric lighting is shown.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -31,6 +54,7 @@ pub(crate) enum LightingSub {
     Presets,
     Falloff,
     Exposure,
+    Contract,
 }
 
 // ===========================================================================
@@ -185,7 +209,7 @@ impl PresetsState {
         l
     }
 
-    pub(crate) fn settings(&self) -> ExposureSettings {
+    pub(crate) fn settings(&self, camera: &PhysicalExposure) -> ExposureSettings {
         if self.auto_exposure {
             // Full adaptation so every preset - across a ~400,000x lux range - is
             // driven to mid-grey. The library default (0.5) deliberately does not
@@ -197,8 +221,8 @@ impl PresetsState {
             };
             ExposureSettings::from_mode(ExposureMode::Automatic(auto))
         } else {
-            // A fixed sunny-daylight camera (roughly "sunny 16").
-            ExposureSettings::physical(16.0, 1.0 / 125.0, 100.0)
+            // The camera's own physical exposure: sunny 16 unless changed.
+            ExposureSettings::from_mode(camera.to_exposure_mode())
         }
     }
 }
@@ -291,6 +315,7 @@ const EXPOSURE_COL_SPACING: f32 = 2.4;
 /// [`ExposureSettings`] so per-mode parameters survive switching between modes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModeSel {
+    Passthrough,
     Manual,
     Physical,
     Automatic,
@@ -305,10 +330,6 @@ pub(crate) struct ExposureSubState {
     pub compensation: f32,
     // Manual
     pub manual_ev: f32,
-    // Physical camera
-    pub aperture: f32,
-    pub shutter_denom: f32,
-    pub iso: f32,
     // Automatic
     pub auto: AutoExposure,
     pub smooth: bool,
@@ -324,12 +345,6 @@ impl Default for ExposureSubState {
             mode: ModeSel::Automatic,
             compensation: 0.0,
             manual_ev: 0.0,
-            // Low-light defaults: this demo's "scene brightness" is a small
-            // abstract value, not a physical lux level, so daylight f-stops read
-            // black here. See the Units & Presets tab for real lux/candela.
-            aperture: 1.4,
-            shutter_denom: 30.0,
-            iso: 3200.0,
             auto: AutoExposure::default(),
             smooth: false,
             frame_dt: 0.0,
@@ -355,34 +370,88 @@ impl ExposureSubState {
         l
     }
 
-    pub(crate) fn settings(&self) -> ExposureSettings {
-        let mode = match self.mode {
-            ModeSel::Manual => ExposureMode::Manual { ev: self.manual_ev },
-            ModeSel::Physical => ExposureMode::PhysicalCamera {
-                aperture: self.aperture,
-                shutter: 1.0 / self.shutter_denom.max(1.0),
-                iso: self.iso.max(1.0),
-            },
-            ModeSel::Automatic => {
-                let mut a = self.auto;
-                a.dt = if self.smooth { self.frame_dt } else { 0.0 };
-                ExposureMode::Automatic(a)
-            }
-        };
+    pub(crate) fn settings(&self, camera: &PhysicalExposure) -> ExposureSettings {
+        let mode = exposure_mode(
+            self.mode,
+            self.manual_ev,
+            camera,
+            self.auto,
+            self.smooth,
+            self.frame_dt,
+        );
         ExposureSettings::from_mode(mode).with_compensation(self.compensation)
     }
+}
 
-    fn readout_ev(&self) -> Option<f32> {
-        match self.mode {
-            ModeSel::Manual => Some(self.manual_ev),
-            ModeSel::Physical => {
-                let n = self.aperture;
-                let t = 1.0 / self.shutter_denom.max(1.0);
-                let iso = self.iso.max(1.0);
-                Some((n * n / t).log2() + (100.0 / iso).log2())
-            }
-            ModeSel::Automatic => None,
+/// The exposure mode the shared selector picks. The physical camera is the
+/// camera's own `PhysicalExposure`.
+fn exposure_mode(
+    sel: ModeSel,
+    manual_ev: f32,
+    camera: &PhysicalExposure,
+    auto: AutoExposure,
+    smooth: bool,
+    frame_dt: f32,
+) -> ExposureMode {
+    match sel {
+        ModeSel::Passthrough => ExposureMode::Passthrough,
+        ModeSel::Manual => ExposureMode::Manual { ev: manual_ev },
+        ModeSel::Physical => camera.to_exposure_mode(),
+        ModeSel::Automatic => {
+            let mut a = auto;
+            a.dt = if smooth { frame_dt } else { 0.0 };
+            ExposureMode::Automatic(a)
         }
+    }
+}
+
+/// EV100 of a physical camera: `log2(N^2 / t) + log2(100 / ISO)`.
+fn physical_ev100(camera: &PhysicalExposure) -> f32 {
+    let n = camera.aperture;
+    let t = camera.shutter_seconds.max(1e-6);
+    (n * n / t).log2() + (100.0 / camera.iso.max(1.0)).log2()
+}
+
+/// The linear multiplier a fixed EV100 resolves to: `1 / (1.2 * 2^EV100)`.
+fn ev_multiplier(ev100: f32) -> f32 {
+    1.0 / (1.2 * ev100.exp2())
+}
+
+/// The shared mode selector: Passthrough, Manual EV, Physical camera, Automatic.
+fn mode_selector(ui: &mut egui::Ui, mode: &mut ModeSel) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Mode:");
+        ui.selectable_value(mode, ModeSel::Passthrough, "Passthrough");
+        ui.selectable_value(mode, ModeSel::Manual, "Manual EV");
+        ui.selectable_value(mode, ModeSel::Physical, "Physical camera");
+        ui.selectable_value(mode, ModeSel::Automatic, "Automatic");
+    });
+}
+
+/// Sliders for the camera's physical exposure (aperture, shutter, ISO).
+fn physical_sliders(ui: &mut egui::Ui, camera: &mut PhysicalExposure) {
+    ui.add(egui::Slider::new(&mut camera.aperture, 1.0..=22.0).text("Aperture f/"));
+    let mut denom = 1.0 / camera.shutter_seconds.max(1e-6);
+    if ui
+        .add(
+            egui::Slider::new(&mut denom, 4.0..=4000.0)
+                .logarithmic(true)
+                .text("Shutter 1/x s"),
+        )
+        .changed()
+    {
+        camera.shutter_seconds = 1.0 / denom.max(1.0);
+    }
+    ui.add(
+        egui::Slider::new(&mut camera.iso, 50.0..=6400.0)
+            .logarithmic(true)
+            .text("ISO"),
+    );
+    if ui
+        .small_button("Sunny 16 (f/16, 1/125 s, ISO 100)")
+        .clicked()
+    {
+        *camera = PhysicalExposure::default().with_focus_distance(camera.focus_distance);
     }
 }
 
@@ -395,6 +464,7 @@ pub(crate) struct PhotometricLightingState {
     pub presets: PresetsState,
     pub falloff: FalloffState,
     pub exposure: ExposureSubState,
+    pub contract: ContractState,
 }
 
 impl Default for PhotometricLightingState {
@@ -404,6 +474,7 @@ impl Default for PhotometricLightingState {
             presets: PresetsState::default(),
             falloff: FalloffState::default(),
             exposure: ExposureSubState::default(),
+            contract: ContractState::default(),
         }
     }
 }
@@ -415,6 +486,7 @@ impl PhotometricLightingState {
             LightingSub::Presets => self.presets.built,
             LightingSub::Falloff => self.falloff.built,
             LightingSub::Exposure => self.exposure.built,
+            LightingSub::Contract => self.contract.built,
         }
     }
 
@@ -425,6 +497,7 @@ impl PhotometricLightingState {
             LightingSub::Presets => self.presets.built = false,
             LightingSub::Falloff => self.falloff.built = false,
             LightingSub::Exposure => self.exposure.built = false,
+            LightingSub::Contract => self.contract.built = false,
         }
     }
 
@@ -433,6 +506,7 @@ impl PhotometricLightingState {
             LightingSub::Presets => &self.presets.scene,
             LightingSub::Falloff => &self.falloff.scene,
             LightingSub::Exposure => &self.exposure.scene,
+            LightingSub::Contract => &self.contract.scene,
         }
     }
 
@@ -441,6 +515,7 @@ impl PhotometricLightingState {
             LightingSub::Presets => &mut self.presets.scene,
             LightingSub::Falloff => &mut self.falloff.scene,
             LightingSub::Exposure => &mut self.exposure.scene,
+            LightingSub::Contract => &mut self.contract.scene,
         }
     }
 
@@ -449,15 +524,18 @@ impl PhotometricLightingState {
             LightingSub::Presets => self.presets.lighting(),
             LightingSub::Falloff => self.falloff.lighting(),
             LightingSub::Exposure => self.exposure.lighting(),
+            LightingSub::Contract => self.contract.lighting(),
         }
     }
 
     /// Exposure to apply this frame. The Falloff sub uses the neutral default;
-    /// Presets and Exposure drive it from their controls.
-    pub(crate) fn exposure_settings(&self) -> ExposureSettings {
+    /// the others drive it from their controls and the camera's physical
+    /// exposure.
+    pub(crate) fn exposure_settings(&self, camera: &PhysicalExposure) -> ExposureSettings {
         match self.sub {
-            LightingSub::Presets => self.presets.settings(),
-            LightingSub::Exposure => self.exposure.settings(),
+            LightingSub::Presets => self.presets.settings(camera),
+            LightingSub::Exposure => self.exposure.settings(camera),
+            LightingSub::Contract => self.contract.settings(camera),
             LightingSub::Falloff => ExposureSettings::default(),
         }
     }
@@ -494,6 +572,18 @@ impl App {
                     glam::DVec3::new(6.0, 0.4, 0.7),
                     17.0,
                     glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+                );
+                // Low-light defaults: this tab's "scene brightness" is a small
+                // abstract value, not a physical lux level, so daylight
+                // f-stops read black here. See Units & Presets for real lux.
+                self.camera.exposure = PhysicalExposure::new(1.4, 1.0 / 30.0, 3200.0);
+            }
+            LightingSub::Contract => {
+                build_contract_scene(self, renderer);
+                self.camera = vpl::Camera::orbit(
+                    glam::DVec3::new(f64::from(CONTRACT_SPAN) * 0.5, 0.0, 0.5),
+                    20.0,
+                    glam::Quat::from_rotation_x(1.05),
                 );
             }
         }
@@ -648,6 +738,11 @@ pub(crate) fn controls_photometric_lighting(app: &mut App, ui: &mut egui::Ui) {
             LightingSub::Exposure,
             "Exposure",
         );
+        ui.selectable_value(
+            &mut app.lighting_state.sub,
+            LightingSub::Contract,
+            "Exposure contract",
+        );
     });
     if app.lighting_state.sub != prev {
         // Switching sub swaps the scene and camera framing; force a rebuild.
@@ -659,6 +754,7 @@ pub(crate) fn controls_photometric_lighting(app: &mut App, ui: &mut egui::Ui) {
         LightingSub::Presets => controls_presets(app, ui),
         LightingSub::Falloff => controls_falloff(app, ui),
         LightingSub::Exposure => controls_exposure(app, ui),
+        LightingSub::Contract => controls_contract(app, ui),
     }
 }
 
@@ -759,9 +855,10 @@ fn controls_falloff(app: &mut App, ui: &mut egui::Ui) {
 fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
     app.lighting_state.exposure.frame_dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
 
-    ui.label("One lit scene under three exposure modes. Drive the scene-brightness slider and watch how each mode responds.");
+    ui.label("One lit scene under each exposure mode. Drive the scene-brightness slider and watch how each mode responds.");
     ui.separator();
 
+    let camera = &mut app.camera.exposure;
     let st = &mut app.lighting_state.exposure;
     ui.add(
         egui::Slider::new(&mut st.light_intensity, 0.1..=40.0)
@@ -773,31 +870,20 @@ fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
     );
     ui.separator();
 
-    ui.horizontal(|ui| {
-        ui.label("Mode:");
-        ui.selectable_value(&mut st.mode, ModeSel::Manual, "Manual EV");
-        ui.selectable_value(&mut st.mode, ModeSel::Physical, "Physical camera");
-        ui.selectable_value(&mut st.mode, ModeSel::Automatic, "Automatic");
-    });
+    mode_selector(ui, &mut st.mode);
     ui.separator();
 
     match st.mode {
+        ModeSel::Passthrough => {
+            ui.label("A multiplier of exactly 1: lights read as authored.");
+        }
         ModeSel::Manual => {
             ui.add(egui::Slider::new(&mut st.manual_ev, -6.0..=16.0).text("EV100"));
             ui.label("Fixed exposure. Higher EV = darker image. Change the scene brightness and the image clips or crushes.");
         }
         ModeSel::Physical => {
-            ui.add(egui::Slider::new(&mut st.aperture, 1.0..=22.0).text("Aperture f/"));
-            ui.add(
-                egui::Slider::new(&mut st.shutter_denom, 4.0..=4000.0)
-                    .logarithmic(true)
-                    .text("Shutter 1/x s"),
-            );
-            ui.add(
-                egui::Slider::new(&mut st.iso, 50.0..=6400.0)
-                    .logarithmic(true)
-                    .text("ISO"),
-            );
+            ui.label("The camera's own exposure (Camera::exposure):");
+            physical_sliders(ui, camera);
             ui.label("The camera triangle: EV100 = log2(N^2 / t) + log2(100 / ISO).");
             ui.label("Note: this tab's brightness slider is a small abstract value, not a physical lux level, so use fast/wide/high-ISO (low EV) settings; the Units & Presets tab authors lights in real lux/candela.");
         }
@@ -821,7 +907,13 @@ fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    match app.lighting_state.exposure.readout_ev() {
+    let readout = match app.lighting_state.exposure.mode {
+        ModeSel::Passthrough => Some(vpl::PASSTHROUGH_EV100),
+        ModeSel::Manual => Some(app.lighting_state.exposure.manual_ev),
+        ModeSel::Physical => Some(physical_ev100(&app.camera.exposure)),
+        ModeSel::Automatic => None,
+    };
+    match readout {
         Some(ev) => {
             ui.label(format!(
                 "EV100: {ev:.2}  (before {:+.1} stops compensation)",
@@ -886,11 +978,14 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     // Drive the exposure model from the active sub's controls. The HDR
     // pipeline stays enabled (default) so the tone map / exposure
     // buffer path runs.
-    fd.effects.display.exposure = app.lighting_state.exposure_settings();
+    fd.effects.display.exposure = app.lighting_state.exposure_settings(&app.camera.exposure);
+    if app.lighting_state.sub == LightingSub::Contract {
+        contract_frame(app, fd, ctx);
+    }
     let cam = &app.camera;
     let far = (cam.focus_distance() * 3.0).max(60.0);
     fd.camera.render_camera =
@@ -933,11 +1028,18 @@ pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
 pub(crate) fn viewport_override(
-    _app: &mut crate::App,
-    _ui: &mut crate::eframe::egui::Ui,
-    _cx: &crate::ViewportCtx,
+    app: &mut crate::App,
+    ui: &mut crate::eframe::egui::Ui,
+    cx: &crate::ViewportCtx,
 ) -> bool {
-    false
+    if app.lighting_state.sub != LightingSub::Contract
+        || !app.lighting_state.contract.two_viewports
+        || !app.lighting_state.contract.built
+    {
+        return false;
+    }
+    contract_two_viewports(app, ui, cx);
+    true
 }
 
 /// Drive the orbit controller for this showcase. Returning false leaves the
@@ -1005,4 +1107,707 @@ impl crate::Showcase for ScPhotometricLighting {
     ) {
         controls_photometric_lighting(app, ui)
     }
+    fn overlay(&self, app: &mut crate::App, ui: &mut egui::Ui, cx: &crate::ViewportCtx) {
+        if app.lighting_state.sub == LightingSub::Contract {
+            contract_overlay(app, ui, cx.rect);
+        }
+    }
+    fn tour(&self, app: &mut crate::App, step: u32) -> bool {
+        let st = &mut app.lighting_state;
+        let to_contract = |st: &mut PhotometricLightingState| {
+            if st.sub != LightingSub::Contract {
+                st.sub = LightingSub::Contract;
+                st.mark_unbuilt();
+            }
+        };
+        match step {
+            0 => {}
+            1 => {
+                to_contract(st);
+                st.contract.mode = ModeSel::Passthrough;
+            }
+            2 => st.contract.mode = ModeSel::Physical,
+            3 => {
+                st.contract.mode = ModeSel::Automatic;
+                st.contract.direct_path = true;
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
+// ===========================================================================
+// Exposure contract sub
+// ===========================================================================
+
+/// Spacing of the subjects along X.
+const CONTRACT_STEP: f32 = 1.6;
+/// Number of subjects in the row.
+const CONTRACT_SUBJECTS: usize = 9;
+/// Length of the row.
+const CONTRACT_SPAN: f32 = (CONTRACT_SUBJECTS - 1) as f32 * CONTRACT_STEP;
+/// Luminance of the emissive cards, in nits.
+const EMITTER_NITS: f32 = 200.0;
+/// Albedo of the Lambert card.
+const GREY_CARD: f32 = 0.18;
+
+/// How a subject responds to the camera's exposure.
+#[derive(Clone, Copy)]
+enum Response {
+    /// Lit radiance: scales by the full multiplier.
+    Lit,
+    /// An emitter at this exposure weight: scales by `mix(1, k, w)`.
+    Emissive(f32),
+    /// A resolved colour: exposure does not touch it.
+    Resolved,
+}
+
+/// One subject of the row: its label, how it responds and why.
+const SUBJECTS: [(&str, Response, &str); CONTRACT_SUBJECTS] = [
+    (
+        "Lambert 18% card",
+        Response::Lit,
+        "Lit: every light is exposed before shading.",
+    ),
+    (
+        "PBR sphere",
+        Response::Lit,
+        "Lit: sun, fill and reflections all exposed.",
+    ),
+    (
+        "Emitter, weight 1",
+        Response::Emissive(1.0),
+        "A light source: exposed like the sun.",
+    ),
+    (
+        "Emitter, weight 0.5",
+        Response::Emissive(0.5),
+        "Half way, in multiplier terms.",
+    ),
+    (
+        "Emitter, weight 0",
+        Response::Emissive(0.0),
+        "Display-relative: shows its value whatever the EV.",
+    ),
+    (
+        "Unlit orange card",
+        Response::Resolved,
+        "ItemSettings::unlit: a colour, not light.",
+    ),
+    (
+        "Colour-mapped points",
+        Response::Resolved,
+        "A colour map is data, so the colour bar stays true.",
+    ),
+    (
+        "Matcap sphere",
+        Response::Resolved,
+        "A matcap is captured lighting, shown as is.",
+    ),
+    (
+        "Recolor sphere",
+        Response::Lit,
+        "The hook sees and returns exposed radiance.",
+    ),
+];
+
+/// A captured panorama, kept as display pixels for the sidebar and as
+/// radiance for comparing two captures.
+pub(crate) struct ProbeCapture {
+    radiance: Vec<f32>,
+    rgba8: Vec<u8>,
+    size: [usize; 2],
+    /// The camera EV100 at capture time, or `None` under automatic exposure.
+    ev: Option<f32>,
+    /// Largest per-channel difference from the capture before, if any.
+    max_diff: Option<f32>,
+}
+
+pub(crate) struct ContractState {
+    pub built: bool,
+    pub scene: Scene,
+    pub mode: ModeSel,
+    pub manual_ev: f32,
+    pub direct_path: bool,
+    pub two_viewports: bool,
+    pub right_ev: f32,
+    viewports: Option<[vpl::ViewportId; 2]>,
+    targets: Vec<crate::Target>,
+    recolor: Option<vpl::MaterialPluginId>,
+    cloud_positions: Vec<[f32; 3]>,
+    cloud_scalars: Vec<f32>,
+    /// Notices taken from the renderer, newest frame first.
+    notices: Vec<String>,
+    capture_requested: bool,
+    probe: Option<ProbeCapture>,
+    probe_texture: Option<egui::TextureHandle>,
+    frame_dt: f32,
+}
+
+impl Default for ContractState {
+    fn default() -> Self {
+        Self {
+            built: false,
+            scene: Scene::new(),
+            mode: ModeSel::Physical,
+            manual_ev: 15.0,
+            direct_path: false,
+            two_viewports: false,
+            right_ev: 13.0,
+            viewports: None,
+            targets: Vec::new(),
+            recolor: None,
+            cloud_positions: Vec::new(),
+            cloud_scalars: Vec::new(),
+            notices: Vec::new(),
+            capture_requested: false,
+            probe: None,
+            probe_texture: None,
+            frame_dt: 0.0,
+        }
+    }
+}
+
+impl ContractState {
+    fn lighting(&self) -> LightingSettings {
+        let mut l = LightingSettings::daylight();
+        l.lights[0].kind = LightKind::Directional {
+            direction: [0.35, -0.8, 1.0],
+        };
+        l.lights[0].cast_shadows = true;
+        l.shadows.enabled = true;
+        l
+    }
+
+    fn settings(&self, camera: &PhysicalExposure) -> ExposureSettings {
+        let auto = AutoExposure {
+            adaptation: 1.0,
+            ..AutoExposure::default()
+        };
+        ExposureSettings::from_mode(exposure_mode(
+            self.mode,
+            self.manual_ev,
+            camera,
+            auto,
+            true,
+            self.frame_dt,
+        ))
+    }
+
+    /// The multiplier this frame's fixed exposure resolves to, or `None` under
+    /// automatic exposure, which is metered on the GPU.
+    fn multiplier(&self, camera: &PhysicalExposure) -> Option<f32> {
+        self.ev(camera).map(ev_multiplier)
+    }
+
+    fn ev(&self, camera: &PhysicalExposure) -> Option<f32> {
+        match self.mode {
+            ModeSel::Passthrough => Some(vpl::PASSTHROUGH_EV100),
+            ModeSel::Manual => Some(self.manual_ev),
+            ModeSel::Physical => Some(physical_ev100(camera)),
+            ModeSel::Automatic => None,
+        }
+    }
+}
+
+/// A black surface emitting white at [`EMITTER_NITS`] with exposure weight `w`.
+fn contract_emitter(w: f32) -> Material {
+    let mut m = Material::pbr(Colour::linear_rgb(0.0, 0.0, 0.0), 0.0, 1.0);
+    m.specular_factor = 0.0;
+    m.emissive = Colour::linear_rgb(1.0, 1.0, 1.0);
+    m.emissive_strength = EMITTER_NITS;
+    m.with_emissive_exposure_weight(w)
+}
+
+fn build_contract_scene(app: &mut App, renderer: &mut ViewportRenderer) {
+    let st = &mut app.lighting_state.contract;
+    st.scene = Scene::new();
+    let device = &app.device;
+    let upload = |renderer: &mut ViewportRenderer, mesh: &vpl::MeshData| {
+        renderer
+            .resources_mut()
+            .upload_mesh_data(device, mesh)
+            .expect("contract mesh upload")
+    };
+    let ground = upload(renderer, &vpl::primitives::plane(CONTRACT_SPAN + 8.0, 16.0));
+    let card = upload(renderer, &vpl::primitives::plane(1.0, 1.0));
+    let sphere = upload(renderer, &vpl::primitives::sphere(0.5, 48, 24));
+
+    let lambert = |albedo: [f32; 3]| {
+        let mut m = Material::from_colour(Colour::from_linear_rgb_array(albedo));
+        m.specular = 0.0;
+        m
+    };
+    let ground_mat = upload_material(renderer, lambert([0.3, 0.3, 0.3]));
+    st.scene.add_named(
+        "Ground",
+        Some(ground),
+        glam::Mat4::from_translation(glam::Vec3::new(CONTRACT_SPAN * 0.5, 0.0, 0.0)),
+        ground_mat,
+    );
+
+    renderer
+        .resources_mut()
+        .ensure_matcaps_initialized(&app.device, &app.queue);
+    let matcap = renderer
+        .resources()
+        .builtin_matcap_id(vpl::BuiltinMatcap::Ceramic);
+    if st.recolor.is_none() {
+        st.recolor = Some(
+            renderer
+                .resources_mut()
+                .register_material_plugin(&app.device, &RecolorTintPlugin)
+                .expect("register recolor plugin"),
+        );
+    }
+
+    let x = |i: usize| i as f32 * CONTRACT_STEP;
+    // Cards lean back towards the camera; spheres sit on the ground.
+    let card_at = |i: usize| {
+        glam::Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(1.1),
+            glam::Quat::from_rotation_x(1.0),
+            glam::Vec3::new(x(i), 0.0, 0.5),
+        )
+    };
+    let sphere_at = |i: usize| glam::Mat4::from_translation(glam::Vec3::new(x(i), 0.0, 0.5));
+
+    let mut add = |name: &str, mesh, at, m: Material, unlit: bool| {
+        let mat = upload_material(renderer, m);
+        let id = st.scene.add_named(name, Some(mesh), at, mat);
+        if unlit {
+            let mut settings = vpl::ItemSettings::default();
+            settings.unlit = true;
+            st.scene.set_appearance(id, settings);
+        }
+    };
+    add(
+        SUBJECTS[0].0,
+        card,
+        card_at(0),
+        lambert([GREY_CARD; 3]),
+        false,
+    );
+    add(
+        SUBJECTS[1].0,
+        sphere,
+        sphere_at(1),
+        Material::pbr(Colour::linear_rgb(0.5, 0.5, 0.5), 0.0, 0.45),
+        false,
+    );
+    for (i, w) in [(2, 1.0), (3, 0.5), (4, 0.0)] {
+        add(SUBJECTS[i].0, card, card_at(i), contract_emitter(w), false);
+    }
+    add(
+        SUBJECTS[5].0,
+        card,
+        card_at(5),
+        Material::from_colour(Colour::linear_rgb(0.9, 0.35, 0.05)),
+        true,
+    );
+    let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
+    m.shading_model = vpl::ShadingModel::Matcap(matcap);
+    add(SUBJECTS[7].0, sphere, sphere_at(7), m, false);
+    let recolor = Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.45)
+        .with_plugin(st.recolor.expect("registered above"))
+        .with_param("tint", [1.0f32, 0.45, 0.15]);
+    add(SUBJECTS[8].0, sphere, sphere_at(8), recolor, false);
+
+    // The point cloud: a 16 x 16 upright patch, coloured by its height.
+    st.cloud_positions.clear();
+    st.cloud_scalars.clear();
+    for i in 0..16 {
+        for j in 0..16 {
+            let u = i as f32 / 15.0;
+            let v = j as f32 / 15.0;
+            st.cloud_positions
+                .push([x(6) - 0.5 + u, 0.0, 0.05 + v * 1.0]);
+            st.cloud_scalars.push(v);
+        }
+    }
+
+    if st.viewports.is_none() {
+        st.viewports = Some([
+            renderer.create_viewport(&app.device),
+            renderer.create_viewport(&app.device),
+        ]);
+    }
+    app.camera.exposure = PhysicalExposure::default();
+    st.built = true;
+}
+
+/// The point cloud and the per-frame renderer work: notices, probe capture.
+fn contract_frame(app: &mut App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+    let st = &mut app.lighting_state.contract;
+    if st.direct_path {
+        fd.effects.display.mode = vpl::PipelineMode::Direct;
+    }
+    let mut cloud = viewport_lib_plugins::item_types::point_cloud::PointCloudItem::default();
+    cloud.positions = st.cloud_positions.clone();
+    cloud.colour = vpl::ColourSource::Scalar {
+        values: st.cloud_scalars.clone(),
+        range: Some((0.0, 1.0)),
+        colourmap: Some(vpl::ColourmapId(vpl::BuiltinColourmap::Viridis as usize)),
+    };
+    cloud.size = vpl::SizeSource::Uniform(7.0);
+    fd.scene
+        .items_mut::<viewport_lib_plugins::item_types::point_cloud::PointCloudItem>()
+        .push(cloud);
+
+    let Some(rs) = ctx.frame.wgpu_render_state() else {
+        return;
+    };
+    let mut guard = rs.renderer.write();
+    let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() else {
+        return;
+    };
+    // Notices reported by the last frame's render.
+    let notices = renderer.take_notices();
+    st.notices = notices
+        .iter()
+        .map(|n| format!("{:?} x{}: {}", n.severity, n.count, n.detail))
+        .collect();
+    if st.capture_requested {
+        st.capture_requested = false;
+        let ev = st.ev(&app.camera.exposure);
+        let centre = [CONTRACT_SPAN * 0.5, -2.0, 1.2];
+        let pano = renderer.capture_equirect(&app.device, &app.queue, fd, centre, 64, 64);
+        let (w, h) = (pano.width as usize, pano.height as usize);
+        let max_diff = st.probe.as_ref().and_then(|prev| {
+            (prev.radiance.len() == pano.rgba.len()).then(|| {
+                prev.radiance
+                    .iter()
+                    .zip(&pano.rgba)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f32, f32::max)
+            })
+        });
+        // A simple Reinhard and sRGB encode for the thumbnail.
+        let rgba8 = pano
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|p| {
+                let enc = |c: f32| {
+                    let t = (c / (1.0 + c)).clamp(0.0, 1.0);
+                    (t.powf(1.0 / 2.2) * 255.0).round() as u8
+                };
+                [
+                    enc(p[0] / 4000.0),
+                    enc(p[1] / 4000.0),
+                    enc(p[2] / 4000.0),
+                    255,
+                ]
+            })
+            .collect();
+        st.probe = Some(ProbeCapture {
+            radiance: pano.rgba,
+            rgba8,
+            size: [w, h],
+            ev,
+            max_diff,
+        });
+        st.probe_texture = None;
+    }
+}
+
+fn controls_contract(app: &mut App, ui: &mut egui::Ui) {
+    app.lighting_state.contract.frame_dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
+    ui.label(
+        "Full daylight (100 000 lx sun, 8 000 nit fill) on a row of subjects. Move from \
+         Passthrough to the physical camera (sunny 16): the lit subjects and the weight-1 \
+         emitter come down into range; the weight-0 emitter, the unlit card, the colour map \
+         and the matcap do not move.",
+    );
+    ui.separator();
+    let camera = &mut app.camera.exposure;
+    let st = &mut app.lighting_state.contract;
+    mode_selector(ui, &mut st.mode);
+    match st.mode {
+        ModeSel::Manual => {
+            ui.add(egui::Slider::new(&mut st.manual_ev, -2.0..=18.0).text("EV100"));
+        }
+        ModeSel::Physical => physical_sliders(ui, camera),
+        _ => {}
+    }
+    let k = st.multiplier(camera);
+    match (st.ev(camera), k) {
+        (Some(ev), Some(k)) => ui.label(format!("EV100 {ev:.2}: multiplier k = {k:.3e}")),
+        _ => ui.label("Automatic: k is metered on the GPU each frame."),
+    };
+
+    ui.separator();
+    ui.label("Per subject (value before the tone map):");
+    egui::Grid::new("contract_table")
+        .num_columns(3)
+        .striped(true)
+        .show(ui, |ui| {
+            ui.strong("Subject");
+            ui.strong("Scale");
+            ui.strong("Value");
+            ui.end_row();
+            // Sun lux and fill nits of the daylight preset, at normal incidence.
+            let sun_lux = Lux::FULL_DAYLIGHT.0;
+            for (name, response, why) in SUBJECTS {
+                ui.label(name).on_hover_text(why);
+                let (scale, value) = match (response, k) {
+                    (Response::Lit, Some(k)) => (
+                        format!("k = {k:.2e}"),
+                        if name.starts_with("Lambert") {
+                            format!("{:.3}", GREY_CARD * sun_lux / std::f32::consts::PI * k)
+                        } else {
+                            "lit x k".to_string()
+                        },
+                    ),
+                    (Response::Emissive(w), Some(k)) => {
+                        let m = 1.0 + (k - 1.0) * w;
+                        (format!("{m:.3}"), format!("{:.3}", EMITTER_NITS * m))
+                    }
+                    (Response::Resolved, _) => ("1".to_string(), "as authored".to_string()),
+                    (_, None) => ("metered".to_string(), "-".to_string()),
+                };
+                ui.label(scale);
+                ui.label(value);
+                ui.end_row();
+            }
+        });
+    ui.weak(
+        "Lambert value: 0.18 x 100 000 lx / pi x k at normal incidence, before the fill. \
+         Hover a subject for why it scales the way it does.",
+    );
+
+    ui.separator();
+    ui.checkbox(&mut st.direct_path, "Direct path (PipelineMode::Direct)");
+    if st.direct_path {
+        ui.weak("No HDR target: Automatic cannot meter, so it draws at passthrough.");
+    }
+    ui.label("Notices:");
+    if st.notices.is_empty() {
+        ui.weak("(none)");
+    }
+    for n in &st.notices {
+        ui.add(egui::Label::new(egui::RichText::new(n).small()).wrap());
+    }
+
+    ui.separator();
+    ui.checkbox(&mut st.two_viewports, "Two viewports");
+    ui.add_enabled(
+        st.two_viewports,
+        egui::Slider::new(&mut st.right_ev, 8.0..=18.0).text("Right half EV100"),
+    );
+
+    ui.separator();
+    if ui.button("Capture probe").clicked() {
+        st.capture_requested = true;
+    }
+    if let Some(probe) = &st.probe {
+        let tex = st.probe_texture.get_or_insert_with(|| {
+            ui.ctx().load_texture(
+                "contract_probe",
+                egui::ColorImage::from_rgba_unmultiplied(probe.size, &probe.rgba8),
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        ui.image((tex.id(), egui::vec2(200.0, 100.0)));
+        match probe.ev {
+            Some(ev) => ui.label(format!("Captured with the camera at EV100 {ev:.2}.")),
+            None => ui.label("Captured under automatic exposure."),
+        };
+        if let Some(d) = probe.max_diff {
+            ui.label(format!("Max difference from the capture before: {d:.3e}"));
+        }
+        ui.weak("A capture holds absolute radiance: change the EV and capture again.");
+    }
+}
+
+/// The colour bar for the point cloud, drawn over the bottom-left corner.
+fn contract_overlay(_app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
+    let bar = egui::Rect::from_min_size(
+        rect.left_bottom() + egui::vec2(60.0, -34.0),
+        egui::vec2(140.0, 12.0),
+    );
+    let painter = ui.painter_at(rect);
+    let steps = 32;
+    for i in 0..steps {
+        let t = i as f32 / (steps - 1) as f32;
+        let c = vpl::BuiltinColourmap::Viridis.sample(t);
+        let x0 = bar.left() + bar.width() * i as f32 / steps as f32;
+        let x1 = bar.left() + bar.width() * (i + 1) as f32 / steps as f32;
+        painter.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(x0, bar.top()), egui::pos2(x1, bar.bottom())),
+            0.0,
+            egui::Color32::from_rgb(
+                (c[0] * 255.0) as u8,
+                (c[1] * 255.0) as u8,
+                (c[2] * 255.0) as u8,
+            ),
+        );
+    }
+    let text = |pos, s: &str, align| {
+        painter.text(
+            pos,
+            align,
+            s,
+            egui::FontId::proportional(11.0),
+            egui::Color32::from_gray(220),
+        );
+    };
+    text(bar.left_top(), "0", egui::Align2::LEFT_BOTTOM);
+    text(bar.right_top(), "1", egui::Align2::RIGHT_BOTTOM);
+    text(
+        bar.center_top(),
+        "point height",
+        egui::Align2::CENTER_BOTTOM,
+    );
+}
+
+/// Feed the host's input to the orbit controller, for the frames this
+/// showcase draws the viewport itself.
+fn drive_orbit(app: &mut App, ui: &egui::Ui, cx: &crate::ViewportCtx) {
+    use vpl::{ButtonState, MouseButton, ScrollUnits, ViewportContext, ViewportEvent};
+    let rect = cx.rect;
+    let hovered = cx.response.hovered();
+    app.input.begin_frame(ViewportContext {
+        hovered,
+        focused: hovered,
+        viewport_size: [rect.width(), rect.height()],
+    });
+    app.controller
+        .set_viewport_size([rect.width(), rect.height()]);
+    ui.input(|i| {
+        let mods = vpl::input::adapters::modifiers_from_egui(&i.modifiers);
+        app.input.push_event(ViewportEvent::ModifiersChanged(mods));
+        if let Some(pos) = i.pointer.interact_pos() {
+            let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
+            app.input
+                .push_event(ViewportEvent::PointerMoved { position: local });
+        }
+        for event in &i.events {
+            match event {
+                egui::Event::PointerButton {
+                    button,
+                    pressed,
+                    pos,
+                    ..
+                } => {
+                    let button = match button {
+                        egui::PointerButton::Primary => MouseButton::Left,
+                        egui::PointerButton::Secondary => MouseButton::Right,
+                        egui::PointerButton::Middle => MouseButton::Middle,
+                        _ => continue,
+                    };
+                    if *pressed && !rect.contains(*pos) {
+                        continue;
+                    }
+                    let state = if *pressed {
+                        ButtonState::Pressed
+                    } else {
+                        ButtonState::Released
+                    };
+                    app.input
+                        .push_event(ViewportEvent::MouseButton { button, state });
+                }
+                egui::Event::MouseWheel { unit, delta, .. } if hovered => {
+                    let units = match unit {
+                        egui::MouseWheelUnit::Line => ScrollUnits::Lines,
+                        egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
+                        egui::MouseWheelUnit::Page => ScrollUnits::Pages,
+                    };
+                    app.input.push_event(ViewportEvent::Wheel {
+                        delta: glam::Vec2::new(delta.x, delta.y),
+                        units,
+                    });
+                }
+                _ => {}
+            }
+        }
+    });
+    let action = app.input.resolve();
+    let dt = ui.ctx().input(|i| i.stable_dt);
+    app.controller.apply(&mut app.camera, &action, dt);
+    app.camera.set_aspect_ratio(rect.width(), rect.height());
+}
+
+/// Draw the contract scene through two viewports over one prepared scene:
+/// the left half at the selected exposure, the right half at a manual EV.
+fn contract_two_viewports(app: &mut App, ui: &mut egui::Ui, cx: &crate::ViewportCtx) {
+    drive_orbit(app, ui, cx);
+    let rect = cx.rect;
+    let ppp = ui.ctx().pixels_per_point();
+    let dt = ui.ctx().input(|i| i.stable_dt.min(1.0 / 15.0));
+    let Some([vp_left, vp_right]) = app.lighting_state.contract.viewports else {
+        return;
+    };
+    let mut left = app.build_frame_data(rect.width(), rect.height(), ppp, cx.frame, dt);
+    let mut right = app.build_frame_data(rect.width(), rect.height(), ppp, cx.frame, dt);
+    left.camera = left.camera.with_viewport_id(vp_left);
+    right.camera = right.camera.with_viewport_id(vp_right);
+    right.effects.display.exposure = ExposureSettings::manual(app.lighting_state.contract.right_ev);
+
+    let rs = cx.frame.wgpu_render_state().expect("wgpu required");
+    let size_px = [
+        (rect.width() * ppp).round().max(1.0) as u32,
+        (rect.height() * ppp).round().max(1.0) as u32,
+    ];
+    let mut guard = rs.renderer.write();
+    let st = &mut app.lighting_state.contract;
+    if st.targets.len() != 2 || st.targets.iter().any(|t| t.inner.size() != size_px) {
+        for old in st.targets.drain(..) {
+            guard.free_texture(&old.id);
+        }
+        for _ in 0..2 {
+            let inner = vpl::OffscreenViewportTarget::new(&app.device, rs.target_format, size_px);
+            let id = guard.register_native_texture(
+                &app.device,
+                inner.sample_view(),
+                crate::eframe::wgpu::FilterMode::Linear,
+            );
+            st.targets.push(crate::Target { inner, id });
+        }
+    }
+    if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+        let mut owned = renderer.owned();
+        let (scene_fx, _) = left.effects.split();
+        let token = owned.prepare_scene(&app.device, &app.queue, &left, &scene_fx);
+        owned.prepare_viewport(&app.device, &app.queue, &token, vp_left, &left);
+        owned.prepare_viewport(&app.device, &app.queue, &token, vp_right, &right);
+        for (vp, fd, target) in [
+            (vp_left, &left, &st.targets[0]),
+            (vp_right, &right, &st.targets[1]),
+        ] {
+            let cmd =
+                owned.render_viewport(&app.device, &app.queue, target.inner.render_view(), vp, fd);
+            app.queue.submit(std::iter::once(cmd));
+        }
+    }
+    let ids = [st.targets[0].id, st.targets[1].id];
+    drop(guard);
+
+    let mid = rect.center().x;
+    let painter = ui.painter_at(rect);
+    painter.image(
+        ids[0],
+        egui::Rect::from_min_max(rect.min, egui::pos2(mid, rect.max.y)),
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.5, 1.0)),
+        egui::Color32::WHITE,
+    );
+    painter.image(
+        ids[1],
+        egui::Rect::from_min_max(egui::pos2(mid, rect.min.y), rect.max),
+        egui::Rect::from_min_max(egui::pos2(0.5, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+    painter.line_segment(
+        [egui::pos2(mid, rect.top()), egui::pos2(mid, rect.bottom())],
+        egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+    );
+    painter.text(
+        egui::pos2(mid + 6.0, rect.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        format!("EV100 {:.1}", st.right_ev),
+        egui::FontId::proportional(13.0),
+        egui::Color32::WHITE,
+    );
+    contract_overlay(app, ui, rect);
+    ui.ctx().request_repaint();
 }
