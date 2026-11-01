@@ -376,14 +376,19 @@ pub enum ShadowFilter {
 
 /// Per-frame lighting configuration for the viewport.
 ///
-/// Supports up to 8 light sources; each casts shadows when its `cast_shadows`
-/// flag is set. Blinn-Phong shading coefficients (ambient, diffuse, specular,
-/// shininess) have moved to per-object [`Material`](crate::material::Material) structs.
+/// Lights are clustered, so a frame can carry up to 512 of them on the full
+/// tier (16 on the compatibility tier); past that the renderer keeps the
+/// first directional light and the highest-ranked of the rest. Each light casts
+/// shadows when its `cast_shadows` flag is set: the first casting directional
+/// light owns the cascades, and point and spot lights take layers of the
+/// punctual shadow array in rank order. Blinn-Phong shading coefficients
+/// (ambient, diffuse, specular, shininess) live on per-object
+/// [`Material`](crate::material::Material) structs.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LightingSettings {
-    /// Active light sources (max 8). Default: one directional light.
+    /// Active light sources. Default: one directional light.
     pub lights: Vec<LightSource>,
     /// Sky colour of the hemisphere fill: the tint of light arriving from
     /// above, with the magnitude in

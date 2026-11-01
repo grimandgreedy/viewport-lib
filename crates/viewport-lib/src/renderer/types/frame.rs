@@ -548,11 +548,9 @@ pub struct CameraFrame {
     /// layer). An item is culled on this camera when its
     /// `ItemSettings::visibility_mask` shares no bit with this mask
     /// (`visibility_mask & cull_mask == 0`). This is a CPU-side cull applied at
-    /// scene collect, so it costs nothing at the default and needs no GPU
-    /// carrier; it is the per-viewport layer filter for quad-view and editor
-    /// layouts. Note the GPU-driven instanced cull path does not yet honour the
-    /// mask, so an instanced batch culled only by layer still runs its GPU cull
-    /// (it is skipped CPU-side before reaching that path).
+    /// scene collect, before batching, so it costs nothing at the default,
+    /// needs no GPU carrier, and an item it drops never reaches the GPU cull;
+    /// it is the per-viewport layer filter for quad-view and editor layouts.
     pub cull_mask: u32,
 }
 
