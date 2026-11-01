@@ -1,7 +1,7 @@
 //! The example itself: three primitives on a grid, orbited with touch.
 //!
 //! The same code runs on Android, on iOS, and on the desktop, and the input
-//! handling is the same on all three: translate the winit event with `from_winit`,
+//! handling is the same on all three: translate the winit event with `translate`,
 //! push it into a `ViewportInput`, and apply the frame it resolves to the camera.
 //! One finger orbits, two pan, a pinch zooms and a twist turns; none of that is
 //! written here.
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use viewport_lib::Colour;
 
-use viewport_lib::interaction::input::adapters::from_winit;
+use viewport_lib::interaction::input::adapters::{AdapterCtx, winit as vpl_winit};
 use viewport_lib::{
     Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, OrbitCameraController,
     PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
@@ -271,10 +271,14 @@ impl ApplicationHandler for App {
             // Everything else, touch included, goes through the adapter. The
             // viewport fills the window, so there is no rect to offset by.
             other => {
-                let scale = state.window.scale_factor() as f32;
-                if let Some(ev) = from_winit(&other, scale) {
-                    state.input.push_event(ev);
+                let actx = AdapterCtx::new(state.window.scale_factor() as f32, glam::Vec2::ZERO);
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &actx, &mut events);
+                if !events.is_empty() {
                     state.window.request_redraw();
+                }
+                for ev in events {
+                    state.input.push_event(ev);
                 }
             }
         }
