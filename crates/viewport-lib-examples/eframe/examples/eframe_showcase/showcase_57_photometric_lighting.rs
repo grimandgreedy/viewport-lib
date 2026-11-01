@@ -36,7 +36,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
-use crate::shared::upload_material;
+use crate::shared::{two_sided, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -1330,7 +1330,10 @@ fn build_contract_scene(app: &mut App, renderer: &mut ViewportRenderer) {
             .upload_mesh_data(device, mesh)
             .expect("contract mesh upload")
     };
-    let ground = upload(renderer, &vpl::primitives::plane(CONTRACT_SPAN + 8.0, 16.0));
+    let ground = upload(
+        renderer,
+        &vpl::primitives::cuboid(CONTRACT_SPAN + 8.0, 16.0, 0.1),
+    );
     let card = upload(renderer, &vpl::primitives::plane(1.0, 1.0));
     let sphere = upload(renderer, &vpl::primitives::sphere(0.5, 48, 24));
 
@@ -1343,7 +1346,7 @@ fn build_contract_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     st.scene.add_named(
         "Ground",
         Some(ground),
-        glam::Mat4::from_translation(glam::Vec3::new(CONTRACT_SPAN * 0.5, 0.0, 0.0)),
+        glam::Mat4::from_translation(glam::Vec3::new(CONTRACT_SPAN * 0.5, 0.0, -0.05)),
         ground_mat,
     );
 
@@ -1374,7 +1377,7 @@ fn build_contract_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     let sphere_at = |i: usize| glam::Mat4::from_translation(glam::Vec3::new(x(i), 0.0, 0.5));
 
     let mut add = |name: &str, mesh, at, m: Material, unlit: bool| {
-        let mat = upload_material(renderer, m);
+        let mat = upload_material(renderer, two_sided(m));
         let id = st.scene.add_named(name, Some(mesh), at, mat);
         if unlit {
             let mut settings = vpl::ItemSettings::default();

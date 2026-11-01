@@ -26,7 +26,7 @@
 use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_uv_sphere;
-use crate::shared::upload_material;
+use crate::shared::{two_sided, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::vplt::effects::tone_operators;
@@ -405,7 +405,7 @@ impl App {
         for i in 0..RAMP_STOPS {
             let nits = ((i - 12) as f32).exp2();
             let x = (i as f32 - (RAMP_STOPS as f32 - 1.0) / 2.0) * ramp_step;
-            let mat = upload_material(renderer, emitter([1.0; 3], nits));
+            let mat = upload_material(renderer, two_sided(emitter([1.0; 3], nits)));
             scene.add_named(
                 &format!("Ramp 2^{} nits", i - 12),
                 Some(card),
@@ -419,7 +419,7 @@ impl App {
         }
         for (i, hue) in HUES.iter().enumerate() {
             let x = (i as f32 - 2.5) * 1.3;
-            let mat = upload_material(renderer, emitter(*hue, HUE_NITS));
+            let mat = upload_material(renderer, two_sided(emitter(*hue, HUE_NITS)));
             scene.add_named(
                 &format!("Hue card {i}"),
                 Some(card),

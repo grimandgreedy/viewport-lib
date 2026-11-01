@@ -26,7 +26,7 @@
 
 use crate::App;
 use crate::eframe::egui;
-use crate::shared::{edit_material, two_sided, upload_material};
+use crate::shared::{edit_material, upload_material};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
@@ -278,9 +278,9 @@ fn build_transmission(app: &mut App, renderer: &mut ViewportRenderer) {
         renderer,
         0,
         "Floor",
-        vpl::primitives::plane(16.0, 10.0),
-        glam::Mat4::from_translation(glam::Vec3::new(1.0, 0.5, 0.0)),
-        two_sided(floor),
+        vpl::primitives::cuboid(16.0, 10.0, 0.1),
+        glam::Mat4::from_translation(glam::Vec3::new(1.0, 0.5, -0.05)),
+        floor,
     );
     let wall_tex = renderer
         .resources_mut()
@@ -293,12 +293,9 @@ fn build_transmission(app: &mut App, renderer: &mut ViewportRenderer) {
         renderer,
         0,
         "Patterned wall",
-        vpl::primitives::plane(14.0, 5.0),
-        glam::Mat4::from_rotation_translation(
-            glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            glam::Vec3::new(1.0, 3.0, 2.5),
-        ),
-        two_sided(wall),
+        vpl::primitives::cuboid(14.0, 0.1, 5.0),
+        glam::Mat4::from_translation(glam::Vec3::new(1.0, 3.05, 2.5)),
+        wall,
     );
 
     let glass = |v: &Volume| {
@@ -370,13 +367,9 @@ fn build_layers(app: &mut App, renderer: &mut ViewportRenderer) {
         renderer,
         1,
         "Floor",
-        vpl::primitives::plane(14.0, 10.0),
-        glam::Mat4::IDENTITY,
-        two_sided(Material::pbr(
-            Colour::linear_rgb(0.35, 0.35, 0.35),
-            0.0,
-            0.85,
-        )),
+        vpl::primitives::cuboid(14.0, 10.0, 0.1),
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
+        Material::pbr(Colour::linear_rgb(0.35, 0.35, 0.35), 0.0, 0.85),
     );
     let flakes = renderer
         .resources_mut()

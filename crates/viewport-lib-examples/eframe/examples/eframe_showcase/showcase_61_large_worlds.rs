@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::App;
 use crate::eframe::egui;
-use crate::shared::{two_sided, upload_material};
+use crate::shared::upload_material;
 use glam::{DVec3, Mat3, Vec3};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
@@ -458,17 +458,13 @@ fn build(app: &mut App, renderer: &mut ViewportRenderer) {
     // The ground, left unclipped so the cut only opens the building.
     let ground = renderer
         .resources_mut()
-        .upload_mesh_data(&app.device, &vpl::primitives::plane(40.0, 40.0))
+        .upload_mesh_data(&app.device, &vpl::primitives::cuboid(40.0, 40.0, 0.1))
         .expect("ground upload");
     let ground_mat = upload_material(
         renderer,
-        two_sided(Material::pbr(
-            Colour::linear_rgb(0.3, 0.38, 0.28),
-            0.0,
-            0.95,
-        )),
+        Material::pbr(Colour::linear_rgb(0.3, 0.38, 0.28), 0.0, 0.95),
     );
-    let local = [0.0, 0.0, -0.21];
+    let local = [0.0, 0.0, -0.26];
     let id = st.scene.add_named(
         "Ground",
         Some(ground),
