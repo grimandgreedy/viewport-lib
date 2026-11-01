@@ -11,7 +11,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -183,7 +182,7 @@ impl ItemTypePlugin for TensorFieldPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         let mut bound = false;
         for entry in &self.frame {
             if entry.draw.instance_count == 0 {

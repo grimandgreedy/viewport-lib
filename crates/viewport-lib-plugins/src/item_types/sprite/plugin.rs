@@ -612,7 +612,7 @@ impl ItemTypePlugin for SpritePlugin {
         // The depth attachment is writable in this pass and is the same buffer
         // the soft fade would sample, so group 2 gets the 1x1 fallback. A
         // depth-writing batch has no soft fade to lose by it.
-        let target = if ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT {
+        let target = if ctx.is_hdr_pass() {
             pipeline::SpritePass::Scene
         } else {
             pipeline::SpritePass::Ldr

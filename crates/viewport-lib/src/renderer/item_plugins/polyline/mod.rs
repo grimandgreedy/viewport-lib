@@ -22,7 +22,6 @@ use crate::plugin_api::{
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PolylineItem, PolylineRefItem, SubObjectRef,
 };
-use crate::resources::HDR_COLOR_FORMAT;
 use lines::{PolylineGpuData, PolylineKey};
 
 pub(crate) const TYPE_NAME: &str = "vpl.polyline";
@@ -162,7 +161,7 @@ impl ItemTypePlugin for PolylinePlugin {
         items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         // Painted for the overlays alone when the frame submitted no polyline
         // items, and then `frame` still holds the last prepared frame's.
         let own: &[pipeline::PolylineFrame] = if items.is_empty() { &[] } else { &self.frame };

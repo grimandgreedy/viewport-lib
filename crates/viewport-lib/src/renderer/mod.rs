@@ -2674,6 +2674,7 @@ impl ViewportRenderer {
                 self.resources.target_format
             },
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            hdr_pass: is_hdr,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if !is_hdr && !plugin.draws_ldr() {
@@ -2743,6 +2744,7 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            hdr_pass: true,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if !plugin.draws_foreground() {
@@ -2943,6 +2945,7 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            hdr_pass: true,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             let items = crate::plugin_api::ItemCollections::new(

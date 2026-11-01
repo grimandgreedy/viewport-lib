@@ -37,7 +37,7 @@ use viewport_lib::plugin_api::{
 use viewport_lib::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SpriteBlend, SubObjectRef,
 };
-use viewport_lib::resources::{DeviceResources, HDR_COLOR_FORMAT};
+use viewport_lib::resources::DeviceResources;
 
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.ribbon";
@@ -555,7 +555,7 @@ impl ItemTypePlugin for RibbonPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         for entry in &self.frame {
             let gd = &entry.gpu;
             if gd.index_count == 0 && gd.edge_index_count == 0 {

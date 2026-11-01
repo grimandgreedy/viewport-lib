@@ -7,7 +7,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext, ShadowCastContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 use viewport_lib_geometry::volume::grid::VolumeData;
 
 use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
@@ -192,7 +191,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             return;
         }
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         for entry in &self.frame {
             if entry.hidden {
                 continue;
