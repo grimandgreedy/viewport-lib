@@ -46,7 +46,7 @@
 //! expects.
 //!
 //! Material plugin hooks (`shade_surface`, `shade_light`, `shade_ambient`,
-//! `recolor`), item-type plugins that read the lights uniform, and post-effect
+//! `recolour`), item-type plugins that read the lights uniform, and post-effect
 //! producers see exposed radiance and return exposed radiance. A plugin that
 //! adds its own light multiplies it by the exposure the same way.
 //!
@@ -86,7 +86,7 @@
 //! brighten with the camera, is a black base colour with an emissive term at
 //! weight 1, not an unlit item.
 //!
-//! A `recolor` hook replaces lit radiance, so its output is exposed radiance,
+//! A `recolour` hook replaces lit radiance, so its output is exposed radiance,
 //! clamped to `lit_clamp` like the rest of the lit result.
 //!
 //! # 5. Exposure modes

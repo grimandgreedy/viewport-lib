@@ -15,7 +15,7 @@ use common::*;
 /// 16), the lightmap texture (binding 17), the `lightmap_mode` object field, and
 /// the `apply_lightmap` blend in the ambient slot.
 #[test]
-fn lightmap_replace_mode_recolors_object() {
+fn lightmap_replace_mode_recolours_object() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;

@@ -6,7 +6,7 @@
 //   fn <name>__shade_surface(surf: ShadingSurface) -> SurfaceOverride
 //   fn <name>__shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32>
 //   fn <name>__shade_ambient(surf: ShadingSurface) -> vec3<f32>
-//   fn <name>__recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32>
+//   fn <name>__recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32>
 //
 // Bodies may also read the group-0 `camera` uniform: `camera.proj`,
 // `camera.viewport` (physical pixels: w, h, 1/w, 1/h), `camera.clip` (near,

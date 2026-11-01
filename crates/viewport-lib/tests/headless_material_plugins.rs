@@ -245,7 +245,7 @@ fn material_plugin_reads_vertex_attribute() {
         }
         fn wgsl_body(&self) -> String {
             "\
-fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     return direct + ambient + surf.attr.rgb;
 }
 "
@@ -751,7 +751,7 @@ fn material_plugin_reading_vertex_attribute_sees_it_in_a_batch() {
         }
         fn wgsl_body(&self) -> String {
             "\
-fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     return direct + ambient + surf.attr.rgb;
 }
 "

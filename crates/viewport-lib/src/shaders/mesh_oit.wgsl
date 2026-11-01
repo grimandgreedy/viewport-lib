@@ -1143,8 +1143,8 @@ fn compute_lit(
         dbg_ambient_lum  = amb.ambient_lum;
         // </viewport-shade-slot:ambient>
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
-        // <viewport-shade-slot:recolor>
-        // </viewport-shade-slot:recolor>
+        // <viewport-shade-slot:recolour>
+        // </viewport-shade-slot:recolour>
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);

@@ -1376,9 +1376,9 @@ fn compute_lit(
         // </viewport-shade-slot:ambient>
 
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
-        // <viewport-shade-slot:recolor>
-        // </viewport-shade-slot:recolor>
-        // A hook's recolor replaces the colour but not the split, which
+        // <viewport-shade-slot:recolour>
+        // </viewport-shade-slot:recolour>
+        // A hook's recolour replaces the colour but not the split, which
         // stays the light loop's and the ambient term's.
         lit_indirect = ambient;
         lit_direct = Lo;

@@ -100,7 +100,7 @@ fn expected(name: &str) -> Option<Expected> {
         "light_transport_probe_x4" => e(4, 4, 3, 3, 2234),
         "occlusion_ssao" => e(2, 2, 2, 2, 14),
         "occlusion_contact" => e(2, 2, 2, 2, 14),
-        "light_transport_recolor_physical" => e(3, 3, 3, 3, 4418),
+        "light_transport_recolour_physical" => e(3, 3, 3, 3, 4418),
         "light_transport_colourmap_physical" => e(4, 4, 3, 3, 966),
         "light_transport_no_environment" => e(9, 9, 2, 2, 12162),
         // Grading charts: the plate and the twelve cards, as the exposure

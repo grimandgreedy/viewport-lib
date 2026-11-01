@@ -1,4 +1,4 @@
-//! A material plugin that tints the final lit colour through `recolor`.
+//! A material plugin that tints the final lit colour through `recolour`.
 //!
 //! Lighting runs as usual and only the last step changes: the hook returns
 //! `(direct + ambient) * tint`. The hook sees exposed radiance and returns
@@ -7,18 +7,18 @@
 
 use viewport_lib as vpl;
 
-/// Returns `(direct + ambient) * tint` from the `recolor` hook, with `tint`
+/// Returns `(direct + ambient) * tint` from the `recolour` hook, with `tint`
 /// (linear) read from a declared parameter.
-pub struct RecolorTintPlugin;
+pub struct RecolourTintPlugin;
 
-impl vpl::MaterialPlugin for RecolorTintPlugin {
+impl vpl::MaterialPlugin for RecolourTintPlugin {
     fn name(&self) -> &str {
-        "example_recolor_tint"
+        "example_recolour_tint"
     }
 
     fn wgsl_body(&self) -> String {
         "\
-fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     return (direct + ambient) * params.tint;
 }
 "

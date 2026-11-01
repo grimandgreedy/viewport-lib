@@ -15,18 +15,18 @@
 //!   viewport and the raw vertex colour, with lighting zeroed.
 //! - [`AoOverrideMaterialPlugin`]: writes a zero AO override, with or without
 //!   the flag that applies it.
-//! - [`RecolorTintMaterialPlugin`]: tints the lit colour through `recolor`.
+//! - [`RecolourTintMaterialPlugin`]: tints the lit colour through `recolour`.
 
 mod ao_override;
 mod flat_colour;
 mod frame_inputs;
-mod recolor_tint;
+mod recolour_tint;
 mod surface_glow;
 mod textured;
 
 pub use ao_override::AoOverrideMaterialPlugin;
 pub use flat_colour::FlatColourMaterialPlugin;
 pub use frame_inputs::FrameInputsMaterialPlugin;
-pub use recolor_tint::RecolorTintMaterialPlugin;
+pub use recolour_tint::RecolourTintMaterialPlugin;
 pub use surface_glow::SurfaceGlowMaterialPlugin;
 pub use textured::TexturedMaterialPlugin;

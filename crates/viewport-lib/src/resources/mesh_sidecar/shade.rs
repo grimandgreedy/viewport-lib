@@ -52,7 +52,7 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 /// fn shade_surface(surf: ShadingSurface) -> SurfaceOverride
 /// fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32>
 /// fn shade_ambient(surf: ShadingSurface) -> vec3<f32>
-/// fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32>
+/// fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32>
 /// ```
 ///
 /// plus any helper declarations. The composer prefixes every top-level
@@ -74,8 +74,8 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 ///   is honoured only under Mask/Blend alpha modes (Mask re-tests the
 ///   cutoff, Blend takes it as output alpha, Opaque ignores it).
 /// - `shade_light` replaces the built-in `viewport_brdf_light_contrib`
-///   per-light term; `shade_ambient` replaces the whole ambient term; `recolor` replaces the
-///   final pre-emissive colour with `recolor(surf, Lo, ambient)`.
+///   per-light term; `shade_ambient` replaces the whole ambient term; `recolour` replaces the
+///   final pre-emissive colour with `recolour(surf, Lo, ambient)`.
 /// - `hook_emissive`, `hook_alpha` and `params` are reserved identifiers in
 ///   hook bodies (the composer's carriers for the surface hook's outputs, and
 ///   the declared parameters).
@@ -86,8 +86,8 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &["mesh.wgsl", "mesh_oit.wgsl"]
 /// - Bodies may read the group-0 `camera` uniform, including `camera.time`
 ///   (from `FrameData::time`), `camera.viewport` and `camera.exposure`.
 /// - Hooks see and return exposed radiance: `light.radiance`, the `Lo` and
-///   `ambient` a `recolor` receives, and what `shade_light`, `shade_ambient`
-///   and `recolor` return are all already multiplied by the camera's
+///   `ambient` a `recolour` receives, and what `shade_light`, `shade_ambient`
+///   and `recolour` return are all already multiplied by the camera's
 ///   exposure. A hook that reads a light or the environment itself
 ///   (`lights_uniform`, the IBL textures) multiplies by `camera.exposure`.
 ///   The `emissive` a `shade_surface` returns is radiance in nits; the
@@ -176,7 +176,7 @@ pub(crate) struct StoredShadingHook {
     pub has_surface: bool,
     pub has_light: bool,
     pub has_ambient: bool,
-    pub has_recolor: bool,
+    pub has_recolour: bool,
 }
 
 impl StoredShadingHook {
@@ -188,11 +188,11 @@ impl StoredShadingHook {
         let has_surface = prefixed_body.contains(&format!("fn {name}__shade_surface("));
         let has_light = prefixed_body.contains(&format!("fn {name}__shade_light("));
         let has_ambient = prefixed_body.contains(&format!("fn {name}__shade_ambient("));
-        let has_recolor = prefixed_body.contains(&format!("fn {name}__recolor("));
-        if !has_surface && !has_light && !has_ambient && !has_recolor {
+        let has_recolour = prefixed_body.contains(&format!("fn {name}__recolour("));
+        if !has_surface && !has_light && !has_ambient && !has_recolour {
             return Err(ViewportError::ShadeShaderInvalid {
                 reason: format!(
-                    "hook '{name}' defines none of shade_surface / shade_light / shade_ambient / recolor"
+                    "hook '{name}' defines none of shade_surface / shade_light / shade_ambient / recolour"
                 ),
             });
         }
@@ -222,7 +222,7 @@ impl StoredShadingHook {
             has_surface,
             has_light,
             has_ambient,
-            has_recolor,
+            has_recolour,
         })
     }
 }
@@ -539,12 +539,12 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             &format!("        var ambient: vec3<f32> = {name}__shade_ambient(surf);\n"),
         )?;
     }
-    if hook.has_recolor {
+    if hook.has_recolour {
         s = rewrite_region(
             &s,
-            "recolor",
+            "recolour",
             &format!(
-                "        final_rgb = clamp({name}__recolor(surf, Lo, ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));\n"
+                "        final_rgb = clamp({name}__recolour(surf, Lo, ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));\n"
             ),
         )?;
     }
@@ -556,7 +556,7 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
 /// `shade_light` calls the same `viewport_brdf_light_contrib_f90` the inline
 /// path calls (with `radiance * shadow`, matching the inline multiply
 /// exactly, and the surface's f90 and energy compensation), keeps the
-/// backface early-continue, and leaves ambient and recolor on the defaults.
+/// backface early-continue, and leaves ambient and recolour on the defaults.
 /// The composed module therefore computes identical lighting; what it adds is
 /// exactly the hook mechanism (ShadingSurface fill, LightSample construction,
 /// the call indirection), which is what the knob measures. The body touches
@@ -1790,8 +1790,8 @@ fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
 }
 ";
 
-    const RECOLOR_BODY: &str = "\
-fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+    const RECOLOUR_BODY: &str = "\
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     return floor(direct * 5.0) / 5.0 + ambient;
 }
 ";
@@ -1929,7 +1929,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     #[test]
     fn analyse_detects_hooks_and_rejects_empty() {
         let s = stored("toon", TOON_BODY, false);
-        assert!(s.has_light && !s.has_ambient && !s.has_recolor);
+        assert!(s.has_light && !s.has_ambient && !s.has_recolour);
         let err = StoredShadingHook::analyse(ShadingHookDesc {
             name: "empty".into(),
             wgsl_body: "fn helper() -> f32 { return 1.0; }".to_string(),
@@ -2002,15 +2002,15 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     }
 
     #[test]
-    fn compose_recolor_only_keeps_builtin_light_term() {
-        let hook = stored("poster", RECOLOR_BODY, false);
+    fn compose_recolour_only_keeps_builtin_light_term() {
+        let hook = stored("poster", RECOLOUR_BODY, false);
         let Some(base) = registry::lookup_source("mesh.wgsl") else {
             return;
         };
         let composed = compose_shade_shader(base, &hook).expect("compose");
         assert!(composed.contains("Lo += pbr_direct(px, "));
         assert!(
-            composed.contains("final_rgb = clamp(poster__recolor(surf, Lo, ambient) * tint.rgb")
+            composed.contains("final_rgb = clamp(poster__recolour(surf, Lo, ambient) * tint.rgb")
         );
         assert!(composed.contains("let surf = build_shading_surface("));
     }
@@ -2162,7 +2162,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     #[test]
     fn analyse_accepts_surface_only_and_rejects_reserved_names() {
         let s = stored("paint", SURFACE_BODY, false);
-        assert!(s.has_surface && !s.has_light && !s.has_ambient && !s.has_recolor);
+        assert!(s.has_surface && !s.has_light && !s.has_ambient && !s.has_recolour);
         let err = StoredShadingHook::analyse(ShadingHookDesc {
             name: "bad".into(),
             wgsl_body: format!("{SURFACE_BODY}\nconst hook_alpha: f32 = 0.0;\n"),

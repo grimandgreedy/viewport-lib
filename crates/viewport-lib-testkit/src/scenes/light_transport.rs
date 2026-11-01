@@ -5,7 +5,7 @@
 //! emitters across the emissive exposure weight,
 //! bloom from an emitter at physical and at unit scale, a textured PBR model
 //! under image-based lighting with and without an environment zone, a
-//! captured reflection probe at two intensities, a `recolor` hook surface, a
+//! captured reflection probe at two intensities, a `recolour` hook surface, a
 //! scalar colour map, and the default lighting with no environment.
 
 use glam::{Mat4, Quat, Vec3};
@@ -23,7 +23,7 @@ use super::{
     BuildCtx, BuiltScene, NamedCamera, NamedScene, frame_for, item_model, orbit_camera, textures,
     upload,
 };
-use crate::fixtures::material_plugin::RecolorTintMaterialPlugin;
+use crate::fixtures::material_plugin::RecolourTintMaterialPlugin;
 
 const CARD: f32 = 0.9;
 const COL_STEP: f32 = 1.2;
@@ -378,18 +378,18 @@ fn build_probe_x4(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     build_probe(ctx, 4.0)
 }
 
-// --- recolor hook -----------------------------------------------------------
+// --- recolour hook -----------------------------------------------------------
 
 /// Two spheres in daylight under a physical camera: the stock material on the
-/// left, the same material through a `recolor` hook that tints it cyan on the
+/// left, the same material through a `recolour` hook that tints it cyan on the
 /// right.
-fn build_recolor_physical(ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    let plugin = RecolorTintMaterialPlugin::new("light_transport_recolor", [0.3, 0.9, 1.0]);
+fn build_recolour_physical(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let plugin = RecolourTintMaterialPlugin::new("light_transport_recolour", [0.3, 0.9, 1.0]);
     let plugin_id = ctx
         .renderer
         .resources_mut()
         .register_material_plugin(ctx.device, &plugin)
-        .expect("register recolor plugin");
+        .expect("register recolour plugin");
     let sphere = upload(ctx, &primitives::sphere(0.6, 48, 24));
     let base = Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.7), 0.0, 0.5);
     let items = vec![
@@ -568,9 +568,9 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_probe_x4,
         },
         NamedScene {
-            name: "light_transport_recolor_physical",
+            name: "light_transport_recolour_physical",
             cameras: iso_camera(4.0),
-            build: build_recolor_physical,
+            build: build_recolour_physical,
         },
         NamedScene {
             name: "light_transport_colourmap_physical",

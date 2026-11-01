@@ -18,7 +18,7 @@
 //!   Lambert 18% card, a PBR sphere, a 200 nit emitter at
 //!   `Material::emissive_exposure_weight` 1, 0.5 and 0, an
 //!   `ItemSettings::unlit` card, a colour-mapped point cloud, a matcap sphere
-//!   and a sphere shaded through a `recolor` material plugin. Moving from
+//!   and a sphere shaded through a `recolour` material plugin. Moving from
 //!   Passthrough to sunny-16 darkens the lit subjects and the weight-1
 //!   emitter; the weight-0 emitter, the unlit card, the colour map and the
 //!   matcap stay put. The tab also renders through `PipelineMode::Direct`
@@ -44,9 +44,9 @@ use vpl::{
     Lux, Material, PhysicalExposure, ViewportRenderer, scene::Scene,
 };
 
-#[path = "../plugins/recolor_tint_plugin.rs"]
-mod recolor_tint_plugin;
-use recolor_tint_plugin::RecolorTintPlugin;
+#[path = "../plugins/recolour_tint_plugin.rs"]
+mod recolour_tint_plugin;
+use recolour_tint_plugin::RecolourTintPlugin;
 
 /// Which facet of photometric lighting is shown.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1206,7 +1206,7 @@ const SUBJECTS: [(&str, Response, &str); CONTRACT_SUBJECTS] = [
         "A matcap is captured lighting, shown as is.",
     ),
     (
-        "Recolor sphere",
+        "Recolour sphere",
         Response::Lit,
         "The hook sees and returns exposed radiance.",
     ),
@@ -1234,7 +1234,7 @@ pub(crate) struct ContractState {
     pub right_ev: f32,
     viewports: Option<[vpl::ViewportId; 2]>,
     targets: Vec<crate::Target>,
-    recolor: Option<vpl::MaterialPluginId>,
+    recolour: Option<vpl::MaterialPluginId>,
     cloud_positions: Vec<[f32; 3]>,
     cloud_scalars: Vec<f32>,
     /// Notices taken from the renderer, newest frame first.
@@ -1257,7 +1257,7 @@ impl Default for ContractState {
             right_ev: 13.0,
             viewports: None,
             targets: Vec::new(),
-            recolor: None,
+            recolour: None,
             cloud_positions: Vec::new(),
             cloud_scalars: Vec::new(),
             notices: Vec::new(),
@@ -1356,12 +1356,12 @@ fn build_contract_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     let matcap = renderer
         .resources()
         .builtin_matcap_id(vpl::BuiltinMatcap::Ceramic);
-    if st.recolor.is_none() {
-        st.recolor = Some(
+    if st.recolour.is_none() {
+        st.recolour = Some(
             renderer
                 .resources_mut()
-                .register_material_plugin(&app.device, &RecolorTintPlugin)
-                .expect("register recolor plugin"),
+                .register_material_plugin(&app.device, &RecolourTintPlugin)
+                .expect("register recolour plugin"),
         );
     }
 
@@ -1412,10 +1412,10 @@ fn build_contract_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     let mut m = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8));
     m.shading_model = vpl::ShadingModel::Matcap(matcap);
     add(SUBJECTS[7].0, sphere, sphere_at(7), m, false);
-    let recolor = Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.45)
-        .with_plugin(st.recolor.expect("registered above"))
+    let recolour = Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.45)
+        .with_plugin(st.recolour.expect("registered above"))
         .with_param("tint", [1.0f32, 0.45, 0.15]);
-    add(SUBJECTS[8].0, sphere, sphere_at(8), recolor, false);
+    add(SUBJECTS[8].0, sphere, sphere_at(8), recolour, false);
 
     // The point cloud: a 16 x 16 upright patch, coloured by its height.
     st.cloud_positions.clear();

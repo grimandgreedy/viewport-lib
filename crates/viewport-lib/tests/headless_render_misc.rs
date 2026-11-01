@@ -176,7 +176,7 @@ fn three_bind_group_device_draws_a_material_plugin() {
             "sample_texture"
         }
         fn wgsl_body(&self) -> String {
-            "fn recolor(surf: ShadingSurface, lit: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {\n    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;\n}\n".to_string()
+            "fn recolour(surf: ShadingSurface, lit: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {\n    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;\n}\n".to_string()
         }
         fn texture_count(&self) -> u32 {
             1

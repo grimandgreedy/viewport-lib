@@ -11,7 +11,7 @@
 //!      parameters (independent band count and tint).
 //!   4. Toon plugin, textured material: a procedural stripe texture in the
 //!      plugin's `material_texture_0` slot.
-//!   5. Rim plugin: a `recolor` hook that adds a view-dependent rim on top of
+//!   5. Rim plugin: a `recolour` hook that adds a view-dependent rim on top of
 //!      the built-in lighting.
 //!   6. Detail-layer plugin: a tiled detail albedo blended over the base,
 //!      gated by a per-vertex mask painted into
@@ -397,7 +397,7 @@ pub(crate) fn controls_custom_shading(
     });
 
     ui.separator();
-    ui.label("Rim sphere (recolor hook on built-in PBR)");
+    ui.label("Rim sphere (recolour hook on built-in PBR)");
     ui.horizontal(|ui| {
         ui.label("rim colour:");
         ui.color_edit_button_rgb(&mut app.cs_state.rim_colour);

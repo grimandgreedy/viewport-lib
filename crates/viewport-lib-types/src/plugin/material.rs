@@ -199,7 +199,7 @@ pub trait MaterialPlugin {
     /// Plugin name: a unique, valid WGSL identifier. The registry stores
     /// its own copy, so the name can be built at run time.
     fn name(&self) -> &str;
-    /// The WGSL body defining `shade_light` / `shade_ambient` / `recolor`
+    /// The WGSL body defining `shade_light` / `shade_ambient` / `recolour`
     /// (any non-empty subset) plus helpers.
     fn wgsl_body(&self) -> String;
     /// Whether `shade_light` wants lights with `dot(N, L) <= 0` (wrap
