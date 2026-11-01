@@ -1294,6 +1294,64 @@ mod tests {
     }
 
     #[test]
+    fn focus_lost_releases_held_buttons_and_contacts() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 100.0, 100.0);
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Middle,
+            state: ButtonState::Pressed,
+        });
+        touch(&mut input, 1, TouchPhase::Started, 50.0, 50.0);
+        assert!(input.is_gesture_active());
+        input.push_event(ViewportEvent::FocusLost);
+        assert!(!input.is_gesture_active(), "focus loss ends every gesture");
+
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 140.0, 120.0);
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        assert_eq!(frame.pointer.contacts, 0);
+    }
+
+    #[test]
+    fn a_drag_that_landed_inside_keeps_going_outside() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        move_to(&mut input, 100.0, 100.0);
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Middle,
+            state: ButtonState::Pressed,
+        });
+        input.resolve();
+
+        // The pointer has left the rect, but the press was ours.
+        input.begin_frame(ViewportContext {
+            hovered: false,
+            focused: false,
+            viewport_size: [800.0, 600.0],
+        });
+        move_to(&mut input, 900.0, 100.0);
+        let frame = input.resolve();
+        assert_ne!(frame.navigation.orbit, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn the_wheel_accrues_under_chrome_over_the_viewport() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(ViewportContext {
+            hovered: true,
+            focused: false,
+            viewport_size: [800.0, 600.0],
+        });
+        input.push_event(ViewportEvent::Wheel {
+            delta: glam::Vec2::new(0.0, 1.0),
+            units: ScrollUnits::Lines,
+        });
+        assert!(input.resolve().navigation.zoom != 0.0);
+    }
+
+    #[test]
     fn character_event_populates_typed_chars() {
         let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
