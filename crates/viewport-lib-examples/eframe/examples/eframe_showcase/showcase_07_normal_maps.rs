@@ -462,8 +462,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-/// Cache gizmo placement for next frame's hit-testing.
-
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
 pub(crate) fn viewport_override(

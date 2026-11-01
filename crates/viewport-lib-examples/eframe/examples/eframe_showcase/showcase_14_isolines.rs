@@ -638,8 +638,6 @@ pub(crate) fn flush_gpu(app: &mut crate::App, cx: &crate::ViewportCtx) {
     block.extract(offset);
 }
 
-/// Cache gizmo placement for next frame's hit-testing.
-
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
 pub(crate) fn viewport_override(
