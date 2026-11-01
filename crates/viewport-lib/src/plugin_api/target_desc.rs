@@ -89,15 +89,17 @@ impl SceneColourTargets {
     }
 }
 
-/// The HDR scene pass's `@location(1)` target, the indirect fraction.
+/// The HDR scene pass's `@location(1)` target, the indirect fraction: the
+/// indirect share of the pixel's light in red, which ambient occlusion
+/// scales, and the direct share in green, which contact shadows scale.
 ///
-/// A fragment entry that writes it outputs `vec4(fraction, 0, 0, alpha)` with
-/// the colour target's alpha (see `scene_fragment` in
+/// A fragment entry that writes it outputs `vec4(indirect, direct, 0, alpha)`
+/// with the colour target's alpha (see `scene_fragment` in
 /// [`SHARED_SCENE_FRAGMENT_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SCENE_FRAGMENT_WGSL)),
 /// and the target takes the colour target's `blend`, so an alpha-blended draw
 /// mixes the fraction the way it mixes the colour. A draw that does not write
 /// it gets an empty write mask and leaves the pixel's value as it was: 1 where
-/// nothing else drew, so ambient occlusion darkens it in full. Only an opaque
+/// nothing else drew, so both terms darken it in full. Only an opaque
 /// (`blend: None`) or [`ALPHA_BLENDING`](crate::gpu::BlendState::ALPHA_BLENDING)
 /// draw writes it; under any other blend (additive, premultiplied) the
 /// fraction would not mix as a weight, so the mask is empty whatever

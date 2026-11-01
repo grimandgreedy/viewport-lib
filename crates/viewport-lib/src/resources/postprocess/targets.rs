@@ -128,11 +128,12 @@ pub(crate) enum TargetId {
     /// The opaque scene copy, with its mip chain, that transmissive meshes
     /// read.
     OpaqueCopy,
-    /// The share of each opaque pixel's light that is indirect (`R8Unorm`),
-    /// the scene pass's second colour attachment. Cleared to 1, so a pixel
-    /// nothing wrote counts as wholly indirect. The composite scales ambient
-    /// occlusion and contact shadows by it, so they darken the ambient term
-    /// and leave direct light and emission alone. A further per-pixel surface
+    /// How each opaque pixel's light splits (`Rg8Unorm`), the scene pass's
+    /// second colour attachment: red is the indirect share, green the direct
+    /// share, the rest emission. Cleared to 1 in both, so a pixel nothing wrote
+    /// is darkened by both terms in full. The composite scales ambient
+    /// occlusion by the indirect share and contact shadows by the direct
+    /// share, so neither darkens emission. A further per-pixel surface
     /// attribute for a screen-space pass, such as a normal buffer, is added
     /// the same way: another attachment every opaque scene pipeline declares.
     IndirectFraction,

@@ -171,9 +171,10 @@ fn shade_mc(world_pos: vec3<f32>, world_norm: vec3<f32>) -> vec4<f32> {
         specular += light_rgb * spec * shadow_factor;
     }
 
-    scene_indirect_fraction = indirect_fraction(
+    scene_light_split(
         material.base_colour * ambient,
         material.base_colour * diffuse + specular,
+        vec3<f32>(0.0),
     );
     let final_colour = material.base_colour * (ambient + diffuse) + specular;
     return vec4<f32>(final_colour, material.opacity);

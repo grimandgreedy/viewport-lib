@@ -860,7 +860,7 @@ impl ViewportRenderer {
                     end_of_pass_write_index: Some(crate::renderer::GPU_TS_SCENE * 2 + 1),
                 }
             });
-            // The indirect fraction starts at 1, wholly indirect, where nothing
+            // The indirect fraction starts at 1 in both shares where nothing
             // draws, and is kept only for a frame whose composite reads it.
             let fraction_store = if slot.pass_table.reads_indirect_fraction() {
                 crate::gpu::StoreOp::Store

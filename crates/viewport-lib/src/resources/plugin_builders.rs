@@ -16,10 +16,11 @@ const NO_LIT_GROUP0: &str = "item types register only where there is a lit group
 /// path build pipelines against this format.
 pub const HDR_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba16Float;
 
-/// Format of the HDR scene pass's second colour target, the indirect share
-/// of each opaque pixel's light (see
+/// Format of the HDR scene pass's second colour target, the indirect
+/// fraction: the indirect share of each opaque pixel's light in red and the
+/// direct share in green (see
 /// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)).
-pub const INDIRECT_FRACTION_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::R8Unorm;
+pub const INDIRECT_FRACTION_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rg8Unorm;
 
 /// The default scene depth-stencil format, `Depth24PlusStencil8`.
 ///

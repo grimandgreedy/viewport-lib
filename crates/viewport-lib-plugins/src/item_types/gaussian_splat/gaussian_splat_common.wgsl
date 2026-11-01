@@ -270,5 +270,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_scene(in: VsOut) -> SceneFragment {
     let colour = fs_main_body(in);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }

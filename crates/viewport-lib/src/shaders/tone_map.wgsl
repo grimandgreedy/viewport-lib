@@ -72,11 +72,11 @@ struct ExposureState {
 // otherwise.
 @group(0) @binding(11) var view_lut: texture_2d<f32>;
 
-// The scene pass's indirect fraction: the share of each opaque pixel's light
-// that is indirect, 1 where nothing wrote it. AO and contact shadows scale by
-// it, so they leave direct light and emission alone. A white placeholder when
-// neither is on. Under SSAA it is the supersampled target, which the linear
-// sampler filters down.
+// The scene pass's light split: red is the indirect share of each opaque
+// pixel's light, green the direct share, 1 for both where nothing wrote it.
+// AO scales the indirect share and contact shadows the direct share, so
+// neither darkens emission. A white placeholder when neither is on. Under
+// SSAA the resolve has already averaged it down.
 @group(0) @binding(12) var indirect_fraction_texture: texture_2d<f32>;
 
 // #include "helpers/depth_texel.wgsl"
@@ -278,20 +278,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // was shaded. Over empty background there is no geometry, so skipping them
     // both avoids modulating transparent particles by stale values in
     // non-geometry regions and keeps the bloom-over-background path independent of
-    // those textures' clear values. Each darkens the indirect share of the
-    // light only: `1 - (1 - term) * fraction`.
+    // those textures' clear values. Each darkens its share of the light only,
+    // `1 - (1 - term) * share`: AO the indirect light, contact shadows (the key
+    // light's screen-space shadow) the direct light.
     if !is_background && !covered {
-        var fraction = 1.0;
+        var split = vec2<f32>(1.0);
         if params.ssao_enabled != 0u || params.contact_shadows_enabled != 0u {
-            fraction = textureSampleLevel(indirect_fraction_texture, hdr_sampler, in.uv, 0.0).r;
+            split = textureSampleLevel(indirect_fraction_texture, hdr_sampler, in.uv, 0.0).rg;
         }
         if params.ssao_enabled != 0u {
             let ao = textureSampleLevel(ao_texture, hdr_sampler, in.uv, 0.0).r;
-            colour = colour * (1.0 - (1.0 - ao) * fraction);
+            colour = colour * (1.0 - (1.0 - ao) * split.x);
         }
         if params.contact_shadows_enabled != 0u {
             let cs = textureSampleLevel(cs_texture, hdr_sampler, in.uv, 0.0).r;
-            colour = colour * (1.0 - (1.0 - cs) * fraction);
+            colour = colour * (1.0 - (1.0 - cs) * split.y);
         }
     }
 

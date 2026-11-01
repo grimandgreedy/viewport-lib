@@ -287,7 +287,7 @@ var<private> object: Object;
 // The fragment's transmission, written by compute_lit for the transmission
 // entry points to finish.
 var<private> transmission_out: PbrTransmission;
-// The scene pass's output and `scene_indirect_fraction`, which fs_body sets.
+// The scene pass's output and the light split, which fs_body sets.
 // #include "helpers/scene_fragment.wgsl"
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
@@ -1497,13 +1497,13 @@ fn fs_main_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @l
 @fragment
 fn fs_scene(in: VertexOut, @builtin(front_facing) is_front: bool) -> SceneFragment {
     let colour = fs_body(in, is_front);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }
 
 @fragment
 fn fs_scene_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> SceneFragment {
     let colour = fs_body(from_plain(p), is_front);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }
 
 // BEGIN_TRANSMISSION_PASS
@@ -1579,7 +1579,7 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
 
     if surface.resolved {
         // Unlit, wireframe, face colour, matcap: never darkened.
-        scene_indirect_fraction = 0.0;
+        scene_light_split(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
         return surface.out_colour;
     }
 
@@ -1615,8 +1615,8 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
     final_rgb += emissive;
     let dbg_emissive_lum = dot(emissive, lum_weights);
-    // Emission counts as direct, so ambient occlusion leaves it alone.
-    scene_indirect_fraction = indirect_fraction(lit.indirect, lit.direct + emissive);
+    // Emission is neither: no occlusion term darkens it.
+    scene_light_split(lit.indirect, lit.direct, emissive);
 
     // #include "helpers/debug_vis.wgsl"
 

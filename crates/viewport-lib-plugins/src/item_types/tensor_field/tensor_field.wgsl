@@ -183,7 +183,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // fragments lit.
     let shaded_terms = scene_lighting_terms(in.world_nrm, true, in.world_pos, lights);
     let shaded = in.colour.rgb * (shaded_terms.indirect + shaded_terms.direct);
-    scene_indirect_fraction = indirect_fraction(in.colour.rgb * shaded_terms.indirect, in.colour.rgb * shaded_terms.direct);
+    scene_light_split(in.colour.rgb * shaded_terms.indirect, in.colour.rgb * shaded_terms.direct, vec3<f32>(0.0));
 
     return vec4<f32>(shaded, alpha);
 }
@@ -197,5 +197,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_scene(in: VertexOut) -> SceneFragment {
     let colour = fs_main_body(in);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }

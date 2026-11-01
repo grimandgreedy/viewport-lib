@@ -322,8 +322,8 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
 
 // The two terms `apply_scene_lighting` sums, before the base colour: the
 // hemisphere fill (indirect) and the light loop's sum (direct), both exposed.
-// The scene pass's indirect fraction is `indirect_fraction(base * indirect,
-// base * direct)`.
+// The scene pass's light split is `scene_light_split(base * indirect,
+// base * direct, emitted)`.
 struct SceneLightingTerms {
     indirect: vec3<f32>,
     direct:   vec3<f32>,

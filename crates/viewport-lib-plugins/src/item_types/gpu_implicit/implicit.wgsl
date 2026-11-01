@@ -214,7 +214,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
 @fragment
 fn fs_scene(in: VertexOutput) -> SceneFragOutput {
     let out = fs_main_body(in);
-    let scene = scene_fragment(out.colour, scene_indirect_fraction);
+    let scene = scene_fragment(out.colour);
     return SceneFragOutput(scene.colour, scene.indirect_fraction, out.depth);
 }
 
@@ -268,7 +268,7 @@ fn fs_main_body(in: VertexOutput) -> FragOutput {
     let normal = estimate_normal(hit_pos);
     let shaded_rgb_terms = scene_lighting_terms(normal, false, hit_pos, lights);
     let shaded_rgb = base_colour.rgb * (shaded_rgb_terms.indirect + shaded_rgb_terms.direct);
-    scene_indirect_fraction = indirect_fraction(base_colour.rgb * shaded_rgb_terms.indirect, base_colour.rgb * shaded_rgb_terms.direct);
+    scene_light_split(base_colour.rgb * shaded_rgb_terms.indirect, base_colour.rgb * shaded_rgb_terms.direct, vec3<f32>(0.0));
     let shaded    = vec4<f32>(shaded_rgb, alpha);
 
     // Compute NDC depth of the hit point so the hardware depth test fires correctly.

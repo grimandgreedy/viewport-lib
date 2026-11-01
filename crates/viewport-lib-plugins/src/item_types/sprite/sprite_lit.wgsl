@@ -288,7 +288,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
             lights_uniform.hemisphere_intensity * sprite_ub.ambient_scale;
         let lit_rgb_terms = scene_lighting_terms(n, false, in.world_pos, lights_for_shader);
         let lit_rgb = colour.rgb * (lit_rgb_terms.indirect + lit_rgb_terms.direct);
-        scene_indirect_fraction = indirect_fraction(colour.rgb * lit_rgb_terms.indirect, colour.rgb * lit_rgb_terms.direct);
+        scene_light_split(colour.rgb * lit_rgb_terms.indirect, colour.rgb * lit_rgb_terms.direct, vec3<f32>(0.0));
 
         // When `receive_shadows` is set, attenuate the direct-light contribution
         // by the cascade shadow map. The hemisphere ambient survives shadow so
@@ -310,7 +310,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
                 ) * (lights_for_shader.hemisphere_intensity * camera.exposure);
                 let ambient_rgb = colour.rgb * ambient;
                 colour = vec4<f32>(mix(ambient_rgb, lit_rgb, shadow_factor), colour.a);
-                scene_indirect_fraction = indirect_fraction(ambient_rgb, colour.rgb - ambient_rgb);
+                scene_light_split(ambient_rgb, colour.rgb - ambient_rgb, vec3<f32>(0.0));
             } else {
                 colour = vec4<f32>(lit_rgb, colour.a);
             }
@@ -368,5 +368,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_scene(in: VertexOut) -> SceneFragment {
     let colour = fs_main_body(in);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }

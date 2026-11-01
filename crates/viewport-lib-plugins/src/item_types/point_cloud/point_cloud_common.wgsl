@@ -143,9 +143,10 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
         let specular = pow(max(dot(n, h), 0.0), 32.0) * 0.4;
 
         let brightness = ambient + (1.0 - ambient) * diffuse + specular;
-        scene_indirect_fraction = indirect_fraction(
+        scene_light_split(
             vec3<f32>(ambient),
             vec3<f32>((1.0 - ambient) * diffuse + specular),
+            vec3<f32>(0.0),
         );
         colour = vec4<f32>(colour.rgb * brightness, colour.a);
     }
@@ -163,5 +164,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_scene(in: VertexOut) -> SceneFragment {
     let colour = fs_main_body(in);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }

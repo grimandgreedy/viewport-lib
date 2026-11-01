@@ -88,7 +88,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     let ndl = max(dot(n, l), 0.0);
     let shade = 0.25 + 0.75 * ndl;
     // The floor is the indirect share.
-    scene_indirect_fraction = indirect_fraction(vec3<f32>(0.25), vec3<f32>(0.75 * ndl));
+    scene_light_split(vec3<f32>(0.25), vec3<f32>(0.75 * ndl), vec3<f32>(0.0));
     return vec4<f32>(draw_ub.colour.rgb * shade, draw_ub.colour.a);
 }
 
@@ -101,5 +101,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_scene(in: VertexOut) -> SceneFragment {
     let colour = fs_main_body(in);
-    return scene_fragment(colour, scene_indirect_fraction);
+    return scene_fragment(colour);
 }

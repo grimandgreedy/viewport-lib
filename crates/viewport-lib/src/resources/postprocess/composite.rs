@@ -32,8 +32,9 @@ pub(crate) mod slot {
     /// View-transform strip LUT, sampled in place of the operator when the
     /// uniform's `mode` selects it. A neutral placeholder otherwise.
     pub(crate) const VIEW_LUT: u32 = 11;
-    /// The scene pass's indirect fraction, which scales the AO and contact
-    /// shadow terms. The white placeholder when neither is on.
+    /// The scene pass's indirect fraction: the indirect share, which scales
+    /// the AO term, and the direct share, which scales contact shadows. The
+    /// white placeholder when neither is on.
     pub(crate) const INDIRECT_FRACTION: u32 = 12;
 }
 
