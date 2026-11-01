@@ -520,7 +520,8 @@ impl DisplaySettings {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PostProcessSettings {
-    /// Enable screen-space ambient occlusion.
+    /// Enable screen-space ambient occlusion. It darkens the indirect share
+    /// of each pixel's light, not direct light or emission.
     pub ssao: bool,
     /// Bloom (glow) settings.
     pub bloom: BloomSettings,
@@ -690,7 +691,9 @@ impl Default for BloomSettings {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContactShadowSettings {
-    /// Enable screen-space contact shadows (thin shadows at object-ground contact).
+    /// Enable screen-space contact shadows (thin shadows at object-ground
+    /// contact). Like ambient occlusion they darken the indirect share of
+    /// each pixel's light.
     pub enabled: bool,
     /// Maximum ray-march distance in view space. Default: `0.5`.
     pub max_distance: f32,

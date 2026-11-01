@@ -175,6 +175,16 @@
 //! The defaults of these settings, and the behaviour of each named operator,
 //! do not change within a major version.
 //!
+//! # 9. Screen-space occlusion
+//!
+//! Screen-space ambient occlusion ([`PostProcessSettings::ssao`]) and contact
+//! shadows ([`PostProcessSettings::contact_shadows`]) darken the indirect share
+//! of an opaque pixel's light: the ambient term (the hemisphere fill, the
+//! environment, probes and lightmaps). Direct light and emission are left
+//! alone, and so is a resolved colour. Each term `t` scales the exposed colour
+//! by `1 - (1 - t) * f`, where `f` is the pixel's indirect share by
+//! luminance, before step 2 of the view transform. Bloom is added after them.
+//!
 //! # Current behaviour
 //!
 //! Under [`ExposureMode::Automatic`] a frame shades with the exposure the
@@ -195,6 +205,8 @@
 //! [`GradingSpace::Scene`]: crate::effects::postprocess::GradingSpace::Scene
 //! [`GradingSpace::Display`]: crate::effects::postprocess::GradingSpace::Display
 //! [`PostProcessSettings::grade_lut`]: crate::effects::postprocess::PostProcessSettings::grade_lut
+//! [`PostProcessSettings::ssao`]: crate::effects::postprocess::PostProcessSettings::ssao
+//! [`PostProcessSettings::contact_shadows`]: crate::effects::postprocess::PostProcessSettings::contact_shadows
 //! [`PostProcessSettings::grading_space`]: crate::effects::postprocess::PostProcessSettings::grading_space
 //! [`PostProcessSettings::working_space`]: crate::effects::postprocess::PostProcessSettings::working_space
 //! [`WorkingSpace::Rec709`]: crate::effects::postprocess::WorkingSpace::Rec709
