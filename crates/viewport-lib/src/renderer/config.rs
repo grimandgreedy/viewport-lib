@@ -92,11 +92,11 @@ pub struct RendererConfig {
     /// `paint_viewport`, `paint_hdr_blit`, the `*_with_depth` blits) must give
     /// that pass a depth attachment of the resolved format,
     /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format).
-    /// A framework that allocates the attachment itself (eframe and iced give
+    /// A framework that allocates the attachment itself (eframe gives
     /// `Depth24PlusStencil8` for 24 depth and 8 stencil bits) on a device with
     /// the feature should pin `Some(Depth24PlusStencil8)` here. Hosts that draw
-    /// through `owned()`, `render_offscreen` or `ViewportApp`
-    /// never see the attachment and can leave `None`. Default `None`.
+    /// through `owned()`, `render_offscreen` or `ViewportApp` never see the
+    /// attachment and can leave `None`. Default `None`.
     pub scene_depth_format: Option<crate::gpu::TextureFormat>,
     /// The point positions are measured from on their way to the GPU. A
     /// frame can replace it with
