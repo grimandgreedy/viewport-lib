@@ -238,7 +238,9 @@ impl App {
                         } else {
                             PointerOwnership::Elsewhere
                         },
-                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                        keyboard: if response.hovered()
+                            && ui.ctx().memory(|m| m.focused().is_none())
+                        {
                             KeyboardOwnership::Owned
                         } else {
                             KeyboardOwnership::Elsewhere
