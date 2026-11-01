@@ -44,7 +44,8 @@ pub mod viewport_app;
 
 use crate::camera::Camera;
 use crate::interaction::input::{
-    ActionFrame, BindingPreset, TouchSettings, ViewportBinding, ViewportContext, ViewportEvent,
+    ActionFrame, BindingPreset, InputOwnership, TouchSettings, ViewportBinding, ViewportContext,
+    ViewportEvent,
 };
 use crate::interaction::manipulation::{ManipResult, ManipulationController};
 use crate::interaction::select::selection::Selection;
@@ -322,6 +323,15 @@ impl ViewportInstance {
     pub fn begin_frame_at(&mut self, ctx: ViewportContext, time_seconds: f32) {
         self.viewport_size = ctx.viewport_size;
         self.input.begin_frame_at(ctx, time_seconds);
+    }
+
+    /// Change who owns the input without starting a new frame or resetting the
+    /// input accumulator. Events fed after this are routed on the new ownership.
+    ///
+    /// For a host that learns of a change between frames, such as the cursor
+    /// entering the window or the window gaining focus.
+    pub fn set_input_ownership(&mut self, ownership: InputOwnership) {
+        self.input.set_ownership(ownership);
     }
 
     /// The numbers touch recognition is calibrated on: sensitivities with per-axis
@@ -668,11 +678,7 @@ mod tests {
     }
 
     fn ctx() -> ViewportContext {
-        ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [256.0, 256.0],
-        }
+        ViewportContext::new(InputOwnership::full_window(), [256.0, 256.0])
     }
 
     #[test]

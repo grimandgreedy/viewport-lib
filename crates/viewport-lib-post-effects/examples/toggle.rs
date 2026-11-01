@@ -18,8 +18,9 @@ use viewport_lib_post_effects::{
 };
 use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    LightKind, LightSource, Material, OffscreenViewportTarget, OrbitCameraController,
-    ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    InputOwnership, KeyboardOwnership, LightKind, LightSource, Material, OffscreenViewportTarget,
+    OrbitCameraController, PointerOwnership, ViewportContext, ViewportEvent, ViewportInstance,
+    primitives,
 };
 
 /// Slanted key light: also fed to the external contact-shadow effect, which
@@ -223,11 +224,21 @@ impl eframe::App for App {
                 }
                 let target = self.target.as_ref().unwrap();
 
-                self.session.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                self.session.begin_frame(ViewportContext::new(
+                    InputOwnership {
+                        pointer: if response.hovered() {
+                            PointerOwnership::Owned
+                        } else {
+                            PointerOwnership::Elsewhere
+                        },
+                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                            KeyboardOwnership::Owned
+                        } else {
+                            KeyboardOwnership::Elsewhere
+                        },
+                    },
+                    [rect.width(), rect.height()],
+                ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {

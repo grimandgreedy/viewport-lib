@@ -39,10 +39,10 @@ use viewport_lib::wgpu;
 
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    BindingPreset, ButtonState, Camera as VplCamera, CameraFrame, FrameData, LightingSettings,
-    Material, MaterialId, MeshId, OrbitCameraController, PostProcessSettings, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
-    primitives,
+    BindingPreset, ButtonState, Camera as VplCamera, CameraFrame, FrameData, InputOwnership,
+    LightingSettings, Material, MaterialId, MeshId, OrbitCameraController, PostProcessSettings,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, primitives,
 };
 
 // Flocking / world tuning.
@@ -271,11 +271,10 @@ fn setup(
 
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-    input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [half_w as f32, h as f32],
-    });
+    input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [half_w as f32, h as f32],
+    ));
 
     commands.insert_resource(CamState {
         camera,
@@ -500,11 +499,10 @@ fn camera_input(
     );
 
     let cam = &mut *cam;
-    cam.input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [vw as f32, h as f32],
-    });
+    cam.input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [vw as f32, h as f32],
+    ));
     // Pan reads the viewport height off the controller.
     cam.controller.set_viewport_size([vw as f32, h as f32]);
 

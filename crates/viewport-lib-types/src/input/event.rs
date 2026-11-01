@@ -133,8 +133,10 @@ pub enum ViewportEvent {
     /// viewport's own edge. A drag whose press landed inside the viewport keeps
     /// resolving after the pointer leaves the rect, which is what lets a fast orbit
     /// run past the edge; forwarding this event at that boundary throws that away.
-    /// Lowering [`ViewportContext::hovered`](crate::input::ViewportContext::hovered)
-    /// is the way to say "the pointer is no longer over us" without ending the drag.
+    /// Setting the pointer ownership in the
+    /// [`ViewportContext`](crate::input::ViewportContext) to
+    /// [`Elsewhere`](crate::input::PointerOwnership::Elsewhere) is the way to say
+    /// "the pointer is no longer over us" without ending the drag.
     ///
     /// Under a pointer grab it should never be sent at all: a grabbed pointer has no
     /// rect to leave, and ending the gesture would end the look session.
@@ -176,7 +178,7 @@ pub enum ViewportEvent {
     /// shell hosts the viewport.
     ///
     /// Resolves into [`NavigationActions::zoom`](crate::input::NavigationActions::zoom),
-    /// gated on the viewport being hovered, like the wheel.
+    /// gated on the pointer being inside the viewport, like the wheel.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
@@ -186,7 +188,7 @@ pub enum ViewportEvent {
     ///
     /// `delta` is the pan this event in logical points. Resolves into
     /// [`NavigationActions::pan`](crate::input::NavigationActions::pan), gated on the
-    /// viewport being hovered.
+    /// pointer being inside the viewport.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
@@ -251,13 +253,17 @@ impl ViewportEvent {
     /// Whether this event would be claimed by both the viewport and anything drawn
     /// over it, so at most one of them may act on it.
     ///
-    /// A left press, its release, and the pointer motion between them are contested:
-    /// a press-and-move is exactly what a camera orbit, a gizmo drag and a UI drag
-    /// would all claim, so it has to belong to one of them. Touch contacts are
-    /// contested for the same reason and with no exception: a finger is the only
-    /// pointer a touch device has, so a control that takes the contact takes all of
-    /// it. Everything else is **ambient**: the wheel, the other buttons and the
-    /// modifiers can be acted on by more than one claimant in the same frame.
+    /// A left press, the pointer motion after it, and a touch contact landing are
+    /// contested: a press-and-move is exactly what a camera orbit, a gizmo drag and
+    /// a UI drag would all claim, so it has to belong to one of them. Touch is
+    /// contested for the same reason: a finger is the only pointer a touch device
+    /// has, so a control that takes the contact takes all of it. Everything else is
+    /// **ambient**: the wheel, the other buttons and the modifiers can be acted on
+    /// by more than one claimant in the same frame. Releases and contact ends are
+    /// teardown, not claims, and are never contested: a resolver that saw the
+    /// press must see its release, and one that did not ignores it. A contact's
+    /// later moves are left to the resolver, which follows the contacts it saw
+    /// land.
     ///
     /// That asymmetry is deliberate. Withholding the whole event stream whenever
     /// something over the viewport holds the pointer is the obvious implementation
@@ -266,11 +272,11 @@ impl ViewportEvent {
     /// to scroll.
     ///
     /// The set is fixed and does not consult the active bindings. Right and middle
-    /// drag stay ambient even though the default scheme binds them to camera
-    /// navigation, because chrome overwhelmingly uses the primary button, and
-    /// contesting the others would break the commoner case of a camera drag
-    /// interrupted by the cursor passing over a readout. An application whose own
-    /// chrome binds right or middle drag withholds those itself before forwarding.
+    /// presses stay ambient even though the default scheme binds them to camera
+    /// navigation, because chrome overwhelmingly uses the primary button. The
+    /// resolver starts a drag from one only when it arrives while the viewport
+    /// owns the input, so a right press on chrome over the viewport does not
+    /// orbit.
     ///
     /// Used by [`forward_to_viewport`](super::context::forward_to_viewport), which is
     /// what most callers want.
@@ -279,9 +285,12 @@ impl ViewportEvent {
             self,
             ViewportEvent::MouseButton {
                 button: MouseButton::Left,
-                ..
+                state: ButtonState::Pressed,
             } | ViewportEvent::PointerMoved { .. }
-                | ViewportEvent::Touch { .. }
+                | ViewportEvent::Touch {
+                    phase: TouchPhase::Started,
+                    ..
+                }
         )
     }
 
@@ -373,21 +382,36 @@ mod contested_tests {
     }
 
     #[test]
-    fn only_the_left_button_and_pointer_motion_are_contested() {
+    fn only_the_left_press_pointer_motion_and_a_landing_are_contested() {
         assert!(
             ViewportEvent::PointerMoved {
                 position: glam::Vec2::ZERO
             }
             .is_contested()
         );
-        for state in [ButtonState::Pressed, ButtonState::Released] {
-            assert!(
-                ViewportEvent::MouseButton {
-                    button: MouseButton::Left,
-                    state
-                }
-                .is_contested()
-            );
+        assert!(
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed
+            }
+            .is_contested()
+        );
+        assert!(
+            !ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Released
+            }
+            .is_contested(),
+            "a release is teardown"
+        );
+        let touch = |phase| ViewportEvent::Touch {
+            id: TouchId(1),
+            phase,
+            position: glam::Vec2::ZERO,
+        };
+        assert!(touch(TouchPhase::Started).is_contested());
+        for phase in [TouchPhase::Moved, TouchPhase::Ended, TouchPhase::Cancelled] {
+            assert!(!touch(phase).is_contested(), "{phase:?}");
         }
 
         // Ambient: acted on by the camera even while something over it holds the pointer.

@@ -12,9 +12,9 @@ use viewport_lib::Colour;
 
 use viewport_lib::interaction::input::adapters::from_winit;
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, PostProcessSettings,
-    SceneFrame, SceneRenderItem, ViewportContext, ViewportInput, ViewportRenderer, primitives,
-    viewport_default_bindings,
+    Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, OrbitCameraController,
+    PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    ViewportRenderer, primitives, viewport_default_bindings,
 };
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -160,11 +160,10 @@ impl ApplicationHandler for App {
         // means.
         let controller = OrbitCameraController::new_stateless();
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [config.width as f32, config.height as f32],
-        });
+        input.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [config.width as f32, config.height as f32],
+        ));
 
         self.state = Some(AppState {
             window,
@@ -264,11 +263,7 @@ impl ApplicationHandler for App {
                 frame.present();
 
                 state.input.begin_frame_at(
-                    ViewportContext {
-                        hovered: true,
-                        focused: true,
-                        viewport_size: [w, h],
-                    },
+                    ViewportContext::new(InputOwnership::full_window(), [w, h]),
                     state.start.elapsed().as_secs_f32(),
                 );
             }

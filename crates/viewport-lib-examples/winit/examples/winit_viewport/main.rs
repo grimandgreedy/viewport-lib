@@ -13,9 +13,9 @@ use viewport_lib as vpl;
 
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
-    primitives,
+    BindingPreset, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer, primitives,
 };
 use vpl::{ButtonState, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
@@ -143,11 +143,10 @@ impl ApplicationHandler for App {
         // Prime the resolver for the first frame of events.
         let controller = OrbitCameraController::new_stateless();
         let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [config.width as f32, config.height as f32],
-        });
+        input.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [config.width as f32, config.height as f32],
+        ));
 
         self.state = Some(AppState {
             window,
@@ -332,11 +331,9 @@ impl ApplicationHandler for App {
                 frame.present();
 
                 // Begin accumulation for the next frame's events.
-                state.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                state
+                    .input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 state.controller.set_viewport_size([w, h]);
             }

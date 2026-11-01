@@ -6,7 +6,7 @@
 
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
-use vpl::{ViewportContext, ViewportInstance};
+use vpl::{InputOwnership, KeyboardOwnership, PointerOwnership, ViewportContext, ViewportInstance};
 
 use crate::camera::{CameraRig, MoveKeys};
 
@@ -97,11 +97,21 @@ impl<'a> ShowcaseCtx<'a> {
             left: self.key_down(egui::Key::ArrowLeft),
             right: self.key_down(egui::Key::ArrowRight),
         };
-        let view_ctx = ViewportContext {
-            hovered: self.hovered,
-            focused: self.focused,
-            viewport_size: self.viewport_size,
-        };
+        let view_ctx = ViewportContext::new(
+            InputOwnership {
+                pointer: if self.hovered {
+                    PointerOwnership::Owned
+                } else {
+                    PointerOwnership::Elsewhere
+                },
+                keyboard: if self.focused {
+                    KeyboardOwnership::Owned
+                } else {
+                    KeyboardOwnership::Elsewhere
+                },
+            },
+            self.viewport_size,
+        );
         self.camera
             .drive(&mut *self.session, self.dt, view_ctx, toggle, move_keys);
     }

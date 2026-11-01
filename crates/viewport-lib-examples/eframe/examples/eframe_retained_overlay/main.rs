@@ -32,9 +32,10 @@ use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    AnchorY, LabelItem, Material, OffscreenViewportTarget, OrbitCameraController, OverlayFill,
-    OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
-    RetainedOverlay, ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    AnchorY, InputOwnership, KeyboardOwnership, LabelItem, Material, OffscreenViewportTarget,
+    OrbitCameraController, OverlayFill, OverlayGeometryId, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, PointerOwnership, RetainedOverlay, ViewportContext,
+    ViewportEvent, ViewportInstance, primitives,
 };
 
 /// Panel geometry, in the panel's own logical-pixel space (top-left origin near
@@ -230,11 +231,21 @@ impl App {
                 }
                 let target = self.target.as_ref().unwrap();
 
-                self.session.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                self.session.begin_frame(ViewportContext::new(
+                    InputOwnership {
+                        pointer: if response.hovered() {
+                            PointerOwnership::Owned
+                        } else {
+                            PointerOwnership::Elsewhere
+                        },
+                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                            KeyboardOwnership::Owned
+                        } else {
+                            KeyboardOwnership::Elsewhere
+                        },
+                    },
+                    [rect.width(), rect.height()],
+                ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {

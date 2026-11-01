@@ -9,7 +9,8 @@
 //! Run: `cargo run -p viewport-lib-input --example custom_controller`
 
 use viewport_lib_input::input::{
-    BindingPreset, ButtonState, MouseButton, ViewportContext, ViewportEvent, ViewportInput,
+    BindingPreset, ButtonState, InputOwnership, MouseButton, ViewportContext, ViewportEvent,
+    ViewportInput,
 };
 use viewport_lib_input::{Camera, CameraController};
 use viewport_lib_types::input::ActionFrame;
@@ -37,11 +38,10 @@ impl CameraController for HalfSpeedOrbit {
 fn main() {
     // 1. RESOLVE: feed native-shaped events into ViewportInput for one frame.
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-    input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [800.0, 600.0],
-    });
+    input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [800.0, 600.0],
+    ));
 
     // In the primitives preset, plain left-drag (no modifiers) orbits. Drive it
     // by hand: place the pointer, press the button there (that sets the drag

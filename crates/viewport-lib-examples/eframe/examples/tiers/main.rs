@@ -34,8 +34,8 @@ use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    ManipulationController, OffscreenViewportTarget, RendererConfig, Tier, ViewportContext,
-    ViewportEvent, ViewportInstance,
+    InputOwnership, ManipulationController, OffscreenViewportTarget, PointerOwnership,
+    RendererConfig, Tier, ViewportContext, ViewportEvent, ViewportInstance,
 };
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -343,11 +343,14 @@ impl App {
                 tab.target = Some(Target { inner, id });
             }
 
-            tab.session.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            tab.session.begin_frame(ViewportContext::new(
+                InputOwnership::pointer_only(if response.hovered() {
+                    PointerOwnership::Owned
+                } else {
+                    PointerOwnership::Elsewhere
+                }),
+                [rect.width(), rect.height()],
+            ));
             tab.session.set_pixels_per_point(ppp);
 
             let origin = glam::Vec2::new(rect.left(), rect.top());

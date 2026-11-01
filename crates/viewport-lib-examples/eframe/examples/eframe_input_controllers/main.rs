@@ -27,12 +27,12 @@ pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
-    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings,
-    ManipResult, ManipulationContext, ManipulationController, ManipulationKind, MeshId,
-    OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, gizmo_centre_for_pivot, primitives, viewport_default_bindings,
-    wish_xy_from_actions,
+    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InputOwnership, InteractionFrame, KeyCode,
+    KeyboardOwnership, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
+    ManipulationKind, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode,
+    PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits, Selection,
+    ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    gizmo_centre_for_pivot, primitives, viewport_default_bindings, wish_xy_from_actions,
 };
 
 /// Body movement speed in world units per second for the character cameras.
@@ -491,13 +491,21 @@ impl eframe::App for App {
                 self.drag_started = false;
                 self.clicked = false;
 
-                let vp_ctx = ViewportContext {
-                    hovered: response.hovered(),
-                    // Treat any hover as focus so keyboard shortcuts work without
-                    // requiring a separate egui-focus click on the canvas widget.
-                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                    viewport_size: [rect.width(), rect.height()],
-                };
+                let vp_ctx = ViewportContext::new(
+                    InputOwnership {
+                        pointer: if response.hovered() {
+                            PointerOwnership::Owned
+                        } else {
+                            PointerOwnership::Elsewhere
+                        },
+                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                            KeyboardOwnership::Owned
+                        } else {
+                            KeyboardOwnership::Elsewhere
+                        },
+                    },
+                    [rect.width(), rect.height()],
+                );
                 match self.mode {
                     Mode::Primitives => self.input_primitives.begin_frame(vp_ctx),
                     Mode::All => self.input_all.begin_frame(vp_ctx),

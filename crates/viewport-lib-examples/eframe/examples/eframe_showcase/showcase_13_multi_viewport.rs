@@ -26,10 +26,10 @@ use viewport_lib::Colour;
 use viewport_lib::input::adapters::modifiers_from_egui;
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
-    GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext,
-    ManipulationController, Material, MouseButton, NodeId, OrbitCameraController, PickBackend,
-    PickMask, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer,
+    GizmoInfo, GizmoMode, GizmoSpace, InputOwnership, LightingSettings, ManipResult,
+    ManipulationContext, ManipulationController, Material, MouseButton, NodeId,
+    OrbitCameraController, PickBackend, PickMask, PointerOwnership, SceneFrame, ScrollUnits,
+    Selection, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
     gizmo::{compute_gizmo_scale, gizmo_centre_from_selection},
 };
 
@@ -221,11 +221,14 @@ impl App {
         // their pan reads.
         for i in 0..4 {
             let qr = quad_rects[i];
-            self.mv_state.inputs[i].begin_frame(ViewportContext {
-                hovered: i == hq && response.hovered(),
-                focused: i == hq && response.hovered(),
-                viewport_size: [qr.width(), qr.height()],
-            });
+            self.mv_state.inputs[i].begin_frame(ViewportContext::new(
+                InputOwnership::pointer_only(if i == hq && response.hovered() {
+                    PointerOwnership::Owned
+                } else {
+                    PointerOwnership::Elsewhere
+                }),
+                [qr.width(), qr.height()],
+            ));
             self.mv_state.controllers[i].set_viewport_size([qr.width(), qr.height()]);
         }
 

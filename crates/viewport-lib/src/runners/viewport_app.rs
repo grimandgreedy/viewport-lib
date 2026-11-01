@@ -53,7 +53,10 @@ use ::winit::window::{
 };
 
 use crate::interaction::input::adapters::{from_winit_device, from_winit_into};
-use crate::interaction::input::{CursorShape, ViewportContext, ViewportEvent};
+use crate::interaction::input::{
+    CursorShape, InputOwnership, KeyboardOwnership, PointerOwnership, ViewportContext,
+    ViewportEvent,
+};
 use crate::runners::ViewportInstance;
 use crate::{
     BlitTexture, ExposureMode, FrameData, OrbitCameraController, OverlayFrame, ViewportRenderer,
@@ -954,6 +957,26 @@ struct WindowState {
     startup_marks: Option<super::InitMarks>,
 }
 
+impl WindowState {
+    /// Who owns this window's input. The viewport fills the window with no chrome
+    /// over it, so the pointer is the viewport's whenever it is in the window, and
+    /// the keyboard whenever the window has focus.
+    fn ownership(&self) -> InputOwnership {
+        InputOwnership {
+            pointer: if self.hovered {
+                PointerOwnership::Owned
+            } else {
+                PointerOwnership::Elsewhere
+            },
+            keyboard: if self.focused {
+                KeyboardOwnership::Owned
+            } else {
+                KeyboardOwnership::Elsewhere
+            },
+        }
+    }
+}
+
 struct AppHandler {
     config: AppConfig,
     /// Windows declared before `run`, realised on first `resumed`.
@@ -1058,14 +1081,17 @@ impl AppHandler {
         let hovered = false;
         let scale = window.scale_factor() as f32;
         session.set_pixels_per_point(scale);
-        session.begin_frame(ViewportContext {
-            hovered,
-            focused,
-            viewport_size: [
+        // A new window has focus and has not yet seen the cursor.
+        session.begin_frame(ViewportContext::new(
+            InputOwnership {
+                pointer: PointerOwnership::Elsewhere,
+                keyboard: KeyboardOwnership::Owned,
+            },
+            [
                 surface_config.width as f32 / scale,
                 surface_config.height as f32 / scale,
             ],
-        });
+        ));
 
         self.winit_ids.insert(window.id(), id);
         window.request_redraw();
@@ -1142,14 +1168,13 @@ impl AppHandler {
                         *session.camera_mut() = state.session.camera().clone();
                         let scale = state.window.scale_factor() as f32;
                         session.set_pixels_per_point(scale);
-                        session.begin_frame(ViewportContext {
-                            hovered: state.hovered,
-                            focused: state.focused,
-                            viewport_size: [
+                        session.begin_frame(ViewportContext::new(
+                            state.ownership(),
+                            [
                                 state.surface_config.width as f32 / scale,
                                 state.surface_config.height as f32 / scale,
                             ],
-                        });
+                        ));
                         state.session = session;
                         state.device_rebuilt = true;
                         state.window.request_redraw();
@@ -1252,11 +1277,7 @@ impl AppHandler {
             // With an input handler the app already drove the camera, so assemble
             // without touching it; otherwise drive the built-in orbit.
             let assembled = if state.input.is_some() {
-                let vctx = ViewportContext {
-                    hovered: state.hovered,
-                    focused: state.focused,
-                    viewport_size: [w, h],
-                };
+                let vctx = ViewportContext::new(state.ownership(), [w, h]);
                 state.session.frame_with(vctx, move |frame| {
                     frame.overlays = overlays;
                     for inject in injects {
@@ -1352,14 +1373,9 @@ impl AppHandler {
 
             // begin_frame_at rather than begin_frame: the runner already owns a clock,
             // and double tap and long press need one.
-            state.session.begin_frame_at(
-                ViewportContext {
-                    hovered: state.hovered,
-                    focused: state.focused,
-                    viewport_size: [w, h],
-                },
-                time,
-            );
+            state
+                .session
+                .begin_frame_at(ViewportContext::new(state.ownership(), [w, h]), time);
             // A loss shows after the submit; the next redraw replaces the device.
             let lost = gpu.lost.is_lost_or_destroyed();
             // A frame shades with the automatic exposure the frame before it
@@ -1472,9 +1488,12 @@ impl ApplicationHandler for AppHandler {
 
             WindowEvent::RedrawRequested => self.redraw(event_loop, id),
 
+            // Ownership changes take effect at once, so the events that follow in
+            // this batch are routed on it rather than on the last frame's.
             WindowEvent::Focused(focused) => {
                 if let Some(state) = self.windows.get_mut(&id) {
                     state.focused = focused;
+                    state.session.set_input_ownership(state.ownership());
                     state.window.request_redraw();
                 }
             }
@@ -1482,6 +1501,7 @@ impl ApplicationHandler for AppHandler {
             WindowEvent::CursorEntered { .. } => {
                 if let Some(state) = self.windows.get_mut(&id) {
                     state.hovered = true;
+                    state.session.set_input_ownership(state.ownership());
                     state.window.request_redraw();
                 }
             }
@@ -1489,6 +1509,7 @@ impl ApplicationHandler for AppHandler {
             WindowEvent::CursorLeft { .. } => {
                 if let Some(state) = self.windows.get_mut(&id) {
                     state.hovered = false;
+                    state.session.set_input_ownership(state.ownership());
                     state.window.request_redraw();
                 }
             }
@@ -1514,6 +1535,7 @@ impl ApplicationHandler for AppHandler {
                             ::winit::event::TouchPhase::Ended
                                 | ::winit::event::TouchPhase::Cancelled
                         );
+                        state.session.set_input_ownership(state.ownership());
                     }
                     // A key press is followed by the text it typed: winit resolves
                     // layout, shift and dead keys into it.
@@ -1646,11 +1668,10 @@ mod tests {
             eprintln!("skipping input_ctx_forwards_only_selected_events: no GPU adapter");
             return;
         };
-        session.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [256.0, 256.0],
-        });
+        session.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [256.0, 256.0],
+        ));
 
         // Buffered this frame: a click (move + press + release) and a scroll.
         let events = vec![
@@ -1703,11 +1724,10 @@ mod tests {
             );
             return;
         };
-        session.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [256.0, 256.0],
-        });
+        session.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [256.0, 256.0],
+        ));
 
         let events = vec![
             ViewportEvent::MouseButton {

@@ -22,9 +22,9 @@ use viewport_lib::Colour;
 
 use slint::wgpu_29::{self, wgpu};
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
+    Material, MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 slint::slint! {
@@ -247,11 +247,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     s.target = Some((texture, view, pw, ph));
                 }
 
-                s.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                s.input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 s.controller.set_viewport_size([w, h]);
                 for event in s.events.drain(..) {

@@ -28,7 +28,7 @@ use std::rc::Rc;
 
 use viewport_lib as vpl;
 use vpl::{
-    AppConfig, BlitTexture, Colour, Material, OffscreenViewportTarget, ViewportApp,
+    AppConfig, BlitTexture, Colour, InputOwnership, Material, OffscreenViewportTarget, ViewportApp,
     ViewportContext, ViewportInstance, WindowConfig, primitives,
 };
 
@@ -165,11 +165,8 @@ impl Child {
         // which draws the retained frame as it stands: without it the instance
         // keeps its default viewport size and the pass is rejected for a depth
         // attachment that does not match the offscreen colour target.
-        self.session.frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: logical,
-        });
+        self.session
+            .frame(ViewportContext::new(InputOwnership::NONE, logical));
         let cmd = self
             .session
             .render(device, queue, self.target.render_view());

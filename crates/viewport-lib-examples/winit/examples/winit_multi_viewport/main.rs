@@ -28,9 +28,9 @@ use viewport_lib::Colour;
 
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
-    ViewportRenderer, primitives,
+    BindingPreset, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, MeshId,
+    OrbitCameraController, PointerOwnership, SceneFrame, SceneRenderItem, ViewportContext,
+    ViewportEvent, ViewportId, ViewportInput, ViewportRenderer, primitives,
 };
 use vpl::{ButtonState, MouseButton, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
@@ -282,11 +282,14 @@ impl ApplicationHandler for App {
         };
         let make_input = |hovered: bool, size: [f32; 2]| {
             let mut i = ViewportInput::from_preset(BindingPreset::Viewer);
-            i.begin_frame(ViewportContext {
-                hovered,
-                focused: hovered,
-                viewport_size: size,
-            });
+            i.begin_frame(ViewportContext::new(
+                InputOwnership::pointer_only(if hovered {
+                    PointerOwnership::Owned
+                } else {
+                    PointerOwnership::Elsewhere
+                }),
+                size,
+            ));
             i
         };
 
@@ -562,11 +565,14 @@ impl ApplicationHandler for App {
                 for i in 0..4 {
                     let quad = quads[i];
                     let (_, _, qw, qh) = quad_rect(quad, w, h);
-                    state.inputs[i].begin_frame(ViewportContext {
-                        hovered: quad == hovered_quad,
-                        focused: quad == hovered_quad,
-                        viewport_size: [qw as f32, qh as f32],
-                    });
+                    state.inputs[i].begin_frame(ViewportContext::new(
+                        InputOwnership::pointer_only(if quad == hovered_quad {
+                            PointerOwnership::Owned
+                        } else {
+                            PointerOwnership::Elsewhere
+                        }),
+                        [qw as f32, qh as f32],
+                    ));
                     // Pan reads the viewport height off the controller.
                     state.controllers[i].set_viewport_size([qw as f32, qh as f32]);
                 }

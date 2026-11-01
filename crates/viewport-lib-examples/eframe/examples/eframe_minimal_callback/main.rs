@@ -17,10 +17,10 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MaterialId, MeshId,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, InputOwnership, KeyboardOwnership,
+    LightingSettings, ManipResult, ManipulationContext, ManipulationController, Material,
+    MaterialId, MeshId, OrbitCameraController, PointerOwnership, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -145,11 +145,21 @@ impl App {
         self.drag_started = false;
         self.clicked = false;
 
-        self.input.begin_frame(ViewportContext {
-            hovered: response.hovered(),
-            focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-            viewport_size: [rect.width(), rect.height()],
-        });
+        self.input.begin_frame(ViewportContext::new(
+            InputOwnership {
+                pointer: if response.hovered() {
+                    PointerOwnership::Owned
+                } else {
+                    PointerOwnership::Elsewhere
+                },
+                keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                    KeyboardOwnership::Owned
+                } else {
+                    KeyboardOwnership::Elsewhere
+                },
+            },
+            [rect.width(), rect.height()],
+        ));
         // Pan reads the viewport height off the controller.
         self.controller
             .set_viewport_size([rect.width(), rect.height()]);

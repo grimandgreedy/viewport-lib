@@ -33,10 +33,10 @@ use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
-    LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
-    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
-    ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportInstance,
-    primitives,
+    InputOwnership, KeyboardOwnership, LightKind, LightSource, LightingSettings, Lumen, Lux,
+    MatcapId, Material, MaterialId, MeshId, OrbitCameraController, PipelineMode, PointerOwnership,
+    SceneFrame, SceneRenderItem, ShadowDebugStats, ShadowFilter, ToneMapping, ViewportContext,
+    ViewportEvent, ViewportId, ViewportInstance, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -916,11 +916,21 @@ impl eframe::App for App {
             let target = self.target.as_ref().unwrap();
 
             // Feed input to the instance's own input pipeline via the egui adapter.
-            self.session.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            self.session.begin_frame(ViewportContext::new(
+                InputOwnership {
+                    pointer: if response.hovered() {
+                        PointerOwnership::Owned
+                    } else {
+                        PointerOwnership::Elsewhere
+                    },
+                    keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                        KeyboardOwnership::Owned
+                    } else {
+                        KeyboardOwnership::Elsewhere
+                    },
+                },
+                [rect.width(), rect.height()],
+            ));
             self.session.set_pixels_per_point(ppp);
             let origin = glam::Vec2::new(rect.left(), rect.top());
             ui.input(|i| {

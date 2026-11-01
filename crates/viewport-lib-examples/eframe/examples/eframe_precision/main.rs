@@ -46,11 +46,11 @@ use viewport_lib_plugins::item_types::decal::{DecalBlendMode, DecalItem};
 use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, Camera, CameraFrame, ClipObject, ClipShape, FrameData, LabelItem, LightKind,
-    LightSource, LightingSettings, Material, MaterialId, OffscreenViewportTarget,
-    OrbitCameraController, PickBackend, PickMask, PostEffectContext, PostEffectResizeContext,
-    PostEffectStage, Selection, TextureId, Transform, ViewportContext, ViewportInput,
-    ViewportRenderer, WorldOrigin, scene::Scene,
+    BindingPreset, Camera, CameraFrame, ClipObject, ClipShape, FrameData, InputOwnership,
+    KeyboardOwnership, LabelItem, LightKind, LightSource, LightingSettings, Material, MaterialId,
+    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, PointerOwnership,
+    PostEffectContext, PostEffectResizeContext, PostEffectStage, Selection, TextureId, Transform,
+    ViewportContext, ViewportInput, ViewportRenderer, WorldOrigin, scene::Scene,
 };
 
 /// The distances the selector steps through, in metres.
@@ -763,11 +763,21 @@ impl eframe::App for App {
 
                 // Camera input. A capture tour keeps the opening camera.
                 let size = [rect.width(), rect.height()];
-                self.input.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                    viewport_size: size,
-                });
+                self.input.begin_frame(ViewportContext::new(
+                    InputOwnership {
+                        pointer: if response.hovered() {
+                            PointerOwnership::Owned
+                        } else {
+                            PointerOwnership::Elsewhere
+                        },
+                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                            KeyboardOwnership::Owned
+                        } else {
+                            KeyboardOwnership::Elsewhere
+                        },
+                    },
+                    size,
+                ));
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {
                     self.input.push_event(vpl::ViewportEvent::ModifiersChanged(

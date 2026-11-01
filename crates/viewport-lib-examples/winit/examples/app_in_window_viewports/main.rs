@@ -20,9 +20,9 @@ use viewport_lib::Colour;
 
 use viewport_lib as vpl;
 use vpl::{
-    AppConfig, BlitTexture, ButtonState, Material, NodeId, OffscreenViewportTarget,
-    OrbitCameraController, ViewportApp, ViewportContext, ViewportEvent, ViewportInstance,
-    WindowConfig, primitives,
+    AppConfig, BlitTexture, ButtonState, InputOwnership, Material, NodeId, OffscreenViewportTarget,
+    OrbitCameraController, PointerOwnership, ViewportApp, ViewportContext, ViewportEvent,
+    ViewportInstance, WindowConfig, primitives,
 };
 
 /// One in-window viewport: its scene, the offscreen target it renders into, a camera
@@ -78,11 +78,14 @@ impl Pane {
     ) {
         // Events land in the accumulator, which begin_frame resets, so feed them
         // after begin_frame and before update_orbit resolves them.
-        self.session.begin_frame(ViewportContext {
-            hovered: active,
-            focused: active,
-            viewport_size: vp_logical,
-        });
+        self.session.begin_frame(ViewportContext::new(
+            InputOwnership::pointer_only(if active {
+                PointerOwnership::Owned
+            } else {
+                PointerOwnership::Elsewhere
+            }),
+            vp_logical,
+        ));
         self.session.set_viewport_size(vp_logical);
         self.session.set_pixels_per_point(ppp);
         if active {

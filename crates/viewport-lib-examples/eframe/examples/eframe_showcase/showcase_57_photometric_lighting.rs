@@ -1667,14 +1667,21 @@ fn contract_overlay(_app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
 /// Feed the host's input to the orbit controller, for the frames this
 /// showcase draws the viewport itself.
 fn drive_orbit(app: &mut App, ui: &egui::Ui, cx: &crate::ViewportCtx) {
-    use vpl::{ButtonState, MouseButton, ScrollUnits, ViewportContext, ViewportEvent};
+    use vpl::{
+        ButtonState, InputOwnership, MouseButton, PointerOwnership, ScrollUnits, ViewportContext,
+        ViewportEvent,
+    };
     let rect = cx.rect;
     let hovered = cx.response.hovered();
-    app.input.begin_frame(ViewportContext {
-        hovered,
-        focused: hovered,
-        viewport_size: [rect.width(), rect.height()],
-    });
+    let pointer = if hovered {
+        PointerOwnership::Owned
+    } else {
+        PointerOwnership::Elsewhere
+    };
+    app.input.begin_frame(ViewportContext::new(
+        InputOwnership::pointer_only(pointer),
+        [rect.width(), rect.height()],
+    ));
     app.controller
         .set_viewport_size([rect.width(), rect.height()]);
     ui.input(|i| {

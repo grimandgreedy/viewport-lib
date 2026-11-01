@@ -26,9 +26,9 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 
 use vpl::{
-    AppConfig, BindingPreset, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill,
-    OverlayShape, OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent,
-    ViewportInput, WindowConfig, primitives,
+    AppConfig, BindingPreset, InputOwnership, LabelAnchor, LabelItem, Material,
+    OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem, PickMask, ViewportApp,
+    ViewportContext, ViewportEvent, ViewportInput, WindowConfig, primitives,
 };
 
 // Quit button rectangle in logical pixels (top-left corner of the window).
@@ -92,11 +92,7 @@ fn main() {
                 let mut cursor = glam::Vec2::ZERO;
                 move |ictx| {
                     let size = ictx.viewport_size();
-                    input.begin_frame(ViewportContext {
-                        hovered: true,
-                        focused: true,
-                        viewport_size: size,
-                    });
+                    input.begin_frame(ViewportContext::new(InputOwnership::full_window(), size));
                     // Pan reads the viewport height off the controller.
                     orbit.set_viewport_size(size);
                     // Cloned so we can forward (which borrows the instance) while reading.

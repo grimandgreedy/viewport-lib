@@ -27,8 +27,8 @@ use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    ManipulationController, OffscreenViewportTarget, ViewportContext, ViewportEvent,
-    ViewportInstance,
+    InputOwnership, ManipulationController, OffscreenViewportTarget, PointerOwnership,
+    ViewportContext, ViewportEvent, ViewportInstance,
 };
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -268,11 +268,14 @@ impl App {
             // A viewport-local rect never takes egui keyboard focus, so treat
             // it as focused while hovered, or the input resolver drops key
             // events (G/R/S, WASD).
-            self.session.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            self.session.begin_frame(ViewportContext::new(
+                InputOwnership::pointer_only(if response.hovered() {
+                    PointerOwnership::Owned
+                } else {
+                    PointerOwnership::Elsewhere
+                }),
+                [rect.width(), rect.height()],
+            ));
             self.session.set_pixels_per_point(ppp);
 
             let origin = glam::Vec2::new(rect.left(), rect.top());

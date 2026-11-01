@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use super::action::Action;
 use super::action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 use super::binding::{KeyCode, Modifiers, MouseButton};
-use super::context::ViewportContext;
+use super::context::{KeyboardOwnership, ViewportContext, forward_to_viewport};
 use super::event::{ButtonState, ScrollUnits, TouchId, TouchPhase, ViewportEvent};
 use super::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
 use super::touch::TouchSettings;
@@ -100,6 +100,12 @@ fn wrap_angle(a: f32) -> f32 {
 /// let actions = input.resolve();   // apply to camera / interactions
 /// input.begin_frame(ctx);          // reset for next frame's events
 /// ```
+///
+/// # Routing
+///
+/// [`push_event`](Self::push_event) decides whether each event reaches the
+/// viewport from the [`InputOwnership`](crate::input::InputOwnership) in the
+/// current [`ViewportContext`], so a host pushes every event it translates.
 pub struct ViewportInput {
     bindings: Vec<ViewportBinding>,
 
@@ -234,18 +240,13 @@ impl ViewportInput {
     /// Whether a pointer gesture of ours is in flight: a button is held and its
     /// press landed while we were being fed events.
     ///
-    /// A host uses this before taking the pointer for itself, so its own UI does not
-    /// steal a drag (or, once touch lands, a pinch) half-way through. The reverse
-    /// direction, telling the viewport an input is not its own, is simply not
-    /// forwarding it: see
-    /// [`forward_to_viewport`](crate::input::forward_to_viewport).
+    /// A host uses this before taking the pointer for its own UI, so the UI does not
+    /// steal a drag or a pinch half-way through. The resolver already keeps such a
+    /// gesture's events while it lasts, whatever ownership the host reports, so the
+    /// host does not need to report [`Grabbed`](crate::input::PointerOwnership::Grabbed)
+    /// for it.
     pub fn is_gesture_active(&self) -> bool {
-        !self.contacts.is_empty()
-            || self
-                .button_held
-                .iter()
-                .zip(self.button_press_pos.iter())
-                .any(|(held, press)| *held && press.is_some())
+        !self.contacts.is_empty() || self.press_armed()
     }
 
     /// The numbers touch recognition is calibrated on.
@@ -329,6 +330,15 @@ impl ViewportInput {
         // keys_held) is NOT reset.
     }
 
+    /// Change who owns the input without starting a new frame.
+    ///
+    /// For a host that learns of an ownership change between frames, such as a
+    /// runner seeing the cursor enter the window: events pushed after this are
+    /// routed on the new ownership, and the frame's accumulators are kept.
+    pub fn set_ownership(&mut self, ownership: crate::input::InputOwnership) {
+        self.ctx.ownership = ownership;
+    }
+
     /// Begin a new frame, and tell the resolver what time it is.
     ///
     /// `time_seconds` is your own elapsed-seconds clock, the same one you drive
@@ -368,7 +378,9 @@ impl ViewportInput {
                 // lands outside is not ours. Once it is tracked the gesture runs to
                 // its end wherever the finger goes, like a drag whose press landed
                 // inside.
-                if !self.ctx.hovered || self.contacts.iter().any(|c| c.id == id) {
+                if !self.ctx.ownership.pointer.pointer_inside()
+                    || self.contacts.iter().any(|c| c.id == id)
+                {
                     return;
                 }
                 self.contacts.push(Contact {
@@ -470,8 +482,63 @@ impl ViewportInput {
         self.last_tap = Some((contact.origin, self.time));
     }
 
+    /// Whether a press of ours is held: a button that went down while the viewport
+    /// owned the pointer and has not been released. While one is, the gesture
+    /// keeps its pointer events whatever ownership the host reports.
+    fn press_armed(&self) -> bool {
+        self.button_held
+            .iter()
+            .zip(self.button_press_pos.iter())
+            .any(|(held, press)| *held && press.is_some())
+    }
+
+    /// The routing rule: whether `event` reaches the viewport under the current
+    /// context.
+    fn admits(&self, event: &ViewportEvent) -> bool {
+        let pointer = self.ctx.ownership.pointer;
+        let keyboard = self.ctx.ownership.keyboard == KeyboardOwnership::Owned;
+        match event {
+            // A contact we saw land is followed wherever it goes.
+            ViewportEvent::Touch {
+                id,
+                phase: TouchPhase::Moved,
+                ..
+            } => pointer.owns_input() || self.contacts.iter().any(|c| c.id == *id),
+            // Teardown for a key always lands, so a key held when the keyboard
+            // moves elsewhere is not left down.
+            ViewportEvent::Key {
+                state: ButtonState::Released,
+                ..
+            } => true,
+            ViewportEvent::Key { .. } | ViewportEvent::Character(_) => keyboard,
+            ev if ev.is_contested() && self.press_armed() => true,
+            ev => forward_to_viewport(ev, pointer),
+        }
+    }
+
     /// Push a single viewport-scoped event into the accumulator.
+    ///
+    /// Every event can be pushed: this applies the routing rule itself, from the
+    /// [`InputOwnership`](crate::input::InputOwnership) in the context given to the
+    /// last [`begin_frame`](Self::begin_frame) (or
+    /// [`set_ownership`](Self::set_ownership)). So `begin_frame` for a frame comes
+    /// before that frame's pushes; a host that pushes from its event callback and
+    /// begins the frame later routes on the previous frame's ownership.
+    ///
+    /// - A left press, pointer motion and a touch landing reach the viewport only
+    ///   when it owns the pointer, or while a press of its own is held.
+    /// - A button press is always tracked so its release lands, but only one that
+    ///   arrives while the viewport owns the pointer starts a drag. A press of ours
+    ///   keeps its moves and release even after the pointer leaves the viewport or
+    ///   crosses chrome over it, and a touch contact we saw land keeps its moves.
+    /// - The wheel, trackpad gestures and a touch landing need the pointer inside.
+    /// - Keys, typed text and held-modifier bindings need the keyboard. Modifier
+    ///   changes are always tracked, so a shift-drag pans whoever has the keyboard.
+    /// - Releases, contact ends, focus loss and the pointer leaving always land.
     pub fn push_event(&mut self, event: ViewportEvent) {
+        if !self.admits(&event) {
+            return;
+        }
         match event {
             ViewportEvent::PointerMoved { position } => {
                 if let Some(prev) = self.pointer_pos {
@@ -500,10 +567,14 @@ impl ViewportInput {
                 if let Some(idx) = button_index(button) {
                     match state {
                         ButtonState::Pressed => {
+                            // Held either way, so its release lands; only a press
+                            // the viewport won records where it went down, which
+                            // is what starts a drag.
+                            let ours = self.ctx.ownership.pointer.owns_input();
                             self.button_held[idx] = true;
-                            self.button_press_pos[idx] = self.pointer_pos;
+                            self.button_press_pos[idx] = if ours { self.pointer_pos } else { None };
                             if button == MouseButton::Left {
-                                self.left_pressed = true;
+                                self.left_pressed = ours;
                                 self.left_drag_reached = false;
                             }
                         }
@@ -535,8 +606,7 @@ impl ViewportInput {
                     ScrollUnits::Pixels => 1.0,
                     ScrollUnits::Pages => self.ctx.viewport_size[1].max(1.0),
                 };
-                // Only accumulate if viewport is hovered
-                if self.ctx.hovered {
+                if self.ctx.ownership.pointer.pointer_inside() {
                     self.wheel_delta += delta * scale;
                 }
             }
@@ -545,26 +615,19 @@ impl ViewportInput {
             }
             ViewportEvent::Key {
                 key, state, repeat, ..
-            } => {
-                // Only process key events when the viewport is focused
-                if !self.ctx.focused {
-                    return;
-                }
-                match state {
-                    ButtonState::Pressed => {
-                        if !repeat {
-                            self.keys_pressed.insert(key);
-                        }
-                        self.keys_held.insert(key);
+            } => match state {
+                ButtonState::Pressed => {
+                    if !repeat {
+                        self.keys_pressed.insert(key);
                     }
-                    ButtonState::Released => {
-                        self.keys_held.remove(&key);
-                    }
+                    self.keys_held.insert(key);
                 }
-            }
+                ButtonState::Released => {
+                    self.keys_held.remove(&key);
+                }
+            },
             ViewportEvent::Character(c) => {
-                // Typed text is keyboard input, so it is gated like keys.
-                if self.ctx.focused && !c.is_control() {
+                if !c.is_control() {
                     self.typed_chars.push(c);
                 }
             }
@@ -602,17 +665,17 @@ impl ViewportInput {
             // Contacts win, because they are the ones the recogniser above is
             // calibrated for.
             ViewportEvent::TrackpadRotate(angle) => {
-                if self.ctx.hovered && self.contacts.is_empty() {
+                if self.ctx.ownership.pointer.pointer_inside() && self.contacts.is_empty() {
                     self.rotate_gesture += angle;
                 }
             }
             ViewportEvent::TrackpadPinch(delta) => {
-                if self.ctx.hovered && self.contacts.is_empty() {
+                if self.ctx.ownership.pointer.pointer_inside() && self.contacts.is_empty() {
                     self.pinch_gesture += delta;
                 }
             }
             ViewportEvent::TrackpadPan(delta) => {
-                if self.ctx.hovered && self.contacts.is_empty() {
+                if self.ctx.ownership.pointer.pointer_inside() && self.contacts.is_empty() {
                     self.pan_gesture += delta;
                 }
             }
@@ -632,12 +695,7 @@ impl ViewportInput {
 
         // Skip pointer/wheel gesture evaluation if viewport is not hovered
         // (and no button is actively held from a press that started inside).
-        let any_held_with_press = self
-            .button_held
-            .iter()
-            .enumerate()
-            .any(|(i, &held)| held && self.button_press_pos[i].is_some());
-        let pointer_active = self.ctx.hovered || any_held_with_press;
+        let pointer_active = self.ctx.ownership.pointer.pointer_inside() || self.press_armed();
 
         for binding in &self.bindings {
             match &binding.gesture {
@@ -776,8 +834,10 @@ impl ViewportInput {
                     }
                 }
                 ViewportGesture::ModifiersHeld { modifiers } => {
-                    // Gated on focus like a held key, since a modifier is one.
-                    if self.ctx.focused && modifiers.matches(self.modifiers) {
+                    // Gated on the keyboard like a held key, since a modifier is one.
+                    if self.ctx.ownership.keyboard == KeyboardOwnership::Owned
+                        && modifiers.matches(self.modifiers)
+                    {
                         actions
                             .entry(binding.action)
                             .or_insert(ResolvedActionState::Held);
@@ -837,15 +897,17 @@ impl ViewportInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::context::{InputOwnership, PointerOwnership};
     use crate::input::event::ButtonState;
     use crate::input::preset::viewport_default_bindings;
+    use crate::input::viewport_binding::{ViewportBinding, ViewportGesture};
+
+    fn ctx(pointer: PointerOwnership, keyboard: KeyboardOwnership) -> ViewportContext {
+        ViewportContext::new(InputOwnership { pointer, keyboard }, [800.0, 600.0])
+    }
 
     fn focused_ctx() -> ViewportContext {
-        ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [800.0, 600.0],
-        }
+        ctx(PointerOwnership::Owned, KeyboardOwnership::Owned)
     }
 
     /// Drag a held left button from `from` to `to`, returning the resolved frame.
@@ -1072,11 +1134,7 @@ mod tests {
     #[test]
     fn key_ignored_when_not_focused() {
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: false,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
         input.push_event(ViewportEvent::Key {
             key: KeyCode::F,
             state: ButtonState::Pressed,
@@ -1130,11 +1188,7 @@ mod tests {
     #[test]
     fn scroll_ignored_when_not_hovered() {
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: false,
-            focused: true,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(PointerOwnership::Elsewhere, KeyboardOwnership::Owned));
         input.push_event(ViewportEvent::Wheel {
             delta: glam::Vec2::new(0.0, 5.0),
             units: ScrollUnits::Lines,
@@ -1326,11 +1380,10 @@ mod tests {
         input.resolve();
 
         // The pointer has left the rect, but the press was ours.
-        input.begin_frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(
+            PointerOwnership::Elsewhere,
+            KeyboardOwnership::Elsewhere,
+        ));
         move_to(&mut input, 900.0, 100.0);
         let frame = input.resolve();
         assert_ne!(frame.navigation.orbit, glam::Vec2::ZERO);
@@ -1339,16 +1392,214 @@ mod tests {
     #[test]
     fn the_wheel_accrues_under_chrome_over_the_viewport() {
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: false,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(PointerOwnership::Inside, KeyboardOwnership::Elsewhere));
         input.push_event(ViewportEvent::Wheel {
             delta: glam::Vec2::new(0.0, 1.0),
             units: ScrollUnits::Lines,
         });
         assert!(input.resolve().navigation.zoom != 0.0);
+    }
+
+    fn button(input: &mut ViewportInput, button: MouseButton, state: ButtonState) {
+        input.push_event(ViewportEvent::MouseButton { button, state });
+    }
+
+    /// One binding: a drag on `b` orbits.
+    fn drag_orbits(b: MouseButton) -> ViewportInput {
+        ViewportInput::new(vec![ViewportBinding::new(
+            Action::Orbit,
+            ViewportGesture::Drag {
+                button: b,
+                modifiers: crate::input::ModifiersMatch::Any,
+            },
+        )])
+    }
+
+    fn pointer_ctx(pointer: PointerOwnership) -> ViewportContext {
+        ctx(pointer, KeyboardOwnership::Owned)
+    }
+
+    #[test]
+    fn a_left_press_on_chrome_over_the_viewport_is_dropped() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+        move_to(&mut input, 10.0, 10.0);
+        input.resolve();
+        input.begin_frame(pointer_ctx(PointerOwnership::Inside));
+        press(&mut input);
+        move_to(&mut input, 60.0, 10.0);
+        let frame = input.resolve();
+        assert!(!frame.pointer.pressed);
+        assert!(!input.is_gesture_active());
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_release_under_elsewhere_still_lands() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        input.resolve();
+        input.begin_frame(pointer_ctx(PointerOwnership::Elsewhere));
+        release(&mut input);
+        assert!(!input.is_gesture_active());
+        assert!(input.button_held.iter().all(|h| !h), "no button stays held");
+        move_to(&mut input, 80.0, 10.0);
+        assert_eq!(input.resolve().navigation.orbit, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_drag_of_ours_survives_chrome_and_leaving_with_any_button() {
+        for b in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            let mut input = drag_orbits(b);
+            input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+            move_to(&mut input, 100.0, 100.0);
+            button(&mut input, b, ButtonState::Pressed);
+            input.resolve();
+
+            // No escalation from the host: it reports what the pointer is over.
+            for ownership in [PointerOwnership::Inside, PointerOwnership::Elsewhere] {
+                input.begin_frame(pointer_ctx(ownership));
+                let x = input.pointer_pos.unwrap().x + 20.0;
+                move_to(&mut input, x, 100.0);
+                let frame = input.resolve();
+                assert_eq!(
+                    frame.navigation.orbit,
+                    glam::Vec2::new(20.0, 0.0),
+                    "{b:?} under {ownership:?}"
+                );
+            }
+
+            input.begin_frame(pointer_ctx(PointerOwnership::Elsewhere));
+            button(&mut input, b, ButtonState::Released);
+            assert!(!input.is_gesture_active(), "{b:?} released");
+        }
+    }
+
+    #[test]
+    fn a_right_press_elsewhere_does_not_orbit() {
+        let mut input = drag_orbits(MouseButton::Right);
+        input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+        move_to(&mut input, 100.0, 100.0);
+        input.resolve();
+
+        // The press is ambient so it arrives, but it landed on a side panel.
+        for ownership in [PointerOwnership::Elsewhere, PointerOwnership::Inside] {
+            input.begin_frame(pointer_ctx(ownership));
+            button(&mut input, MouseButton::Right, ButtonState::Pressed);
+            move_to(&mut input, 150.0, 120.0);
+            let frame = input.resolve();
+            assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO, "{ownership:?}");
+            assert!(!input.is_gesture_active());
+
+            // Moving back over the viewport with the button still down does not
+            // pick the drag up either.
+            input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+            move_to(&mut input, 160.0, 120.0);
+            move_to(&mut input, 190.0, 120.0);
+            assert_eq!(input.resolve().navigation.orbit, glam::Vec2::ZERO);
+
+            button(&mut input, MouseButton::Right, ButtonState::Released);
+            assert!(input.button_held.iter().all(|h| !h), "no button stays held");
+            move_to(&mut input, 100.0, 100.0);
+        }
+    }
+
+    #[test]
+    fn a_contact_of_ours_keeps_moving_under_chrome() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+        touch(&mut input, 1, TouchPhase::Started, 100.0, 100.0);
+        input.resolve();
+        input.begin_frame(pointer_ctx(PointerOwnership::Inside));
+        touch(&mut input, 1, TouchPhase::Moved, 130.0, 100.0);
+        let frame = input.resolve();
+        assert_eq!(frame.pointer.contacts, 1);
+        assert_ne!(frame.navigation.orbit, glam::Vec2::ZERO);
+
+        // A contact that landed on the chrome is not followed.
+        input.begin_frame(pointer_ctx(PointerOwnership::Inside));
+        touch(&mut input, 1, TouchPhase::Ended, 130.0, 100.0);
+        touch(&mut input, 2, TouchPhase::Started, 100.0, 100.0);
+        touch(&mut input, 2, TouchPhase::Moved, 140.0, 100.0);
+        let frame = input.resolve();
+        assert_eq!(frame.pointer.contacts, 0);
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_cancelled_press_is_not_followed_under_chrome() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(pointer_ctx(PointerOwnership::Owned));
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        input.resolve();
+
+        // A tool drawn in the viewport took the press: the host cancels the
+        // camera's gesture and reports Inside from here.
+        input.cancel_gesture();
+        input.begin_frame(pointer_ctx(PointerOwnership::Inside));
+        let before = input.pointer_pos;
+        move_to(&mut input, 60.0, 10.0);
+        let frame = input.resolve();
+        assert_eq!(input.pointer_pos, before, "the move did not reach us");
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        assert_eq!(frame.pointer.delta, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_shift_middle_drag_pans_while_a_text_field_has_the_keyboard() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
+        move_to(&mut input, 100.0, 100.0);
+        button(&mut input, MouseButton::Middle, ButtonState::Pressed);
+        move_to(&mut input, 110.0, 105.0);
+        let frame = input.resolve();
+        assert_ne!(frame.navigation.pan, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        // A held modifier is a key, so it does not fire while the keyboard is
+        // elsewhere.
+        assert!(!frame.is_active(Action::FlySpeedBoost));
+
+        input.begin_frame(focused_ctx());
+        assert!(input.resolve().is_active(Action::FlySpeedBoost));
+    }
+
+    #[test]
+    fn a_key_held_when_the_keyboard_moves_away_is_released() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Pressed,
+            repeat: false,
+            logical: Some('w'),
+        });
+        assert!(input.resolve().is_active(Action::FlyForward));
+
+        input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Released,
+            repeat: false,
+            logical: Some('w'),
+        });
+        input.begin_frame(focused_ctx());
+        assert!(!input.resolve().is_active(Action::FlyForward));
+    }
+
+    #[test]
+    fn set_ownership_routes_the_rest_of_the_frame() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(pointer_ctx(PointerOwnership::Elsewhere));
+        move_to(&mut input, 10.0, 10.0);
+        assert_eq!(input.pointer_pos, None);
+        input.set_ownership(InputOwnership::full_window());
+        move_to(&mut input, 10.0, 10.0);
+        press(&mut input);
+        assert!(input.is_gesture_active());
     }
 
     #[test]
@@ -1367,11 +1618,7 @@ mod tests {
     #[test]
     fn character_event_ignored_when_unfocused() {
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: false,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
         input.push_event(ViewportEvent::Character('3'));
         let frame = input.resolve();
         assert!(frame.typed_chars.is_empty());
@@ -1635,11 +1882,10 @@ mod tests {
     #[test]
     fn a_contact_landing_outside_the_viewport_is_not_ours() {
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(
+            PointerOwnership::Elsewhere,
+            KeyboardOwnership::Elsewhere,
+        ));
         touch(&mut input, 1, TouchPhase::Started, 100.0, 100.0);
         touch(&mut input, 1, TouchPhase::Moved, 200.0, 100.0);
         let frame = input.resolve();
@@ -1739,11 +1985,10 @@ mod tests {
     fn trackpad_gestures_are_dropped_when_not_hovered() {
         // Same gate as the wheel: a gesture over someone else's pane is not ours.
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: [800.0, 600.0],
-        });
+        input.begin_frame(ctx(
+            PointerOwnership::Elsewhere,
+            KeyboardOwnership::Elsewhere,
+        ));
         input.push_event(ViewportEvent::TrackpadPinch(0.5));
         input.push_event(ViewportEvent::TrackpadPan(glam::Vec2::new(5.0, 5.0)));
         input.push_event(ViewportEvent::TrackpadRotate(0.5));

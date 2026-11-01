@@ -33,9 +33,9 @@ use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    AutoExposure, ExposureMode, ExposureSettings, ItemSettings, LightKind, LightSource,
-    LightingSettings, Lumen, Lux, Material, OrbitCameraController, ViewportContext, ViewportEvent,
-    ViewportInstance, primitives,
+    AutoExposure, ExposureMode, ExposureSettings, InputOwnership, ItemSettings, KeyboardOwnership,
+    LightKind, LightSource, LightingSettings, Lumen, Lux, Material, OrbitCameraController,
+    PointerOwnership, ViewportContext, ViewportEvent, ViewportInstance, primitives,
 };
 
 const COLUMNS: usize = 6;
@@ -497,11 +497,21 @@ impl eframe::App for App {
 
                 // Screen-space state stays in logical points; pixels_per_point
                 // sizes the physical render target and keeps overlays crisp.
-                self.session.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                self.session.begin_frame(ViewportContext::new(
+                    InputOwnership {
+                        pointer: if response.hovered() {
+                            PointerOwnership::Owned
+                        } else {
+                            PointerOwnership::Elsewhere
+                        },
+                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                            KeyboardOwnership::Owned
+                        } else {
+                            KeyboardOwnership::Elsewhere
+                        },
+                    },
+                    [rect.width(), rect.height()],
+                ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {

@@ -34,11 +34,12 @@ use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
-    GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MaterialId, MeshId, MouseButton,
-    OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
-    Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput, ViewportRenderer,
-    gizmo::compute_gizmo_scale, gizmo_centre_for_pivot, picking::screen_to_ray, primitives,
+    GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, InputOwnership, KeyCode, LightingSettings,
+    ManipResult, ManipulationContext, ManipulationController, Material, MaterialId, MeshId,
+    MouseButton, OffscreenViewportTarget, OrbitCameraController, PointerOwnership, SceneFrame,
+    SceneRenderItem, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId,
+    ViewportInput, ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_centre_for_pivot,
+    picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -423,11 +424,16 @@ impl App {
                 // size their pan reads.
                 for i in 0..4 {
                     let qr = quads[i];
-                    self.inputs[i].begin_frame(ViewportContext {
-                        hovered: i == hq && ui.rect_contains_pointer(rect),
-                        focused: i == hq && ui.rect_contains_pointer(rect),
-                        viewport_size: [qr.width(), qr.height()],
-                    });
+                    self.inputs[i].begin_frame(ViewportContext::new(
+                        InputOwnership::pointer_only(
+                            if i == hq && ui.rect_contains_pointer(rect) {
+                                PointerOwnership::Owned
+                            } else {
+                                PointerOwnership::Elsewhere
+                            },
+                        ),
+                        [qr.width(), qr.height()],
+                    ));
                     self.controllers[i].set_viewport_size([qr.width(), qr.height()]);
                 }
 

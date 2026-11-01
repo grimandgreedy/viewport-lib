@@ -7,9 +7,10 @@ use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId,
-    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, InputOwnership, LightingSettings, MeshData,
+    MeshId, OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask,
+    PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer,
 };
 
 mod geometry;
@@ -773,11 +774,14 @@ impl eframe::App for App {
 
                 // ----- Camera controller -----
                 let vp_hovered = response.hovered();
-                self.input.begin_frame(ViewportContext {
-                    hovered: vp_hovered,
-                    focused: vp_hovered,
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                self.input.begin_frame(ViewportContext::new(
+                    InputOwnership::pointer_only(if vp_hovered {
+                        PointerOwnership::Owned
+                    } else {
+                        PointerOwnership::Elsewhere
+                    }),
+                    [rect.width(), rect.height()],
+                ));
                 // Pan reads the viewport height off the controller.
                 self.controller
                     .set_viewport_size([rect.width(), rect.height()]);

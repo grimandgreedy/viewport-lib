@@ -19,10 +19,10 @@ use viewport_lib::Colour;
 
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings,
-    Material, MeshId, OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem,
-    PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, InputOwnership,
+    LightingSettings, Material, MeshId, OrbitCameraController, OverlayFill, OverlayShape,
+    OverlayShapeItem, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -153,11 +153,10 @@ impl ApplicationHandler for App {
 
         let controller = OrbitCameraController::new_stateless();
         let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [config.width as f32, config.height as f32],
-        });
+        input.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [config.width as f32, config.height as f32],
+        ));
 
         self.state = Some(AppState {
             window,
@@ -374,11 +373,9 @@ impl ApplicationHandler for App {
                     );
                 }
 
-                state.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                state
+                    .input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 state.controller.set_viewport_size([w, h]);
             }

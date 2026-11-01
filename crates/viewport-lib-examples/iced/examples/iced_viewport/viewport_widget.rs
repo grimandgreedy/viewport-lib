@@ -11,8 +11,8 @@ use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId,
-    Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController, RenderCamera,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
+    MeshId, Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController, RenderCamera,
     SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer, primitives,
 };
@@ -403,11 +403,10 @@ impl shader::Program<Message> for SceneSnapshot {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<Message>> {
-        let vp_ctx = ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: glam::vec2(bounds.width, bounds.height).into(),
-        };
+        let vp_ctx = ViewportContext::new(
+            InputOwnership::full_window(),
+            glam::vec2(bounds.width, bounds.height).into(),
+        );
         // Pan reads the viewport height off the controller.
         state.controller.set_viewport_size(vp_ctx.viewport_size);
 

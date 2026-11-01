@@ -32,14 +32,14 @@ use super::movement::wish_from_actions;
 ///
 /// ```text
 /// // --- AppState construction ---
-/// controller.begin_frame(ViewportContext { hovered: true, focused: true, viewport_size });
+/// controller.begin_frame(ViewportContext::new(InputOwnership::full_window(), viewport_size));
 ///
 /// // --- window_event ---
 /// controller.push_event(translated_event);
 ///
 /// // --- RedrawRequested ---
 /// controller.apply_to_camera(&mut state.camera);
-/// controller.begin_frame(ViewportContext { hovered: true, focused: true, viewport_size });
+/// controller.begin_frame(ViewportContext::new(InputOwnership::full_window(), viewport_size));
 /// // ... render ...
 /// ```
 ///
@@ -47,11 +47,16 @@ use super::movement::wish_from_actions;
 ///
 /// ```text
 /// // --- update() ---
-/// controller.begin_frame(ViewportContext {
-///     hovered: response.hovered(),
-///     focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-///     viewport_size: [rect.width(), rect.height()],
-/// });
+/// let pointer = if response.hovered() { PointerOwnership::Owned } else { PointerOwnership::Elsewhere };
+/// let keyboard = if response.hovered() && !ui.ctx().wants_keyboard_input() {
+///     KeyboardOwnership::Owned
+/// } else {
+///     KeyboardOwnership::Elsewhere
+/// };
+/// controller.begin_frame(ViewportContext::new(
+///     InputOwnership { pointer, keyboard },
+///     [rect.width(), rect.height()],
+/// ));
 /// // push each event in ui.input(|i| { ... }) through from_egui_into
 /// controller.apply_to_camera(&mut self.camera);
 /// ```
@@ -481,11 +486,7 @@ mod tests {
     use crate::input::event::{ButtonState, ScrollUnits, ViewportEvent};
 
     fn make_ctx() -> ViewportContext {
-        ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [800.0, 600.0],
-        }
+        ViewportContext::new(crate::input::InputOwnership::full_window(), [800.0, 600.0])
     }
 
     #[test]

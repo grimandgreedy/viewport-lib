@@ -29,11 +29,11 @@ pub use viewport_lib_examples_eframe::eframe;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
-    BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, LightKind,
-    LightSource, LightingSettings, MatcapId, Material, MaterialId, MeshId, OffscreenViewportTarget,
-    OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask, SceneFrame,
-    SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer,
+    BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, InputOwnership,
+    KeyboardOwnership, LightKind, LightSource, LightingSettings, MatcapId, Material, MaterialId,
+    MeshId, OffscreenViewportTarget, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig,
+    PickId, PickMask, PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits, ShadingModel,
+    ShadowFilter, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
@@ -707,11 +707,21 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.input.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            self.input.begin_frame(ViewportContext::new(
+                InputOwnership {
+                    pointer: if response.hovered() {
+                        PointerOwnership::Owned
+                    } else {
+                        PointerOwnership::Elsewhere
+                    },
+                    keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                        KeyboardOwnership::Owned
+                    } else {
+                        KeyboardOwnership::Elsewhere
+                    },
+                },
+                [rect.width(), rect.height()],
+            ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);

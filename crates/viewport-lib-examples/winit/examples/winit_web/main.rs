@@ -43,9 +43,9 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, Material, MeshId,
-    OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, InputOwnership,
+    Material, MeshId, OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -276,11 +276,9 @@ impl ApplicationHandler<State> for App {
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();
 
-                state.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                state
+                    .input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 state.controller.set_viewport_size([w, h]);
 
@@ -395,11 +393,10 @@ async fn build_state(window: Arc<Window>) -> State {
     let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-    input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [surface_config.width as f32, surface_config.height as f32],
-    });
+    input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [surface_config.width as f32, surface_config.height as f32],
+    ));
 
     State {
         window,

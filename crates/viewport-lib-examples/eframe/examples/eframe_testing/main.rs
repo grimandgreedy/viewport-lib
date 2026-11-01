@@ -17,10 +17,10 @@ use viewport_lib::Colour;
 use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
-    LightingSettings, Material, MaterialId, MeshId, OffscreenViewportTarget, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer, primitives,
+    BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, KeyboardOwnership,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId,
+    OffscreenViewportTarget, OrbitCameraController, PointerOwnership, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 // Solid unlit colours for the subsurface objects. Picked to be visually distinct
@@ -349,11 +349,21 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.input.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            self.input.begin_frame(ViewportContext::new(
+                InputOwnership {
+                    pointer: if response.hovered() {
+                        PointerOwnership::Owned
+                    } else {
+                        PointerOwnership::Elsewhere
+                    },
+                    keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
+                        KeyboardOwnership::Owned
+                    } else {
+                        KeyboardOwnership::Elsewhere
+                    },
+                },
+                [rect.width(), rect.height()],
+            ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);
