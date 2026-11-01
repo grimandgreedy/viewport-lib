@@ -318,12 +318,6 @@ fn item_types_6400_km_from_origin_still_draw() {
     let mut failures = Vec::new();
     for part in mix_parts().into_iter().skip(1).chain(extra_parts()) {
         let name = part.name;
-        // Tubes (in "curves") and streamtubes vanish this far out for a
-        // reason of their own, not the cull; they are left out so the rest
-        // stay guarded.
-        if matches!(name, "curves" | "streamtube") {
-            continue;
-        }
         let parts = vec![ground().remove(0), part];
         let near = render_parts_at(
             &mut harness,
