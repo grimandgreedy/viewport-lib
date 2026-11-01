@@ -152,6 +152,12 @@ fn main() -> eframe::Result {
                 .insert(renderer);
 
             let box_mesh = vpl::primitives::cube(1.0);
+            // `VPL_SHOWCASE=<n>` opens on showcase number n instead of the first.
+            let mode = std::env::var("VPL_SHOWCASE")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .and_then(|n| registry::SHOWCASES.iter().find(|e| e.number == n))
+                .map_or(ShowcaseMode::Basic, |e| e.mode);
 
             Ok(Box::new(App {
                 pipelines_pending: 0,
@@ -167,10 +173,11 @@ fn main() -> eframe::Result {
                 ),
                 controller: OrbitCameraController::new_stateless(),
                 input: ViewportInput::from_preset(BindingPreset::Default),
-                mode: ShowcaseMode::Basic,
+                mode,
                 mode_gen: 0,
                 show_keybinds: false,
                 pending_pick: None,
+                capture: Capture::from_env(),
                 basic_state: showcase_01_basic::BasicState::default(),
                 sg_state: showcase_02_scene_graph::SgState::default(),
                 box_mesh_data: box_mesh,
@@ -376,6 +383,9 @@ pub(crate) struct App {
     /// and the on-screen `FrameData` are all in scope, by `pick_object`. Cursor
     /// in viewport pixels.
     pending_pick: Option<glam::Vec2>,
+
+    /// The capture tour `VPL_CAPTURE` asks for, if any.
+    capture: Option<Capture>,
 
     // --- Showcase 1 ---
     pub(crate) basic_state: showcase_01_basic::BasicState,
@@ -1014,6 +1024,12 @@ impl eframe::App for App {
                         // Resolve any deferred click pick against the frame just
                         // drawn, using the unified GPU picker.
                         self.apply_pending_pick(renderer, &frame_data);
+                        if let Some(done) = self.capture_step(renderer, &frame_data) {
+                            if done {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            ctx.request_repaint();
+                        }
                     }
                     drop(guard);
                     ui.painter().image(
@@ -1120,6 +1136,7 @@ impl App {
         if self.mode == mode {
             return;
         }
+        self.mode.showcase().leave(self);
         self.mode = mode;
         self.mode_gen = self.mode_gen.wrapping_add(1);
         if let Some(cam) = shared::opening_camera(mode) {
@@ -1285,6 +1302,21 @@ pub(crate) trait Showcase {
     /// Route a plain viewport click that no gizmo or widget consumed.
     fn on_click(&self, _app: &mut crate::App, _cx: &crate::ClickCtx) {}
 
+    /// Route the GPU pick a click asked for (through `App::pending_pick`),
+    /// resolved against the frame just drawn.
+    fn on_pick(&self, _app: &mut crate::App, _hit: Option<vpl::PickHit>) {}
+
+    /// The selector is switching away from this showcase: turn off anything
+    /// it left running in the renderer, such as a post-effect stage.
+    fn leave(&self, _app: &mut crate::App) {}
+
+    /// Set up step `step` of a `VPL_CAPTURE` tour (a sub-tab or a setting
+    /// worth a picture). Step 0 is the showcase as it opens. Return false
+    /// when there is no such step.
+    fn tour(&self, _app: &mut crate::App, step: u32) -> bool {
+        step == 0
+    }
+
     /// Handle drag gestures this showcase owns, before the camera controller runs.
     fn drag_input(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 
@@ -1331,6 +1363,90 @@ pub(crate) trait Showcase {
         _ui: &mut crate::eframe::egui::Ui,
         _frame: &crate::eframe::Frame,
     ) {
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Capture tour
+// ---------------------------------------------------------------------------
+
+/// `VPL_CAPTURE=<dir>` renders the opening showcase (see `VPL_SHOWCASE`)
+/// through each step of its [`Showcase::tour`], writes one BMP per step to
+/// `<dir>/showcase_<n>_<step>.bmp` and closes the window.
+struct Capture {
+    dir: std::path::PathBuf,
+    step: u32,
+    frames: u32,
+}
+
+/// Frames drawn per tour step before the capture, so lazy builds, pipeline
+/// compiles and auto-exposure settle.
+const CAPTURE_SETTLE_FRAMES: u32 = 45;
+
+impl Capture {
+    fn from_env() -> Option<Self> {
+        let dir = std::env::var_os("VPL_CAPTURE")?;
+        Some(Self {
+            dir: dir.into(),
+            step: 0,
+            frames: 0,
+        })
+    }
+}
+
+/// Write RGBA8 pixels as a 32-bit BMP (bottom-up rows, BGRA).
+fn write_bmp(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> std::io::Result<()> {
+    let size = 54 + w * h * 4;
+    let mut out = Vec::with_capacity(size as usize);
+    out.extend_from_slice(b"BM");
+    for v in [size, 0, 54, 40] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&(w as i32).to_le_bytes());
+    out.extend_from_slice(&(h as i32).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    for v in [0u32, w * h * 4, 2835, 2835, 0, 0] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    for y in (0..h).rev() {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            out.extend_from_slice(&[rgba[i + 2], rgba[i + 1], rgba[i], 255]);
+        }
+    }
+    std::fs::write(path, out)
+}
+
+impl App {
+    /// Advance the capture tour by one frame. Returns `None` with no tour,
+    /// otherwise whether the tour has finished.
+    fn capture_step(
+        &mut self,
+        renderer: &mut ViewportRenderer,
+        frame_data: &FrameData,
+    ) -> Option<bool> {
+        let cap = self.capture.as_mut()?;
+        cap.frames += 1;
+        if cap.frames < CAPTURE_SETTLE_FRAMES {
+            return Some(false);
+        }
+        // The frame's viewport size is in points; capture at its pixel size.
+        let ppp = frame_data.camera.pixels_per_point;
+        let [w, h] = frame_data
+            .camera
+            .viewport_size
+            .map(|v| (v * ppp).round().max(1.0) as u32);
+        let pixels = renderer.render_offscreen(&self.device, &self.queue, frame_data, w, h);
+        let number = self.mode.entry().number;
+        let path = cap.dir.join(format!("showcase_{number}_{}.bmp", cap.step));
+        if let Err(e) = write_bmp(&path, w, h, &pixels) {
+            eprintln!("capture: {}: {e}", path.display());
+        }
+        cap.step += 1;
+        cap.frames = 0;
+        let step = cap.step;
+        Some(!self.mode.showcase().tour(self, step))
     }
 }
 
@@ -1666,7 +1782,7 @@ impl App {
                     showcase_46_decals::decal46_place(self, &h);
                 }
             }
-            _ => {}
+            _ => self.mode.showcase().on_pick(self, hit),
         }
     }
 }
