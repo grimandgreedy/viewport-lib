@@ -27,9 +27,64 @@ macro_rules! egui_adapter {
         use $egui as egui;
 
         use crate::input::{
-            ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, TouchId, TouchPhase,
-            ViewportEvent,
+            ButtonState, InputOwnership, KeyCode, KeyboardOwnership, Modifiers, MouseButton,
+            PointerOwnership, ScrollUnits, TouchId, TouchPhase, ViewportEvent,
         };
+
+        /// Who owns the input for a viewport drawn as an egui widget.
+        ///
+        /// `response` is the viewport widget's response and `rect` the viewport's
+        /// rectangle, usually `response.rect`. `session_active` is whether the
+        /// application has a manipulation session in flight (a G/R/S move driven by
+        /// the keyboard and the pointer), which keeps the pointer for the session.
+        ///
+        /// The pointer is [`Grabbed`](PointerOwnership::Grabbed) while the widget
+        /// is dragged or a session is active, [`Owned`](PointerOwnership::Owned)
+        /// while it is hovered, [`Inside`](PointerOwnership::Inside) when the
+        /// pointer is in `rect` but egui gave the hover to something drawn over it,
+        /// and [`Elsewhere`](PointerOwnership::Elsewhere) otherwise. The keyboard is
+        /// the viewport's while it has the pointer and no egui widget has keyboard
+        /// focus, so typing into a text field beside a hovered viewport does not
+        /// reach it.
+        ///
+        /// A camera drag in flight needs no escalation: the resolver keeps its own
+        /// held press's events when the pointer crosses egui chrome or leaves the
+        /// rect. [`Grabbed`](PointerOwnership::Grabbed) from the host is for
+        /// pointer capture. With a session active, a click on an egui button both
+        /// presses the button and confirms the session.
+        ///
+        /// A tool drawn inside the viewport (a gizmo handle) is not something egui
+        /// can see, so this reports the pointer owned over it. Give the camera's
+        /// resolver [`Inside`](PointerOwnership::Inside) while the tool wants the
+        /// pointer, and call its `cancel_gesture()` when the tool takes a press.
+        pub fn ownership(
+            response: &egui::Response,
+            ctx: &egui::Context,
+            rect: egui::Rect,
+            session_active: bool,
+        ) -> InputOwnership {
+            let pointer = if response.dragged() || session_active {
+                PointerOwnership::Grabbed
+            } else if response.hovered() {
+                PointerOwnership::Owned
+            } else if ctx
+                .input(|i| i.pointer.latest_pos())
+                .is_some_and(|p| rect.contains(p))
+            {
+                PointerOwnership::Inside
+            } else {
+                PointerOwnership::Elsewhere
+            };
+            // Any focused egui widget is listening for keys (what egui's
+            // `wants_keyboard_input` reports, under a name that changed in 0.35).
+            let text_focus = ctx.memory(|m| m.focused().is_some());
+            let keyboard = if !text_focus && pointer.owns_input() {
+                KeyboardOwnership::Owned
+            } else {
+                KeyboardOwnership::Elsewhere
+            };
+            InputOwnership { pointer, keyboard }
+        }
 
         /// Translate egui's modifier state into [`Modifiers`], for a
         /// [`ViewportEvent::ModifiersChanged`]. Ctrl and Cmd (`mac_cmd`) stay
@@ -578,6 +633,119 @@ macro_rules! egui_adapter {
                 }
             }
 
+            /// Run one egui frame with `events`, laying out the viewport widget at
+            /// `VIEWPORT` and a second widget beside it, which takes keyboard focus
+            /// when `focus_field` is set. Returns what `ownership` reports.
+            fn frame(
+                ctx: &egui::Context,
+                events: Vec<Event>,
+                session_active: bool,
+                focus_field: bool,
+            ) -> InputOwnership {
+                let raw = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        Pos2::ZERO,
+                        egui::vec2(400.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                };
+                let mut out = InputOwnership::NONE;
+                let mut body = |ui: &mut egui::Ui| {
+                    let field = ui.interact(FIELD, egui::Id::new("field"), egui::Sense::click());
+                    if focus_field {
+                        field.request_focus();
+                    }
+                    let response = ui.interact(
+                        VIEWPORT,
+                        egui::Id::new("viewport"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    out = ownership(&response, ui.ctx(), BIG, session_active);
+                };
+                #[cfg(feature = "egui-adapter")]
+                let _ = ctx.run(raw, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| body(ui));
+                });
+                #[cfg(not(feature = "egui-adapter"))]
+                let _ = ctx.run_ui(raw, |ui| body(ui));
+                out
+            }
+
+            const VIEWPORT: egui::Rect = egui::Rect {
+                min: Pos2::new(100.0, 100.0),
+                max: Pos2::new(200.0, 200.0),
+            };
+            /// A larger rect around the widget, so a pointer in it but off the
+            /// widget reads as inside the viewport with the hover elsewhere.
+            const BIG: egui::Rect = egui::Rect {
+                min: Pos2::new(50.0, 50.0),
+                max: Pos2::new(250.0, 250.0),
+            };
+            const FIELD: egui::Rect = egui::Rect {
+                min: Pos2::new(300.0, 0.0),
+                max: Pos2::new(380.0, 20.0),
+            };
+
+            fn moved(x: f32, y: f32) -> Event {
+                Event::PointerMoved(Pos2::new(x, y))
+            }
+
+            fn primary(x: f32, y: f32, pressed: bool) -> Event {
+                Event::PointerButton {
+                    pos: Pos2::new(x, y),
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::default(),
+                }
+            }
+
+            #[test]
+            fn ownership_follows_hover() {
+                let ctx = egui::Context::default();
+                frame(&ctx, vec![moved(150.0, 150.0)], false, false);
+                let o = frame(&ctx, vec![], false, false);
+                assert_eq!(o, InputOwnership::full_window(), "hovered");
+
+                frame(&ctx, vec![moved(70.0, 70.0)], false, false);
+                let o = frame(&ctx, vec![], false, false);
+                assert_eq!(
+                    o.pointer,
+                    PointerOwnership::Inside,
+                    "in the rect, off the widget"
+                );
+                assert_eq!(o.keyboard, KeyboardOwnership::Elsewhere);
+
+                frame(&ctx, vec![moved(390.0, 290.0)], false, false);
+                let o = frame(&ctx, vec![], false, false);
+                assert_eq!(o, InputOwnership::NONE, "outside");
+            }
+
+            #[test]
+            fn a_session_or_a_drag_grabs_the_pointer() {
+                let ctx = egui::Context::default();
+                frame(&ctx, vec![moved(390.0, 290.0)], false, false);
+                let o = frame(&ctx, vec![], true, false);
+                assert_eq!(o.pointer, PointerOwnership::Grabbed, "session");
+                assert_eq!(o.keyboard, KeyboardOwnership::Owned);
+
+                frame(&ctx, vec![moved(150.0, 150.0)], false, false);
+                frame(&ctx, vec![primary(150.0, 150.0, true)], false, false);
+                frame(&ctx, vec![moved(170.0, 150.0)], false, false);
+                // Dragged past the widget's edge and out of the rect: still ours.
+                let o = frame(&ctx, vec![moved(390.0, 290.0)], false, false);
+                assert_eq!(o.pointer, PointerOwnership::Grabbed, "drag");
+            }
+
+            #[test]
+            fn a_focused_text_field_keeps_the_keyboard() {
+                let ctx = egui::Context::default();
+                frame(&ctx, vec![moved(150.0, 150.0)], false, true);
+                let o = frame(&ctx, vec![], false, false);
+                assert_eq!(o.pointer, PointerOwnership::Owned);
+                assert_eq!(o.keyboard, KeyboardOwnership::Elsewhere);
+            }
+
             #[test]
             fn text_becomes_one_character_per_char() {
                 let mut out = Vec::new();
@@ -609,18 +777,18 @@ mod v033 {
     egui_adapter!(egui033);
 }
 #[cfg(feature = "egui-adapter")]
-pub use v033::{from_egui, from_egui_into, modifiers_from_egui};
+pub use v033::{from_egui, from_egui_into, modifiers_from_egui, ownership};
 
 #[cfg(feature = "egui-adapter-035")]
 mod v035 {
     egui_adapter!(egui035);
 }
 #[cfg(feature = "egui-adapter-035")]
-pub use v035::{from_egui, from_egui_into, modifiers_from_egui};
+pub use v035::{from_egui, from_egui_into, modifiers_from_egui, ownership};
 
 #[cfg(feature = "egui-adapter-036")]
 mod v036 {
     egui_adapter!(egui036);
 }
 #[cfg(feature = "egui-adapter-036")]
-pub use v036::{from_egui, from_egui_into, modifiers_from_egui};
+pub use v036::{from_egui, from_egui_into, modifiers_from_egui, ownership};

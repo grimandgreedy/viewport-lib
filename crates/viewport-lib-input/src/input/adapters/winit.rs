@@ -1,9 +1,55 @@
 //! winit -> [`ViewportEvent`] translation.
 
 use crate::input::{
-    ButtonState, ImeEvent, KeyCode, Modifiers, MouseButton, ScrollUnits, Theme, TouchId,
-    TouchPhase, ViewportEvent,
+    ButtonState, ImeEvent, InputOwnership, KeyCode, KeyboardOwnership, Modifiers, MouseButton,
+    PointerOwnership, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent,
 };
+
+/// Who owns the input for a viewport in a winit window, from what a winit host
+/// knows.
+///
+/// - `window_focused`: the window has keyboard focus (`WindowEvent::Focused`).
+/// - `cursor_in_rect`: the cursor is inside the viewport's rect.
+/// - `captured`: the host has grabbed the pointer, as for mouselook.
+/// - `ui_claims_pointer`: the host's own UI drawn over the viewport has the
+///   pointer this frame (a button, a panel, a tool handle).
+/// - `ui_claims_keyboard`: the host's own UI has the keyboard (a text field).
+///
+/// The pointer is [`Grabbed`](PointerOwnership::Grabbed) while captured,
+/// [`Owned`](PointerOwnership::Owned) when the cursor is in the rect of a
+/// focused window and the UI does not claim it,
+/// [`Inside`](PointerOwnership::Inside) when the cursor is in the rect
+/// otherwise, and [`Elsewhere`](PointerOwnership::Elsewhere) outside it. The
+/// keyboard is the viewport's while the window is focused and the UI does not
+/// claim it.
+///
+/// A camera drag in flight needs no argument: the resolver keeps its own held
+/// press's events when the cursor crosses the UI or leaves the rect. `captured`
+/// is for pointer capture only, where there is no rect to leave and
+/// [`ViewportEvent::PointerLeft`] must not end the session.
+pub fn ownership(
+    window_focused: bool,
+    cursor_in_rect: bool,
+    captured: bool,
+    ui_claims_pointer: bool,
+    ui_claims_keyboard: bool,
+) -> InputOwnership {
+    let pointer = if captured {
+        PointerOwnership::Grabbed
+    } else if window_focused && cursor_in_rect && !ui_claims_pointer {
+        PointerOwnership::Owned
+    } else if cursor_in_rect {
+        PointerOwnership::Inside
+    } else {
+        PointerOwnership::Elsewhere
+    };
+    let keyboard = if window_focused && !ui_claims_keyboard {
+        KeyboardOwnership::Owned
+    } else {
+        KeyboardOwnership::Elsewhere
+    };
+    InputOwnership { pointer, keyboard }
+}
 
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
 /// [`ViewportEvent`], or `None` for events the viewport does not consume.
@@ -400,6 +446,41 @@ mod tests {
     /// the guard against the "key not in the defined set" class: a defined key
     /// the adapter forgets to map (F13-F24 were exactly this) fails here because
     /// `map_key` returns `None` for it.
+    #[test]
+    fn ownership_follows_focus_cursor_and_claims() {
+        use KeyboardOwnership as K;
+        use PointerOwnership as P;
+        // (focused, in rect, captured, ui pointer, ui keyboard) -> (pointer, keyboard)
+        let cases = [
+            ((true, true, false, false, false), (P::Owned, K::Owned)),
+            ((true, false, false, false, false), (P::Elsewhere, K::Owned)),
+            ((true, true, false, true, false), (P::Inside, K::Owned)),
+            (
+                (false, true, false, false, false),
+                (P::Inside, K::Elsewhere),
+            ),
+            (
+                (false, false, false, false, false),
+                (P::Elsewhere, K::Elsewhere),
+            ),
+            ((true, true, false, false, true), (P::Owned, K::Elsewhere)),
+            ((true, false, true, false, false), (P::Grabbed, K::Owned)),
+            ((true, true, true, true, true), (P::Grabbed, K::Elsewhere)),
+            (
+                (false, false, true, false, false),
+                (P::Grabbed, K::Elsewhere),
+            ),
+        ];
+        for ((focused, inside, captured, ui_p, ui_k), (pointer, keyboard)) in cases {
+            let o = ownership(focused, inside, captured, ui_p, ui_k);
+            assert_eq!(
+                (o.pointer, o.keyboard),
+                (pointer, keyboard),
+                "focused {focused}, in rect {inside}, captured {captured}, ui {ui_p}/{ui_k}"
+            );
+        }
+    }
+
     #[test]
     fn every_defined_key_maps_from_winit() {
         for &code in ALL_KEYCODES {

@@ -8,9 +8,9 @@
 //! part of this crate.
 
 #[cfg(feature = "winit-adapter")]
-mod winit;
+pub mod winit;
 #[cfg(feature = "winit-adapter")]
-pub use winit::{from_winit, from_winit_device, from_winit_into, modifiers_from_winit};
+pub use self::winit::{from_winit, from_winit_device, from_winit_into, modifiers_from_winit};
 
 // One module for every egui version the adapter supports; the enabled one
 // re-exports `from_egui` and `from_egui_into`.
@@ -19,10 +19,10 @@ pub use winit::{from_winit, from_winit_device, from_winit_into, modifiers_from_w
     feature = "egui-adapter-035",
     feature = "egui-adapter-036"
 ))]
-mod egui;
+pub mod egui;
 #[cfg(any(
     feature = "egui-adapter",
     feature = "egui-adapter-035",
     feature = "egui-adapter-036"
 ))]
-pub use egui::{from_egui, from_egui_into, modifiers_from_egui};
+pub use self::egui::{from_egui, from_egui_into, modifiers_from_egui};
