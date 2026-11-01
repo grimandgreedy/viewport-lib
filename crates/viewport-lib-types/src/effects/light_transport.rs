@@ -177,13 +177,15 @@
 //!
 //! # 9. Screen-space occlusion
 //!
-//! Screen-space ambient occlusion ([`PostProcessSettings::ssao`]) and contact
-//! shadows ([`PostProcessSettings::contact_shadows`]) darken the indirect share
-//! of an opaque pixel's light: the ambient term (the hemisphere fill, the
-//! environment, probes and lightmaps). Direct light and emission are left
-//! alone, and so is a resolved colour. Each term `t` scales the exposed colour
-//! by `1 - (1 - t) * f`, where `f` is the pixel's indirect share by
-//! luminance, before step 2 of the view transform. Bloom is added after them.
+//! Screen-space ambient occlusion ([`PostProcessSettings::ssao`]) darkens the
+//! indirect share of an opaque pixel's light: the ambient term (the hemisphere
+//! fill, the environment, probes and lightmaps). Contact shadows
+//! ([`PostProcessSettings::contact_shadows`]), the key light's screen-space
+//! shadow, darken the direct share: the light loop. Neither darkens emission
+//! or a resolved colour. Each term `t` scales the exposed colour by
+//! `1 - (1 - t) * s`, where `s` is the pixel's share of the light the term
+//! applies to, by luminance, before step 2 of the view transform. Bloom is
+//! added after them.
 //!
 //! # Current behaviour
 //!

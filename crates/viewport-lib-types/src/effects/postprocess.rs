@@ -692,8 +692,9 @@ impl Default for BloomSettings {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContactShadowSettings {
     /// Enable screen-space contact shadows (thin shadows at object-ground
-    /// contact). Like ambient occlusion they darken the indirect share of
-    /// each pixel's light.
+    /// contact). They are the key light's screen-space shadow, so they darken
+    /// the direct share of each pixel's light, not indirect light or
+    /// emission.
     pub enabled: bool,
     /// Maximum ray-march distance in view space. Default: `0.5`.
     pub max_distance: f32,
