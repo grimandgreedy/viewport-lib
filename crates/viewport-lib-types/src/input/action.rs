@@ -4,7 +4,9 @@
 ///
 /// Actions are decoupled from their physical triggers (keys/mouse buttons),
 /// so bindings can be remapped and the same action can be reached through
-/// different triggers depending on context.
+/// different triggers depending on context. The named variants are the ones
+/// the library's controllers and the gizmo convention act on; an application
+/// binds its own shortcuts to [`Action::Custom`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -20,8 +22,6 @@ pub enum Action {
     FocusObject,
     /// Reset camera to the default view.
     ResetView,
-    /// Toggle between solid and wireframe render modes.
-    ToggleWireframe,
     /// Cycle the gizmo mode (Translate -> Rotate -> Scale).
     CycleGizmoMode,
 
@@ -75,23 +75,16 @@ pub enum Action {
     /// Tab: advance focus to the next axis buffer in numeric input.
     NumericNextAxis,
 
-    // -- Global --
-    /// Undo the last action.
-    Undo,
-    /// Redo the previously undone action.
-    Redo,
-
     // -- Gizmo --
-    /// Toggle gizmo between World and Local coordinate space.
-    ToggleGizmoSpace,
     /// Cycle the pivot mode forward (Selection Centroid -> Individual Origins -> Median Point -> World Origin -> ...).
     CyclePivotModeForward,
     /// Cycle the pivot mode backward (... -> World Origin -> Median Point -> Individual Origins -> Selection Centroid).
     CyclePivotModeBackward,
 
-    // -- Scene object shortcuts --
-    /// Shift+A: open the radial "Add Object" menu.
-    OpenAddMenu,
-    /// X: prompt to delete the currently selected object.
-    DeleteSelected,
+    // -- Application-defined --
+    /// An action the application defines. The library binds nothing to it and
+    /// never acts on it; the resolver reports it like any other action, so an
+    /// application shortcut gets the same gestures, modifiers and keyboard
+    /// ownership as a built-in one. Give each shortcut its own constant.
+    Custom(u32),
 }

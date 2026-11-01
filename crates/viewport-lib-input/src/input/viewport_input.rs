@@ -1742,6 +1742,27 @@ mod tests {
     }
 
     #[test]
+    fn an_application_action_fires_like_a_built_in_one() {
+        const TOGGLE_WIREFRAME: Action = Action::Custom(7);
+        let mut input = ViewportInput::new(vec![ViewportBinding::new(
+            TOGGLE_WIREFRAME,
+            ViewportGesture::CharPress {
+                ch: 'w',
+                modifiers: crate::input::ModifiersMatch::Exact(Modifiers::NONE),
+            },
+        )]);
+        input.begin_frame(focused_ctx());
+        key(&mut input, KeyCode::W, Some('w'), ButtonState::Pressed);
+        assert!(input.resolve().is_active(TOGGLE_WIREFRAME));
+        // Under a text field the keyboard is elsewhere, so the shortcut is held back.
+        let mut ctx = focused_ctx();
+        ctx.ownership.keyboard = KeyboardOwnership::Elsewhere;
+        input.begin_frame(ctx);
+        key(&mut input, KeyCode::W, Some('w'), ButtonState::Pressed);
+        assert!(!input.resolve().is_active(TOGGLE_WIREFRAME));
+    }
+
+    #[test]
     fn a_cyrillic_layout_keeps_g_where_it_is() {
         let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());

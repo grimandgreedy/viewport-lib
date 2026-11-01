@@ -96,11 +96,6 @@ pub fn default_bindings() -> Vec<Binding> {
             normal,
         ),
         Binding::in_modes(
-            Action::ToggleWireframe,
-            key_press(KeyCode::W, Modifiers::NONE),
-            normal,
-        ),
-        Binding::in_modes(
             Action::CycleGizmoMode,
             key_press(KeyCode::Tab, Modifiers::NONE),
             normal,
@@ -120,12 +115,6 @@ pub fn default_bindings() -> Vec<Binding> {
         // FlySpeedBoost has no binding in this legacy set: Shift is a modifier, not a
         // key, and a Trigger names a key. viewport_default_bindings binds it with
         // ViewportGesture::ModifiersHeld.
-        // -- Gizmo space toggle --
-        Binding::in_modes(
-            Action::ToggleGizmoSpace,
-            key_press(KeyCode::Backtick, Modifiers::NONE),
-            normal,
-        ),
         // -- Pivot mode cycling --
         Binding::in_modes(
             Action::CyclePivotModeForward,
@@ -196,21 +185,6 @@ pub fn default_bindings() -> Vec<Binding> {
             fly_manip,
         ),
         Binding::in_modes(Action::Cancel, mouse_click(MouseButton::Right), fly_manip),
-        // -- Scene object shortcuts --
-        Binding::in_modes(
-            Action::OpenAddMenu,
-            key_press(KeyCode::A, Modifiers::SHIFT),
-            normal,
-        ),
-        Binding::in_modes(
-            Action::DeleteSelected,
-            key_press(KeyCode::X, Modifiers::NONE),
-            normal,
-        ),
-        // -- Global (all modes) --
-        Binding::global(Action::Undo, key_press(KeyCode::Z, Modifiers::CTRL)),
-        Binding::global(Action::Redo, key_press(KeyCode::Z, Modifiers::CTRL_SHIFT)),
-        Binding::global(Action::Redo, key_press(KeyCode::Y, Modifiers::CTRL)),
     ]
 }
 
@@ -220,16 +194,17 @@ mod tests {
     use crate::input::viewport_default_bindings;
     use std::collections::HashSet;
 
-    // One list of every action, expanded into both the array the coverage test
-    // walks and an exhaustive `match`. Adding an `Action` variant fails to
+    // One list of every named action, expanded into both the array the coverage
+    // test walks and an exhaustive `match`. Adding an `Action` variant fails to
     // compile here until it is listed, which forces a decision: bind it, or add
-    // it to the documented exceptions below.
+    // it to the documented exceptions below. `Custom` is the application's and
+    // is never bound by the library.
     macro_rules! all_actions {
         ($($v:ident),* $(,)?) => {
             const ALL_ACTIONS: &[Action] = &[$(Action::$v),*];
             #[allow(dead_code)]
             fn actions_are_exhaustive(a: Action) {
-                match a { $(Action::$v => {}),* }
+                match a { $(Action::$v => {}),* Action::Custom(_) => {} }
             }
         };
     }
@@ -240,7 +215,6 @@ mod tests {
         Zoom,
         FocusObject,
         ResetView,
-        ToggleWireframe,
         CycleGizmoMode,
         EnterFlyMode,
         FlyForward,
@@ -263,13 +237,8 @@ mod tests {
         Cancel,
         NumericBackspace,
         NumericNextAxis,
-        Undo,
-        Redo,
-        ToggleGizmoSpace,
         CyclePivotModeForward,
         CyclePivotModeBackward,
-        OpenAddMenu,
-        DeleteSelected,
     );
 
     /// Every action must be reachable from at least one of the two shipped

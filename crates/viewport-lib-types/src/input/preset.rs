@@ -149,9 +149,9 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
 /// from [`viewport_camera_bindings`] plus the viewport's keyboard shortcuts.
 ///
 /// Covers normal-mode actions, fly-mode movement, and [`manipulation_bindings`].
-/// Undo and redo are deliberately **not** bound: they belong to the application's
-/// document, not to the viewport, so binding them here would make every consumer
-/// notice and unbind them.
+/// Application shortcuts (undo, delete, add, wireframe) are not bound here: they
+/// belong to the application, which binds them to [`Action::Custom`] values of
+/// its own.
 ///
 /// Consumers are responsible for applying mode awareness : key bindings for
 /// fly mode and manipulation mode are always present in the resolved
@@ -163,21 +163,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
 
     let mut bindings = viewport_camera_bindings();
 
-    // -- Normal mode: object shortcuts --
-    bindings.push(ViewportBinding::new(
-        Action::OpenAddMenu,
-        ViewportGesture::KeyPress {
-            key: KeyCode::A,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::DeleteSelected,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: none,
-        },
-    ));
     bindings.push(ViewportBinding::new(
         Action::FocusObject,
         ViewportGesture::KeyPress {
@@ -193,23 +178,9 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         },
     ));
     bindings.push(ViewportBinding::new(
-        Action::ToggleWireframe,
-        ViewportGesture::KeyPress {
-            key: KeyCode::W,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
         Action::CycleGizmoMode,
         ViewportGesture::KeyPress {
             key: KeyCode::Tab,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ToggleGizmoSpace,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Backtick,
             modifiers: none,
         },
     ));
