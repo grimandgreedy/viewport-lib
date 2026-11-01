@@ -11,15 +11,16 @@ use std::sync::Arc;
 use std::time::Instant;
 use viewport_lib as vpl;
 
+use vpl::PostProcessSettings;
+use vpl::input::adapters::{AdapterCtx, winit as vpl_winit};
 use vpl::wgpu;
 use vpl::{
     BindingPreset, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, MeshId,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, primitives,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    ViewportRenderer, primitives,
 };
-use vpl::{ButtonState, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -189,75 +190,6 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::ModifiersChanged(mods) => {
-                let mut m = vpl::Modifiers::default();
-                m.shift = mods.state().shift_key();
-                m.ctrl = mods.state().control_key();
-                m.alt = mods.state().alt_key();
-                state.input.push_event(ViewportEvent::ModifiersChanged(m));
-            }
-
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => {
-                let vp_button = match button {
-                    MouseButton::Left => vpl::MouseButton::Left,
-                    MouseButton::Middle => vpl::MouseButton::Middle,
-                    MouseButton::Right => vpl::MouseButton::Right,
-                    _ => return,
-                };
-                let vp_state = if btn_state == ElementState::Pressed {
-                    ButtonState::Pressed
-                } else {
-                    ButtonState::Released
-                };
-                state.input.push_event(ViewportEvent::MouseButton {
-                    button: vp_button,
-                    state: vp_state,
-                });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                state.input.push_event(ViewportEvent::PointerMoved {
-                    position: glam::Vec2::new(position.x as f32, position.y as f32),
-                });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorLeft { .. } => {
-                state.input.push_event(ViewportEvent::PointerLeft);
-            }
-
-            WindowEvent::Focused(false) => {
-                state.input.push_event(ViewportEvent::FocusLost);
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state
-                    .input
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::RotationGesture { delta, .. } => {
-                state
-                    .input
-                    .push_event(ViewportEvent::TrackpadRotate(delta.to_radians()));
-                state.window.request_redraw();
-            }
-
             // --- Render ---
             WindowEvent::RedrawRequested => {
                 let frame = match state.surface.get_current_texture() {
@@ -338,7 +270,19 @@ impl ApplicationHandler for App {
                 state.controller.set_viewport_size([w, h]);
             }
 
-            _ => {}
+            // Pointer, wheel, keys, modifiers, focus and trackpad gestures. The
+            // viewport fills the window, so it owns everything; positions stay in
+            // physical pixels, the units the surface size is given in.
+            other => {
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &AdapterCtx::default(), &mut events);
+                if !events.is_empty() {
+                    state.window.request_redraw();
+                }
+                for ev in events {
+                    state.input.push_event(ev);
+                }
+            }
         }
     }
 }

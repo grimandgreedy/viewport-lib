@@ -21,8 +21,8 @@ use viewport_lib::Colour;
 use viewport_lib as vpl;
 use vpl::{
     AppConfig, BlitTexture, ButtonState, InputOwnership, Material, NodeId, OffscreenViewportTarget,
-    OrbitCameraController, PointerOwnership, ViewportApp, ViewportContext, ViewportEvent,
-    ViewportInstance, WindowConfig, primitives,
+    OrbitCameraController, ViewportApp, ViewportContext, ViewportEvent, ViewportInstance,
+    WindowConfig, primitives,
 };
 
 /// One in-window viewport: its scene, the offscreen target it renders into, a camera
@@ -78,14 +78,15 @@ impl Pane {
     ) {
         // Events land in the accumulator, which begin_frame resets, so feed them
         // after begin_frame and before update_orbit resolves them.
-        self.session.begin_frame(ViewportContext::new(
-            InputOwnership::pointer_only(if active {
-                PointerOwnership::Owned
-            } else {
-                PointerOwnership::Elsewhere
-            }),
-            vp_logical,
-        ));
+        // Only the active pane is fed events, and it owns the pointer and keys
+        // the way a full-window viewport does.
+        let ownership = if active {
+            InputOwnership::full_window()
+        } else {
+            InputOwnership::NONE
+        };
+        self.session
+            .begin_frame(ViewportContext::new(ownership, vp_logical));
         self.session.set_viewport_size(vp_logical);
         self.session.set_pixels_per_point(ppp);
         if active {
@@ -109,17 +110,6 @@ struct Panes {
     /// The pane a drag started in (0 = left, 1 = right), so a drag keeps its pane even
     /// if the cursor crosses the seam. `None` when no drag is active.
     drag_pane: Option<usize>,
-}
-
-/// Shift a pointer position into a pane's local space by subtracting the pane's left
-/// edge (in logical points); other events pass through unchanged.
-fn remap(ev: &ViewportEvent, x_offset: f32) -> ViewportEvent {
-    match ev {
-        ViewportEvent::PointerMoved { position } => ViewportEvent::PointerMoved {
-            position: glam::Vec2::new(position.x - x_offset, position.y),
-        },
-        other => other.clone(),
-    }
 }
 
 fn main() {
@@ -215,8 +205,7 @@ fn main() {
                             .scene_mut()
                             .set_local_transform(cube, glam::Mat4::from_rotation_z(ctx.time()));
                     }
-                    let left_events: Vec<ViewportEvent> =
-                        events.iter().map(|e| remap(e, 0.0)).collect();
+                    let left_events: Vec<ViewportEvent> = events.to_vec();
                     left.render(
                         &device,
                         &queue,
@@ -237,8 +226,10 @@ fn main() {
                 // Right pane: static torus; its events shift into pane-local space.
                 if let Some(right) = panes.right.as_mut() {
                     right.resize(&device, [right_w.max(1), ph]);
-                    let right_events: Vec<ViewportEvent> =
-                        events.iter().map(|e| remap(e, half_logical)).collect();
+                    let right_events: Vec<ViewportEvent> = events
+                        .iter()
+                        .map(|e| e.offset_by(glam::Vec2::new(half_logical, 0.0)))
+                        .collect();
                     right.render(
                         &device,
                         &queue,

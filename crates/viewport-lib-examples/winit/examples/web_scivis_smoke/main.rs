@@ -39,6 +39,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::{AdapterCtx, winit as vpl_winit};
 
 use web_time::Instant;
 
@@ -50,12 +51,11 @@ use viewport_lib::vplg::volume::marching_cubes::extract_isosurface;
 use viewport_lib::{
     Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LabelItem,
     Material, MaterialId, MeshId, MouseButton, OrbitCameraController, OverlayFill, OverlayShape,
-    OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, SceneRenderItem,
-    ScrollUnits, Tier, ViewportContext, ViewportError, ViewportEvent, ViewportInput,
-    ViewportRenderer, wgpu,
+    OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, SceneRenderItem, Tier,
+    ViewportContext, ViewportError, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -224,53 +224,38 @@ impl ApplicationHandler<State> for App {
                     .configure(&state.device, &state.surface_config);
                 state.window.request_redraw();
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                state.cursor = glam::Vec2::new(position.x as f32, position.y as f32);
-                state.input.push_event(ViewportEvent::PointerMoved {
-                    position: state.cursor,
-                });
-                state.window.request_redraw();
-            }
-            WindowEvent::MouseInput {
-                button: WinitMouseButton::Left,
-                state: element_state,
-                ..
-            } => {
-                state.input.push_event(ViewportEvent::MouseButton {
-                    button: MouseButton::Left,
-                    state: match element_state {
-                        ElementState::Pressed => ButtonState::Pressed,
-                        ElementState::Released => ButtonState::Released,
-                    },
-                });
-                // A release is the click: run a pick at the cursor and report
-                // it, so the CPU pick path is exercised on demand and not only
-                // once during setup.
-                if element_state == ElementState::Released {
-                    state.pick_at_cursor();
-                }
-                state.window.request_redraw();
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state
-                    .input
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
-            }
             WindowEvent::RedrawRequested => {
                 state.render();
                 state.window.request_redraw();
             }
-            _ => {}
+            // The viewport fills the canvas, so it owns everything; positions
+            // stay in physical pixels, the units the surface size is given in.
+            other => {
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &AdapterCtx::default(), &mut events);
+                if !events.is_empty() {
+                    state.window.request_redraw();
+                }
+                for ev in events {
+                    let left_release = matches!(
+                        ev,
+                        ViewportEvent::MouseButton {
+                            button: MouseButton::Left,
+                            state: ButtonState::Released,
+                        }
+                    );
+                    if let ViewportEvent::PointerMoved { position } = ev {
+                        state.cursor = position;
+                    }
+                    state.input.push_event(ev);
+                    // A release is the click: run a pick at the cursor and report
+                    // it, so the CPU pick path is exercised on demand and not only
+                    // once during setup.
+                    if left_release {
+                        state.pick_at_cursor();
+                    }
+                }
+            }
         }
     }
 }

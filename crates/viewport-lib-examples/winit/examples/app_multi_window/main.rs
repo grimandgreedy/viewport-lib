@@ -23,11 +23,12 @@ use viewport_lib::Colour;
 use viewport_lib as vpl;
 use vpl::runners::viewport_app::RedrawMode;
 use vpl::{
-    AppConfig, ButtonState, FrameCtx, KeyCode, Material, MouseButton, NodeId, ViewportApp,
-    ViewportEvent, WindowConfig, primitives,
+    AppConfig, ButtonState, FrameCtx, Material, MouseButton, NodeId, ViewportApp, ViewportEvent,
+    WindowConfig, primitives,
 };
 
-/// N opens a new window, W closes the focused one. Called from every window's
+/// N opens a new window, W closes the focused one, matched on the character the
+/// key types so they follow the keyboard layout. Called from every window's
 /// per-frame callback (including windows opened at runtime), so the keys work no
 /// matter which window has focus.
 fn handle_open_close(ctx: &mut FrameCtx) {
@@ -35,9 +36,13 @@ fn handle_open_close(ctx: &mut FrameCtx) {
     let mut close_self = false;
     for ev in ctx.events() {
         match ev {
-            ViewportEvent::Key { key, state, .. } if *state == ButtonState::Pressed => match key {
-                KeyCode::N => open_new = true,
-                KeyCode::W => close_self = true,
+            ViewportEvent::Key {
+                state: ButtonState::Pressed,
+                logical: Some(ch),
+                ..
+            } => match ch {
+                'n' => open_new = true,
+                'w' => close_self = true,
                 _ => {}
             },
             // Tier-2 events surface on the raw event stream; here we just report them.
