@@ -33,10 +33,7 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
-use vpl::{
-    ManipulationController, OffscreenViewportTarget, RendererConfig, Tier, ViewportContext,
-    ViewportInstance,
-};
+use vpl::{OffscreenViewportTarget, RendererConfig, Tier, ViewportContext, ViewportInstance};
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -94,8 +91,7 @@ impl Tab {
     ) -> Self {
         let config = RendererConfig::new(OffscreenViewportTarget::render_format(target_format))
             .with_max_tier(tier);
-        let mut session = ViewportInstance::with_config(device, &config)
-            .with_manipulation(ManipulationController::new());
+        let mut session = ViewportInstance::with_config(device, &config);
         // Below the full tier there is no GPU pick pass; picks run on the CPU
         // against the cached scene items.
         session.renderer_mut().set_cpu_pick_cache(true);
@@ -344,11 +340,13 @@ impl App {
             }
 
             let ownership =
-                vpl_egui::ownership(&response, ui.ctx(), rect, tab.session.is_manipulating());
+                vpl_egui::ownership(&response, ui.ctx(), rect, self.camera.tool_active());
             tab.session.begin_frame(ViewportContext::new(
                 ownership,
                 [rect.width(), rect.height()],
             ));
+            self.camera
+                .begin_frame(ownership, [rect.width(), rect.height()]);
             tab.session.set_pixels_per_point(ppp);
 
             let origin = glam::Vec2::new(rect.left(), rect.top());
@@ -372,6 +370,7 @@ impl App {
                 }
             });
             for ev in events {
+                self.camera.push_event(ev.clone());
                 tab.session.handle_event(ev);
             }
 

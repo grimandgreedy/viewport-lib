@@ -20,9 +20,9 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
 use vpl::{
-    AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo,
-    ItemSettings, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId,
-    SceneRenderItem, ViewportRenderer, VolumeId, scene::Scene, selection::Selection,
+    AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, ItemSettings,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId, SceneRenderItem,
+    ViewportRenderer, VolumeId, scene::Scene, selection::Selection,
 };
 
 /// Colour for the clip-object outlines and the plane fill.
@@ -105,11 +105,6 @@ pub(crate) struct ClipVolState {
     pub fill_material: MaterialId,
     pub clips: Vec<ActiveClip>,
     pub show_overlay: bool,
-    /// Gizmo retained for main.rs compatibility (not used for clip editing).
-    pub gizmo: Gizmo,
-    pub gizmo_centre: Option<glam::Vec3>,
-    pub gizmo_scale: f32,
-    pub gizmo_drag_active: bool,
 }
 
 impl Default for ClipVolState {
@@ -128,10 +123,6 @@ impl Default for ClipVolState {
                 distance: 0.0,
             }],
             show_overlay: true,
-            gizmo: Gizmo::new(),
-            gizmo_centre: None,
-            gizmo_scale: 1.0,
-            gizmo_drag_active: false,
         }
     }
 }
@@ -254,7 +245,6 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
                 .clicked()
             {
                 app.clipvol_state.tab = tab;
-                app.clipvol_state.gizmo_drag_active = false;
             }
         }
     });
@@ -754,42 +744,12 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// pixels.
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
-    // ----- Clip-vol gizmo drag (Showcase 18) -----
-    if app.clipvol_state.gizmo_drag_active && cx.response.dragged() {
-        let drag_delta = cx.response.drag_delta();
-        let dx = drag_delta.x;
-        let dy = drag_delta.y;
-        if dx.abs() > 0.001 || dy.abs() > 0.001 {
-            app.apply_clipvol_gizmo_drag(dx, dy, cx.rect.width(), cx.rect.height());
-        }
-    }
-}
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
-pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
-    if app.clipvol_state.tab == ClipsCutsTab::Cuts {
-        app.clipvol_state.gizmo_centre = None;
-        return;
-    }
-    if app.clipvol_state.built {
-        app.clipvol_state.gizmo_centre = app.clip_gizmo_centre();
-        if let Some(centre) = app.clipvol_state.gizmo_centre {
-            app.clipvol_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
-                centre,
-                app.camera.eye().as_vec3(),
-                app.camera.fov_y(),
-                cx.rect.height(),
-            );
-        }
-    }
-}
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -808,9 +768,9 @@ pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> b
 }
 
 /// Whether the orbit controller should resolve without moving the camera this
-/// frame, because this showcase is using the drag for something of its own.
-pub(crate) fn suppress_orbit(app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
-    app.clipvol_state.gizmo_drag_active
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -840,12 +800,6 @@ impl crate::Showcase for ScClipVolumes {
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
-    }
-    fn drag_input(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
-        drag_input(app, cx)
-    }
-    fn cache_gizmo(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
-        cache_gizmo(app, cx)
     }
     fn viewport_override(
         &self,

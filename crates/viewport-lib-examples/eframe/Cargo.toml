@@ -30,6 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # demos, and a glyph-id lookup in the overlay text showcase.
 bytemuck = { version = "1.25", features = ["derive"] }
 ttf-parser = "0.25"
+viewport-lib-gizmo = { path = "../../../../extensions/viewport-lib-gizmo" }
 
 # The lightmap-bake showcase runs the full offline lightmapper: this crate's
 # unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Desktop-only:

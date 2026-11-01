@@ -758,11 +758,6 @@ impl Showcase for PickingShowcase {
 
         let session = &mut *ctx.session;
 
-        // This is a picking showcase, not a manipulation one. The session stamps
-        // a transform gizmo whenever a scene node is selected (mesh outlines go
-        // through the session selection), so clear it here to keep the gizmo out.
-        session.frame_data_mut().interaction.gizmo_model = None;
-
         // Inject every non-mesh item (rendering + picking both read the frame).
         self.inject_items(session);
 

@@ -779,11 +779,6 @@ impl Showcase for DecalCoverageShowcase {
 
         let session = &mut *ctx.session;
 
-        // This is a picking showcase, not a manipulation one. The session stamps
-        // a transform gizmo whenever a scene node is selected (mesh outlines go
-        // through the session selection), so clear it here to keep the gizmo out.
-        session.frame_data_mut().interaction.gizmo_model = None;
-
         // Take the meshes off layers 0 to 7, the ones a decal can see, or put
         // them back. The other types in this scene stay on them and take a
         // decal wherever they wrote depth.

@@ -26,7 +26,7 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
-use vpl::{ManipulationController, OffscreenViewportTarget, ViewportContext, ViewportInstance};
+use vpl::{OffscreenViewportTarget, ViewportContext, ViewportInstance};
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -39,15 +39,13 @@ fn main() -> eframe::Result {
                 .wgpu_render_state
                 .as_ref()
                 .expect("wgpu backend required");
-            // One session, shared across showcases; manipulation is always
-            // attached (idle when nothing is selected).
+            // One session, shared across showcases.
             // sRGB render format so the tonemap encode happens; the offscreen
             // target hands egui a non-sRGB view so the encode survives its sample.
             let mut session = ViewportInstance::new(
                 &rs.device,
                 OffscreenViewportTarget::render_format(rs.target_format),
-            )
-            .with_manipulation(ManipulationController::new());
+            );
             viewport_lib_plugins::item_types::install(session.renderer_mut(), &rs.device);
 
             let mut list = showcases::all();
@@ -263,13 +261,17 @@ impl App {
 
             // Logical viewport size + pixels_per_point; cursor stays logical.
             // The viewport has the keyboard (G/R/S, WASD) while it has the
-            // pointer and no egui widget has focus.
+            // pointer and no egui widget has focus. The camera rig resolves the
+            // same events on its own, kept off the pointer while a showcase's
+            // tool wants it.
             let ownership =
-                vpl_egui::ownership(&response, ui.ctx(), rect, self.session.is_manipulating());
+                vpl_egui::ownership(&response, ui.ctx(), rect, self.camera.tool_active());
             self.session.begin_frame(ViewportContext::new(
                 ownership,
                 [rect.width(), rect.height()],
             ));
+            self.camera
+                .begin_frame(ownership, [rect.width(), rect.height()]);
             self.session.set_pixels_per_point(ppp);
 
             let origin = glam::Vec2::new(rect.left(), rect.top());
@@ -293,6 +295,7 @@ impl App {
                 }
             });
             for ev in events {
+                self.camera.push_event(ev.clone());
                 self.session.handle_event(ev);
             }
 

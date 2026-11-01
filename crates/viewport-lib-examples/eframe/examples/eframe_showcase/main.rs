@@ -7,14 +7,14 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId,
-    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
-    SceneRenderItem, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
+    OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ViewportContext,
+    ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 mod geometry;
-mod gizmo_helpers;
 mod registry;
+mod scene_gizmo;
 mod shared;
 mod showcase_01_basic;
 mod showcase_02_scene_graph;
@@ -776,7 +776,7 @@ impl eframe::App for App {
                     &response,
                     ui.ctx(),
                     rect,
-                    self.interact_state.manip.is_active(),
+                    self.interact_state.gizmo.is_active(),
                 );
                 self.input.begin_frame(ViewportContext::new(
                     ownership,
@@ -814,7 +814,7 @@ impl eframe::App for App {
                         ViewportEvent::MouseButton {
                             button: vpl::MouseButton::Left,
                             state,
-                        } => self.left_button(state == ButtonState::Pressed, press_local, rect),
+                        } => self.left_button(state == ButtonState::Pressed, press_local),
                         _ => {}
                     }
                     self.input.push_event(ev);
@@ -869,8 +869,6 @@ impl eframe::App for App {
                     dt_frame,
                 );
 
-                // ----- Per-showcase cache_gizmo -----
-                self.showcase_cache_gizmo(&viewport_cx);
                 // ----- Render into the offscreen target and display it -----
                 // The target's sRGB dual-view keeps the tonemap encode through
                 // egui's sample (see `OffscreenViewportTarget`).
@@ -1025,50 +1023,14 @@ impl App {
     /// App-side state a left press or release drives, besides the camera.
     /// `press_local` is where the press went down, viewport-local, or `None`
     /// when it went down outside the viewport.
-    fn left_button(&mut self, pressed: bool, press_local: Option<glam::Vec2>, rect: egui::Rect) {
-        if pressed {
-            // Ignore presses that originate outside the viewport.
-            let Some(local) = press_local else {
-                return;
-            };
-            // Track raw left-button held state for ManipulationContext.
-            self.interact_state.left_held = true;
-
-            // Clip-vol gizmo : start drag.
-            if self.mode == ShowcaseMode::ClipVolumes {
-                if let Some(centre) = self.clipvol_state.gizmo_centre {
-                    let w = rect.width();
-                    let h = rect.height();
-                    let vp_inv = self.camera.view_proj_matrix().inverse();
-                    let (ray_origin, ray_dir) =
-                        vpl::picking::screen_to_ray(local, glam::Vec2::new(w, h), vp_inv);
-                    let orient = self.clipvol_gizmo_orient();
-                    let hit = self.clipvol_state.gizmo.hit_test_oriented(
-                        ray_origin,
-                        ray_dir,
-                        centre,
-                        self.clipvol_state.gizmo_scale,
-                        orient,
-                    );
-                    if hit != GizmoAxis::None {
-                        self.clipvol_state.gizmo.active_axis = hit;
-                        self.clipvol_state.gizmo_drag_active = true;
-                    }
-                }
-            }
-
-            // PickLevels: track drag start for rubber-band box select.
-            if self.mode == ShowcaseMode::PickLevels {
-                self.pl_state.drag_start = Some(local);
-            }
-        } else {
-            self.interact_state.left_held = false;
-
-            // Clip-vol gizmo : end drag.
-            if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.gizmo_drag_active {
-                self.clipvol_state.gizmo_drag_active = false;
-                self.clipvol_state.gizmo.active_axis = GizmoAxis::None;
-            }
+    fn left_button(&mut self, pressed: bool, press_local: Option<glam::Vec2>) {
+        // Ignore presses that originate outside the viewport.
+        let Some(local) = press_local.filter(|_| pressed) else {
+            return;
+        };
+        // PickLevels: track drag start for rubber-band box select.
+        if self.mode == ShowcaseMode::PickLevels {
+            self.pl_state.drag_start = Some(local);
         }
     }
 
@@ -1116,11 +1078,6 @@ impl App {
     /// Flush any per-frame GPU writes this showcase has queued.
     fn showcase_flush_gpu(&mut self, cx: &ViewportCtx) {
         self.mode.showcase().flush_gpu(self, cx)
-    }
-
-    /// Cache gizmo placement for next frame's hit-testing.
-    fn showcase_cache_gizmo(&mut self, cx: &ViewportCtx) {
-        self.mode.showcase().cache_gizmo(self, cx)
     }
 
     /// Let the active showcase take over the whole viewport for this frame.
@@ -1259,9 +1216,6 @@ pub(crate) trait Showcase {
 
     /// Flush any per-frame GPU writes this showcase has queued.
     fn flush_gpu(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
-
-    /// Cache gizmo placement for next frame's hit-testing.
-    fn cache_gizmo(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 
     /// Take over the whole viewport for this frame. Returning true skips the
     /// host's single-viewport path entirely.
@@ -1503,53 +1457,6 @@ impl App {
             cached_items: perf_arc,
         } = overrides;
 
-        // Gizmo matrices for Interaction and ClipVolumes modes.
-        let (gizmo_model, gizmo_mode, gizmo_space_orient, gizmo_hovered) =
-            if self.mode == ShowcaseMode::Interaction {
-                let centre = self.interact_state.gizmo_centre;
-                let model = centre.map(|c| {
-                    glam::Mat4::from_scale_rotation_translation(
-                        glam::Vec3::splat(self.interact_state.gizmo_scale),
-                        glam::Quat::IDENTITY,
-                        c,
-                    )
-                });
-                let orient = gizmo_helpers::gizmo_orientation(
-                    &self.interact_state.gizmo,
-                    &self.interact_state.selection,
-                    &self.interact_state.scene,
-                );
-                let hovered = if let Some(state) = self.interact_state.manip.state() {
-                    state.axis.unwrap_or(GizmoAxis::None)
-                } else {
-                    self.interact_state.gizmo.hovered_axis
-                };
-                (model, self.interact_state.gizmo.mode, orient, hovered)
-            } else if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
-                let centre = self.clipvol_state.gizmo_centre;
-                let orient = self.clipvol_gizmo_orient();
-                let model = centre.map(|c| {
-                    glam::Mat4::from_scale_rotation_translation(
-                        glam::Vec3::splat(self.clipvol_state.gizmo_scale),
-                        glam::Quat::IDENTITY,
-                        c,
-                    )
-                });
-                let hovered = if self.clipvol_state.gizmo.active_axis != GizmoAxis::None {
-                    self.clipvol_state.gizmo.active_axis
-                } else {
-                    self.clipvol_state.gizmo.hovered_axis
-                };
-                (model, self.clipvol_state.gizmo.mode, orient, hovered)
-            } else {
-                (
-                    None,
-                    GizmoMode::Translate,
-                    glam::Quat::IDENTITY,
-                    GizmoAxis::None,
-                )
-            };
-
         let mut fd = FrameData::new(
             CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(pixels_per_point),
             if let Some(arc) = perf_arc {
@@ -1607,10 +1514,6 @@ impl App {
         if self.mode == ShowcaseMode::VolumeMesh {
             showcase_26_volume_mesh::vm_configure_frame(self, &mut fd);
         }
-        fd.interaction.gizmo_model = gizmo_model;
-        fd.interaction.gizmo_mode = gizmo_mode;
-        fd.interaction.gizmo_hovered = gizmo_hovered;
-        fd.interaction.gizmo_space_orientation = gizmo_space_orient;
         fd.interaction.outline_selected = adv_outline
             || perf_outline
             || scene_graph_outline

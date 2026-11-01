@@ -84,9 +84,9 @@ impl<'a> ShowcaseCtx<'a> {
     }
 
     /// Run the shared orbit/fly camera and assemble the frame. Call this once per
-    /// `update`, after any click-selection and before applying manipulation, so
-    /// the frame is assembled from the moved camera. Handles the backtick toggle
-    /// and WASD/arrow movement internally.
+    /// `update`, after any click-selection and before pushing overlays, so the
+    /// frame is assembled from the moved camera. Handles the backtick toggle and
+    /// WASD/arrow movement internally.
     pub fn drive_camera(&mut self) {
         let toggle = self.key_pressed(egui::Key::Backtick);
         let move_keys = MoveKeys {
@@ -98,6 +98,17 @@ impl<'a> ShowcaseCtx<'a> {
         let view_ctx = ViewportContext::new(self.ownership, self.viewport_size);
         self.camera
             .drive(&mut *self.session, self.dt, view_ctx, toggle, move_keys);
+    }
+
+    /// Report a tool drawn in the viewport (the transform gizmo) to the camera:
+    /// `wants_pointer` while a handle is hovered or a session runs keeps the
+    /// pointer from the camera from the next frame; `took_press` drops the
+    /// camera's drag for a press the tool took this frame.
+    pub fn report_tool(&mut self, wants_pointer: bool, active: bool, took_press: bool) {
+        self.camera.set_tool(wants_pointer, active);
+        if took_press {
+            self.camera.cancel_gesture();
+        }
     }
 }
 
