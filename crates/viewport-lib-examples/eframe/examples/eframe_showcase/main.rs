@@ -3,14 +3,13 @@
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, InputOwnership, LightingSettings, MeshData,
-    MeshId, OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask,
-    PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer,
+    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId,
+    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
+    SceneRenderItem, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 mod geometry;
@@ -773,13 +772,14 @@ impl eframe::App for App {
                 }
 
                 // ----- Camera controller -----
-                let vp_hovered = response.hovered();
+                let ownership = vpl_egui::ownership(
+                    &response,
+                    ui.ctx(),
+                    rect,
+                    self.interact_state.manip.is_active(),
+                );
                 self.input.begin_frame(ViewportContext::new(
-                    InputOwnership::pointer_only(if vp_hovered {
-                        PointerOwnership::Owned
-                    } else {
-                        PointerOwnership::Elsewhere
-                    }),
+                    ownership,
                     [rect.width(), rect.height()],
                 ));
                 // Pan reads the viewport height off the controller.
@@ -787,157 +787,38 @@ impl eframe::App for App {
                     .set_viewport_size([rect.width(), rect.height()]);
 
                 // Translate egui events -> ViewportEvents.
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut events = Vec::new();
+                let mut press_local = None;
                 ui.input(|i| {
-                    let mods = modifiers_from_egui(&i.modifiers);
-                    self.input.push_event(ViewportEvent::ModifiersChanged(mods));
-
                     if let Some(pos) = i.pointer.interact_pos() {
-                        let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                        self.cursor_viewport = local;
-                        self.input
-                            .push_event(ViewportEvent::PointerMoved { position: local });
+                        self.cursor_viewport =
+                            glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
                     }
-
+                    press_local = i
+                        .pointer
+                        .press_origin()
+                        .filter(|p| rect.contains(*p))
+                        .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        match event {
-                            egui::Event::Key {
-                                key,
-                                pressed,
-                                repeat,
-                                ..
-                            } if self.mode == ShowcaseMode::Interaction => {
-                                if let Some(kc) = shared::egui_key_to_keycode(*key) {
-                                    self.input.push_event(ViewportEvent::Key {
-                                        key: kc,
-                                        state: if *pressed {
-                                            ButtonState::Pressed
-                                        } else {
-                                            ButtonState::Released
-                                        },
-                                        repeat: *repeat,
-                                        logical: None,
-                                    });
-                                }
-                            }
-
-                            egui::Event::Text(text) => {
-                                for c in text.chars() {
-                                    self.input.push_event(ViewportEvent::Character(c));
-                                }
-                            }
-
-                            egui::Event::PointerButton {
-                                button,
-                                pressed,
-                                pos,
-                                ..
-                            } => {
-                                let vp_button = match button {
-                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
-                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                    _ => continue,
-                                };
-
-                                // Ignore presses that originate outside the viewport.
-                                if *pressed && !rect.contains(*pos) {
-                                    continue;
-                                }
-
-                                // Track raw left-button held state for ManipulationContext.
-                                if *button == egui::PointerButton::Primary {
-                                    if *pressed {
-                                        self.interact_state.left_held = true;
-                                    } else {
-                                        self.interact_state.left_held = false;
-                                    }
-                                }
-
-                                // Clip-vol gizmo : start drag.
-                                if self.mode == ShowcaseMode::ClipVolumes
-                                    && *button == egui::PointerButton::Primary
-                                    && *pressed
-                                {
-                                    let local =
-                                        glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                                    if let Some(centre) = self.clipvol_state.gizmo_centre {
-                                        let w = rect.width();
-                                        let h = rect.height();
-                                        let vp_inv = self.camera.view_proj_matrix().inverse();
-                                        let (ray_origin, ray_dir) = vpl::picking::screen_to_ray(
-                                            local,
-                                            glam::Vec2::new(w, h),
-                                            vp_inv,
-                                        );
-                                        let orient = self.clipvol_gizmo_orient();
-                                        let hit = self.clipvol_state.gizmo.hit_test_oriented(
-                                            ray_origin,
-                                            ray_dir,
-                                            centre,
-                                            self.clipvol_state.gizmo_scale,
-                                            orient,
-                                        );
-                                        if hit != GizmoAxis::None {
-                                            self.clipvol_state.gizmo.active_axis = hit;
-                                            self.clipvol_state.gizmo_drag_active = true;
-                                        }
-                                    }
-                                }
-
-                                // Clip-vol gizmo : end drag.
-                                if self.mode == ShowcaseMode::ClipVolumes
-                                    && *button == egui::PointerButton::Primary
-                                    && !pressed
-                                    && self.clipvol_state.gizmo_drag_active
-                                {
-                                    self.clipvol_state.gizmo_drag_active = false;
-                                    self.clipvol_state.gizmo.active_axis = GizmoAxis::None;
-                                }
-
-                                // PickLevels: track drag start for rubber-band box select.
-                                if self.mode == ShowcaseMode::PickLevels
-                                    && *button == egui::PointerButton::Primary
-                                    && *pressed
-                                {
-                                    let local =
-                                        glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                                    self.pl_state.drag_start = Some(local);
-                                }
-
-                                let state = if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                };
-                                self.input.push_event(ViewportEvent::MouseButton {
-                                    button: vp_button,
-                                    state,
-                                });
-                            }
-
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let over_vp = i
-                                    .pointer
-                                    .hover_pos()
-                                    .map(|p| rect.contains(p))
-                                    .unwrap_or(false);
-                                if over_vp {
-                                    let units = match unit {
-                                        egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                        egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                        egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                    };
-                                    self.input.push_event(ViewportEvent::Wheel {
-                                        delta: glam::Vec2::new(delta.x, delta.y),
-                                        units,
-                                    });
-                                }
-                            }
-
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    match ev {
+                        // Keys reach the controller only in the interaction showcase.
+                        ViewportEvent::Key { .. } if self.mode != ShowcaseMode::Interaction => {
+                            continue;
+                        }
+                        ViewportEvent::MouseButton {
+                            button: vpl::MouseButton::Left,
+                            state,
+                        } => self.left_button(state == ButtonState::Pressed, press_local, rect),
+                        _ => {}
+                    }
+                    self.input.push_event(ev);
+                }
 
                 // ----- Per-showcase drag_input -----
                 self.showcase_drag_input(&viewport_cx);
@@ -1138,6 +1019,56 @@ impl App {
                 None => 0,
             };
             selection.select_one(walk[next_idx].0);
+        }
+    }
+
+    /// App-side state a left press or release drives, besides the camera.
+    /// `press_local` is where the press went down, viewport-local, or `None`
+    /// when it went down outside the viewport.
+    fn left_button(&mut self, pressed: bool, press_local: Option<glam::Vec2>, rect: egui::Rect) {
+        if pressed {
+            // Ignore presses that originate outside the viewport.
+            let Some(local) = press_local else {
+                return;
+            };
+            // Track raw left-button held state for ManipulationContext.
+            self.interact_state.left_held = true;
+
+            // Clip-vol gizmo : start drag.
+            if self.mode == ShowcaseMode::ClipVolumes {
+                if let Some(centre) = self.clipvol_state.gizmo_centre {
+                    let w = rect.width();
+                    let h = rect.height();
+                    let vp_inv = self.camera.view_proj_matrix().inverse();
+                    let (ray_origin, ray_dir) =
+                        vpl::picking::screen_to_ray(local, glam::Vec2::new(w, h), vp_inv);
+                    let orient = self.clipvol_gizmo_orient();
+                    let hit = self.clipvol_state.gizmo.hit_test_oriented(
+                        ray_origin,
+                        ray_dir,
+                        centre,
+                        self.clipvol_state.gizmo_scale,
+                        orient,
+                    );
+                    if hit != GizmoAxis::None {
+                        self.clipvol_state.gizmo.active_axis = hit;
+                        self.clipvol_state.gizmo_drag_active = true;
+                    }
+                }
+            }
+
+            // PickLevels: track drag start for rubber-band box select.
+            if self.mode == ShowcaseMode::PickLevels {
+                self.pl_state.drag_start = Some(local);
+            }
+        } else {
+            self.interact_state.left_held = false;
+
+            // Clip-vol gizmo : end drag.
+            if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.gizmo_drag_active {
+                self.clipvol_state.gizmo_drag_active = false;
+                self.clipvol_state.gizmo.active_axis = GizmoAxis::None;
+            }
         }
     }
 

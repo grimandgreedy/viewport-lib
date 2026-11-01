@@ -21,18 +21,18 @@
 use std::sync::{Arc, Mutex};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 
 use crate::eframe::{egui, wgpu};
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
-    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InputOwnership, InteractionFrame, KeyCode,
-    KeyboardOwnership, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
-    ManipulationKind, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode,
-    PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits, Selection,
-    ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
-    gizmo_centre_for_pivot, primitives, viewport_default_bindings, wish_xy_from_actions,
+    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings,
+    ManipResult, ManipulationContext, ManipulationController, ManipulationKind, MeshId,
+    OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
+    Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, gizmo_centre_for_pivot, primitives, viewport_default_bindings,
+    wish_xy_from_actions,
 };
 
 /// Body movement speed in world units per second for the character cameras.
@@ -347,34 +347,6 @@ impl App {
     }
 }
 
-fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
-    match key {
-        egui::Key::A => Some(KeyCode::A),
-        egui::Key::D => Some(KeyCode::D),
-        egui::Key::E => Some(KeyCode::E),
-        egui::Key::F => Some(KeyCode::F),
-        egui::Key::G => Some(KeyCode::G),
-        egui::Key::Q => Some(KeyCode::Q),
-        egui::Key::R => Some(KeyCode::R),
-        egui::Key::S => Some(KeyCode::S),
-        egui::Key::W => Some(KeyCode::W),
-        egui::Key::X => Some(KeyCode::X),
-        egui::Key::Y => Some(KeyCode::Y),
-        egui::Key::Z => Some(KeyCode::Z),
-        egui::Key::Tab => Some(KeyCode::Tab),
-        egui::Key::Enter => Some(KeyCode::Enter),
-        egui::Key::Escape => Some(KeyCode::Escape),
-        egui::Key::Backspace => Some(KeyCode::Backspace),
-        egui::Key::Backtick => Some(KeyCode::Backtick),
-        egui::Key::Comma => Some(KeyCode::Comma),
-        egui::Key::Period => Some(KeyCode::Period),
-        egui::Key::OpenBracket => Some(KeyCode::LeftBracket),
-        egui::Key::CloseBracket => Some(KeyCode::RightBracket),
-        egui::Key::Slash => Some(KeyCode::Slash),
-        _ => None,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // eframe::App
 // ---------------------------------------------------------------------------
@@ -491,21 +463,9 @@ impl eframe::App for App {
                 self.drag_started = false;
                 self.clicked = false;
 
-                let vp_ctx = ViewportContext::new(
-                    InputOwnership {
-                        pointer: if response.hovered() {
-                            PointerOwnership::Owned
-                        } else {
-                            PointerOwnership::Elsewhere
-                        },
-                        keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
-                            KeyboardOwnership::Owned
-                        } else {
-                            KeyboardOwnership::Elsewhere
-                        },
-                    },
-                    [rect.width(), rect.height()],
-                );
+                let ownership =
+                    vpl_egui::ownership(&response, ui.ctx(), rect, self.manip.is_active());
+                let vp_ctx = ViewportContext::new(ownership, [rect.width(), rect.height()]);
                 match self.mode {
                     Mode::Primitives => self.input_primitives.begin_frame(vp_ctx),
                     Mode::All => self.input_all.begin_frame(vp_ctx),
@@ -515,14 +475,12 @@ impl eframe::App for App {
                 self.ctrl_primitives.set_viewport_size(vp_ctx.viewport_size);
                 self.ctrl_all.set_viewport_size(vp_ctx.viewport_size);
 
-                let mut vp_events: Vec<ViewportEvent> = Vec::new();
-
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut translated = Vec::new();
+                let mut cmd = false;
                 ui.input(|i| {
                     self.shift_held = i.modifiers.shift;
-
-                    vp_events.push(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                    cmd = i.modifiers.command;
 
                     let local_pos = i
                         .pointer
@@ -530,99 +488,47 @@ impl eframe::App for App {
                         .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                     self.cursor_prev = self.cursor_viewport;
                     self.cursor_viewport = local_pos;
-                    if let Some(pos) = local_pos {
-                        vp_events.push(ViewportEvent::PointerMoved { position: pos });
-                    }
 
-                    let cmd = i.modifiers.command;
-
+                    vpl_egui::begin_frame(i, &actx, &mut translated);
                     for event in &i.events {
-                        match event {
-                            egui::Event::Key {
-                                key,
-                                pressed,
-                                repeat,
-                                ..
-                            } => {
-                                // Cmd+[/] are consumed for mode switching above; don't
-                                // also forward them as pivot-cycle keys to the controller.
-                                if cmd
-                                    && matches!(
-                                        key,
-                                        egui::Key::OpenBracket | egui::Key::CloseBracket
-                                    )
-                                {
-                                    continue;
-                                }
-                                if let Some(kc) = egui_key_to_keycode(*key) {
-                                    vp_events.push(ViewportEvent::Key {
-                                        key: kc,
-                                        state: if *pressed {
-                                            ButtonState::Pressed
-                                        } else {
-                                            ButtonState::Released
-                                        },
-                                        repeat: *repeat,
-                                        logical: None,
-                                    });
-                                }
-                            }
-                            egui::Event::PointerButton {
-                                button, pressed, ..
-                            } => {
-                                let vp_button = match button {
-                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
-                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                    _ => continue,
-                                };
-                                vp_events.push(ViewportEvent::MouseButton {
-                                    button: vp_button,
-                                    state: if *pressed {
-                                        ButtonState::Pressed
-                                    } else {
-                                        ButtonState::Released
-                                    },
-                                });
-                                if *button == egui::PointerButton::Primary {
-                                    if *pressed {
-                                        self.left_held = true;
-                                        self.press_origin = self.cursor_viewport;
-                                        self.drag_started = true;
-                                    } else {
-                                        let is_click = self
-                                            .press_origin
-                                            .zip(self.cursor_viewport)
-                                            .map(|(o, c)| (c - o).length() < 5.0)
-                                            .unwrap_or(false);
-                                        if is_click {
-                                            self.clicked = true;
-                                        }
-                                        self.left_held = false;
-                                        self.press_origin = None;
-                                    }
-                                }
-                            }
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let units = match unit {
-                                    egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                    egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                    egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                };
-                                vp_events.push(ViewportEvent::Wheel {
-                                    delta: glam::Vec2::new(delta.x, delta.y),
-                                    units,
-                                });
-                            }
-                            egui::Event::Text(text) => {
-                                for c in text.chars() {
-                                    vp_events.push(ViewportEvent::Character(c));
-                                }
-                            }
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut translated);
                     }
                 });
+
+                let mut vp_events: Vec<ViewportEvent> = Vec::new();
+                for ev in translated {
+                    match ev {
+                        // Cmd+[/] are consumed for mode switching above; don't also
+                        // forward them as pivot-cycle keys to the controller.
+                        ViewportEvent::Key {
+                            key: KeyCode::LeftBracket | KeyCode::RightBracket,
+                            ..
+                        } if cmd => continue,
+                        ViewportEvent::MouseButton {
+                            button: vpl::MouseButton::Left,
+                            state,
+                        } => {
+                            if state == ButtonState::Pressed {
+                                self.left_held = true;
+                                self.press_origin = self.cursor_viewport;
+                                self.drag_started = true;
+                            } else {
+                                let is_click = self
+                                    .press_origin
+                                    .zip(self.cursor_viewport)
+                                    .map(|(o, c)| (c - o).length() < 5.0)
+                                    .unwrap_or(false);
+                                if is_click {
+                                    self.clicked = true;
+                                }
+                                self.left_held = false;
+                                self.press_origin = None;
+                            }
+                        }
+                        _ => {}
+                    }
+                    vp_events.push(ev);
+                }
 
                 match self.mode {
                     Mode::Primitives => {

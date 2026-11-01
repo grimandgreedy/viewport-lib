@@ -24,16 +24,16 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
-    BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, InputOwnership,
-    KeyboardOwnership, LightKind, LightSource, LightingSettings, MatcapId, Material, MaterialId,
-    MeshId, OffscreenViewportTarget, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig,
-    PickId, PickMask, PointerOwnership, SceneFrame, SceneRenderItem, ScrollUnits, ShadingModel,
-    ShadowFilter, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, LightKind,
+    LightSource, LightingSettings, MatcapId, Material, MaterialId, MeshId, OffscreenViewportTarget,
+    OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask, SceneFrame,
+    SceneRenderItem, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
@@ -707,81 +707,41 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
             self.input.begin_frame(ViewportContext::new(
-                InputOwnership {
-                    pointer: if response.hovered() {
-                        PointerOwnership::Owned
-                    } else {
-                        PointerOwnership::Elsewhere
-                    },
-                    keyboard: if response.hovered() && !ui.ctx().wants_keyboard_input() {
-                        KeyboardOwnership::Owned
-                    } else {
-                        KeyboardOwnership::Elsewhere
-                    },
-                },
+                ownership,
                 [rect.width(), rect.height()],
             ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);
 
+            let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.input
-                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
                 if let Some(p) = i.pointer.interact_pos() {
-                    let local = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
-                    self.last_cursor = local;
-                    self.input
-                        .push_event(ViewportEvent::PointerMoved { position: local });
+                    self.last_cursor = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
                 }
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            // Left is reserved for selection (click = pick, drag = box).
-                            // Orbit is on middle, pan on right, so left never reaches
-                            // the camera controller.
-                            if *button == egui::PointerButton::Primary {
-                                self.drag_start = if *pressed {
-                                    Some(self.last_cursor)
-                                } else {
-                                    self.drag_start
-                                };
-                                continue;
-                            }
-                            let vp_button = match button {
-                                egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.input.push_event(ViewportEvent::MouseButton {
-                                button: vp_button,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.input.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                // Left is reserved for selection (click = pick, drag = box). Orbit is
+                // on middle, pan on right, so left never reaches the camera controller.
+                if let ViewportEvent::MouseButton {
+                    button: vpl::MouseButton::Left,
+                    state,
+                } = ev
+                {
+                    if state == ButtonState::Pressed {
+                        self.drag_start = Some(self.last_cursor);
+                    }
+                    continue;
+                }
+                self.input.push_event(ev);
+            }
 
             let w = rect.width();
             let h = rect.height();

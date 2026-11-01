@@ -30,36 +30,18 @@ use crate::eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
-    GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, InputOwnership, KeyCode, LightingSettings,
-    ManipResult, ManipulationContext, ManipulationController, Material, MaterialId, MeshId,
-    MouseButton, OffscreenViewportTarget, OrbitCameraController, PointerOwnership, SceneFrame,
-    SceneRenderItem, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId,
-    ViewportInput, ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_centre_for_pivot,
-    picking::screen_to_ray, primitives,
+    GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, InputOwnership, LightingSettings, ManipResult,
+    ManipulationContext, ManipulationController, Material, MaterialId, MeshId, MouseButton,
+    OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, Selection,
+    ViewportContext, ViewportEvent, ViewportId, ViewportInput, ViewportRenderer,
+    gizmo::compute_gizmo_scale, gizmo_centre_for_pivot, picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
-
-fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
-    match key {
-        egui::Key::G => Some(KeyCode::G),
-        egui::Key::R => Some(KeyCode::R),
-        egui::Key::S => Some(KeyCode::S),
-        egui::Key::X => Some(KeyCode::X),
-        egui::Key::Y => Some(KeyCode::Y),
-        egui::Key::Z => Some(KeyCode::Z),
-        egui::Key::Tab => Some(KeyCode::Tab),
-        egui::Key::Enter => Some(KeyCode::Enter),
-        egui::Key::Escape => Some(KeyCode::Escape),
-        egui::Key::Period => Some(KeyCode::Period),
-        egui::Key::Minus => Some(KeyCode::Minus),
-        _ => None,
-    }
-}
 
 fn quad_rects(full: egui::Rect) -> [egui::Rect; 4] {
     let mx = full.left() + full.width() * 0.5;
@@ -397,11 +379,10 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
-                let rect = {
-                    let r = ui.available_rect_before_wrap();
-                    let (r, _) = ui.allocate_exact_size(r.size(), egui::Sense::click_and_drag());
-                    r
-                };
+                let (rect, response) = ui.allocate_exact_size(
+                    ui.available_rect_before_wrap().size(),
+                    egui::Sense::click_and_drag(),
+                );
 
                 let quads = quad_rects(rect);
 
@@ -421,19 +402,17 @@ impl App {
                 let hq = self.hovered_quad;
 
                 // begin_frame for every resolver; the controllers only need the
-                // size their pan reads.
+                // size their pan reads. Events go to the hovered quad alone, so it
+                // takes the viewport widget's ownership and the others have none.
                 for i in 0..4 {
                     let qr = quads[i];
-                    self.inputs[i].begin_frame(ViewportContext::new(
-                        InputOwnership::pointer_only(
-                            if i == hq && ui.rect_contains_pointer(rect) {
-                                PointerOwnership::Owned
-                            } else {
-                                PointerOwnership::Elsewhere
-                            },
-                        ),
-                        [qr.width(), qr.height()],
-                    ));
+                    let ownership = if i == hq {
+                        vpl_egui::ownership(&response, ui.ctx(), qr, self.manip.is_active())
+                    } else {
+                        InputOwnership::NONE
+                    };
+                    self.inputs[i]
+                        .begin_frame(ViewportContext::new(ownership, [qr.width(), qr.height()]));
                     self.controllers[i].set_viewport_size([qr.width(), qr.height()]);
                 }
 
@@ -442,85 +421,32 @@ impl App {
                     self.inputs[prev_hq].push_event(ViewportEvent::PointerLeft);
                 }
 
-                // Route input events to the hovered quad's controller.
+                // Route input events to the hovered quad's controller, in its local
+                // coordinates.
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(quads[hq].left(), quads[hq].top()));
+                let mut events = Vec::new();
+                let mut press_inside = false;
                 ui.input(|i| {
-                    let mods = modifiers_from_egui(&i.modifiers);
-                    self.inputs[hq].push_event(ViewportEvent::ModifiersChanged(mods));
-                    self.inputs[hq].push_event(ViewportEvent::PointerMoved {
-                        position: self.cursor_local,
-                    });
-
+                    press_inside = i.pointer.press_origin().is_some_and(|p| rect.contains(p));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        match event {
-                            egui::Event::Key {
-                                key,
-                                pressed,
-                                repeat,
-                                ..
-                            } => {
-                                if let Some(kc) = egui_key_to_keycode(*key) {
-                                    self.inputs[hq].push_event(ViewportEvent::Key {
-                                        key: kc,
-                                        state: if *pressed {
-                                            ButtonState::Pressed
-                                        } else {
-                                            ButtonState::Released
-                                        },
-                                        repeat: *repeat,
-                                        logical: None,
-                                    });
-                                }
-                            }
-                            egui::Event::Text(text) => {
-                                for c in text.chars() {
-                                    self.inputs[hq].push_event(ViewportEvent::Character(c));
-                                }
-                            }
-                            egui::Event::PointerButton {
-                                button,
-                                pressed,
-                                pos,
-                                ..
-                            } => {
-                                let vp_button = match button {
-                                    egui::PointerButton::Primary => MouseButton::Left,
-                                    egui::PointerButton::Secondary => MouseButton::Right,
-                                    egui::PointerButton::Middle => MouseButton::Middle,
-                                    _ => continue,
-                                };
-                                if *pressed && !rect.contains(*pos) {
-                                    continue;
-                                }
-                                if *button == egui::PointerButton::Primary {
-                                    self.left_held = *pressed;
-                                }
-                                self.inputs[hq].push_event(ViewportEvent::MouseButton {
-                                    button: vp_button,
-                                    state: if *pressed {
-                                        ButtonState::Pressed
-                                    } else {
-                                        ButtonState::Released
-                                    },
-                                });
-                            }
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let over_vp = hover_pos.map(|p| rect.contains(p)).unwrap_or(false);
-                                if over_vp {
-                                    let units = match unit {
-                                        egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                        egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                        egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                    };
-                                    self.inputs[hq].push_event(ViewportEvent::Wheel {
-                                        delta: glam::Vec2::new(delta.x, delta.y),
-                                        units,
-                                    });
-                                }
-                            }
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    if let ViewportEvent::MouseButton {
+                        button: MouseButton::Left,
+                        state,
+                    } = ev
+                    {
+                        let pressed = state == ButtonState::Pressed;
+                        // Presses that originate outside the viewport are not held.
+                        if !pressed || press_inside {
+                            self.left_held = pressed;
+                        }
+                    }
+                    self.inputs[hq].push_event(ev);
+                }
 
                 // Gizmo hit test in the hovered quad (only when no session is active).
                 if !self.manip.is_active() {

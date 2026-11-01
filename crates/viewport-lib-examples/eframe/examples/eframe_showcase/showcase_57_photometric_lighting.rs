@@ -1667,71 +1667,30 @@ fn contract_overlay(_app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
 /// Feed the host's input to the orbit controller, for the frames this
 /// showcase draws the viewport itself.
 fn drive_orbit(app: &mut App, ui: &egui::Ui, cx: &crate::ViewportCtx) {
-    use vpl::{
-        ButtonState, InputOwnership, MouseButton, PointerOwnership, ScrollUnits, ViewportContext,
-        ViewportEvent,
-    };
+    use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
+    use vpl::{ViewportContext, ViewportEvent};
     let rect = cx.rect;
-    let hovered = cx.response.hovered();
-    let pointer = if hovered {
-        PointerOwnership::Owned
-    } else {
-        PointerOwnership::Elsewhere
-    };
+    let ownership = vpl_egui::ownership(cx.response, ui.ctx(), rect, false);
     app.input.begin_frame(ViewportContext::new(
-        InputOwnership::pointer_only(pointer),
+        ownership,
         [rect.width(), rect.height()],
     ));
     app.controller
         .set_viewport_size([rect.width(), rect.height()]);
+    let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+    let mut events = Vec::new();
     ui.input(|i| {
-        let mods = vpl::input::adapters::modifiers_from_egui(&i.modifiers);
-        app.input.push_event(ViewportEvent::ModifiersChanged(mods));
-        if let Some(pos) = i.pointer.interact_pos() {
-            let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-            app.input
-                .push_event(ViewportEvent::PointerMoved { position: local });
-        }
+        vpl_egui::begin_frame(i, &actx, &mut events);
         for event in &i.events {
-            match event {
-                egui::Event::PointerButton {
-                    button,
-                    pressed,
-                    pos,
-                    ..
-                } => {
-                    let button = match button {
-                        egui::PointerButton::Primary => MouseButton::Left,
-                        egui::PointerButton::Secondary => MouseButton::Right,
-                        egui::PointerButton::Middle => MouseButton::Middle,
-                        _ => continue,
-                    };
-                    if *pressed && !rect.contains(*pos) {
-                        continue;
-                    }
-                    let state = if *pressed {
-                        ButtonState::Pressed
-                    } else {
-                        ButtonState::Released
-                    };
-                    app.input
-                        .push_event(ViewportEvent::MouseButton { button, state });
-                }
-                egui::Event::MouseWheel { unit, delta, .. } if hovered => {
-                    let units = match unit {
-                        egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                        egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                        egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                    };
-                    app.input.push_event(ViewportEvent::Wheel {
-                        delta: glam::Vec2::new(delta.x, delta.y),
-                        units,
-                    });
-                }
-                _ => {}
-            }
+            vpl_egui::translate(event, &actx, &mut events);
         }
     });
+    // The orbit takes the pointer only; this showcase binds no keys.
+    for ev in events {
+        if !matches!(ev, ViewportEvent::Key { .. }) {
+            app.input.push_event(ev);
+        }
+    }
     let action = app.input.resolve();
     let dt = ui.ctx().input(|i| i.stable_dt);
     app.controller.apply(&mut app.camera, &action, dt);
