@@ -113,8 +113,7 @@ fn expand_point(p: PointInputs, vertex_index: u32) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Section-view clipping: planes and volumes together.
     if !viewport_clip_test(in.world_pos) { discard; }
 
@@ -144,9 +143,25 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let specular = pow(max(dot(n, h), 0.0), 32.0) * 0.4;
 
         let brightness = ambient + (1.0 - ambient) * diffuse + specular;
+        scene_indirect_fraction = indirect_fraction(
+            vec3<f32>(ambient),
+            vec3<f32>((1.0 - ambient) * diffuse + specular),
+        );
         colour = vec4<f32>(colour.rgb * brightness, colour.a);
     }
     // render_mode == 0 (ScreenSpaceCircle): flat disc, no shading beyond the circle clip above.
 
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

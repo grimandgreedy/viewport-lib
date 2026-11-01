@@ -287,6 +287,8 @@ var<private> object: Object;
 // The fragment's transmission, written by compute_lit for the transmission
 // entry points to finish.
 var<private> transmission_out: PbrTransmission;
+// The scene pass's output and `scene_indirect_fraction`, which fs_body sets.
+// #include "helpers/scene_fragment.wgsl"
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
 @group(1) @binding(3) var normal_map: texture_2d<f32>;
@@ -895,6 +897,10 @@ fn build_shading_surface(
 
 struct LitResult {
     rgb: vec3<f32>,
+    // The indirect (ambient, IBL, probe, lightmap) and direct (light loop)
+    // terms behind `rgb`, exposed, for the indirect fraction.
+    indirect: vec3<f32>,
+    direct: vec3<f32>,
     dbg_direct_lum: f32,
     dbg_ambient_lum: f32,
     dbg_ibl_diff_lum: f32,
@@ -1221,6 +1227,8 @@ fn compute_lit(
 
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
+    var lit_indirect = vec3<f32>(0.0);
+    var lit_direct = vec3<f32>(0.0);
 
     var dbg_direct_lum   = 0.0;
     var dbg_ambient_lum  = 0.0;
@@ -1366,6 +1374,10 @@ fn compute_lit(
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
         // <viewport-shade-slot:recolor>
         // </viewport-shade-slot:recolor>
+        // A hook's recolor replaces the colour but not the split, which
+        // stays the light loop's and the ambient term's.
+        lit_indirect = ambient;
+        lit_direct = Lo;
         // BEGIN_PBR_STRIP
     } else {
         // Multi-light Blinn-Phong path
@@ -1450,11 +1462,15 @@ fn compute_lit(
 
         let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
+        lit_indirect = hemi_rgb;
+        lit_direct = direct_rgb;
         // END_PBR_STRIP
     }
 
     var res: LitResult;
     res.rgb = final_rgb;
+    res.indirect = lit_indirect;
+    res.direct = lit_direct;
     res.dbg_direct_lum = dbg_direct_lum;
     res.dbg_ambient_lum = dbg_ambient_lum;
     res.dbg_ibl_diff_lum = dbg_ibl_diff_lum;
@@ -1474,6 +1490,20 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
 @fragment
 fn fs_main_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     return fs_body(from_plain(p), is_front);
+}
+
+// `fs_main` and `fs_main_plain` for the HDR scene pass, which also takes the
+// indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut, @builtin(front_facing) is_front: bool) -> SceneFragment {
+    let colour = fs_body(in, is_front);
+    return scene_fragment(colour, scene_indirect_fraction);
+}
+
+@fragment
+fn fs_scene_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> SceneFragment {
+    let colour = fs_body(from_plain(p), is_front);
+    return scene_fragment(colour, scene_indirect_fraction);
 }
 
 // BEGIN_TRANSMISSION_PASS
@@ -1548,6 +1578,8 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
 
     if surface.resolved {
+        // Unlit, wireframe, face colour, matcap: never darkened.
+        scene_indirect_fraction = 0.0;
         return surface.out_colour;
     }
 
@@ -1583,6 +1615,8 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
     final_rgb += emissive;
     let dbg_emissive_lum = dot(emissive, lum_weights);
+    // Emission counts as direct, so ambient occlusion leaves it alone.
+    scene_indirect_fraction = indirect_fraction(lit.indirect, lit.direct + emissive);
 
     // #include "helpers/debug_vis.wgsl"
 

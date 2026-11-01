@@ -1044,7 +1044,9 @@ fn post_effect_producer_fills_slot() {
             &mut renderer,
             Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
         );
-        item.settings.unlit = true;
+        // Ambient occlusion darkens the indirect share of the light, so the
+        // quad is lit by the hemisphere fill alone.
+        frame.effects.lighting.lights.clear();
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, size, size)
     };

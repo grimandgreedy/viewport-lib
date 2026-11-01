@@ -151,8 +151,7 @@ fn build_normal(local_offset: vec2<f32>,
     return normalize(n);
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // `clip_planes` and the clip tests come from SHARED_CLIP_WGSL.
     if !viewport_pass_clip_planes(in.world_pos) {
         discard;
@@ -173,14 +172,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var lights_for_shader = lights_uniform;
     lights_for_shader.hemisphere_intensity =
         lights_uniform.hemisphere_intensity * sprite_ub.ambient_scale;
-    let lit_rgb = apply_scene_lighting(
-        n,
-        colour.rgb,
-        false,
-        in.world_pos,
-        lights_for_shader,
-    );
+    let lit_rgb_terms = scene_lighting_terms(n, false, in.world_pos, lights_for_shader);
+    let lit_rgb = colour.rgb * (lit_rgb_terms.indirect + lit_rgb_terms.direct);
+    scene_indirect_fraction = indirect_fraction(colour.rgb * lit_rgb_terms.indirect, colour.rgb * lit_rgb_terms.direct);
 
     if colour.a <= 0.001 { discard; }
     return vec4<f32>(lit_rgb, colour.a);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

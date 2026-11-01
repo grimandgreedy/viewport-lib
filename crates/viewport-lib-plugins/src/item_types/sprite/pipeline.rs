@@ -1,5 +1,5 @@
 //! GPU state for the sprite item type: the twelve blend/depth/lit render
-//! pipeline variants, the refractive pipeline and its scene-colour layout, the
+//! pipeline variants in each pass, the refractive pipeline and its scene-colour layout, the
 //! soft-particle depth layout and its fallback, the weighted-blended OIT
 //! pipelines, the pick pipeline, and the selection-outline mask pipeline. Each
 //! pipeline is built the first time a draw needs it.
@@ -102,18 +102,32 @@ pub(super) struct SpriteRecipe {
     depth_format: viewport_lib::gpu::TextureFormat,
 }
 
-/// The 24 sprite colour pipelines: each [`SpriteKey`] in the LDR and HDR
-/// formats, built the first time a draw selects it.
-pub(super) type SpritePipelines = viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, 24>;
+/// The pass a sprite colour pipeline draws into. The HDR scene pass has the
+/// indirect fraction as a second target; the read-only-depth pass has the
+/// HDR colour alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SpritePass {
+    Ldr,
+    Scene,
+    DepthRead,
+}
 
-/// Member index of `key` in the `hdr` or LDR format.
-pub(super) fn sprite_index(key: SpriteKey, hdr: bool) -> usize {
-    key.slot() * 2 + hdr as usize
+impl SpritePass {
+    const ALL: [Self; 3] = [Self::Ldr, Self::Scene, Self::DepthRead];
+}
+
+/// The 36 sprite colour pipelines: each [`SpriteKey`] for each
+/// [`SpritePass`], built the first time a draw selects it.
+pub(super) type SpritePipelines = viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, 36>;
+
+/// Member index of `key` in `pass`.
+pub(super) fn sprite_index(key: SpriteKey, pass: SpritePass) -> usize {
+    key.slot() * 3 + pass as usize
 }
 
 fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
-    let key = SpriteKey::from_slot(i / 2);
-    let hdr = i % 2 == 1;
+    let key = SpriteKey::from_slot(i / 3);
+    let pass = SpritePass::ALL[i % 3];
     let vertex_buffers = [position_layout()];
     let blend = match key.blend {
         viewport_lib::renderer::SpriteBlend::AlphaBlend => {
@@ -150,10 +164,16 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
             depth_write: key.depth_write,
             depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
-            ldr_format: r.ldr_format,
+            // The depth-read pass's one target is the HDR colour.
+            ldr_format: if pass == SpritePass::DepthRead {
+                viewport_lib::resources::HDR_COLOR_FORMAT
+            } else {
+                r.ldr_format
+            },
             depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
-        hdr,
+        pass == SpritePass::Scene,
     )
 }
 
@@ -681,8 +701,9 @@ impl SpriteGpu {
             blend: sprite.blend,
             lit: sprite.lit,
         };
-        let colour = self.pipelines.available(sprite_index(key, false))
-            || self.pipelines.available(sprite_index(key, true));
+        let colour = SpritePass::ALL
+            .into_iter()
+            .any(|pass| self.pipelines.available(sprite_index(key, pass)));
         if sprite.refraction_strength > 0.0 {
             self.passes.available(REFRACTION)
         } else if sprite.oit_eligible {

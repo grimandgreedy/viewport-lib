@@ -240,8 +240,7 @@ fn splat_view_dir(pos_obj: vec3<f32>) -> vec3<f32> {
     return normalize(world_pos - camera.eye_pos);
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VsOut) -> vec4<f32> {
     // Clip planes and clip volumes, on the splat's centre: a splat is kept
     // or cut whole.
     if splat_u.ignore_clip == 0u && !viewport_clip_test(in.world_pos) {
@@ -260,4 +259,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if alpha < 1.0 / 255.0 { discard; }
 
     return vec4<f32>(in.colour, alpha);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VsOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

@@ -59,6 +59,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
                 depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == COLOUR_HDR,
         ),
@@ -279,6 +280,8 @@ fn build_stream(r: &PointCloudStreamRecipe, key: usize) -> gpu::RenderPipeline {
             sample_count: 1,
             ldr_format: r.ldr_format,
             depth_format: r.depth_format,
+            // LDR only.
+            indirect_fraction_entry: None,
         },
         false,
     )

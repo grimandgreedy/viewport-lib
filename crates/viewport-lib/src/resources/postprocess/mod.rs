@@ -712,6 +712,26 @@ impl DeviceResources {
                         },
                         count: None,
                     },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
         // --- DoF bind group layout ---
@@ -1264,15 +1284,41 @@ impl DeviceResources {
             "ssaa_resolve_layout",
             &[&resolve_bgl],
         );
-        self.post.ssaa_resolve_pipeline =
-            Some(crate::resources::builders::build_fullscreen_pipeline(
-                device,
-                "ssaa_resolve_pipeline",
-                &layout,
-                shader.get(),
-                crate::gpu::TextureFormat::Rgba16Float,
-                None,
-            ));
+        // Resolves the scene colour and the indirect fraction together.
+        let colour_target = |format| {
+            Some(crate::gpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: crate::gpu::ColorWrites::ALL,
+            })
+        };
+        self.post.ssaa_resolve_pipeline = Some(crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "ssaa_resolve_pipeline",
+                layout: &layout,
+                vertex_module: shader.get(),
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
+                fragment: Some(crate::gpu::FragmentState {
+                    module: shader.get(),
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        colour_target(crate::gpu::TextureFormat::Rgba16Float),
+                        colour_target(crate::resources::INDIRECT_FRACTION_FORMAT),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: crate::gpu::MultisampleState::default(),
+                cache: None,
+            },
+        ));
 
         let depth_bgl = self.post.ssaa_depth_resolve_bgl.clone().expect(missing);
         self.post.ssaa_depth_resolve_pipeline = Some(Self::depth_only_fullscreen_pipeline(
@@ -1462,6 +1508,20 @@ impl DeviceResources {
             aspect: crate::gpu::TextureAspect::StencilOnly,
             ..Default::default()
         });
+        // The indirect fraction at scene resolution. Under SSAA the scene pass
+        // writes a supersampled one, which the resolve averages into this.
+        let (indirect_fraction_texture, indirect_fraction_view) = match kept(TargetGroups::SCENE) {
+            Some(old) => (
+                old.indirect_fraction_texture.clone(),
+                old.indirect_fraction_view.clone(),
+            ),
+            None => alloc.colour(
+                "indirect_fraction_texture",
+                crate::resources::INDIRECT_FRACTION_FORMAT,
+                scene_size,
+                crate::gpu::TextureUsages::empty(),
+            ),
+        };
 
         // Bloom -- threshold at scene resolution, ping/pong at half.
         let (
@@ -1827,6 +1887,10 @@ impl DeviceResources {
                     binding: composite::slot::VIEW_LUT,
                     resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::INDIRECT_FRACTION,
+                    resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
+                },
             ],
         });
         let bloom_threshold_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2052,6 +2116,8 @@ impl DeviceResources {
         let (
             ssaa_colour_texture,
             ssaa_colour_view,
+            ssaa_indirect_fraction_texture,
+            ssaa_indirect_fraction_view,
             ssaa_depth_texture,
             ssaa_depth_view,
             ssaa_depth_only_view,
@@ -2062,6 +2128,12 @@ impl DeviceResources {
             let (ssaa_colour_tex, ssaa_colour_view) = alloc.colour(
                 "ssaa_colour_texture",
                 crate::gpu::TextureFormat::Rgba16Float,
+                TargetSize::SsaaScene,
+                crate::gpu::TextureUsages::empty(),
+            );
+            let (ssaa_fraction_tex, ssaa_fraction_view) = alloc.colour(
+                "ssaa_indirect_fraction_texture",
+                crate::resources::INDIRECT_FRACTION_FORMAT,
                 TargetSize::SsaaScene,
                 crate::gpu::TextureUsages::empty(),
             );
@@ -2109,6 +2181,18 @@ impl DeviceResources {
                         crate::gpu::BindGroupEntry {
                             binding: 2,
                             resource: ubuf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 3,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &ssaa_fraction_view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 4,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                ssaa_depth_only_view.as_ref().expect("set above"),
+                            ),
                         },
                     ],
                 });
@@ -2158,6 +2242,8 @@ impl DeviceResources {
             (
                 Some(ssaa_colour_tex),
                 Some(ssaa_colour_view),
+                Some(ssaa_fraction_tex),
+                Some(ssaa_fraction_view),
                 Some(ssaa_depth_tex),
                 Some(ssaa_depth_view),
                 ssaa_depth_only_view,
@@ -2166,7 +2252,7 @@ impl DeviceResources {
                 ssaa_ubuf,
             )
         } else {
-            (None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None, None)
         };
 
         // Output-resolution depth for post-tone-map passes.
@@ -2257,6 +2343,8 @@ impl DeviceResources {
             hdr_depth_view,
             hdr_depth_only_view,
             hdr_stencil_only_view,
+            indirect_fraction_texture,
+            indirect_fraction_view,
             bloom: producer::BloomViewport {
                 threshold_texture: bloom_threshold_tex,
                 threshold_view: bloom_threshold_view,
@@ -2300,6 +2388,8 @@ impl DeviceResources {
             },
             ssaa_colour_texture,
             ssaa_colour_view,
+            ssaa_indirect_fraction_texture,
+            ssaa_indirect_fraction_view,
             ssaa_depth_texture,
             ssaa_depth_view,
             ssaa_depth_only_view,
@@ -2436,6 +2526,13 @@ impl DeviceResources {
             .and_then(|id| self.content.textures.get(id))
             .map(|t| &t.view)
             .unwrap_or(ao_placeholder);
+        // Ambient occlusion and contact shadows darken only the indirect
+        // share of a pixel's light.
+        let fraction_view = if inputs.ssao || inputs.contact_shadows {
+            &hdr.indirect_fraction_view
+        } else {
+            ao_placeholder
+        };
         let views = [
             tone_map_hdr_input.clone(),
             bloom_view.clone(),
@@ -2445,6 +2542,7 @@ impl DeviceResources {
             foreground_view.clone(),
             grade_lut_view.clone(),
             view_lut_view.clone(),
+            fraction_view.clone(),
         ];
         if hdr.tone_map_bg_views.as_ref() != Some(&views) {
             hdr.tone_map_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2505,6 +2603,10 @@ impl DeviceResources {
                     crate::gpu::BindGroupEntry {
                         binding: composite::slot::VIEW_LUT,
                         resource: crate::gpu::BindingResource::TextureView(view_lut_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: composite::slot::INDIRECT_FRACTION,
+                        resource: crate::gpu::BindingResource::TextureView(fraction_view),
                     },
                 ],
             });

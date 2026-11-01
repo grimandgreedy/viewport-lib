@@ -26,8 +26,9 @@ fn luma(pixels: &[u8], x: u32, y: u32) -> i32 {
     pixels[i] as i32 + pixels[i + 1] as i32 + pixels[i + 2] as i32
 }
 
-/// A frame with one bright unlit quad filling the middle of the view.
-fn quad_frame(harness: &mut Harness) -> viewport_lib::FrameData {
+/// A frame with one bright quad filling the middle of the view: unlit, or
+/// with `fill_lit` lit by the hemisphere fill alone.
+fn quad_frame(harness: &mut Harness, fill_lit: bool) -> viewport_lib::FrameData {
     let mesh = harness
         .renderer
         .resources_mut()
@@ -42,7 +43,13 @@ fn quad_frame(harness: &mut Harness) -> viewport_lib::FrameData {
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)))
         .expect("material upload");
-    item.settings.unlit = true;
+    if fill_lit {
+        // Ambient occlusion darkens the indirect share of the light, so a
+        // quad lit by the hemisphere fill alone takes all of it.
+        frame.effects.lighting.lights.clear();
+    } else {
+        item.settings.unlit = true;
+    }
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
 }
@@ -118,7 +125,7 @@ fn producer_fixture_fills_its_slot() {
                 ))
                 .unwrap();
         }
-        let frame = quad_frame(&mut harness);
+        let frame = quad_frame(&mut harness, true);
         harness.render(&frame, SIZE, SIZE)
     };
 
@@ -163,7 +170,7 @@ fn stage_fixture_is_in_the_image_path() {
                 )
                 .unwrap();
         }
-        let frame = quad_frame(&mut harness);
+        let frame = quad_frame(&mut harness, false);
         harness.render(&frame, SIZE, SIZE)
     };
 
@@ -236,7 +243,7 @@ fn stage_fixtures_chain_in_order_key_order() {
         )
         .unwrap();
 
-    let frame = quad_frame(&mut harness);
+    let frame = quad_frame(&mut harness, false);
     let both = harness.render(&frame, SIZE, SIZE);
     log.assert_before("first:encode:0", "second:encode:0");
 

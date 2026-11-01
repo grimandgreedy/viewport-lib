@@ -3,9 +3,14 @@
 // Group 0, binding 0: ssaa_texture (Rgba16Float, w*factor x h*factor)
 // Group 0, binding 1: sampler (nearest : we do the averaging manually)
 // Group 0, binding 2: uniform { factor: u32, _pad: [u32;3] }
+// Group 0, binding 3: ssaa_fraction (R8Unorm, the scene pass's indirect fraction)
+// Group 0, binding 4: ssaa_depth (the supersampled scene depth)
 //
 // The vertex shader emits a fullscreen triangle. The fragment shader reads
-// factor^2 texels per output pixel and averages them (box filter).
+// factor^2 texels per output pixel and averages them (box filter). The
+// indirect fraction is averaged over the texels geometry covers, since the
+// composite applies it to geometry alone: a silhouette pixel takes its
+// surface's fraction, not one diluted by the background's.
 
 struct SsaaUniform {
     factor: u32,
@@ -17,6 +22,16 @@ struct SsaaUniform {
 @group(0) @binding(0) var ssaa_texture: texture_2d<f32>;
 @group(0) @binding(1) var ssaa_sampler: sampler;
 @group(0) @binding(2) var<uniform> ssaa_uniform: SsaaUniform;
+@group(0) @binding(3) var ssaa_fraction: texture_2d<f32>;
+@group(0) @binding(4) var ssaa_depth: texture_2d<f32>;
+
+// #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
+
+struct ResolveOut {
+    @location(0) colour: vec4<f32>,
+    @location(1) indirect_fraction: vec4<f32>,
+};
 
 struct VertexOut {
     @builtin(position) pos: vec4<f32>,
@@ -35,19 +50,29 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOut {
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOut) -> ResolveOut {
     let factor = ssaa_uniform.factor;
     let dims = vec2<u32>(textureDimensions(ssaa_texture));
     // Output pixel in the native-res target.
     let out_px = vec2<u32>(in.pos.xy);
     // Accumulate factor^2 SSAA texels.
     var sum = vec4<f32>(0.0);
+    var fraction = 0.0;
+    var covered = 0.0;
     for (var dy = 0u; dy < factor; dy = dy + 1u) {
         for (var dx = 0u; dx < factor; dx = dx + 1u) {
             let tx = min(out_px.x * factor + dx, dims.x - 1u);
             let ty = min(out_px.y * factor + dy, dims.y - 1u);
-            sum = sum + textureLoad(ssaa_texture, vec2<i32>(i32(tx), i32(ty)), 0);
+            let texel = vec2<i32>(i32(tx), i32(ty));
+            sum = sum + textureLoad(ssaa_texture, texel, 0);
+            if !viewport_depth_is_background(depth_texel(ssaa_depth, ssaa_sampler, texel)) {
+                fraction = fraction + textureLoad(ssaa_fraction, texel, 0).r;
+                covered = covered + 1.0;
+            }
         }
     }
-    return sum / f32(factor * factor);
+    let n = f32(factor * factor);
+    // Background alone keeps the clear value, wholly indirect.
+    let resolved_fraction = select(1.0, fraction / covered, covered > 0.0);
+    return ResolveOut(sum / n, vec4<f32>(resolved_fraction, 0.0, 0.0, 1.0));
 }

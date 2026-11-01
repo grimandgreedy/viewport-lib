@@ -434,7 +434,9 @@ pub struct PaintContext<'a> {
     /// (`Rgba16Float`) in `paint` on the HDR path and in `paint_transparent`
     /// (the OIT accumulation target) and `paint_foreground`; the renderer's
     /// configured output format in `paint` on the LDR path. Use it to select
-    /// the matching pipeline variant.
+    /// the matching pipeline variant. In `paint` and `paint_foreground` on the
+    /// HDR path the pass has a second target, the indirect fraction (see
+    /// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)).
     pub target_format: crate::gpu::TextureFormat,
     /// Draw handle for meshes the consumer uploaded through
     /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).

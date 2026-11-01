@@ -60,6 +60,7 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
                 sample_count: 1,
                 ldr_format: r.ldr_format,
                 depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == COLOUR_HDR,
         ),

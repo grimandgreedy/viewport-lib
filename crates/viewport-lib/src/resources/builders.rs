@@ -1182,6 +1182,11 @@ pub struct DualPipelineDesc<'a> {
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
     pub ldr_format: crate::gpu::TextureFormat,
+    /// The fragment entry the HDR variant uses to also write the scene pass's
+    /// indirect fraction at `@location(1)` (see
+    /// [`indirect_fraction_target`](crate::plugin_api::target_desc::indirect_fraction_target)).
+    /// `None` keeps `fragment_entry` and leaves the fraction unwritten.
+    pub indirect_fraction_entry: Option<&'a str>,
     /// Scene depth-stencil format, from
     /// [`DeviceResources::scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
     pub depth_format: crate::gpu::TextureFormat,
@@ -1189,9 +1194,9 @@ pub struct DualPipelineDesc<'a> {
 
 /// Build the LDR + HDR pair of a scene render pipeline from the parts that vary
 /// ([`DualPipelineDesc`]), holding the shared depth / stencil / target-write
-/// state constant. The two variants differ only in colour target format
-/// (`desc.ldr_format` vs `Rgba16Float`), which is the invariant `DualPipeline`
-/// encodes.
+/// state constant. The two variants differ in colour target format
+/// (`desc.ldr_format` vs `Rgba16Float`) and in the HDR variant's second
+/// target, the scene pass's indirect fraction.
 pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
@@ -1202,7 +1207,7 @@ pub fn build_dual_pipeline(
     }
 }
 
-/// One half of [`build_dual_pipeline`]: the HDR (`Rgba16Float`) pipeline when
+/// One half of [`build_dual_pipeline`]: the HDR scene-pass pipeline when
 /// `hdr`, else the LDR one in `desc.ldr_format`. For a type that builds each
 /// on first use rather than both together.
 pub fn build_dual_pipeline_variant(
@@ -1215,6 +1220,27 @@ pub fn build_dual_pipeline_variant(
     } else {
         desc.ldr_format
     };
+    let colour = crate::gpu::ColorTargetState {
+        format,
+        blend: desc.blend,
+        write_mask: crate::gpu::ColorWrites::ALL,
+    };
+    // The HDR variant draws into the scene pass and declares its second
+    // target.
+    let (targets, fragment_entry) = if hdr {
+        (
+            crate::plugin_api::SceneColourTargets::hdr(
+                colour,
+                desc.indirect_fraction_entry.is_some(),
+            ),
+            desc.indirect_fraction_entry.unwrap_or(desc.fragment_entry),
+        )
+    } else {
+        (
+            crate::plugin_api::SceneColourTargets::single(colour),
+            desc.fragment_entry,
+        )
+    };
     render_pipeline(
         device,
         RenderPipelineDesc {
@@ -1225,12 +1251,8 @@ pub fn build_dual_pipeline_variant(
             vertex_buffers: desc.vertex_buffers,
             fragment: Some(crate::gpu::FragmentState {
                 module: desc.shader,
-                entry_point: Some(desc.fragment_entry),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format,
-                    blend: desc.blend,
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
+                entry_point: Some(fragment_entry),
+                targets: targets.as_slice(),
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
             primitive: crate::gpu::PrimitiveState {

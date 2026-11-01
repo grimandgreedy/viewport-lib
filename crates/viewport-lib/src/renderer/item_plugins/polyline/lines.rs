@@ -178,10 +178,10 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
     let slot = i / 2;
     let skip_clip = slot & 1 != 0;
     let wireframe = slot & 2 != 0;
-    let fragment_entry = if skip_clip {
-        "fs_main_no_clip"
+    let (fragment_entry, scene_entry) = if skip_clip {
+        ("fs_main_no_clip", "fs_scene_no_clip")
     } else {
-        "fs_main"
+        ("fs_main", "fs_scene")
     };
     let instance_layout = [pl_instance_layout()];
     let endpoint_layout = [pl_endpoint_layout()];
@@ -201,6 +201,8 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
             depth_format: r.depth_format,
+            // Unlit: fraction 0.
+            indirect_fraction_entry: Some(scene_entry),
         }
     } else {
         crate::resources::builders::DualPipelineDesc {
@@ -218,6 +220,8 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
             depth_format: r.depth_format,
+            // Unlit: fraction 0.
+            indirect_fraction_entry: Some(scene_entry),
         }
     };
     crate::resources::builders::build_dual_pipeline_variant(&r.device, &desc, i & 1 != 0)

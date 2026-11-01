@@ -91,6 +91,7 @@ struct ClipVolumeUB {
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
 // #include "helpers/clip_volume_test.wgsl"
+// #include "helpers/scene_fragment.wgsl"
 
 @group(1) @binding(0) var<uniform> pl_uniform:  PolylineUniform;
 @group(1) @binding(1) var          lut_texture: texture_2d<f32>;
@@ -264,8 +265,7 @@ fn dash_discard(arc_dist: f32) {
     }
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Half-space clip-plane culling (section views).
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         let plane = clip_planes.planes[i];
@@ -278,11 +278,34 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     return in.colour;
 }
 
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
+}
+
 // Clip-exempt variant : used for clip object overlays (box/sphere/cylinder wireframes).
 // The overlay itself should always be fully visible so the user can see where each
 // clip volume is positioned, even when multiple clips are active.
-@fragment
-fn fs_main_no_clip(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_no_clip_body(in: VertexOut) -> vec4<f32> {
     dash_discard(in.arc_dist);
     return in.colour;
+}
+
+@fragment
+fn fs_main_no_clip(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_no_clip_body(in);
+}
+
+// `fs_main_no_clip` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene_no_clip(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_no_clip_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

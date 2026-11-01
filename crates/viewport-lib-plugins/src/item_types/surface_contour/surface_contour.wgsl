@@ -60,8 +60,7 @@ fn level(i: u32) -> f32 {
     return contour.levels[i / 4u][i % 4u];
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOutput) -> vec4<f32> {
     // Derivatives first, in uniform control flow.
     let s = in.scalar;
     let ds = fwidth(s);
@@ -102,4 +101,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
     return vec4<f32>(contour.colour.rgb, contour.colour.a * coverage);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOutput) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

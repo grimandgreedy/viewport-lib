@@ -323,6 +323,7 @@ return a;
         use crate::plugin_api::shared_wgsl as s;
         let sources = SHADERS.iter().map(|e| (e.name, e.source)).chain([
             ("SHARED_SCENE_LIGHTING_WGSL", s::SHARED_SCENE_LIGHTING_WGSL),
+            ("SHARED_SCENE_FRAGMENT_WGSL", s::SHARED_SCENE_FRAGMENT_WGSL),
             ("SHARED_CSM_WGSL", s::SHARED_CSM_WGSL),
             (
                 "SHARED_PUNCTUAL_SHADOW_WGSL",

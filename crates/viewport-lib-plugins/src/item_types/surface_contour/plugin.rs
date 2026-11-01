@@ -115,10 +115,21 @@ struct ContourRecipe {
 type ContourPipelines = viewport_lib::plugin_api::LazyPipelines<ContourRecipe, 2>;
 
 fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
-    let format = if i == 1 {
-        viewport_lib::resources::HDR_COLOR_FORMAT
+    let hdr = i == 1;
+    let colour = viewport_lib::gpu::ColorTargetState {
+        format: if hdr {
+            viewport_lib::resources::HDR_COLOR_FORMAT
+        } else {
+            r.ldr_format
+        },
+        blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+        write_mask: viewport_lib::gpu::ColorWrites::ALL,
+    };
+    // The HDR member draws in the scene pass. The lines are unlit: fraction 0.
+    let targets = if hdr {
+        viewport_lib::plugin_api::SceneColourTargets::hdr(colour, true)
     } else {
-        r.ldr_format
+        viewport_lib::plugin_api::SceneColourTargets::single(colour)
     };
     // Buffer 0 is the shared mesh vertex, read for its position alone.
     let position_layout = viewport_lib::gpu::VertexBufferLayout {
@@ -144,12 +155,8 @@ fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             vertex_buffers: &[position_layout, builders::scalar_attribute_layout(1)],
             fragment: Some(viewport_lib::gpu::FragmentState {
                 module: r.shader.get(),
-                entry_point: Some("fs_main"),
-                targets: &[Some(viewport_lib::gpu::ColorTargetState {
-                    format,
-                    blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                })],
+                entry_point: Some(if hdr { "fs_scene" } else { "fs_main" }),
+                targets: targets.as_slice(),
                 compilation_options: Default::default(),
             }),
             // Both sides: a two-sided surface shows its lines from behind, and

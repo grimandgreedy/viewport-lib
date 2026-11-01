@@ -128,6 +128,14 @@ pub(crate) enum TargetId {
     /// The opaque scene copy, with its mip chain, that transmissive meshes
     /// read.
     OpaqueCopy,
+    /// The share of each opaque pixel's light that is indirect (`R8Unorm`),
+    /// the scene pass's second colour attachment. Cleared to 1, so a pixel
+    /// nothing wrote counts as wholly indirect. The composite scales ambient
+    /// occlusion and contact shadows by it, so they darken the ambient term
+    /// and leave direct light and emission alone. A further per-pixel surface
+    /// attribute for a screen-space pass, such as a normal buffer, is added
+    /// the same way: another attachment every opaque scene pipeline declares.
+    IndirectFraction,
     /// The frame's output view.
     Output,
 }
@@ -178,7 +186,8 @@ impl TargetSet {
                 Self::of(T::HdrColour)
                     .with(T::HdrDepth)
                     .with(T::SsaaColour)
-                    .with(T::SurfaceStencil),
+                    .with(T::SurfaceStencil)
+                    .with(T::IndirectFraction),
             ),
         ) | TargetGroups::when(TargetGroups::BLOOM, self.contains(T::Bloom))
             | TargetGroups::when(TargetGroups::SSAO, self.contains(T::Ssao))

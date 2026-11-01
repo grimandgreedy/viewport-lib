@@ -178,6 +178,14 @@ impl PassTable {
         }
     }
 
+    /// Whether a pass that runs this frame reads the indirect fraction. The
+    /// scene pass always writes it, and stores it only then.
+    pub(crate) fn reads_indirect_fraction(&self) -> bool {
+        self.passes
+            .iter()
+            .any(|d| d.live && d.reads.contains(TargetId::IndirectFraction))
+    }
+
     /// The target groups the running passes read or write.
     pub(crate) fn groups(&self) -> crate::resources::TargetGroups {
         self.passes
@@ -270,7 +278,8 @@ impl ViewportRenderer {
                 TargetSet::of(T::SsaaColour)
             } else {
                 scene
-            },
+            }
+            .with(T::IndirectFraction),
         );
         table.declare(
             HdrPass::HizStore,
@@ -287,7 +296,7 @@ impl ViewportRenderer {
             "ssaa_resolve",
             ssaa,
             TargetSet::of(T::SsaaColour),
-            scene,
+            scene.with(T::IndirectFraction),
         );
         table.declare(
             HdrPass::SurfaceMask,
@@ -400,11 +409,18 @@ impl ViewportRenderer {
                 writes,
             );
         }
+        let external_producers = !self.post_effect_producers.is_empty() && !throttled;
         table.declare_side_effect(
             HdrPass::ExternalProducers,
             "external_producers",
-            !self.post_effect_producers.is_empty() && !throttled,
+            external_producers,
         );
+        // Ambient occlusion and contact shadows scale by the indirect
+        // fraction. An external producer may stand in for either.
+        let occludes = composite_reads.contains(T::Ssao)
+            || composite_reads.contains(T::ContactShadow)
+            || external_producers;
+        let composite_reads = composite_reads.with_if(T::IndirectFraction, occludes);
 
         let stages = pp.fxaa || self.post_effect_stages.iter().any(|e| e.stage.enabled());
         table.declare(

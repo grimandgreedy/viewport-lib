@@ -38,8 +38,7 @@ fn vs_main(@location(0) position: vec3<f32>) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Section-plane clipping.
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         let plane = clip_planes.planes[i];
@@ -69,4 +68,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var colour = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(u, 0.5), 0.0);
     colour.a   = colour.a * slice_ub.opacity;
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

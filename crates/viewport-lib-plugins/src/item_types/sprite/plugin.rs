@@ -392,7 +392,7 @@ impl SpritePlugin {
     fn draw_bucket(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
-        hdr: bool,
+        target: pipeline::SpritePass,
         group2: &viewport_lib::gpu::BindGroup,
         wanted: impl Fn(&SpriteGpuData) -> bool,
     ) {
@@ -408,7 +408,7 @@ impl SpritePlugin {
                 }
                 if !bound {
                     // Still compiling: this key's sprites draw next frame.
-                    let Some(pl) = gpu.pipelines.get(pipeline::sprite_index(key, hdr)) else {
+                    let Some(pl) = gpu.pipelines.get(pipeline::sprite_index(key, target)) else {
                         break;
                     };
                     pass.set_pipeline(pl);
@@ -612,8 +612,12 @@ impl ItemTypePlugin for SpritePlugin {
         // The depth attachment is writable in this pass and is the same buffer
         // the soft fade would sample, so group 2 gets the 1x1 fallback. A
         // depth-writing batch has no soft fade to lose by it.
-        let hdr = ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT;
-        self.draw_bucket(pass, hdr, &gpu.soft_fallback_bg, is_opaque);
+        let target = if ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT {
+            pipeline::SpritePass::Scene
+        } else {
+            pipeline::SpritePass::Ldr
+        };
+        self.draw_bucket(pass, target, &gpu.soft_fallback_bg, is_opaque);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -636,7 +640,12 @@ impl ItemTypePlugin for SpritePlugin {
         // The depth attachment is read-only here, so the live scene depth can
         // be sampled for the soft fade. The ready-made group matches the layout
         // these pipelines were built against.
-        self.draw_bucket(pass, true, ctx.scene_depth_bind_group, is_soft);
+        self.draw_bucket(
+            pass,
+            pipeline::SpritePass::DepthRead,
+            ctx.scene_depth_bind_group,
+            is_soft,
+        );
     }
 
     fn paint_transparent(

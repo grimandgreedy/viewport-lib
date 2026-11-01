@@ -10,6 +10,7 @@
 // is skipped: the cap lies on it, and testing it would discard at random.
 
 // #include "helpers/clip_bindings.wgsl"
+// #include "helpers/scene_fragment.wgsl"
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -44,8 +45,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOutput) -> vec4<f32> {
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         let plane = clip_planes.planes[i];
         if i != cap.own_plane && dot(in.world_pos, plane.xyz) + plane.w < 0.0 {
@@ -56,4 +56,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
     return cap.colour;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOutput) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

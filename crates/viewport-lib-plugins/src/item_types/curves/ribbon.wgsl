@@ -113,8 +113,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     // Section-plane clipping.
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         let plane = clip_planes.planes[i];
@@ -149,7 +148,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // Hemisphere ambient + directional lights via the shared helper. Ribbon is
     // already flipped per-face above, so the helper sees a forward-facing normal
     // and one-sided weighting is enough.
-    var shaded = apply_scene_lighting(n, base_colour.rgb, false, in.world_pos, lights_uniform);
+    let shaded_terms = scene_lighting_terms(n, false, in.world_pos, lights_uniform);
+    var shaded = base_colour.rgb * (shaded_terms.indirect + shaded_terms.direct);
+    scene_indirect_fraction = indirect_fraction(base_colour.rgb * shaded_terms.indirect, base_colour.rgb * shaded_terms.direct);
 
     // When `receive_shadows` is set, attenuate the lit result by the cascade
     // shadow map. Mirrors sprite_lit.wgsl's pattern: mix the fully-lit colour
@@ -172,8 +173,21 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             ) * (lights_uniform.hemisphere_intensity * camera.exposure);
             let ambient_rgb = base_colour.rgb * ambient;
             shaded = mix(ambient_rgb, shaded, shadow_factor);
+            scene_indirect_fraction = indirect_fraction(ambient_rgb, shaded - ambient_rgb);
         }
     }
 
     return vec4<f32>(shaded, alpha);
+}
+
+@fragment
+fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return fs_main_body(in, is_front);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut, @builtin(front_facing) is_front: bool) -> SceneFragment {
+    let colour = fs_main_body(in, is_front);
+    return scene_fragment(colour, scene_indirect_fraction);
 }

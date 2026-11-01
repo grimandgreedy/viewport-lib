@@ -44,6 +44,17 @@ fn build_cap(r: &CapRecipe, i: usize) -> crate::gpu::RenderPipeline {
             1,
         ),
     };
+    let hdr = i != CAP_LDR;
+    let colour = crate::gpu::ColorTargetState {
+        format,
+        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+        write_mask: crate::gpu::ColorWrites::ALL,
+    };
+    let targets = if hdr {
+        crate::plugin_api::SceneColourTargets::hdr(colour, true)
+    } else {
+        crate::plugin_api::SceneColourTargets::single(colour)
+    };
     crate::resources::builders::render_pipeline(
         &r.device,
         crate::resources::builders::RenderPipelineDesc {
@@ -54,12 +65,10 @@ fn build_cap(r: &CapRecipe, i: usize) -> crate::gpu::RenderPipeline {
             vertex_buffers: &[crate::resources::OverlayVertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: r.shader.get(),
-                entry_point: Some("fs_main"),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format,
-                    blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
+                entry_point: Some(if hdr { "fs_scene" } else { "fs_main" }),
+                // The HDR cap draws in the scene pass. Its flat colour is
+                // unlit: fraction 0.
+                targets: targets.as_slice(),
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
             primitive: crate::gpu::PrimitiveState {
