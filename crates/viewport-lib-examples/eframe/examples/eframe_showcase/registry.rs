@@ -76,7 +76,7 @@ pub(crate) const SHOWCASES: [Entry; 60] = [
     ),
     entry(
         6,
-        "Post-Processing",
+        "View Transform & Post-Processing",
         M::PostProcess,
         &crate::showcase_06_post_process::SHOWCASE,
     ),
