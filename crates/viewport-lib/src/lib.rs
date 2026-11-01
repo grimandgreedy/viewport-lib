@@ -158,7 +158,7 @@ mod util;
 pub mod camera;
 /// BVH picking, marching cubes, isolines, and cap geometry.
 pub mod geometry;
-/// Gizmo, snap, selection, picking, and input.
+/// Snap, selection, picking, widgets, and input.
 pub mod interaction;
 /// Notices the renderer reports while it keeps drawing.
 pub mod notice;
@@ -200,9 +200,6 @@ pub use geometry::bvh;
 pub use geometry::primitives;
 pub use interaction::clip_plane;
 pub use interaction::input;
-pub use interaction::manipulation;
-pub use interaction::manipulation::gizmo;
-pub use interaction::manipulation::gizmo_overlay;
 pub use interaction::query::picking;
 pub use interaction::query::snap;
 pub use interaction::select::selection;
@@ -270,9 +267,6 @@ pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton, NavigationMode,
 };
-pub use interaction::manipulation::gizmo::{
-    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_centre_for_pivot,
-};
 // New input pipeline : re-exported at crate root for convenience.
 pub use camera::controllers::{
     FirstPersonCameraController, OrbitCameraController, ThirdPersonCameraController,
@@ -284,13 +278,6 @@ pub use interaction::input::{
     ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase, TouchSettings, ViewportBinding,
     ViewportContext, ViewportEvent, ViewportGesture, ViewportInput, forward_to_viewport,
     manipulation_bindings, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
-};
-pub use interaction::manipulation::solvers::{
-    angular_rotation_from_cursor, constrained_scale, constrained_translation,
-};
-pub use interaction::manipulation::{
-    GizmoInfo, ManipResult, ManipulationContext, ManipulationController, ManipulationKind,
-    ManipulationState, TransformDelta,
 };
 
 pub use interaction::widgets::{
@@ -396,9 +383,9 @@ pub use resources::{
 
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, GpuFrameContext,
-    GpuPlugin, GpuPluginId, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp,
-    PostPaintTargets, RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
-    RuntimePlugin, RuntimePluginId, RuntimeResources, RuntimeStats, RuntimeStepContext,
-    SelectionOp, SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
+    GpuPlugin, GpuPluginId, JobPoll, JobSender, JobSlot, NodeTransformOp, PostPaintTargets,
+    RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase, RuntimePlugin,
+    RuntimePluginId, RuntimeResources, RuntimeStats, RuntimeStepContext, SelectionOp,
+    SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
     TransformWriteback, ViewportRuntime,
 };

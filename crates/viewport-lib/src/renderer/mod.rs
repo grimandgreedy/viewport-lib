@@ -277,7 +277,7 @@ pub(crate) struct ViewportSlot {
 /// One viewport's prepared 2D overlay pass: the vertex and storage buffers the
 /// overlay prepare writes and the draw lists the paint walks. Kept per viewport
 /// so `prepare_viewport` for one viewport does not overwrite the overlays
-/// (gizmo, axes indicator, labels) prepared for another before it renders.
+/// (shapes, axes indicator, labels) prepared for another before it renders.
 pub(crate) struct ViewportOverlay {
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     pub label_gpu_data: Option<crate::resources::LabelGpuData>,
@@ -3766,9 +3766,6 @@ impl ViewportRenderer {
                 usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-
-            // The transform gizmo and the axes indicator now draw through the 2D
-            // overlay system, so no per-viewport geometry buffers are needed for them.
 
             self.viewport_slots.push(ViewportSlot {
                 camera_buf,

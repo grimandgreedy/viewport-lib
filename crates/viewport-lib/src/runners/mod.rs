@@ -47,7 +47,6 @@ use crate::interaction::input::{
     ActionFrame, BindingPreset, InputOwnership, TouchSettings, ViewportBinding, ViewportContext,
     ViewportEvent,
 };
-use crate::interaction::manipulation::{ManipResult, ManipulationController};
 use crate::interaction::select::selection::Selection;
 use crate::resources::DeviceResources;
 use crate::runtime::ViewportRuntime;
@@ -71,7 +70,6 @@ pub struct ViewportInstance {
     selection: Selection,
     camera: Camera,
     input: ViewportInput,
-    manip: Option<ManipulationController>,
     runtime: Option<ViewportRuntime>,
 
     /// Retained frame. Its `effects` and `viewport` sub-frames hold persistent
@@ -80,8 +78,6 @@ pub struct ViewportInstance {
     frame: FrameData,
     /// Resolved input for the current frame. Set by [`resolve`](Self::resolve).
     action: ActionFrame,
-    /// Result of the last manipulation update, surfaced via [`last_manip`](Self::last_manip).
-    last_manip: ManipResult,
 
     /// Viewport size in logical pixels, recorded by [`begin_frame`](Self::begin_frame).
     viewport_size: [f32; 2],
@@ -237,14 +233,12 @@ impl ViewportInstance {
             selection: Selection::new(),
             camera: Camera::default(),
             // The default preset carries the manipulation keybindings (G/R/S, axis
-            // constraints) as well as camera navigation, so an instance with a
-            // ManipulationController resolves them without extra setup.
+            // constraints) as well as camera navigation, so a host's transform
+            // gizmo reads them from this frame without extra setup.
             input: ViewportInput::from_preset(BindingPreset::Default),
-            manip: None,
             runtime: None,
             frame: FrameData::default(),
             action: ActionFrame::default(),
-            last_manip: ManipResult::None,
             viewport_size: [1.0, 1.0],
             pixels_per_point: 1.0,
             outline_selected: defaults.outline_selected,
@@ -289,17 +283,6 @@ impl ViewportInstance {
     /// using the `add_*` methods.
     pub fn with_runtime(mut self, runtime: ViewportRuntime) -> Self {
         self.runtime = Some(runtime);
-        self
-    }
-
-    /// Attach a [`ManipulationController`] for move/rotate/scale sessions.
-    ///
-    /// Without it, [`update_orbit`](Self::update_orbit) skips the manipulation
-    /// step entirely. With it, the controller runs each frame and its result is
-    /// available from [`last_manip`](Self::last_manip); applying that result to
-    /// scene nodes stays with the application.
-    pub fn with_manipulation(mut self, manip: ManipulationController) -> Self {
-        self.manip = Some(manip);
         self
     }
 
@@ -411,27 +394,6 @@ impl ViewportInstance {
     /// The most recently resolved [`ActionFrame`].
     pub fn action_frame(&self) -> &ActionFrame {
         &self.action
-    }
-
-    /// The result of the last manipulation update. [`ManipResult::None`] when no
-    /// controller is attached or nothing happened this frame.
-    pub fn last_manip(&self) -> ManipResult {
-        self.last_manip
-    }
-
-    /// Whether a move/rotate/scale session is currently active. An application driving
-    /// its own camera (first-person, fly) uses this to suppress camera motion
-    /// while a manipulation drag owns the pointer, the way
-    /// [`update_orbit`](Self::update_orbit) suppresses orbit internally.
-    pub fn is_manipulating(&self) -> bool {
-        self.manip.as_ref().is_some_and(|m| m.is_active())
-    }
-
-    /// Snapshot of the active manipulation session, or `None` when idle. The
-    /// `centre` field is the pivot to rotate and scale about when applying a
-    /// [`last_manip`](Self::last_manip) delta to the selection.
-    pub fn manip_state(&self) -> Option<crate::interaction::manipulation::ManipulationState> {
-        self.manip.as_ref().and_then(|m| m.state())
     }
 
     // ---- camera ---------------------------------------------------------------

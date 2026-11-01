@@ -13,8 +13,9 @@
 //! 2. **The clip-plane handles**, [`clip_plane::hit_test_plane_quad`] and
 //!    [`hit_test_normal_handle`](clip_plane::hit_test_normal_handle), when a clip
 //!    object is being edited.
-//! 3. **The transform gizmo**, [`manipulation::gizmo::Gizmo::hit_test`]. Drawn over
-//!    the scene and depth-independent, so it wins against the geometry under it.
+//! 3. **A transform gizmo**, when the application runs one (`viewport-lib-gizmo`
+//!    is one). Drawn over the scene and depth-independent, so it wins against the
+//!    geometry under it.
 //! 4. **Scene picking**, [`query`](crate::interaction::query). Whatever is left.
 //!
 //! Application widgets drawn over the viewport are hit-tested before any of these,
@@ -27,11 +28,8 @@
 /// `crate::interaction::input` path.
 pub use viewport_lib_input::input;
 /// Interactive clip-object manipulator: position and orient section planes (and the
-/// other clip shapes' visuals). Kept separate from `manipulation` (the gizmo) so the
-/// two can be lifted to separate companion crates independently.
+/// other clip shapes' visuals).
 pub mod clip_plane;
-/// Object manipulation controller (move, rotate, scale with constraints and numeric input).
-pub mod manipulation;
 /// Scene queries: ray-cast picking and transform snapping.
 pub mod query;
 /// Selection state: multi-select, sub-object references, and pick masks.

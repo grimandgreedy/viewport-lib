@@ -578,7 +578,7 @@ impl InputCtx<'_> {
     }
 
     /// Send one event to this window's viewport so it drives picking, selection, and
-    /// manipulation this frame. Skip an event to keep it from the viewport.
+    /// the frame's resolved actions. Skip an event to keep it from the viewport.
     pub fn forward(&mut self, event: ViewportEvent) {
         self.session.handle_event(event);
     }

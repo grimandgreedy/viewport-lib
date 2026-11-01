@@ -1,6 +1,5 @@
 use super::*;
 use crate::Colour;
-use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::query::snap::ConstraintOverlay;
 use crate::renderer::SubSelectionRef;
 use crate::resources::CameraUniform;
@@ -979,9 +978,10 @@ impl Default for ViewportFrame {
 
 /// Interaction and selection visualization state for one frame.
 ///
-/// Groups the gizmo, selection overlays, constraint guides, outline, and
-/// x-ray state : everything that communicates selection and interaction
-/// feedback to the user.
+/// Groups the selection overlays, constraint guides, outline, and x-ray
+/// state: everything that communicates selection and interaction feedback to
+/// the user. A transform gizmo draws through the overlay frame instead (see
+/// `viewport-lib-gizmo`).
 #[non_exhaustive]
 pub struct InteractionFrame {
     /// Selection version counter from `Selection::version()`. Default: 0.
@@ -989,14 +989,6 @@ pub struct InteractionFrame {
     /// The renderer uses this to skip batch rebuild and GPU upload when selection
     /// state has not changed since the previous frame.
     pub selection_generation: u64,
-    /// Gizmo model matrix. Some = selected object exists and gizmo should render.
-    pub gizmo_model: Option<glam::Mat4>,
-    /// Current gizmo interaction mode.
-    pub gizmo_mode: GizmoMode,
-    /// Current hovered gizmo axis.
-    pub gizmo_hovered: GizmoAxis,
-    /// Orientation for gizmo space (identity for world, object orientation for local).
-    pub gizmo_space_orientation: glam::Quat,
     /// Constraint guide lines to render this frame.
     pub constraint_overlays: Vec<ConstraintOverlay>,
     /// Draw a stencil-outline ring around selected objects. Default: false.
@@ -1034,10 +1026,6 @@ impl Default for InteractionFrame {
     fn default() -> Self {
         Self {
             selection_generation: 0,
-            gizmo_model: None,
-            gizmo_mode: GizmoMode::Translate,
-            gizmo_hovered: GizmoAxis::None,
-            gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
             outline_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),

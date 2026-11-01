@@ -51,10 +51,8 @@ pub mod visual;
 /// Project a screen-space pointer drag onto a world-space plane normal,
 /// returning the signed distance delta along the normal.
 ///
-/// This is the clip-plane equivalent of `project_drag_onto_axis` in `gizmo.rs`,
-/// generalised to an arbitrary axis (the plane normal). The pointer delta is
-/// projected onto the screen-space direction of the normal and converted back
-/// to world units.
+/// The pointer delta is projected onto the screen-space direction of the
+/// normal and converted back to world units.
 pub fn project_drag_onto_normal(
     pointer_delta: glam::Vec2,
     plane_normal: glam::Vec3,

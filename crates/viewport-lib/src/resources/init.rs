@@ -1014,9 +1014,6 @@ impl DeviceResources {
 
                 mark("shadow_pipelines");
 
-                // The transform gizmo no longer has its own pipeline or geometry: it
-                // draws through the 2D overlay system (see `gizmo_overlay`).
-
                 // ------------------------------------------------------------------
                 // Ground plane pipeline
                 //

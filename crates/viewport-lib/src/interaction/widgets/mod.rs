@@ -1,11 +1,10 @@
 //! Interactive 3D probe and region widgets.
 //!
-//! Each widget is a pure CPU state struct (like `Gizmo`) that the host app owns.
+//! Each widget is a pure CPU state struct that the host app owns.
 //! Push render items from the widget into `SceneFrame` each frame, call `update()`
 //! to advance state, and read public fields for results.
 //!
-//! Suppress orbit while a widget is active using the same pattern as
-//! `ManipulationController`:
+//! Suppress orbit while a widget is active:
 //!
 //! ```rust,ignore
 //! if probe.is_active() {
@@ -44,7 +43,6 @@ use crate::renderer::RenderCamera;
 /// Per-frame input state passed to widget `update()` methods.
 ///
 /// Build this from the `ActionFrame` and `CameraFrame` your app already has.
-/// Mirrors the shape of [`crate::ManipulationContext`].
 #[derive(Clone, Debug)]
 pub struct WidgetContext {
     /// Camera state for this frame (used for ray construction and drag projection).

@@ -44,7 +44,7 @@
 //! | Prepare      | 100   | First. Update time-dependent state before queries. |
 //! | Pick         | 200   | Ray-cast and object picking.                       |
 //! | Select       | 300   | Selection updates driven by pick results.          |
-//! | Manipulate   | 400   | Gizmo drag and keyboard transform sessions.        |
+//! | Manipulate   | 400   | Transform edits from a host tool (none built in).  |
 //! | Animate      | 500   | Procedural or keyframe animation.                  |
 //! | Simulate     | 600   | Physics or simulation. Fixed timestep: runs N times per frame. |
 //! | PostSimulate | 700   | After all Simulate iterations, before Writeback.   |

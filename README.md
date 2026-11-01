@@ -24,7 +24,7 @@
     - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
 - **Lighting**: photometric light units (lux, candela, lumens) with physical-camera and automatic exposure; cascaded, point-light, and contact shadows; image-based lighting; baked lightmaps.
 - **Materials & effects**: PBR metallic-roughness shading; bloom, SSAO, and depth of field.
-- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
+- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection, snapping helpers and constraint guides for transform tools (the transform gizmo itself is the separate `viewport-lib-gizmo` crate)
 - **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices
 - **Integration**: drop a viewport into any wgpu app (eframe/egui, winit, iced, Slint, bevy) through event adapters.
 - **Performance**: GPU-driven frustum culling and mesh instancing; async streaming uploads with VRAM budgeting; mipmapped and block-compressed textures.

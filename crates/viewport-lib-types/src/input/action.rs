@@ -86,5 +86,7 @@ pub enum Action {
     /// never acts on it; the resolver reports it like any other action, so an
     /// application shortcut gets the same gestures, modifiers and keyboard
     /// ownership as a built-in one. Give each shortcut its own constant.
+    /// Library crates take values from `0x1000_0000` upwards; an application
+    /// keeps the range below.
     Custom(u32),
 }

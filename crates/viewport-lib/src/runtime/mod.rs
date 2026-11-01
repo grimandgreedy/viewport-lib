@@ -54,7 +54,7 @@ pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
 pub mod resources;
 pub mod snapshot;
-/// Built-in interaction systems: SelectionSystem and ManipulationSystem.
+/// Built-in interaction systems: SelectionSystem.
 pub mod systems;
 pub mod timestep;
 
@@ -71,7 +71,7 @@ pub use output::{
 pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
-pub use systems::{ManipulationSystem, SelectionSystem};
+pub use systems::SelectionSystem;
 pub use timestep::{DEFAULT_MAX_STEPS, FixedStepIter, FixedTimestep};
 pub use viewport_lib_types::plugin::RuntimePluginId;
 
@@ -1618,7 +1618,6 @@ pub struct ViewportRuntime {
     snapshots: TransformSnapshotTable,
     step_index: u64,
     selection_system: Option<SelectionSystem>,
-    manipulation_system: Option<ManipulationSystem>,
     camera_follow: Option<CameraFollow>,
     /// Typed resource registry shared across plugins each frame.
     resources: RuntimeResources,
@@ -1649,7 +1648,6 @@ impl ViewportRuntime {
             snapshots: TransformSnapshotTable::new(),
             step_index: 0,
             selection_system: None,
-            manipulation_system: None,
             camera_follow: None,
             resources: RuntimeResources::new(),
             prev_node_ids: std::collections::HashSet::new(),
@@ -1674,30 +1672,6 @@ impl ViewportRuntime {
     pub fn with_selection_system(mut self) -> Self {
         self.selection_system = Some(SelectionSystem::new());
         self
-    }
-
-    /// Enable the built-in manipulation system.
-    ///
-    /// The ManipulationSystem runs before the `Manipulate` phase each frame. It
-    /// drives G/R/S sessions and gizmo drag from RuntimeFrameContext inputs, writing
-    /// transform changes via TransformWriteback.
-    pub fn with_manipulation_system(mut self) -> Self {
-        self.manipulation_system = Some(ManipulationSystem::new());
-        self
-    }
-
-    /// True while the built-in manipulation system has an active G/R/S session or gizmo drag.
-    ///
-    /// Use this to suppress orbit camera movement while manipulating objects.
-    pub fn is_manipulating(&self) -> bool {
-        self.manipulation_system
-            .as_ref()
-            .map_or(false, |m| m.is_active())
-    }
-
-    /// Access the built-in manipulation system, if enabled.
-    pub fn manipulation_system(&self) -> Option<&ManipulationSystem> {
-        self.manipulation_system.as_ref()
     }
 
     /// Register a plugin. Plugins run in ascending priority order each frame.
@@ -2174,12 +2148,6 @@ impl ViewportRuntime {
             &mut step_timings,
         );
 
-        // Built-in manipulation system runs before the Manipulate range.
-        if self.manipulation_system.is_some() {
-            let mut manip_sys = self.manipulation_system.take().unwrap();
-            manip_sys.step(frame, scene, selection, &mut writeback, &mut output);
-            self.manipulation_system = Some(manip_sys);
-        }
         // Manipulate + Animate: [MANIPULATE, SIMULATE)
         run_range(
             &mut plugins,

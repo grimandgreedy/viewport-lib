@@ -9,8 +9,8 @@
 
 use viewport_lib::wgpu;
 use viewport_lib::{
-    ClipObject, Colour, GizmoAxis, GizmoMode, GroundPlaneMode, LabelItem, OverlayFill,
-    OverlayShape, OverlayShapeItem, PipelineMode, RetainedOverlay, ViewportId,
+    ClipObject, Colour, GroundPlaneMode, LabelItem, OverlayFill, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, PipelineMode, RetainedOverlay, ViewportId,
 };
 
 mod common;
@@ -286,38 +286,55 @@ fn retained_overlays_draw_in_their_own_viewport() {
 }
 
 #[test]
-fn gizmo_draws_in_its_own_viewport() {
+fn shapes_and_polylines_draw_in_their_own_viewport() {
+    // A tool such as a transform gizmo draws an SDF shape batch and a polyline
+    // batch in the same frame; each viewport keeps both of its own.
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let gizmo = |frame: &mut FrameData, x: f32| {
-        frame.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
-            glam::Vec3::splat(1.0),
-            glam::Quat::IDENTITY,
-            glam::Vec3::new(x, 0.0, 0.0),
-        ));
-        frame.interaction.gizmo_mode = GizmoMode::Translate;
-        frame.interaction.gizmo_hovered = GizmoAxis::None;
+    let white = Colour::linear(1.0, 1.0, 1.0, 1.0);
+    let half = W as f32 / 2.0;
+    let tool = |frame: &mut FrameData, x: f32| {
+        frame.overlays.shapes.push(
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 0.0 },
+                [x, 0.0],
+                [half, H as f32 / 2.0],
+            )
+            .with_fill(OverlayFill::Solid(white)),
+        );
+        let (y0, y1) = (H as f32 / 2.0, H as f32);
+        frame.overlays.polylines.push(
+            OverlayPolylineItem::new(vec![[x, y0], [x + half, y0], [x + half, y1], [x, y1]])
+                .with_closed(true)
+                .with_fill(OverlayFill::Solid(white))
+                .with_colour(white)
+                .with_thickness(1.0),
+        );
     };
     for mode in MODES {
         let mut r = renderer(&device);
         let (a, b) = (r.create_viewport(&device), r.create_viewport(&device));
         let mut fa = base_frame(a, mode);
-        gizmo(&mut fa, -2.5);
+        tool(&mut fa, 0.0);
         let mut fb = base_frame(b, mode);
-        gizmo(&mut fb, 2.5);
+        tool(&mut fb, half);
         let imgs = render_all(&mut r, &device, &queue, &[(a, fa), (b, fb)]);
-        let (al, ar) = (imgs[0].lit_left(any_lit), imgs[0].lit_right(any_lit));
-        let (bl, br) = (imgs[1].lit_left(any_lit), imgs[1].lit_right(any_lit));
-        assert!(
-            al > 20 && ar < al / 4,
-            "{mode:?}: viewport A gizmo left={al} right={ar}"
-        );
-        assert!(
-            br > 20 && bl < br / 4,
-            "{mode:?}: viewport B gizmo left={bl} right={br}"
-        );
+        let (top, bottom) = (H / 4, H * 3 / 4);
+        for (name, img, own, other) in [
+            ("A", &imgs[0], W / 4, W * 3 / 4),
+            ("B", &imgs[1], W * 3 / 4, W / 4),
+        ] {
+            assert!(
+                bright(img.rgb(own, top)) && bright(img.rgb(own, bottom)),
+                "{mode:?}: viewport {name} lost its own shape or polyline"
+            );
+            assert!(
+                !any_lit(img.rgb(other, top)) && !any_lit(img.rgb(other, bottom)),
+                "{mode:?}: viewport {name} drew another viewport's shape or polyline"
+            );
+        }
     }
 }
 

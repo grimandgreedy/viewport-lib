@@ -712,7 +712,7 @@ pub struct FrameData {
     pub scene: SceneFrame,
     /// Viewport presentation settings (background, grid, axes indicator).
     pub viewport: ViewportFrame,
-    /// Interaction and selection visualization (gizmo, outline, x-ray).
+    /// Interaction and selection visualisation (outline, x-ray, constraint guides).
     pub interaction: InteractionFrame,
     /// Global rendering effects (lighting, clipping, post-process).
     pub effects: EffectsFrame,
@@ -973,9 +973,6 @@ macro_rules! emit_draw_calls {
                 }
             }
         }
-
-        // The transform gizmo now draws in the 2D overlay pass; see
-        // `gizmo_overlay::build_gizmo_overlays` and `prepare_overlay_labels`.
 
         // Constraint guide line pass.
         if let Some(slot) = _vp_slot {

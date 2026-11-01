@@ -1,4 +1,4 @@
-//! winit + wgpu integration for viewport-lib with scene graph, picking, and gizmos.
+//! winit + wgpu integration for viewport-lib with scene graph and picking.
 //!
 //! Uses renderer.owned().render() for the full HDR pipeline -- no manual
 //! encoder or depth buffer needed from the caller.

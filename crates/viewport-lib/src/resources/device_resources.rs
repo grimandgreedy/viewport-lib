@@ -613,8 +613,6 @@ pub struct DeviceResources {
     /// Which form each group 0 binding takes here; `None` on the overlay-only
     /// tier, which has no lit group 0.
     pub(crate) group0_profile: Option<crate::resources::group0::Group0Profile>,
-    // --- Gizmo resources ---
-
     // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
     /// Floor grid, axes indicator, base overlay pipelines, and constraint guide
     /// lines. See `resources::overlay::guides::OverlayGuideResources`.

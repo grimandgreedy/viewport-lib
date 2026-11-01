@@ -1,6 +1,6 @@
 //! Per-viewport interaction prepare passes: clip-plane and clip-volume
-//! uniforms, outline/x-ray masks, gizmo and axes geometry, the outline
-//! offscreen edge-detection pass, and sub-object highlight geometry.
+//! uniforms, outline/x-ray masks, the outline offscreen edge-detection pass,
+//! and sub-object highlight geometry.
 
 use super::*;
 use crate::renderer::overlay_buffers::OverlayGeometrySlot;
@@ -565,9 +565,8 @@ impl ViewportRenderer {
         // viewport without assembling a `FrameStats`.
         self.last_stats.cap_meshes_built = caps_built;
 
-        // The transform gizmo and the axes indicator are generated as 2D overlay
-        // primitives during the overlay prepare (see `gizmo_overlay_items` and
-        // `axes_overlay_items`); no per-viewport mesh upload happens here anymore.
+        // The axes indicator is generated as 2D overlay primitives during the
+        // overlay prepare (see `axes_overlay_items`).
 
         // ------------------------------------------------------------------
         // Assign all interaction state to the per-viewport slot.

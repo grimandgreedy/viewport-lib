@@ -568,45 +568,6 @@ fn clip_data(clips: &[crate::resources::ClipShapeGpu]) -> &[crate::resources::Cl
 }
 
 impl ViewportRenderer {
-    /// Build the transform-gizmo overlay items for this frame, if a gizmo is
-    /// active. Returns `(shapes, polylines)` in the overlay coordinate space,
-    /// ready to merge into the viewport's overlay batches. Empty when
-    /// `frame.interaction.gizmo_model` is `None`.
-    ///
-    /// The gizmo used to draw through its own always-on-top 3D pipeline; it now
-    /// projects to 2D overlay primitives here so no dedicated GPU resources are
-    /// needed. Centre and screen scale come straight out of the gizmo model
-    /// matrix the host already supplies (translation and uniform scale).
-    fn gizmo_overlay_items(
-        &self,
-        frame: &FrameData,
-    ) -> (
-        Vec<crate::renderer::types::OverlayShapeItem>,
-        Vec<crate::renderer::types::OverlayPolylineItem>,
-    ) {
-        let mut shapes = Vec::new();
-        let mut polylines = Vec::new();
-        if let Some(model) = frame.interaction.gizmo_model {
-            let (scale, _rot, translation) = model.to_scale_rotation_translation();
-            // Projected relative to the origin, subtracted in f64.
-            let cam = &self.origin.camera(&frame.camera.render_camera);
-            let translation = self.origin.rel(translation);
-            crate::interaction::manipulation::gizmo_overlay::build_gizmo_overlays(
-                frame.interaction.gizmo_mode,
-                cam.view_proj(),
-                cam.forward(),
-                frame.camera.viewport_size,
-                translation,
-                scale.x,
-                frame.interaction.gizmo_hovered,
-                frame.interaction.gizmo_space_orientation,
-                &mut shapes,
-                &mut polylines,
-            );
-        }
-        (shapes, polylines)
-    }
-
     /// The bottom-left XYZ orientation indicator, emitted as screen-space overlay
     /// shapes (axis lines, circles, rings, letters) into the shared shape pass.
     /// Empty when `show_axes_indicator` is off or the viewport has no area.
@@ -690,7 +651,6 @@ impl ViewportRenderer {
         // Counted before any of the paths below can skip a group, so the
         // submitted/drawn pair carries the skips.
         self.overlay_retained_counters.submitted = frame.overlays.retained.len() as u32;
-        let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
         let has_vector_shape = frame.overlays.shapes.iter().any(|s| {
             matches!(
                 &s.shape,
@@ -700,7 +660,6 @@ impl ViewportRenderer {
         let has_overlay = !frame.overlays.labels.is_empty()
             || !frame.overlays.glyph_runs.is_empty()
             || !frame.overlays.polylines.is_empty()
-            || !gizmo_polylines.is_empty()
             || has_vector_shape
             || !frame.overlays.retained.is_empty();
         if has_overlay {
@@ -763,14 +722,7 @@ impl ViewportRenderer {
                 };
 
                 // --- Polylines (between shapes and labels in z order) ---
-                // The gizmo's rings, plane quads, cube faces, and centre handle
-                // ride along here as generated polylines.
-                for poly in frame
-                    .overlays
-                    .polylines
-                    .iter()
-                    .chain(gizmo_polylines.iter())
-                {
+                for poly in frame.overlays.polylines.iter() {
                     if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1671,9 +1623,6 @@ impl ViewportRenderer {
         // SDF overlay shapes
         // ------------------------------------------------------------------
         ov.overlay_shape_gpu_data = None;
-        // The gizmo's arrow shafts and cone heads are generated as overlay
-        // shapes; they merge into the shape batch here (see `gizmo_overlay`).
-        let (gizmo_shapes, _) = self.gizmo_overlay_items(frame);
         // The bottom-left orientation indicator draws as overlay shapes too.
         let axes_shapes = self.axes_overlay_items(frame);
         let has_textured_polyline_fill = frame.overlays.polylines.iter().any(|p| {
@@ -1683,7 +1632,6 @@ impl ViewportRenderer {
                 && p.points.len() >= 3
         });
         if !frame.overlays.shapes.is_empty()
-            || !gizmo_shapes.is_empty()
             || !axes_shapes.is_empty()
             || has_textured_polyline_fill
         {
@@ -1696,7 +1644,6 @@ impl ViewportRenderer {
                     .overlays
                     .shapes
                     .iter()
-                    .chain(gizmo_shapes.iter())
                     .chain(axes_shapes.iter())
                     .collect();
                 sorted.sort_by_key(|s| s.z_order);
