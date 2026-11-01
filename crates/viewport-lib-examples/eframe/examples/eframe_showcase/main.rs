@@ -76,7 +76,6 @@ mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
 mod showcase_59_vector_art;
 mod showcase_60_glass_and_layers;
-mod showcase_61_large_worlds;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
@@ -263,7 +262,6 @@ fn main() -> eframe::Result {
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 va_state: showcase_59_vector_art::VectorArtState::default(),
                 glass_state: showcase_60_glass_and_layers::GlassState::default(),
-                worlds_state: showcase_61_large_worlds::LargeWorldsState::default(),
                 cut_state: showcase_18_cuts::CutViewsState::default(),
                 last_cluster_stats: None,
             }))
@@ -336,7 +334,6 @@ enum ShowcaseMode {
     PhysicallyBasedSurfaces,
     VectorArt,
     GlassAndLayers,
-    LargeWorlds,
 }
 
 // `ShowcaseMode::label` and the menu order live in `registry.rs`.
@@ -561,7 +558,6 @@ pub(crate) struct App {
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
     pub(crate) va_state: showcase_59_vector_art::VectorArtState,
     pub(crate) glass_state: showcase_60_glass_and_layers::GlassState,
-    pub(crate) worlds_state: showcase_61_large_worlds::LargeWorldsState,
     pub(crate) cut_state: showcase_18_cuts::CutViewsState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
@@ -1146,7 +1142,6 @@ impl App {
         if self.mode == mode {
             return;
         }
-        self.mode.showcase().leave(self);
         self.mode = mode;
         self.mode_gen = self.mode_gen.wrapping_add(1);
         if let Some(cam) = shared::opening_camera(mode) {
@@ -1311,14 +1306,6 @@ pub(crate) trait Showcase {
 
     /// Route a plain viewport click that no gizmo or widget consumed.
     fn on_click(&self, _app: &mut crate::App, _cx: &crate::ClickCtx) {}
-
-    /// Route the GPU pick a click asked for (through `App::pending_pick`),
-    /// resolved against the frame just drawn.
-    fn on_pick(&self, _app: &mut crate::App, _hit: Option<vpl::PickHit>) {}
-
-    /// The selector is switching away from this showcase: turn off anything
-    /// it left running in the renderer, such as a post-effect stage.
-    fn leave(&self, _app: &mut crate::App) {}
 
     /// Set up step `step` of a `VPL_CAPTURE` tour (a sub-tab or a setting
     /// worth a picture). Step 0 is the showcase as it opens. Return false
@@ -1792,7 +1779,7 @@ impl App {
                     showcase_46_decals::decal46_place(self, &h);
                 }
             }
-            _ => self.mode.showcase().on_pick(self, hit),
+            _ => {}
         }
     }
 }
