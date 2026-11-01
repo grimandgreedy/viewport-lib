@@ -304,7 +304,7 @@ pub(crate) fn scene(
                 radius: st.spot_radius,
             };
             spot.colour = Colour::linear_rgb(1.0, 0.85, 0.65);
-            spot.intensity = 12.0;
+            spot.intensity = 25.0;
             spot.cast_shadows = st.caster == Caster::Spot;
             _t.lights = vec![sun, spot];
             _t.shadows.enabled = true;
