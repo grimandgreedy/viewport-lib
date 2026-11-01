@@ -75,6 +75,7 @@ mod showcase_56_submesh_materials;
 mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
 mod showcase_59_vector_art;
+mod showcase_60_glass_and_layers;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
@@ -260,6 +261,7 @@ fn main() -> eframe::Result {
                 surfaces_state:
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 va_state: showcase_59_vector_art::VectorArtState::default(),
+                glass_state: showcase_60_glass_and_layers::GlassState::default(),
                 cut_state: showcase_18_cuts::CutViewsState::default(),
                 last_cluster_stats: None,
             }))
@@ -331,6 +333,7 @@ enum ShowcaseMode {
     PhotometricLighting,
     PhysicallyBasedSurfaces,
     VectorArt,
+    GlassAndLayers,
 }
 
 // `ShowcaseMode::label` and the menu order live in `registry.rs`.
@@ -554,6 +557,7 @@ pub(crate) struct App {
     // --- Showcase 58: Physically-Based Surfaces (shading parity + emissive/IBL) ---
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
     pub(crate) va_state: showcase_59_vector_art::VectorArtState,
+    pub(crate) glass_state: showcase_60_glass_and_layers::GlassState,
     pub(crate) cut_state: showcase_18_cuts::CutViewsState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the

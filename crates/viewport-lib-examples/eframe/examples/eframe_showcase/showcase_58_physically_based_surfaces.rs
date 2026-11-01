@@ -33,7 +33,7 @@ const EMISSIVE_COL_SPACING: f32 = 2.4;
 /// Equirectangular sky/ground gradient (RGBA f32), sky at the top row. The stored
 /// values are relative; `LightingSettings::environment_intensity` scales them to
 /// nits.
-fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
+pub(crate) fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
     let mut px = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         let v = y as f32 / (h - 1).max(1) as f32;

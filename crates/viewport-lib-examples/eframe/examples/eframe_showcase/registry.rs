@@ -43,7 +43,7 @@ use ShowcaseMode as M;
 
 /// Every showcase, in the order the selector lists them and the cycle keys
 /// walk them.
-pub(crate) const SHOWCASES: [Entry; 58] = [
+pub(crate) const SHOWCASES: [Entry; 59] = [
     entry(
         1,
         "Rendering Basics",
@@ -391,6 +391,12 @@ pub(crate) const SHOWCASES: [Entry; 58] = [
         "Vector Art (SVG)",
         M::VectorArt,
         &crate::showcase_59_vector_art::SHOWCASE,
+    ),
+    entry(
+        60,
+        "Glass and Layered Materials",
+        M::GlassAndLayers,
+        &crate::showcase_60_glass_and_layers::SHOWCASE,
     ),
 ];
 

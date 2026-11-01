@@ -28,6 +28,13 @@ pub(crate) fn upload_material(renderer: &mut ViewportRenderer, material: Materia
         .expect("material upload")
 }
 
+/// `m` with back faces drawn and lit from the viewer's side, for open
+/// surfaces (planes, cards) the camera can see from behind or below.
+pub(crate) fn two_sided(mut m: Material) -> Material {
+    m.backface_policy = vpl::BackfacePolicy::Identical;
+    m
+}
+
 /// Edit an uploaded material in place from a controls panel. `edit` gets the
 /// current values; if it changes them, every item holding `id` draws the new
 /// values next frame.
