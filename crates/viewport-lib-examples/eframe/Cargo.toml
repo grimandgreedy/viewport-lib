@@ -101,6 +101,11 @@ name = "eframe-multi-viewport"
 path = "examples/eframe_multi_viewport/main.rs"
 
 [[example]]
+name = "eframe-precision"
+path = "examples/eframe_precision/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
 name = "eframe-showcase"
 path = "examples/eframe_showcase/main.rs"
 required-features = ["wgpu27"]

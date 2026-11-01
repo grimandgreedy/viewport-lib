@@ -38,7 +38,7 @@
 //! | example | legs |
 //! | --- | --- |
 //! | `eframe-minimal`, `eframe-minimal-callback`, `eframe-primitives`, `eframe-retained-overlay`, `eframe-multi-viewport`, `debug-light`, `showcase` | 27, 29, 30 |
-//! | `eframe-exposure`, `eframe-lighting-shadows`, `eframe-input-controllers`, `eframe-render-paths`, `eframe-testing`, `eframe-showcase` | 27 only (side/top panel layout) |
+//! | `eframe-exposure`, `eframe-lighting-shadows`, `eframe-input-controllers`, `eframe-render-paths`, `eframe-testing`, `eframe-precision`, `eframe-showcase` | 27 only (side/top panel layout) |
 //!
 //! Check a non-default leg with:
 //!
