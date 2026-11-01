@@ -1155,11 +1155,11 @@ pub(crate) struct MaterialPluginGpu {
     pub bind_group_layout: crate::gpu::BindGroupLayout,
     /// Present when `texture_count > 0`; shared by every texture set.
     pub sampler: Option<crate::gpu::Sampler>,
-    /// Group 3 with every slot on the 1x1 white fallback. The only group of a
+    /// Group 2 with every slot on the 1x1 white fallback. The only group of a
     /// plugin with no textures, and what a set draws with before prepare has
     /// built its own.
     pub default_group: crate::gpu::BindGroup,
-    /// Group 3 per texture set, built in prepare for the sets the frame draws.
+    /// Group 2 per texture set, built in prepare for the sets the frame draws.
     /// A set is evicted when a texture it names is freed or replaced, since
     /// its group holds the old view.
     pub texture_groups: std::collections::HashMap<PluginTextures, crate::gpu::BindGroup>,
@@ -1188,7 +1188,7 @@ impl crate::resources::DeviceResources {
     ///
     /// # Errors
     ///
-    /// [`ViewportError::ShadeShaderInvalid`] on a device with fewer than 4
+    /// [`ViewportError::ShadeShaderInvalid`] on a device with fewer than 3
     /// bind groups, an invalid body or parameter layout, more than
     /// [`MATERIAL_PLUGIN_MAX_TEXTURES`] textures, or a failed composition;
     /// [`ViewportError::MaterialPluginTextureBudget`] when the device cannot
