@@ -159,3 +159,102 @@ fn point_light_and_clip_plane_far_from_origin_match_the_world_origin() {
     eprintln!("light_and_clip: {n} of {} pixels differ", W * H);
     assert!(n <= limit, "{n} pixels differ (allowed {limit})");
 }
+
+/// 6 400 km: far enough out that an f32 world position steps by half a metre.
+const ROOM_FAR: f64 = 6_400_000.0;
+
+/// A small building, as (centre, size): a floor, four walls with a doorway
+/// and a plinth.
+const ROOM_BOXES: [([f64; 3], [f32; 3]); 8] = [
+    ([0.0, 0.0, -0.1], [4.0, 4.0, 0.2]),
+    ([0.0, 1.9, 1.2], [4.0, 0.2, 2.4]),
+    ([-1.9, 0.0, 1.2], [0.2, 4.0, 2.4]),
+    ([1.9, 0.0, 1.2], [0.2, 4.0, 2.4]),
+    ([-1.25, -1.9, 1.2], [1.5, 0.2, 2.4]),
+    ([1.25, -1.9, 1.2], [1.5, 0.2, 2.4]),
+    ([0.0, -1.9, 2.1], [1.0, 0.2, 0.6]),
+    ([0.6, 0.6, 0.25], [0.5, 0.5, 0.5]),
+];
+
+/// The building lit only by a shadowed point light inside it, seen from 7 m,
+/// optionally cut open by a clip plane. At the world origin under
+/// `WorldOrigin::Zero`, or 6 400 km out under a snapped origin.
+fn render_room(harness: &mut Harness, far: bool, clip: bool, generation: u64) -> Vec<u8> {
+    use glam::DVec3;
+    use viewport_lib::{Colour, LightKind, LightSource, Material, SceneRenderItem, primitives};
+    let base = DVec3::new(if far { ROOM_FAR } else { 0.0 }, 0.0, 0.0);
+    let mut scene = viewport_lib_testkit::BuiltScene::default();
+    let res = harness.renderer.resources_mut();
+    let mat = res
+        .upload_material(Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.68), 0.0, 0.8))
+        .expect("material upload");
+    for (centre, size) in ROOM_BOXES {
+        let mesh = res
+            .upload_mesh_data(
+                &harness.device,
+                &primitives::cuboid(size[0], size[1], size[2]),
+            )
+            .expect("mesh upload");
+        let mut item = SceneRenderItem::new(mesh, mat);
+        item.model = viewport_lib::Transform::from_translation(base + DVec3::from(centre));
+        scene.items.push(item);
+    }
+    let mut lamp = LightSource::default();
+    lamp.kind = LightKind::Point {
+        position: base + DVec3::new(-0.6, 0.4, 1.9),
+        range: 8.0,
+        radius: 0.05,
+    };
+    lamp.colour = Colour::linear_rgb(1.0, 0.75, 0.45);
+    lamp.intensity = 6.0;
+    lamp.cast_shadows = true;
+    scene.lighting = viewport_lib::LightingSettings::default();
+    scene.lighting.lights = vec![lamp];
+    scene.lighting.hemisphere_intensity = 0.35;
+    scene.lighting.shadows.enabled = true;
+    scene.generation = generation;
+    scene.world_origin = Some(if far {
+        viewport_lib::WorldOrigin::snapped()
+    } else {
+        viewport_lib::WorldOrigin::Zero
+    });
+    if clip {
+        // Keep x <= base.x + 0.4.
+        let plane = viewport_lib::ClipObject::plane([-1.0, 0.0, 0.0], base.x + 0.4);
+        scene.clip = Some((vec![plane], false));
+    }
+    let camera = viewport_lib::Camera::orbit(
+        base + DVec3::new(0.0, 0.0, 1.0),
+        7.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
+    let frame = frame_for(&scene, &camera, [W as f32, H as f32]);
+    let _ = harness.render(&frame, W, H);
+    harness.render(&frame, W, H)
+}
+
+#[test]
+fn point_light_in_a_room_far_from_origin_matches_the_world_origin() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let limit = (W * H) as usize * PIXELS_PER_MILLE / 1000;
+    let mut failures = Vec::new();
+    let mut generation = 30_000;
+    for clip in [false, true] {
+        generation += 2;
+        let near = render_room(&mut harness, false, clip, generation);
+        let far = render_room(&mut harness, true, clip, generation + 1);
+        assert!(
+            differing(&near, &vec![0u8; near.len()]) > 0,
+            "the room rendered nothing"
+        );
+        let n = differing(&near, &far);
+        eprintln!("room, clip {clip}: {n} of {} pixels differ", W * H);
+        if n > limit {
+            failures.push(format!("clip {clip}: {n} pixels differ (allowed {limit})"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
