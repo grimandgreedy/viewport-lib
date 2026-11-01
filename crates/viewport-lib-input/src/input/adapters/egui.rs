@@ -142,6 +142,29 @@ macro_rules! egui_adapter {
             }
         }
 
+        /// As [`from_egui`], appending to `out`, plus typed text.
+        ///
+        /// An `egui::Event::Text` becomes one [`ViewportEvent::Character`] per
+        /// character, control characters left out. The resolver keeps characters
+        /// only while the viewport is focused, so every event can go through
+        /// here. Use this rather than `from_egui` when manipulation numeric entry
+        /// or anything else reading typed text should work.
+        pub fn from_egui_into(
+            event: &egui::Event,
+            viewport_origin: glam::Vec2,
+            out: &mut Vec<ViewportEvent>,
+        ) {
+            if let egui::Event::Text(text) = event {
+                out.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .map(ViewportEvent::Character),
+                );
+            } else {
+                out.extend(from_egui(event, viewport_origin));
+            }
+        }
+
         fn map_touch_phase(phase: egui::TouchPhase) -> TouchPhase {
             match phase {
                 egui::TouchPhase::Start => TouchPhase::Started,
@@ -554,6 +577,29 @@ macro_rules! egui_adapter {
                     other => panic!("expected Key, got {other:?}"),
                 }
             }
+
+            #[test]
+            fn text_becomes_one_character_per_char() {
+                let mut out = Vec::new();
+                from_egui_into(&Event::Text("2.5\t".into()), glam::Vec2::ZERO, &mut out);
+                let chars: Vec<char> = out
+                    .iter()
+                    .map(|ev| match ev {
+                        ViewportEvent::Character(c) => *c,
+                        other => panic!("expected Character, got {other:?}"),
+                    })
+                    .collect();
+                assert_eq!(chars, vec!['2', '.', '5']);
+            }
+
+            #[test]
+            fn into_appends_the_translated_event() {
+                let mut out = vec![ViewportEvent::PointerLeft];
+                from_egui_into(&Event::PointerGone, glam::Vec2::ZERO, &mut out);
+                from_egui_into(&Event::Copy, glam::Vec2::ZERO, &mut out);
+                assert_eq!(out.len(), 2);
+                assert!(matches!(out[1], ViewportEvent::PointerLeft));
+            }
         }
     };
 }
@@ -563,18 +609,18 @@ mod v033 {
     egui_adapter!(egui033);
 }
 #[cfg(feature = "egui-adapter")]
-pub use v033::{from_egui, modifiers_from_egui};
+pub use v033::{from_egui, from_egui_into, modifiers_from_egui};
 
 #[cfg(feature = "egui-adapter-035")]
 mod v035 {
     egui_adapter!(egui035);
 }
 #[cfg(feature = "egui-adapter-035")]
-pub use v035::{from_egui, modifiers_from_egui};
+pub use v035::{from_egui, from_egui_into, modifiers_from_egui};
 
 #[cfg(feature = "egui-adapter-036")]
 mod v036 {
     egui_adapter!(egui036);
 }
 #[cfg(feature = "egui-adapter-036")]
-pub use v036::{from_egui, modifiers_from_egui};
+pub use v036::{from_egui, from_egui_into, modifiers_from_egui};

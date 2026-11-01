@@ -213,12 +213,18 @@ pub(super) fn update_constraint(
 
 /// Update numeric buffering for the session.
 ///
-/// Reads `frame.typed_chars` (digits, `.`, `-`) and `Action::NumericBackspace` /
-/// `Action::NumericNextAxis` to maintain per-axis string buffers. The first digit
-/// typed automatically initialises the numeric state.
+/// Reads the digits, `.` and `-` in `frame.typed_chars` and
+/// `Action::NumericBackspace` / `Action::NumericNextAxis` to maintain per-axis
+/// string buffers. Other characters are ignored: a letter typed during a session
+/// is a key command (an axis constraint), not part of the value. The first numeric
+/// character typed initialises the numeric state.
 pub(super) fn update_numeric_state(session: &mut ManipulationSession, frame: &ActionFrame) {
-    // Bootstrap: create numeric state on the first typed digit.
-    if session.numeric.is_none() && !frame.typed_chars.is_empty() {
+    // Bootstrap: create numeric state on the first typed numeric character.
+    let typed_numeric = frame
+        .typed_chars
+        .iter()
+        .any(|c| c.is_ascii_digit() || *c == '.' || *c == '-');
+    if session.numeric.is_none() && typed_numeric {
         session.numeric = Some(NumericInputState::new(session.axis, session.exclude_axis));
     }
 

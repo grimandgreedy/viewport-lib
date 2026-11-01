@@ -918,7 +918,7 @@ impl eframe::App for App {
             // Feed input to the instance's own input pipeline via the egui adapter.
             self.session.begin_frame(ViewportContext {
                 hovered: response.hovered(),
-                focused: response.has_focus(),
+                focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
                 viewport_size: [rect.width(), rect.height()],
             });
             self.session.set_pixels_per_point(ppp);

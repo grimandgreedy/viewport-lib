@@ -783,7 +783,6 @@ impl eframe::App for App {
                     .set_viewport_size([rect.width(), rect.height()]);
 
                 // Translate egui events -> ViewportEvents.
-                let manip_active_for_text = self.interact_state.manip.is_active();
                 ui.input(|i| {
                     let mods = modifiers_from_egui(&i.modifiers);
                     self.input.push_event(ViewportEvent::ModifiersChanged(mods));
@@ -817,7 +816,7 @@ impl eframe::App for App {
                                 }
                             }
 
-                            egui::Event::Text(text) if manip_active_for_text => {
+                            egui::Event::Text(text) => {
                                 for c in text.chars() {
                                     self.input.push_event(ViewportEvent::Character(c));
                                 }

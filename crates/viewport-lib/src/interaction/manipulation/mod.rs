@@ -572,6 +572,22 @@ mod tests {
     }
 
     #[test]
+    fn typed_letter_does_not_start_numeric_input() {
+        let mut ctrl = ManipulationController::new();
+        ctrl.begin(ManipulationKind::Move, glam::Vec3::ZERO);
+
+        let mut frame = ActionFrame::default();
+        frame.typed_chars.push('x');
+        ctrl.update(&frame, idle_ctx());
+
+        let state = ctrl.state().unwrap();
+        assert!(
+            state.numeric_display.is_none(),
+            "a letter is an axis command, not a value"
+        );
+    }
+
+    #[test]
     fn numeric_backspace_removes_last_digit() {
         let mut ctrl = ManipulationController::new();
         ctrl.begin(ManipulationKind::Move, glam::Vec3::ZERO);

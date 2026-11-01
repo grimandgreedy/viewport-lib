@@ -765,7 +765,7 @@ impl eframe::App for App {
                 let size = [rect.width(), rect.height()];
                 self.input.begin_frame(ViewportContext {
                     hovered: response.hovered(),
-                    focused: response.has_focus(),
+                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
                     viewport_size: size,
                 });
                 let origin = glam::Vec2::new(rect.left(), rect.top());

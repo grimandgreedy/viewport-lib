@@ -49,10 +49,10 @@ use super::movement::wish_from_actions;
 /// // --- update() ---
 /// controller.begin_frame(ViewportContext {
 ///     hovered: response.hovered(),
-///     focused: response.has_focus(),
+///     focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
 ///     viewport_size: [rect.width(), rect.height()],
 /// });
-/// // push events from ui.input(|i| { ... })
+/// // push each event in ui.input(|i| { ... }) through from_egui_into
 /// controller.apply_to_camera(&mut self.camera);
 /// ```
 pub struct OrbitCameraController {

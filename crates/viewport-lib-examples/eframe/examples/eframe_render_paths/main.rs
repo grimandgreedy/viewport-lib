@@ -709,7 +709,7 @@ impl eframe::App for App {
 
             self.input.begin_frame(ViewportContext {
                 hovered: response.hovered(),
-                focused: response.has_focus(),
+                focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
                 viewport_size: [rect.width(), rect.height()],
             });
             // Pan reads the viewport height off the controller.

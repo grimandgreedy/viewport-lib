@@ -495,7 +495,7 @@ impl eframe::App for App {
                     hovered: response.hovered(),
                     // Treat any hover as focus so keyboard shortcuts work without
                     // requiring a separate egui-focus click on the canvas widget.
-                    focused: response.hovered() || response.has_focus(),
+                    focused: response.hovered() && !ui.ctx().wants_keyboard_input(),
                     viewport_size: [rect.width(), rect.height()],
                 };
                 match self.mode {
@@ -508,7 +508,6 @@ impl eframe::App for App {
                 self.ctrl_all.set_viewport_size(vp_ctx.viewport_size);
 
                 let mut vp_events: Vec<ViewportEvent> = Vec::new();
-                let manip_active = self.manip.is_active();
 
                 ui.input(|i| {
                     self.shift_held = i.modifiers.shift;
@@ -607,7 +606,7 @@ impl eframe::App for App {
                                     units,
                                 });
                             }
-                            egui::Event::Text(text) if manip_active => {
+                            egui::Event::Text(text) => {
                                 for c in text.chars() {
                                     vp_events.push(ViewportEvent::Character(c));
                                 }

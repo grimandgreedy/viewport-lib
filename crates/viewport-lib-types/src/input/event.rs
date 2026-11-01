@@ -148,8 +148,10 @@ pub enum ViewportEvent {
     ///
     /// winit puts it in `KeyEvent::text`, which `from_winit` drops;
     /// `from_winit_into` emits it after the key's [`Key`](ViewportEvent::Key)
-    /// event, and `ViewportApp` uses that. The viewport reads only digits, `.`
-    /// and `-`, for manipulation numeric entry.
+    /// event, and `ViewportApp` uses that. egui sends it as `Event::Text`, which
+    /// `from_egui_into` turns into one `Character` per character. The resolver
+    /// keeps it only while the viewport is focused, like a key, and a
+    /// manipulation session reads its digits, `.` and `-` for numeric entry.
     Character(char),
 
     /// Two-finger trackpad rotation gesture.

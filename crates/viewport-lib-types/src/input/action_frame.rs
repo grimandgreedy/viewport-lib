@@ -103,11 +103,12 @@ pub struct ActionFrame {
     pub navigation: NavigationActions,
     /// General action states resolved this frame (key presses, holds, etc.).
     pub actions: HashMap<Action, ResolvedActionState>,
-    /// Characters typed this frame, for numeric manipulation input.
+    /// Characters typed this frame while the viewport was focused, control
+    /// characters left out.
     ///
-    /// Only populated when the app forwards [`super::event::ViewportEvent::Character`]
-    /// events (which it should do only while `ManipulationController::is_active()`).
-    /// Already filtered to `0-9`, `.`, `-` by the input layer.
+    /// Filled from [`super::event::ViewportEvent::Character`] events, which
+    /// `from_winit_into` and `from_egui_into` produce. A manipulation session reads
+    /// the digits, `.` and `-` in it for numeric entry and ignores the rest.
     pub typed_chars: Vec<char>,
     /// Cursor position, pointer delta, and click-vs-drag flags for this frame.
     pub pointer: PointerFrame,

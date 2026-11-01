@@ -13,7 +13,7 @@ mod winit;
 pub use winit::{from_winit, from_winit_device, from_winit_into, modifiers_from_winit};
 
 // One module for every egui version the adapter supports; the enabled one
-// re-exports `from_egui`.
+// re-exports `from_egui` and `from_egui_into`.
 #[cfg(any(
     feature = "egui-adapter",
     feature = "egui-adapter-035",
@@ -25,4 +25,4 @@ mod egui;
     feature = "egui-adapter-035",
     feature = "egui-adapter-036"
 ))]
-pub use egui::{from_egui, modifiers_from_egui};
+pub use egui::{from_egui, from_egui_into, modifiers_from_egui};

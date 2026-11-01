@@ -436,8 +436,6 @@ impl App {
                     self.inputs[prev_hq].push_event(ViewportEvent::PointerLeft);
                 }
 
-                let manip_active_for_text = self.manip.is_active();
-
                 // Route input events to the hovered quad's controller.
                 ui.input(|i| {
                     let mods = modifiers_from_egui(&i.modifiers);
@@ -467,7 +465,7 @@ impl App {
                                     });
                                 }
                             }
-                            egui::Event::Text(text) if manip_active_for_text => {
+                            egui::Event::Text(text) => {
                                 for c in text.chars() {
                                     self.inputs[hq].push_event(ViewportEvent::Character(c));
                                 }

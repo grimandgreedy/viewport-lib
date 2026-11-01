@@ -563,9 +563,8 @@ impl ViewportInput {
                 }
             }
             ViewportEvent::Character(c) => {
-                // Only accept characters that are valid in a numeric expression.
-                // The buffer is per frame and only a manipulation session reads it.
-                if c.is_ascii_digit() || c == '.' || c == '-' {
+                // Typed text is keyboard input, so it is gated like keys.
+                if self.ctx.focused && !c.is_control() {
                     self.typed_chars.push(c);
                 }
             }
@@ -1301,9 +1300,23 @@ mod tests {
         input.push_event(ViewportEvent::Character('3'));
         input.push_event(ViewportEvent::Character('.'));
         input.push_event(ViewportEvent::Character('5'));
-        input.push_event(ViewportEvent::Character('a')); // filtered out
+        input.push_event(ViewportEvent::Character('a'));
+        input.push_event(ViewportEvent::Character('\r')); // control, dropped
         let frame = input.resolve();
-        assert_eq!(frame.typed_chars, vec!['3', '.', '5']);
+        assert_eq!(frame.typed_chars, vec!['3', '.', '5', 'a']);
+    }
+
+    #[test]
+    fn character_event_ignored_when_unfocused() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(ViewportContext {
+            hovered: true,
+            focused: false,
+            viewport_size: [800.0, 600.0],
+        });
+        input.push_event(ViewportEvent::Character('3'));
+        let frame = input.resolve();
+        assert!(frame.typed_chars.is_empty());
     }
 
     #[test]

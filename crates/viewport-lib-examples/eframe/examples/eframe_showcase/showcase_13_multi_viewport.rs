@@ -234,8 +234,6 @@ impl App {
             self.mv_state.inputs[prev_hq].push_event(ViewportEvent::PointerLeft);
         }
 
-        let manip_active_for_text = self.mv_state.manip.is_active();
-
         // Push this frame's input events to the hovered controller.
         ui.input(|i| {
             let mods = modifiers_from_egui(&i.modifiers);
@@ -266,7 +264,7 @@ impl App {
                         }
                     }
 
-                    egui::Event::Text(text) if manip_active_for_text => {
+                    egui::Event::Text(text) => {
                         for c in text.chars() {
                             self.mv_state.inputs[hq].push_event(ViewportEvent::Character(c));
                         }
