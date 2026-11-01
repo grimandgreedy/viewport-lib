@@ -801,8 +801,16 @@ pub(super) fn rank_lights<'a>(
     // Dropping off-screen lights here keeps the cluster build pass and
     // the per-fragment iteration both bounded by what is actually visible.
     // Directional lights always survive : they affect every fragment.
+    // The test runs relative to the eye: positions are subtracted in f64 and
+    // the frustum has no translation, so a light far from the world origin
+    // keeps the precision of one near it.
+    let eye = frame.camera.render_camera.eye_position();
     let cull_frustum = crate::camera::frustum::Frustum::from_view_proj(
-        &frame.camera.render_camera.culling_view_proj(),
+        &frame
+            .camera
+            .render_camera
+            .relative_to(eye)
+            .culling_view_proj(),
     );
     let mut frustum_culled = 0u32;
     let raw_lights: Vec<(usize, &LightSource)> = lights
@@ -812,7 +820,7 @@ pub(super) fn rank_lights<'a>(
             LightKind::Point {
                 position, range, ..
             } => {
-                let keep = !cull_frustum.cull_sphere(position.as_vec3(), range);
+                let keep = !cull_frustum.cull_sphere((position - eye).as_vec3(), range);
                 if !keep {
                     frustum_culled += 1;
                 }
@@ -829,7 +837,8 @@ pub(super) fn rank_lights<'a>(
                 if axis.length_squared() < 1e-8 {
                     return true;
                 }
-                let keep = !cull_frustum.cull_cone(position.as_vec3(), axis, outer_angle, range);
+                let apex = (position - eye).as_vec3();
+                let keep = !cull_frustum.cull_cone(apex, axis, outer_angle, range);
                 if !keep {
                     frustum_culled += 1;
                 }
@@ -849,7 +858,6 @@ pub(super) fn rank_lights<'a>(
     // lowest-priority lights deterministically. Directional lights are
     // treated as infinitely close (proximity_weight = 1). Shading itself is
     // order-independent.
-    let camera_pos = frame.camera.render_camera.eye_position();
     let directional = |l: &LightSource| matches!(l.kind, LightKind::Directional { .. });
     let directional_first = raw_lights
         .iter()
@@ -872,7 +880,7 @@ pub(super) fn rank_lights<'a>(
                 | LightKind::Spot {
                     position, range, ..
                 } => {
-                    let d = (position - camera_pos).length() as f32;
+                    let d = (position - eye).length() as f32;
                     // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
                     (range / (range + d.max(0.0))).clamp(0.0, 1.0)
                 }
@@ -1010,6 +1018,42 @@ mod tests {
         let lights = [point(1.0), quiet, LightSource::default()];
         let ranked = rank_lights(lights.iter(), &frame(), 16);
         assert_eq!(ranked.lights[0].0, 2);
+    }
+
+    fn frame_looking_at(centre: glam::DVec3) -> FrameData {
+        let camera = crate::Camera::orbit(
+            centre,
+            7.0,
+            glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+        );
+        let cf = CameraFrame::new(RenderCamera::from_camera(&camera), [256.0, 256.0]);
+        let sf = SceneFrame::new(SurfaceSubmission::Flat(std::sync::Arc::from(Vec::new())));
+        FrameData::new(cf, sf)
+    }
+
+    /// A light in front of a camera 6 400 km out survives the cull, and one
+    /// behind it, out of range of the view, does not.
+    #[test]
+    fn far_lights_cull_as_near_ones_do() {
+        for base in [glam::DVec3::ZERO, glam::DVec3::new(6.4e6, 0.0, 0.0)] {
+            let frame = frame_looking_at(base);
+            let eye = frame.camera.render_camera.eye_position();
+            let mut inside = point(1.0);
+            let mut behind = point(1.0);
+            let back = eye + (eye - base).normalize() * 20.0;
+            for (l, at) in [(&mut inside, base), (&mut behind, back)] {
+                l.kind = LightKind::Point {
+                    position: at,
+                    range: 8.0,
+                    radius: 0.05,
+                };
+            }
+            let lights = [inside, behind];
+            let ranked = rank_lights(lights.iter(), &frame, 16);
+            let kept: Vec<usize> = ranked.lights.iter().map(|(i, _)| *i).collect();
+            assert_eq!(kept, vec![0], "at {base}");
+            assert_eq!(ranked.frustum_culled, 1, "at {base}");
+        }
     }
 
     /// The spot frustum covers the cone plus its tap guard, so a point on the
