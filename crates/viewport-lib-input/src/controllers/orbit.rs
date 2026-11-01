@@ -11,7 +11,9 @@ use crate::input::action_frame::ActionFrame;
 use crate::input::context::ViewportContext;
 use crate::input::event::ViewportEvent;
 use crate::input::mode::NavigationMode;
-use crate::input::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
+use crate::input::preset::{
+    BindingPreset, manipulation_bindings, viewer_bindings, viewport_default_bindings,
+};
 use crate::input::viewport_binding::ViewportBinding;
 use crate::input::viewport_input::ViewportInput;
 
@@ -130,6 +132,7 @@ impl OrbitCameraController {
         let bindings = match preset {
             BindingPreset::Default => viewport_default_bindings(),
             BindingPreset::Viewer => viewer_bindings(),
+            BindingPreset::Manipulation => manipulation_bindings(),
             // BindingPreset is non_exhaustive; an unknown preset gets the default set.
             _ => viewport_default_bindings(),
         };

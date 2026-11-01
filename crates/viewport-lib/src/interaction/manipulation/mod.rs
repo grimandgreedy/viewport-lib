@@ -558,7 +558,7 @@ mod tests {
 
         // First digit: bootstrap numeric state.
         let mut frame = ActionFrame::default();
-        frame.typed_chars.push('2');
+        frame.text.push('2');
         let mut ctx = idle_ctx();
         ctx.dragging = false; // not a mouse drag
         let result = ctrl.update(&frame, ctx);
@@ -577,7 +577,7 @@ mod tests {
         ctrl.begin(ManipulationKind::Move, glam::Vec3::ZERO);
 
         let mut frame = ActionFrame::default();
-        frame.typed_chars.push('x');
+        frame.text.push('x');
         ctrl.update(&frame, idle_ctx());
 
         let state = ctrl.state().unwrap();
@@ -594,7 +594,7 @@ mod tests {
 
         // Type "25".
         let mut frame = ActionFrame::default();
-        frame.typed_chars.extend(['2', '5']);
+        frame.text.extend(['2', '5']);
         ctrl.update(&frame, idle_ctx());
 
         // Backspace once.
@@ -894,7 +894,7 @@ mod tests {
         let mut ctrl = ManipulationController::new();
         ctrl.begin(ManipulationKind::Rotate, glam::Vec3::ZERO);
         let mut frame = ActionFrame::default();
-        frame.typed_chars.extend(['4', '5']);
+        frame.text.extend(['4', '5']);
         match ctrl.update(&frame, idle_ctx()) {
             ManipResult::Update(delta) => {
                 assert_eq!(delta.rotation_override[0], Some(45.0));

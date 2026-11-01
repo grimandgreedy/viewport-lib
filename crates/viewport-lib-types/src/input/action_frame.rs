@@ -109,7 +109,7 @@ pub struct ActionFrame {
     /// Filled from [`super::event::ViewportEvent::Character`] events, which the
     /// winit and egui adapters' `translate` produce. A manipulation session reads
     /// the digits, `.` and `-` in it for numeric entry and ignores the rest.
-    pub typed_chars: Vec<char>,
+    pub text: Vec<char>,
     /// Cursor position, pointer delta, and click-vs-drag flags for this frame.
     pub pointer: PointerFrame,
 }

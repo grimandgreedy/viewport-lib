@@ -3,14 +3,16 @@
 //! [`ViewportInput`] is the lower-level input resolver. Most consumers should
 //! use [`crate::controllers::orbit::OrbitCameraController`] which wraps it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::action::Action;
 use super::action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::{KeyboardOwnership, ViewportContext, forward_to_viewport};
 use super::event::{ButtonState, ScrollUnits, TouchId, TouchPhase, ViewportEvent};
-use super::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
+use super::preset::{
+    BindingPreset, manipulation_bindings, viewer_bindings, viewport_default_bindings,
+};
 use super::touch::TouchSettings;
 use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
@@ -132,8 +134,10 @@ pub struct ViewportInput {
 
     // Per-frame key accumulators (reset by begin_frame)
     keys_pressed: HashSet<KeyCode>,
+    /// The binding character of each key pressed this frame (see `binding_char`).
+    chars_pressed: HashSet<char>,
     /// Characters typed this frame (reset by begin_frame, drained into ActionFrame).
-    typed_chars: Vec<char>,
+    text: Vec<char>,
 
     // Per-frame touch accumulators (reset by begin_frame)
     /// Motion of the contact centroid, logical pixels.
@@ -171,6 +175,9 @@ pub struct ViewportInput {
     modifiers: Modifiers,
     /// Keys currently held down (persistent across frames).
     keys_held: HashSet<KeyCode>,
+    /// The binding character of each held key, keyed by the key so its release
+    /// clears it whatever the layout reports then.
+    chars_held: HashMap<KeyCode, char>,
 
     ctx: ViewportContext,
 }
@@ -185,6 +192,82 @@ fn button_index(b: MouseButton) -> Option<usize> {
         MouseButton::Middle => Some(2),
         _ => None,
     }
+}
+
+/// The character a character binding matches a key on: the layout's character
+/// when it is an ASCII graphic one, lower case, and otherwise the character the
+/// key types on a US layout. A Cyrillic or Greek layout reports a non-ASCII
+/// character for the key labelled G in the US position, so it falls back to `g`.
+fn binding_char(key: KeyCode, logical: Option<char>) -> Option<char> {
+    match logical {
+        Some(c) if c.is_ascii_graphic() => Some(c.to_ascii_lowercase()),
+        _ => us_char(key),
+    }
+}
+
+/// The unshifted character `key` types on a US layout, if it types one.
+fn us_char(key: KeyCode) -> Option<char> {
+    use KeyCode as K;
+    const LETTERS: [KeyCode; 26] = [
+        K::A,
+        K::B,
+        K::C,
+        K::D,
+        K::E,
+        K::F,
+        K::G,
+        K::H,
+        K::I,
+        K::J,
+        K::K,
+        K::L,
+        K::M,
+        K::N,
+        K::O,
+        K::P,
+        K::Q,
+        K::R,
+        K::S,
+        K::T,
+        K::U,
+        K::V,
+        K::W,
+        K::X,
+        K::Y,
+        K::Z,
+    ];
+    const DIGITS: [KeyCode; 10] = [
+        K::Num0,
+        K::Num1,
+        K::Num2,
+        K::Num3,
+        K::Num4,
+        K::Num5,
+        K::Num6,
+        K::Num7,
+        K::Num8,
+        K::Num9,
+    ];
+    if let Some(i) = LETTERS.iter().position(|k| *k == key) {
+        return Some((b'a' + i as u8) as char);
+    }
+    if let Some(i) = DIGITS.iter().position(|k| *k == key) {
+        return Some((b'0' + i as u8) as char);
+    }
+    Some(match key {
+        K::Minus => '-',
+        K::Equals => '=',
+        K::LeftBracket => '[',
+        K::RightBracket => ']',
+        K::Backslash => '\\',
+        K::Semicolon => ';',
+        K::Apostrophe => '\'',
+        K::Comma => ',',
+        K::Period => '.',
+        K::Slash => '/',
+        K::Backtick => '`',
+        _ => return None,
+    })
 }
 
 impl ViewportInput {
@@ -203,7 +286,8 @@ impl ViewportInput {
             left_drag_reached: false,
             left_clicked: false,
             keys_pressed: HashSet::new(),
-            typed_chars: Vec::new(),
+            chars_pressed: HashSet::new(),
+            text: Vec::new(),
             touch_drag: glam::Vec2::ZERO,
             touch_pinch: 0.0,
             touch_twist: 0.0,
@@ -222,6 +306,7 @@ impl ViewportInput {
             button_press_pos: [None, None, None],
             modifiers: Modifiers::NONE,
             keys_held: HashSet::new(),
+            chars_held: HashMap::new(),
             ctx: ViewportContext::default(),
         }
     }
@@ -231,6 +316,7 @@ impl ViewportInput {
         let bindings = match preset {
             BindingPreset::Default => viewport_default_bindings(),
             BindingPreset::Viewer => viewer_bindings(),
+            BindingPreset::Manipulation => manipulation_bindings(),
             // BindingPreset is non_exhaustive; an unknown preset gets the default set.
             _ => viewport_default_bindings(),
         };
@@ -319,7 +405,8 @@ impl ViewportInput {
         self.left_drag_began = false;
         self.left_clicked = false;
         self.keys_pressed.clear();
-        self.typed_chars.clear();
+        self.chars_pressed.clear();
+        self.text.clear();
         self.touch_drag = glam::Vec2::ZERO;
         self.touch_pinch = 0.0;
         self.touch_twist = 0.0;
@@ -614,21 +701,32 @@ impl ViewportInput {
                 self.modifiers = mods;
             }
             ViewportEvent::Key {
-                key, state, repeat, ..
-            } => match state {
-                ButtonState::Pressed => {
-                    if !repeat {
-                        self.keys_pressed.insert(key);
+                key,
+                state,
+                repeat,
+                logical,
+            } => {
+                let ch = binding_char(key, logical);
+                match state {
+                    ButtonState::Pressed => {
+                        if !repeat {
+                            self.keys_pressed.insert(key);
+                            self.chars_pressed.extend(ch);
+                        }
+                        self.keys_held.insert(key);
+                        if let Some(ch) = ch {
+                            self.chars_held.insert(key, ch);
+                        }
                     }
-                    self.keys_held.insert(key);
+                    ButtonState::Released => {
+                        self.keys_held.remove(&key);
+                        self.chars_held.remove(&key);
+                    }
                 }
-                ButtonState::Released => {
-                    self.keys_held.remove(&key);
-                }
-            },
+            }
             ViewportEvent::Character(c) => {
                 if !c.is_control() {
-                    self.typed_chars.push(c);
+                    self.text.push(c);
                 }
             }
             ViewportEvent::PointerLeft => {
@@ -653,6 +751,8 @@ impl ViewportInput {
                 self.touch_ref = None;
                 self.keys_held.clear();
                 self.keys_pressed.clear();
+                self.chars_held.clear();
+                self.chars_pressed.clear();
             }
             ViewportEvent::Touch {
                 id,
@@ -833,6 +933,25 @@ impl ViewportInput {
                             .or_insert(ResolvedActionState::Held);
                     }
                 }
+                ViewportGesture::CharPress { ch, modifiers } => {
+                    if self.chars_pressed.contains(&ch.to_ascii_lowercase())
+                        && modifiers.matches(self.modifiers)
+                    {
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Pressed);
+                    }
+                }
+                ViewportGesture::CharHold { ch, modifiers } => {
+                    let ch = ch.to_ascii_lowercase();
+                    if self.chars_held.values().any(|c| *c == ch)
+                        && modifiers.matches(self.modifiers)
+                    {
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Held);
+                    }
+                }
                 ViewportGesture::ModifiersHeld { modifiers } => {
                     // Gated on the keyboard like a held key, since a modifier is one.
                     if self.ctx.ownership.keyboard == KeyboardOwnership::Owned
@@ -883,7 +1002,7 @@ impl ViewportInput {
         let mut frame = ActionFrame::default();
         frame.navigation = navigation;
         frame.actions = actions;
-        frame.typed_chars = self.typed_chars.clone();
+        frame.text = self.text.clone();
         frame.pointer = pointer;
         frame
     }
@@ -1602,8 +1721,121 @@ mod tests {
         assert!(input.is_gesture_active());
     }
 
+    fn key(input: &mut ViewportInput, key: KeyCode, logical: Option<char>, state: ButtonState) {
+        input.push_event(ViewportEvent::Key {
+            key,
+            state,
+            repeat: false,
+            logical,
+        });
+    }
+
     #[test]
-    fn character_event_populates_typed_chars() {
+    fn a_qwertz_z_constrains_to_z() {
+        // On QWERTZ the key in the US Y position is labelled Z.
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        key(&mut input, KeyCode::Y, Some('z'), ButtonState::Pressed);
+        let frame = input.resolve();
+        assert!(frame.is_active(Action::ConstrainZ));
+        assert!(!frame.is_active(Action::ConstrainY));
+    }
+
+    #[test]
+    fn a_cyrillic_layout_keeps_g_where_it_is() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        key(
+            &mut input,
+            KeyCode::G,
+            Some('\u{43f}'),
+            ButtonState::Pressed,
+        );
+        assert!(input.resolve().is_active(Action::BeginMove));
+    }
+
+    #[test]
+    fn a_char_binding_folds_case_and_reads_shift_from_the_modifiers() {
+        let mut input = ViewportInput::new(vec![ViewportBinding::new(
+            Action::BeginMove,
+            ViewportGesture::CharPress {
+                ch: 'g',
+                modifiers: crate::input::ModifiersMatch::Exact(Modifiers::SHIFT),
+            },
+        )]);
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
+        key(&mut input, KeyCode::G, Some('G'), ButtonState::Pressed);
+        assert!(input.resolve().is_active(Action::BeginMove));
+
+        // Without Shift it does not match.
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::NONE));
+        key(&mut input, KeyCode::G, Some('g'), ButtonState::Released);
+        key(&mut input, KeyCode::G, Some('g'), ButtonState::Pressed);
+        assert!(!input.resolve().is_active(Action::BeginMove));
+    }
+
+    #[test]
+    fn a_char_hold_lasts_until_its_key_is_released() {
+        let mut input = ViewportInput::new(vec![ViewportBinding::new(
+            Action::FlyForward,
+            ViewportGesture::CharHold {
+                ch: 'w',
+                modifiers: crate::input::ModifiersMatch::Any,
+            },
+        )]);
+        // AZERTY: the key labelled Z is in the US W position, so this is not W.
+        input.begin_frame(focused_ctx());
+        key(&mut input, KeyCode::W, Some('z'), ButtonState::Pressed);
+        assert!(!input.resolve().is_active(Action::FlyForward));
+        key(&mut input, KeyCode::W, Some('z'), ButtonState::Released);
+
+        input.begin_frame(focused_ctx());
+        key(&mut input, KeyCode::Z, Some('w'), ButtonState::Pressed);
+        assert!(input.resolve().is_active(Action::FlyForward));
+        input.begin_frame(focused_ctx());
+        assert!(input.resolve().is_active(Action::FlyForward), "still held");
+        // The release clears it even if the layout reports something else now.
+        key(&mut input, KeyCode::Z, None, ButtonState::Released);
+        input.begin_frame(focused_ctx());
+        assert!(!input.resolve().is_active(Action::FlyForward));
+    }
+
+    #[test]
+    fn char_bindings_need_the_keyboard() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
+        key(&mut input, KeyCode::G, Some('g'), ButtonState::Pressed);
+        assert!(!input.resolve().is_active(Action::BeginMove));
+    }
+
+    #[test]
+    fn the_manipulation_preset_is_part_of_the_default() {
+        let manipulation = ViewportInput::from_preset(BindingPreset::Manipulation);
+        let default = viewport_default_bindings();
+        for binding in &manipulation.bindings {
+            assert!(
+                default.iter().any(|b| b.action == binding.action
+                    && format!("{:?}", b.gesture) == format!("{:?}", binding.gesture)),
+                "{:?} missing from the default set",
+                binding.action
+            );
+        }
+        // The letters are bound by character, not position.
+        assert!(
+            manipulation
+                .bindings
+                .iter()
+                .any(|b| b.action == Action::ConstrainZ
+                    && matches!(b.gesture, ViewportGesture::CharPress { ch: 'z', .. }))
+        );
+        assert!(!default.iter().any(|b| b.action == Action::ConstrainZ
+            && matches!(b.gesture, ViewportGesture::KeyPress { .. })));
+    }
+
+    #[test]
+    fn character_event_populates_text() {
         let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Character('3'));
@@ -1612,7 +1844,7 @@ mod tests {
         input.push_event(ViewportEvent::Character('a'));
         input.push_event(ViewportEvent::Character('\r')); // control, dropped
         let frame = input.resolve();
-        assert_eq!(frame.typed_chars, vec!['3', '.', '5', 'a']);
+        assert_eq!(frame.text, vec!['3', '.', '5', 'a']);
     }
 
     #[test]
@@ -1621,7 +1853,7 @@ mod tests {
         input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
         input.push_event(ViewportEvent::Character('3'));
         let frame = input.resolve();
-        assert!(frame.typed_chars.is_empty());
+        assert!(frame.text.is_empty());
     }
 
     #[test]

@@ -23,8 +23,9 @@ pub enum BindingPreset {
     /// - Ctrl + Scroll -> Orbit
     /// - Shift + Scroll -> Pan
     ///
-    /// Plus the viewport keyboard shortcuts (manipulation, axis constraints, fly
-    /// movement, focus, reset view, wireframe, gizmo mode and space).
+    /// Plus the viewport keyboard shortcuts (focus, reset view, wireframe, gizmo
+    /// mode and space, fly movement) and the [`Manipulation`](Self::Manipulation)
+    /// set.
     ///
     /// **Left drag and right drag are deliberately unbound** and belong to the
     /// application: selection, gizmo dragging, tools, context menus.
@@ -43,6 +44,13 @@ pub enum BindingPreset {
     /// thumbnail preview. In anything with a selection, left drag has two claimants
     /// and the camera will fight the tool.
     Viewer,
+
+    /// The manipulation keys alone, bound by the character they type so they
+    /// follow the keyboard layout: G, R and S begin a move, rotate or scale; X,
+    /// Y and Z constrain to an axis, and with Shift exclude it; Backspace and Tab
+    /// edit a typed value. [`Default`](Self::Default) includes it. See
+    /// [`manipulation_bindings`].
+    Manipulation,
 }
 
 /// Former name for the camera-only scheme. Resolves to [`BindingPreset::Viewer`],
@@ -140,7 +148,7 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
 /// Returns the full binding set for [`BindingPreset::Default`]: the camera scheme
 /// from [`viewport_camera_bindings`] plus the viewport's keyboard shortcuts.
 ///
-/// Covers normal-mode actions, fly-mode movement, and manipulation constraints.
+/// Covers normal-mode actions, fly-mode movement, and [`manipulation_bindings`].
 /// Undo and redo are deliberately **not** bound: they belong to the application's
 /// document, not to the viewport, so binding them here would make every consumer
 /// notice and unbind them.
@@ -154,29 +162,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
     let any = ModifiersMatch::Any;
 
     let mut bindings = viewport_camera_bindings();
-
-    // -- Normal mode: object manipulation shortcuts --
-    bindings.push(ViewportBinding::new(
-        Action::BeginMove,
-        ViewportGesture::KeyPress {
-            key: KeyCode::G,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::BeginRotate,
-        ViewportGesture::KeyPress {
-            key: KeyCode::R,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::BeginScale,
-        ViewportGesture::KeyPress {
-            key: KeyCode::S,
-            modifiers: none,
-        },
-    ));
 
     // -- Normal mode: object shortcuts --
     bindings.push(ViewportBinding::new(
@@ -288,66 +273,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         },
     ));
 
-    // -- Manipulation mode: axis constraints --
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainX,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainY,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainZ,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeX,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeY,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeZ,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-
-    // -- Manipulation mode: numeric input --
-    bindings.push(ViewportBinding::new(
-        Action::NumericBackspace,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Backspace,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::NumericNextAxis,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Tab,
-            modifiers: none,
-        },
-    ));
-
     // -- Confirm / Cancel (fly mode + manipulation mode; callers must gate on mode) --
     bindings.push(ViewportBinding::new(
         Action::Confirm,
@@ -380,7 +305,51 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         },
     ));
 
+    bindings.extend(manipulation_bindings());
     bindings
+}
+
+/// Returns the bindings for [`BindingPreset::Manipulation`], which
+/// [`viewport_default_bindings`] includes.
+///
+/// The letters are bound by character ([`ViewportGesture::CharPress`]), so on
+/// QWERTZ the Z constraint is the key labelled Z, not the one in the US Z
+/// position. Callers gate these on a manipulation session or a selection: G, R
+/// and S begin a session, and the rest only mean something during one.
+pub fn manipulation_bindings() -> Vec<ViewportBinding> {
+    let none = ModifiersMatch::Exact(Modifiers::NONE);
+    let shift = ModifiersMatch::Contains(Modifiers::SHIFT);
+    let char_press = |action, ch, modifiers| {
+        ViewportBinding::new(action, ViewportGesture::CharPress { ch, modifiers })
+    };
+    vec![
+        // Normal mode: begin a session.
+        char_press(Action::BeginMove, 'g', none),
+        char_press(Action::BeginRotate, 'r', none),
+        char_press(Action::BeginScale, 's', none),
+        // During a session: constrain to an axis, or with Shift exclude it.
+        char_press(Action::ConstrainX, 'x', none),
+        char_press(Action::ConstrainY, 'y', none),
+        char_press(Action::ConstrainZ, 'z', none),
+        char_press(Action::ExcludeX, 'x', shift),
+        char_press(Action::ExcludeY, 'y', shift),
+        char_press(Action::ExcludeZ, 'z', shift),
+        // During a session: edit the typed value. These keys type no character.
+        ViewportBinding::new(
+            Action::NumericBackspace,
+            ViewportGesture::KeyPress {
+                key: KeyCode::Backspace,
+                modifiers: none,
+            },
+        ),
+        ViewportBinding::new(
+            Action::NumericNextAxis,
+            ViewportGesture::KeyPress {
+                key: KeyCode::Tab,
+                modifiers: none,
+            },
+        ),
+    ]
 }
 
 /// Former name for the full set. Renamed; note that undo and redo are no longer

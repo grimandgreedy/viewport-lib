@@ -51,7 +51,8 @@ pub use context::{
 pub use cursor::{CursorShape, UnknownCursorShape};
 pub use event::{ButtonState, ImeEvent, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent};
 pub use preset::{
-    BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+    BindingPreset, manipulation_bindings, viewer_bindings, viewport_camera_bindings,
+    viewport_default_bindings,
 };
 pub use touch::TouchSettings;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
