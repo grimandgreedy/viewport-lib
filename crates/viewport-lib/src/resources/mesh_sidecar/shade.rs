@@ -1642,8 +1642,9 @@ impl crate::resources::DeviceResources {
     }
 
     /// Build the plugin's lit pipeline set if it is registered and not built.
-    /// Called from prepare (budgeted per frame) for plugin ids the frame
-    /// references, and from the warm-up methods above; paint has no mutable
+    /// Called from prepare for plugin ids the frame references, so a pipeline
+    /// set is built by the first frame that draws with it, and from the
+    /// warm-up methods above; there is no per-frame budget. Paint has no mutable
     /// access, so an id that never went through either draws with built-in
     /// shading instead.
     pub(crate) fn ensure_material_plugin_pipelines(

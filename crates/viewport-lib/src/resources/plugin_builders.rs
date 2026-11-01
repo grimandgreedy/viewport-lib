@@ -444,7 +444,9 @@ impl DeviceResources {
 
     /// Build an opaque scene pipeline that draws into the HDR scene pass.
     ///
-    /// Standard depth state: `LessEqual` test, depth write on. The pipeline
+    /// Standard depth state: `opts.depth_compare` test
+    /// ([`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE) by default),
+    /// depth write on. The pipeline
     /// layout lists [`group0_layout`](Self::group0_layout) as group 0,
     /// then `extra_bind_group_layouts` as groups 1.., in order. The plugin
     /// owns all groups past 0.

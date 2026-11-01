@@ -895,15 +895,19 @@ pub struct ItemTypeId(pub(crate) u64);
 ///
 /// Registration model: item-type plugins are singleton-by-type. The
 /// `type_name` is the identity scene items reference to route themselves to a
-/// renderer, so two plugins under the same name would be ambiguous and the
-/// second registration replaces the first. This behaviour is frozen. Runtime
+/// renderer, so two plugins under the same name would be ambiguous: a second
+/// registration under a taken name is refused with
+/// [`ViewportError::ItemTypeNameTaken`](crate::ViewportError::ItemTypeNameTaken).
+/// To replace a plugin, unregister it first with
+/// [`remove_item_type_plugin`](crate::ViewportRenderer::remove_item_type_plugin). Runtime
 /// and GPU plugins differ deliberately: they carry no external identity and
 /// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
 /// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a
-    /// second plugin with the same name replaces the first.
+    /// second plugin with the same name is refused with
+    /// [`ViewportError::ItemTypeNameTaken`](crate::ViewportError::ItemTypeNameTaken).
     fn type_name(&self) -> &'static str;
 
     /// What the plugin needs from the device. Checked at registration: a
