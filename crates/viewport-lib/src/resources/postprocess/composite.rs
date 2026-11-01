@@ -2,7 +2,8 @@
 //!
 //! `tone_map.wgsl` is a single fullscreen composite: it reads the HDR scene
 //! colour plus a fixed set of effect-produced inputs (bloom, ambient
-//! occlusion, contact shadows), the scene depth, the foreground
+//! occlusion, contact shadows), the scene pass's indirect fraction, the scene
+//! depth, the foreground
 //! coverage mask, and the exposure state buffer. This module names that
 //! binding set once, so the bind group layout, the initial and per-frame bind
 //! groups, and the per-frame enable flags are all driven from the same table
@@ -31,6 +32,10 @@ pub(crate) mod slot {
     /// View-transform strip LUT, sampled in place of the operator when the
     /// uniform's `mode` selects it. A neutral placeholder otherwise.
     pub(crate) const VIEW_LUT: u32 = 11;
+    /// The scene pass's indirect fraction: the indirect share, which scales
+    /// the AO term, and the direct share, which scales contact shadows. The
+    /// white placeholder when neither is on.
+    pub(crate) const INDIRECT_FRACTION: u32 = 12;
 }
 
 /// GPU-side shape of one composite binding.
@@ -64,6 +69,7 @@ const BINDINGS: &[(u32, BindingKind)] = &[
     (slot::EXPOSURE, BindingKind::StorageReadOnly),
     (slot::GRADE_LUT, BindingKind::FilterableTexture),
     (slot::VIEW_LUT, BindingKind::FilterableTexture),
+    (slot::INDIRECT_FRACTION, BindingKind::FilterableTexture),
 ];
 
 /// Build the tone-map bind group layout from the binding table.

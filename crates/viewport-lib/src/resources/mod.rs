@@ -98,9 +98,9 @@ pub use self::mesh_sidecar::shade::{
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
-    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
-    PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT, ShadowCaster,
+    HDR_COLOR_FORMAT, INDIRECT_FRACTION_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
+    PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts,
+    SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT, ShadowCaster,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub use self::types::OutlineEdgeUniform;

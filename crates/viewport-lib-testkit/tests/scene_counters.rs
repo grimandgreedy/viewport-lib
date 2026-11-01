@@ -98,6 +98,8 @@ fn expected(name: &str) -> Option<Expected> {
         "light_transport_helmet_zone" => e(2, 2, 2, 2, 3980),
         "light_transport_probe_x1" => e(4, 4, 3, 3, 2234),
         "light_transport_probe_x4" => e(4, 4, 3, 3, 2234),
+        "occlusion_ssao" => e(2, 2, 2, 2, 14),
+        "occlusion_contact" => e(2, 2, 2, 2, 14),
         "light_transport_recolor_physical" => e(3, 3, 3, 3, 4418),
         "light_transport_colormap_physical" => e(4, 4, 3, 3, 966),
         "light_transport_no_environment" => e(9, 9, 2, 2, 12162),

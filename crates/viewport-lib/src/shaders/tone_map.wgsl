@@ -72,6 +72,13 @@ struct ExposureState {
 // otherwise.
 @group(0) @binding(11) var view_lut: texture_2d<f32>;
 
+// The scene pass's light split: red is the indirect share of each opaque
+// pixel's light, green the direct share, 1 for both where nothing wrote it.
+// AO scales the indirect share and contact shadows the direct share, so
+// neither darkens emission. A white placeholder when neither is on. Under
+// SSAA the resolve has already averaged it down.
+@group(0) @binding(12) var indirect_fraction_texture: texture_2d<f32>;
+
 // #include "helpers/depth_texel.wgsl"
 // #include "helpers/depth.wgsl"
 // #include "helpers/tone_operators.wgsl"
@@ -265,27 +272,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
     }
 
-    // Add bloom additively before tone mapping.
-    var colour = hdr.rgb + bloom;
+    var colour = hdr.rgb;
 
     // Screen-space geometry terms (AO, contact shadows) apply only where geometry
     // was shaded. Over empty background there is no geometry, so skipping them
-    // both avoids modulating transparent particles / bloom by stale values in
+    // both avoids modulating transparent particles by stale values in
     // non-geometry regions and keeps the bloom-over-background path independent of
-    // those textures' clear values.
+    // those textures' clear values. Each darkens its share of the light only,
+    // `1 - (1 - term) * share`: AO the indirect light, contact shadows (the key
+    // light's screen-space shadow) the direct light.
     if !is_background && !covered {
-        // Multiply by AO before tone mapping.
+        var split = vec2<f32>(1.0);
+        if params.ssao_enabled != 0u || params.contact_shadows_enabled != 0u {
+            split = textureSampleLevel(indirect_fraction_texture, hdr_sampler, in.uv, 0.0).rg;
+        }
         if params.ssao_enabled != 0u {
             let ao = textureSampleLevel(ao_texture, hdr_sampler, in.uv, 0.0).r;
-            colour = colour * ao;
+            colour = colour * (1.0 - (1.0 - ao) * split.x);
         }
-
-        // Multiply by contact shadow factor before tone mapping.
         if params.contact_shadows_enabled != 0u {
             let cs = textureSampleLevel(cs_texture, hdr_sampler, in.uv, 0.0).r;
-            colour = colour * cs;
+            colour = colour * (1.0 - (1.0 - cs) * split.y);
         }
     }
+
+    // Add bloom after the occlusion terms, so they do not dim the glow.
+    colour = colour + bloom;
 
     // Eye-Dome Lighting: darken pixels at depth discontinuities.
     // Depth is linearized (z_eye / far, capped at 1 for background) before the

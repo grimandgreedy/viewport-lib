@@ -200,6 +200,7 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
             depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
         hdr,
     )

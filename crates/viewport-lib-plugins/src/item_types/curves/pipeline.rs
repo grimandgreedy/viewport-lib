@@ -397,6 +397,7 @@ fn build_mesh(r: &CurveMeshRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
             depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
         matches!(i, SOLID_HDR | WIREFRAME_HDR),
     )

@@ -43,7 +43,18 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
     return camera.view_proj * vec4<f32>(pos, 1.0);
 }
 
+fn fs_main_body() -> vec4<f32> {
+    return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+}
+
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+    return fs_main_body();
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene() -> SceneFragment {
+    let colour = fs_main_body();
+    return scene_fragment(colour);
 }

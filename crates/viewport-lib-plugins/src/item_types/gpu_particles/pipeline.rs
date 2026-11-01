@@ -91,6 +91,7 @@ fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
             depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
         hdr,
     )

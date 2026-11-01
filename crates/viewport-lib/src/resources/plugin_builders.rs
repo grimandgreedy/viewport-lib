@@ -16,6 +16,12 @@ const NO_LIT_GROUP0: &str = "item types register only where there is a lit group
 /// path build pipelines against this format.
 pub const HDR_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba16Float;
 
+/// Format of the HDR scene pass's second colour target, the indirect
+/// fraction: the indirect share of each opaque pixel's light in red and the
+/// direct share in green (see
+/// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)).
+pub const INDIRECT_FRACTION_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rg8Unorm;
+
 /// The default scene depth-stencil format, `Depth24PlusStencil8`.
 ///
 /// A renderer configured with
@@ -153,6 +159,7 @@ impl DeviceResources {
     pub fn opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: HDR_COLOR_FORMAT,
+            indirect_fraction_format: Some(INDIRECT_FRACTION_FORMAT),
             depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
@@ -170,6 +177,7 @@ impl DeviceResources {
     pub fn ldr_opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: self.target_format,
+            indirect_fraction_format: None,
             depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
@@ -179,6 +187,7 @@ impl DeviceResources {
     pub fn foreground_target_desc(&self) -> ForegroundTargetDesc {
         ForegroundTargetDesc {
             color_format: HDR_COLOR_FORMAT,
+            indirect_fraction_format: INDIRECT_FRACTION_FORMAT,
             depth_format: self.scene_depth_format(),
             sample_count: 1,
         }
@@ -438,6 +447,12 @@ impl DeviceResources {
     /// layout lists [`group0_layout`](Self::group0_layout) as group 0,
     /// then `extra_bind_group_layouts` as groups 1.., in order. The plugin
     /// owns all groups past 0.
+    ///
+    /// The pass has two colour targets, the scene colour and the indirect
+    /// fraction (see [`OpaqueTargetDesc`]); the pipeline declares both. With
+    /// [`writes_indirect_fraction`](PluginPipelineOpts::writes_indirect_fraction)
+    /// off, the default, the fragment entry writes `@location(0)` only and the
+    /// fraction is left as it was.
     pub fn build_opaque_pipeline(
         &self,
         device: &crate::gpu::Device,
@@ -692,11 +707,9 @@ impl PipelineBuilder {
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: desc.color_format,
-                        blend: opts.color_blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
+                    targets: desc
+                        .colour_targets(opts.color_blend, opts.writes_indirect_fraction)
+                        .as_slice(),
                     compilation_options: Default::default(),
                 }),
                 primitive: opts.primitive,
@@ -738,11 +751,9 @@ impl PipelineBuilder {
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: desc.color_format,
-                        blend: opts.color_blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
+                    targets: desc
+                        .colour_targets(opts.color_blend, opts.writes_indirect_fraction)
+                        .as_slice(),
                     compilation_options: Default::default(),
                 }),
                 primitive: opts.primitive,
@@ -1101,6 +1112,12 @@ pub struct PluginPipelineOpts<'a> {
     /// [`shadow_caster`](Self::shadow_caster), which sets this and the cull
     /// mode to the pair the renderer's own meshes cast with.
     pub depth_bias: Option<crate::gpu::DepthBiasState>,
+    /// Whether the fragment entry writes the HDR scene pass's indirect
+    /// fraction at `@location(1)`, for the opaque and foreground builders (see
+    /// [`indirect_fraction_target`](crate::plugin_api::target_desc::indirect_fraction_target)).
+    /// Ignored by the others and on the LDR pass. Default `false`: the target
+    /// is declared with an empty write mask.
+    pub writes_indirect_fraction: bool,
 }
 
 /// How a shadow pipeline's triangles cast into the cascade atlas. Each case
@@ -1165,6 +1182,7 @@ impl<'a> PluginPipelineOpts<'a> {
             depth_write: true,
             depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             depth_bias: None,
+            writes_indirect_fraction: false,
         }
     }
 

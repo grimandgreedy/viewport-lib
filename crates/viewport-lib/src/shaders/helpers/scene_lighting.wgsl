@@ -9,6 +9,8 @@
 //
 //   apply_scene_lighting(N, base_colour, two_sided, world_pos, lights) -> vec3<f32>
 //
+// and `scene_lighting_terms`, which returns its two terms apart.
+//
 // The helper returns `base_colour * (hemisphere_ambient + light_sum)` where
 // `hemisphere_ambient` is the sky/ground blend on `N.z` and `light_sum`
 // accumulates direct contribution from the per-cluster light list. When the
@@ -318,13 +320,21 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
     return ev;
 }
 
-fn apply_scene_lighting(
+// The two terms `apply_scene_lighting` sums, before the base colour: the
+// hemisphere fill (indirect) and the light loop's sum (direct), both exposed.
+// The scene pass's light split is `scene_light_split(base * indirect,
+// base * direct, emitted)`.
+struct SceneLightingTerms {
+    indirect: vec3<f32>,
+    direct:   vec3<f32>,
+};
+
+fn scene_lighting_terms(
     normal: vec3<f32>,
-    base_colour: vec3<f32>,
     two_sided: bool,
     world_pos: vec3<f32>,
     lights: Lights,
-) -> vec3<f32> {
+) -> SceneLightingTerms {
     // Hemisphere ambient. Z-up world: N.z=+1 reads pure sky, N.z=-1 reads pure
     // ground. Scaled by `hemisphere_intensity` so `hemisphere_intensity = 0`
     // disables the term and items rely entirely on direct lights.
@@ -344,5 +354,16 @@ fn apply_scene_lighting(
         // matches the PBR and Phong diffuse energy for the same light.
         direct = direct + ev.radiance * n_dot_l * INV_PI;
     }
-    return base_colour * (ambient + direct);
+    return SceneLightingTerms(ambient, direct);
+}
+
+fn apply_scene_lighting(
+    normal: vec3<f32>,
+    base_colour: vec3<f32>,
+    two_sided: bool,
+    world_pos: vec3<f32>,
+    lights: Lights,
+) -> vec3<f32> {
+    let terms = scene_lighting_terms(normal, two_sided, world_pos, lights);
+    return base_colour * (terms.indirect + terms.direct);
 }

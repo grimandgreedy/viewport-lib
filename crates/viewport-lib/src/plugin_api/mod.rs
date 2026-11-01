@@ -180,7 +180,8 @@ pub use post_effect::{
 };
 pub use target_desc::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,
-    OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
+    OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, SceneColourTargets, ShadowTargetDesc,
+    indirect_fraction_target,
 };
 pub use uploads::{Handles, Uploads};
 pub use writes::{Channel, Extent, Sourced, Span, Writes};

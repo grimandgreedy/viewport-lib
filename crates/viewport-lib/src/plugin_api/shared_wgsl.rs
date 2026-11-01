@@ -33,7 +33,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 10;
+pub const WGSL_VERSION: u32 = 11;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -111,6 +111,34 @@ pub const SHARED_BINDINGS_WGSL: &str =
 /// take.
 pub const SHARED_SCENE_LIGHTING_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/scene_lighting.wgsl"));
+
+/// The HDR scene pass's fragment output and the indirect fraction.
+///
+/// Provides:
+///
+/// ```ignore
+/// struct SceneFragment {
+///     @location(0) colour: vec4<f32>,
+///     @location(1) indirect_fraction: vec4<f32>,
+/// };
+/// fn scene_light_split(indirect: vec3<f32>, direct: vec3<f32>, emitted: vec3<f32>);
+/// fn scene_fragment(colour: vec4<f32>) -> SceneFragment;
+/// var<private> scene_indirect_fraction: f32; // 0 unless the body sets it
+/// var<private> scene_direct_fraction: f32;   // 0 unless the body sets it
+/// ```
+///
+/// The HDR scene pass has a second colour target holding how each pixel's
+/// light splits: the indirect share, which the composite scales by ambient
+/// occlusion, and the direct share, which it scales by contact shadows. A lit
+/// body calls `scene_light_split(ambient, direct, emitted)` with exposed
+/// radiance in each term, and the fragment entry its HDR pipeline uses
+/// returns `scene_fragment(colour)`. An unlit body sets nothing, leaving both
+/// shares at 0, so neither term darkens it. The LDR pass has one
+/// target, so the LDR pipeline keeps a separate entry returning the colour.
+/// [`scene_lighting_terms`](SHARED_SCENE_LIGHTING_WGSL) gives the two terms
+/// of the shared light loop. Declares no bindings.
+pub const SHARED_SCENE_FRAGMENT_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/scene_fragment.wgsl"));
 
 /// The cascaded shadow-map sampler the renderer's own lit shaders use.
 ///

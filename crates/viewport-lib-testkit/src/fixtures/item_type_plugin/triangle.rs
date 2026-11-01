@@ -133,9 +133,11 @@ impl TriangleGpu {
             ),
         );
 
-        // The encode pass targets the same HDR scene attachments the opaque
-        // pass does, so it is built from the same descriptor.
-        let encode = resources.build_opaque_pipeline(
+        // The encode pass attaches the HDR scene colour alone, without the
+        // scene pass's indirect fraction, so it is built against the one HDR
+        // target the read-only-depth descriptor declares. It tests depth and
+        // does not write it.
+        let encode = resources.build_depth_read_pipeline(
             device,
             &PluginPipelineOpts::new(
                 Some("triangle_item_encode"),

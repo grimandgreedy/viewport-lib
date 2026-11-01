@@ -835,6 +835,10 @@ impl ViewportRenderer {
             } else {
                 &slot_hdr.hdr_depth_view
             };
+            let scene_fraction_view = match &slot_hdr.ssaa_indirect_fraction_view {
+                Some(view) if use_ssaa => view,
+                _ => &slot_hdr.indirect_fraction_view,
+            };
 
             let clear_wgpu = crate::gpu::Color {
                 r: hdr_clear_rgb[0] as f64,
@@ -856,19 +860,37 @@ impl ViewportRenderer {
                     end_of_pass_write_index: Some(crate::renderer::GPU_TS_SCENE * 2 + 1),
                 }
             });
+            // The indirect fraction starts at 1 in both shares where nothing
+            // draws, and is kept only for a frame whose composite reads it.
+            let fraction_store = if slot.pass_table.reads_indirect_fraction() {
+                crate::gpu::StoreOp::Store
+            } else {
+                crate::gpu::StoreOp::Discard
+            };
             let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("hdr_scene_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: scene_colour_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(clear_wgpu),
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
+                color_attachments: &[
+                    Some(crate::gpu::RenderPassColorAttachment {
+                        view: scene_colour_view,
+                        resolve_target: None,
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(clear_wgpu),
+                            store: crate::gpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    }),
+                    Some(crate::gpu::RenderPassColorAttachment {
+                        view: scene_fraction_view,
+                        resolve_target: None,
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
+                            store: fraction_store,
+                        },
+                        depth_slice: None,
+                    }),
+                ],
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
@@ -1195,7 +1217,13 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if ssaa_factor > 1 {
             self.mark_pass_ran(vp_idx, HdrPass::SsaaResolve);
-            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let slot = &self.viewport_slots[vp_idx];
+            let slot_hdr = slot.hdr.as_ref().unwrap();
+            let fraction_store = if slot.pass_table.reads_indirect_fraction() {
+                crate::gpu::StoreOp::Store
+            } else {
+                crate::gpu::StoreOp::Discard
+            };
             if let (Some(pipeline), Some(bg)) = (
                 &self.resources.post.ssaa_resolve_pipeline,
                 &slot_hdr.ssaa_resolve_bind_group,
@@ -1205,15 +1233,26 @@ impl ViewportRenderer {
                         #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("ssaa_resolve_pass"),
-                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                            view: &slot_hdr.hdr_view,
-                            resolve_target: None,
-                            ops: crate::gpu::Operations {
-                                load: crate::gpu::LoadOp::Load,
-                                store: crate::gpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
+                        color_attachments: &[
+                            Some(crate::gpu::RenderPassColorAttachment {
+                                view: &slot_hdr.hdr_view,
+                                resolve_target: None,
+                                ops: crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Load,
+                                    store: crate::gpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            }),
+                            Some(crate::gpu::RenderPassColorAttachment {
+                                view: &slot_hdr.indirect_fraction_view,
+                                resolve_target: None,
+                                ops: crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Load,
+                                    store: fraction_store,
+                                },
+                                depth_slice: None,
+                            }),
+                        ],
                         depth_stencil_attachment: None,
                         timestamp_writes: None,
                         occlusion_query_set: None,
@@ -2062,15 +2101,34 @@ impl ViewportRenderer {
             #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("hdr_foreground_pass"),
-            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                view: &slot_hdr.hdr_view,
-                resolve_target: None,
-                ops: crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
+            // The foreground draws with the scene pass's pipelines, so it
+            // attaches the indirect fraction as well. The composite skips
+            // the occlusion terms where the foreground covers, so what it
+            // writes there is never read; the rest must survive.
+            color_attachments: &[
+                Some(crate::gpu::RenderPassColorAttachment {
+                    view: &slot_hdr.hdr_view,
+                    resolve_target: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+                Some(crate::gpu::RenderPassColorAttachment {
+                    view: &slot_hdr.indirect_fraction_view,
+                    resolve_target: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: if slot.pass_table.reads_indirect_fraction() {
+                            crate::gpu::StoreOp::Store
+                        } else {
+                            crate::gpu::StoreOp::Discard
+                        },
+                    },
+                    depth_slice: None,
+                }),
+            ],
             depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                 view: fg_depth_view,
                 depth_ops: Some(crate::gpu::Operations {

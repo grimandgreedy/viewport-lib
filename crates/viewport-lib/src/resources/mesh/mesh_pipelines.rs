@@ -178,7 +178,8 @@ pub(crate) fn ldr_mesh_pipeline_with(
     )
 }
 
-/// One HDR `mesh.wgsl` pipeline, drawing into the Rgba16Float intermediate.
+/// One HDR `mesh.wgsl` pipeline, drawing into the scene pass: the
+/// Rgba16Float intermediate and the indirect fraction.
 /// `constants` sets the module's `override` constants (empty for the
 /// defaults).
 #[allow(clippy::too_many_arguments)]
@@ -237,12 +238,16 @@ pub(crate) fn hdr_mesh_pipeline_entry(
             vertex_buffers: mesh_vertex_state(&mesh_vertex_buffers(culled), lean),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some(if plain { "fs_main_plain" } else { "fs_main" }),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format: crate::gpu::TextureFormat::Rgba16Float,
-                    blend,
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
+                entry_point: Some(if plain { "fs_scene_plain" } else { "fs_scene" }),
+                targets: crate::plugin_api::SceneColourTargets::hdr(
+                    crate::gpu::ColorTargetState {
+                        format: crate::gpu::TextureFormat::Rgba16Float,
+                        blend,
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    },
+                    true,
+                )
+                .as_slice(),
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
             primitive: crate::gpu::PrimitiveState {

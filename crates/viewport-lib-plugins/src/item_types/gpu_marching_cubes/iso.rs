@@ -160,6 +160,7 @@ fn build(r: &McIsoRecipe, i: usize) -> gpu::RenderPipeline {
                 sample_count: 1,
                 ldr_format: r.ldr_format,
                 depth_format: r.depth_format,
+                indirect_fraction_entry: None,
             },
             false,
         ),

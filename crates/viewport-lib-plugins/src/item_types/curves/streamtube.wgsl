@@ -100,8 +100,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Section-plane clipping.
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         let plane = clip_planes.planes[i];
@@ -128,7 +127,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Hemisphere ambient + directional lights via the shared helper. One-sided
     // surface (outward-facing tube normals).
-    let shaded = apply_scene_lighting(n, base_colour.rgb, false, in.world_pos, lights);
+    let shaded_terms = scene_lighting_terms(n, false, in.world_pos, lights);
+    let shaded = base_colour.rgb * (shaded_terms.indirect + shaded_terms.direct);
+    scene_light_split(base_colour.rgb * shaded_terms.indirect, base_colour.rgb * shaded_terms.direct, vec3<f32>(0.0));
 
     return vec4<f32>(shaded, alpha);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

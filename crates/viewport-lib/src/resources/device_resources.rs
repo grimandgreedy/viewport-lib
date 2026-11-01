@@ -22,6 +22,12 @@ pub(crate) struct ViewportHdrState {
     pub hdr_depth_view: crate::gpu::TextureView,
     pub hdr_depth_only_view: crate::gpu::TextureView,
     pub hdr_stencil_only_view: crate::gpu::TextureView,
+    /// The indirect share of each opaque pixel's light, at scene resolution:
+    /// the scene pass's second colour attachment (the SSAA resolve's under
+    /// SSAA), which the composite scales ambient occlusion and contact shadows
+    /// by. The foreground pass attaches it too.
+    pub indirect_fraction_texture: crate::gpu::Texture,
+    pub indirect_fraction_view: crate::gpu::TextureView,
 
     // --- Composite-input producers (targets, bind groups, uniforms) ---
     pub bloom: crate::resources::postprocess::producer::BloomViewport,
@@ -36,6 +42,11 @@ pub(crate) struct ViewportHdrState {
     /// Supersampled colour render target. `None` when ssaa_factor == 1.
     pub ssaa_colour_texture: Option<crate::gpu::Texture>,
     pub ssaa_colour_view: Option<crate::gpu::TextureView>,
+    /// Supersampled indirect fraction, the scene pass's second attachment
+    /// under SSAA; the resolve averages it into `indirect_fraction_view`.
+    /// `None` when ssaa_factor == 1.
+    pub ssaa_indirect_fraction_texture: Option<crate::gpu::Texture>,
+    pub ssaa_indirect_fraction_view: Option<crate::gpu::TextureView>,
     /// Supersampled depth render target. `None` when ssaa_factor == 1.
     pub ssaa_depth_texture: Option<crate::gpu::Texture>,
     pub ssaa_depth_view: Option<crate::gpu::TextureView>,
@@ -83,9 +94,10 @@ pub(crate) struct ViewportHdrState {
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
     /// The views `tone_map_bind_group` was last built over (HDR input, bloom,
-    /// AO, contact shadow, scene depth, foreground depth, grade LUT), so a
-    /// frame that binds the same ones reuses it. `None` until the first rebuild.
-    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 8]>,
+    /// AO, contact shadow, scene depth, foreground depth, grade and view LUTs,
+    /// indirect fraction), so a frame that binds the same ones reuses it.
+    /// `None` until the first rebuild.
+    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 9]>,
     /// The foreground view the DOF bind group was last built with.
     pub dof_bg_foreground: Option<crate::gpu::TextureView>,
     /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.
@@ -154,7 +166,8 @@ pub(crate) struct ViewportHdrState {
 pub struct DualPipeline {
     /// Variant compiled for the LDR swapchain format.
     pub ldr: crate::gpu::RenderPipeline,
-    /// Variant compiled for the HDR intermediate format (`Rgba16Float`).
+    /// Variant compiled for the HDR scene pass: the `Rgba16Float`
+    /// intermediate and the indirect fraction.
     pub hdr: crate::gpu::RenderPipeline,
 }
 
@@ -1482,11 +1495,17 @@ impl DeviceResources {
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
+                    // The sky is background, which the composite never
+                    // occludes: the fraction is left at its clear value.
+                    targets: crate::plugin_api::SceneColourTargets::hdr(
+                        crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::Rgba16Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        },
+                        false,
+                    )
+                    .as_slice(),
                     compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: crate::gpu::PrimitiveState {

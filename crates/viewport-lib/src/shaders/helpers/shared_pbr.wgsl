@@ -1,5 +1,5 @@
 
-// @viewport-wgsl-version: 3
+// @viewport-wgsl-version: 4
 // Shared PBR / lit-shading helpers. Requires SHARED_BINDINGS_WGSL to be
 // included first.
 //
@@ -86,12 +86,19 @@ fn _viewport_eval_light(light: SingleLight, world_pos: vec3<f32>) -> _ViewportLi
     return ev;
 }
 
-fn viewport_apply_scene_lighting(
+// The two terms `viewport_apply_scene_lighting` sums, before the base
+// colour: the hemisphere fill (indirect) and the light loop's sum (direct),
+// both exposed.
+struct ViewportLightingTerms {
+    indirect: vec3<f32>,
+    direct:   vec3<f32>,
+};
+
+fn viewport_scene_lighting_terms(
     normal: vec3<f32>,
-    base_colour: vec3<f32>,
     two_sided: bool,
     world_pos: vec3<f32>,
-) -> vec3<f32> {
+) -> ViewportLightingTerms {
     let up_weight = clamp(normal.z * 0.5 + 0.5, 0.0, 1.0);
     let ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
                   * (lights.hemisphere_intensity * camera.exposure);
@@ -110,7 +117,17 @@ fn viewport_apply_scene_lighting(
         }
         direct = direct + radiance * n_dot_l * shadow_factor;
     }
-    return base_colour * (ambient + direct);
+    return ViewportLightingTerms(ambient, direct);
+}
+
+fn viewport_apply_scene_lighting(
+    normal: vec3<f32>,
+    base_colour: vec3<f32>,
+    two_sided: bool,
+    world_pos: vec3<f32>,
+) -> vec3<f32> {
+    let terms = viewport_scene_lighting_terms(normal, two_sided, world_pos);
+    return base_colour * (terms.indirect + terms.direct);
 }
 
 // Cascade selection + atlas tap. Mirrors the bias scheme and filter

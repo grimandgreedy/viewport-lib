@@ -526,20 +526,26 @@ impl ViewportRenderer {
             BatchBound, BatchPass, DrawKind, MeshDrawEncoder, draw_batch,
         };
         let resources = &self.resources;
-        // The HDR scene pass renders Rgba16Float at sample count 1 with a
-        // writable stencil aspect; the LDR passes render the surface format
-        // at the configured sample count with the stencil attached read-only
-        // (`stencil_ops: None`). A read-only stencil declaration is valid in
-        // both (the mesh pipelines never touch stencil).
-        let (colour_format, sample_count) = if hdr {
-            (crate::gpu::TextureFormat::Rgba16Float, 1)
+        // The HDR scene pass renders Rgba16Float plus the indirect fraction
+        // at sample count 1 with a writable stencil aspect; the LDR passes
+        // render the surface format at the configured sample count with the
+        // stencil attached read-only (`stencil_ops: None`). A read-only
+        // stencil declaration is valid in both (the mesh pipelines never
+        // touch stencil).
+        let hdr_formats = [
+            Some(crate::gpu::TextureFormat::Rgba16Float),
+            Some(crate::resources::INDIRECT_FRACTION_FORMAT),
+        ];
+        let ldr_formats = [Some(resources.target_format)];
+        let (colour_formats, sample_count): (&[Option<crate::gpu::TextureFormat>], u32) = if hdr {
+            (&hdr_formats, 1)
         } else {
-            (resources.target_format, resources.sample_count)
+            (&ldr_formats, resources.sample_count)
         };
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,
             "per_object_bundle",
-            &[Some(colour_format)],
+            colour_formats,
             Some(crate::gpu::RenderBundleDepthStencil {
                 format: resources.scene_depth_format(),
                 depth_read_only: false,

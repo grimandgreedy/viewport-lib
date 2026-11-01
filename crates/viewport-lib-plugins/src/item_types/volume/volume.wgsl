@@ -225,8 +225,7 @@ fn clip_ray_cylinder(
     return vec2<f32>(t_near, t_far);
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOutput) -> vec4<f32> {
     // Transform ray to model space (unit cube [0,1]^3).
     let eye_model = (volume.inv_model * vec4<f32>(camera.eye_pos, 1.0)).xyz;
     let frag_model = (volume.inv_model * vec4<f32>(in.world_pos, 1.0)).xyz;
@@ -423,4 +422,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(colour_accum, alpha_accum);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOutput) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }
