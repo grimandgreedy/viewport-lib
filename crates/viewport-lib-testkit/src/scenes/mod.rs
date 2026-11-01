@@ -23,6 +23,7 @@ pub mod materials;
 pub mod materials_ibl;
 pub mod meshes;
 pub mod normal_maps;
+pub mod occlusion;
 pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
@@ -1100,6 +1101,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(light_transport::scenes());
     scenes.extend(grading::scenes());
     scenes.extend(tone_mapping::scenes());
+    scenes.extend(occlusion::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());
