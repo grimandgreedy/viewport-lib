@@ -941,7 +941,9 @@ impl eframe::App for App {
                 // manipulation) drives the controller itself; otherwise the
                 // host applies it, or resolves it without moving the camera
                 // when the showcase is using the drag for something else.
-                if !self.showcase_drive_camera(&viewport_cx)
+                // A capture tour keeps the opening camera whatever the pointer does.
+                if self.capture.is_none()
+                    && !self.showcase_drive_camera(&viewport_cx)
                     && !self.showcase_suppress_orbit(&viewport_cx)
                 {
                     let action_frame = self.input.resolve();
