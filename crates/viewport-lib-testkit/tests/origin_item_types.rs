@@ -453,3 +453,66 @@ fn plugin_cull_frustum_6400_km_from_origin_keeps_what_is_in_view() {
     assert!(single.iter().all(|k| *k), "single-call prepare culled it");
     assert!(split.iter().all(|k| *k), "per-viewport prepare culled it");
 }
+
+/// A foreground cube 6 400 km out, placed at odd multiples of 1/16 that f32
+/// rounds by up to a quarter metre there, over a floor drawn in the scene
+/// pass. At the world origin under `WorldOrigin::Zero`, or out there under a
+/// snapped origin.
+fn render_foreground(harness: &mut Harness, far: bool, generation: u64) -> Vec<u8> {
+    use glam::DVec3;
+    use viewport_lib::{Colour, Material, SceneRenderItem, primitives};
+    let base = DVec3::new(if far { ROOM_FAR } else { 0.0 }, 0.0, 0.0);
+    let mut scene = viewport_lib_testkit::BuiltScene::default();
+    let res = harness.renderer.resources_mut();
+    let floor_mat = res
+        .upload_material(Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.8))
+        .expect("material upload");
+    let fg_mat = res
+        .upload_material(Material::pbr(Colour::linear_rgb(0.8, 0.3, 0.2), 0.0, 0.5))
+        .expect("material upload");
+    let floor = res
+        .upload_mesh_data(&harness.device, &primitives::cuboid(4.0, 4.0, 0.2))
+        .expect("mesh upload");
+    let cube = res
+        .upload_mesh_data(&harness.device, &primitives::cuboid(0.5, 0.5, 0.5))
+        .expect("mesh upload");
+    let mut ground = SceneRenderItem::new(floor, floor_mat);
+    ground.model = viewport_lib::Transform::from_translation(base + DVec3::new(0.0, 0.0, -0.1));
+    scene.items.push(ground);
+    scene.generation = generation;
+    scene.world_origin = Some(if far {
+        viewport_lib::WorldOrigin::snapped()
+    } else {
+        viewport_lib::WorldOrigin::Zero
+    });
+    let camera = viewport_lib::Camera::orbit(
+        base + DVec3::new(0.0, 0.0, 0.5),
+        3.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
+    let mut frame = frame_for(&scene, &camera, [W as f32, H as f32]);
+    let mut held = SceneRenderItem::new(cube, fg_mat);
+    held.model =
+        viewport_lib::Transform::from_translation(base + DVec3::new(0.3125, -0.1875, 0.4375));
+    frame.scene.foreground_items = vec![held];
+    let _ = harness.render(&frame, W, H);
+    harness.render(&frame, W, H)
+}
+
+#[test]
+fn foreground_item_6400_km_from_origin_matches_the_world_origin() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let near = render_foreground(&mut harness, false, 40_000);
+    let far = render_foreground(&mut harness, true, 40_001);
+    assert!(
+        differing(&near, &vec![0u8; near.len()]) > 0,
+        "the foreground scene rendered nothing"
+    );
+    let n = differing(&near, &far);
+    let limit = (W * H) as usize * PIXELS_PER_MILLE / 1000;
+    eprintln!("foreground: {n} of {} pixels differ", W * H);
+    assert!(n <= limit, "{n} pixels differ (allowed {limit})");
+}

@@ -8,7 +8,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext, SurfaceMaskContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -105,7 +104,7 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
             return;
         }
         // Still compiling: the slices draw next frame.
-        let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+        let colour = if ctx.is_hdr_pass() {
             pipeline::COLOUR_HDR
         } else {
             pipeline::COLOUR_LDR

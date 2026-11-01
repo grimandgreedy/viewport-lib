@@ -419,7 +419,7 @@ impl<'a> ItemFrameContext<'a> {
 /// into the LDR pass via [`ItemTypePlugin::draws_ldr`] keeps a second
 /// pipeline built against
 /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc)
-/// and selects between the two by [`target_format`](Self::target_format).
+/// and selects between the two by [`is_hdr_pass`](Self::is_hdr_pass).
 #[non_exhaustive]
 pub struct PaintContext<'a> {
     /// Active render-camera snapshot for this viewport.
@@ -433,16 +433,34 @@ pub struct PaintContext<'a> {
     /// Colour format of the pass's first colour target: the HDR scene format
     /// (`Rgba16Float`) in `paint` on the HDR path and in `paint_transparent`
     /// (the OIT accumulation target) and `paint_foreground`; the renderer's
-    /// configured output format in `paint` on the LDR path. Use it to select
-    /// the matching pipeline variant. In `paint` and `paint_foreground` on the
-    /// HDR path the pass has a second target, the indirect fraction (see
-    /// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)).
+    /// configured output format in `paint` on the LDR path. In `paint` and
+    /// `paint_foreground` on the HDR path the pass has a second target, the
+    /// indirect fraction (see
+    /// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)). Choose the
+    /// pipeline variant with [`is_hdr_pass`](Self::is_hdr_pass): the LDR
+    /// output format can be `Rgba16Float` too.
     pub target_format: crate::gpu::TextureFormat,
     /// Draw handle for meshes the consumer uploaded through
     /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).
     /// An item type whose geometry is a `MeshId` binds and draws it through
     /// this; one that owns its buffers ignores it.
     pub meshes: crate::resources::MeshDraw<'a>,
+    /// Whether the pass is one of the HDR path's passes.
+    pub(crate) hdr_pass: bool,
+}
+
+impl PaintContext<'_> {
+    /// `true` when the pass belongs to the HDR path: `paint` on the HDR path,
+    /// `paint_transparent` and `paint_foreground`. `false` for `paint` on the
+    /// LDR path, whose single colour target is the renderer's output format.
+    ///
+    /// Select the HDR or LDR pipeline variant with this rather than by
+    /// comparing [`target_format`](Self::target_format) with
+    /// [`HDR_COLOR_FORMAT`](crate::resources::HDR_COLOR_FORMAT): a renderer
+    /// whose output is `Rgba16Float` draws its LDR pass in that format too.
+    pub fn is_hdr_pass(&self) -> bool {
+        self.hdr_pass
+    }
 }
 
 /// Information forwarded to a plugin's `paint_depth_read`.
@@ -1015,8 +1033,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// On the LDR path (`PipelineMode::Direct`, `paint`, `paint_to`,
     /// `paint_viewport`), called after the built-in scene content, but only
     /// for plugins that opt in via [`draws_ldr`](Self::draws_ldr); the two
-    /// paths use different colour formats, and
-    /// [`PaintContext::target_format`] names the active one. The pass has
+    /// paths use different colour formats:
+    /// [`PaintContext::is_hdr_pass`] says which path the pass is on and
+    /// [`PaintContext::target_format`] names its format. The pass has
     /// the shared group-0 bind group bound on entry; plugins must restore it
     /// if they rebind group 0 themselves.
     ///
@@ -1037,8 +1056,8 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// rather than the HDR scene format, so a plugin that returns `true`
     /// must keep a pipeline for that format (built against
     /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc))
-    /// and pick it when [`PaintContext::target_format`] is not the HDR
-    /// format. Plugins that leave this `false` are skipped on the LDR path
+    /// and pick it when [`PaintContext::is_hdr_pass`] is `false`. A plugin
+    /// that returns `false` here is skipped on the LDR path
     /// (and the renderer warns once), never handed a pass their pipeline
     /// cannot draw into.
     ///

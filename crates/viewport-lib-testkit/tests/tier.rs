@@ -771,11 +771,7 @@ fn draw_split(harness: &mut Harness, frame: &mut viewport_lib::FrameData) -> (Ve
     let id = r.create_viewport(&device);
     frame.camera.viewport_index = id.index();
     let colour = target(&device, Harness::DEFAULT_TARGET_FORMAT, "tier_colour");
-    let depth = target(
-        &device,
-        wgpu::TextureFormat::Depth24PlusStencil8,
-        "tier_depth",
-    );
+    let depth = target(&device, r.scene_depth_format(), "tier_depth");
     let (colour_view, depth_view) = (
         colour.create_view(&Default::default()),
         depth.create_view(&Default::default()),

@@ -241,7 +241,7 @@ impl DeviceResources {
         // contiguous, so the whole array uploads in one write_texture.
         let mut bytes = Vec::with_capacity(rgba.len() * 2);
         for &v in rgba {
-            bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+            bytes.extend_from_slice(&f16_le_bytes(v));
         }
         let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("lightmap_array_texture"),
@@ -2915,6 +2915,18 @@ pub struct GpuTexture {
     pub colour_space: Option<crate::ColourSpace>,
 }
 
+/// `v` as little-endian half-float bytes, clamped to the largest finite half
+/// float, as environment uploads are, so a bright texel does not become
+/// infinite. NaN becomes 0.
+fn f16_le_bytes(v: f32) -> [u8; 2] {
+    let v = if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(-super::environment::F16_MAX, super::environment::F16_MAX)
+    };
+    half::f16::from_f32(v).to_le_bytes()
+}
+
 /// Pick the texture format for a payload and hand back the levels to write.
 ///
 /// The format comes from the payload kind and the colour space: an 8-bit or
@@ -2939,7 +2951,7 @@ pub(crate) fn texture_format_and_levels(
             // Pack to half-float bytes (2 bytes per channel, little-endian).
             let mut bytes = Vec::with_capacity(texels.len() * 2);
             for &v in &texels {
-                bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+                bytes.extend_from_slice(&f16_le_bytes(v));
             }
             (crate::gpu::TextureFormat::Rgba16Float, vec![bytes])
         }
@@ -3379,4 +3391,23 @@ pub(crate) fn create_builtin_colourmaps(
 
     let ids = std::array::from_fn(ColourmapId);
     (textures, views, cpu, ids)
+}
+
+#[cfg(test)]
+mod half_float_payload_tests {
+    use super::{TextureData, texture_format_and_levels};
+
+    /// A float payload brighter than a half float holds is clamped, not made
+    /// infinite, and a NaN texel becomes 0.
+    #[test]
+    fn float_payload_is_clamped_to_the_half_float_range() {
+        let data = TextureData::hdr(1, 1, vec![1.0e6, -1.0e6, f32::NAN, 0.5]);
+        let (format, levels) = texture_format_and_levels(data);
+        assert_eq!(format, crate::gpu::TextureFormat::Rgba16Float);
+        let texels: Vec<f32> = levels[0]
+            .chunks_exact(2)
+            .map(|b| half::f16::from_le_bytes([b[0], b[1]]).to_f32())
+            .collect();
+        assert_eq!(texels, vec![65504.0, -65504.0, 0.0, 0.5]);
+    }
 }

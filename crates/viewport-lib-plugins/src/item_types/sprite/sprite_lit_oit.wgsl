@@ -264,7 +264,8 @@ fn pack_oit(rgb: vec3<f32>, alpha: f32, view_z: f32, is_premultiplied: bool) -> 
     let z = abs(view_z);
     let w = alpha * clamp(10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0)), 1e-2, 3e3);
     var out: OitOutput;
-    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
+    // Clamped to the largest finite half float: the weight reaches 3e3.
+    out.accum  = min(vec4<f32>(premult_rgb * w, alpha * w), vec4<f32>(65504.0));
     out.reveal = alpha;
     return out;
 }

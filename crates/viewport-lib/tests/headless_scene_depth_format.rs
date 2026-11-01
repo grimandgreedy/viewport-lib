@@ -1,7 +1,8 @@
 //! The scene depth format: `RendererConfig::scene_depth_format` picks the
-//! format every scene pipeline and depth target uses, a 32-bit float depth
-//! draws the same picture as the 24-bit default, and a request the device
-//! cannot honour falls back with a notice.
+//! format every scene pipeline and depth target uses, no request takes the
+//! 32-bit float depth on a device with the feature, a 32-bit float depth draws
+//! the same picture as a pinned 24-bit one, and a request the device cannot
+//! honour falls back with a notice.
 
 use viewport_lib::wgpu;
 use viewport_lib::{Colour, LightKind, NoticeDetail, RendererConfig};
@@ -132,7 +133,8 @@ fn compare(a: &[u8], b: &[u8]) -> (usize, u8) {
 
 /// The same shadowed scene drawn with a `Depth32FloatStencil8` scene depth
 /// matches the 24-bit render within [`TOLERANCE`] on both paths, and a GPU
-/// pick against the float depth finds the object under the cursor.
+/// pick against the float depth finds the object under the cursor. With no
+/// request the device's float depth is taken.
 #[test]
 fn float_depth_matches_the_24_bit_render() {
     let Some((device, queue)) = headless_device_with(
@@ -141,7 +143,8 @@ fn float_depth_matches_the_24_bit_render() {
         eprintln!("skipping: no adapter with DEPTH32FLOAT_STENCIL8");
         return;
     };
-    let mut base = renderer(&device, None);
+    assert_eq!(renderer(&device, None).scene_depth_format(), F32S8);
+    let mut base = renderer(&device, Some(F24));
     let mut float = renderer(&device, Some(F32S8));
     assert_eq!(base.scene_depth_format(), F24);
     assert_eq!(float.scene_depth_format(), F32S8);

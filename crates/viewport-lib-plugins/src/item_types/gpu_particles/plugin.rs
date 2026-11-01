@@ -516,7 +516,7 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         if self.frame.is_empty() {
             return;
         }
-        let hdr = ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT;
+        let hdr = ctx.is_hdr_pass();
         // Each system draws its full capacity; a dead particle emits a
         // degenerate vertex and contributes no fragments.
         for pd in &self.frame {

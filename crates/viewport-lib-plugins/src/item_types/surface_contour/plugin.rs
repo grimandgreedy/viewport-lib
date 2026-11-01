@@ -360,7 +360,7 @@ impl ItemTypePlugin for SurfaceContourPlugin {
         if self.draws.is_empty() {
             return;
         }
-        let hdr = ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT;
+        let hdr = ctx.is_hdr_pass();
         // Still compiling: the lines draw from the frame it is ready.
         let Some(pipeline) = gpu.pipelines.get(hdr as usize) else {
             return;

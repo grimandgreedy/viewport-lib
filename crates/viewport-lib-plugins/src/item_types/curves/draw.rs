@@ -13,7 +13,6 @@ use super::pipeline::{
 use super::store::StreamtubeGpuData;
 use viewport_lib::plugin_api::{PaintContext, PickContext, PickPassContext};
 use viewport_lib::renderer::{PickId, PickMask, SubObjectRef};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// Pixel radius of a world-space radius measured at the curve's first control
 /// point, for the screen-space pick tolerance.
@@ -85,7 +84,7 @@ pub(super) fn paint_curve_mesh(
     frame: &[CurveFrame],
 ) {
     let Some(gpu) = gpu else { return };
-    let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+    let is_hdr = ctx.is_hdr_pass();
     for entry in frame {
         let gd = &entry.gpu;
         if gd.index_count == 0 && gd.edge_index_count == 0 {

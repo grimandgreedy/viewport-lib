@@ -235,6 +235,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // exposure.
     let w = in.emissive_weight;
     let emissive_scale = w * camera.exposure + (1.0 - w);
-    let rgb = min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb * emissive_scale;
+    // The sum is clamped to the largest finite half float.
+    let rgb = min(
+        min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb * emissive_scale,
+        vec3<f32>(65504.0),
+    );
     return vec4<f32>(rgb, colour.a);
 }

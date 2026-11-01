@@ -35,7 +35,13 @@ fn main() -> eframe::Result {
             let device = &rs.device;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // The paint callback draws into eframe's own pass, whose depth
+            // attachment is the 24-bit one `native_options` asks for.
+            let mut renderer = ViewportRenderer::with_config(
+                device,
+                &vpl::RendererConfig::new(format)
+                    .with_scene_depth_format(eframe::wgpu::TextureFormat::Depth24PlusStencil8),
+            );
             let res = renderer.resources_mut();
 
             let m_sphere = res

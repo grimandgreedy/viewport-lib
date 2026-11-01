@@ -28,7 +28,9 @@ fn viewport_oit_weight(view_z: f32, alpha: f32) -> f32 {
 fn viewport_oit_pack(color: vec3<f32>, alpha: f32, view_z: f32) -> OitOutput {
     let w = viewport_oit_weight(view_z, alpha);
     var out: OitOutput;
-    out.accum  = vec4<f32>(color * alpha * w, alpha * w);
+    // 65504 is the largest finite half float; the accumulation target is
+    // Rgba16Float and the weight reaches 3e3.
+    out.accum  = min(vec4<f32>(color * alpha * w, alpha * w), vec4<f32>(65504.0));
     out.reveal = alpha;
     return out;
 }

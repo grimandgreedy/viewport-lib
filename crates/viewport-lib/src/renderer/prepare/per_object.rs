@@ -315,7 +315,9 @@ impl ViewportRenderer {
             let mesh = resources.mesh_store.get(item.mesh_id);
             let mut obj_uniform =
                 build_instance_record(resources, item, mesh, false, None, material_id);
-            obj_uniform.model = resources.world_origin.rel_model(obj_uniform.model);
+            // Foreground items arrive with absolute placements: rebase in f64
+            // before the cast, as the scene list is.
+            obj_uniform.model = resources.world_origin.rel_transform(&item.model);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)

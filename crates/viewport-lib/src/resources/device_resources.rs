@@ -1165,10 +1165,11 @@ impl DeviceResources {
     }
 
     /// The scene depth-stencil format every scene pipeline here was built
-    /// with: `Depth24PlusStencil8`, or `Depth32FloatStencil8` when
+    /// with: `Depth32FloatStencil8` when the device has
+    /// `Features::DEPTH32FLOAT_STENCIL8`, else `Depth24PlusStencil8`, unless
     /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
-    /// asked for it and the device has it. Build plugin pipelines that draw
-    /// into a scene pass against this, not a fixed format.
+    /// pins one. Build plugin pipelines that draw into a scene pass against
+    /// this, not a fixed format.
     pub fn scene_depth_format(&self) -> crate::gpu::TextureFormat {
         self.capabilities.scene_depth_format
     }

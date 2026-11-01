@@ -21,6 +21,10 @@
 // Normal maps: tangent-space normal mapping via TBN when object.has_normal_map != 0u.
 // AO maps: ambient occlusion applied to ambient + diffuse when object.has_ao_map != 0u.
 
+// Largest finite half float: the bound on any colour written to the scene
+// target.
+const HDR_COLOUR_MAX: f32 = 65504.0;
+
 struct Camera {
     view_proj: mat4x4<f32>,
     eye_pos: vec3<f32>,
@@ -1613,7 +1617,9 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     // `mix(1, exposure, w)`, written so weight 1 is exactly the exposure.
     let emissive_weight = material_gpu_buf[object.material_id].volume0.w;
     emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
-    final_rgb += emissive;
+    // The sum is clamped to the largest finite half float, so a bright
+    // emissive cannot write an infinity into a half-float target.
+    final_rgb = min(final_rgb + emissive, vec3<f32>(HDR_COLOUR_MAX));
     let dbg_emissive_lum = dot(emissive, lum_weights);
     // Emission is neither: no occlusion term darkens it.
     scene_light_split(lit.indirect, lit.direct, emissive);

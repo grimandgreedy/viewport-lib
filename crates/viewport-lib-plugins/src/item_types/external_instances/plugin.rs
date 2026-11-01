@@ -192,7 +192,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         if self.frame.is_empty() {
             return;
         }
-        let member = if ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT {
+        let member = if ctx.is_hdr_pass() {
             pipeline::COLOUR_HDR
         } else {
             pipeline::COLOUR_LDR
