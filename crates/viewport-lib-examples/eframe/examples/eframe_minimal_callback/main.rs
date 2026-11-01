@@ -35,12 +35,11 @@ fn main() -> eframe::Result {
             let device = &rs.device;
             let format = rs.target_format;
 
-            // The paint callback draws into eframe's own pass, whose depth
-            // attachment is the 24-bit one `native_options` asks for.
+            // The paint callback draws into eframe's own pass, so the scene
+            // depth format is pinned to the attachment `native_options` set up.
             let mut renderer = ViewportRenderer::with_config(
                 device,
-                &vpl::RendererConfig::new(format)
-                    .with_scene_depth_format(eframe::wgpu::TextureFormat::Depth24PlusStencil8),
+                &viewport_lib_examples_eframe::pass_renderer_config(format),
             );
             let res = renderer.resources_mut();
 
