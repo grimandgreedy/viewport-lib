@@ -1487,8 +1487,7 @@ impl ViewportRenderer {
             // The instance bounds are relative to the origin, so the camera is.
             let camera = origin.camera(&frame.camera.render_camera);
             let vp_mat = camera.view_proj();
-            let cpu_frustum =
-                crate::camera::frustum::Frustum::from_view_proj(&camera.culling_view_proj());
+            let cpu_frustum = camera.culling_frustum();
 
             // `gpu_culling_enabled` is only set once the compute is built.
             let Some(cull) = instancing.cull_resources.ready() else {

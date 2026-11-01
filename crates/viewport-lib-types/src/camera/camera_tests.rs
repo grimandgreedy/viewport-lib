@@ -253,3 +253,29 @@ fn test_fit_aabb_target() {
     assert!((target.distance - expected_d).abs() < 1e-5);
     assert_eq!(target.orientation, cam.orientation());
 }
+
+/// The frustum of a camera 6 400 km out keeps its target inside and drops
+/// points behind it, past the far plane and off to the side, as it does at
+/// the world origin.
+#[test]
+fn frustum_far_from_origin_matches_the_world_origin() {
+    for base in [DVec3::ZERO, DVec3::new(6.4e6, 6.4e6, 0.0)] {
+        let cam = Camera::orbit(
+            base,
+            5.0,
+            Quat::from_rotation_z(0.3) * Quat::from_rotation_x(0.8),
+        );
+        let frustum = cam.frustum();
+        let at = |p: DVec3| crate::scene::aabb::Aabb::from_positions(&[p.as_vec3().to_array()]);
+        let (_, far) = cam.depth_range();
+        let eye = cam.eye();
+        let forward = cam.forward().as_dvec3();
+        assert!(!frustum.cull_aabb(&at(base)), "the target at {base}");
+        let behind = eye - forward * 20.0;
+        let beyond = eye + forward * (f64::from(far) + 20.0);
+        let aside = base + cam.right().as_dvec3() * 50.0;
+        for (name, p) in [("behind", behind), ("beyond", beyond), ("aside", aside)] {
+            assert!(frustum.cull_aabb(&at(p)), "{name} at {base}");
+        }
+    }
+}

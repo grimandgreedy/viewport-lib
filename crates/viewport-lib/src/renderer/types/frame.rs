@@ -300,6 +300,18 @@ impl RenderCamera {
         self.culling_projection * self.view
     }
 
+    /// The frustum of [`culling_view_proj`](Self::culling_view_proj) in world
+    /// space, extracted relative to the eye so it holds far from the world
+    /// origin; see
+    /// [`Frustum::from_eye_relative`](crate::camera::frustum::Frustum::from_eye_relative).
+    pub fn culling_frustum(&self) -> crate::camera::frustum::Frustum {
+        let eye = self.pose.eye;
+        crate::camera::frustum::Frustum::from_eye_relative(
+            &self.relative_to(eye).culling_view_proj(),
+            eye,
+        )
+    }
+
     /// The world-space ray through a point on screen, as `(origin, direction)`
     /// with a unit direction.
     ///

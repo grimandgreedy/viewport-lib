@@ -416,9 +416,16 @@ impl Camera {
         self.culling_proj_matrix() * self.view_matrix()
     }
 
-    /// The view frustum, from [`culling_view_proj_matrix`](Self::culling_view_proj_matrix).
+    /// The view frustum of [`culling_view_proj_matrix`](Self::culling_view_proj_matrix)
+    /// in world space, built relative to the eye; see
+    /// [`Frustum::from_eye_relative`](crate::camera::frustum::Frustum::from_eye_relative).
     pub fn frustum(&self) -> crate::camera::frustum::Frustum {
-        crate::camera::frustum::Frustum::from_view_proj(&self.culling_view_proj_matrix())
+        let rotation = glam::DMat3::from_quat(self.pose.orientation.normalize()).transpose();
+        let view = Mat4::from_mat3(rotation.as_mat3());
+        crate::camera::frustum::Frustum::from_eye_relative(
+            &(self.culling_proj_matrix() * view),
+            self.eye(),
+        )
     }
 
     /// The world-space ray through a point on screen, as `(origin, direction)`

@@ -3934,8 +3934,7 @@ impl ViewportRenderer {
             sink.extend(plugin_bufs);
         }
         if !self.item_type_plugins.is_empty() {
-            let vp = frame.camera.render_camera.culling_view_proj();
-            let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
+            let frustum = frame.camera.render_camera.culling_frustum();
             self.dispatch_plugin_cull(&frustum, frame);
         }
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, &mut sink);
