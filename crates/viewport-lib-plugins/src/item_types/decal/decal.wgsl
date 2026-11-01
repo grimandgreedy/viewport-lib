@@ -37,9 +37,9 @@ struct Camera {
 // `ShadowAtlas` comes from the shared shadow atlas section.
 @group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 
-// Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
+// Scene depth written by the opaque pass (depth-only aspect of the scene depth).
 @group(1) @binding(0) var scene_depth:   texture_2d<f32>;
-// Scene stencil (stencil-only aspect, Depth24PlusStencil8). Holds the surface
+// Scene stencil (stencil-only aspect of the scene depth). Holds the surface
 // mask: the layers of the item that owns each pixel.
 @group(1) @binding(1) var scene_stencil: texture_2d<u32>;
 @group(1) @binding(2) var scene_sampler: sampler;
