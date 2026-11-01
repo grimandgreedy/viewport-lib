@@ -258,3 +258,204 @@ fn point_light_in_a_room_far_from_origin_matches_the_world_origin() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// 6 400 km along +Y, the way the camera looks: the view translation carries
+/// the whole offset into the depth row.
+const MIX_FAR: f32 = 6_400_000.0;
+
+fn render_parts_at(
+    harness: &mut Harness,
+    parts: &[Part],
+    at: glam::Vec3,
+    origin: viewport_lib::WorldOrigin,
+    generation: u64,
+) -> Vec<u8> {
+    let mut ctx = BuildCtx {
+        renderer: &mut harness.renderer,
+        device: &harness.device,
+        queue: &harness.queue,
+    };
+    let mut scene = build_parts(&mut ctx, parts, at);
+    scene.generation = generation;
+    scene.world_origin = Some(origin);
+    let frame = frame_for(&scene, &far_origin::camera(at), [W as f32, H as f32]);
+    let _ = harness.render(&frame, W, H);
+    harness.render(&frame, W, H)
+}
+
+/// Every item type 6 400 km out still draws, under a snapped and a fixed
+/// origin. f32 positions step by half a metre there, so the far copy is not
+/// pixel-exact; what is checked is that each part covers about as many
+/// pixels over the bare ground as it does at the world origin.
+#[test]
+fn item_types_6400_km_from_origin_still_draw() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let far_at = glam::Vec3::new(0.0, MIX_FAR, 0.0);
+    let origins = [
+        ("snapped", viewport_lib::WorldOrigin::snapped()),
+        ("fixed", viewport_lib::WorldOrigin::Fixed(far_at.as_dvec3())),
+    ];
+    let ground = || mix_parts().into_iter().take(1).collect::<Vec<_>>();
+    let mut generation = 40_000;
+    let mut next = || {
+        generation += 1;
+        generation
+    };
+    let bare_near = render_parts_at(
+        &mut harness,
+        &ground(),
+        glam::Vec3::ZERO,
+        viewport_lib::WorldOrigin::Zero,
+        next(),
+    );
+    let bare_far: Vec<Vec<u8>> = origins
+        .iter()
+        .map(|(_, o)| render_parts_at(&mut harness, &ground(), far_at, *o, next()))
+        .collect();
+    let mut failures = Vec::new();
+    for part in mix_parts().into_iter().skip(1).chain(extra_parts()) {
+        let name = part.name;
+        // Tubes (in "curves") and streamtubes vanish this far out for a
+        // reason of their own, not the cull; they are left out so the rest
+        // stay guarded.
+        if matches!(name, "curves" | "streamtube") {
+            continue;
+        }
+        let parts = vec![ground().remove(0), part];
+        let near = render_parts_at(
+            &mut harness,
+            &parts,
+            glam::Vec3::ZERO,
+            viewport_lib::WorldOrigin::Zero,
+            next(),
+        );
+        let near_cover = differing(&bare_near, &near);
+        assert!(near_cover > 0, "{name} drew nothing at the world origin");
+        for ((label, origin), bare) in origins.iter().zip(&bare_far) {
+            let far = render_parts_at(&mut harness, &parts, far_at, *origin, next());
+            let far_cover = differing(bare, &far);
+            let moved = differing(&near, &far);
+            if let Some(dir) = std::env::var_os("ORIGIN_FAR_DUMP") {
+                let dir = std::path::PathBuf::from(dir);
+                let _ = std::fs::create_dir_all(&dir);
+                for (tag, px) in [("near", &near), ("far", &far)] {
+                    viewport_lib_testkit::golden::RgbaImage::from_raw(W, H, px.clone())
+                        .expect("image")
+                        .save(dir.join(format!("{name}_{label}_{tag}.png")))
+                        .expect("save");
+                }
+            }
+            eprintln!(
+                "{name}, {label}: covers {far_cover} pixels (at the origin {near_cover}), \
+                 {moved} differ from the origin render"
+            );
+            if far_cover * 2 < near_cover {
+                failures.push(format!(
+                    "{name}, {label}: covers {far_cover} pixels, {near_cover} at the origin"
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Records whether the frustum handed to an item-type plugin's `cull` keeps
+/// a small box at `probe`.
+struct CullProbe {
+    probe: glam::DVec3,
+    kept: std::sync::Arc<std::sync::Mutex<Vec<bool>>>,
+}
+
+impl viewport_lib::plugin_api::ItemTypePlugin for CullProbe {
+    fn type_name(&self) -> &'static str {
+        "origin_test.cull_probe"
+    }
+    fn cull(
+        &mut self,
+        frustum: &viewport_lib::camera::frustum::Frustum,
+        _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
+        _items: &viewport_lib::plugin_api::ItemCollections<'_>,
+    ) {
+        let c = self.probe.as_vec3();
+        let aabb = viewport_lib::Aabb {
+            min: c - glam::Vec3::splat(0.5),
+            max: c + glam::Vec3::splat(0.5),
+        };
+        self.kept.lock().unwrap().push(!frustum.cull_aabb(&aabb));
+    }
+}
+
+struct ProbeItems(viewport_lib::ItemSettings);
+
+impl viewport_lib::plugin_api::PluginItemCollection for ProbeItems {
+    fn len(&self) -> usize {
+        1
+    }
+    fn item_settings(&self, _index: usize) -> &viewport_lib::ItemSettings {
+        &self.0
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+/// The frustum an item-type plugin culls against keeps a box 5 m in front of
+/// a camera 6 400 km out, on the single-call and the per-viewport prepare.
+#[test]
+fn plugin_cull_frustum_6400_km_from_origin_keeps_what_is_in_view() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let at = glam::Vec3::new(0.0, MIX_FAR, 0.0);
+    let probe = (at + glam::Vec3::new(0.0, 0.5, 0.25)).as_dvec3();
+    let kept = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(CullProbe {
+                probe,
+                kept: kept.clone(),
+            }),
+        )
+        .expect("register the probe");
+    let scene = viewport_lib_testkit::BuiltScene {
+        world_origin: Some(viewport_lib::WorldOrigin::snapped()),
+        ..Default::default()
+    };
+    let mut frame = frame_for(&scene, &far_origin::camera(at), [W as f32, H as f32]);
+    frame.scene.submit_plugin_items(
+        "origin_test.cull_probe",
+        ProbeItems(viewport_lib::ItemSettings::default()),
+    );
+    let _ = harness.render(&frame, W, H);
+    let single = std::mem::take(&mut *kept.lock().unwrap());
+
+    let vp = harness.renderer.create_viewport(&harness.device);
+    frame.camera = frame.camera.with_viewport_id(vp);
+    let (scene_fx, _) = frame.effects.split();
+    let token =
+        harness
+            .renderer
+            .owned()
+            .prepare_scene(&harness.device, &harness.queue, &frame, &scene_fx);
+    harness
+        .renderer
+        .owned()
+        .prepare_viewport(&harness.device, &harness.queue, &token, vp, &frame);
+    let split = std::mem::take(&mut *kept.lock().unwrap());
+
+    assert!(
+        !single.is_empty() && !split.is_empty(),
+        "{single:?} {split:?}"
+    );
+    assert!(single.iter().all(|k| *k), "single-call prepare culled it");
+    assert!(split.iter().all(|k| *k), "per-viewport prepare culled it");
+}
