@@ -793,9 +793,8 @@ impl ViewportRenderer {
     /// - `DEPTH_CLIP_CONTROL` lets the directional shadow pass clamp casters
     ///   in front of a cascade rather than clip them, so the cascade's depth
     ///   range stays tight around what it covers.
-    /// - `DEPTH32FLOAT_STENCIL8` lets
-    ///   [`RendererConfig::scene_depth_format`] choose a 32-bit float scene
-    ///   depth.
+    /// - `DEPTH32FLOAT_STENCIL8` gives the scene a 32-bit float depth, which
+    ///   [`RendererConfig::scene_depth_format`] takes by default when present.
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,

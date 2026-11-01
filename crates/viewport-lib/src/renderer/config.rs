@@ -78,15 +78,25 @@ pub struct RendererConfig {
     /// keeps every target a viewport has used for as long as the viewport
     /// exists. Default `None`.
     pub target_release_frames: Option<u32>,
-    /// The scene depth-stencil format. `None` is `Depth24PlusStencil8`.
-    /// `Some(Depth32FloatStencil8)` needs `Features::DEPTH32FLOAT_STENCIL8` on
-    /// the device; without it the renderer uses `Depth24PlusStencil8` and
-    /// reports a [`NoticeDetail::SceneDepthFormatFallback`](crate::NoticeDetail::SceneDepthFormatFallback).
+    /// The scene depth-stencil format. `None` is `Depth32FloatStencil8` when
+    /// the device has `Features::DEPTH32FLOAT_STENCIL8` (which
+    /// [`ViewportRenderer::recommended_device_features`](crate::ViewportRenderer::recommended_device_features)
+    /// requests), else `Depth24PlusStencil8`. `Some` pins a format.
+    /// `Some(Depth32FloatStencil8)` without the feature falls back to
+    /// `Depth24PlusStencil8` and reports a
+    /// [`NoticeDetail::SceneDepthFormatFallback`](crate::NoticeDetail::SceneDepthFormatFallback).
     /// Any other format fails construction with
     /// [`ViewportError::InvalidSceneDepthFormat`](crate::ViewportError::InvalidSceneDepthFormat).
-    /// Read the format in use from
-    /// [`DeviceResources::scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
-    /// Default `None`.
+    ///
+    /// A host that paints into its own render pass ([`PassPath::paint`](crate::PassPath::paint),
+    /// `paint_viewport`, `paint_hdr_blit`, the `*_with_depth` blits) must give
+    /// that pass a depth attachment of the resolved format,
+    /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format).
+    /// A framework that allocates the attachment itself (eframe and iced give
+    /// `Depth24PlusStencil8` for 24 depth and 8 stencil bits) on a device with
+    /// the feature should pin `Some(Depth24PlusStencil8)` here. Hosts that draw
+    /// through `owned()`, `render_offscreen` or `ViewportApp`
+    /// never see the attachment and can leave `None`. Default `None`.
     pub scene_depth_format: Option<crate::gpu::TextureFormat>,
     /// The point positions are measured from on their way to the GPU. A
     /// frame can replace it with

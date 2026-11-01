@@ -38,7 +38,13 @@ fn main() -> eframe::Result {
             let queue = &rs.queue;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // The paint callback draws into eframe's own pass, whose depth
+            // attachment is 24-bit.
+            let mut renderer = ViewportRenderer::with_config(
+                device,
+                &viewport_lib::RendererConfig::new(format)
+                    .with_scene_depth_format(eframe::wgpu::TextureFormat::Depth24PlusStencil8),
+            );
 
             // Build every catalogue scene once, uploading all assets up front.
             let mut builts: Vec<BuiltScene> = Vec::new();
