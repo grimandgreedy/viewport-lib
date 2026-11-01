@@ -78,25 +78,29 @@ pub struct RendererConfig {
     /// keeps every target a viewport has used for as long as the viewport
     /// exists. Default `None`.
     pub target_release_frames: Option<u32>,
-    /// The scene depth-stencil format. `None` is `Depth32FloatStencil8` when
-    /// the device has `Features::DEPTH32FLOAT_STENCIL8` (which
+    /// The scene depth-stencil format. `None`, the default, is
+    /// `Depth24PlusStencil8` on every device: the format any framework's render
+    /// pass can carry, so a host that paints into a pass it does not allocate
+    /// (an eframe callback with 24 depth and 8 stencil bits) matches without
+    /// configuration. `Some(Depth32FloatStencil8)` draws the scene into a
+    /// 32-bit float depth, which keeps reversed-Z precise on Vulkan and DX12,
+    /// where the 24-bit format is unorm; it needs
+    /// `Features::DEPTH32FLOAT_STENCIL8` (which
     /// [`ViewportRenderer::recommended_device_features`](crate::ViewportRenderer::recommended_device_features)
-    /// requests), else `Depth24PlusStencil8`. `Some` pins a format.
-    /// `Some(Depth32FloatStencil8)` without the feature falls back to
-    /// `Depth24PlusStencil8` and reports a
+    /// requests) and without it falls back to `Depth24PlusStencil8` with a
     /// [`NoticeDetail::SceneDepthFormatFallback`](crate::NoticeDetail::SceneDepthFormatFallback).
     /// Any other format fails construction with
     /// [`ViewportError::InvalidSceneDepthFormat`](crate::ViewportError::InvalidSceneDepthFormat).
     ///
-    /// A host that paints into its own render pass ([`PassPath::paint`](crate::PassPath::paint),
-    /// `paint_viewport`, `paint_hdr_blit`, the `*_with_depth` blits) must give
-    /// that pass a depth attachment of the resolved format,
+    /// Ask for the float format only where the renderer or your own code
+    /// allocates the depth target: `owned()`, `render_offscreen`, or a pass you
+    /// build yourself with an attachment of
     /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format).
-    /// A framework that allocates the attachment itself (eframe gives
-    /// `Depth24PlusStencil8` for 24 depth and 8 stencil bits) on a device with
-    /// the feature should pin `Some(Depth24PlusStencil8)` here. Hosts that draw
-    /// through `owned()`, `render_offscreen` or `ViewportApp` never see the
-    /// attachment and can leave `None`. Default `None`.
+    /// `ViewportApp` asks for it on its own when the device has the feature,
+    /// since it owns the surface depth. A host that paints into a framework's
+    /// pass ([`PassPath::paint`](crate::PassPath::paint), `paint_viewport`,
+    /// `paint_hdr_blit`, the `*_with_depth` blits) leaves `None` unless it
+    /// also made the framework allocate the float format.
     pub scene_depth_format: Option<crate::gpu::TextureFormat>,
     /// The point positions are measured from on their way to the GPU. A
     /// frame can replace it with

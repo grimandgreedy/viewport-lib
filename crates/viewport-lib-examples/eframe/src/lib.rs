@@ -116,12 +116,13 @@ pub fn native_options(size: [f32; 2]) -> eframe::NativeOptions {
 /// The depth and stencil bits `native_options` asks eframe for, and the
 /// `wgpu::TextureFormat` eframe allocates from them.
 ///
-/// eframe allocates its pass's depth attachment from these before the adapter
-/// is known, while the renderer picks its scene depth format from the device's
-/// features. A paint callback drawing into eframe's pass needs the two to agree,
-/// so it builds its renderer with [`pass_renderer_config`], which pins this
-/// format. An example that renders offscreen and shows the result as an image
-/// owns its depth target and can use `RendererConfig::new` as usual.
+/// eframe allocates its pass's depth attachment from these, and the renderer's
+/// default scene depth format is the same 24-bit one, so a paint callback
+/// drawing into eframe's pass matches with `RendererConfig::new`.
+/// [`pass_renderer_config`] states the pairing explicitly for a callback that
+/// configures other things and must not change the depth format. An example
+/// that renders offscreen and shows the result as an image owns its depth
+/// target and can ask for `Depth32FloatStencil8` instead.
 pub const PASS_DEPTH_BITS: u8 = 24;
 pub const PASS_STENCIL_BITS: u8 = 8;
 pub const PASS_DEPTH_FORMAT: eframe::wgpu::TextureFormat =

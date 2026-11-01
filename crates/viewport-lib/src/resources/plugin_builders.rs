@@ -22,12 +22,12 @@ pub const HDR_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForma
 /// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)).
 pub const INDIRECT_FRACTION_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rg8Unorm;
 
-/// The scene depth-stencil format on a device without
-/// `Features::DEPTH32FLOAT_STENCIL8`, `Depth24PlusStencil8`.
+/// The default scene depth-stencil format, `Depth24PlusStencil8`.
 ///
-/// A device with the feature, or a renderer configured with
-/// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format),
-/// uses another one: build pipelines against
+/// A renderer configured with
+/// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+/// (as `ViewportApp` and the testkit harness are on a device with
+/// `Features::DEPTH32FLOAT_STENCIL8`) uses another one: build pipelines against
 /// [`DeviceResources::scene_depth_format`] or a target descriptor's
 /// `depth_format`, not this constant.
 pub const SCENE_DEPTH_FORMAT: crate::gpu::TextureFormat =

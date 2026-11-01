@@ -137,6 +137,14 @@ impl Harness {
         if let Some(downlevel) = downlevel {
             config = config.with_downlevel_capabilities(downlevel);
         }
+        // The harness owns its depth target, so it draws with the float depth
+        // when the device has it, as the runner does.
+        if device
+            .features()
+            .contains(wgpu::Features::DEPTH32FLOAT_STENCIL8)
+        {
+            config = config.with_scene_depth_format(wgpu::TextureFormat::Depth32FloatStencil8);
+        }
         // wgpu 27 cannot read the backend from a device, and the GL backend's
         // shaders cannot load from depth textures.
         config.backend = backend;

@@ -912,9 +912,14 @@ impl Gpu {
         // Every window's renderer joins the device's one cache, so the saved
         // data only seeds the first of them.
         let cache_data = super::load_pipeline_cache(app.pipeline_cache_path.as_deref());
-        let config =
-            super::runner_renderer_config(&app.renderer, format, cache_data, &self.adapter)
-                .with_device_lost_watcher(self.lost.clone());
+        let config = super::runner_renderer_config(
+            &app.renderer,
+            format,
+            cache_data,
+            &self.adapter,
+            &self.device,
+        )
+        .with_device_lost_watcher(self.lost.clone());
         ViewportInstance::try_with_config(&self.device, &config)
     }
 }

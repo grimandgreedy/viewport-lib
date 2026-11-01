@@ -101,11 +101,11 @@ pub struct Capabilities {
     /// `Features::DEPTH32FLOAT_STENCIL8`: the scene depth can be
     /// `Depth32FloatStencil8`.
     pub depth32float_stencil8: bool,
-    /// The format of the scene depth-stencil attachment: `Depth32FloatStencil8`
-    /// when the device has `Features::DEPTH32FLOAT_STENCIL8`, else
-    /// `Depth24PlusStencil8`, unless
+    /// The format of the scene depth-stencil attachment: `Depth24PlusStencil8`
+    /// unless
     /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
-    /// pins one. Every scene pipeline and depth target the renderer makes uses it.
+    /// asks for `Depth32FloatStencil8` on a device that has it. Every scene
+    /// pipeline and depth target the renderer makes uses it.
     pub scene_depth_format: gpu::TextureFormat,
 }
 
@@ -306,8 +306,9 @@ impl Capabilities {
     /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
     /// on this device, and whether a request for `Depth32FloatStencil8` fell
     /// back to `Depth24PlusStencil8` because the device lacks
-    /// `Features::DEPTH32FLOAT_STENCIL8`. No request takes the 32-bit float
-    /// format when the device has the feature. Any other format is an error:
+    /// `Features::DEPTH32FLOAT_STENCIL8`. No request takes `Depth24PlusStencil8`
+    /// on every device, so a host that does not own its depth attachment gets
+    /// the format every framework can allocate. Any other format is an error:
     /// the scene passes need a stencil aspect and a depth aspect they can
     /// sample.
     pub(crate) fn select_scene_depth_format(
@@ -315,9 +316,6 @@ impl Capabilities {
         requested: Option<gpu::TextureFormat>,
     ) -> Result<(gpu::TextureFormat, bool), crate::ViewportError> {
         match requested {
-            None if self.depth32float_stencil8 => {
-                Ok((gpu::TextureFormat::Depth32FloatStencil8, false))
-            }
             None | Some(gpu::TextureFormat::Depth24PlusStencil8) => {
                 Ok((gpu::TextureFormat::Depth24PlusStencil8, false))
             }
@@ -501,10 +499,7 @@ mod tests {
             without.select_scene_depth_format(None).unwrap(),
             (f24, false)
         );
-        assert_eq!(
-            with.select_scene_depth_format(None).unwrap(),
-            (f32s8, false)
-        );
+        assert_eq!(with.select_scene_depth_format(None).unwrap(), (f24, false));
         for caps in [&without, &with] {
             assert_eq!(
                 caps.select_scene_depth_format(Some(f24)).unwrap(),

@@ -108,6 +108,7 @@ pub(crate) fn runner_renderer_config(
     format: crate::gpu::TextureFormat,
     cache_data: Option<Vec<u8>>,
     adapter: &crate::gpu::Adapter,
+    device: &crate::gpu::Device,
 ) -> crate::RendererConfig {
     let mut config = base.clone().with_target_format(format).with_sample_count(1);
     if cache_data.is_some() {
@@ -118,6 +119,15 @@ pub(crate) fn runner_renderer_config(
     }
     if config.backend.is_none() {
         config.backend = Some(adapter.get_info().backend);
+    }
+    // The runner owns the surface depth target, so it takes the float depth
+    // the device was created with; a host that pinned a format keeps it.
+    if config.scene_depth_format.is_none()
+        && device
+            .features()
+            .contains(crate::gpu::Features::DEPTH32FLOAT_STENCIL8)
+    {
+        config.scene_depth_format = Some(crate::gpu::TextureFormat::Depth32FloatStencil8);
     }
     config
 }
