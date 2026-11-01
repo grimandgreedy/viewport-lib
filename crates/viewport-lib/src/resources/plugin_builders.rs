@@ -332,7 +332,7 @@ impl DeviceResources {
         &self.scene_tier.material.depth_read_bgl
     }
 
-    /// Shared linear-clamp sampler used by the lib for colormap LUTs.
+    /// Shared linear-clamp sampler used by the lib for colourmap LUTs.
     ///
     /// Use this when sampling 1D LUT-style data (colourmaps, transfer
     /// functions) where the texture should not wrap.

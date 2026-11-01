@@ -452,7 +452,7 @@ fn mapped_plane(
 /// Top to bottom: a lit colour-mapped plane, the same plane unlit, and a
 /// colour-mapped point cloud, beside a lit 18% grey sphere, in daylight under
 /// a physical camera.
-fn build_colormap_physical(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+fn build_colourmap_physical(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let plane = upload(ctx, &ramp_plane());
     let sphere = upload(ctx, &primitives::sphere(0.45, 32, 16));
     let items = vec![
@@ -573,9 +573,9 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_recolor_physical,
         },
         NamedScene {
-            name: "light_transport_colormap_physical",
+            name: "light_transport_colourmap_physical",
             cameras: top_camera(),
-            build: build_colormap_physical,
+            build: build_colourmap_physical,
         },
         NamedScene {
             name: "light_transport_no_environment",
