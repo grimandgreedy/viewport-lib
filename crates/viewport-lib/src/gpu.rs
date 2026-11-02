@@ -162,12 +162,17 @@ pub fn instance_from_env() -> Instance {
 /// Keep all three: the surface has to come from the instance that made the
 /// adapter. Native targets need no equivalent, since `Backends::all()` already
 /// enumerates GL adapters after Vulkan, Metal and DX12.
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 pub async fn request_adapter_with_gl_fallback(
     target: impl Into<SurfaceTarget<'static>>,
     power_preference: PowerPreference,
 ) -> Result<(Instance, Surface<'static>, Adapter), WebAdapterError> {
+    #[cfg(wgpu27)]
     let instance = util::new_instance_with_webgpu_detection(&InstanceDescriptor::default()).await;
+    #[cfg(any(wgpu29, wgpu30))]
+    let instance =
+        util::new_instance_with_webgpu_detection(InstanceDescriptor::new_without_display_handle())
+            .await;
     let surface = instance
         .create_surface(target)
         .map_err(WebAdapterError::Surface)?;
@@ -176,6 +181,9 @@ pub async fn request_adapter_with_gl_fallback(
             power_preference,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            // wgpu 30 added this field; false matches `headless_adapter_options`.
+            #[cfg(wgpu30)]
+            apply_limit_buckets: false,
         })
         .await
         .map_err(WebAdapterError::NoAdapter)?;
@@ -183,7 +191,7 @@ pub async fn request_adapter_with_gl_fallback(
 }
 
 /// Why [`request_adapter_with_gl_fallback`] failed.
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub enum WebAdapterError {
     /// The canvas gave no surface, for example because it already holds a 2D
@@ -193,7 +201,7 @@ pub enum WebAdapterError {
     NoAdapter(RequestAdapterError),
 }
 
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 impl std::fmt::Display for WebAdapterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -203,7 +211,7 @@ impl std::fmt::Display for WebAdapterError {
     }
 }
 
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 impl std::error::Error for WebAdapterError {}
 
 /// The outcome of acquiring the next surface texture, normalised across wgpu legs.

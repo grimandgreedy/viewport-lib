@@ -81,10 +81,10 @@ rayon = "1"
 
 # On wasm wgpu serves WebGPU and, for browsers that have no WebGPU adapter,
 # WebGL2 through its GL backend. This unions the `webgpu` and `webgl` features
-# into the same optional `wgpu` dep the `wgpu27` feature activates; the native
-# `metal`/`vulkan` features compile to nothing on this target. Which one a page
-# gets is decided at runtime (`gpu::request_adapter_with_gl_fallback`), so one
-# bundle serves both.
+# into the same optional dep each leg feature activates (`wgpu`, `wgpu29`,
+# `wgpu30`); the native `metal`/`vulkan` features compile to nothing on this
+# target. Which one a page gets is decided at runtime
+# (`gpu::request_adapter_with_gl_fallback`), so one bundle serves both.
 #
 # `fragile-send-sync-non-atomic-wasm` makes wgpu's handles `Send + Sync` here.
 # The WebGPU backend holds `RefCell`s, because the browser API it wraps is
@@ -95,6 +95,16 @@ rayon = "1"
 # wasm threads would mean revisiting this, not just leaving the flag on.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { version = "27.0", features = [
+    "webgpu",
+    "webgl",
+    "fragile-send-sync-non-atomic-wasm",
+], optional = true }
+wgpu29 = { package = "wgpu", version = "29.0", features = [
+    "webgpu",
+    "webgl",
+    "fragile-send-sync-non-atomic-wasm",
+], optional = true }
+wgpu30 = { package = "wgpu", version = "30.0", features = [
     "webgpu",
     "webgl",
     "fragile-send-sync-non-atomic-wasm",

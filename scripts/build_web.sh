@@ -12,10 +12,11 @@
 #
 # --check builds nothing to serve: it compile-checks the library crates (with
 # their default features, which the examples do not all use, plus the
-# post-effects crate) and both web examples for wasm32. Code that only breaks on wasm,
-# such as a rayon call the serial stand-in in util/par.rs does not cover, builds
-# on every native target, so this is the quick way to catch it. It needs no
-# wasm-bindgen.
+# post-effects crate) and both web examples for wasm32, then checks the library
+# crates again on the wgpu29 and wgpu30 legs (the web examples are wgpu27 only).
+# Code that only breaks on wasm, such as a rayon call the serial stand-in in
+# util/par.rs does not cover, builds on every native target, so this is the
+# quick way to catch it. It needs no wasm-bindgen.
 #
 # The default Homebrew rustc does not ship the wasm32 std, so this routes the
 # build through the rustup stable toolchain (which does, once you have run
@@ -76,6 +77,16 @@ if [ "$check_only" -eq 1 ]; then
     echo "checking web examples for wasm32-unknown-unknown ..."
     RUSTC="$tc_rustc" "$tc_cargo" check --target wasm32-unknown-unknown \
         -p viewport-lib-examples-winit --example winit-web --example web-scivis-smoke
+    for leg in wgpu29 wgpu30; do
+        echo "checking library crates for wasm32-unknown-unknown on $leg ..."
+        RUSTC="$tc_rustc" "$tc_cargo" check --target wasm32-unknown-unknown \
+            --no-default-features --features "viewport-lib/$leg" \
+            --features "viewport-lib-plugins/$leg,viewport-lib-plugins/item-types,viewport-lib-plugins/deformers" \
+            --features "viewport-lib-post-effects/$leg" \
+            -p viewport-lib \
+            -p viewport-lib-plugins \
+            -p viewport-lib-post-effects
+    done
     echo "done."
     exit 0
 fi
