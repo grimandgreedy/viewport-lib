@@ -99,6 +99,12 @@ pub const WGPU_LEG: u32 = 30;
 /// Use this, [`instance_with_backends`] or [`instance_from_env`] as the first
 /// call of a runner, alongside [`headless_adapter_options`],
 /// [`runner_surface_config`], [`acquire_surface`] and [`present`].
+///
+/// The instance carries no display handle. That is enough for Vulkan, Metal and
+/// DX12, but on wgpu 29 and 30 the GL backend picks its EGL platform from the
+/// instance's display, so without one it cannot present to a Wayland window and
+/// finds no adapter for it. A host that may land on GL under Linux uses
+/// [`instance_with_display`] instead.
 #[cfg(wgpu27)]
 pub fn default_instance() -> Instance {
     Instance::new(&InstanceDescriptor::default())
@@ -147,6 +153,52 @@ pub fn instance_from_env() -> Instance {
 #[cfg(any(wgpu29, wgpu30))]
 pub fn instance_from_env() -> Instance {
     Instance::new(InstanceDescriptor::new_without_display_handle_from_env())
+}
+
+/// Construct a wgpu `Instance` limited to `backends`, carrying the display
+/// handle surfaces will be created on.
+///
+/// Pass the event loop's display, for winit `event_loop.owned_display_handle()`,
+/// and create every surface from windows on that same display. On wgpu 29 and 30
+/// the GL backend needs it to present to a Wayland or X11 window: without it
+/// EGL falls back to a surfaceless platform and no GL adapter is compatible with
+/// the window's surface. Vulkan, Metal and DX12 ignore it. wgpu 27 finds the
+/// display itself, so that leg drops it.
+#[cfg(wgpu27)]
+pub fn instance_with_display(
+    backends: Backends,
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    let _ = display;
+    instance_with_backends(backends)
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn instance_with_display(
+    backends: Backends,
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    let mut desc =
+        InstanceDescriptor::new_without_display_handle().with_display_handle(Box::new(display));
+    desc.backends = backends;
+    Instance::new(desc)
+}
+
+/// [`instance_from_env`] carrying a display handle; see [`instance_with_display`]
+/// for when a host needs one.
+#[cfg(wgpu27)]
+pub fn instance_from_env_with_display(
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    let _ = display;
+    instance_from_env()
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn instance_from_env_with_display(
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    Instance::new(InstanceDescriptor::new_with_display_handle_from_env(
+        Box::new(display),
+    ))
 }
 
 /// Bring up a browser instance, surface and adapter, on WebGPU when the browser

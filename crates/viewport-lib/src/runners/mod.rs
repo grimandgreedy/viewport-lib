@@ -232,9 +232,8 @@ impl ViewportInstance {
             scene: Scene::new(),
             selection: Selection::new(),
             camera: Camera::default(),
-            // The default preset carries the manipulation keybindings (G/R/S, axis
-            // constraints) as well as camera navigation, so a host's transform
-            // gizmo reads them from this frame without extra setup.
+            // Camera navigation only. A host with a transform gizmo appends the
+            // gizmo's own bindings through `set_bindings`.
             input: ViewportInput::from_preset(BindingPreset::Default),
             runtime: None,
             frame: FrameData::default(),

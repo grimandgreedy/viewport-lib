@@ -859,12 +859,17 @@ struct Gpu {
 
 impl Gpu {
     /// Bring up an instance, an adapter that can present to `window`, and a
-    /// device, returning the window's surface with them.
+    /// device, returning the window's surface with them. The instance carries
+    /// the event loop's display, which GL needs to present under Wayland.
     fn request(
+        event_loop: &ActiveEventLoop,
         window: Arc<Window>,
         marks: &mut super::InitMarks,
     ) -> (Self, crate::gpu::Surface<'static>) {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_with_display(
+            crate::gpu::Backends::default(),
+            event_loop.owned_display_handle(),
+        );
         let surface = instance.create_surface(window).expect("surface");
         marks.mark("instance_and_surface");
         let adapter = pollster::block_on(instance.request_adapter(
@@ -1044,7 +1049,7 @@ impl AppHandler {
                 .create_surface(window.clone())
                 .expect("surface")
         } else {
-            let (gpu, surface) = Gpu::request(window.clone(), &mut marks);
+            let (gpu, surface) = Gpu::request(event_loop, window.clone(), &mut marks);
             self.gpu = Some(gpu);
             surface
         };
@@ -1154,7 +1159,7 @@ impl AppHandler {
                     .create_surface(state.window.clone())
                     .expect("surface"),
                 None => {
-                    let (gpu, surface) = Gpu::request(state.window.clone(), &mut marks);
+                    let (gpu, surface) = Gpu::request(event_loop, state.window.clone(), &mut marks);
                     new_gpu = Some(gpu);
                     surface
                 }
