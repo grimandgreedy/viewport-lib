@@ -88,7 +88,6 @@ required-features = ["wgpu27"]
 [[example]]
 name = "web-scivis-smoke"
 path = "examples/web_scivis_smoke/main.rs"
-required-features = ["wgpu27"]
 
 [[example]]
 name = "viewport-in-viewport"

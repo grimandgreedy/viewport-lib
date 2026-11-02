@@ -285,16 +285,13 @@ impl State {
     }
 
     fn render(&mut self) {
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+        let frame = match viewport_lib::gpu::acquire_surface(&self.surface) {
+            viewport_lib::gpu::SurfaceFrame::Acquired(f) => f,
+            viewport_lib::gpu::SurfaceFrame::Recreate => {
                 self.surface.configure(&self.device, &self.surface_config);
                 return;
             }
-            Err(e) => {
-                log_line(&format!("surface error: {e:?}"));
-                return;
-            }
+            viewport_lib::gpu::SurfaceFrame::Skip => return,
         };
         let view = frame
             .texture
@@ -319,7 +316,7 @@ impl State {
             .owned()
             .render(&self.device, &self.queue, &view, &frame_data);
         self.queue.submit(std::iter::once(cmd));
-        frame.present();
+        viewport_lib::gpu::present(&self.queue, frame);
 
         self.input
             .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
@@ -331,16 +328,21 @@ impl State {
 async fn build_state(window: Arc<Window>) -> State {
     let mut results = Results::default();
 
+    // The surface comes from the canvas element rather than the winit window: a
+    // window brings its own display handle, a bare canvas does not, and the
+    // canvas is the target a host without winit hands over.
     #[cfg(target_arch = "wasm32")]
     let (_instance, surface, adapter) = viewport_lib::gpu::request_adapter_with_gl_fallback(
-        window.clone(),
+        wgpu::SurfaceTarget::Canvas(
+            winit::platform::web::WindowExtWebSys::canvas(&*window).expect("winit made a canvas"),
+        ),
         wgpu::PowerPreference::HighPerformance,
     )
     .await
     .expect("neither WebGPU nor WebGL2 gave an adapter");
     #[cfg(not(target_arch = "wasm32"))]
     let (surface, adapter) = {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = viewport_lib::gpu::default_instance();
         let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -397,16 +399,13 @@ async fn build_state(window: Arc<Window>) -> State {
         .find(|f| f.is_srgb())
         .copied()
         .unwrap_or(caps.formats[0]);
-    let surface_config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    let surface_config = viewport_lib::gpu::runner_surface_config(
         format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode: caps.alpha_modes[0],
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
+        size.width.max(1),
+        size.height.max(1),
+        wgpu::PresentMode::AutoVsync,
+        caps.alpha_modes[0],
+    );
     surface.configure(&device, &surface_config);
 
     let config = RendererConfig::new(format).with_adapter(&adapter);

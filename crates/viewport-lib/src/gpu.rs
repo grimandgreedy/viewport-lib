@@ -169,10 +169,14 @@ pub async fn request_adapter_with_gl_fallback(
 ) -> Result<(Instance, Surface<'static>, Adapter), WebAdapterError> {
     #[cfg(wgpu27)]
     let instance = util::new_instance_with_webgpu_detection(&InstanceDescriptor::default()).await;
+    // wgpu 29 creates a canvas surface with no display handle, which the GL
+    // backend rejects, so the instance carries the web one. wgpu 30 passes the
+    // same handle itself; giving it here too keeps both legs on one path.
     #[cfg(any(wgpu29, wgpu30))]
-    let instance =
-        util::new_instance_with_webgpu_detection(InstanceDescriptor::new_without_display_handle())
-            .await;
+    let instance = util::new_instance_with_webgpu_detection(
+        InstanceDescriptor::new_without_display_handle().with_display_handle(Box::new(WebDisplay)),
+    )
+    .await;
     let surface = instance
         .create_surface(target)
         .map_err(WebAdapterError::Surface)?;
@@ -188,6 +192,18 @@ pub async fn request_adapter_with_gl_fallback(
         .await
         .map_err(WebAdapterError::NoAdapter)?;
     Ok((instance, surface, adapter))
+}
+
+/// The browser's display handle, for an instance that creates canvas surfaces.
+#[cfg(all(target_arch = "wasm32", any(wgpu29, wgpu30)))]
+#[derive(Debug)]
+struct WebDisplay;
+
+#[cfg(all(target_arch = "wasm32", any(wgpu29, wgpu30)))]
+impl rwh::HasDisplayHandle for WebDisplay {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+        Ok(rwh::DisplayHandle::web())
+    }
 }
 
 /// Why [`request_adapter_with_gl_fallback`] failed.

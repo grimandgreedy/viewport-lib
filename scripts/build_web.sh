@@ -25,10 +25,11 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: scripts/build_web.sh [--release] [example]"
+    echo "usage: scripts/build_web.sh [--release] [--leg=wgpu29] [example]"
     echo "       scripts/build_web.sh --check"
     echo "  builds a web example for wasm32 and runs wasm-bindgen into its pkg/"
     echo "  example defaults to winit-web; web-scivis-smoke is the other one"
+    echo "  --leg builds on another wgpu leg (wgpu27, wgpu29, wgpu30); the default is wgpu27"
     echo "  --check compile-checks the library crates and both web examples instead"
 }
 
@@ -36,9 +37,11 @@ profile="debug"
 cargo_profile_flag=""
 example="winit-web"
 check_only=0
+leg_flags=()
 for arg in "$@"; do
     case "$arg" in
         --release) profile="release"; cargo_profile_flag="--release" ;;
+        --leg=wgpu27|--leg=wgpu29|--leg=wgpu30) leg_flags=(--no-default-features --features "${arg#--leg=}") ;;
         --check) check_only=1 ;;
         -h|--help) usage; exit 0 ;;
         -*) echo "unknown arg: $arg" >&2; usage; exit 1 ;;
@@ -99,7 +102,8 @@ fi
 
 echo "building $example ($profile) for wasm32-unknown-unknown ..."
 RUSTC="$tc_rustc" "$tc_cargo" build $cargo_profile_flag \
-    --target wasm32-unknown-unknown -p viewport-lib-examples-winit --example "$example"
+    --target wasm32-unknown-unknown -p viewport-lib-examples-winit --example "$example" \
+    ${leg_flags[@]+"${leg_flags[@]}"}
 
 wasm_in="$(cargo metadata --format-version 1 --no-deps \
     | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
