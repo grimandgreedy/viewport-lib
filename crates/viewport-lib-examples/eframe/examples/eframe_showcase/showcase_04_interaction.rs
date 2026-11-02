@@ -6,6 +6,7 @@ use crate::scene_gizmo::{self, Snapshots};
 use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib_gizmo::actions;
 use viewport_lib_gizmo::{
     FrameInput as GizmoInput, GizmoAxis, GizmoDriver, GizmoMode, GizmoSpace, GizmoStyle,
     ManipResult, build_numeric_label,
@@ -435,7 +436,7 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
 
     let state = &mut app.interact_state;
     // Tab cycles the gizmo mode (ignored while a session runs).
-    if action_frame.is_active(vpl::Action::CycleGizmoMode) {
+    if action_frame.is_active(actions::CYCLE_GIZMO_MODE) {
         state.gizmo.cycle_mode();
     }
 

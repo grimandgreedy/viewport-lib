@@ -10,9 +10,7 @@ use super::action_frame::{ActionFrame, NavigationActions, PointerFrame, Resolved
 use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::{KeyboardOwnership, ViewportContext, forward_to_viewport};
 use super::event::{ButtonState, ScrollUnits, TouchId, TouchPhase, ViewportEvent};
-use super::preset::{
-    BindingPreset, manipulation_bindings, viewer_bindings, viewport_default_bindings,
-};
+use super::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
 use super::touch::TouchSettings;
 use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
@@ -316,11 +314,23 @@ impl ViewportInput {
         let bindings = match preset {
             BindingPreset::Default => viewport_default_bindings(),
             BindingPreset::Viewer => viewer_bindings(),
-            BindingPreset::Manipulation => manipulation_bindings(),
             // BindingPreset is non_exhaustive; an unknown preset gets the default set.
             _ => viewport_default_bindings(),
         };
         Self::new(bindings)
+    }
+
+    /// Append bindings to the set, keeping the ones already there.
+    ///
+    /// For a tool crate's own bindings on top of a preset:
+    ///
+    /// ```ignore
+    /// let input = ViewportInput::from_preset(BindingPreset::Default)
+    ///     .with_bindings(viewport_lib_gizmo::manipulation_bindings());
+    /// ```
+    pub fn with_bindings(mut self, extra: impl IntoIterator<Item = ViewportBinding>) -> Self {
+        self.bindings.extend(extra);
+        self
     }
 
     /// Whether a pointer gesture of ours is in flight: a button is held and its
@@ -1730,15 +1740,58 @@ mod tests {
         });
     }
 
+    // Character bindings of the kind a tool crate adds on top of a preset.
+    const TOOL_G: Action = Action::Custom(0x1000_0000);
+    const TOOL_X: Action = Action::Custom(0x1000_0001);
+    const TOOL_Y: Action = Action::Custom(0x1000_0002);
+    const TOOL_Z: Action = Action::Custom(0x1000_0003);
+    const TOOL_SHIFT_X: Action = Action::Custom(0x1000_0004);
+
+    fn tool_bindings() -> Vec<ViewportBinding> {
+        use crate::input::ModifiersMatch;
+        let none = ModifiersMatch::Exact(Modifiers::NONE);
+        let shift = ModifiersMatch::Contains(Modifiers::SHIFT);
+        let char_press = |action, ch, modifiers| {
+            ViewportBinding::new(action, ViewportGesture::CharPress { ch, modifiers })
+        };
+        vec![
+            char_press(TOOL_G, 'g', none),
+            char_press(TOOL_X, 'x', none),
+            char_press(TOOL_Y, 'y', none),
+            char_press(TOOL_Z, 'z', none),
+            char_press(TOOL_SHIFT_X, 'x', shift),
+        ]
+    }
+
+    #[test]
+    fn appended_bindings_fire_alongside_the_preset() {
+        let mut input =
+            ViewportInput::from_preset(BindingPreset::Default).with_bindings(tool_bindings());
+        input.begin_frame(focused_ctx());
+        key(&mut input, KeyCode::G, Some('g'), ButtonState::Pressed);
+        key(&mut input, KeyCode::F, Some('f'), ButtonState::Pressed);
+        let frame = input.resolve();
+        assert!(frame.is_active(TOOL_G));
+        assert!(frame.is_active(Action::FocusObject), "the preset is kept");
+    }
+
+    #[test]
+    fn the_default_preset_binds_no_characters() {
+        assert!(!viewport_default_bindings().iter().any(|b| matches!(
+            b.gesture,
+            ViewportGesture::CharPress { .. } | ViewportGesture::CharHold { .. }
+        )));
+    }
+
     #[test]
     fn a_qwertz_z_constrains_to_z() {
         // On QWERTZ the key in the US Y position is labelled Z.
-        let mut input = ViewportInput::new(viewport_default_bindings());
+        let mut input = ViewportInput::new(tool_bindings());
         input.begin_frame(focused_ctx());
         key(&mut input, KeyCode::Y, Some('z'), ButtonState::Pressed);
         let frame = input.resolve();
-        assert!(frame.is_active(Action::ConstrainZ));
-        assert!(!frame.is_active(Action::ConstrainY));
+        assert!(frame.is_active(TOOL_Z));
+        assert!(!frame.is_active(TOOL_Y));
     }
 
     #[test]
@@ -1764,7 +1817,7 @@ mod tests {
 
     #[test]
     fn a_cyrillic_layout_keeps_g_where_it_is() {
-        let mut input = ViewportInput::new(viewport_default_bindings());
+        let mut input = ViewportInput::new(tool_bindings());
         input.begin_frame(focused_ctx());
         key(
             &mut input,
@@ -1772,13 +1825,13 @@ mod tests {
             Some('\u{43f}'),
             ButtonState::Pressed,
         );
-        assert!(input.resolve().is_active(Action::BeginMove));
+        assert!(input.resolve().is_active(TOOL_G));
     }
 
     #[test]
     fn a_char_binding_folds_case_and_reads_shift_from_the_modifiers() {
         let mut input = ViewportInput::new(vec![ViewportBinding::new(
-            Action::BeginMove,
+            TOOL_G,
             ViewportGesture::CharPress {
                 ch: 'g',
                 modifiers: crate::input::ModifiersMatch::Exact(Modifiers::SHIFT),
@@ -1787,14 +1840,14 @@ mod tests {
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
         key(&mut input, KeyCode::G, Some('G'), ButtonState::Pressed);
-        assert!(input.resolve().is_active(Action::BeginMove));
+        assert!(input.resolve().is_active(TOOL_G));
 
         // Without Shift it does not match.
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::ModifiersChanged(Modifiers::NONE));
         key(&mut input, KeyCode::G, Some('g'), ButtonState::Released);
         key(&mut input, KeyCode::G, Some('g'), ButtonState::Pressed);
-        assert!(!input.resolve().is_active(Action::BeginMove));
+        assert!(!input.resolve().is_active(TOOL_G));
     }
 
     #[test]
@@ -1825,34 +1878,10 @@ mod tests {
 
     #[test]
     fn char_bindings_need_the_keyboard() {
-        let mut input = ViewportInput::new(viewport_default_bindings());
+        let mut input = ViewportInput::new(tool_bindings());
         input.begin_frame(ctx(PointerOwnership::Owned, KeyboardOwnership::Elsewhere));
         key(&mut input, KeyCode::G, Some('g'), ButtonState::Pressed);
-        assert!(!input.resolve().is_active(Action::BeginMove));
-    }
-
-    #[test]
-    fn the_manipulation_preset_is_part_of_the_default() {
-        let manipulation = ViewportInput::from_preset(BindingPreset::Manipulation);
-        let default = viewport_default_bindings();
-        for binding in &manipulation.bindings {
-            assert!(
-                default.iter().any(|b| b.action == binding.action
-                    && format!("{:?}", b.gesture) == format!("{:?}", binding.gesture)),
-                "{:?} missing from the default set",
-                binding.action
-            );
-        }
-        // The letters are bound by character, not position.
-        assert!(
-            manipulation
-                .bindings
-                .iter()
-                .any(|b| b.action == Action::ConstrainZ
-                    && matches!(b.gesture, ViewportGesture::CharPress { ch: 'z', .. }))
-        );
-        assert!(!default.iter().any(|b| b.action == Action::ConstrainZ
-            && matches!(b.gesture, ViewportGesture::KeyPress { .. })));
+        assert!(!input.resolve().is_active(TOOL_G));
     }
 
     #[test]
@@ -2300,21 +2329,19 @@ mod tests {
 
     #[test]
     fn modifiers_changed_affects_bindings() {
-        let mut input = ViewportInput::new(viewport_default_bindings());
+        let mut input = ViewportInput::new(tool_bindings());
         input.begin_frame(focused_ctx());
-        // Press Shift modifier, then press X -> should fire ExcludeX (Shift+X)
+        // Press Shift, then X -> the Shift+X binding fires, not the plain X one.
         input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
         input.push_event(ViewportEvent::Key {
             key: KeyCode::X,
             state: ButtonState::Pressed,
             repeat: false,
-            logical: None,
+            logical: Some('X'),
         });
         let frame = input.resolve();
-        assert!(
-            frame.is_active(Action::ExcludeX),
-            "Shift+X should fire ExcludeX"
-        );
+        assert!(frame.is_active(TOOL_SHIFT_X), "Shift+X should fire");
+        assert!(!frame.is_active(TOOL_X), "plain X should not");
     }
 
     #[test]
@@ -2322,15 +2349,15 @@ mod tests {
         let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Key {
-            key: KeyCode::G,
+            key: KeyCode::F,
             state: ButtonState::Pressed,
             repeat: true,
             logical: None,
         });
         let frame = input.resolve();
-        // BeginMove is a KeyPress binding; repeat should not trigger it
+        // FocusObject is a KeyPress binding; repeat should not trigger it
         assert!(
-            !frame.is_active(Action::BeginMove),
+            !frame.is_active(Action::FocusObject),
             "repeat should not fire KeyPress bindings"
         );
     }

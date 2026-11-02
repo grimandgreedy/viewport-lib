@@ -4,7 +4,8 @@
 //!   Left/Middle drag -> Orbit  |  Right drag -> Pan  |  Scroll -> Zoom
 //!   Ctrl+Scroll -> Orbit (two-axis)  |  Shift+Scroll -> Pan (two-axis)
 //!
-//! Cmd+] : Full controls (`ViewportAll`) + the `viewport-lib-gizmo` transform gizmo:
+//! Cmd+] : Full controls (`BindingPreset::Default`) plus the `viewport-lib-gizmo`
+//! transform gizmo and its keys (`viewport_lib_gizmo::manipulation_bindings()`):
 //!   Ctrl+Scroll -> Orbit  |  Right drag -> Pan  |  Scroll -> Zoom
 //!   Click -> select  |  Shift+Click -> multi-select
 //!   G move  R rotate  S scale  |  X/Y/Z constrain  |  Shift+X/Y/Z exclude
@@ -25,12 +26,13 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 
 use crate::eframe::{egui, wgpu};
+use viewport_lib_gizmo::actions;
 use viewport_lib_gizmo::{
     FrameInput as GizmoInput, GizmoDriver, GizmoStyle, ManipResult, PivotMode, Selection,
     TransformDelta, build_numeric_label, gizmo_centre_for_pivot,
 };
 use vpl::{
-    Action, BindingPreset, Camera, CameraFrame, FirstPersonCameraController, FrameData, KeyCode,
+    BindingPreset, Camera, CameraFrame, FirstPersonCameraController, FrameData, KeyCode,
     LightingSettings, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, SceneFrame,
     SceneRenderItem, ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer, primitives, viewport_default_bindings, wish_xy_from_actions,
@@ -223,7 +225,9 @@ impl App {
             ctrl_primitives: OrbitCameraController::new_stateless(),
             input_primitives: ViewportInput::from_preset(BindingPreset::Viewer),
             ctrl_all: OrbitCameraController::new_stateless(),
-            input_all: ViewportInput::from_preset(BindingPreset::Default),
+            // The gizmo reads this resolver, so it carries the gizmo's keys.
+            input_all: ViewportInput::from_preset(BindingPreset::Default)
+                .with_bindings(viewport_lib_gizmo::manipulation_bindings()),
             // Resolver for the play modes: viewport_all provides the WASD/Fly
             // movement actions. Look is driven from raw pointer motion in the
             // update loop, so it follows the mouse without holding a button.
@@ -631,12 +635,12 @@ impl eframe::App for App {
                         // Tab cycles the gizmo mode, [ and ] the pivot. The driver
                         // ignores both while a session runs, so Tab then steps
                         // the numeric field instead.
-                        if action_frame.is_active(Action::CycleGizmoMode) {
+                        if action_frame.is_active(actions::CYCLE_GIZMO_MODE) {
                             self.gizmo.cycle_mode();
                         }
-                        if action_frame.is_active(Action::CyclePivotModeForward) {
+                        if action_frame.is_active(actions::CYCLE_PIVOT_FORWARD) {
                             self.gizmo.cycle_pivot_forward();
-                        } else if action_frame.is_active(Action::CyclePivotModeBackward) {
+                        } else if action_frame.is_active(actions::CYCLE_PIVOT_BACKWARD) {
                             self.gizmo.cycle_pivot_backward();
                         }
                         self.recompute_gizmo_centre();

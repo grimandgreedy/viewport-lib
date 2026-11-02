@@ -277,7 +277,7 @@ pub use interaction::input::{
     KeyboardOwnership, ModifiersMatch, NavigationActions, PointerFrame, PointerOwnership,
     ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase, TouchSettings, ViewportBinding,
     ViewportContext, ViewportEvent, ViewportGesture, ViewportInput, forward_to_viewport,
-    manipulation_bindings, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+    viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
 };
 
 pub use interaction::widgets::{

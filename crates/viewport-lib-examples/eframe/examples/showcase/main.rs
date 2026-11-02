@@ -42,10 +42,15 @@ fn main() -> eframe::Result {
             // One session, shared across showcases.
             // sRGB render format so the tonemap encode happens; the offscreen
             // target hands egui a non-sRGB view so the encode survives its sample.
+            // The objects showcase's gizmo reads the session's resolver, so the
+            // session carries the gizmo's keys on top of the default set.
+            let mut bindings = vpl::viewport_default_bindings();
+            bindings.extend(viewport_lib_gizmo::manipulation_bindings());
             let mut session = ViewportInstance::new(
                 &rs.device,
                 OffscreenViewportTarget::render_format(rs.target_format),
-            );
+            )
+            .with_bindings(bindings);
             viewport_lib_plugins::item_types::install(session.renderer_mut(), &rs.device);
 
             let mut list = showcases::all();

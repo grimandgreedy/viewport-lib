@@ -7,11 +7,12 @@ use crate::eframe::egui;
 use glam::{Mat4, Quat, Vec2, Vec3};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib_gizmo::actions;
 use viewport_lib_gizmo::{
     FrameInput as GizmoInput, GizmoAxis, GizmoDriver, GizmoStyle, ManipResult, TransformDelta,
     build_numeric_label,
 };
-use vpl::{Action, Material, NodeId, PickMask, primitives};
+use vpl::{Material, NodeId, PickMask, primitives};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -128,7 +129,7 @@ impl Showcase for ObjectsShowcase {
         let was_busy = self.gizmo.is_active() || self.gizmo.hovered_axis() != GizmoAxis::None;
 
         // Tab cycles the gizmo mode (ignored while a session runs).
-        if action.is_active(Action::CycleGizmoMode) {
+        if action.is_active(actions::CYCLE_GIZMO_MODE) {
             self.gizmo.cycle_mode();
         }
 

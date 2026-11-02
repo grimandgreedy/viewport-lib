@@ -25,13 +25,14 @@ use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
+use viewport_lib_gizmo::actions;
 use viewport_lib_gizmo::{
     FrameInput as GizmoInput, GizmoDriver, GizmoMode, GizmoSpace, GizmoStyle, ManipResult,
 };
 use vpl::{
-    Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership,
-    LightingSettings, Material, MouseButton, OrbitCameraController, PickBackend, PickMask,
-    SceneFrame, Selection, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
+    Material, MouseButton, OrbitCameraController, PickBackend, PickMask, SceneFrame, Selection,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,12 +94,12 @@ impl Default for MvState {
                 OrbitCameraController::new_stateless(),
                 OrbitCameraController::new_stateless(),
             ],
-            inputs: [
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-            ],
+            // Each view's resolver drives its camera and, while hovered, the
+            // gizmo, so each carries the gizmo's keys.
+            inputs: std::array::from_fn(|_| {
+                ViewportInput::from_preset(BindingPreset::Default)
+                    .with_bindings(viewport_lib_gizmo::manipulation_bindings())
+            }),
             viewports: None,
             built: false,
             gizmo: GizmoDriver::new(),
@@ -281,7 +282,7 @@ impl App {
 
             let state = &mut self.mv_state;
             // Tab cycles the gizmo mode (ignored while a session runs).
-            if action_frame.is_active(Action::CycleGizmoMode) {
+            if action_frame.is_active(actions::CYCLE_GIZMO_MODE) {
                 state.gizmo.cycle_mode();
             }
 
