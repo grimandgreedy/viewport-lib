@@ -32,15 +32,16 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
+use viewport_lib_gizmo::actions;
 use viewport_lib_gizmo::{
     FrameInput as GizmoInput, GizmoDriver, GizmoStyle, ManipResult, Selection, TransformDelta,
     build_numeric_label, gizmo_centre_for_pivot,
 };
 use vpl::{
-    Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData,
-    InputOwnership, LightingSettings, Material, MaterialId, MeshId, MouseButton,
-    OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext,
-    ViewportEvent, ViewportId, ViewportInput, ViewportRenderer, picking::screen_to_ray, primitives,
+    BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership,
+    LightingSettings, Material, MaterialId, MeshId, MouseButton, OffscreenViewportTarget,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
+    ViewportInput, ViewportRenderer, picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -219,12 +220,12 @@ impl App {
                 OrbitCameraController::new_stateless(),
                 OrbitCameraController::new_stateless(),
             ],
-            inputs: [
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-            ],
+            // Each view's resolver drives its camera and, while hovered, the
+            // gizmo, so each carries the gizmo's keys.
+            inputs: std::array::from_fn(|_| {
+                ViewportInput::from_preset(BindingPreset::Default)
+                    .with_bindings(viewport_lib_gizmo::manipulation_bindings())
+            }),
             gizmo: GizmoDriver::new(),
             gizmo_style: GizmoStyle::default(),
             gizmo_centre: None,
@@ -433,7 +434,7 @@ impl App {
                 }
 
                 // Tab cycles the gizmo mode (ignored while a session runs).
-                if action_frame.is_active(Action::CycleGizmoMode) {
+                if action_frame.is_active(actions::CYCLE_GIZMO_MODE) {
                     self.gizmo.cycle_mode();
                 }
 

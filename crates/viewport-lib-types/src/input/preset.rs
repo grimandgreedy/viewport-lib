@@ -23,9 +23,9 @@ pub enum BindingPreset {
     /// - Ctrl + Scroll -> Orbit
     /// - Shift + Scroll -> Pan
     ///
-    /// Plus the viewport keyboard shortcuts (focus, reset view, wireframe, gizmo
-    /// mode and space, fly movement) and the [`Manipulation`](Self::Manipulation)
-    /// set.
+    /// Plus the viewport keyboard shortcuts: focus, reset view, fly mode and its
+    /// movement, confirm and cancel. Add a tool's own bindings with
+    /// `ViewportInput::with_bindings`.
     ///
     /// **Left drag and right drag are deliberately unbound** and belong to the
     /// application: selection, gizmo dragging, tools, context menus.
@@ -44,13 +44,6 @@ pub enum BindingPreset {
     /// thumbnail preview. In anything with a selection, left drag has two claimants
     /// and the camera will fight the tool.
     Viewer,
-
-    /// The manipulation keys alone, bound by the character they type so they
-    /// follow the keyboard layout: G, R and S begin a move, rotate or scale; X,
-    /// Y and Z constrain to an axis, and with Shift exclude it; Backspace and Tab
-    /// edit a typed value. [`Default`](Self::Default) includes it. See
-    /// [`manipulation_bindings`].
-    Manipulation,
 }
 
 /// Former name for the camera-only scheme. Resolves to [`BindingPreset::Viewer`],
@@ -148,13 +141,13 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
 /// Returns the full binding set for [`BindingPreset::Default`]: the camera scheme
 /// from [`viewport_camera_bindings`] plus the viewport's keyboard shortcuts.
 ///
-/// Covers normal-mode actions, fly-mode movement, and [`manipulation_bindings`].
-/// Application shortcuts (undo, delete, add, wireframe) are not bound here: they
-/// belong to the application, which binds them to [`Action::Custom`] values of
-/// its own.
+/// Covers normal-mode actions, fly-mode movement, and confirm and cancel.
+/// Application and tool shortcuts (undo, delete, a gizmo's G, R and S) are not
+/// bound here: they belong to the application or the tool crate, which binds
+/// them to [`Action::Custom`] values of its own.
 ///
 /// Consumers are responsible for applying mode awareness : key bindings for
-/// fly mode and manipulation mode are always present in the resolved
+/// fly mode and confirm / cancel are always present in the resolved
 /// [`ActionFrame`](crate::input::action_frame::ActionFrame), so callers should
 /// gate on the current [`InputMode`](crate::input::mode::InputMode).
 pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
@@ -174,13 +167,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         Action::ResetView,
         ViewportGesture::KeyPress {
             key: KeyCode::R,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::CycleGizmoMode,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Tab,
             modifiers: none,
         },
     ));
@@ -244,7 +230,7 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         },
     ));
 
-    // -- Confirm / Cancel (fly mode + manipulation mode; callers must gate on mode) --
+    // -- Confirm / Cancel (fly mode and modal tools; callers must gate on mode) --
     bindings.push(ViewportBinding::new(
         Action::Confirm,
         ViewportGesture::KeyPress {
@@ -259,68 +245,7 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
             modifiers: none,
         },
     ));
-
-    // -- Pivot mode cycling (normal + manipulation mode) --
-    bindings.push(ViewportBinding::new(
-        Action::CyclePivotModeForward,
-        ViewportGesture::KeyPress {
-            key: KeyCode::LeftBracket,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::CyclePivotModeBackward,
-        ViewportGesture::KeyPress {
-            key: KeyCode::RightBracket,
-            modifiers: none,
-        },
-    ));
-
-    bindings.extend(manipulation_bindings());
     bindings
-}
-
-/// Returns the bindings for [`BindingPreset::Manipulation`], which
-/// [`viewport_default_bindings`] includes.
-///
-/// The letters are bound by character ([`ViewportGesture::CharPress`]), so on
-/// QWERTZ the Z constraint is the key labelled Z, not the one in the US Z
-/// position. Callers gate these on a manipulation session or a selection: G, R
-/// and S begin a session, and the rest only mean something during one.
-pub fn manipulation_bindings() -> Vec<ViewportBinding> {
-    let none = ModifiersMatch::Exact(Modifiers::NONE);
-    let shift = ModifiersMatch::Contains(Modifiers::SHIFT);
-    let char_press = |action, ch, modifiers| {
-        ViewportBinding::new(action, ViewportGesture::CharPress { ch, modifiers })
-    };
-    vec![
-        // Normal mode: begin a session.
-        char_press(Action::BeginMove, 'g', none),
-        char_press(Action::BeginRotate, 'r', none),
-        char_press(Action::BeginScale, 's', none),
-        // During a session: constrain to an axis, or with Shift exclude it.
-        char_press(Action::ConstrainX, 'x', none),
-        char_press(Action::ConstrainY, 'y', none),
-        char_press(Action::ConstrainZ, 'z', none),
-        char_press(Action::ExcludeX, 'x', shift),
-        char_press(Action::ExcludeY, 'y', shift),
-        char_press(Action::ExcludeZ, 'z', shift),
-        // During a session: edit the typed value. These keys type no character.
-        ViewportBinding::new(
-            Action::NumericBackspace,
-            ViewportGesture::KeyPress {
-                key: KeyCode::Backspace,
-                modifiers: none,
-            },
-        ),
-        ViewportBinding::new(
-            Action::NumericNextAxis,
-            ViewportGesture::KeyPress {
-                key: KeyCode::Tab,
-                modifiers: none,
-            },
-        ),
-    ]
 }
 
 /// Former name for the full set. Renamed; note that undo and redo are no longer

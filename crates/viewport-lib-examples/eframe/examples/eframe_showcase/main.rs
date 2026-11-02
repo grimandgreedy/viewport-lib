@@ -173,7 +173,9 @@ fn main() -> eframe::Result {
                     glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
                 ),
                 controller: OrbitCameraController::new_stateless(),
-                input: ViewportInput::from_preset(BindingPreset::Default),
+                // Showcase 4's gizmo reads this resolver, so it carries the gizmo's keys.
+                input: ViewportInput::from_preset(BindingPreset::Default)
+                    .with_bindings(viewport_lib_gizmo::manipulation_bindings()),
                 mode,
                 mode_gen: 0,
                 show_keybinds: false,

@@ -5,8 +5,9 @@
 /// Actions are decoupled from their physical triggers (keys/mouse buttons),
 /// so bindings can be remapped and the same action can be reached through
 /// different triggers depending on context. The named variants are the ones
-/// the library's controllers and the gizmo convention act on; an application
-/// binds its own shortcuts to [`Action::Custom`].
+/// the library's controllers act on, plus [`Confirm`](Action::Confirm) and
+/// [`Cancel`](Action::Cancel) for any modal tool; an application or a tool crate
+/// binds its own actions to [`Action::Custom`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -22,8 +23,6 @@ pub enum Action {
     FocusObject,
     /// Reset camera to the default view.
     ResetView,
-    /// Cycle the gizmo mode (Translate -> Rotate -> Scale).
-    CycleGizmoMode,
 
     // -- Fly mode --
     /// Enter first-person fly-through mode.
@@ -43,43 +42,11 @@ pub enum Action {
     /// Hold to increase fly-mode movement speed.
     FlySpeedBoost,
 
-    // -- Object manipulation (keyboard G/R/S) --
-    /// Begin keyboard-driven move (G key).
-    BeginMove,
-    /// Begin keyboard-driven rotate (R key).
-    BeginRotate,
-    /// Begin keyboard-driven scale (S key).
-    BeginScale,
-    /// Constrain transform to the X axis.
-    ConstrainX,
-    /// Constrain transform to the Y axis.
-    ConstrainY,
-    /// Constrain transform to the Z axis.
-    ConstrainZ,
-    /// Shift+X/Y/Z : exclude that axis, operate in the perpendicular plane.
-    ExcludeX,
-    /// Exclude the Y axis; operate in the XZ plane.
-    ExcludeY,
-    /// Exclude the Z axis; operate in the XY plane.
-    ExcludeZ,
-
     // -- Shared modal --
     /// Confirm the current operation (Enter / left-click).
     Confirm,
     /// Cancel the current operation (Escape / right-click).
     Cancel,
-
-    // -- Numeric input (manipulation mode) --
-    /// Backspace: erase the last typed digit in the numeric buffer.
-    NumericBackspace,
-    /// Tab: advance focus to the next axis buffer in numeric input.
-    NumericNextAxis,
-
-    // -- Gizmo --
-    /// Cycle the pivot mode forward (Selection Centroid -> Individual Origins -> Median Point -> World Origin -> ...).
-    CyclePivotModeForward,
-    /// Cycle the pivot mode backward (... -> World Origin -> Median Point -> Individual Origins -> Selection Centroid).
-    CyclePivotModeBackward,
 
     // -- Application-defined --
     /// An action the application defines. The library binds nothing to it and
