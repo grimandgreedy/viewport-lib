@@ -60,11 +60,6 @@ name = "winit-minimal"
 path = "examples/winit_minimal/main.rs"
 
 [[example]]
-name = "winit-viewport"
-path = "examples/winit_viewport/main.rs"
-required-features = ["wgpu27"]
-
-[[example]]
 name = "winit-basic-interaction"
 path = "examples/winit_basic_interaction/main.rs"
 

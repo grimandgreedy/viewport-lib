@@ -5,7 +5,7 @@
 //! app; `app_multi_window` declares several. Orbit navigation (left/middle drag),
 //! pan (right drag), and zoom (scroll) work with no per-event code here: the
 //! runner translates winit events and drives the camera. Compare the hand-written
-//! event loop in `examples/winit_viewport` for the full-control version.
+//! event loop in `examples/winit_hdr` for the full-control version.
 
 use std::cell::Cell;
 use std::rc::Rc;
