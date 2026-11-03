@@ -14,7 +14,7 @@ on:
         default: buffer_invariants
       testkit_scene:
         description: buffer_invariants runs only this catalogue scene (empty for all)
-        default: gpu_marching_cubes
+        default: ''
 
 env:
   CARGO_TERM_COLOR: always
