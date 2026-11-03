@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+
+- **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
+
 ## [0.23.0]
 
 This release moves the built-in item types into the new `viewport-lib-plugins` crate, runs the renderer on WebGL2 and GLES through device tiers, extends PBR materials with layered lobes and transmission, applies a physical exposure throughout, holds world positions in f64, reworks point and spot shadows, and moves the transform gizmo out to `viewport-lib-gizmo`.

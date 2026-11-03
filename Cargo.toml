@@ -49,3 +49,14 @@ exclude = [
 # fail to unify between the renderer and the types crate).
 [workspace.dependencies]
 glam = { version = "=0.30.10", features = ["bytemuck"] }
+
+# The example crates depend on crates published from other repositories (the
+# gizmo, io and lightbake), which name this workspace's crates by version. Patch
+# those to the workspace's own paths so there is one copy of each in the graph
+# rather than a path copy and a crates.io copy that do not unify. Ignored when
+# publishing.
+[patch.crates-io]
+viewport-lib = { path = "crates/viewport-lib" }
+viewport-lib-types = { path = "crates/viewport-lib-types" }
+viewport-lib-geometry = { path = "crates/viewport-lib-geometry" }
+viewport-lib-plugins = { path = "crates/viewport-lib-plugins" }
