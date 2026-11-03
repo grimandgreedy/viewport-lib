@@ -25,14 +25,12 @@ pub(crate) struct LdrMeshContext {
 }
 
 /// What every HDR mesh pipeline build reads: the lit module and its
-/// discard-free twin, plus the overlay pair the cap fill draws with.
+/// discard-free twin.
 pub(crate) struct HdrMeshContext {
     device: crate::gpu::Device,
     layout: crate::gpu::PipelineLayout,
     shader: crate::resources::pipeline_slot::LazyModule,
     shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
-    overlay_layout: crate::gpu::PipelineLayout,
-    overlay_shader: crate::gpu::ShaderModule,
     depth_format: crate::gpu::TextureFormat,
 }
 
@@ -48,12 +46,12 @@ pub(crate) struct SceneCorePipelines {
     /// opaque fragment shader branches on a per-object uniform),
     /// transparent, wireframe, and the cap-fill overlay. The opaque and
     /// transparent members also come in feature sets, built as draws ask.
-    pub(crate) hdr: Option<LazyFamily<HdrMeshContext, 9>>,
+    pub(crate) hdr: Option<LazyFamily<HdrMeshContext, 8>>,
     /// The LDR and HDR families on the bindless member of group 1, built
     /// alongside the two above when material textures bind bindlessly. The
     /// batch draws whose bind groups are bindless draw through these.
     pub(crate) ldr_bindless: Option<LazyFamily<LdrMeshContext, 6>>,
-    pub(crate) hdr_bindless: Option<LazyFamily<HdrMeshContext, 9>>,
+    pub(crate) hdr_bindless: Option<LazyFamily<HdrMeshContext, 8>>,
 }
 
 const LDR_SOLID: usize = 0;
@@ -68,11 +66,10 @@ const LDR_SOLID_TWO_SIDED_NODISCARD: usize = 5;
 const HDR_OPAQUE: usize = 0;
 const HDR_TRANSPARENT: usize = 4;
 const HDR_WIREFRAME: usize = 5;
-const HDR_OVERLAY: usize = 6;
 /// The additive and premultiplied blends an explicit mesh-instance item can
 /// ask for, beside the alpha-blended `HDR_TRANSPARENT`.
-const HDR_ADDITIVE: usize = 7;
-const HDR_PREMULTIPLIED: usize = 8;
+const HDR_ADDITIVE: usize = 6;
+const HDR_PREMULTIPLIED: usize = 7;
 
 fn hdr_opaque_slot(key: PipelineKey) -> usize {
     HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize
@@ -248,48 +245,13 @@ fn build_hdr_features(
             PrimitiveTopology::TriangleList,
             false,
         ),
-        HDR_PREMULTIPLIED => make(
+        _ => make(
             ctx.shader.get(),
             "hdr_premultiplied_pipeline",
             None,
             Some(crate::resources::mesh::mesh_pipelines::PREMULTIPLIED_BLEND),
             PrimitiveTopology::TriangleList,
             false,
-        ),
-        _ => crate::resources::builders::render_pipeline(
-            &ctx.device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "hdr_overlay_pipeline",
-                layout: &ctx.overlay_layout,
-                vertex_module: &ctx.overlay_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[crate::resources::OverlayVertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &ctx.overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: Some(BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    ctx.depth_format,
-                    false,
-                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                cache: None,
-            },
         ),
     }
 }
@@ -360,10 +322,6 @@ impl SceneCorePipelines {
 
     pub(crate) fn hdr_wireframe(&self) -> Option<&crate::gpu::RenderPipeline> {
         self.hdr.as_ref()?.get(HDR_WIREFRAME)
-    }
-
-    pub(crate) fn hdr_overlay(&self) -> Option<&crate::gpu::RenderPipeline> {
-        self.hdr.as_ref()?.get(HDR_OVERLAY)
     }
 
     /// The HDR blended pipeline an explicit mesh-instance item draws with.
@@ -499,7 +457,7 @@ impl MeshColourFamily for LdrScene<'_> {
     }
 }
 
-pub(crate) struct HdrScene<'a>(Option<&'a LazyFamily<HdrMeshContext, 9>>);
+pub(crate) struct HdrScene<'a>(Option<&'a LazyFamily<HdrMeshContext, 8>>);
 
 impl MeshColourFamily for HdrScene<'_> {
     fn opaque(&self, key: PipelineKey) -> Option<&crate::gpu::RenderPipeline> {
@@ -673,16 +631,6 @@ impl crate::resources::DeviceResources {
             &self.scene_tier.binds.camera_bgl,
             &self.scene_tier.binds.object_bgl,
         );
-        let overlay_shader = crate::resources::builders::wgsl_module(
-            device,
-            "overlay_shader_hdr",
-            crate::resources::builders::wgsl_source!("overlay"),
-        );
-        let overlay_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "hdr_overlay_pipeline_layout",
-            &[&self.scene_tier.binds.camera_bgl, &self.guides.overlay_bgl],
-        );
         let bindless = if self.bindless_textures() {
             let source = crate::resources::mesh::instanced_bindless::bindlessify_mesh(&final_src);
             let shader = self.shared_module(device, "mesh_bindless_shader_hdr", &source);
@@ -706,8 +654,6 @@ impl crate::resources::DeviceResources {
                     layout,
                     shader,
                     shader_nodiscard,
-                    overlay_layout: overlay_layout.clone(),
-                    overlay_shader: overlay_shader.clone(),
                     depth_format: self.scene_depth_format(),
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),

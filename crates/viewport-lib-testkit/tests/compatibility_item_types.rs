@@ -611,9 +611,9 @@ fn compatibility_tier_draws_wireframe_overlays_and_thin_lines() {
             .filter(|(a, b)| a[..3] != b[..3])
             .count()
     };
-    let mut render = |harness: &mut Harness,
-                      name: &str,
-                      edit: &dyn Fn(&mut viewport_lib_testkit::BuiltScene)| {
+    let render = |harness: &mut Harness,
+                  name: &str,
+                  edit: &dyn Fn(&mut viewport_lib_testkit::BuiltScene)| {
         let scene = scenes
             .iter()
             .find(|s| s.name == name)
