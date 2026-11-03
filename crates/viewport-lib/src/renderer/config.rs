@@ -34,6 +34,12 @@ pub struct RendererConfig {
     /// without `Features::PIPELINE_CACHE`, and stale or foreign data is
     /// discarded. Default `None`.
     pub pipeline_cache_data: Option<Vec<u8>>,
+    /// A pipeline cache to share with other renderers on the same device, in
+    /// place of one made from `pipeline_cache_data`. A host with several
+    /// renderers on one device (one per window) makes one cache and gives it
+    /// to each, so they reuse each other's pipelines and save one set of data.
+    /// It must belong to the device the renderer is built on. Default `None`.
+    pub pipeline_cache: Option<crate::gpu::PipelineCache>,
     /// How a pipeline is compiled the first time a frame needs it. `None`
     /// takes `VPL_PIPELINE_COMPILATION` from the environment if set, else
     /// [`PipelineCompilation::platform_default`]. Can be changed later with
@@ -119,6 +125,7 @@ impl RendererConfig {
             target_format,
             sample_count: 1,
             pipeline_cache_data: None,
+            pipeline_cache: None,
             pipeline_compilation: None,
             geometry_chunk_bytes: None,
             downlevel_capabilities: None,
@@ -146,6 +153,13 @@ impl RendererConfig {
     /// Seed the pipeline cache from data an earlier run saved.
     pub fn with_pipeline_cache_data(mut self, data: Option<Vec<u8>>) -> Self {
         self.pipeline_cache_data = data;
+        self
+    }
+
+    /// Share `cache` with the other renderers on the device instead of making
+    /// a cache of this renderer's own. See [`pipeline_cache`](Self::pipeline_cache).
+    pub fn with_pipeline_cache(mut self, cache: crate::gpu::PipelineCache) -> Self {
+        self.pipeline_cache = Some(cache);
         self
     }
 

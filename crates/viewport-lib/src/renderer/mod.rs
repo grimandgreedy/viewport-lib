@@ -1089,6 +1089,7 @@ impl ViewportRenderer {
             target_format,
             sample_count,
             config.pipeline_cache_data.as_deref(),
+            config.pipeline_cache.as_ref(),
             config.geometry_chunk_bytes,
         )?;
         resources.device_lost = device_lost;
@@ -2149,6 +2150,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
     ) -> Result<crate::plugin_api::ItemTypeId, crate::ViewportError> {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         self.resources.require_live()?;
         let name = plugin.type_name();
         assert!(
@@ -2382,6 +2384,7 @@ impl ViewportRenderer {
         &mut self,
         producer: Box<dyn crate::plugin_api::PostEffectProducer>,
     ) -> Result<crate::plugin_api::PostEffectProducerId, crate::ViewportError> {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         self.check_plugin_requirements(producer.type_name(), &producer.requires())?;
         self.next_post_effect_producer_id += 1;
         let id = crate::plugin_api::PostEffectProducerId(self.next_post_effect_producer_id);
@@ -2421,6 +2424,7 @@ impl ViewportRenderer {
         stage: Box<dyn crate::plugin_api::PostEffectStage>,
         order: i32,
     ) -> Result<crate::plugin_api::PostEffectStageId, crate::ViewportError> {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         self.check_plugin_requirements(stage.type_name(), &stage.requires())?;
         self.next_post_effect_stage_id += 1;
         let id = crate::plugin_api::PostEffectStageId(self.next_post_effect_stage_id);

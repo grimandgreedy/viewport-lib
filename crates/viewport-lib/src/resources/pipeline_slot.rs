@@ -115,16 +115,30 @@ pub struct PipelineCompiler {
     /// reads block while it is non-zero. See [`Self::blocking_scope`].
     blocking_scopes: AtomicUsize,
     pending: Arc<Pending>,
+    /// The renderer's pipeline cache, made current around every build this
+    /// compiler runs. See [`Self::cache_scope`].
+    cache: Option<crate::gpu::PipelineCache>,
 }
 
 impl PipelineCompiler {
-    pub(crate) fn new(policy: PipelineCompilation) -> Self {
+    pub(crate) fn new(
+        policy: PipelineCompilation,
+        cache: Option<crate::gpu::PipelineCache>,
+    ) -> Self {
         Self {
             policy: AtomicU8::new(policy as u8),
             capturing: AtomicBool::new(false),
             blocking_scopes: AtomicUsize::new(0),
             pending: Arc::new(Pending::default()),
+            cache,
         }
+    }
+
+    /// Make this renderer's pipeline cache the one pipelines built on this
+    /// thread use, until the guard is dropped. Held around the renderer's own
+    /// entry points; worker compiles take it themselves.
+    pub(crate) fn cache_scope(&self) -> crate::resources::builders::current_pipeline_cache::Scope {
+        crate::resources::builders::current_pipeline_cache::enter(self.cache.as_ref())
     }
 
     /// The policy slots follow right now: the one set, or `Blocking` while
@@ -157,7 +171,10 @@ impl PipelineCompiler {
     /// has no later frame to catch up on, so it must not skip a draw.
     pub(crate) fn blocking_scope(self: &Arc<Self>) -> BlockingScope {
         self.blocking_scopes.fetch_add(1, Ordering::Relaxed);
-        BlockingScope(Arc::clone(self))
+        BlockingScope {
+            compiler: Arc::clone(self),
+            _cache: self.cache_scope(),
+        }
     }
 
     /// Whether a capture or a read-back call is running: a frame whose pixels
@@ -187,9 +204,12 @@ impl PipelineCompiler {
 
     fn spawn(&self, job: impl FnOnce() + Send + 'static) {
         let pending = Arc::clone(&self.pending);
+        let cache = self.cache.clone();
         pending.add();
         pool().submit(Box::new(move || {
             if !pending.cancelled.load(Ordering::SeqCst) {
+                let _cache =
+                    crate::resources::builders::current_pipeline_cache::enter(cache.as_ref());
                 job();
             }
             pending.finish();
@@ -197,12 +217,18 @@ impl PipelineCompiler {
     }
 }
 
-/// Ends a [`PipelineCompiler::blocking_scope`] when dropped.
-pub(crate) struct BlockingScope(Arc<PipelineCompiler>);
+/// Ends a [`PipelineCompiler::blocking_scope`] when dropped, and with it the
+/// renderer's pipeline cache scope it opened.
+pub(crate) struct BlockingScope {
+    compiler: Arc<PipelineCompiler>,
+    _cache: crate::resources::builders::current_pipeline_cache::Scope,
+}
 
 impl Drop for BlockingScope {
     fn drop(&mut self) {
-        self.0.blocking_scopes.fetch_sub(1, Ordering::Relaxed);
+        self.compiler
+            .blocking_scopes
+            .fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -293,6 +319,7 @@ impl<P: Send + 'static> PipelineSlot<P> {
         }
         match policy {
             PipelineCompilation::Blocking => {
+                let _cache = compiler.cache_scope();
                 let _ = self.ready.set(build());
                 self.ready.get()
             }
@@ -673,11 +700,11 @@ mod tests {
     use std::time::Duration;
 
     fn background() -> PipelineCompiler {
-        PipelineCompiler::new(PipelineCompilation::Background)
+        PipelineCompiler::new(PipelineCompilation::Background, None)
     }
 
     fn blocking() -> PipelineCompiler {
-        PipelineCompiler::new(PipelineCompilation::Blocking)
+        PipelineCompiler::new(PipelineCompilation::Blocking, None)
     }
 
     fn pending(compiler: &PipelineCompiler) -> usize {

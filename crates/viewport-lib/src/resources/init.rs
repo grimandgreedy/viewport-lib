@@ -40,6 +40,31 @@ fn stage_storage_buffers(
         .count() as u32
 }
 
+/// A pipeline cache for `device`, seeded from `data` if given, or `None` when
+/// the device lacks `Features::PIPELINE_CACHE`. A cache records compiled
+/// pipelines so a later run seeded with its saved data skips recompiling them;
+/// `fallback: true` discards stale or foreign data rather than failing.
+pub(crate) fn create_pipeline_cache(
+    device: &crate::gpu::Device,
+    data: Option<&[u8]>,
+) -> Option<crate::gpu::PipelineCache> {
+    if !device
+        .features()
+        .contains(crate::gpu::Features::PIPELINE_CACHE)
+    {
+        return None;
+    }
+    // Safety: the data, if any, came from a prior `PipelineCache::get_data`
+    // call as the API requires, and `fallback` covers data that did not.
+    Some(unsafe {
+        device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
+            label: Some("viewport_pipeline_cache"),
+            data,
+            fallback: true,
+        })
+    })
+}
+
 impl DeviceResources {
     /// Create all GPU resources for the viewport.
     ///
@@ -74,45 +99,31 @@ impl DeviceResources {
             sample_count,
             pipeline_cache_data,
             None,
+            None,
         )
         .unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// The constructor behind the public ones, with the device's capabilities
-    /// and the geometry store's first chunk size (`None` for the default).
+    /// The constructor behind the public ones, with the device's capabilities,
+    /// a pipeline cache shared with other renderers on the device (used in
+    /// place of making one from `pipeline_cache_data`), and the geometry
+    /// store's first chunk size (`None` for the default).
     pub(crate) fn new_configured(
         device: &crate::gpu::Device,
         capabilities: crate::capabilities::Capabilities,
         target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
+        shared_pipeline_cache: Option<&crate::gpu::PipelineCache>,
         geometry_chunk_bytes: Option<u64>,
     ) -> Result<Self, crate::ViewportError> {
-        // A pipeline cache records compiled pipelines so a later run (seeded with
-        // saved data) skips recompilation. Only available when the device enables
-        // `Features::PIPELINE_CACHE`; `fallback: true` discards stale/invalid data
-        // rather than failing. Safety: the data, if any, came from a prior
-        // `PipelineCache::get_data` call as the API requires.
-        let pipeline_cache = if device
-            .features()
-            .contains(crate::gpu::Features::PIPELINE_CACHE)
-        {
-            Some(unsafe {
-                device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
-                    label: Some("viewport_pipeline_cache"),
-                    data: pipeline_cache_data,
-                    fallback: true,
-                })
-            })
-        } else {
-            None
+        let pipeline_cache = match shared_pipeline_cache {
+            Some(shared) => Some(shared.clone()),
+            None => create_pipeline_cache(device, pipeline_cache_data),
         };
-        // Registered with or without a cache: the lookup has to know about
-        // every renderer to tell when it cannot answer.
-        let pipeline_cache_lease = crate::resources::builders::device_pipeline_cache::register(
-            device,
-            pipeline_cache.as_ref(),
-        );
+        // The pipelines built below are created against this renderer's cache.
+        let _cache_scope =
+            crate::resources::builders::current_pipeline_cache::enter(pipeline_cache.as_ref());
 
         // Cold-start instrumentation. Pipeline compilation and large depth-texture
         // allocation can dominate construction on some backends (notably Adreno
@@ -1615,6 +1626,7 @@ impl DeviceResources {
         let pipeline_compiler =
             std::sync::Arc::new(crate::resources::pipeline_slot::PipelineCompiler::new(
                 crate::resources::pipeline_slot::initial_policy(),
+                pipeline_cache.clone(),
             ));
         let group0_profile = crate::resources::group0::Group0Profile::for_caps(&capabilities);
         // The compatibility tier's group 0, where the scene tier was not built.
@@ -1635,7 +1647,6 @@ impl DeviceResources {
             force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
-            pipeline_cache_lease,
             shader_modules: Default::default(),
             scene: crate::resources::scene_pipelines::SceneCorePipelines::default(),
             shade_hooks: Vec::new(),

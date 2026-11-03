@@ -552,10 +552,6 @@ pub struct DeviceResources {
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
     pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
-    /// This renderer's entry in the pipeline cache lookup, removed when the
-    /// renderer is dropped.
-    #[allow(dead_code)]
-    pub(crate) pipeline_cache_lease: crate::resources::builders::device_pipeline_cache::Lease,
     /// Shader modules shared between the pipeline families compiled from the
     /// same source, keyed by the source text. The LDR and HDR mesh families
     /// and the culled family compile one `mesh.wgsl`; a module this size

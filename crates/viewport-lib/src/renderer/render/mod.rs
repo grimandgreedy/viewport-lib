@@ -695,6 +695,7 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         if self.device_lost_now() {
             return crate::renderer::empty_command_buffer(device);
         }
@@ -715,6 +716,7 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         if self.skip_frame_device_lost() {
             return crate::renderer::empty_command_buffer(device);
         }
