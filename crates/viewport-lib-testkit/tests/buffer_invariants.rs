@@ -147,14 +147,21 @@ fn slab_and_collapse_invariants_hold() {
     }
 
     let (w, h) = (320u32, 240u32);
+    // `TESTKIT_SCENE` runs one scene by name, for a fault on one adapter.
+    let only = std::env::var("TESTKIT_SCENE").ok().filter(|name| !name.is_empty());
     for scene in catalogue() {
-        // Named first, so a run that faults in the driver shows the scene.
+        if only.as_deref().is_some_and(|name| name != scene.name) {
+            continue;
+        }
+        // Named at each step, so a run that faults in the driver shows where.
         eprintln!("scene {}", scene.name);
         // Fresh harness per scene so slab residency reflects that scene alone.
         let mut harness = Harness::new().expect("adapter present");
         let built = harness.build_scene(&scene);
+        eprintln!("  built");
         let frame = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
         let s = harness.render_two_frames(&frame, w, h);
+        eprintln!("  rendered");
 
         // The catalogue's geometry fits one vertex chunk and one index chunk, so
         // the slab holds two, or none for a scene that uploads no mesh. A larger

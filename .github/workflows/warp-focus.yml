@@ -8,10 +8,13 @@ on:
     inputs:
       library_tests:
         description: viewport-lib test targets (space-separated, empty to skip)
-        default: headless_deform_source_deferred headless_render_misc headless_mesh_sidecar_pool
+        default: ''
       testkit_tests:
         description: testkit test targets (space-separated, empty to skip)
         default: buffer_invariants
+      testkit_scene:
+        description: buffer_invariants runs only this catalogue scene (empty for all)
+        default: gpu_marching_cubes
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,6 +54,13 @@ jobs:
         continue-on-error: true
         shell: bash
         working-directory: crates/viewport-lib-testkit
+        env:
+          TESTKIT_SCENE: ${{ inputs.testkit_scene }}
+          # Pipelines compile on the test's thread, in order, so the step
+          # messages show which stage a fault is in.
+          VPL_PIPELINE_COMPILATION: blocking
+          WGPU_VALIDATION: 1
+          WGPU_DEBUG: 1
         run: |
           args=()
           for t in ${{ inputs.testkit_tests }}; do args+=(--test "$t"); done
