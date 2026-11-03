@@ -623,6 +623,7 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         desc: ShadingHookDesc,
     ) -> ViewportResult<ShadingHookId> {
+        let _cache = self.pipeline_compiler.cache_scope();
         let stored = self.validated_shading_hook(device, desc)?;
         let index = self
             .shade_hooks
@@ -1204,6 +1205,7 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         plugin: &dyn MaterialPlugin,
     ) -> ViewportResult<MaterialPluginId> {
+        let _cache = self.pipeline_compiler.cache_scope();
         self.require_scene_tier()?;
         if let Some(existing) = self.shading_hook_id_by_name(plugin.name()) {
             if self.material_plugins.contains_key(&(existing.index as u32)) {

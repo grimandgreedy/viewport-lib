@@ -354,7 +354,7 @@ fn every_scene_builds_without_direct_depth_sampling() {
             .into_iter()
             .find(|s| s.name == name)
             .expect("the scene is in the catalogue");
-        let mut draw = |harness: &mut Harness| {
+        let draw = |harness: &mut Harness| {
             let built = harness.build_scene(&scene);
             let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
             let _ = harness.render(&frame, W, H);

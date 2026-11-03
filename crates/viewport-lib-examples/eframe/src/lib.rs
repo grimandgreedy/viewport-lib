@@ -4,7 +4,7 @@
 //! Run one with:
 //!
 //! ```text
-//! cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --example eframe-showcase
+//! cargo run --release -p viewport-lib-examples-eframe --example eframe-showcase
 //! ```
 //!
 //! # The leg shim
@@ -43,7 +43,7 @@
 //! Check a non-default leg with:
 //!
 //! ```text
-//! cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --no-default-features \
+//! cargo run --release -p viewport-lib-examples-eframe --no-default-features \
 //!     --features wgpu30 --example eframe-minimal
 //! ```
 

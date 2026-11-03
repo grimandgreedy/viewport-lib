@@ -124,6 +124,9 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, FORMAT);
+    // A deferred frame skips draws whose pipelines are still compiling, and
+    // this reads the first frame back.
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let plane = viewport_lib::primitives::plane(1.0, 1.0);
     let vertex_count = plane.positions.len();
     let quad = renderer

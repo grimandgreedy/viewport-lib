@@ -178,11 +178,7 @@ pollster = "0.4"
 # Used by the headless color-glyph test to look up an emoji glyph id. Same crate
 # as the normal dependency; listed here so the integration test can name it.
 ttf-parser = "0.25"
-# The lightmap-bake integration test runs the full offline lightmapper: this
-# crate's unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake.
-# Desktop-only: xatlas is C++ and does not cross-compile to wasm.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-viewport-lib-lightbake = { version = "0.1.0" }
 # The headless integration tests share one device constructor with the testkit
 # instead of keeping their own copies. `core` only, so no scene catalogue or
 # `image` is pulled; path-only and dev-only, so it never reaches the published

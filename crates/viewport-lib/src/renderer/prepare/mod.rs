@@ -160,6 +160,7 @@ impl ViewportRenderer {
         scene_fx: &SceneEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare_scene").entered();
         if self.direct_paint {
             self.resources.ensure_host_depth_reset_pipeline(device);
@@ -932,6 +933,7 @@ impl ViewportRenderer {
         viewport_fx: &ViewportEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         // Ensure a per-viewport camera slot exists for this viewport index.
         let _span = tracing::debug_span!(
             target: "viewport_lib::frame",
@@ -1100,6 +1102,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> crate::renderer::stats::FrameStats {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         let mut sink = crate::renderer::SubmitSink::inline(queue);
         self.prepare_into(device, queue, frame, &mut sink)
     }

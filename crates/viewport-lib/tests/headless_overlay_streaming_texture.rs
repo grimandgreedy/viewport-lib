@@ -235,7 +235,7 @@ fn streaming_texture_keeps_its_colour_space() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 64u32;
     let grey = [128u8, 128, 128, 255];
-    let mut draw = |renderer: &mut ViewportRenderer, tex| {
+    let draw = |renderer: &mut ViewportRenderer, tex| {
         let mut frame = overlay_frame(size);
         frame.overlays.shapes = vec![textured_shape(tex)];
         let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

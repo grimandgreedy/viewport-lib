@@ -56,14 +56,6 @@ pub(crate) fn rel_product(a: Mat4, b: Mat4, origin: DVec3) -> Mat4 {
     m.as_mat4()
 }
 
-/// [`rel_model`] for a `Mat4`.
-pub(crate) fn rel_mat4(m: Mat4, origin: DVec3) -> Mat4 {
-    if origin == DVec3::ZERO {
-        return m;
-    }
-    Mat4::from_cols_array_2d(&rel_model(m.to_cols_array_2d(), origin))
-}
-
 /// The translation that moves data written relative to `anchor` into
 /// coordinates relative to `origin`: `anchor - origin`, in f64.
 ///
@@ -151,7 +143,8 @@ mod tests {
     #[test]
     fn zero_origin_is_the_identity() {
         let m = Mat4::from_translation(Vec3::new(1.0e6 + 0.125, -3.0, 2.5));
-        assert_eq!(rel_mat4(m, DVec3::ZERO), m);
+        let cols = m.to_cols_array_2d();
+        assert_eq!(rel_model(cols, DVec3::ZERO), cols);
         let p = [1.0e6 + 0.125, 2.0, 3.0];
         assert_eq!(rel_point(p, DVec3::ZERO), p);
     }
@@ -166,7 +159,7 @@ mod tests {
             glam::Quat::from_rotation_z(0.3),
             Vec3::from(p),
         );
-        let r = rel_mat4(m, origin);
+        let r = Mat4::from_cols_array_2d(&rel_model(m.to_cols_array_2d(), origin));
         assert_eq!(r.w_axis.truncate(), Vec3::new(2.125, -3.5, 7.25));
         assert_eq!(r.x_axis, m.x_axis);
     }

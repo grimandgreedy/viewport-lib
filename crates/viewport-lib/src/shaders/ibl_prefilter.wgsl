@@ -101,7 +101,17 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let a2 = a * a;
     if (a == 0.0) {
         // A mirror lobe is the one direction: read it at the output's size.
-        let c = textureSampleLevel(src_tex, src_sampler, dir_to_equirect_uv(n), params.min_lod).rgb;
+        // When that level matches the output texel for texel, load the texel
+        // itself: the direction round trip and a filtered read drift by a
+        // fraction of a texel on low-precision rasterisers, which next to a
+        // small bright sun puts its energy in the wrong texel.
+        let lvl = i32(params.min_lod);
+        var c: vec3<f32>;
+        if (all(textureDimensions(src_tex, lvl) == dims)) {
+            c = textureLoad(src_tex, vec2<i32>(gid.xy), lvl).rgb;
+        } else {
+            c = textureSampleLevel(src_tex, src_sampler, dir_to_equirect_uv(n), params.min_lod).rgb;
+        }
         textureStore(dst_tex, vec2<i32>(gid.xy), vec4<f32>(c, 1.0));
         return;
     }

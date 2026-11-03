@@ -1454,8 +1454,8 @@ pub(crate) fn surface_mask_depth_stencil(
 
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
 /// shape: a shader, its layout, and an entry point, with default compilation
-/// options, created against the device's pipeline cache when it has one (see
-/// `device_pipeline_cache`). This is the one place the crate calls
+/// options, created against the building renderer's pipeline cache when it has
+/// one (see `current_pipeline_cache`). This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
 pub fn compute_pipeline(
     device: &crate::gpu::Device,
@@ -1465,7 +1465,7 @@ pub fn compute_pipeline(
     entry: &str,
 ) -> crate::gpu::ComputePipeline {
     let build_start = web_time::Instant::now();
-    let cache = device_pipeline_cache::get(device);
+    let cache = current_pipeline_cache::get();
     let pipeline = device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
@@ -1551,9 +1551,8 @@ pub struct RenderPipelineDesc<'a> {
     pub depth_stencil: Option<crate::gpu::DepthStencilState>,
     /// Multisample (MSAA) state.
     pub multisample: crate::gpu::MultisampleState,
-    /// Pipeline cache to create against. `None` uses the cache the renderer
-    /// registered for the device, when the device has one, so a site does not
-    /// have to name it.
+    /// Pipeline cache to create against. `None` uses the cache of the renderer
+    /// doing the building, when it has one, so a site does not have to name it.
     pub cache: Option<&'a crate::gpu::PipelineCache>,
 }
 
@@ -1606,11 +1605,11 @@ pub(crate) fn render_pipeline_with_constants(
     };
     let build_start = web_time::Instant::now();
     let build_label = desc.label;
-    let device_cache = match desc.cache {
+    let current_cache = match desc.cache {
         Some(_) => None,
-        None => device_pipeline_cache::get(device),
+        None => current_pipeline_cache::get(),
     };
-    let cache = desc.cache.or(device_cache.as_ref());
+    let cache = desc.cache.or(current_cache.as_ref());
     let pipeline = device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
@@ -1630,124 +1629,61 @@ pub(crate) fn render_pipeline_with_constants(
     pipeline
 }
 
-/// The pipeline cache each device's pipelines are created against.
+/// The pipeline cache the pipelines being built on this thread are created
+/// against.
 ///
 /// wgpu takes the cache per pipeline descriptor, and pipelines are created all
 /// over the crate and by item-type plugins. Naming the cache at every site is
-/// how sites get missed, so each renderer registers its cache here and
-/// [`render_pipeline`] and [`compute_pipeline`] look it up by device.
+/// how sites get missed, so the renderer makes its cache current while it
+/// builds (see `PipelineCompiler::cache_scope`) and [`render_pipeline`] and
+/// [`compute_pipeline`] read it from here.
 ///
-/// The lookup answers only when it cannot be wrong. wgpu compares devices by
-/// an id that is unique within one wgpu instance and not across them, so two
-/// devices from two instances can compare equal, and a cache used with the
-/// other instance's device is a panic inside wgpu. Every renderer registers,
-/// with or without a cache, and a device that matches more than one
-/// registration gets no cache from the lookup: its pipelines are still built,
-/// uncached, unless the site names the cache itself. Two renderers on one
-/// device are indistinguishable from that case and are treated the same way.
-pub(crate) mod device_pipeline_cache {
-    use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU64, Ordering};
+/// The cache comes from the renderer doing the building, not from the device:
+/// wgpu compares devices by an id that is unique within one wgpu instance and
+/// not across them, so a cache found by device can belong to another
+/// instance's device, which is a panic inside wgpu. A pipeline built outside
+/// any renderer's scope is built uncached.
+pub(crate) mod current_pipeline_cache {
+    use std::cell::RefCell;
 
-    struct Entry<D, C> {
-        id: u64,
-        device: D,
-        cache: Option<C>,
+    thread_local! {
+        static CURRENT: RefCell<Option<crate::gpu::PipelineCache>> = const { RefCell::new(None) };
     }
 
-    struct Registry<D, C> {
-        entries: Vec<Entry<D, C>>,
+    /// The cache current on this thread, if any.
+    pub(crate) fn get() -> Option<crate::gpu::PipelineCache> {
+        CURRENT.with(|c| c.borrow().clone())
     }
 
-    impl<D: PartialEq, C: Clone> Registry<D, C> {
-        fn get(&self, device: &D) -> Option<C> {
-            let mut matching = self.entries.iter().filter(|e| e.device == *device);
-            let only = matching.next()?;
-            if matching.next().is_some() {
-                return None;
-            }
-            only.cache.clone()
+    /// Make `cache` current on this thread until the returned guard is
+    /// dropped, then restore whatever was current before. `None` makes no
+    /// cache current, for a renderer that has none.
+    pub(crate) fn enter(cache: Option<&crate::gpu::PipelineCache>) -> Scope {
+        let previous = CURRENT.with(|c| c.replace(cache.cloned()));
+        Scope {
+            previous,
+            _not_send: std::marker::PhantomData,
         }
     }
 
-    static CACHES: Mutex<Registry<crate::gpu::Device, crate::gpu::PipelineCache>> =
-        Mutex::new(Registry {
-            entries: Vec::new(),
-        });
-    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-    /// Register a renderer on `device` and the cache it holds, if any. The
-    /// registration lasts as long as the returned lease.
-    pub(crate) fn register(
-        device: &crate::gpu::Device,
-        cache: Option<&crate::gpu::PipelineCache>,
-    ) -> Lease {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        CACHES.lock().unwrap().entries.push(Entry {
-            id,
-            device: device.clone(),
-            cache: cache.cloned(),
-        });
-        Lease(id)
+    /// Restores the previously current cache when dropped. Tied to its
+    /// thread, since the cache it set is the thread's.
+    pub(crate) struct Scope {
+        previous: Option<crate::gpu::PipelineCache>,
+        _not_send: std::marker::PhantomData<*const ()>,
     }
 
-    /// The cache to build `device`'s pipelines against, when exactly one
-    /// renderer is registered for it.
-    pub(crate) fn get(device: &crate::gpu::Device) -> Option<crate::gpu::PipelineCache> {
-        CACHES.lock().unwrap().get(device)
-    }
-
-    /// One renderer's registration, removed when dropped.
-    pub(crate) struct Lease(u64);
-
-    impl Drop for Lease {
+    impl Drop for Scope {
         fn drop(&mut self) {
-            let mut caches = CACHES.lock().unwrap();
-            caches.entries.retain(|e| e.id != self.0);
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::{Entry, Registry};
-
-        fn registry(entries: &[(u32, Option<&'static str>)]) -> Registry<u32, &'static str> {
-            Registry {
-                entries: entries
-                    .iter()
-                    .enumerate()
-                    .map(|(id, (device, cache))| Entry {
-                        id: id as u64,
-                        device: *device,
-                        cache: *cache,
-                    })
-                    .collect(),
-            }
-        }
-
-        #[test]
-        fn a_device_registered_once_gets_its_cache() {
-            let r = registry(&[(1, Some("a")), (2, Some("b")), (3, None)]);
-            assert_eq!(r.get(&1), Some("a"));
-            assert_eq!(r.get(&2), Some("b"));
-            assert_eq!(r.get(&3), None);
-            assert_eq!(r.get(&4), None);
-        }
-
-        /// Two registrations that compare equal may be two devices, so neither
-        /// is handed the other's cache, whichever of them holds one.
-        #[test]
-        fn a_device_registered_twice_gets_no_cache() {
-            assert_eq!(registry(&[(1, Some("a")), (1, Some("b"))]).get(&1), None);
-            assert_eq!(registry(&[(1, Some("a")), (1, None)]).get(&1), None);
-            assert_eq!(registry(&[(1, None), (1, Some("b"))]).get(&1), None);
+            let previous = self.previous.take();
+            CURRENT.with(|c| *c.borrow_mut() = previous);
         }
     }
 }
 
 #[cfg(test)]
-mod device_pipeline_cache_tests {
-    use super::device_pipeline_cache;
+mod current_pipeline_cache_tests {
+    use super::current_pipeline_cache;
 
     fn device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::instance_from_env();
@@ -1769,38 +1705,55 @@ mod device_pipeline_cache_tests {
         .ok()
     }
 
-    /// Two renderers on one device each hold their own cache, and the lookup
-    /// answers for neither. A device without the feature gets no cache.
-    ///
-    /// Every test in this binary registers its renderers in the same
-    /// registry, and devices from different instances can compare equal, so
-    /// only what another test cannot change is asserted here.
+    /// Outside any renderer's scope nothing is current, so a pipeline built
+    /// on a device that has no renderer of its own is built uncached rather
+    /// than against another renderer's cache.
     #[test]
-    fn two_renderers_on_one_device_keep_their_own_caches() {
+    fn nothing_is_current_outside_a_renderer() {
+        assert!(current_pipeline_cache::get().is_none());
         let Some((device, _queue)) = device() else {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        let format = crate::gpu::TextureFormat::Rgba8UnormSrgb;
+        let resources =
+            crate::DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        // Constructing a renderer leaves nothing current behind it.
+        assert!(current_pipeline_cache::get().is_none());
         let has_cache = device
             .features()
             .contains(crate::gpu::Features::PIPELINE_CACHE);
+        assert_eq!(resources.pipeline_cache.is_some(), has_cache);
+    }
 
-        let first = crate::DeviceResources::new(&device, format, 1);
-        assert_eq!(first.pipeline_cache.is_some(), has_cache);
-        if !has_cache {
-            assert!(device_pipeline_cache::get(&device).is_none());
-            eprintln!("this backend has no pipeline cache; checked that none is handed out");
+    /// A scope makes its renderer's cache current, an inner scope for another
+    /// renderer replaces it, and each restores what was there before.
+    #[test]
+    fn scopes_nest_and_restore() {
+        let Some((device, _queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        if !device
+            .features()
+            .contains(crate::gpu::Features::PIPELINE_CACHE)
+        {
+            eprintln!("skipping: this backend has no pipeline cache");
             return;
         }
-
-        // Two renderers on one device: each holds its own cache and the
-        // lookup answers for neither.
+        let format = crate::gpu::TextureFormat::Rgba8UnormSrgb;
+        let first = crate::DeviceResources::new(&device, format, 1);
         let second = crate::DeviceResources::new(&device, format, 1);
         assert!(first.pipeline_cache != second.pipeline_cache);
-        assert!(device_pipeline_cache::get(&device).is_none());
-        drop(second);
-        drop(first);
+        {
+            let _outer = first.pipeline_compiler.cache_scope();
+            assert!(current_pipeline_cache::get() == first.pipeline_cache);
+            {
+                let _inner = second.pipeline_compiler.cache_scope();
+                assert!(current_pipeline_cache::get() == second.pipeline_cache);
+            }
+            assert!(current_pipeline_cache::get() == first.pipeline_cache);
+        }
+        assert!(current_pipeline_cache::get().is_none());
     }
 }
 

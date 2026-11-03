@@ -1407,6 +1407,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
+        let _cache = self.pipeline_compiler.cache_scope();
         self.require_scene_tier()?;
         validate_name(&self.scene_tier.deform.registrations, &desc.name)?;
         let slot = allocate_slot(&self.scene_tier.deform.registrations)?;

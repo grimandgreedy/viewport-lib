@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
+
+### Fixes
+
+- **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
+- **GPU picks before their pipelines have compiled** - under `PipelineCompilation::Background`, the default everywhere but the web and Apple platforms on wgpu 27, a pick, rect pick or snap query that ran before its pipelines finished compiling drew nothing and reported no hit; it now builds the pipelines it needs first, so a click in the first frames hits what is under the cursor.
+- **Pipelines built against another wgpu instance's pipeline cache** - a pipeline found its renderer's cache by device, and wgpu tells devices apart only within one instance, so with two instances in one process a pipeline could be created against the other's cache and wgpu panicked; each renderer now makes its own cache current while it builds, and a pipeline built outside any renderer is built uncached.
+- **Pipeline caching with more than one window in `ViewportApp`** - each window's renderer made a cache of its own on the shared device, which left almost every pipeline uncached once a second window opened; the windows now share one cache.
+
 ## [0.23.0]
 
 This release moves the built-in item types into the new `viewport-lib-plugins` crate, runs the renderer on WebGL2 and GLES through device tiers, extends PBR materials with layered lobes and transmission, applies a physical exposure throughout, holds world positions in f64, reworks point and spot shadows, and moves the transform gizmo out to `viewport-lib-gizmo`.

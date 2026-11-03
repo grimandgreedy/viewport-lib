@@ -40,9 +40,13 @@ APIS = {
         [
             # WebGPU is still behind this flag, and Metal is the ANGLE backend
             # that works on macOS. Both are harmless where they do not apply.
+            # The last lets a page that asks for the fallback adapter get
+            # SwiftShader on a machine with no GPU; a page that does not ask
+            # still gets the hardware adapter.
             "--enable-unsafe-webgpu",
             "--enable-features=Vulkan,WebGPU",
             "--use-angle=metal",
+            "--enable-unsafe-swiftshader",
         ],
     ),
     "webgl2": (

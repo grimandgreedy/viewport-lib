@@ -82,15 +82,17 @@ impl ViewportInstance {
     /// [`StaleHandles`]. An attached runtime runs its GPU plugins' `init_gpu`
     /// again on the new device before their next `pre_prepare`.
     ///
-    /// A device-lost watcher in the original config watches the old device,
-    /// so the new renderer installs its own; pass a new one with
-    /// [`rebuild_with_config`](Self::rebuild_with_config).
+    /// A device-lost watcher or shared pipeline cache in the original config
+    /// belongs to the old device, so the new renderer installs its own watcher
+    /// and makes its own cache from the config's `pipeline_cache_data`; pass
+    /// new ones with [`rebuild_with_config`](Self::rebuild_with_config).
     pub fn rebuild(
         &mut self,
         device: &crate::gpu::Device,
     ) -> Result<StaleHandles, crate::ViewportError> {
         let mut config = self.config.clone();
         config.device_lost_watcher = None;
+        config.pipeline_cache = None;
         self.rebuild_with_config(device, &config)
     }
 

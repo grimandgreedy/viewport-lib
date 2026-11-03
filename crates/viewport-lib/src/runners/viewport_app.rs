@@ -855,6 +855,10 @@ struct Gpu {
     /// Shared by every window's renderer: wgpu keeps one lost callback per
     /// device.
     lost: crate::DeviceLostWatcher,
+    /// The device's pipeline cache, made by the first window and shared by
+    /// every window's renderer, or `None` on a device without
+    /// `Features::PIPELINE_CACHE`.
+    pipeline_cache: std::sync::OnceLock<Option<crate::gpu::PipelineCache>>,
 }
 
 impl Gpu {
@@ -897,6 +901,7 @@ impl Gpu {
             device,
             queue,
             lost,
+            pipeline_cache: std::sync::OnceLock::new(),
         };
         (gpu, surface)
     }
@@ -918,17 +923,23 @@ impl Gpu {
         app: &AppConfig,
         format: crate::gpu::TextureFormat,
     ) -> Result<ViewportInstance, crate::ViewportError> {
-        // Every window's renderer joins the device's one cache, so the saved
-        // data only seeds the first of them.
-        let cache_data = super::load_pipeline_cache(app.pipeline_cache_path.as_deref());
-        let config = super::runner_renderer_config(
-            &app.renderer,
-            format,
-            cache_data,
-            &self.adapter,
-            &self.device,
-        )
-        .with_device_lost_watcher(self.lost.clone());
+        let mut config =
+            super::runner_renderer_config(&app.renderer, format, None, &self.adapter, &self.device)
+                .with_device_lost_watcher(self.lost.clone());
+        // Every window's renderer shares the device's one cache, made with the
+        // first window from the saved data, so they reuse each other's
+        // pipelines and the data saved on exit is the same from any of them.
+        // A cache the host set on its config is kept.
+        if config.pipeline_cache.is_none() {
+            let cache = self.pipeline_cache.get_or_init(|| {
+                let data = super::load_pipeline_cache(app.pipeline_cache_path.as_deref())
+                    .or_else(|| app.renderer.pipeline_cache_data.clone());
+                crate::resources::create_pipeline_cache(&self.device, data.as_deref())
+            });
+            if let Some(cache) = cache {
+                config = config.with_pipeline_cache(cache.clone());
+            }
+        }
         ViewportInstance::try_with_config(&self.device, &config)
     }
 }

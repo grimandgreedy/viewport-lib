@@ -26,6 +26,8 @@ pub(crate) mod ground_plane;
 /// Shared generational handle primitive and the `ContentHandle` interface.
 pub mod handle;
 mod init;
+#[cfg(feature = "app")]
+pub(crate) use init::create_pipeline_cache;
 pub mod light_probes;
 /// Scene lighting buffers, light-probe field, and adaptive probe volume.
 pub(crate) mod lighting;

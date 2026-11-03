@@ -1,8 +1,8 @@
 //! The pipeline cache, on a backend that has one.
 //!
-//! The lookup that finds a renderer's cache is process-wide, so everything
-//! runs from one test and in sequence. On a backend with no pipeline cache
-//! (Metal) only the two-device part does any work.
+//! Everything runs from one test and in sequence. On a backend with no
+//! pipeline cache (Metal), or a driver that keeps no pipelines in its cache
+//! data (lavapipe), only the two-device part does any work.
 
 use viewport_lib::wgpu;
 
@@ -18,6 +18,39 @@ fn frame() -> FrameData {
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
+/// Whether the driver writes a pipeline into a cache's data at all, checked
+/// with one pipeline built straight through wgpu against a cache of its own.
+/// Some drivers keep only the cache header: lavapipe reports
+/// `PIPELINE_CACHE` and its data stays at the 96-byte header whatever is
+/// built against it.
+fn driver_records_pipelines(device: &wgpu::Device) -> bool {
+    let cache = unsafe {
+        device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+            label: Some("cache_probe"),
+            data: None,
+            fallback: true,
+        })
+    };
+    let before = cache.get_data().map_or(0, |d| d.len());
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("cache_probe"),
+        source: wgpu::ShaderSource::Wgsl(
+            "@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n\
+             @compute @workgroup_size(1) fn main() { out[0] = 7u; }"
+                .into(),
+        ),
+    });
+    let _pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("cache_probe"),
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: Some(&cache),
+    });
+    cache.get_data().map_or(0, |d| d.len()) > before
+}
+
 #[test]
 fn lazy_pipelines_reach_the_cache_and_two_devices_do_not_share_one() {
     let Some((device, queue)) = headless_device_recommended_limits() else {
@@ -32,7 +65,15 @@ fn lazy_pipelines_reach_the_cache_and_two_devices_do_not_share_one() {
     let before = renderer.pipeline_cache_data();
     let _ = renderer.render_offscreen(&device, &queue, &frame(), 64, 64);
     let saved = renderer.pipeline_cache_data();
-    if device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+    if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+        assert!(saved.is_none());
+        eprintln!("this backend has no pipeline cache; checking the two-device case only");
+    } else if !driver_records_pipelines(&device) {
+        assert!(saved.is_some());
+        eprintln!(
+            "this driver keeps no pipelines in its cache data; checking the two-device case only"
+        );
+    } else {
         let (before, saved) = (
             before.map_or(0, |d| d.len()),
             saved.as_ref().map_or(0, Vec::len),
@@ -41,9 +82,6 @@ fn lazy_pipelines_reach_the_cache_and_two_devices_do_not_share_one() {
             saved > before,
             "the first frame's pipelines were not added to the cache ({before} -> {saved} bytes)"
         );
-    } else {
-        assert!(saved.is_none());
-        eprintln!("this backend has no pipeline cache; checking the two-device case only");
     }
     drop(renderer);
 

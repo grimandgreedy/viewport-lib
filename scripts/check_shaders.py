@@ -69,8 +69,12 @@ const add = (ok, text) => {
 
 async function main() {
   if (!navigator.gpu) { add(false, "navigator.gpu is missing: no WebGPU in this browser"); return; }
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) { add(false, "requestAdapter returned nothing"); return; }
+  // A machine with no GPU (a CI runner) has only Chrome's software adapter,
+  // SwiftShader, which is handed out only when asked for. Tint compiles the
+  // shaders the same way on either.
+  const adapter = (await navigator.gpu.requestAdapter())
+    ?? (await navigator.gpu.requestAdapter({ forceFallbackAdapter: true }));
+  if (!adapter) { add(false, "requestAdapter returned nothing, even the fallback adapter"); return; }
   const device = await adapter.requestDevice();
 
   const shaders = await (await fetch("shaders.json")).json();

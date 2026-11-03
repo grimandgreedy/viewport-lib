@@ -1667,9 +1667,11 @@ mod tests {
         let id = runner.submit_cpu(|_p| Ok(JobProduct::empty()));
 
         assert_eq!(runner.pending(), 1);
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         assert!(matches!(runner.status(id), UploadStatus::Ready));
         assert_eq!(runner.pending(), 0);
@@ -1686,7 +1688,7 @@ mod tests {
         let mut runner = JobRunner::new();
         let id = runner.submit_cpu(|_p| Ok(JobProduct::empty()));
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
             assert!(
                 matches!(runner.status(id), UploadStatus::Ready),
@@ -1716,7 +1718,9 @@ mod tests {
                 let _ = runner.process(device, queue);
             }
             assert!(matches!(runner.status(id), UploadStatus::Unknown));
-        });
+        }) {
+            return;
+        }
     }
 
     #[test]
@@ -1754,9 +1758,11 @@ mod tests {
         );
 
         gate.store(true, Ordering::Relaxed);
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
         assert!(matches!(runner.status(id), UploadStatus::Ready));
     }
 
@@ -1773,9 +1779,11 @@ mod tests {
             ) as GpuWorkFn)
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         assert!(matches!(runner.status(id), UploadStatus::Ready));
         assert!(runner.all_complete());
@@ -1790,9 +1798,11 @@ mod tests {
             })
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         assert!(matches!(runner.status(id), UploadStatus::Failed(_)));
     }
@@ -1827,7 +1837,7 @@ mod tests {
             ) as ChunkedGpuWorkFn)
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             for _ in 0..400 {
                 let _ = runner.process_budgeted(
                     device,
@@ -1840,7 +1850,9 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
-        });
+        }) {
+            return;
+        }
 
         assert!(matches!(runner.status(id), UploadStatus::Ready));
         assert_eq!(
@@ -1879,9 +1891,11 @@ mod tests {
             ) as ChunkedGpuWorkFn)
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         assert!(matches!(runner.status(id), UploadStatus::Ready));
         assert_eq!(turns.load(Ordering::Relaxed), 1);
@@ -1908,9 +1922,11 @@ mod tests {
             ) as ChunkedGpuWorkFn)
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         match runner.status(id) {
             UploadStatus::Failed(ViewportError::JobWorkerLost { reason }) => {
@@ -1940,7 +1956,7 @@ mod tests {
             });
         }
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             let mut max_per_call = 0usize;
             for _ in 0..400 {
                 let before = ran.load(Ordering::Relaxed);
@@ -1963,7 +1979,9 @@ mod tests {
                 max_per_call <= 1,
                 "budget did not bound the deferred drain: {max_per_call} stages in one call"
             );
-        });
+        }) {
+            return;
+        }
     }
 
     #[test]
@@ -1975,9 +1993,11 @@ mod tests {
             })
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         match runner.status(id) {
             UploadStatus::Failed(ViewportError::InvalidGaussianSplatData { reason }) => {
@@ -1992,9 +2012,11 @@ mod tests {
         let mut runner = JobRunner::new();
         let id = runner.submit_cpu(|_| panic!("worker exploded"));
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
-        });
+        }) {
+            return;
+        }
 
         match runner.status(id) {
             UploadStatus::Failed(ViewportError::JobWorkerLost { reason }) => {
@@ -2015,7 +2037,7 @@ mod tests {
             *seen_clone.lock().unwrap() = Some(matches!(status, UploadStatus::Ready));
         });
 
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             // process() returns Completion entries so the caller can run
             // apply + callback after dropping any external lock. The
             // integration on DeviceResources does this automatically;
@@ -2031,7 +2053,9 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(5));
             }
-        });
+        }) {
+            return;
+        }
 
         let observed = seen.lock().unwrap().clone();
         assert_eq!(observed, Some(true));
@@ -2061,7 +2085,7 @@ mod tests {
         // window only spans one drain cycle, so we cannot query every id
         // after the loop -- we have to collect the observation as we go.
         let mut seen_ready = std::collections::HashSet::new();
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             for _ in 0..400 {
                 let _ = runner.process(device, queue);
                 for id in &ids {
@@ -2077,7 +2101,9 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(5));
             }
-        });
+        }) {
+            return;
+        }
 
         assert_eq!(
             seen_ready.len(),
@@ -2091,7 +2117,7 @@ mod tests {
     #[test]
     fn gpu_job_waits_for_submission() {
         let mut runner = JobRunner::new();
-        with_test_gpu(|device, queue| {
+        if !with_test_gpu(|device, queue| {
             let id = runner.submit_with_gpu(device, queue, |device, queue, _p| {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("upload_jobs_test_buf"),
@@ -2130,7 +2156,9 @@ mod tests {
                 }
             }
             panic!("GPU-gated job did not reach Ready");
-        });
+        }) {
+            return;
+        }
     }
 
     // -----------------------------------------------------------------
@@ -2368,10 +2396,10 @@ mod tests {
 
     /// Creates a headless wgpu device + queue for the duration of `f`.
     ///
-    /// Skips the test (via early return) if no adapter is available. CI
-    /// builds without a GPU should pass the CPU-only tests above and skip
-    /// the GPU-gated one.
-    fn with_test_gpu<F: FnOnce(&crate::gpu::Device, &crate::gpu::Queue)>(f: F) {
+    /// Returns `false` without calling `f` if no adapter is available; the
+    /// caller returns early so its assertions after the GPU work are skipped
+    /// too.
+    fn with_test_gpu<F: FnOnce(&crate::gpu::Device, &crate::gpu::Queue)>(f: F) -> bool {
         let instance = crate::gpu::instance_from_env();
         let adapter = match pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
@@ -2385,7 +2413,7 @@ mod tests {
             Ok(a) => a,
             Err(_) => {
                 eprintln!("skipping GPU-gated test: no adapter available");
-                return;
+                return false;
             }
         };
         let (device, queue) =
@@ -2399,5 +2427,6 @@ mod tests {
             }))
             .expect("device creation");
         f(&device, &queue);
+        true
     }
 }

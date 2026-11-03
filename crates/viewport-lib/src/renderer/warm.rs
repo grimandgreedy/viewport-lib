@@ -184,6 +184,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         set: &PipelineSet,
     ) {
+        let _cache = self.resources.pipeline_compiler.cache_scope();
         if !self.resources.scene_tier.is_built() {
             return;
         }
