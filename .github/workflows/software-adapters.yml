@@ -48,11 +48,13 @@ jobs:
 
       # Allowed to fail so the testkit steps below still report: the library
       # tests can take the process down on WARP, and then nothing after them
-      # would run.
+      # would run. One test at a time: with several tests each driving a WARP
+      # device at once the process faulted inside the driver, in a different
+      # test each run, while every one of them passed on its own.
       - name: Library headless tests
         id: library_tests
         continue-on-error: true
-        run: cargo test --release -p viewport-lib --tests
+        run: cargo test --release -p viewport-lib --tests -- --test-threads=1
 
       # When the library tests failed, the foreground item case again on its
       # own, with wgpu's warnings, its validation layer and a backtrace, so the
@@ -77,7 +79,7 @@ jobs:
       # the runner does not need.
       - name: Testkit tests
         working-directory: crates/viewport-lib-testkit
-        run: cargo test --release --tests
+        run: cargo test --release --tests -- --test-threads=1
 
       # Renders every catalogue scene without comparing pixels.
       - name: Catalogue scenes render
