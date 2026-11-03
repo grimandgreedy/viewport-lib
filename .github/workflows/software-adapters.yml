@@ -119,12 +119,20 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
 
-      # wasm-bindgen-cli has to match the wasm-bindgen crate in the lockfile.
-      - name: Install wasm-bindgen-cli at the lockfile version
+      # Cargo.lock is not committed, so resolve it first and install the
+      # wasm-bindgen CLI at the version it picked: the two must match exactly.
+      - name: Resolve the wasm-bindgen version
+        id: lock
         run: |
-          ver=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
-          echo "wasm-bindgen $ver"
-          cargo install wasm-bindgen-cli --version "$ver" --locked
+          cargo generate-lockfile
+          version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3; exit }' Cargo.lock)
+          test -n "$version"
+          echo "wasm-bindgen $version"
+          echo "wasm_bindgen=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.lock.outputs.wasm_bindgen }}
 
       # Builds the smoke example, serves it, loads it in headless Chrome and
       # reads the page's report. It runs twice: on WebGPU, and with the GPU
