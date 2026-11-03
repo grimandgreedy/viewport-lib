@@ -210,7 +210,17 @@ impl PipelineCompiler {
             if !pending.cancelled.load(Ordering::SeqCst) {
                 let _cache =
                     crate::resources::builders::current_pipeline_cache::enter(cache.as_ref());
-                job();
+                // A build that panics (wgpu rejecting a pipeline the device
+                // cannot take) must not end the worker thread or skip the
+                // `finish` below: either would leave `wait_for_pipelines` and
+                // every later compile waiting for good. The slot sees its
+                // channel close and rebuilds on the thread that next asks.
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
+                    tracing::error!(
+                        target: "viewport_lib::frame",
+                        "a pipeline compile panicked on a worker; it is rebuilt on the thread that next asks for it"
+                    );
+                }
             }
             pending.finish();
         }));
@@ -310,12 +320,17 @@ impl<P: Send + 'static> PipelineSlot<P> {
                 },
             };
             *inflight = None;
-            // A disconnected channel means the worker panicked; build again
-            // below as if nothing had been asked for.
             if let Some(p) = result {
                 let _ = self.ready.set(p);
                 return self.ready.get();
             }
+            // A disconnected channel means the build panicked on the worker.
+            // Build again here, on the thread that asked: a build that fails
+            // every time then fails where the caller sees it, as it would
+            // under `Blocking`, rather than on a worker frame after frame.
+            let _cache = compiler.cache_scope();
+            let _ = self.ready.set(build());
+            return self.ready.get();
         }
         match policy {
             PipelineCompilation::Blocking => {
@@ -757,6 +772,32 @@ mod tests {
         assert_eq!(settle(&slot, &compiler), &42);
         wait(&compiler);
         assert_eq!(pending(&compiler), 0);
+    }
+
+    /// A build that panics on a worker (wgpu rejecting a pipeline the device
+    /// cannot take) leaves the compiler able to finish and to run the next
+    /// compile, and the next read builds on the calling thread, where the
+    /// panic is seen, instead of waiting for good.
+    #[test]
+    fn a_build_that_panics_on_a_worker_fails_on_the_caller_instead_of_hanging() {
+        let compiler = background();
+        let slot = PipelineSlot::<u32>::new();
+        assert_eq!(
+            slot.get(&compiler, || panic!("this pipeline cannot be built")),
+            None
+        );
+        // The worker reported itself finished despite the panic.
+        wait(&compiler);
+        assert_eq!(pending(&compiler), 0);
+        // The next read rebuilds here and panics here.
+        let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            slot.get(&compiler, || panic!("still cannot be built"));
+        }));
+        assert!(again.is_err());
+        // The worker thread survived: another compile still runs.
+        let other = PipelineSlot::<u32>::new();
+        assert_eq!(other.get(&compiler, || 7), None);
+        assert_eq!(settle(&other, &compiler), &7);
     }
 
     #[test]

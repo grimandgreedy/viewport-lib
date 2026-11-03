@@ -104,6 +104,13 @@ def main() -> int:
     adapter = os.environ.get("VPL_WEBGPU_ADAPTER")
     if adapter and (api or "webgpu") == "webgpu":
         switches = [*switches, f"--use-webgpu-adapter={adapter}"]
+        if adapter == "swiftshader":
+            # With no GPU, Chrome's GPU process fails to bring up GL through
+            # EGL and restarts, and a WebGPU request made meanwhile finds no
+            # adapter. ANGLE on SwiftShader lets it start; it replaces the
+            # Metal ANGLE backend, which only applies on macOS.
+            switches = [s for s in switches if not s.startswith("--use-angle=")]
+            switches.append("--use-angle=swiftshader")
 
     server = http.server.ThreadingHTTPServer(
         ("127.0.0.1", 0),
