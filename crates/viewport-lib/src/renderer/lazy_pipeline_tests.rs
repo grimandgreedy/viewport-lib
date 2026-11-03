@@ -21,6 +21,8 @@ const FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba8UnormS
 /// Without, it is a default device, where the same frames go through the
 /// plain instanced and per-object paths.
 fn device(recommended: bool) -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+    // wgpu's warnings and validation messages, printed when `RUST_LOG` is set.
+    let _ = env_logger::builder().is_test(true).try_init();
     let instance = crate::gpu::instance_from_env();
     let adapter = pollster::block_on(instance.request_adapter(
         &crate::gpu::RequestAdapterOptions {

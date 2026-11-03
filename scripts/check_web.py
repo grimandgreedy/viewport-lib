@@ -22,6 +22,7 @@ first line, and a run that landed on the other one fails.
 
 import http.server
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,8 @@ import shutil
 # Long enough for a cold shader cache and a debug-profile wasm, short enough
 # that a hang is still reported inside a coffee break.
 TIMEOUT_S = 120
+# How much of Chrome's log a failed run prints.
+LOG_TAIL_LINES = 80
 
 # What the page's first line opens with on each path, and the switches that put
 # Chrome on it.
@@ -94,6 +97,13 @@ def main() -> int:
     expected_prefix, switches = APIS[api or "webgpu"]
     if api is None:
         expected_prefix = None
+    # A machine with no GPU has only Chrome's software adapter, which Chrome
+    # does not always offer as the default, so a CI job names it here
+    # (VPL_WEBGPU_ADAPTER=swiftshader). Unset, Chrome picks the adapter, so a
+    # run on a desktop tests its real GPU.
+    adapter = os.environ.get("VPL_WEBGPU_ADAPTER")
+    if adapter and (api or "webgpu") == "webgpu":
+        switches = [*switches, f"--use-webgpu-adapter={adapter}"]
 
     server = http.server.ThreadingHTTPServer(
         ("127.0.0.1", 0),
@@ -103,6 +113,9 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     profile = tempfile.mkdtemp(prefix="vpl-web-check-")
+    # Chrome's own log, page console included, kept so a run that fails or
+    # never reports can show what the browser said.
+    browser_log = open(os.path.join(profile, "chrome.log"), "w+b")
     expecting = f", expecting {api}" if api else ""
     print(f"loading the page in headless Chrome on port {port}{expecting} ...")
     browser = subprocess.Popen(
@@ -112,16 +125,27 @@ def main() -> int:
             *switches,
             "--no-first-run",
             "--disable-extensions",
+            "--enable-logging=stderr",
+            "--log-level=0",
             f"--user-data-dir={profile}",
             f"http://127.0.0.1:{port}/index.html",
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=browser_log,
+        stderr=subprocess.STDOUT,
     )
+
+    def show_browser_log() -> None:
+        browser_log.flush()
+        browser_log.seek(0)
+        tail = browser_log.read().decode("utf-8", "replace").splitlines()[-LOG_TAIL_LINES:]
+        print(f"--- the last {len(tail)} lines Chrome logged:")
+        for line in tail:
+            print(f"    {line}")
 
     try:
         if not Harness.arrived.wait(TIMEOUT_S):
             print(f"no report after {TIMEOUT_S}s; the page never finished starting")
+            show_browser_log()
             return 1
 
         lines = Harness.report or []
@@ -144,6 +168,7 @@ def main() -> int:
 
         if failed:
             print(f"\n{failed} step(s) failed in the browser")
+            show_browser_log()
             return 1
         print(f"\nall {len(lines)} steps passed in the browser")
         return 0
@@ -154,6 +179,7 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             browser.kill()
         server.shutdown()
+        browser_log.close()
         shutil.rmtree(profile, ignore_errors=True)
 
 
