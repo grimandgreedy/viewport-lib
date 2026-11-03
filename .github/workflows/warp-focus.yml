@@ -25,6 +25,14 @@ on:
       testkit_repeat:
         description: buffer_invariants runs each scene this many times
         default: '1'
+      indirect_validation:
+        description: wgpu rewrites indirect draw arguments (off sets WGPU_VALIDATION_INDIRECT_CALL=0)
+        type: boolean
+        default: true
+      gpu_based_validation:
+        description: D3D12 GPU-based validation (slow)
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -68,6 +76,8 @@ jobs:
           TESTKIT_SCENE: ${{ inputs.testkit_scene }}
           TESTKIT_SKIP: ${{ inputs.testkit_skip }}
           TESTKIT_REPEAT: ${{ inputs.testkit_repeat }}
+          WGPU_VALIDATION_INDIRECT_CALL: ${{ inputs.indirect_validation && '1' || '0' }}
+          WGPU_GPU_BASED_VALIDATION: ${{ inputs.gpu_based_validation && '1' || '0' }}
           TESTKIT_SHARED_DEVICE: ${{ inputs.testkit_shared_device && '1' || '' }}
           # Pipelines compile on the test's thread, in order, so the step
           # messages show which stage a fault is in.
