@@ -823,10 +823,7 @@ impl ViewportRenderer {
                 let _ = tx.send(result);
             });
         device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
+            .poll(crate::gpu::PollType::wait_indefinitely())
             .unwrap();
         let _ = rx.recv().unwrap_or(Err(crate::gpu::BufferAsyncError));
 
@@ -1389,10 +1386,7 @@ mod tests {
                 let cmd = renderer.render_viewport(&device, &queue, &view, vp, &frame);
                 queue.submit(std::iter::once(cmd));
                 device
-                    .poll(crate::gpu::PollType::Wait {
-                        submission_index: None,
-                        timeout: Some(std::time::Duration::from_secs(5)),
-                    })
+                    .poll(crate::gpu::PollType::wait_indefinitely())
                     .unwrap();
                 let stats = renderer.last_frame_stats();
                 if stats.gpu_culling_active {

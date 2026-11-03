@@ -1824,10 +1824,7 @@ impl Tracer {
 
         let slice = s.staging_buf.slice(..);
         slice.map_async(crate::gpu::MapMode::Read, |_| {});
-        let _ = device.poll(crate::gpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(30)),
-        });
+        let _ = device.poll(crate::gpu::PollType::wait_indefinitely());
         let rgba: Vec<f32> = {
             let data = crate::gpu::mapped_range(slice);
             bytemuck::cast_slice::<u8, f32>(&data).to_vec()

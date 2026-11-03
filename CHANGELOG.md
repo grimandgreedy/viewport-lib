@@ -16,6 +16,7 @@
 - **Renderers built from a device alone on wgpu 27** - `ViewportRenderer::new` could not tell which backend the device was on, so on GL it kept depth-texture loads and the mesh pipelines failed to build. The backend is now read from the device, as on wgpu 29 and 30.
 - **GPU picking on GL without `EXT_color_buffer_float`** - the pick depth channel was an `R32Float` target, which wgpu's GL backend cannot render to without that extension, so every pick pipeline failed to build. `PICK_DEPTH_CHANNEL_FORMAT` is now `R32Uint`: a plugin pick shader declares `@location(2)` as `u32` and writes `bitcast<u32>(depth)`.
 - **Per-vertex mesh data on DX12** - the mesh shaders read `vertex_index` in a helper function, where naga's DX12 output leaves out the draw's base vertex, so scalar colouring, UV1, lightmaps, position overrides and deformer slots read another mesh's vertices. The index is now read in the entry point.
+- **Blocking readbacks on slow devices** - `render_offscreen`, `exposure_state`, `read_debug_pixel` and the path tracer's `accumulate` gave the GPU five seconds (thirty for the tracer), then panicked or read an unmapped buffer. They now wait for the work to finish, so a software adapter or a debug layer makes them slower rather than failing.
 
 ## [0.23.0]
 

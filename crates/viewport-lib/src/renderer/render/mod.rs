@@ -253,9 +253,9 @@ macro_rules! emit_overlay_2d {
 
 mod hdr_path;
 mod ldr_path;
-mod transmission;
 mod paint_direct;
 pub(crate) mod pass_table;
+mod transmission;
 
 impl ViewportRenderer {
     /// Render the scene into an intermediate dyn-res texture for the LDR callback
@@ -1179,10 +1179,7 @@ impl ViewportRenderer {
                 let _ = tx.send(result);
             });
         device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
+            .poll(crate::gpu::PollType::wait_indefinitely())
             .unwrap();
         let _ = rx.recv().unwrap_or(Err(crate::gpu::BufferAsyncError));
 

@@ -1468,10 +1468,7 @@ impl ViewportRenderer {
 
         let slice = staging.slice(..);
         slice.map_async(crate::gpu::MapMode::Read, |_| {});
-        let _ = device.poll(crate::gpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(5)),
-        });
+        let _ = device.poll(crate::gpu::PollType::wait_indefinitely());
         let out = {
             let data = crate::gpu::mapped_range(slice);
             let st: &crate::resources::gpu::exposure::ExposureState =
@@ -3208,10 +3205,7 @@ impl ViewportRenderer {
         slice.map_async(crate::gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = device.poll(crate::gpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(5)),
-        });
+        let _ = device.poll(crate::gpu::PollType::wait_indefinitely());
         rx.recv().ok()?.ok()?;
         let data = crate::gpu::mapped_range(slice);
         // Rgba16Float: four halves.
