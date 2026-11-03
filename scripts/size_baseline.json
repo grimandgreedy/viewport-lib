@@ -1,17 +1,25 @@
 {
   "schema": 1,
-  "commit": "4b8737da",
+  "commit": "cd8c9c6d648f8eedd7433b86cf0bdc5204eb14c5",
   "profile": "fat LTO, codegen-units 1, panic abort, strip",
   "desktop": {
     "example": "winit-minimal",
     "host": {
-      "target": "aarch64-apple-darwin",
-      "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26) (Homebrew)"
+      "target": "x86_64-unknown-linux-gnu",
+      "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)"
     },
-    "stripped_bytes": 6400176
+    "stripped_bytes": 10713376
   },
   "wasm": {
     "example": "winit-web",
-    "skipped": "wasm-bindgen CLI 0.2.126 does not match 0.2.130 in Cargo.lock"
+    "host": {
+      "target": "wasm32-unknown-unknown",
+      "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+      "wasm_bindgen": "0.2.130",
+      "wasm_opt": "wasm-opt version 123 (version_123)"
+    },
+    "raw_bytes": 7163982,
+    "opt_bytes": 6690400,
+    "gzip_bytes": 2322006
   }
 }
