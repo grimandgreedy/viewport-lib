@@ -13,7 +13,7 @@ on:
         description: testkit test targets (space-separated, empty to skip)
         default: buffer_invariants
       testkit_scene:
-        description: buffer_invariants runs only this catalogue scene (empty for all)
+        description: buffer_invariants runs only these catalogue scenes (comma-separated, empty for all)
         default: ''
 
 env:

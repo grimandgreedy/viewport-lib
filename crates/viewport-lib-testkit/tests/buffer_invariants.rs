@@ -147,10 +147,16 @@ fn slab_and_collapse_invariants_hold() {
     }
 
     let (w, h) = (320u32, 240u32);
-    // `TESTKIT_SCENE` runs one scene by name, for a fault on one adapter.
-    let only = std::env::var("TESTKIT_SCENE").ok().filter(|name| !name.is_empty());
+    // `TESTKIT_SCENE` runs only the named scenes (comma-separated), for a fault
+    // on one adapter.
+    let only: Vec<String> = std::env::var("TESTKIT_SCENE")
+        .unwrap_or_default()
+        .split(',')
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
     for scene in catalogue() {
-        if only.as_deref().is_some_and(|name| name != scene.name) {
+        if !only.is_empty() && !only.iter().any(|name| name == scene.name) {
             continue;
         }
         // Named at each step, so a run that faults in the driver shows where.
