@@ -148,6 +148,8 @@ fn slab_and_collapse_invariants_hold() {
 
     let (w, h) = (320u32, 240u32);
     for scene in catalogue() {
+        // Named first, so a run that faults in the driver shows the scene.
+        eprintln!("scene {}", scene.name);
         // Fresh harness per scene so slab residency reflects that scene alone.
         let mut harness = Harness::new().expect("adapter present");
         let built = harness.build_scene(&scene);

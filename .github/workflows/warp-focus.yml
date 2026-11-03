@@ -1,0 +1,61 @@
+# Temporary: reruns only the tests that fail on WARP, with wgpu logging, so a
+# fix can be checked without the full software-adapters run. Delete once WARP
+# passes there.
+name: WARP focus
+
+on:
+  workflow_dispatch:
+    inputs:
+      library_tests:
+        description: viewport-lib test targets (space-separated, empty to skip)
+        default: headless_deform_source_deferred headless_render_misc headless_mesh_sidecar_pool
+      testkit_tests:
+        description: testkit test targets (space-separated, empty to skip)
+        default: buffer_invariants
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  warp:
+    name: WARP focus (DX12, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      WGPU_BACKEND: dx12
+      RUST_BACKTRACE: 1
+      RUST_LOG: wgpu_core=warn,wgpu_hal=warn,naga=warn
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: warp-dx12
+          workspaces: |
+            . -> target
+            crates/viewport-lib-testkit -> target
+
+      - name: Library tests
+        id: library
+        if: inputs.library_tests != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          args=()
+          for t in ${{ inputs.library_tests }}; do args+=(--test "$t"); done
+          cargo test --release -p viewport-lib --no-fail-fast "${args[@]}" -- --nocapture --test-threads=1
+
+      - name: Testkit tests
+        id: testkit
+        if: inputs.testkit_tests != ''
+        continue-on-error: true
+        shell: bash
+        working-directory: crates/viewport-lib-testkit
+        run: |
+          args=()
+          for t in ${{ inputs.testkit_tests }}; do args+=(--test "$t"); done
+          cargo test --release --no-fail-fast "${args[@]}" -- --nocapture --test-threads=1
+
+      - name: Fail the job if either step failed
+        if: always() && (steps.library.outcome == 'failure' || steps.testkit.outcome == 'failure')
+        run: exit 1
