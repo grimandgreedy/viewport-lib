@@ -46,8 +46,32 @@ jobs:
       - name: Adapter probe
         run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
 
+      # Allowed to fail so the testkit steps below still report: the library
+      # tests can take the process down on WARP, and then nothing after them
+      # would run.
       - name: Library headless tests
+        id: library_tests
+        continue-on-error: true
         run: cargo test --release -p viewport-lib --tests
+
+      # When the library tests failed, the foreground item case again on its
+      # own, with wgpu's warnings, its validation layer and a backtrace, so the
+      # log names the call that hangs or the error before it. It hung and then
+      # crashed the process on WARP; the step timeout stops a hang holding the
+      # job for the rest of its 90 minutes.
+      - name: Foreground item case with wgpu logging
+        if: steps.library_tests.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: wgpu_core=warn,wgpu_hal=warn,naga=warn
+          WGPU_VALIDATION: 1
+          WGPU_DEBUG: 1
+        run: >-
+          cargo test --release -p viewport-lib --lib
+          renderer::lazy_pipeline_tests::foreground_item
+          -- --exact --nocapture --test-threads=1
 
       # --tests keeps the examples out of the build: they pull eframe, which
       # the runner does not need.
@@ -59,6 +83,12 @@ jobs:
       - name: Catalogue scenes render
         working-directory: crates/viewport-lib-testkit
         run: cargo test --release --test snapshots
+
+      # The library tests were let fail so the steps above could still run;
+      # the job still fails for them.
+      - name: Fail the job if the library tests failed
+        if: always() && steps.library_tests.outcome == 'failure'
+        run: exit 1
 
   llvmpipe-gl:
     name: llvmpipe (GL, Linux)
@@ -138,11 +168,14 @@ jobs:
       # reads the page's report. It runs twice: on WebGPU, and with the GPU
       # process off, where the page falls back to WebGL2 and the overlay-only
       # renderer. The page names the API it landed on, so a run that took the
-      # wrong path fails rather than passing on the other one.
+      # wrong path fails rather than passing on the other one. The runner has
+      # no GPU, and Chrome does not always offer its software adapter as the
+      # default, so the WebGPU runs name SwiftShader.
       - name: Run the smoke page
         run: |
           VPL_WASM_TOOLCHAIN="$(rustc --print sysroot)" \
           VPL_CHROME="$(command -v google-chrome)" \
+          VPL_WEBGPU_ADAPTER=swiftshader \
           scripts/check_web.sh
 
   mobile-check:

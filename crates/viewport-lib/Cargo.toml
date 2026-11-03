@@ -175,6 +175,9 @@ naga29 = { package = "naga", version = "29" }
 naga30 = { package = "naga", version = "30" }
 # Blocks on the async device request in the headless integration tests.
 pollster = "0.4"
+# Prints wgpu's own log output (it reports through `log`) in a test run with
+# `RUST_LOG` set, for a failure only a CI adapter shows.
+env_logger = { version = "0.11", default-features = false }
 # Used by the headless color-glyph test to look up an emoji glyph id. Same crate
 # as the normal dependency; listed here so the integration test can name it.
 ttf-parser = "0.25"
