@@ -78,7 +78,8 @@ pub struct Capabilities {
     pub downlevel_known: bool,
     /// `Features::INDIRECT_FIRST_INSTANCE`: the GPU-culled indirect draw path.
     pub indirect_first_instance: bool,
-    /// `Features::MULTI_DRAW_INDIRECT_COUNT`: native multi-draw.
+    /// `Features::MULTI_DRAW_INDIRECT_COUNT`: native multi-draw. Off on DX12,
+    /// where wgpu's count draws pass a zero `first_instance` to the shader.
     pub multi_draw_indirect_count: bool,
     /// `Features::TIMESTAMP_QUERY`: GPU frame timings.
     pub timestamps: bool,
@@ -109,6 +110,26 @@ pub struct Capabilities {
     pub scene_depth_format: gpu::TextureFormat,
 }
 
+/// The backend `device` runs on, for the backends whose rules
+/// [`Capabilities::with_backend`] applies. wgpu 27 has no `adapter_info` on a
+/// device, so this asks the device for each backend's hal type in turn. `None`
+/// for any other backend.
+#[cfg(wgpu27)]
+fn device_backend(device: &gpu::Device) -> Option<gpu::Backend> {
+    // Safety: the guards only test which backend the device is on and are
+    // dropped at once; nothing is read through them.
+    #[cfg(target_os = "windows")]
+    if unsafe { device.as_hal::<gpu::hal::api::Dx12>() }.is_some() {
+        return Some(gpu::Backend::Dx12);
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    if unsafe { device.as_hal::<gpu::hal::api::Gles>() }.is_some() {
+        return Some(gpu::Backend::Gl);
+    }
+    let _ = device;
+    None
+}
+
 impl Capabilities {
     /// The capabilities of `device`. Pass the adapter's downlevel capabilities
     /// when you have them; without them the downlevel flags are assumed
@@ -124,6 +145,11 @@ impl Capabilities {
         );
         #[cfg(any(wgpu29, wgpu30))]
         let caps = caps.with_backend(device.adapter_info().backend);
+        #[cfg(wgpu27)]
+        let caps = match device_backend(device) {
+            Some(backend) => caps.with_backend(backend),
+            None => caps,
+        };
         caps
     }
 
@@ -145,10 +171,14 @@ impl Capabilities {
 
     /// These capabilities with what follows from running on `backend`: on
     /// [`Backend::Gl`](gpu::Backend::Gl), no depth-texture loads and no
-    /// direct depth sampling.
+    /// direct depth sampling; on [`Backend::Dx12`](gpu::Backend::Dx12), no
+    /// multi-draw count. wgpu's DX12 count draws leave `first_instance` out of
+    /// `instance_index`, so every draw in a group would read the first batch's
+    /// instances.
     pub fn with_backend(mut self, backend: gpu::Backend) -> Self {
         self.depth_texture_loads = backend != gpu::Backend::Gl;
         self.direct_depth_sampling &= backend != gpu::Backend::Gl;
+        self.multi_draw_indirect_count &= backend != gpu::Backend::Dx12;
         self
     }
 
@@ -611,6 +641,25 @@ mod tests {
             .with_storage_buffers_per_stage(10)
             .with_bind_groups(5);
         assert_eq!(caps.missing_requirements(&wants).len(), 2);
+    }
+
+    /// DX12 loses the multi-draw count path and keeps the rest; other backends
+    /// keep it.
+    #[test]
+    fn dx12_has_no_multi_draw_count() {
+        let caps = Capabilities::from_parts(
+            &gpu::Limits::default(),
+            gpu::Features::MULTI_DRAW_INDIRECT_COUNT | gpu::Features::INDIRECT_FIRST_INSTANCE,
+            None,
+        );
+        let dx12 = caps.clone().with_backend(gpu::Backend::Dx12);
+        assert!(!dx12.multi_draw_indirect_count);
+        assert!(dx12.indirect_first_instance);
+        assert!(dx12.depth_texture_loads);
+        assert!(
+            caps.with_backend(gpu::Backend::Vulkan)
+                .multi_draw_indirect_count
+        );
     }
 
     #[test]

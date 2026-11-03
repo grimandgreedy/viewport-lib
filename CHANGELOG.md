@@ -12,6 +12,8 @@
 - **GPU picks before their pipelines have compiled** - under `PipelineCompilation::Background`, the default everywhere but the web and Apple platforms on wgpu 27, a pick, rect pick or snap query that ran before its pipelines finished compiling drew nothing and reported no hit; it now builds the pipelines it needs first, so a click in the first frames hits what is under the cursor.
 - **Pipelines built against another wgpu instance's pipeline cache** - a pipeline found its renderer's cache by device, and wgpu tells devices apart only within one instance, so with two instances in one process a pipeline could be created against the other's cache and wgpu panicked; each renderer now makes its own cache current while it builds, and a pipeline built outside any renderer is built uncached.
 - **Pipeline caching with more than one window in `ViewportApp`** - each window's renderer made a cache of its own on the shared device, which left almost every pipeline uncached once a second window opened; the windows now share one cache.
+- **Instanced draws on DX12 with GPU culling** - wgpu's DX12 multi-draw count leaves each draw's first instance out of `instance_index`, so every batch in a group read the first batch's instances: deformers saw another item's data and a keep-hook cut removed the wrong surface. DX12 now issues one indirect draw per batch.
+- **Renderers built from a device alone on wgpu 27** - `ViewportRenderer::new` could not tell which backend the device was on, so on GL it kept depth-texture loads and the mesh pipelines failed to build. The backend is now read from the device, as on wgpu 29 and 30.
 
 ## [0.23.0]
 
