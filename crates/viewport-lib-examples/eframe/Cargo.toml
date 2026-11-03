@@ -14,7 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 viewport-lib = { path = "../../viewport-lib", default-features = false }
 viewport-lib-plugins = { path = "../../viewport-lib-plugins", default-features = false, features = ["item-types", "deformers"] }
-glam = { version = "=0.30.10", features = ["bytemuck"] }
+glam = { workspace = true }
 # eframe embeds wgpu, so its version pairs with viewport-lib's leg: 0.33 with
 # wgpu 27, 0.35 with 29, 0.36 with 30. All three are aliased and optional,
 # selected by the leg features below and re-exported from src/lib.rs under one
@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # demos, and a glyph-id lookup in the overlay text showcase.
 bytemuck = { version = "1.25", features = ["derive"] }
 ttf-parser = "0.25"
-viewport-lib-gizmo = { path = "../../../../extensions/viewport-lib-gizmo" }
+viewport-lib-gizmo = "0.1.0"
 
 # The lightmap-bake showcase runs the full offline lightmapper: this crate's
 # unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Desktop-only:
