@@ -102,6 +102,9 @@ fn compatibility_tier_draws_the_item_types_that_accept_it() {
     harness.renderer.set_cpu_pick_cache(true);
     let scenes = catalogue();
     for (name, type_name) in SCENES {
+        if viewport_lib_testkit::skipped(name) {
+            continue;
+        }
         assert!(
             harness.renderer.has_item_type_plugin(type_name),
             "{type_name} registers on the compatibility tier"
@@ -428,6 +431,10 @@ fn compatibility_marching_cubes_follows_the_isovalue() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
+    if viewport_lib_testkit::skipped("gpu_marching_cubes") {
+        eprintln!("skipping: gpu_marching_cubes is in TESTKIT_SKIP");
+        return;
+    }
     let scenes = catalogue();
     let scene = scenes
         .iter()

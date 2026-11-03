@@ -92,6 +92,9 @@ fn item_types_that_take_a_decal_can_decline_it() {
         "gpu_implicit",
         "gpu_marching_cubes",
     ] {
+        if viewport_lib_testkit::skipped(name) {
+            continue;
+        }
         let named = scenes
             .iter()
             .find(|s| s.name == name)

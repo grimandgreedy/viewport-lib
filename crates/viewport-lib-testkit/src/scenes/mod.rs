@@ -1105,7 +1105,16 @@ pub fn catalogue() -> Vec<NamedScene> {
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());
+    scenes.retain(|scene| !skipped(scene.name));
     scenes
+}
+
+/// Whether the `TESTKIT_SKIP` environment variable (comma-separated scene
+/// names) leaves `name` out of [`catalogue`], for a scene one adapter cannot
+/// run. A test that looks a scene up by name skips it when this is true.
+pub fn skipped(name: &str) -> bool {
+    std::env::var("TESTKIT_SKIP")
+        .is_ok_and(|names| names.split(',').any(|skip| skip.trim() == name))
 }
 
 /// Look up a scene by name.

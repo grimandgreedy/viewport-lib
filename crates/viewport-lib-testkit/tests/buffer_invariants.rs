@@ -148,18 +148,14 @@ fn slab_and_collapse_invariants_hold() {
 
     let (w, h) = (320u32, 240u32);
     // For a fault on one adapter: `TESTKIT_SCENE` runs only the named scenes
-    // and `TESTKIT_SKIP` leaves the named ones out (both comma-separated), and
-    // `TESTKIT_REPEAT` runs each scene that many times.
-    let names = |var: &str| -> Vec<String> {
-        std::env::var(var)
-            .unwrap_or_default()
-            .split(',')
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
-            .collect()
-    };
-    let only = names("TESTKIT_SCENE");
-    let skip = names("TESTKIT_SKIP");
+    // (comma-separated) and `TESTKIT_REPEAT` runs each scene that many times.
+    // `TESTKIT_SKIP` is applied by `catalogue` itself.
+    let only: Vec<String> = std::env::var("TESTKIT_SCENE")
+        .unwrap_or_default()
+        .split(',')
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
     let repeat: usize = std::env::var("TESTKIT_REPEAT")
         .ok()
         .and_then(|n| n.trim().parse().ok())
@@ -171,10 +167,7 @@ fn slab_and_collapse_invariants_hold() {
         .then(|| Harness::new().expect("adapter present"));
     let scenes: Vec<_> = catalogue()
         .into_iter()
-        .filter(|scene| {
-            (only.is_empty() || only.iter().any(|name| name == scene.name))
-                && !skip.iter().any(|name| name == scene.name)
-        })
+        .filter(|scene| only.is_empty() || only.iter().any(|name| name == scene.name))
         .collect();
     for scene in scenes
         .iter()
