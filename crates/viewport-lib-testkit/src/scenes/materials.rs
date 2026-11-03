@@ -7,7 +7,7 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::{
     AlphaMode, BackfacePolicy, Colour, LightKind, LightSource, LightingSettings, Material,
-    MeshData, Projection, SceneRenderItem, ShadingModel, TextureSlot, UvTransform, primitives,
+    MeshData, SceneRenderItem, ShadingModel, TextureSlot, UvTransform, primitives,
 };
 
 use super::{
@@ -457,7 +457,7 @@ fn build_materials_alpha(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// wherever it sits and the paired rows compare exactly.
 pub(super) fn grid_camera(centre_z: f32, distance: f32) -> Vec<NamedCamera> {
     let mut camera = orbit_camera(Vec3::new(0.0, 0.0, centre_z), distance, 0.0, 1.5708);
-    camera.projection = Projection::Orthographic;
+    camera.set_orthographic(true);
     camera.aspect = 4.0 / 3.0;
     vec![NamedCamera {
         name: "front",

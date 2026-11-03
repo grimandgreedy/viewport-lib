@@ -108,7 +108,7 @@ impl Showcase for OverlaysShowcase {
             );
         }
 
-        ctx.session.camera_mut().distance = 14.0;
+        ctx.session.camera_mut().set_orbit_distance(14.0);
 
         // Overlay textures for the texture-masked and 9-slice shapes.
         let mut upload = |data: vpl::TextureData| {

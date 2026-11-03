@@ -469,6 +469,7 @@ fn build_clip_shapes(
     viewport: [f32; 2],
     view: &glam::Mat4,
     proj: &glam::Mat4,
+    world_origin: glam::DVec3,
 ) -> (
     Vec<crate::resources::ClipShapeGpu>,
     std::collections::HashMap<u32, i32>,
@@ -495,7 +496,7 @@ fn build_clip_shapes(
                 continue;
             }
             if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
-                if let Some(tl) = s.resolve_top_left(viewport, view, proj) {
+                if let Some(tl) = s.resolve_top_left_at(viewport, view, proj, world_origin) {
                     if masks.len()
                         == crate::resources::overlay::overlay_shape::MAX_OVERLAY_CLIP_SHAPES
                     {
@@ -525,7 +526,7 @@ fn build_clip_shapes(
         } else if st == 7 {
             radii[0] *= ppp;
         }
-        let center = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
+        let centre = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
         let half = [hw * ppp, hh * ppp];
         let parent = s
             .clip
@@ -533,7 +534,7 @@ fn build_clip_shapes(
             .and_then(|pid| index_of.get(&pid).copied())
             .unwrap_or(-1);
         out.push(crate::resources::ClipShapeGpu {
-            center,
+            centre,
             half_size: half,
             radii,
             params: [shape_type, s.transform.rotation, parent as f32, 0.0],
@@ -553,7 +554,7 @@ fn build_clip_shapes(
 /// Written in place of an empty clip list, so the clip binding always has an
 /// element to point at.
 static NO_CLIP: [crate::resources::ClipShapeGpu; 1] = [crate::resources::ClipShapeGpu {
-    center: [0.0, 0.0],
+    centre: [0.0, 0.0],
     half_size: [0.0, 0.0],
     radii: [0.0; 4],
     params: [0.0, 0.0, -1.0, 0.0],
@@ -567,43 +568,6 @@ fn clip_data(clips: &[crate::resources::ClipShapeGpu]) -> &[crate::resources::Cl
 }
 
 impl ViewportRenderer {
-    /// Build the transform-gizmo overlay items for this frame, if a gizmo is
-    /// active. Returns `(shapes, polylines)` in the overlay coordinate space,
-    /// ready to merge into the viewport's overlay batches. Empty when
-    /// `frame.interaction.gizmo_model` is `None`.
-    ///
-    /// The gizmo used to draw through its own always-on-top 3D pipeline; it now
-    /// projects to 2D overlay primitives here so no dedicated GPU resources are
-    /// needed. Centre and screen scale come straight out of the gizmo model
-    /// matrix the host already supplies (translation and uniform scale).
-    fn gizmo_overlay_items(
-        &self,
-        frame: &FrameData,
-    ) -> (
-        Vec<crate::renderer::types::OverlayShapeItem>,
-        Vec<crate::renderer::types::OverlayPolylineItem>,
-    ) {
-        let mut shapes = Vec::new();
-        let mut polylines = Vec::new();
-        if let Some(model) = frame.interaction.gizmo_model {
-            let (scale, _rot, translation) = model.to_scale_rotation_translation();
-            let cam = &frame.camera.render_camera;
-            crate::interaction::manipulation::gizmo_overlay::build_gizmo_overlays(
-                frame.interaction.gizmo_mode,
-                cam.view_proj(),
-                glam::Vec3::from(cam.forward),
-                frame.camera.viewport_size,
-                translation,
-                scale.x,
-                frame.interaction.gizmo_hovered,
-                frame.interaction.gizmo_space_orientation,
-                &mut shapes,
-                &mut polylines,
-            );
-        }
-        (shapes, polylines)
-    }
-
     /// The bottom-left XYZ orientation indicator, emitted as screen-space overlay
     /// shapes (axis lines, circles, rings, letters) into the shared shape pass.
     /// Empty when `show_axes_indicator` is off or the viewport has no area.
@@ -617,7 +581,7 @@ impl ViewportRenderer {
             crate::interaction::widgets::axes_indicator::build_axes_overlays(
                 w,
                 h,
-                frame.camera.render_camera.orientation,
+                frame.camera.render_camera.orientation(),
                 &mut shapes,
             );
         }
@@ -687,7 +651,6 @@ impl ViewportRenderer {
         // Counted before any of the paths below can skip a group, so the
         // submitted/drawn pair carries the skips.
         self.overlay_retained_counters.submitted = frame.overlays.retained.len() as u32;
-        let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
         let has_vector_shape = frame.overlays.shapes.iter().any(|s| {
             matches!(
                 &s.shape,
@@ -697,7 +660,6 @@ impl ViewportRenderer {
         let has_overlay = !frame.overlays.labels.is_empty()
             || !frame.overlays.glyph_runs.is_empty()
             || !frame.overlays.polylines.is_empty()
-            || !gizmo_polylines.is_empty()
             || has_vector_shape
             || !frame.overlays.retained.is_empty();
         if has_overlay {
@@ -706,8 +668,11 @@ impl ViewportRenderer {
             let vp_h = frame.camera.viewport_size[1];
             let ppp = frame.camera.pixels_per_point;
             if vp_w > 0.0 && vp_h > 0.0 {
-                let view = &frame.camera.render_camera.view;
-                let proj = &frame.camera.render_camera.projection;
+                // World anchors project through the camera relative to the
+                // world origin, with the origin subtracted in f64.
+                let world_origin = self.origin.origin();
+                let view = &self.origin.camera(&frame.camera.render_camera).view();
+                let proj = &frame.camera.render_camera.projection();
 
                 // Each item (label, glyph run, or polyline) contributes a
                 // (z_order, verts) batch. A stable sort keeps submission order
@@ -723,8 +688,14 @@ impl ViewportRenderer {
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
                 let overlay_time = frame.overlays.time;
-                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) =
-                    build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
+                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
+                    &frame.overlays.shapes,
+                    ppp,
+                    [vp_w, vp_h],
+                    view,
+                    proj,
+                    world_origin,
+                );
                 self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
                 // Stamp an item's clip onto every vertex it emitted: the mask
                 // bbox and index when it names a mask, intersected with the
@@ -751,14 +722,7 @@ impl ViewportRenderer {
                 };
 
                 // --- Polylines (between shapes and labels in z order) ---
-                // The gizmo's rings, plane quads, cube faces, and centre handle
-                // ride along here as generated polylines.
-                for poly in frame
-                    .overlays
-                    .polylines
-                    .iter()
-                    .chain(gizmo_polylines.iter())
-                {
+                for poly in frame.overlays.polylines.iter() {
                     if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
@@ -787,7 +751,9 @@ impl ViewportRenderer {
                     // path there; a culled world anchor skips it. The offset is
                     // baked into a translated copy so the stroke and fill paths
                     // (which read `poly.points`) both see anchored coordinates.
-                    let Some(offset) = poly.resolve_offset([vp_w, vp_h], view, proj) else {
+                    let Some(offset) =
+                        poly.resolve_offset_at([vp_w, vp_h], view, proj, world_origin)
+                    else {
                         continue;
                     };
                     let translated_storage;
@@ -935,7 +901,9 @@ impl ViewportRenderer {
                     // anchor skips the shape. Tracks resolve first, because a
                     // `translate` track drives the channel the top-left is
                     // measured from.
-                    let Some(tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
+                    let Some(tl) =
+                        owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
+                    else {
                         continue;
                     };
                     owned.transform.translate = tl;
@@ -953,11 +921,12 @@ impl ViewportRenderer {
                         continue;
                     }
 
-                    let Some(anchor_px) = crate::renderer::types::resolve_anchor_origin(
+                    let Some(anchor_px) = crate::renderer::types::resolve_anchor_origin_at(
                         &label.anchoring.origin,
                         [vp_w, vp_h],
                         view,
                         proj,
+                        world_origin,
                     ) else {
                         continue;
                     };
@@ -1203,11 +1172,12 @@ impl ViewportRenderer {
                     // Resolve the anchor origin; skip the run when a world anchor
                     // is culled. Alignment shifts the whole run by its glyph-extent
                     // box, so default Left/Top leaves the authored positions.
-                    let Some(origin) = crate::renderer::types::resolve_anchor_origin(
+                    let Some(origin) = crate::renderer::types::resolve_anchor_origin_at(
                         &run.anchoring.origin,
                         [vp_w, vp_h],
                         view,
                         proj,
+                        world_origin,
                     ) else {
                         continue;
                     };
@@ -1437,11 +1407,12 @@ impl ViewportRenderer {
                     let submitted_origin = r.anchoring.map(|a| a.origin);
                     let translate = match submitted_origin.or(compiled_anchor) {
                         Some(a) => {
-                            let Some(origin) = crate::renderer::types::resolve_anchor_origin(
+                            let Some(origin) = crate::renderer::types::resolve_anchor_origin_at(
                                 &a,
                                 [vp_w, vp_h],
                                 view,
                                 proj,
+                                world_origin,
                             ) else {
                                 continue;
                             };
@@ -1652,9 +1623,6 @@ impl ViewportRenderer {
         // SDF overlay shapes
         // ------------------------------------------------------------------
         ov.overlay_shape_gpu_data = None;
-        // The gizmo's arrow shafts and cone heads are generated as overlay
-        // shapes; they merge into the shape batch here (see `gizmo_overlay`).
-        let (gizmo_shapes, _) = self.gizmo_overlay_items(frame);
         // The bottom-left orientation indicator draws as overlay shapes too.
         let axes_shapes = self.axes_overlay_items(frame);
         let has_textured_polyline_fill = frame.overlays.polylines.iter().any(|p| {
@@ -1664,7 +1632,6 @@ impl ViewportRenderer {
                 && p.points.len() >= 3
         });
         if !frame.overlays.shapes.is_empty()
-            || !gizmo_shapes.is_empty()
             || !axes_shapes.is_empty()
             || has_textured_polyline_fill
         {
@@ -1677,7 +1644,6 @@ impl ViewportRenderer {
                     .overlays
                     .shapes
                     .iter()
-                    .chain(gizmo_shapes.iter())
                     .chain(axes_shapes.iter())
                     .collect();
                 sorted.sort_by_key(|s| s.z_order);
@@ -1737,10 +1703,19 @@ impl ViewportRenderer {
                 // the same masks by index. The bbox is looked up by that same index, so
                 // `clip_rect` and `clip_index` always describe the same mask.
                 let ppp = frame.camera.pixels_per_point;
-                let view = &frame.camera.render_camera.view;
-                let proj = &frame.camera.render_camera.projection;
-                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) =
-                    build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
+                // World anchors project through the camera relative to the
+                // world origin, with the origin subtracted in f64.
+                let world_origin = self.origin.origin();
+                let view = &self.origin.camera(&frame.camera.render_camera).view();
+                let proj = &frame.camera.render_camera.projection();
+                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
+                    &frame.overlays.shapes,
+                    ppp,
+                    [vp_w, vp_h],
+                    view,
+                    proj,
+                    world_origin,
+                );
                 self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
 
                 for shape_orig in &sorted {
@@ -1772,7 +1747,9 @@ impl ViewportRenderer {
                                 &mut owned.style.tint,
                             );
                         }
-                        let Some(tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
+                        let Some(tl) =
+                            owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
+                        else {
                             continue;
                         };
                         owned.transform.translate = tl;
@@ -1913,7 +1890,9 @@ impl ViewportRenderer {
                     // covers all of them. The `animations.position` track has
                     // already been applied above, so it drives the nudge that is
                     // layered on the resolved origin here.
-                    let Some(resolved_tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
+                    let Some(resolved_tl) =
+                        owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
+                    else {
                         continue;
                     };
                     owned.transform.translate = resolved_tl;
@@ -2418,7 +2397,9 @@ impl ViewportRenderer {
                     // Resolve the anchor to a screen offset and translate the
                     // points, matching the stroke/fill path in the label pass, so
                     // an anchored textured polygon fills where it draws.
-                    let Some(offset) = poly.resolve_offset([vp_w, vp_h], view, proj) else {
+                    let Some(offset) =
+                        poly.resolve_offset_at([vp_w, vp_h], view, proj, world_origin)
+                    else {
                         continue;
                     };
                     let translated_storage;
@@ -2533,20 +2514,19 @@ impl ViewportRenderer {
                     None
                 };
 
-                let (shadow_bind_group, shape_clip_buf) = if let (true, Some(shadow)) =
-                    (solid_vbuf.is_some(), shadow_tex.as_ref())
-                {
-                    let clip_buf = ov.overlay_bindings.clip.write_changed(
-                        device,
-                        queue,
-                        clip_data(&clip_shapes),
-                    );
-                    let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                    let key = (shadow.clone(), clip_buf.clone(), vp_buf.clone());
-                    let cache = &mut ov.overlay_bindings.shape_shadow_bg;
-                    let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
-                        cache.get(key, || {
-                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                let (shadow_bind_group, shape_clip_buf) =
+                    if let (true, Some(shadow)) = (solid_vbuf.is_some(), shadow_tex.as_ref()) {
+                        let clip_buf = ov.overlay_bindings.clip.write_changed(
+                            device,
+                            queue,
+                            clip_data(&clip_shapes),
+                        );
+                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                        let key = (shadow.clone(), clip_buf.clone(), vp_buf.clone());
+                        let cache = &mut ov.overlay_bindings.shape_shadow_bg;
+                        let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                            cache.get(key, || {
+                                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                 label: Some("overlay_shape_shadow_bg"),
                                 layout: bgl,
                                 entries: &[
@@ -2567,12 +2547,12 @@ impl ViewportRenderer {
                                     },
                                 ],
                             })
-                        })
-                    });
-                    (bg, Some(clip_buf))
-                } else {
-                    (None, None)
-                };
+                            })
+                        });
+                        (bg, Some(clip_buf))
+                    } else {
+                        (None, None)
+                    };
 
                 let mut tex_batches = Vec::new();
                 // Maps a texture group index to its batch index in `tex_batches`
@@ -2772,6 +2752,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
 
         assert_eq!(gpu.len(), 2);
@@ -2779,7 +2760,7 @@ mod clip_registry_tests {
         assert_eq!(map[&20], 1);
 
         // Parent: centre and half-size scaled by ppp, corner radius scaled, no parent.
-        assert_eq!(gpu[0].center, [400.0, 200.0]);
+        assert_eq!(gpu[0].centre, [400.0, 200.0]);
         assert_eq!(gpu[0].half_size, [200.0, 100.0]);
         assert_eq!(gpu[0].radii, [16.0, 16.0, 16.0, 16.0]);
         assert_eq!(gpu[0].params[0], 0.0); // rect/rounded shape type
@@ -2819,6 +2800,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
 
         assert_eq!(gpu.len(), 1);
@@ -2846,6 +2828,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
         assert_eq!(gpu.len(), max);
         assert_eq!(bboxes.len(), max);
@@ -2864,6 +2847,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
         assert!(gpu.is_empty());
         assert!(map.is_empty());
@@ -2894,6 +2878,7 @@ mod clip_registry_tests {
             [1000.0, 1000.0],
             &glam::Mat4::IDENTITY,
             &glam::Mat4::IDENTITY,
+            glam::DVec3::ZERO,
         );
 
         assert_eq!(gpu.len(), 1, "the vector shape must not be encoded");

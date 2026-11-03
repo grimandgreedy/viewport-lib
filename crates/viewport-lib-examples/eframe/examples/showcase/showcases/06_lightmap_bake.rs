@@ -890,7 +890,7 @@ impl LightmapBakeShowcase {
                 // realtime shadow reads as a soft contact shadow that blends with the
                 // baked GI rather than a hard-edged blot on the curved baked heroes.
                 l.shadows.filter = ShadowFilter::Pcss;
-                l.shadows.pcss_light_radius = 0.05;
+                l.shadows.sun_angular_radius = 0.03;
             } else {
                 let mut key = LightSource::default();
                 key.kind = LightKind::Directional {
@@ -1285,8 +1285,8 @@ impl Showcase for LightmapBakeShowcase {
         );
 
         ctx.session.viewport_frame_mut().show_grid = false;
-        ctx.session.camera_mut().distance = 30.0;
-        ctx.session.camera_mut().orientation = glam::Quat::from_rotation_x(0.5);
+        let camera = ctx.session.camera_mut();
+        camera.set_orbit(camera.target(), 30.0, glam::Quat::from_rotation_x(0.5));
 
         self.rebuild(ctx.session);
         self.shown = Some(self.mode);

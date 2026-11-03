@@ -13,15 +13,17 @@ pub enum ClipShape {
     Plane {
         /// Unit normal pointing into the preserved half-space.
         normal: [f32; 3],
-        /// Signed distance from origin along `normal`.
-        distance: f32,
+        /// Signed distance from the world origin along `normal`, in f64 so a
+        /// plane far from the world origin keeps its place.
+        distance: f64,
         /// Cap fill colour override. `None` = use the clipped mesh's base_colour.
         cap_colour: Option<[f32; 4]>,
     },
     /// Oriented box : fragments inside the box are kept.
     Box {
-        /// World-space center of the box.
-        center: [f32; 3],
+        /// World-space centre of the box.
+        #[cfg_attr(feature = "serde", serde(alias = "center"))]
+        centre: glam::DVec3,
         /// Half-extents along each local axis.
         half_extents: [f32; 3],
         /// 3x3 rotation matrix columns.
@@ -29,15 +31,17 @@ pub enum ClipShape {
     },
     /// Sphere : fragments inside the sphere are kept.
     Sphere {
-        /// World-space center of the sphere.
-        center: [f32; 3],
+        /// World-space centre of the sphere.
+        #[cfg_attr(feature = "serde", serde(alias = "center"))]
+        centre: glam::DVec3,
         /// Radius of the sphere.
         radius: f32,
     },
     /// Cylinder : fragments inside the cylinder are kept.
     Cylinder {
-        /// World-space center (midpoint of the axis segment).
-        center: [f32; 3],
+        /// World-space centre (midpoint of the axis segment).
+        #[cfg_attr(feature = "serde", serde(alias = "center"))]
+        centre: glam::DVec3,
         /// Unit axis direction.
         axis: [f32; 3],
         /// Radius.
@@ -50,9 +54,15 @@ pub enum ClipShape {
 /// A clip object : defines a clipping region and optional visual boundary rendering.
 ///
 /// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants and
-/// up to 4 `Box`, `Sphere`, or `Cylinder` variants are supported simultaneously; all
-/// active clip objects apply cumulatively (AND semantics). Entries beyond the limit
-/// are silently ignored.
+/// up to 4 `Box`, `Sphere`, or `Cylinder` variants clip at once; all active clip
+/// objects apply cumulatively (AND semantics). Entries beyond the limit are
+/// ignored, and the renderer reports a
+/// [`NoticeDetail::ClipObjectsOverCap`](crate::NoticeDetail::ClipObjectsOverCap).
+///
+/// With `ClipSettings::cap_fill_enabled`, each clipping plane fills the
+/// cross-section of every mesh it cuts that has CPU geometry and is not
+/// `ignore_clip`. A cap is clipped by the other planes and the clip volumes, and
+/// holes in the section stay open.
 ///
 /// The renderer does not draw a boundary for a clip object; it only performs the
 /// clip operation (and the section cap fill). To show where a clip sits, build the
@@ -68,8 +78,8 @@ pub struct ClipObject {
     pub shape: ClipShape,
     /// Whether this object clips rendered geometry via the GPU clip-plane uniform.
     ///
-    /// Set to `false` to produce only a visual indicator without affecting geometry.
-    /// Default: `true`.
+    /// With `false` the object neither clips nor produces a section cap, and
+    /// takes none of the plane or volume slots. Default: `true`.
     pub clip_geometry: bool,
     /// Whether this object is active. Disabled objects are ignored entirely.
     pub enabled: bool,
@@ -91,21 +101,25 @@ impl Default for ClipObject {
 
 impl ClipObject {
     /// Create a half-space plane clip object.
-    pub fn plane(normal: [f32; 3], distance: f32) -> Self {
+    pub fn plane(normal: [f32; 3], distance: impl Into<f64>) -> Self {
         Self {
             shape: ClipShape::Plane {
                 normal,
-                distance,
+                distance: distance.into(),
                 cap_colour: None,
             },
             ..Default::default()
         }
     }
     /// Create an oriented box clip object.
-    pub fn box_shape(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
+    pub fn box_shape(
+        centre: impl crate::IntoWorldPosition,
+        half_extents: [f32; 3],
+        orientation: [[f32; 3]; 3],
+    ) -> Self {
         Self {
             shape: ClipShape::Box {
-                center,
+                centre: centre.into_world_position(),
                 half_extents,
                 orientation,
             },
@@ -113,9 +127,12 @@ impl ClipObject {
         }
     }
     /// Create a sphere clip object.
-    pub fn sphere(center: [f32; 3], radius: f32) -> Self {
+    pub fn sphere(centre: impl crate::IntoWorldPosition, radius: f32) -> Self {
         Self {
-            shape: ClipShape::Sphere { center, radius },
+            shape: ClipShape::Sphere {
+                centre: centre.into_world_position(),
+                radius,
+            },
             ..Default::default()
         }
     }
@@ -123,10 +140,15 @@ impl ClipObject {
     /// Create a cylinder clip object.
     ///
     /// `axis` must be a unit vector.
-    pub fn cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
+    pub fn cylinder(
+        centre: impl crate::IntoWorldPosition,
+        axis: [f32; 3],
+        radius: f32,
+        half_length: f32,
+    ) -> Self {
         Self {
             shape: ClipShape::Cylinder {
-                center,
+                centre: centre.into_world_position(),
                 axis,
                 radius,
                 half_length,

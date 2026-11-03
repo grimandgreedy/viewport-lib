@@ -164,8 +164,7 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
         .zip(offsets.iter())
         .map(|((&mesh_id, &colour), &tx)| {
             let mut item = SceneRenderItem::new(mesh_id, app.warp_state.material);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item.warp_attribute = Some("warp".to_string());
             item.warp_scale = app.warp_state.scale;
@@ -220,12 +219,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_warp_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.0),
-        distance: 10.0,
-        orientation: glam::Quat::from_rotation_x(0.6),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 0.0),
+        10.0,
+        glam::Quat::from_rotation_x(0.6),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -281,8 +279,6 @@ pub(crate) fn scene(
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

@@ -9,16 +9,20 @@
 //
 //   apply_scene_lighting(N, base_colour, two_sided, world_pos, lights) -> vec3<f32>
 //
+// and `scene_lighting_terms`, which returns its two terms apart.
+//
 // The helper returns `base_colour * (hemisphere_ambient + light_sum)` where
 // `hemisphere_ambient` is the sky/ground blend on `N.z` and `light_sum`
 // accumulates direct contribution from the per-cluster light list. When the
 // active light count is small enough that cluster overhead would dominate,
 // the host sets `cluster_grid_uniform.screen.z != 0` and the helper iterates
-// the full `lights_storage` array directly.
+// the full `lights_storage` array directly. A cell whose list overflowed its
+// fixed slice iterates the full array too, so no light is ever dropped.
 //
 // The world-to-view matrix is carried inside the cluster grid uniform so the
-// helper can derive the view-space fragment position itself; consumers don't
-// have to extend their per-shader `Camera` struct to expose it.
+// helper can derive the view-space fragment position itself. The radiance
+// `eval_light` and `apply_scene_lighting` return is exposed: both multiply by
+// `camera.exposure`, the lane after `forward` in the group-0 camera uniform.
 //
 // The BEGIN_/END_ regions carry an alternative on `// ALT(NAME):` lines, which
 // `builders::adapt_wgsl` swaps in where the device's group 0 needs it: the
@@ -31,6 +35,8 @@
 //   - Bind the per-light storage buffer at `@group(0) @binding(13)`.
 //   - Bind the cluster grid uniform / cells / index list at bindings 14, 15,
 //     and 16 (all on group 0).
+//   - Declare `camera` at `@group(0) @binding(0)` with the uniform's layout
+//     through `exposure` (view_proj, eye_pos, a f32, forward, exposure).
 //   - Remove any local `SingleLight` and `Lights` struct definitions and
 //     `// #include "scene_lighting.wgsl"` near the top of the file instead.
 
@@ -47,8 +53,11 @@ struct SingleLight {
     range:             f32,
     inner_angle:       f32,
     outer_angle:       f32,
+    // 0 none, 1 cascade atlas, 2 point light layers, 3 spot light layer.
+    shadow_kind:       u32,
     spot_direction:    vec3<f32>,
-    point_shadow_slot: i32,
+    // Base layer in the punctual shadow array, -1 none.
+    shadow_layer:      i32,
     point_shadow_near: f32,
     radius:            f32,
     channel_mask:      u32,
@@ -73,26 +82,36 @@ struct Lights {
     ibl_specular_scale:   f32,
     // Start of the custom-data region of indirect_light_data, in vec4 elements.
     custom_data_base:     u32,
+    // Material AO options: AO_FLAG_MULTI_BOUNCE, AO_FLAG_MICRO_SHADOW.
+    ao_flags:             u32,
+    _pad_ao_a:            u32,
+    _pad_ao_b:            u32,
+    _pad_ao_c:            u32,
 };
 
-// One environment-selection zone: a world-space box (center + half_extents) that
+// Lights::ao_flags bits. Match the constants in renderer/prepare/lighting.rs.
+const AO_FLAG_MULTI_BOUNCE: u32 = 1u;
+const AO_FLAG_MICRO_SHADOW: u32 = 2u;
+
+// One environment-selection zone: a world-space box (centre + half_extents) that
 // selects array layer `layer`, with `fade` the outer falloff band. `parallax`
 // is 1 for a local reflection probe (box-project the reflection against this box)
-// and 0 for a distant environment. See env_zone_weight / ibl_ambient_zoned in
-// ambient.wgsl.
+// and 0 for a distant environment. `rotation` (radians about +Z) and `intensity`
+// (the resolved multiplier) are the zone's own, not the lighting environment's.
+// See env_zone_weight / ibl_ambient_zoned in ambient.wgsl.
 //
-// 48 bytes, matching `EnvZoneGpu` in environment.rs. The trailing pad is three
-// SCALAR u32s, not a vec3<u32>: a vec3 has 16-byte alignment, which would round
-// the struct up to 64 and break the array stride against the 48-byte Rust upload.
-// The pad reserves room for a future separate parallax proxy box.
+// 48 bytes, matching `EnvZoneGpu` in environment.rs. The fields after
+// `parallax` are SCALARS, not a vec3: a vec3 has 16-byte alignment, which would
+// round the struct up to 64 and break the array stride against the 48-byte
+// Rust upload.
 struct EnvZone {
-    center:       vec3<f32>,   // offset 0
+    centre:       vec3<f32>,   // offset 0
     layer:        u32,         // offset 12
     half_extents: vec3<f32>,   // offset 16
     fade:         f32,         // offset 28
     parallax:     u32,         // offset 32
-    _pad_a:       u32,         // offset 36
-    _pad_b:       u32,         // offset 40
+    rotation:     f32,         // offset 36
+    intensity:    f32,         // offset 40
     _pad_c:       u32,         // offset 44 (struct size 48)
 };
 
@@ -116,7 +135,9 @@ struct ClusterGrid {
 // Start of the light index list in cluster_data, in u32 words. Must equal
 // resources::gpu::clustered::CLUSTER_INDEX_BASE_BYTES / 4 on the CPU side.
 const CLUSTER_INDEX_BASE: u32 = 13824u;
-@group(0) @binding(17) var                point_shadow_cube_tex: texture_depth_cube_array;
+// Point and spot light shadows: a point light's six cube faces from its
+// shadow_layer, a spot light's map at its shadow_layer. See punctual_shadow.wgsl.
+@group(0) @binding(17) var                punctual_shadow_tex:   texture_depth_2d_array;
 // Indirect-lighting data (binding 18). Three regions share one storage buffer
 // to keep the fragment stage within the per-stage storage-buffer budget:
 //   [0, ENV_ZONE_BASE)   : per-object light-probe SH, 9 vec4 per light-probe-lit
@@ -152,13 +173,14 @@ fn custom_data1(base: u32, id: u32) -> vec4<f32> {
 
 // Reconstruct environment zone `i` from the packed vec4 region of
 // indirect_light_data. Mirrors EnvZoneGpu (resources::material::environment):
-// 3 vec4 per zone, with layer/parallax bit-cast from the vec4 lanes.
+// 3 vec4 per zone, with layer/parallax bit-cast from the vec4 lanes and the
+// zone's rotation and intensity in c.y, c.z.
 fn load_env_zone(i: u32) -> EnvZone {
     let base = ENV_ZONE_BASE + i * 3u;
     let a = indirect_light_data[base + 0u];
     let b = indirect_light_data[base + 1u];
     let c = indirect_light_data[base + 2u];
-    return EnvZone(a.xyz, bitcast<u32>(a.w), b.xyz, b.w, bitcast<u32>(c.x), 0u, 0u, 0u);
+    return EnvZone(a.xyz, bitcast<u32>(a.w), b.xyz, b.w, bitcast<u32>(c.x), c.y, c.z, 0u);
 }
 
 
@@ -188,9 +210,9 @@ fn cluster_index_for(view_pos: vec3<f32>) -> u32 {
 }
 
 // Iteration bounds for the per-fragment light loop. `fallback` is true when
-// the host short-circuited the cluster build : in that case `start` is 0 and
-// `count` is the total active light count, and `cluster_light_global` returns
-// the loop index directly.
+// the host short-circuited the cluster build or the fragment's cell overflowed
+// its index slice: in that case `start` is 0 and `count` is the total active
+// light count, and `cluster_light_global` returns the loop index directly.
 struct LightRange {
     fallback: bool,
     start:    u32,
@@ -209,6 +231,14 @@ fn cluster_light_range(world_pos: vec3<f32>, total_count: u32) -> LightRange {
         let cid = cluster_index_for(view_pos);
         r.start = cluster_data[cid * 4u];
         r.count = cluster_data[cid * 4u + 1u];
+        // A cell whose punctual demand outgrew its slice walks every light
+        // instead of dropping the overflow; `eval_light`'s range test keeps
+        // that walk cheap.
+        if cluster_data[cid * 4u + 3u] > cluster_data[cid * 4u + 2u] {
+            r.fallback = true;
+            r.start = 0u;
+            r.count = total_count;
+        }
     }
     // ALT(UNCLUSTERED): r.fallback = true;
     // ALT(UNCLUSTERED): r.start = 0u;
@@ -228,8 +258,8 @@ fn cluster_light_global(range: LightRange, j: u32) -> u32 {
 }
 
 // Per-light geometry and unshadowed radiance for one fragment. `radiance`
-// folds in colour * intensity * distance/spot attenuation; it carries no
-// shadow factor and no N.L term. `in_range` is false when a punctual light is
+// folds in colour * intensity * exposure * distance/spot attenuation; it
+// carries no shadow factor and no N.L term. `in_range` is false when a punctual light is
 // at or beyond its range (radiance would be zero); callers skip such lights
 // outright and so avoid shadow taps and BRDF work. This is the one canonical
 // copy of the per-light attenuation math for every lit mesh loop.
@@ -249,9 +279,11 @@ fn light_in_channel(light: SingleLight, object_mask: u32) -> bool {
 
 fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
     var ev: LightEval;
+    // The light's exposed intensity: exposure applies where radiance is read.
+    let intensity = light.intensity * camera.exposure;
     if light.light_type == 0u {
         ev.l = normalize(light.pos_or_dir);
-        ev.radiance = light.colour * light.intensity;
+        ev.radiance = light.colour * intensity;
         ev.in_range = true;
         return ev;
     }
@@ -273,7 +305,7 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
     let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
     let atten = inv_sq * win * win;
     if light.light_type == 1u {
-        ev.radiance = light.colour * light.intensity * atten;
+        ev.radiance = light.colour * intensity * atten;
     } else {
         let spot_dir = normalize(light.spot_direction);
         let cos_angle = dot(-ev.l, spot_dir);
@@ -283,24 +315,32 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
             (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
             0.0, 1.0,
         );
-        ev.radiance = light.colour * light.intensity * atten * cone_att;
+        ev.radiance = light.colour * intensity * atten * cone_att;
     }
     return ev;
 }
 
-fn apply_scene_lighting(
+// The two terms `apply_scene_lighting` sums, before the base colour: the
+// hemisphere fill (indirect) and the light loop's sum (direct), both exposed.
+// The scene pass's light split is `scene_light_split(base * indirect,
+// base * direct, emitted)`.
+struct SceneLightingTerms {
+    indirect: vec3<f32>,
+    direct:   vec3<f32>,
+};
+
+fn scene_lighting_terms(
     normal: vec3<f32>,
-    base_colour: vec3<f32>,
     two_sided: bool,
     world_pos: vec3<f32>,
     lights: Lights,
-) -> vec3<f32> {
+) -> SceneLightingTerms {
     // Hemisphere ambient. Z-up world: N.z=+1 reads pure sky, N.z=-1 reads pure
     // ground. Scaled by `hemisphere_intensity` so `hemisphere_intensity = 0`
     // disables the term and items rely entirely on direct lights.
     let up_weight = clamp(normal.z * 0.5 + 0.5, 0.0, 1.0);
     let ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity;
+                  * (lights.hemisphere_intensity * camera.exposure);
 
     var direct = vec3<f32>(0.0);
     let range = cluster_light_range(world_pos, lights.count);
@@ -314,5 +354,16 @@ fn apply_scene_lighting(
         // matches the PBR and Phong diffuse energy for the same light.
         direct = direct + ev.radiance * n_dot_l * INV_PI;
     }
-    return base_colour * (ambient + direct);
+    return SceneLightingTerms(ambient, direct);
+}
+
+fn apply_scene_lighting(
+    normal: vec3<f32>,
+    base_colour: vec3<f32>,
+    two_sided: bool,
+    world_pos: vec3<f32>,
+    lights: Lights,
+) -> vec3<f32> {
+    let terms = scene_lighting_terms(normal, two_sided, world_pos, lights);
+    return base_colour * (terms.indirect + terms.direct);
 }

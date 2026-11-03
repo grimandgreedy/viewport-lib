@@ -28,7 +28,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -53,6 +53,7 @@ struct ClipVolumeUB {
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
 // #include "helpers/clip_volume_test.wgsl"
+// #include "helpers/scene_fragment.wgsl"
 
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -74,8 +75,7 @@ fn vs_main(
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Half-space clip-plane culling (section views), matching polyline.wgsl's
     // thick-line fragment stage. Previously absent: a wireframe polyline
     // silently ignored every active clip plane and clip volume regardless of
@@ -90,9 +90,32 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     return vec4<f32>(0.75, 0.75, 0.75, 1.0);
 }
 
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
+}
+
 // Clip-exempt variant: used for clip object overlays (box/sphere/cylinder
 // wireframes) and any polyline with `ItemSettings.ignore_clip = true`.
+fn fs_main_no_clip_body(in: VertexOut) -> vec4<f32> {
+    return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+}
+
 @fragment
 fn fs_main_no_clip(in: VertexOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+    return fs_main_no_clip_body(in);
+}
+
+// `fs_main_no_clip` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene_no_clip(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_no_clip_body(in);
+    return scene_fragment(colour);
 }

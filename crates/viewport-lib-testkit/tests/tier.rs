@@ -441,7 +441,14 @@ struct ForwardLit {
 }
 
 const FORWARD_LIT_BODY: &str = "
-@group(0) @binding(0) var<uniform> test_view_proj: mat4x4<f32>;
+struct TestCamera {
+    view_proj: mat4x4<f32>,
+    eye_pos: vec3<f32>,
+    _pad: f32,
+    forward: vec3<f32>,
+    exposure: f32,
+};
+@group(0) @binding(0) var<uniform> camera: TestCamera;
 @group(0) @binding(3) var<uniform> test_lights: Lights;
 
 struct TestOut {
@@ -452,7 +459,7 @@ struct TestOut {
 @vertex
 fn vs_main(@location(0) position: vec3<f32>) -> TestOut {
     var out: TestOut;
-    out.clip = test_view_proj * vec4<f32>(position, 1.0);
+    out.clip = camera.view_proj * vec4<f32>(position, 1.0);
     out.world = position;
     return out;
 }
@@ -764,11 +771,7 @@ fn draw_split(harness: &mut Harness, frame: &mut viewport_lib::FrameData) -> (Ve
     let id = r.create_viewport(&device);
     frame.camera.viewport_index = id.index();
     let colour = target(&device, Harness::DEFAULT_TARGET_FORMAT, "tier_colour");
-    let depth = target(
-        &device,
-        wgpu::TextureFormat::Depth24PlusStencil8,
-        "tier_depth",
-    );
+    let depth = target(&device, r.scene_depth_format(), "tier_depth");
     let (colour_view, depth_view) = (
         colour.create_view(&Default::default()),
         depth.create_view(&Default::default()),
@@ -794,7 +797,7 @@ fn draw_split(harness: &mut Harness, frame: &mut viewport_lib::FrameData) -> (Ve
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: wgpu::LoadOp::Clear(viewport_lib::plugin_api::depth::DEPTH_CLEAR),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: Some(wgpu::Operations {
@@ -887,7 +890,7 @@ fn compatibility_sub_object_highlights_draw_through_the_split_and_host_pass_path
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     let mut camera = viewport_lib::Camera::default();
-    camera.set_distance(6.0);
+    camera.set_orbit_distance(6.0);
     camera.set_aspect_ratio(W as f32, H as f32);
     let base = || {
         let mut frame = viewport_lib::FrameData::default();
@@ -992,7 +995,7 @@ fn compatibility_outlines_draw_through_the_split_and_host_pass_paths() {
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     item.settings.selected = true;
     let mut camera = viewport_lib::Camera::default();
-    camera.set_distance(6.0);
+    camera.set_orbit_distance(6.0);
     camera.set_aspect_ratio(W as f32, H as f32);
     let mut frame = viewport_lib::FrameData::default();
     frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);
@@ -1040,7 +1043,7 @@ fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     let mut camera = viewport_lib::Camera::default();
-    camera.set_distance(6.0);
+    camera.set_orbit_distance(6.0);
     camera.set_aspect_ratio(W as f32, H as f32);
     let mut frame = viewport_lib::FrameData::default();
     frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(&camera);

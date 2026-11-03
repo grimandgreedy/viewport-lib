@@ -99,6 +99,12 @@ pub const WGPU_LEG: u32 = 30;
 /// Use this, [`instance_with_backends`] or [`instance_from_env`] as the first
 /// call of a runner, alongside [`headless_adapter_options`],
 /// [`runner_surface_config`], [`acquire_surface`] and [`present`].
+///
+/// The instance carries no display handle. That is enough for Vulkan, Metal and
+/// DX12, but on wgpu 29 and 30 the GL backend picks its EGL platform from the
+/// instance's display, so without one it cannot present to a Wayland window and
+/// finds no adapter for it. A host that may land on GL under Linux uses
+/// [`instance_with_display`] instead.
 #[cfg(wgpu27)]
 pub fn default_instance() -> Instance {
     Instance::new(&InstanceDescriptor::default())
@@ -149,6 +155,52 @@ pub fn instance_from_env() -> Instance {
     Instance::new(InstanceDescriptor::new_without_display_handle_from_env())
 }
 
+/// Construct a wgpu `Instance` limited to `backends`, carrying the display
+/// handle surfaces will be created on.
+///
+/// Pass the event loop's display, for winit `event_loop.owned_display_handle()`,
+/// and create every surface from windows on that same display. On wgpu 29 and 30
+/// the GL backend needs it to present to a Wayland or X11 window: without it
+/// EGL falls back to a surfaceless platform and no GL adapter is compatible with
+/// the window's surface. Vulkan, Metal and DX12 ignore it. wgpu 27 finds the
+/// display itself, so that leg drops it.
+#[cfg(wgpu27)]
+pub fn instance_with_display(
+    backends: Backends,
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    let _ = display;
+    instance_with_backends(backends)
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn instance_with_display(
+    backends: Backends,
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    let mut desc =
+        InstanceDescriptor::new_without_display_handle().with_display_handle(Box::new(display));
+    desc.backends = backends;
+    Instance::new(desc)
+}
+
+/// [`instance_from_env`] carrying a display handle; see [`instance_with_display`]
+/// for when a host needs one.
+#[cfg(wgpu27)]
+pub fn instance_from_env_with_display(
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    let _ = display;
+    instance_from_env()
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn instance_from_env_with_display(
+    display: impl rwh::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    Instance::new(InstanceDescriptor::new_with_display_handle_from_env(
+        Box::new(display),
+    ))
+}
+
 /// Bring up a browser instance, surface and adapter, on WebGPU when the browser
 /// has a WebGPU adapter and on WebGL2 otherwise.
 ///
@@ -162,12 +214,21 @@ pub fn instance_from_env() -> Instance {
 /// Keep all three: the surface has to come from the instance that made the
 /// adapter. Native targets need no equivalent, since `Backends::all()` already
 /// enumerates GL adapters after Vulkan, Metal and DX12.
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 pub async fn request_adapter_with_gl_fallback(
     target: impl Into<SurfaceTarget<'static>>,
     power_preference: PowerPreference,
 ) -> Result<(Instance, Surface<'static>, Adapter), WebAdapterError> {
+    #[cfg(wgpu27)]
     let instance = util::new_instance_with_webgpu_detection(&InstanceDescriptor::default()).await;
+    // wgpu 29 creates a canvas surface with no display handle, which the GL
+    // backend rejects, so the instance carries the web one. wgpu 30 passes the
+    // same handle itself; giving it here too keeps both legs on one path.
+    #[cfg(any(wgpu29, wgpu30))]
+    let instance = util::new_instance_with_webgpu_detection(
+        InstanceDescriptor::new_without_display_handle().with_display_handle(Box::new(WebDisplay)),
+    )
+    .await;
     let surface = instance
         .create_surface(target)
         .map_err(WebAdapterError::Surface)?;
@@ -176,14 +237,29 @@ pub async fn request_adapter_with_gl_fallback(
             power_preference,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            // wgpu 30 added this field; false matches `headless_adapter_options`.
+            #[cfg(wgpu30)]
+            apply_limit_buckets: false,
         })
         .await
         .map_err(WebAdapterError::NoAdapter)?;
     Ok((instance, surface, adapter))
 }
 
+/// The browser's display handle, for an instance that creates canvas surfaces.
+#[cfg(all(target_arch = "wasm32", any(wgpu29, wgpu30)))]
+#[derive(Debug)]
+struct WebDisplay;
+
+#[cfg(all(target_arch = "wasm32", any(wgpu29, wgpu30)))]
+impl rwh::HasDisplayHandle for WebDisplay {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+        Ok(rwh::DisplayHandle::web())
+    }
+}
+
 /// Why [`request_adapter_with_gl_fallback`] failed.
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub enum WebAdapterError {
     /// The canvas gave no surface, for example because it already holds a 2D
@@ -193,7 +269,7 @@ pub enum WebAdapterError {
     NoAdapter(RequestAdapterError),
 }
 
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 impl std::fmt::Display for WebAdapterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -203,7 +279,7 @@ impl std::fmt::Display for WebAdapterError {
     }
 }
 
-#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[cfg(target_arch = "wasm32")]
 impl std::error::Error for WebAdapterError {}
 
 /// The outcome of acquiring the next surface texture, normalised across wgpu legs.

@@ -11,7 +11,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -127,16 +126,6 @@ impl ItemTypePlugin for VectorFieldPlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.layouts = Some(VectorFieldResources::new(device, self.streams));
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -166,7 +155,8 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let built = build_vector_field(device, queue, &binds, item, 0);
+            let built =
+                build_vector_field(device, queue, &binds, item, 0, Some(ctx.world_origin()));
             let draw = built.draw();
             let pick_bind_group = (draw.pick_id != PickId::NONE)
                 .then(|| gpu.pick_bind_group(device, queue, draw.pick_id, built.uniform_buf()));
@@ -192,7 +182,8 @@ impl ItemTypePlugin for VectorFieldPlugin {
             let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
-            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&ref_item.model));
+            let model = crate::item_types::origin::rel_model(ref_item.model, ctx.world_origin());
+            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&model));
             let mut draw = entry.draw();
             // The pick id comes from the reference, not from the upload: the
             // same stored field can be drawn twice under two ids.
@@ -216,7 +207,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         let mut bound = false;
         for entry in &self.frame {
             if entry.draw.instance_count == 0 {
@@ -375,11 +366,11 @@ impl ItemTypePlugin for VectorFieldPlugin {
             // against.
             if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                 if let Some(base) = item.positions.get(idx as usize) {
-                    hit.world_pos = model.transform_point3(glam::Vec3::from(*base));
+                    hit.world_pos = model.transform_point3(glam::Vec3::from(*base)).as_dvec3();
                 }
                 hit.sub_object = wants_instance.then_some(SubObjectRef::Instance(idx));
             }
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if best.as_ref().is_none_or(|(t, _)| toi < *t) {
                 best = Some((toi, hit));
             }
@@ -557,7 +548,7 @@ impl VectorFieldPlugin {
             .layouts
             .get_or_insert_with(|| VectorFieldResources::new(device, streams));
         let binds = resolve_bindings(resources, layouts, item);
-        build_vector_field(device, queue, &binds, item, capacity)
+        build_vector_field(device, queue, &binds, item, capacity, None)
     }
 
     /// Pre-upload a vector field and return its handle.
@@ -690,7 +681,7 @@ impl VectorFieldPlugin {
         let binds = resolve_bindings(resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_vector_field(&device, &queue, &binds, &item, 0))
+        jobs.submit_cpu(move || build_vector_field(&device, &queue, &binds, &item, 0, None))
     }
 
     /// Store the field a finished job built and hand back its handle.

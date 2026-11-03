@@ -18,20 +18,13 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
 
-struct ShadowAtlas {
-    cascade_vp:        array<mat4x4<f32>, 4>,
-    cascade_splits:    vec4<f32>,
-    cascade_count:     u32,
-    atlas_size:        f32,
-    shadow_filter:     u32,
-    pcss_light_radius: f32,
-    atlas_rects:       array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
@@ -59,7 +52,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -131,7 +124,8 @@ fn pack_oit(rgb: vec3<f32>, alpha: f32, view_z: f32, is_premultiplied: bool) -> 
     let z = abs(view_z);
     let w = alpha * clamp(10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0)), 1e-2, 3e3);
     var out: OitOutput;
-    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
+    // Clamped to the largest finite half float: the weight reaches 3e3.
+    out.accum  = min(vec4<f32>(premult_rgb * w, alpha * w), vec4<f32>(65504.0));
     out.reveal = alpha;
     return out;
 }
@@ -170,7 +164,7 @@ fn oit_fragment(in: VertexOut, is_front: bool, is_premultiplied: bool) -> OitOut
                     lights_uniform.ground_colour,
                     lights_uniform.sky_colour,
                     up_weight,
-                ) * lights_uniform.hemisphere_intensity;
+                ) * (lights_uniform.hemisphere_intensity * camera.exposure);
                 let ambient_rgb = base_colour.rgb * ambient;
                 shaded = mix(ambient_rgb, shaded, shadow_factor);
             }

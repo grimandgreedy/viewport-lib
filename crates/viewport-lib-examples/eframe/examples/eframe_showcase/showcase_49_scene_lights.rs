@@ -76,7 +76,7 @@ fn default_lights() -> [LightSource; 3] {
     let point = {
         let mut s = LightSource::default();
         s.kind = LightKind::Point {
-            position: [5.0, 0.0, 3.0],
+            position: [5.0, 0.0, 3.0].into(),
             range: 14.0,
             radius: 0.1,
         };
@@ -89,7 +89,7 @@ fn default_lights() -> [LightSource; 3] {
     let spot = {
         let mut s = LightSource::default();
         s.kind = LightKind::Spot {
-            position: [-5.0, 0.0, 6.0],
+            position: [-5.0, 0.0, 6.0].into(),
             direction: [0.0, 0.0, -1.0],
             range: 18.0,
             inner_angle: 0.2,
@@ -334,7 +334,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
 
         let mut src = LightSource::default();
         src.kind = LightKind::Point {
-            position: [x, y, z],
+            position: glam::Vec3::new(x, y, z).as_dvec3(),
             range: state.stress_radius,
             radius: 0.1,
         };
@@ -381,7 +381,7 @@ fn submit_basics(app: &mut App, fd: &mut vpl::FrameData) {
         ref mut position, ..
     } = app.sl_state.lights[0].kind
     {
-        *position = [px, py, 3.0];
+        *position = glam::DVec3::new(px.into(), py.into(), 3.0);
     }
 
     let sx = radius * (t + std::f32::consts::PI).cos();
@@ -394,7 +394,7 @@ fn submit_basics(app: &mut App, fd: &mut vpl::FrameData) {
         ref mut position, ..
     } = app.sl_state.lights[1].kind
     {
-        *position = [sx, sy, 6.0];
+        *position = glam::DVec3::new(sx.into(), sy.into(), 6.0);
     }
 
     for i in 0..3 {
@@ -431,11 +431,12 @@ fn submit_stress(app: &mut App, fd: &mut vpl::FrameData) {
             ref mut position, ..
         } = src.kind
         {
-            let base_z = (position[2] - bob_amp).max(0.3);
-            position[2] = base_z + bob_amp * (t * bob_freq + idx as f32 * 0.3).sin().abs();
+            let base_z = (position.z as f32 - bob_amp).max(0.3);
+            position.z =
+                f64::from(base_z + bob_amp * (t * bob_freq + idx as f32 * 0.3).sin().abs());
             app.sl_state.scene.set_local_transform(
                 app.sl_state.stress_light_ids[idx],
-                glam::Mat4::from_translation(glam::Vec3::from(*position)),
+                glam::Mat4::from_translation(position.as_vec3()),
             );
             app.sl_state
                 .scene
@@ -742,12 +743,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_sl_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 1.0),
-        distance: 20.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        20.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -814,8 +814,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

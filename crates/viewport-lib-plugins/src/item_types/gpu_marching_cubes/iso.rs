@@ -18,7 +18,11 @@ use viewport_lib_geometry::volume::grid::VolumeData;
 /// The ray-marched isosurface's shader: the shared shading, then the march.
 pub(crate) fn isosurface_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_CLIP_WGSL],
+        &[
+            shared_wgsl::SHARED_CSM_WGSL,
+            shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+            shared_wgsl::SHARED_CLIP_WGSL,
+        ],
         &[wgsl_source!("mc_shading"), wgsl_source!("mc_isosurface")].join("\n"),
     )
 }
@@ -98,14 +102,16 @@ struct McIsoRaw {
 }
 
 impl McIsoRaw {
-    fn new(field: &McField, isovalue: f32) -> Self {
+    /// `origin` is the frame's world origin; the box is placed relative to
+    /// it.
+    fn new(field: &McField, isovalue: f32, origin: glam::DVec3) -> Self {
         // Half a cell per step, so a crossing as thin as a cell is not
         // stepped over, and enough steps for the box's diagonal.
         let step = 0.5 * field.spacing.iter().copied().fold(f32::INFINITY, f32::min);
         let cells = glam::Vec3::from(field.dims.map(|d| d.saturating_sub(1) as f32));
         let max_steps = ((cells.length() * 2.0).ceil() as u32 + 2).min(4096);
         Self {
-            origin: field.origin,
+            origin: crate::item_types::origin::rel_point(field.origin, origin),
             isovalue,
             spacing: field.spacing,
             step,
@@ -127,6 +133,7 @@ pub(super) struct McIsoRecipe {
     bgl: gpu::BindGroupLayout,
     shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The LDR colour pipeline and the selection mask.
@@ -149,9 +156,11 @@ fn build(r: &McIsoRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: Some(gpu::Face::Front),
                 depth_write: true,
-                depth_compare: gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: None,
             },
             false,
         ),
@@ -222,6 +231,7 @@ impl McIsoGpu {
                 bgl: bgl.clone(),
                 shader,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );
@@ -240,6 +250,7 @@ impl McIsoGpu {
         device: &gpu::Device,
         volumes: &super::store::McVolumeStore,
         jobs: &[GpuMarchingCubesItem],
+        origin: glam::DVec3,
     ) -> Vec<McIsoFrame> {
         jobs.iter()
             .filter(|job| !job.settings.hidden)
@@ -252,7 +263,7 @@ impl McIsoGpu {
                 });
                 let iso = device.create_buffer_init(&gpu::util::BufferInitDescriptor {
                     label: Some("mc_isosurface_uniform"),
-                    contents: bytemuck::bytes_of(&McIsoRaw::new(field, job.isovalue)),
+                    contents: bytemuck::bytes_of(&McIsoRaw::new(field, job.isovalue, origin)),
                     usage: gpu::BufferUsages::UNIFORM,
                 });
                 let bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {

@@ -1,11 +1,10 @@
 //! Interactive 3D probe and region widgets.
 //!
-//! Each widget is a pure CPU state struct (like `Gizmo`) that the host app owns.
+//! Each widget is a pure CPU state struct that the host app owns.
 //! Push render items from the widget into `SceneFrame` each frame, call `update()`
 //! to advance state, and read public fields for results.
 //!
-//! Suppress orbit while a widget is active using the same pattern as
-//! `ManipulationController`:
+//! Suppress orbit while a widget is active:
 //!
 //! ```rust,ignore
 //! if probe.is_active() {
@@ -44,7 +43,6 @@ use crate::renderer::RenderCamera;
 /// Per-frame input state passed to widget `update()` methods.
 ///
 /// Build this from the `ActionFrame` and `CameraFrame` your app already has.
-/// Mirrors the shape of [`crate::ManipulationContext`].
 #[derive(Clone, Debug)]
 pub struct WidgetContext {
     /// Camera state for this frame (used for ray construction and drag projection).
@@ -206,20 +204,20 @@ pub(super) fn handle_world_radius(
     viewport_height: f32,
     target_px: f32,
 ) -> f32 {
-    let eye = glam::Vec3::from(camera.eye_position);
+    let eye = camera.eye_position().as_vec3();
     let dist = (pos - eye).length().max(0.001);
-    let world_per_px = 2.0 * (camera.fov * 0.5).tan() * dist / viewport_height.max(1.0);
+    let world_per_px = 2.0 * (camera.fov_y() * 0.5).tan() * dist / viewport_height.max(1.0);
     world_per_px * target_px
 }
 
 /// Build a ray from the context cursor position.
 pub(super) fn ctx_ray(ctx: &WidgetContext) -> (glam::Vec3, glam::Vec3) {
-    let vp = ctx.camera.projection * ctx.camera.view;
-    crate::interaction::query::picking::screen_to_ray(
-        ctx.cursor_viewport,
-        ctx.viewport_size,
-        vp.inverse(),
-    )
+    let size = ctx.viewport_size;
+    let ndc = glam::Vec2::new(
+        (ctx.cursor_viewport.x / size.x) * 2.0 - 1.0,
+        1.0 - (ctx.cursor_viewport.y / size.y) * 2.0,
+    );
+    ctx.camera.screen_ray(ndc)
 }
 
 /// Shortest distance from a ray to a point.

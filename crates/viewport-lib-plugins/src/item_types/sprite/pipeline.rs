@@ -1,5 +1,5 @@
 //! GPU state for the sprite item type: the twelve blend/depth/lit render
-//! pipeline variants, the refractive pipeline and its scene-colour layout, the
+//! pipeline variants in each pass, the refractive pipeline and its scene-colour layout, the
 //! soft-particle depth layout and its fallback, the weighted-blended OIT
 //! pipelines, the pick pipeline, and the selection-outline mask pipeline. Each
 //! pipeline is built the first time a draw needs it.
@@ -99,20 +99,35 @@ pub(super) struct SpriteRecipe {
     lit_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
-/// The 24 sprite colour pipelines: each [`SpriteKey`] in the LDR and HDR
-/// formats, built the first time a draw selects it.
-pub(super) type SpritePipelines = viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, 24>;
+/// The pass a sprite colour pipeline draws into. The HDR scene pass has the
+/// indirect fraction as a second target; the read-only-depth pass has the
+/// HDR colour alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SpritePass {
+    Ldr,
+    Scene,
+    DepthRead,
+}
 
-/// Member index of `key` in the `hdr` or LDR format.
-pub(super) fn sprite_index(key: SpriteKey, hdr: bool) -> usize {
-    key.slot() * 2 + hdr as usize
+impl SpritePass {
+    const ALL: [Self; 3] = [Self::Ldr, Self::Scene, Self::DepthRead];
+}
+
+/// The 36 sprite colour pipelines: each [`SpriteKey`] for each
+/// [`SpritePass`], built the first time a draw selects it.
+pub(super) type SpritePipelines = viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, 36>;
+
+/// Member index of `key` in `pass`.
+pub(super) fn sprite_index(key: SpriteKey, pass: SpritePass) -> usize {
+    key.slot() * 3 + pass as usize
 }
 
 fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
-    let key = SpriteKey::from_slot(i / 2);
-    let hdr = i % 2 == 1;
+    let key = SpriteKey::from_slot(i / 3);
+    let pass = SpritePass::ALL[i % 3];
     let vertex_buffers = [position_layout()];
     let blend = match key.blend {
         viewport_lib::renderer::SpriteBlend::AlphaBlend => {
@@ -147,11 +162,18 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
             topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             depth_write: key.depth_write,
-            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
-            ldr_format: r.ldr_format,
+            // The depth-read pass's one target is the HDR colour.
+            ldr_format: if pass == SpritePass::DepthRead {
+                viewport_lib::resources::HDR_COLOR_FORMAT
+            } else {
+                r.ldr_format
+            },
+            depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
-        hdr,
+        pass == SpritePass::Scene,
     )
 }
 
@@ -192,6 +214,7 @@ pub(super) struct SpritePassRecipe {
     pick_layout: viewport_lib::gpu::PipelineLayout,
     pick_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The refractive, pick, outline mask, surface mask and four OIT pipelines,
@@ -227,8 +250,9 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                     ..Default::default()
                 },
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                    r.depth_format,
                     false,
-                    viewport_lib::gpu::CompareFunction::Less,
+                    viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: viewport_lib::gpu::MultisampleState {
                     count: r.sample_count,
@@ -273,8 +297,9 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                     ..Default::default()
                 },
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                    r.depth_format,
                     true,
-                    viewport_lib::gpu::CompareFunction::Less,
+                    viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 )),
                 multisample: viewport_lib::gpu::MultisampleState {
                     count: 1,
@@ -289,10 +314,11 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             &r.mask_layout,
             r.mask_shader.get(),
             viewport_lib::gpu::TextureFormat::R8Unorm,
+            r.depth_format,
             &vertex_buffers,
             None,
             false,
-            viewport_lib::gpu::CompareFunction::Less,
+            viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
         ),
         // The unlit colour shader again, stamping the scene stencil. It
         // discards where the colour pass did, so a cut-out sprite stamps only
@@ -302,6 +328,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             "sprite_surface_mask_pipeline",
             &r.layout,
             r.shader.get(),
+            r.depth_format,
             &vertex_buffers,
             None,
         ),
@@ -369,8 +396,9 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                         ..Default::default()
                     },
                     depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                        r.depth_format,
                         false,
-                        viewport_lib::gpu::CompareFunction::LessEqual,
+                        viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                     )),
                     multisample: viewport_lib::gpu::MultisampleState {
                         count: r.sample_count,
@@ -502,6 +530,7 @@ impl SpriteGpu {
                 &[
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
+                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit"),
             ),
@@ -553,6 +582,7 @@ impl SpriteGpu {
                 &[
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
+                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit_oit"),
             ),
@@ -625,6 +655,7 @@ impl SpriteGpu {
                 lit_shader,
                 sample_count,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build_sprite,
         );
@@ -644,6 +675,7 @@ impl SpriteGpu {
                 pick_layout,
                 pick_shader,
                 sample_count,
+                depth_format: resources.scene_depth_format(),
             },
             build_pass,
         );
@@ -669,8 +701,9 @@ impl SpriteGpu {
             blend: sprite.blend,
             lit: sprite.lit,
         };
-        let colour = self.pipelines.available(sprite_index(key, false))
-            || self.pipelines.available(sprite_index(key, true));
+        let colour = SpritePass::ALL
+            .into_iter()
+            .any(|pass| self.pipelines.available(sprite_index(key, pass)));
         if sprite.refraction_strength > 0.0 {
             self.passes.available(REFRACTION)
         } else if sprite.oit_eligible {

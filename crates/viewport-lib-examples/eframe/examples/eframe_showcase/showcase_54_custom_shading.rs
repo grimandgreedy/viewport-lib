@@ -11,7 +11,7 @@
 //!      parameters (independent band count and tint).
 //!   4. Toon plugin, textured material: a procedural stripe texture in the
 //!      plugin's `material_texture_0` slot.
-//!   5. Rim plugin: a `recolor` hook that adds a view-dependent rim on top of
+//!   5. Rim plugin: a `recolour` hook that adds a view-dependent rim on top of
 //!      the built-in lighting.
 //!   6. Detail-layer plugin: a tiled detail albedo blended over the base,
 //!      gated by a per-vertex mask painted into
@@ -337,8 +337,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
         .map(|(&(x, _, detail), &material)| {
             let mesh = if detail { detail_mesh } else { mesh_id };
             let mut item = SceneRenderItem::new(mesh, material);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.0)).into();
             item
         })
         .collect()
@@ -398,7 +397,7 @@ pub(crate) fn controls_custom_shading(
     });
 
     ui.separator();
-    ui.label("Rim sphere (recolor hook on built-in PBR)");
+    ui.label("Rim sphere (recolour hook on built-in PBR)");
     ui.horizontal(|ui| {
         ui.label("rim colour:");
         ui.color_edit_button_rgb(&mut app.cs_state.rim_colour);
@@ -454,12 +453,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_custom_shading_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 1.0),
-        distance: 15.0,
-        orientation: glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        15.0,
+        glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -515,8 +513,6 @@ pub(crate) fn scene(
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

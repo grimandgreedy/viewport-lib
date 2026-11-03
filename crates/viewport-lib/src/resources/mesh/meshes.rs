@@ -1160,7 +1160,7 @@ impl DeviceResources {
             crate::resources::lightmap::secondary_texture(data),
             TextureRequirement::linear("LightmapData direction / shadowmask"),
         );
-        self.texture_slot_mismatch()?;
+        self.first_texture_slot_mismatch()?;
 
         let store_len = self.mesh_store.len();
         let mesh =
@@ -1740,6 +1740,9 @@ impl DeviceResources {
                 if let Some(record) = record {
                     self.sidecar.free(&record);
                 }
+            }
+            if self.scene_tier.is_built() {
+                self.scene_tier.deform.forget_mesh(id);
             }
             self.resource_free_epoch += 1;
         }
@@ -2471,10 +2474,19 @@ impl DeviceResources {
         let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(indices);
         let bytes = (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
         if bytes > device.limits().max_buffer_size {
-            tracing::warn!(
-                mesh_index = mesh_id.index(),
-                bytes,
-                "edge index buffer would exceed max_buffer_size; wireframe skipped"
+            let mesh = mesh_id.index() as u32;
+            self.notices.report(
+                crate::notice::NoticeKey::new(
+                    crate::NoticeCategory::Device,
+                    "buffer_over_device_limit",
+                    [u64::from(mesh), crate::notice::name_id("edge index")],
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::BufferOverDeviceLimit {
+                    mesh,
+                    buffer: "edge index",
+                    bytes,
+                },
             );
             return;
         }
@@ -2518,10 +2530,19 @@ impl DeviceResources {
         };
         let bytes = (positions.len() * 2 * std::mem::size_of::<Vertex>()) as u64;
         if bytes > device.limits().max_buffer_size {
-            tracing::warn!(
-                mesh_index = mesh_id.index(),
-                bytes,
-                "normal-line buffer would exceed max_buffer_size; normals view skipped"
+            let mesh = mesh_id.index() as u32;
+            self.notices.report(
+                crate::notice::NoticeKey::new(
+                    crate::NoticeCategory::Device,
+                    "buffer_over_device_limit",
+                    [u64::from(mesh), crate::notice::name_id("normal-line")],
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::BufferOverDeviceLimit {
+                    mesh,
+                    buffer: "normal-line",
+                    bytes,
+                },
             );
             return;
         }

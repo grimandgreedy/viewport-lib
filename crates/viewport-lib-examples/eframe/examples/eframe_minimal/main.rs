@@ -3,7 +3,7 @@
 //! The session renders into an app-owned offscreen texture, which egui displays
 //! as an image. This keeps the whole session model (renderer, scene, camera,
 //! input) behind one object; the app only owns the texture and translates events
-//! with `viewport_lib::input::adapters::from_egui`. The egui paint-callback route
+//! with `viewport_lib::input::adapters::egui::translate`. The egui paint-callback route
 //! is not used here because it requires the session to live in egui's
 //! `Send + Sync` callback resources, which a session carrying a runtime is not.
 //!
@@ -18,10 +18,10 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
     Material, NodeId, OffscreenViewportTarget, OrbitCameraController, RendererConfig,
-    ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    ViewportContext, ViewportInstance, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -84,7 +84,7 @@ fn main() -> eframe::Result {
                 glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)),
                 green,
             );
-            session.camera_mut().distance = 10.0;
+            session.camera_mut().set_orbit_distance(10.0);
 
             Ok(Box::new(App {
                 session,
@@ -180,23 +180,23 @@ impl App {
                 // Screen-space state (viewport size, cursor) stays in logical
                 // points; pixels_per_point sizes the physical render target and
                 // keeps overlays and the axes indicator crisp on HiDPI.
-                self.session.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.has_focus(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+                self.session.begin_frame(ViewportContext::new(
+                    ownership,
+                    [rect.width(), rect.height()],
+                ));
                 self.session.set_pixels_per_point(ppp);
-                let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.session.handle_event(ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.session.handle_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.session.handle_event(ev);
+                }
 
                 // Z-up: spin the cube about the world up axis, before assembly.
                 let spin = glam::Mat4::from_rotation_z(time);

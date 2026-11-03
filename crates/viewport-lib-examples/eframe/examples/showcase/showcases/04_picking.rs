@@ -371,16 +371,16 @@ impl PickingShowcase {
 
         // GPU implicit: two smooth-blended spheres.
         {
-            let centers = [[10.3_f32, 5.0, 0.0], [11.7, 5.0, 0.0]];
+            let centres = [[10.3_f32, 5.0, 0.0], [11.7, 5.0, 0.0]];
             let colours = [[0.68_f32, 0.22, 0.06, 1.0], [0.12, 0.28, 0.68, 1.0]];
             let mut item = GpuImplicitItem::default();
             for i in 0..2 {
                 let mut prim = ImplicitPrimitive::zeroed();
                 prim.kind = 1; // sphere
                 prim.blend = 0.8;
-                prim.params[0] = centers[i][0];
-                prim.params[1] = centers[i][1];
-                prim.params[2] = centers[i][2];
+                prim.params[0] = centres[i][0];
+                prim.params[1] = centres[i][1];
+                prim.params[2] = centres[i][2];
                 prim.params[3] = 1.1; // radius
                 prim.colour = Colour::from_linear_array(colours[i]);
                 item.primitives.push(prim);
@@ -746,8 +746,7 @@ impl Showcase for PickingShowcase {
         ctx.session
             .set_selection_outline(true, [1.0, 0.85, 0.2, 1.0], 2.5);
         let cam = ctx.session.camera_mut();
-        cam.distance = 34.0;
-        cam.orientation = glam::Quat::from_rotation_x(0.85);
+        cam.set_orbit(cam.target(), 34.0, glam::Quat::from_rotation_x(0.85));
     }
 
     fn update(&mut self, ctx: &mut ShowcaseCtx) {
@@ -758,11 +757,6 @@ impl Showcase for PickingShowcase {
         ctx.drive_camera();
 
         let session = &mut *ctx.session;
-
-        // This is a picking showcase, not a manipulation one. The session stamps
-        // a transform gizmo whenever a scene node is selected (mesh outlines go
-        // through the session selection), so clear it here to keep the gizmo out.
-        session.frame_data_mut().interaction.gizmo_model = None;
 
         // Inject every non-mesh item (rendering + picking both read the frame).
         self.inject_items(session);
@@ -822,10 +816,10 @@ impl Showcase for PickingShowcase {
                         self.last = Some(HitInfo {
                             name,
                             sub: sub_desc(hit.sub_object),
-                            pos: hit.world_pos,
+                            pos: hit.world_pos.as_vec3(),
                             scalar: hit.scalar_value,
                         });
-                        self.marker_pos = Some(hit.world_pos);
+                        self.marker_pos = Some(hit.world_pos.as_vec3());
                         self.rect_status = None;
                         self.clear_selection(session);
                         self.record(session, hit.id, hit.sub_object);

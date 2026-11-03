@@ -3,31 +3,24 @@
 use super::ViewportInstance;
 use crate::Colour;
 use crate::interaction::input::ViewportContext;
-use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
-use crate::interaction::manipulation::{ManipResult, ManipulationContext};
 use crate::runtime::RuntimeFrameContext;
 use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,
 };
 
 impl ViewportInstance {
-    /// Resolve input, drive the camera with `orbit`, run manipulation, and
-    /// assemble the frame. Returns the assembled [`FrameData`].
+    /// Resolve input, drive the camera with `orbit`, and assemble the frame.
+    /// Returns the assembled [`FrameData`].
     ///
-    /// Orbit is suppressed while a manipulation session is active so pointer
-    /// motion drives the gizmo, not the camera. `orbit` is borrowed so the
-    /// application keeps its own handle for tuning. `dt` is the frame time in
-    /// seconds, passed to [`OrbitCameraController::apply`] for fly movement.
+    /// `orbit` is borrowed so the application keeps its own handle for tuning.
+    /// `dt` is the frame time in seconds, passed to
+    /// [`OrbitCameraController::apply`] for fly movement. A host running a tool
+    /// that takes the pointer (a transform gizmo, say) drives the camera from
+    /// its own resolver instead and calls [`frame`](Self::frame).
     pub fn update_orbit(&mut self, orbit: &mut OrbitCameraController, dt: f32) -> &FrameData {
         self.action = self.input.resolve();
         orbit.set_viewport_size(self.viewport_size);
-
-        let manip_active = self.manip.as_ref().is_some_and(|m| m.is_active());
-        if !manip_active {
-            orbit.apply(&mut self.camera, &self.action, dt);
-        }
-
-        self.run_manip();
+        orbit.apply(&mut self.camera, &self.action, dt);
         self.assemble();
         &self.frame
     }
@@ -38,7 +31,6 @@ impl ViewportInstance {
     pub fn frame(&mut self, ctx: ViewportContext) -> &FrameData {
         self.viewport_size = ctx.viewport_size;
         self.action = self.input.resolve();
-        self.run_manip();
         self.assemble();
         &self.frame
     }
@@ -110,46 +102,6 @@ impl ViewportInstance {
         let _output = runtime.step(&mut self.scene, &mut self.selection, &ctx);
     }
 
-    /// Run the manipulation controller for this frame, if one is attached.
-    fn run_manip(&mut self) {
-        if self.manip.is_none() {
-            self.last_manip = ManipResult::None;
-            return;
-        }
-        let selection_center = self.selection_center();
-        let pointer = self.action.pointer;
-        let ctx = ManipulationContext {
-            camera: self.camera.clone(),
-            viewport_size: glam::Vec2::from(self.viewport_size),
-            cursor_viewport: pointer.cursor,
-            pointer_delta: pointer.delta,
-            selection_center,
-            gizmo: None,
-            drag_started: pointer.pressed,
-            dragging: pointer.dragging,
-            clicked: pointer.clicked,
-        };
-        // Disjoint field borrows: `manip` mutable, `action` shared.
-        self.last_manip = self.manip.as_mut().unwrap().update(&self.action, ctx);
-    }
-
-    /// World-space centroid of the selected nodes, or `None` when nothing is
-    /// selected. Feeds `ManipulationContext::selection_center`, which gates G/R/S.
-    fn selection_center(&self) -> Option<glam::Vec3> {
-        if self.selection.is_empty() {
-            return None;
-        }
-        let mut sum = glam::Vec3::ZERO;
-        let mut count = 0.0f32;
-        for &id in self.selection.iter() {
-            if let Some(node) = self.scene.node(id) {
-                sum += node.world_transform().col(3).truncate();
-                count += 1.0;
-            }
-        }
-        (count > 0.0).then(|| sum / count)
-    }
-
     /// Rebuild the per-frame sub-frames of the retained [`FrameData`].
     ///
     /// `camera`, `scene`, and the derived half of `interaction` are rebuilt from
@@ -167,37 +119,7 @@ impl ViewportInstance {
         self.frame.interaction.outline_selected = self.outline_selected;
         self.frame.interaction.outline_colour = Colour::from_linear_array(self.outline_colour);
         self.frame.interaction.outline_width_px = self.outline_width_px;
-        self.stamp_gizmo();
         self.frame.overlays = OverlayFrame::default();
         self.inject_extras();
-    }
-
-    /// Draw the transform gizmo whenever something is selected: at rest it sits
-    /// at the selection centroid in translate mode; during a G/R/S session it
-    /// reflects the active kind and constrained axis. Positioned at the live
-    /// centroid so it follows a translating object. Nothing selected ->
-    /// `gizmo_model` stays `None` and no gizmo is drawn.
-    fn stamp_gizmo(&mut self) {
-        let Some(center) = self.selection_center() else {
-            return;
-        };
-        let scale = compute_gizmo_scale(
-            center,
-            self.camera.eye_position(),
-            self.camera.fov_y,
-            self.viewport_size[1],
-        );
-        self.frame.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
-            glam::Vec3::splat(scale),
-            glam::Quat::IDENTITY,
-            center,
-        ));
-        let state = self.manip.as_ref().and_then(|m| m.state());
-        self.frame.interaction.gizmo_mode = state
-            .as_ref()
-            .map(|s| GizmoMode::from(s.kind))
-            .unwrap_or(GizmoMode::Translate);
-        self.frame.interaction.gizmo_hovered =
-            state.and_then(|s| s.axis).unwrap_or(GizmoAxis::None);
     }
 }

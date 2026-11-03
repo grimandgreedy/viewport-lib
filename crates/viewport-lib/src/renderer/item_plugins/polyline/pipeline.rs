@@ -55,10 +55,11 @@ fn build_pass(r: &PolylinePassRecipe, i: usize) -> crate::gpu::RenderPipeline {
             &r.mask_layout,
             r.mask_shader.get(),
             crate::gpu::TextureFormat::R8Unorm,
+            r.builder.scene_depth_format(),
             &instance,
             None,
             true,
-            crate::gpu::CompareFunction::LessEqual,
+            crate::plugin_api::depth::DEPTH_COMPARE,
         ),
     }
 }

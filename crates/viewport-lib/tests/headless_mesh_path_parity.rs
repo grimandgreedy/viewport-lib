@@ -76,20 +76,15 @@ impl Scene {
         frame.effects.lighting.hemisphere_intensity = 0.5;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
 
         let item_at = |x: f32| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.mesh;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).into();
             item.material = material;
             item.settings.opacity = opacity;
             item
@@ -337,7 +332,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
     let caster_at = |y: f32, material: MaterialId| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).into();
         it.material = material;
         it
     };
@@ -361,12 +356,8 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -384,7 +375,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
     };
     let mut bulb = LightSource::default();
     bulb.kind = LightKind::Point {
-        position: [3.0, 0.0, 3.0],
+        position: [3.0, 0.0, 3.0].into(),
         range: 30.0,
         radius: 0.0,
     };
@@ -451,7 +442,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     let caster_at = |y: f32| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = caster_mesh;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).into();
         it.material = caster;
         it
     };
@@ -476,12 +467,8 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -499,7 +486,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     };
     let mut bulb = LightSource::default();
     bulb.kind = LightKind::Point {
-        position: [3.0, 0.0, 3.0],
+        position: [3.0, 0.0, 3.0].into(),
         range: 30.0,
         radius: 0.0,
     };

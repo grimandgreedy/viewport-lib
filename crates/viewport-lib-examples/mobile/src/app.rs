@@ -1,7 +1,7 @@
 //! The example itself: three primitives on a grid, orbited with touch.
 //!
 //! The same code runs on Android, on iOS, and on the desktop, and the input
-//! handling is the same on all three: translate the winit event with `from_winit`,
+//! handling is the same on all three: translate the winit event with `translate`,
 //! push it into a `ViewportInput`, and apply the frame it resolves to the camera.
 //! One finger orbits, two pan, a pinch zooms and a twist turns; none of that is
 //! written here.
@@ -10,11 +10,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use viewport_lib::Colour;
 
-use viewport_lib::interaction::input::adapters::from_winit;
+use viewport_lib::interaction::input::adapters::{AdapterCtx, winit as vpl_winit};
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, PostProcessSettings,
-    SceneFrame, SceneRenderItem, ViewportContext, ViewportInput, ViewportRenderer, primitives,
-    viewport_default_bindings,
+    Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, OrbitCameraController,
+    PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    ViewportRenderer, primitives, viewport_default_bindings,
 };
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -141,7 +141,7 @@ impl ApplicationHandler for App {
         let make_item = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             // The default material, coloured per item.
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item
@@ -153,21 +153,17 @@ impl ApplicationHandler for App {
             make_item(m_cylinder, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
         ];
 
-        let camera = Camera {
-            distance: 10.0,
-            ..Camera::default()
-        };
+        let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
 
         // The controller applies a resolved frame; the bindings live on the
         // resolver beside it, which is the one place that decides what a gesture
         // means.
         let controller = OrbitCameraController::new_stateless();
         let mut input = ViewportInput::new(viewport_default_bindings());
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [config.width as f32, config.height as f32],
-        });
+        input.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [config.width as f32, config.height as f32],
+        ));
 
         self.state = Some(AppState {
             window,
@@ -267,11 +263,7 @@ impl ApplicationHandler for App {
                 frame.present();
 
                 state.input.begin_frame_at(
-                    ViewportContext {
-                        hovered: true,
-                        focused: true,
-                        viewport_size: [w, h],
-                    },
+                    ViewportContext::new(InputOwnership::full_window(), [w, h]),
                     state.start.elapsed().as_secs_f32(),
                 );
             }
@@ -279,10 +271,14 @@ impl ApplicationHandler for App {
             // Everything else, touch included, goes through the adapter. The
             // viewport fills the window, so there is no rect to offset by.
             other => {
-                let scale = state.window.scale_factor() as f32;
-                if let Some(ev) = from_winit(&other, scale) {
-                    state.input.push_event(ev);
+                let actx = AdapterCtx::new(state.window.scale_factor() as f32, glam::Vec2::ZERO);
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &actx, &mut events);
+                if !events.is_empty() {
                     state.window.request_redraw();
+                }
+                for ev in events {
+                    state.input.push_event(ev);
                 }
             }
         }

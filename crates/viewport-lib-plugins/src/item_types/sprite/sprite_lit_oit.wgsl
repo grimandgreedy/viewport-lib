@@ -22,7 +22,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -40,7 +41,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -79,15 +80,7 @@ struct SpriteUniform {
     _pad_lit_c:             u32,
 };
 
-struct ShadowAtlas {
-    cascade_vp:        array<mat4x4<f32>, 4>,
-    cascade_splits:    vec4<f32>,
-    cascade_count:     u32,
-    atlas_size:        f32,
-    shadow_filter:     u32,
-    pcss_light_radius: f32,
-    atlas_rects:       array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 
 struct SpriteInstance {
     colour:        vec4<f32>,
@@ -199,24 +192,24 @@ fn vs_main(in: VertexIn) -> VertexOut {
                        + local_up    * (rotated.y * half);
         out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
-        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px = inst.size * 0.5;
         let inv_vp  = vec2<f32>(1.0, 1.0)
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         if sprite_ub.orientation == 0u {
             let ndc_off = rotated * half_px * inv_vp;
             out.clip_pos = vec4<f32>(
-                center.x + ndc_off.x * center.w,
-                center.y + ndc_off.y * center.w,
-                center.z,
-                center.w,
+                centre.x + ndc_off.x * centre.w,
+                centre.y + ndc_off.y * centre.w,
+                centre.z,
+                centre.w,
             );
         } else {
             let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
             let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
             let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
                             + up_clip    * (rotated.y * half_px * inv_vp.y);
-            out.clip_pos = center + offset_clip * center.w;
+            out.clip_pos = centre + offset_clip * centre.w;
         }
         quad_world_pos = world_pos
                        + local_right * (rotated.x * stretch_x)
@@ -271,7 +264,8 @@ fn pack_oit(rgb: vec3<f32>, alpha: f32, view_z: f32, is_premultiplied: bool) -> 
     let z = abs(view_z);
     let w = alpha * clamp(10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0)), 1e-2, 3e3);
     var out: OitOutput;
-    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
+    // Clamped to the largest finite half float: the weight reaches 3e3.
+    out.accum  = min(vec4<f32>(premult_rgb * w, alpha * w), vec4<f32>(65504.0));
     out.reveal = alpha;
     return out;
 }
@@ -313,7 +307,7 @@ fn resolve_colour(in: VertexOut) -> vec4<f32> {
                     lights_for_shader.ground_colour,
                     lights_for_shader.sky_colour,
                     up_weight,
-                ) * lights_for_shader.hemisphere_intensity;
+                ) * (lights_for_shader.hemisphere_intensity * camera.exposure);
                 let ambient_rgb = colour.rgb * ambient;
                 colour = vec4<f32>(mix(ambient_rgb, lit_rgb, shadow_factor), colour.a);
             } else {

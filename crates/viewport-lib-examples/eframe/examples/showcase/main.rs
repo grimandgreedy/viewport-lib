@@ -25,11 +25,8 @@ mod ui;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
-use vpl::{
-    ManipulationController, OffscreenViewportTarget, ViewportContext, ViewportEvent,
-    ViewportInstance,
-};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
+use vpl::{OffscreenViewportTarget, ViewportContext, ViewportInstance};
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -42,15 +39,18 @@ fn main() -> eframe::Result {
                 .wgpu_render_state
                 .as_ref()
                 .expect("wgpu backend required");
-            // One session, shared across showcases; manipulation is always
-            // attached (idle when nothing is selected).
+            // One session, shared across showcases.
             // sRGB render format so the tonemap encode happens; the offscreen
             // target hands egui a non-sRGB view so the encode survives its sample.
+            // The objects showcase's gizmo reads the session's resolver, so the
+            // session carries the gizmo's keys on top of the default set.
+            let mut bindings = vpl::viewport_default_bindings();
+            bindings.extend(viewport_lib_gizmo::manipulation_bindings());
             let mut session = ViewportInstance::new(
                 &rs.device,
                 OffscreenViewportTarget::render_format(rs.target_format),
             )
-            .with_manipulation(ManipulationController::new());
+            .with_bindings(bindings);
             viewport_lib_plugins::item_types::install(session.renderer_mut(), &rs.device);
 
             let mut list = showcases::all();
@@ -265,24 +265,27 @@ impl App {
             let target = self.target.as_ref().unwrap();
 
             // Logical viewport size + pixels_per_point; cursor stays logical.
-            // A viewport-local rect never takes egui keyboard focus, so treat
-            // it as focused while hovered, or the input resolver drops key
-            // events (G/R/S, WASD).
-            self.session.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            // The viewport has the keyboard (G/R/S, WASD) while it has the
+            // pointer and no egui widget has focus. The camera rig resolves the
+            // same events on its own, kept off the pointer while a showcase's
+            // tool wants it.
+            let ownership =
+                vpl_egui::ownership(&response, ui.ctx(), rect, self.camera.tool_active());
+            self.session.begin_frame(ViewportContext::new(
+                ownership,
+                [rect.width(), rect.height()],
+            ));
+            self.camera
+                .begin_frame(ownership, [rect.width(), rect.height()]);
             self.session.set_pixels_per_point(ppp);
 
             let origin = glam::Vec2::new(rect.left(), rect.top());
             let mut keys_pressed = Vec::new();
             let keys_down: Vec<egui::Key> = ui.input(|i| i.keys_down.iter().copied().collect());
+            let actx = AdapterCtx::new(1.0, origin);
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
                     if let egui::Event::Key {
                         key,
@@ -293,11 +296,13 @@ impl App {
                     {
                         keys_pressed.push(*key);
                     }
-                    if let Some(ev) = from_egui(event, origin) {
-                        self.session.handle_event(ev);
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.camera.push_event(ev.clone());
+                self.session.handle_event(ev);
+            }
 
             {
                 let mut sctx = ShowcaseCtx::new(
@@ -307,8 +312,7 @@ impl App {
                     &rs.queue,
                     ppp,
                     dt,
-                    response.hovered(),
-                    response.hovered(),
+                    ownership,
                     [rect.width(), rect.height()],
                     &keys_pressed,
                     &keys_down,

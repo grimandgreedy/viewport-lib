@@ -38,6 +38,7 @@ pub(super) struct ParticleRecipe {
     mesh_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// Three routes by three blend modes by two formats.
@@ -86,9 +87,11 @@ fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
             cull_mode,
             depth_write: false,
-            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
         hdr,
     )
@@ -250,6 +253,7 @@ impl ParticleGpu {
                 mesh_shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

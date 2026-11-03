@@ -7,7 +7,14 @@
 //!   hold their own IBL environment. A row of polished metal spheres crosses the
 //!   zones and reflects whichever environment covers it, cross-fading in the
 //!   overlaps. Clear the zones and every sphere reflects the single default
-//!   environment instead.
+//!   environment instead. Each zone takes its own brightness
+//!   (`EnvironmentZone::with_intensity`: a multiplier, an EV step or a lux
+//!   target) and rotation about +Z (`with_rotation`); a bright band in each
+//!   zone's sky shows the rotation in the reflections. **Capture** bakes a
+//!   reflection probe at the row's centre (`capture_reflection_probes`) and
+//!   installs it as a fourth zone. A capture holds absolute radiance: two
+//!   panoramas captured under a passthrough and a sunny-16 exposure are
+//!   identical.
 //! - **Lightmaps:** an upright panel carries a baked lightmap texture, sampled
 //!   by a second UV set. No runtime light produces the coloured light pools and
 //!   dark corners on it: they are baked in. The toggle blends the same panel
@@ -33,9 +40,9 @@ use vpl::resources::{
     LightProbe, LightProbeSet, LightmapData, LightmapMode, SHCoefficients, TextureId,
 };
 use vpl::{
-    Aabb, BackfacePolicy, EnvironmentLighting, EnvironmentMapId, EnvironmentOptions,
-    EnvironmentZone, IndirectLightSource, LightKind, LightSource, Material, MaterialId, MeshId,
-    NodeId, TextureData, primitives,
+    Aabb, BackfacePolicy, EnvironmentIntensity, EnvironmentLighting, EnvironmentMapId,
+    EnvironmentOptions, EnvironmentZone, ExposureSettings, IndirectLightSource, LightKind,
+    LightSource, Material, MaterialId, MeshId, NodeId, TextureData, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -70,7 +77,7 @@ fn build_probe_set(enabled: &[bool]) -> LightProbeSet {
     for (i, &(colour, x)) in PROBES.iter().enumerate() {
         if enabled.get(i).copied().unwrap_or(false) {
             probes.push(LightProbe {
-                position: [x, 0.0, PROBE_ROW_Z],
+                position: Vec3::new(x, 0.0, PROBE_ROW_Z).as_dvec3(),
                 sh: flat_sh(colour),
             });
         }
@@ -122,6 +129,37 @@ const N_METAL: usize = 13;
 const ROW_HALF_X: f32 = 8.0;
 const ZONE_HALF_X: f32 = 1.8;
 const ZONE_FADE: f32 = 1.7;
+
+/// The brightness choices for a zone.
+const ZONE_INTENSITIES: [(&str, EnvironmentIntensity); 4] = [
+    ("x1", EnvironmentIntensity::Multiplier(1.0)),
+    ("x4", EnvironmentIntensity::Multiplier(4.0)),
+    ("EV -2", EnvironmentIntensity::Ev100(-2.0)),
+    ("3 lx", EnvironmentIntensity::Lux(3.0)),
+];
+
+/// Names of the zones the panel edits: the three distant ones and the
+/// captured probe.
+const ZONE_NAMES: [&str; 4] = ["Warm", "Cool", "Green", "Captured probe"];
+
+/// The captured probe's box: the middle of the row.
+const PROBE_HALF: Vec3 = Vec3::new(2.2, 3.0, 3.0);
+const PROBE_FADE: f32 = 1.0;
+
+/// [`equirect_gradient`] with a bright vertical band at one longitude, so a
+/// rotation about +Z shows in the reflections.
+fn equirect_banded(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
+    let mut px = equirect_gradient(sky, ground, w, h);
+    for y in 0..h {
+        for x in 0..w / 10 {
+            let i = ((y * w + x) * 4) as usize;
+            for c in 0..3 {
+                px[i + c] = 3.0;
+            }
+        }
+    }
+    px
+}
 
 /// A vertical-gradient equirect panorama (sky at the +Z pole, ground at -Z).
 fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
@@ -463,7 +501,17 @@ pub struct IndirectLightingShowcase {
     default_env: Option<EnvironmentMapId>,
     zone_enabled: Vec<bool>,
     use_zones: bool,
-    applied_zones: Option<(bool, Vec<bool>)>,
+    applied_zones: Option<ZoneKey>,
+    /// Per zone (the three distant ones, then the captured probe): an index
+    /// into [`ZONE_INTENSITIES`] and a rotation about +Z in radians.
+    zone_intensity: [usize; 4],
+    zone_rotation: [f32; 4],
+    selected_zone: usize,
+    captured: Option<EnvironmentZone>,
+    capture_requested: bool,
+    /// Largest per-channel difference between the passthrough and sunny-16
+    /// panoramas of the last capture.
+    capture_diff: Option<f32>,
 
     // Lightmap mode.
     lightmap_panel: Option<MeshId>,
@@ -506,6 +554,12 @@ impl IndirectLightingShowcase {
             zone_enabled: vec![true; ENVS.len()],
             use_zones: true,
             applied_zones: None,
+            zone_intensity: [0; 4],
+            zone_rotation: [0.0; 4],
+            selected_zone: 1,
+            captured: None,
+            capture_requested: false,
+            capture_diff: None,
             lightmap_panel: None,
             lightmap_uv1: Vec::new(),
             radiance_tex: None,
@@ -739,20 +793,94 @@ impl IndirectLightingShowcase {
         if !self.use_zones {
             return Vec::new();
         }
-        ENVS.iter()
+        let styled = |zone: EnvironmentZone, i: usize| {
+            zone.with_intensity(ZONE_INTENSITIES[self.zone_intensity[i]].1)
+                .with_rotation(self.zone_rotation[i])
+        };
+        let mut zones: Vec<EnvironmentZone> = ENVS
+            .iter()
             .enumerate()
             .filter(|(i, _)| self.zone_enabled[*i])
-            .map(|(i, e)| EnvironmentZone {
-                bounds: Aabb {
-                    min: Vec3::new(e.x - ZONE_HALF_X, -8.0, ZONE_ROW_Z - 8.0),
-                    max: Vec3::new(e.x + ZONE_HALF_X, 8.0, ZONE_ROW_Z + 8.0),
-                },
-                environment: self.env_ids[i],
-                fade_distance: ZONE_FADE,
+            .map(|(i, e)| {
                 // Distant gradient environments, not local captures: no parallax.
-                parallax: false,
+                let zone = EnvironmentZone::new(
+                    Vec3::new(e.x, 0.0, ZONE_ROW_Z),
+                    Vec3::new(ZONE_HALF_X, 8.0, 8.0),
+                    self.env_ids[i],
+                )
+                .with_fade_distance(ZONE_FADE);
+                styled(zone, i)
             })
-            .collect()
+            .collect();
+        if let Some(probe) = self.captured {
+            zones.push(styled(probe, 3));
+        }
+        zones
+    }
+
+    /// What the zone set depends on, to re-apply it only on a change.
+    fn zone_key(&self) -> ZoneKey {
+        ZoneKey {
+            use_zones: self.use_zones,
+            enabled: self.zone_enabled.clone(),
+            intensity: self.zone_intensity,
+            rotation: self.zone_rotation.map(f32::to_bits),
+            captured: self.captured.is_some(),
+        }
+    }
+
+    /// Bake a reflection probe at the row's centre and keep it as a zone.
+    /// Also capture the panorama there under a passthrough and a sunny-16
+    /// exposure and record their largest difference.
+    fn capture_probe(&mut self, ctx: &mut ShowcaseCtx) {
+        let session = &mut *ctx.session;
+        // The renderer's capture calls take the frame mutably, as does the
+        // session that owns it: borrow the frame out for the capture.
+        let placeholder = vpl::FrameData::new(
+            vpl::CameraFrame::from_camera(session.camera(), [1.0, 1.0]),
+            vpl::SceneFrame::default(),
+        );
+        let mut frame = std::mem::replace(session.frame_data_mut(), placeholder);
+        let saved = frame.effects.display.exposure;
+        let centre = Vec3::new(0.0, 0.0, ZONE_ROW_Z);
+        let renderer = session.renderer_mut();
+        let mut panorama = |frame: &mut vpl::FrameData, exposure| {
+            frame.effects.display.exposure = exposure;
+            renderer
+                .capture_equirect(ctx.device, ctx.queue, frame, centre.to_array(), 64, 64)
+                .rgba
+        };
+        let a = panorama(&mut frame, ExposureSettings::passthrough());
+        let b = panorama(
+            &mut frame,
+            ExposureSettings::physical(16.0, 1.0 / 125.0, 100.0),
+        );
+        self.capture_diff = Some(
+            a.iter()
+                .zip(&b)
+                .map(|(x, y)| (x - y).abs())
+                .fold(0.0f32, f32::max),
+        );
+        frame.effects.display.exposure = saved;
+        let bounds = Aabb {
+            min: centre - PROBE_HALF,
+            max: centre + PROBE_HALF,
+        };
+        let zones = session.renderer_mut().capture_reflection_probes(
+            ctx.device,
+            ctx.queue,
+            &mut frame,
+            &[(bounds, PROBE_FADE)],
+            64,
+            64,
+        );
+        *session.frame_data_mut() = frame;
+        if let Ok(zones) = zones {
+            if let Some(old) = self.captured.take() {
+                session.renderer_mut().free_environment(old.environment);
+            }
+            self.captured = zones.first().copied();
+        }
     }
 }
 
@@ -866,18 +994,32 @@ impl Showcase for IndirectLightingShowcase {
 
         // Environments for zone mode: the scene default + one per zone. Uploaded
         // once here; they persist on the resources across mode switches.
+        self.default_env = Some(
+            ctx.session
+                .renderer_mut()
+                .upload_environment(
+                    ctx.device,
+                    ctx.queue,
+                    TextureData::hdr(
+                        64,
+                        32,
+                        equirect_gradient(DEFAULT_SKY, DEFAULT_GROUND, 64, 32),
+                    ),
+                    EnvironmentOptions::default(),
+                )
+                .unwrap(),
+        );
         let mut upload = |sky, ground| {
             ctx.session
                 .renderer_mut()
                 .upload_environment(
                     ctx.device,
                     ctx.queue,
-                    TextureData::hdr(64, 32, equirect_gradient(sky, ground, 64, 32)),
+                    TextureData::hdr(64, 32, equirect_banded(sky, ground, 64, 32)),
                     EnvironmentOptions::default(),
                 )
                 .unwrap()
         };
-        self.default_env = Some(upload(DEFAULT_SKY, DEFAULT_GROUND));
         self.env_ids = ENVS.iter().map(|e| upload(e.sky, e.ground)).collect();
 
         // A dim key light gives the spheres shape; the indirect term (probe SH or
@@ -896,8 +1038,8 @@ impl Showcase for IndirectLightingShowcase {
         l.ground_colour = Colour::linear_rgb(0.3, 0.3, 0.3);
 
         ctx.session.viewport_frame_mut().show_grid = true;
-        ctx.session.camera_mut().distance = 22.0;
-        ctx.session.camera_mut().orientation = glam::Quat::from_rotation_x(0.55);
+        let camera = ctx.session.camera_mut();
+        camera.set_orbit(camera.target(), 22.0, glam::Quat::from_rotation_x(0.55));
 
         self.rebuild(ctx.session);
         self.shown = Some(self.mode);
@@ -936,7 +1078,11 @@ impl Showcase for IndirectLightingShowcase {
                 self.applied_probes = Some(state);
             }
         } else if self.mode == 1 {
-            let state = (self.use_zones, self.zone_enabled.clone());
+            if self.capture_requested {
+                self.capture_requested = false;
+                self.capture_probe(ctx);
+            }
+            let state = self.zone_key();
             if self.applied_zones.as_ref() != Some(&state) {
                 let zones = self.zones();
                 ctx.session
@@ -1138,8 +1284,52 @@ impl Showcase for IndirectLightingShowcase {
                 "Fragments inside a zone reflect that environment; overlaps blend \
                  by influence, and everywhere else uses the default environment.",
             );
+            ui.add_space(8.0);
+            ui.label("Zone settings:");
+            let zones = if self.captured.is_some() { 4 } else { 3 };
+            self.selected_zone = self.selected_zone.min(zones - 1);
+            if let Some(i) = crate::ui::segmented(ui, self.selected_zone, &ZONE_NAMES[..zones]) {
+                self.selected_zone = i;
+            }
+            let z = self.selected_zone;
+            ui.add_space(2.0);
+            let labels: Vec<&str> = ZONE_INTENSITIES.iter().map(|(l, _)| *l).collect();
+            if let Some(i) = crate::ui::segmented(ui, self.zone_intensity[z], &labels) {
+                self.zone_intensity[z] = i;
+            }
+            ui.add(
+                egui::Slider::new(
+                    &mut self.zone_rotation[z],
+                    -std::f32::consts::PI..=std::f32::consts::PI,
+                )
+                .text("Rotation about +Z"),
+            );
+            ui.add_space(8.0);
+            if ui.button("Capture probe at the row's centre").clicked() {
+                self.capture_requested = true;
+            }
+            ui.label(
+                "Bakes a reflection probe of the lit scene at the centre of the row \
+                 and installs it as a fourth, box-projected zone.",
+            );
+            if let Some(d) = self.capture_diff {
+                ui.label(format!(
+                    "Panorama captured under passthrough vs sunny 16: max difference {d:.3e}. \
+                     A capture holds absolute radiance whatever the camera's exposure."
+                ));
+            }
         }
     }
+}
+
+/// What the zone set was last built from.
+#[derive(Clone, PartialEq)]
+struct ZoneKey {
+    use_zones: bool,
+    enabled: Vec<bool>,
+    intensity: [usize; 4],
+    rotation: [u32; 4],
+    captured: bool,
 }
 
 /// A colour swatch followed by a labelled checkbox.

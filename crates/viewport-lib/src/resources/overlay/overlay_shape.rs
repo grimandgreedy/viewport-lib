@@ -100,6 +100,7 @@ impl crate::resources::DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -202,6 +203,7 @@ impl crate::resources::DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -263,6 +265,7 @@ impl crate::resources::DeviceResources {
         queue: &crate::gpu::Queue,
         data: crate::TextureData,
     ) -> crate::error::ViewportResult<OverlayTextureId> {
+        self.require_live()?;
         let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let entry =
             build_overlay_texture_entry(device, Some(queue), width, height, format, Some(&pixels));
@@ -477,6 +480,7 @@ impl crate::resources::DeviceResources {
         queue: &crate::gpu::Queue,
         data: crate::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_live()?;
         let (width, height, format, pixels) = overlay_texture_pixels(data)?;
         let slot = crate::resources::ResultSlot::<OverlayTextureId>::new();
         let slot_for_apply = slot.clone();
@@ -770,7 +774,7 @@ pub(crate) struct OverlayShadowLayerGpu {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ClipShapeGpu {
     /// Mask centre in framebuffer pixels.
-    pub center: [f32; 2],
+    pub centre: [f32; 2],
     /// Mask half-extents in framebuffer pixels.
     pub half_size: [f32; 2],
     /// Shape-specific radii, matching the draw encoding (length terms scaled to

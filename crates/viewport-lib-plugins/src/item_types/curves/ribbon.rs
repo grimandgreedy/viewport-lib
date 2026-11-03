@@ -17,6 +17,7 @@ use super::draw::{
 use super::pipeline::{CurveFrame, CurvePickGpu, draw_mesh, draw_solid_indexed};
 use super::types::RibbonId;
 use super::types::{RibbonItem, RibbonRefItem};
+use crate::item_types::origin::anchored_model;
 use viewport_lib::plugin_api::shared_wgsl;
 
 /// The catalogue sections `ribbon.wgsl` and `ribbon_oit.wgsl` need on top of
@@ -26,6 +27,7 @@ use viewport_lib::plugin_api::shared_wgsl;
 const RIBBON_LIT_EXTRA: &[&str] = &[
     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
     shared_wgsl::SHARED_CSM_WGSL,
+    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
 ];
 use viewport_lib::plugin_api::pick_helpers::{project_to_screen, ray_triangle, segment_in_rect};
 use viewport_lib::plugin_api::{
@@ -35,7 +37,7 @@ use viewport_lib::plugin_api::{
 use viewport_lib::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SpriteBlend, SubObjectRef,
 };
-use viewport_lib::resources::{DeviceResources, HDR_COLOR_FORMAT};
+use viewport_lib::resources::DeviceResources;
 
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.ribbon";
@@ -125,6 +127,7 @@ struct RibbonRecipe {
     bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// Every blend, topology and depth-write variant in both formats, the two OIT
@@ -193,9 +196,11 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
             },
             cull_mode: None,
             depth_write,
-            depth_compare: viewport_lib::gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
         hdr,
     )
@@ -242,8 +247,9 @@ fn build_oit(r: &RibbonRecipe, premultiplied: bool) -> viewport_lib::gpu::Render
                 ..Default::default()
             },
             depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                r.depth_format,
                 false,
-                viewport_lib::gpu::CompareFunction::LessEqual,
+                viewport_lib::plugin_api::depth::DEPTH_COMPARE,
             )),
             multisample: viewport_lib::gpu::MultisampleState {
                 count: r.sample_count,
@@ -272,7 +278,7 @@ fn build_shadow(r: &RibbonRecipe) -> viewport_lib::gpu::RenderPipeline {
     .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
     let shadow_extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&r.bgl];
     shadow_opts.extra_bind_group_layouts = &shadow_extra;
-    shadow_opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+    shadow_opts.depth_compare = viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT;
     r.builder.build_shadow_pipeline(&r.device, &shadow_opts)
 }
 
@@ -328,6 +334,7 @@ impl RibbonGpu {
                 bgl: layouts.bgl.clone(),
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );
@@ -450,16 +457,6 @@ impl ItemTypePlugin for RibbonPlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.layouts = Some(super::store::RibbonResources::new(device));
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -495,7 +492,16 @@ impl ItemTypePlugin for RibbonPlugin {
                 continue;
             }
             gpu_data.pick_id = item.settings.pick_id;
-            gpu_data.model = item.model;
+            // The build wrote the model relative to zero; under a moved origin
+            // the uniform takes the relative one.
+            gpu_data.model = anchored_model(item.model, gpu_data.anchor, ctx.world_origin());
+            if ctx.world_origin() != glam::DVec3::ZERO {
+                queue.write_buffer(
+                    &gpu_data._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&gpu_data.model),
+                );
+            }
             gpu_data.cast_shadows = item.settings.cast_shadows;
             self.frame.push(build_frame_with(
                 device,
@@ -521,13 +527,13 @@ impl ItemTypePlugin for RibbonPlugin {
             if gpu_data.index_count == 0 {
                 continue;
             }
+            gpu_data.model = anchored_model(ref_item.model, gpu_data.anchor, ctx.world_origin());
             queue.write_buffer(
                 &gpu_data._uniform_buf,
                 0,
-                bytemuck::bytes_of(&ref_item.model),
+                bytemuck::bytes_of(&gpu_data.model),
             );
             gpu_data.pick_id = ref_item.settings.pick_id;
-            gpu_data.model = ref_item.model;
             gpu_data.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             gpu_data.cast_shadows = ref_item.settings.cast_shadows;
             self.frame.push(build_frame_with(
@@ -549,7 +555,7 @@ impl ItemTypePlugin for RibbonPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         for entry in &self.frame {
             let gd = &entry.gpu;
             if gd.index_count == 0 && gd.edge_index_count == 0 {
@@ -675,7 +681,7 @@ impl ItemTypePlugin for RibbonPlugin {
                     ctx.viewport_size,
                     radius_px.max(8.0),
                 ) {
-                    let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                    let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
                     consider(toi, hit);
                 }
             }

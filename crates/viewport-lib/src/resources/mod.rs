@@ -58,7 +58,7 @@ pub(crate) mod scene_bindings;
 /// Core scene mesh pipelines (base LDR set plus HDR variants).
 pub(crate) mod scene_pipelines;
 pub(crate) mod scivis;
-/// Shadow-map GPU resources (cascade atlas, point-shadow cube array, debug viewer).
+/// Shadow-map GPU resources (cascade atlas, punctual shadow array, debug viewer).
 pub(crate) mod shadow;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -98,9 +98,9 @@ pub use self::mesh_sidecar::shade::{
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
-    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
-    PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT, ShadowCaster,
+    HDR_COLOR_FORMAT, INDIRECT_FRACTION_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
+    PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts,
+    SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT, ShadowCaster,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub use self::types::OutlineEdgeUniform;
@@ -108,6 +108,7 @@ pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;
+pub(crate) use self::types::CAMERA_EXPOSURE_OFFSET;
 #[allow(deprecated)]
 pub use self::types::ViewportGpuResources;
 // GlyphBaseMesh and OverlayUniform are re-exported for crate-internal use even
@@ -123,7 +124,7 @@ pub(crate) use self::types::{
     GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, MeshInstanceGpuData,
     OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
     OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
-    ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
+    ProjectedTetUniform, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
     SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{

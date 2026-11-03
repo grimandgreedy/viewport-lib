@@ -52,6 +52,7 @@ pub(crate) struct CullHdrContext {
     layout: crate::gpu::PipelineLayout,
     shader: crate::resources::pipeline_slot::LazyModule,
     shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
+    depth_format: crate::gpu::TextureFormat,
 }
 
 /// Solid slot index for `key`: bit 0 two-sided, bit 1 discard-free.
@@ -91,6 +92,7 @@ fn build_cull_hdr_features(
         &ctx.device,
         &ctx.layout,
         shader,
+        ctx.depth_format,
         &label,
         (i & 1 == 0).then_some(crate::gpu::Face::Back),
         None,
@@ -128,6 +130,7 @@ fn build_cull_oit_features(
         &ctx.device,
         &ctx.layout,
         ctx.shader.get(),
+        ctx.depth_format,
         two_sided,
         &label,
         &feats.constants(),
@@ -379,6 +382,7 @@ impl DeviceResources {
                 &format!("{label}_nodiscard"),
                 &crate::resources::builders::strip_discards(source),
             ),
+            depth_format: this.scene_depth_format(),
         };
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
@@ -428,6 +432,7 @@ impl DeviceResources {
             device: device.clone(),
             layout,
             shader: self.shared_module(device, "mesh_oit_shader", &source),
+            depth_format: self.scene_depth_format(),
         };
         let bindless = if self.bindless_textures() {
             let layout = self.object_bindless_layout(device, "oit_cull_bindless_pipeline_layout");
@@ -439,6 +444,7 @@ impl DeviceResources {
                     "mesh_oit_bindless_shader",
                     &crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source),
                 ),
+                depth_format: self.scene_depth_format(),
             })
         } else {
             None
@@ -530,9 +536,11 @@ impl DeviceResources {
             .texture_id
             .is_some_and(|id| self.content.textures.get(id).is_some());
 
+        // Drawn relative to the frame's world origin.
+        let origin = self.world_origin;
         let build = |i: usize| -> InstanceData {
             InstanceData {
-                model: item.transforms[i],
+                model: origin.rel_model(item.transforms[i]),
                 colour: item
                     .colours
                     .get(i)
@@ -925,6 +933,9 @@ pub(crate) mod instance_flags {
     pub(crate) const HAS_SIDECAR: u32 = 1 << 17;
     /// The mesh has a second UV set in its chunk's uv1 stream.
     pub(crate) const HAS_UV1: u32 = 1 << 18;
+    /// The normal map has a signed (snorm) format, so it samples in [-1, 1]
+    /// and the shader skips the [0, 1] remap.
+    pub(crate) const NORMAL_MAP_SIGNED: u32 = 1 << 19;
 
     /// `bit` when `on`, else 0.
     #[inline]

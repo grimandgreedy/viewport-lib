@@ -54,18 +54,12 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
     // back face. Small pitch is the top-down view (see the testkit's cameras).
     let cam = {
         let mut c = Camera::default();
-        c.center = glam::Vec3::ZERO;
-        c.distance = 6.0;
-        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::from_rotation_x(0.15));
         c
     };
     let render = |renderer: &mut ViewportRenderer, two_sided: bool, opacity: f32| {
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -117,7 +111,7 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
 fn two_sided_transparent_material_plugin_draws_back_faces_on_hdr_oit() {
     struct FlatPlugin;
     impl viewport_lib::MaterialPlugin for FlatPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "flat_oit_test"
         }
         fn wgsl_body(&self) -> String {
@@ -150,17 +144,11 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     let cam = {
         let mut c = Camera::default();
-        c.center = glam::Vec3::ZERO;
-        c.distance = 6.0;
-        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::from_rotation_x(0.15));
         c
     };
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

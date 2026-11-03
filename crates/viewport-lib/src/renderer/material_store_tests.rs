@@ -36,11 +36,7 @@ fn cube(renderer: &mut ViewportRenderer, device: &crate::gpu::Device) -> crate::
 /// block itself.
 fn frame(mesh: crate::MeshId, material: MaterialId, colour: Option<Colour>) -> FrameData {
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -50,7 +46,7 @@ fn frame(mesh: crate::MeshId, material: MaterialId, colour: Option<Colour>) -> F
             let mut item = SceneRenderItem::new(mesh, material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.3 - 1.3, 0.0, 0.0))
-                    .to_cols_array_2d();
+                    .into();
             item.settings.colour = colour;
             if i == 2 {
                 item.nan_colour = Some(Colour::linear_rgb(0.0, 1.0, 0.0));
@@ -222,7 +218,7 @@ fn foreground_items_on_cache_hit_frames_keep_the_scene_materials() {
         glam::Quat::IDENTITY,
         glam::Vec3::new(0.0, 0.0, 1.5),
     )
-    .to_cols_array_2d();
+    .into();
     f.scene.foreground_items = vec![fg];
 
     let first = renderer.render_offscreen(&device, &queue, &f, SIZE, SIZE);
@@ -234,7 +230,7 @@ fn foreground_items_on_cache_hit_frames_keep_the_scene_materials() {
 
 struct Flat;
 impl crate::MaterialPlugin for Flat {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "store_flat"
     }
     fn texture_count(&self) -> u32 {

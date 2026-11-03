@@ -15,20 +15,13 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
 
-struct ShadowAtlas {
-    cascade_vp:        array<mat4x4<f32>, 4>,
-    cascade_splits:    vec4<f32>,
-    cascade_count:     u32,
-    atlas_size:        f32,
-    shadow_filter:     u32,
-    pcss_light_radius: f32,
-    atlas_rects:       array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
@@ -56,7 +49,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -120,8 +113,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     // Section-plane clipping.
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         let plane = clip_planes.planes[i];
@@ -156,7 +148,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // Hemisphere ambient + directional lights via the shared helper. Ribbon is
     // already flipped per-face above, so the helper sees a forward-facing normal
     // and one-sided weighting is enough.
-    var shaded = apply_scene_lighting(n, base_colour.rgb, false, in.world_pos, lights_uniform);
+    let shaded_terms = scene_lighting_terms(n, false, in.world_pos, lights_uniform);
+    var shaded = base_colour.rgb * (shaded_terms.indirect + shaded_terms.direct);
+    scene_light_split(base_colour.rgb * shaded_terms.indirect, base_colour.rgb * shaded_terms.direct, vec3<f32>(0.0));
 
     // When `receive_shadows` is set, attenuate the lit result by the cascade
     // shadow map. Mirrors sprite_lit.wgsl's pattern: mix the fully-lit colour
@@ -176,11 +170,24 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                 lights_uniform.ground_colour,
                 lights_uniform.sky_colour,
                 up_weight,
-            ) * lights_uniform.hemisphere_intensity;
+            ) * (lights_uniform.hemisphere_intensity * camera.exposure);
             let ambient_rgb = base_colour.rgb * ambient;
             shaded = mix(ambient_rgb, shaded, shadow_factor);
+            scene_light_split(ambient_rgb, shaded - ambient_rgb, vec3<f32>(0.0));
         }
     }
 
     return vec4<f32>(shaded, alpha);
+}
+
+@fragment
+fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return fs_main_body(in, is_front);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut, @builtin(front_facing) is_front: bool) -> SceneFragment {
+    let colour = fs_main_body(in, is_front);
+    return scene_fragment(colour);
 }

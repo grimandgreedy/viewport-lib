@@ -1,4 +1,4 @@
-//! Box widget: draggable center, face, and rotation-arc handles for an oriented box.
+//! Box widget: draggable centre, face, and rotation-arc handles for an oriented box.
 
 use crate::Colour;
 use crate::geometry::maths::intersect::ray_plane_intersection;
@@ -15,8 +15,8 @@ use super::{
 /// Which handle on the box is being interacted with.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum BoxHandle {
-    /// Center: moves the whole box.
-    Center,
+    /// Centre: moves the whole box.
+    Centre,
     /// One of the six face handles. Index: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z (in local box space).
     Face(usize),
     /// One of three rotation arc grips. Index: 0=rotate around X, 1=around Y, 2=around Z.
@@ -44,8 +44,8 @@ enum BoxHandle {
 /// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct BoxWidget {
-    /// World-space center of the box.
-    pub center: glam::Vec3,
+    /// World-space centre of the box.
+    pub centre: glam::Vec3,
     /// Half-extents along the box's local X, Y, Z axes.
     pub half_extents: glam::Vec3,
     /// Orientation of the box (rotates the local axes).
@@ -64,9 +64,9 @@ pub struct BoxWidget {
 
 impl BoxWidget {
     /// Create a new axis-aligned box widget (rotation defaults to identity).
-    pub fn new(center: glam::Vec3, half_extents: glam::Vec3) -> Self {
+    pub fn new(centre: glam::Vec3, half_extents: glam::Vec3) -> Self {
         Self {
-            center,
+            centre,
             half_extents: half_extents.max(glam::Vec3::splat(0.01)),
             rotation: glam::Quat::IDENTITY,
             colour: Colour::linear(0.3, 0.8, 0.4, 1.0),
@@ -84,9 +84,9 @@ impl BoxWidget {
         self.active_handle.is_some()
     }
 
-    /// Returns `(center, half_extents, rotation)` for this oriented box.
+    /// Returns `(centre, half_extents, rotation)` for this oriented box.
     pub fn obb(&self) -> (glam::Vec3, glam::Vec3, glam::Quat) {
-        (self.center, self.half_extents, self.rotation)
+        (self.centre, self.half_extents, self.rotation)
     }
 
     /// World-space AABB that conservatively bounds the oriented box.
@@ -101,7 +101,7 @@ impl BoxWidget {
             for sy in [-1.0_f32, 1.0] {
                 for sz in [-1.0_f32, 1.0] {
                     let p =
-                        self.center + self.rotation * glam::Vec3::new(sx * h.x, sy * h.y, sz * h.z);
+                        self.centre + self.rotation * glam::Vec3::new(sx * h.x, sy * h.y, sz * h.z);
                     min = min.min(p);
                     max = max.max(p);
                 }
@@ -112,7 +112,7 @@ impl BoxWidget {
 
     /// Returns true if `point` lies inside the oriented box.
     pub fn contains_point(&self, point: glam::Vec3) -> bool {
-        let local = self.rotation.inverse() * (point - self.center);
+        let local = self.rotation.inverse() * (point - self.centre);
         local.x.abs() <= self.half_extents.x
             && local.y.abs() <= self.half_extents.y
             && local.z.abs() <= self.half_extents.z
@@ -139,7 +139,7 @@ impl BoxWidget {
                 // Camera-facing drag plane. For face handles the resize amount is
                 // derived by projecting movement onto the rotated face normal after
                 // the hit is found, not by constraining the drag plane to that axis.
-                let n = -glam::Vec3::from(ctx.camera.forward);
+                let n = -ctx.camera.forward();
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
                 self.drag_anchor_world = anchor;
@@ -153,7 +153,7 @@ impl BoxWidget {
                 self.hovered_handle = None;
             } else {
                 match handle {
-                    BoxHandle::Center => {
+                    BoxHandle::Centre => {
                         if let Some(hit) = ray_plane_intersection(
                             ro,
                             rd,
@@ -162,7 +162,7 @@ impl BoxWidget {
                         ) {
                             let delta = hit - self.drag_anchor_world;
                             if delta.length_squared() > 1e-10 {
-                                self.center += delta;
+                                self.centre += delta;
                                 self.drag_anchor_world = hit;
                                 updated = true;
                             }
@@ -183,8 +183,8 @@ impl BoxWidget {
                                 let new_he = (self.half_extents[axis] + proj).max(0.01);
                                 let he_delta = new_he - self.half_extents[axis];
                                 self.half_extents[axis] = new_he;
-                                // Keep the opposite face fixed: shift center along the rotated normal.
-                                self.center += world_normal * (he_delta * 0.5);
+                                // Keep the opposite face fixed: shift centre along the rotated normal.
+                                self.centre += world_normal * (he_delta * 0.5);
                                 self.drag_anchor_world = hit;
                                 updated = true;
                             }
@@ -192,14 +192,14 @@ impl BoxWidget {
                     }
                     BoxHandle::RotArc(axis_idx) => {
                         // Project ray onto the plane perpendicular to the rotation axis
-                        // through the box center. Measure the angle delta from the last
+                        // through the box centre. Measure the angle delta from the last
                         // drag anchor and apply it as an incremental rotation.
                         let axis = Self::world_rotation_axis(axis_idx);
-                        let plane_d = -axis.dot(self.center);
+                        let plane_d = -axis.dot(self.centre);
                         if let Some(plane_hit) = ray_plane_intersection(ro, rd, axis, plane_d) {
                             let start_dir =
-                                (self.drag_anchor_world - self.center).normalize_or_zero();
-                            let new_dir = (plane_hit - self.center).normalize_or_zero();
+                                (self.drag_anchor_world - self.centre).normalize_or_zero();
+                            let new_dir = (plane_hit - self.centre).normalize_or_zero();
                             if start_dir.length_squared() > 0.5 && new_dir.length_squared() > 0.5 {
                                 let cos_a = start_dir.dot(new_dir).clamp(-1.0, 1.0);
                                 let cross = start_dir.cross(new_dir);
@@ -210,7 +210,7 @@ impl BoxWidget {
                                     self.rotation = (delta_rot * self.rotation).normalize();
                                     // Update anchor to the new position on the arc.
                                     self.drag_anchor_world =
-                                        self.center + new_dir * self.arc_radius();
+                                        self.centre + new_dir * self.arc_radius();
                                     updated = true;
                                 }
                             }
@@ -231,7 +231,7 @@ impl BoxWidget {
     ///
     /// `id` is the pick ID (0 = not pickable).
     pub fn wireframe_item(&self, id: u64) -> PolylineItem {
-        let c = self.center;
+        let c = self.centre;
         let h = self.half_extents;
         let r = self.rotation;
 
@@ -276,11 +276,11 @@ impl BoxWidget {
 
     /// Build a `PolylineItem` containing three rotation arcs (one per world axis).
     ///
-    /// Each arc is a full circle at radius `arc_radius()` around the box center.
+    /// Each arc is a full circle at radius `arc_radius()` around the box centre.
     /// Arc colours: X = red, Y = green, Z = blue (semi-transparent).
     pub fn rotation_arcs_item(&self, id: u64) -> PolylineItem {
         const STEPS: usize = 48;
-        let c = self.center;
+        let c = self.centre;
         let r = self.arc_radius();
         let arc_colours = [
             [0.9_f32, 0.2, 0.2, 0.7], // X: red
@@ -326,7 +326,7 @@ impl BoxWidget {
     /// Push the visual built from these into the frame; see [`HandleMarkers`].
     pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         const ALL: [BoxHandle; 10] = [
-            BoxHandle::Center,
+            BoxHandle::Centre,
             BoxHandle::Face(0),
             BoxHandle::Face(1),
             BoxHandle::Face(2),
@@ -375,12 +375,12 @@ impl BoxWidget {
     /// World position of a handle.
     fn handle_pos(&self, handle: BoxHandle) -> glam::Vec3 {
         match handle {
-            BoxHandle::Center => self.center,
+            BoxHandle::Centre => self.centre,
             BoxHandle::Face(i) => {
-                self.center
+                self.centre
                     + self.rotation * (Self::local_face_normal(i) * self.half_extents[i / 2])
             }
-            BoxHandle::RotArc(i) => self.center + self.arc_grip_offset(i),
+            BoxHandle::RotArc(i) => self.centre + self.arc_grip_offset(i),
         }
     }
 
@@ -410,7 +410,7 @@ impl BoxWidget {
         self.half_extents.length() * 1.4 + 0.1
     }
 
-    /// World-space offset from center to the grip sphere for rotation arc `i`.
+    /// World-space offset from centre to the grip sphere for rotation arc `i`.
     fn arc_grip_offset(&self, i: usize) -> glam::Vec3 {
         let r = self.arc_radius();
         // Each arc's grip is positioned along a world axis perpendicular to the rotation axis,
@@ -434,7 +434,7 @@ impl BoxWidget {
         );
 
         let all_handles = [
-            BoxHandle::Center,
+            BoxHandle::Centre,
             BoxHandle::Face(0),
             BoxHandle::Face(1),
             BoxHandle::Face(2),
@@ -476,9 +476,9 @@ mod tests {
     use glam::{Quat, Vec2, Vec3};
 
     #[test]
-    fn new_sets_center_extents_and_identity_rotation() {
+    fn new_sets_centre_extents_and_identity_rotation() {
         let w = BoxWidget::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.5, 1.0, 1.5));
-        assert_eq!(w.center, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(w.centre, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(w.half_extents, Vec3::new(0.5, 1.0, 1.5));
         assert_eq!(w.rotation, Quat::IDENTITY);
         assert!(!w.is_active());
@@ -496,13 +496,13 @@ mod tests {
     }
 
     #[test]
-    fn axis_aligned_aabb_is_center_plus_minus_extents() {
+    fn axis_aligned_aabb_is_centre_plus_minus_extents() {
         let w = BoxWidget::new(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 2.0, 3.0));
         let bb = w.aabb();
         assert!((bb.min - Vec3::new(1.0, -2.0, -3.0)).length() < 1e-5);
         assert!((bb.max - Vec3::new(3.0, 2.0, 3.0)).length() < 1e-5);
         let (c, h, _) = w.obb();
-        assert_eq!(c, w.center);
+        assert_eq!(c, w.centre);
         assert_eq!(h, w.half_extents);
     }
 
@@ -516,11 +516,11 @@ mod tests {
     }
 
     #[test]
-    fn drag_center_handle_moves_the_box() {
+    fn drag_centre_handle_moves_the_box() {
         let ctx = ctx_at(CENTRE);
-        let center = point_on_cursor_ray(&ctx, 14.0);
+        let centre = point_on_cursor_ray(&ctx, 14.0);
         // Small box so only the centre handle sits under the cursor, not a face handle.
-        let mut w = BoxWidget::new(center, Vec3::new(0.5, 0.5, 0.5));
+        let mut w = BoxWidget::new(centre, Vec3::new(0.5, 0.5, 0.5));
         w.update(&ctx);
         let mut begin = ctx.clone();
         begin.drag_started = true;
@@ -529,7 +529,7 @@ mod tests {
         let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
         drag.dragging = true;
         w.update(&drag);
-        assert_ne!(w.center, center, "the box centre should move");
+        assert_ne!(w.centre, centre, "the box centre should move");
         let mut rel = drag.clone();
         rel.released = true;
         w.update(&rel);

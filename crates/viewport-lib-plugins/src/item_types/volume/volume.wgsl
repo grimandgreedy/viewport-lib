@@ -96,7 +96,7 @@ fn clip_ray_plane(
 }
 
 // Clip ray against an oriented box in world space.
-// Box is defined by center + half_extents + orientation columns (world-space local axes).
+// Box is defined by centre + half_extents + orientation columns (world-space local axes).
 // Transforms the ray and box to box-local space, clips against [-half, +half] AABB.
 // Returns (t_near, t_far) with t_near > t_far indicating no intersection.
 fn clip_ray_box(
@@ -107,7 +107,7 @@ fn clip_ray_box(
     t_far_in: f32,
 ) -> vec2<f32> {
     // Transform ray to box-local space.
-    let d = ray_origin - e.center;
+    let d = ray_origin - e.centre;
     let local_origin = vec3<f32>(
         dot(d, e.col0),
         dot(d, e.col1),
@@ -155,7 +155,7 @@ fn clip_ray_sphere(
     t_near_in: f32,
     t_far_in: f32,
 ) -> vec2<f32> {
-    let oc = ray_origin - e.center;
+    let oc = ray_origin - e.centre;
     let b  = dot(oc, ray_dir);
     let c  = dot(oc, oc) - e.radius * e.radius;
     let discriminant = b * b - c;
@@ -170,7 +170,7 @@ fn clip_ray_sphere(
 }
 
 // Clip ray against a finite cylinder (world space).
-// Cylinder axis: e.col0 (unit), center: e.center, radius: e.radius,
+// Cylinder axis: e.col0 (unit), centre: e.centre, radius: e.radius,
 // half-length: e.half_extents.x.
 // Returns (t_near, t_far) with t_near > t_far indicating no intersection.
 fn clip_ray_cylinder(
@@ -182,7 +182,7 @@ fn clip_ray_cylinder(
 ) -> vec2<f32> {
     let axis     = e.col0;
     let half_len = e.half_extents.x;
-    let oc       = ray_origin - e.center;
+    let oc       = ray_origin - e.centre;
 
     // Components perpendicular to the cylinder axis.
     let d_dot_a  = dot(ray_dir, axis);
@@ -225,8 +225,7 @@ fn clip_ray_cylinder(
     return vec2<f32>(t_near, t_far);
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOutput) -> vec4<f32> {
     // Transform ray to model space (unit cube [0,1]^3).
     let eye_model = (volume.inv_model * vec4<f32>(camera.eye_pos, 1.0)).xyz;
     let frag_model = (volume.inv_model * vec4<f32>(in.world_pos, 1.0)).xyz;
@@ -423,4 +422,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(colour_accum, alpha_accum);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOutput) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

@@ -1043,7 +1043,7 @@ fn row_anim(
     );
     x5 += 100.0 + gap;
 
-    // Center border on a circle.
+    // Centre border on a circle.
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Circle,
@@ -1809,12 +1809,11 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
             }
         }
     }
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 1.57, 0.0),
-        distance: 9.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 1.57, 0.0),
+        9.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1901,8 +1900,6 @@ pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

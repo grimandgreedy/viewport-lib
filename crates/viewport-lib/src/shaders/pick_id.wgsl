@@ -12,12 +12,21 @@ struct Camera {
     _pad: f32,
 };
 
+// Section-view clip planes, laid out as the colour pass's binding 4.
+struct ClipPlanes {
+    planes: array<vec4<f32>, 6>,
+    count: u32,
+    _pad0: u32,
+    viewport_width: f32,
+    viewport_height: f32,
+};
+
 struct ClipVolumeEntry {
     volume_type: u32,
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -37,8 +46,9 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-// Per-instance pick data: model matrix, object_id and the deform table the
-// item's colour draw reads (a word of the bound sidecar chunk, 0 for none).
+// Per-instance pick data: model matrix, object_id, the deform table the
+// item's colour draw reads (a word of the bound sidecar chunk, 0 for none),
+// flags and the instance index a mesh-instance batch reports.
 // Stored in a separate compact storage buffer, not the colour pass's records.
 struct PickInstance {
     model_c0: vec4<f32>,
@@ -47,17 +57,36 @@ struct PickInstance {
     model_c3: vec4<f32>,
     object_id: u32,
     deform_table: u32,
-    _pad1: u32,
-    _pad2: u32,
+    // PICK_IGNORE_CLIP, PICK_WRITE_INSTANCE.
+    flags: u32,
+    // Written to the primitive channel when PICK_WRITE_INSTANCE is set.
+    instance_index: u32,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
+@group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 @group(1) @binding(0) var<storage, read> pick_instances: array<PickInstance>;
 // The sidecar chunk holding the drawn mesh's record, for its deform data.
 @group(1) @binding(1) var<storage, read> sidecar_pool: array<u32>;
 
 // #include "helpers/clip_volume_test.wgsl"
+
+// PickInstance.flags bits.
+const PICK_IGNORE_CLIP: u32 = 1u;
+const PICK_WRITE_INSTANCE: u32 = 2u;
+
+// The colour pass's section-view test: false when `p` is on the clipped side
+// of any clip plane or outside any clip volume.
+fn pick_clip_test(p: vec3<f32>) -> bool {
+    for (var i = 0u; i < clip_planes.count; i = i + 1u) {
+        let plane = clip_planes.planes[i];
+        if dot(p, plane.xyz) + plane.w < 0.0 {
+            return false;
+        }
+    }
+    return clip_volume_test(p);
+}
 
 // Per-vertex deformation hook contract, so a mesh is picked where its
 // deformers draw it, and a deformer's `keep` removes surface here too.
@@ -76,6 +105,8 @@ struct VertexOut {
     @location(1) world_pos: vec3<f32>,
     // Kept-surface value from deformers that define `keep`; see deform.wgsl.
     // <viewport-deform-keep> @location(2) deform_keep: f32,
+    @location(3) @interpolate(flat) flags: u32,
+    @location(4) @interpolate(flat) instance_index: u32,
 };
 
 @vertex
@@ -83,7 +114,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = pick_instances[idx];
     let model = mat4x4<f32>(inst.model_c0, inst.model_c1, inst.model_c2, inst.model_c3);
     deform_table = inst.deform_table;
-    var dv = DeformVertex(in.position, vec3<f32>(0.0, 0.0, 1.0), in.vertex_index);
+    var dv = DeformVertex(in.position, vec3<f32>(0.0, 0.0, 1.0), in.vertex_index, vec4<f32>(1.0, 0.0, 0.0, 1.0));
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_bound_flags(), 0u);
     dv = viewport_deform_object_space(dv, dctx);
     dv.position = (model * vec4<f32>(dv.position, 1.0)).xyz;
@@ -94,6 +125,8 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.clip_pos  = camera.view_proj * world;
     out.object_id = inst.object_id;
     out.world_pos = world.xyz;
+    out.flags = inst.flags;
+    out.instance_index = inst.instance_index;
     return out;
 }
 
@@ -110,11 +143,14 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
-    if !clip_volume_test(in.world_pos) { discard; }
+    if (in.flags & PICK_IGNORE_CLIP) == 0u && !pick_clip_test(in.world_pos) { discard; }
     // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     var out: FragOut;
     out.object_id = in.object_id;
     out.primitive_id = 0u;
+    if (in.flags & PICK_WRITE_INSTANCE) != 0u {
+        out.primitive_id = in.instance_index;
+    }
     // clip_pos.z in the fragment stage is the depth buffer value in [0, 1].
     out.depth = in.clip_pos.z;
     return out;

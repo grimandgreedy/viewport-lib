@@ -129,6 +129,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -142,10 +143,10 @@ impl DeviceResources {
     }
 
     /// Ensure the depth-stencil compatible upscale pipeline exists for use inside
-    /// eframe's paint render pass, which always has a `Depth24PlusStencil8` attachment.
+    /// eframe's paint render pass, which has a scene depth-stencil attachment.
     ///
     /// Identical to [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) except
-    /// `depth_stencil` is set to read-only `Depth24PlusStencil8` so the pipeline is
+    /// `depth_stencil` is set to the read-only scene depth format so the pipeline is
     /// compatible with any render pass that carries that depth attachment.
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) must be called first.
     pub(crate) fn ensure_dyn_res_ds_pipeline(&mut self, device: &crate::gpu::Device) {
@@ -192,6 +193,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -240,7 +242,7 @@ impl DeviceResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            format: self.scene_depth_format(),
             // TEXTURE_BINDING so the HiZ occlusion prev-depth copy can sample it.
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
                 | crate::gpu::TextureUsages::TEXTURE_BINDING,

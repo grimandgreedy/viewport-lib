@@ -15,8 +15,9 @@ use super::*;
 use crate::gpu::util::DeviceExt;
 
 /// Linear HDR radiance read back from a capture: row-major `width * height`
-/// RGBA texels, four `f32` channels each.
-#[derive(Clone, Debug)]
+/// RGBA texels, four `f32` channels each. Zero by zero and empty when the
+/// device was lost.
+#[derive(Clone, Debug, Default)]
 pub struct CapturedHdr {
     /// Capture width in pixels.
     pub width: u32,
@@ -65,9 +66,10 @@ impl ViewportRenderer {
     /// face of an environment probe.
     ///
     /// `frame` supplies the scene, lighting, and environment. Its camera,
-    /// viewport size, pixels-per-point, post-process toggle, and SSAA factor are
-    /// overridden for the capture and restored before returning, so the caller's
-    /// `FrameData` is left unchanged. The HDR path is forced on regardless of the
+    /// viewport size, pixels-per-point, post-process toggle, SSAA factor and
+    /// exposure are overridden for the capture and restored before returning,
+    /// so the caller's `FrameData` is left unchanged. The exposure is forced to
+    /// passthrough, so the capture holds absolute radiance. The HDR path is forced on regardless of the
     /// caller's setting, because that is what raises the shader's `lit_clamp` to
     /// the `f16` maximum and lets radiance above 1.0 reach the `Rgba16Float`
     /// target this reads back.
@@ -79,6 +81,9 @@ impl ViewportRenderer {
         camera: RenderCamera,
         size: u32,
     ) -> CapturedHdr {
+        if self.device_lost_now() {
+            return CapturedHdr::default();
+        }
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let size = size.max(1);
@@ -126,6 +131,7 @@ impl ViewportRenderer {
         let saved_ppp = frame.camera.pixels_per_point;
         let saved_display_mode = frame.effects.display.mode;
         let saved_ssaa = frame.effects.post_process.ssaa_factor;
+        let saved_exposure = frame.effects.display.exposure;
         let saved_scale = self.current_render_scale;
 
         // Mark this an auxiliary render for its duration: it reads the resident
@@ -149,6 +155,9 @@ impl ViewportRenderer {
         frame.effects.display.mode = crate::renderer::types::PipelineMode::Hdr;
         frame.effects.post_process.ssaa_factor = 1;
         self.current_render_scale = 1.0;
+        // A capture holds absolute radiance whatever the frame's exposure, so
+        // a probe lights a scene the same under any camera.
+        frame.effects.display.exposure = crate::ExposureSettings::passthrough();
 
         // A throwaway output view for the tone-map pass, which we do not read.
         let target_format = self.resources.target_format;
@@ -188,6 +197,7 @@ impl ViewportRenderer {
         frame.camera.pixels_per_point = saved_ppp;
         frame.effects.display.mode = saved_display_mode;
         frame.effects.post_process.ssaa_factor = saved_ssaa;
+        frame.effects.display.exposure = saved_exposure;
         self.current_render_scale = saved_scale;
         self.render_mode = saved_render_mode;
         self.last_stats = saved_last_stats;
@@ -272,6 +282,9 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> CapturedHdr {
+        if self.device_lost_now() {
+            return CapturedHdr::default();
+        }
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let face_size = face_size.max(1);
@@ -279,9 +292,10 @@ impl ViewportRenderer {
         let eq_w = eq_h * 2;
         let eye = glam::Vec3::from(position);
 
-        let near = frame.camera.render_camera.near.max(1e-3);
-        let far = frame.camera.render_camera.far.max(near * 2.0);
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+        let near = frame.camera.render_camera.depth_range().0.max(1e-3);
+        let far = frame.camera.render_camera.depth_range().1.max(near * 2.0);
+        // Reversed depth: near and far swapped.
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, far, near);
 
         // Six axis-aligned faces. Up vectors avoid being parallel to the view
         // direction; the exact choice is irrelevant to correctness because the
@@ -299,15 +313,7 @@ impl ViewportRenderer {
         // (face pixels, forward direction, view_proj) per face.
         let mut captured: Vec<(CapturedHdr, glam::Vec3, glam::Mat4)> = Vec::with_capacity(6);
         for (dir, up) in faces {
-            let mut cam = RenderCamera::default();
-            cam.view = glam::Mat4::look_at_rh(eye, eye + dir, up);
-            cam.projection = proj;
-            cam.eye_position = position;
-            cam.forward = dir.to_array();
-            cam.near = near;
-            cam.far = far;
-            cam.fov = std::f32::consts::FRAC_PI_2;
-            cam.aspect = 1.0;
+            let cam = RenderCamera::from_matrices(glam::Mat4::look_at_rh(eye, eye + dir, up), proj);
             let view_proj = cam.view_proj();
             let face = self.capture_hdr(device, queue, frame, cam, face_size);
             captured.push((face, dir, view_proj));
@@ -421,9 +427,10 @@ impl ViewportRenderer {
         let eq_w = eq_h * 2;
         let eye = glam::Vec3::from(position);
 
-        let near = frame.camera.render_camera.near.max(1e-3);
-        let far = frame.camera.render_camera.far.max(near * 2.0);
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+        let near = frame.camera.render_camera.depth_range().0.max(1e-3);
+        let far = frame.camera.render_camera.depth_range().1.max(near * 2.0);
+        // Reversed depth: near and far swapped.
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, far, near);
 
         // Same six axis-aligned faces and up vectors as the CPU resolve, so the
         // per-face projection convention matches exactly.
@@ -442,15 +449,7 @@ impl ViewportRenderer {
         let mut uniform = ResolveUniform::zeroed();
         uniform.eye = [eye.x, eye.y, eye.z, 0.0];
         for (i, (dir, up)) in faces.into_iter().enumerate() {
-            let mut cam = RenderCamera::default();
-            cam.view = glam::Mat4::look_at_rh(eye, eye + dir, up);
-            cam.projection = proj;
-            cam.eye_position = position;
-            cam.forward = dir.to_array();
-            cam.near = near;
-            cam.far = far;
-            cam.fov = std::f32::consts::FRAC_PI_2;
-            cam.aspect = 1.0;
+            let cam = RenderCamera::from_matrices(glam::Mat4::look_at_rh(eye, eye + dir, up), proj);
             uniform.view_proj[i] = cam.view_proj().to_cols_array_2d();
             uniform.forward[i] = [dir.x, dir.y, dir.z, 0.0];
             self.copy_capture_face(device, queue, frame, cam, face_size, &face_array, i as u32);
@@ -475,6 +474,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         capture: &CapturedHdrGpu,
     ) -> CapturedHdr {
+        if self.device_lost_now() {
+            return CapturedHdr::default();
+        }
         let rgba = Self::readback_rgba16f(
             device,
             queue,
@@ -561,7 +563,10 @@ impl ViewportRenderer {
                     panorama.width,
                     panorama.height,
                 );
-                crate::resources::LightProbe { position, sh }
+                crate::resources::LightProbe {
+                    position: glam::Vec3::from(position).as_dvec3(),
+                    sh,
+                }
             })
             .collect();
         crate::resources::LightProbeSet::new(probes)
@@ -585,6 +590,9 @@ impl ViewportRenderer {
         let gpu = volume.to_gpu();
         self.replace_indirect_light_buffer(device, Some(&gpu));
         self.resources.scene_tier.lighting.has_probe_volume = true;
+        self.resources.scene_tier.lighting.probe_volume_min = Some(volume.min);
+        // The next prepare writes the corner relative to the world origin.
+        self.resources.scene_tier.ibl.zones_dirty = true;
     }
 
     /// Remove the uploaded probe volume. Objects that opted into it fall back to
@@ -595,6 +603,7 @@ impl ViewportRenderer {
         }
         self.replace_indirect_light_buffer(device, None);
         self.resources.scene_tier.lighting.has_probe_volume = false;
+        self.resources.scene_tier.lighting.probe_volume_min = None;
     }
 
     /// Swap in an indirect-light buffer holding `volume`. The probe volume
@@ -697,6 +706,7 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<crate::resources::EnvironmentZone> {
+        self.resources.require_live()?;
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let zones = self.capture_reflection_probes(
@@ -728,13 +738,14 @@ impl ViewportRenderer {
         face_size: u32,
         equirect_height: u32,
     ) -> crate::error::ViewportResult<Vec<crate::resources::EnvironmentZone>> {
+        self.resources.require_live()?;
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let mut zones = Vec::with_capacity(probes.len());
         for &(bounds, fade_distance) in probes {
-            let center = bounds.center().to_array();
+            let centre = bounds.centre().to_array();
             let panorama =
-                self.capture_equirect(device, queue, frame, center, face_size, equirect_height);
+                self.capture_equirect(device, queue, frame, centre, face_size, equirect_height);
             // Resources-level upload does not rebuild bind groups; we rebuild once
             // after the whole batch below.
             let environment = crate::resources::material::environment::upload_environment(
@@ -744,12 +755,14 @@ impl ViewportRenderer {
                 crate::TextureData::hdr(panorama.width, panorama.height, panorama.rgba),
                 crate::resources::EnvironmentOptions::default(),
             )?;
-            zones.push(crate::resources::EnvironmentZone {
-                bounds,
+            // World-aligned and holding absolute radiance: no rotation and a
+            // multiplier of 1.0, whatever the lighting environment uses.
+            zones.push(crate::resources::EnvironmentZone::probe(
+                bounds.centre(),
+                bounds.half_extents(),
                 environment,
                 fade_distance,
-                parallax: true,
-            });
+            ));
         }
         self.rebuild_camera_bind_groups(device);
         Ok(zones)
@@ -842,7 +855,7 @@ impl ViewportRenderer {
 fn sample_face_bilinear(face: &CapturedHdr, u: f32, v: f32) -> [f32; 4] {
     let w = face.width as usize;
     let h = face.height as usize;
-    // Map to texel-center space and clamp.
+    // Map to texel-centre space and clamp.
     let fx = (u.clamp(0.0, 1.0) * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
     let fy = (v.clamp(0.0, 1.0) * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
     let x0 = fx.floor() as usize;
@@ -1329,23 +1342,14 @@ mod tests {
                 mesh_id: mesh,
                 ..Default::default()
             };
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.settings.visibility_mask = 0b01;
             items.push(item);
         }
 
-        let cam = Camera {
-            center: glam::Vec3::ZERO,
-            distance: 18.0,
-            ..Camera::default()
-        };
+        let cam = Camera::orbit(glam::DVec3::ZERO, 18.0, Camera::default().orientation());
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
         frame.camera.viewport_index = vp.0;
         frame.viewport.show_grid = false;
@@ -1433,17 +1437,9 @@ mod tests {
             .unwrap();
 
         let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
-            let cam = Camera {
-                center: glam::Vec3::ZERO,
-                distance: 5.0,
-                ..Camera::default()
-            };
+            let cam = Camera::orbit(glam::DVec3::ZERO, 5.0, Camera::default().orientation());
             let mut frame = FrameData::default();
-            frame.camera.render_camera = {
-                let mut rc = RenderCamera::from_camera(&cam);
-                rc.aspect = 1.0;
-                rc
-            };
+            frame.camera.render_camera = RenderCamera::from_camera(&cam);
             frame.camera.viewport_size = [64.0, 64.0];
             frame.camera.cull_mask = cull_mask;
             frame.viewport.show_grid = false;
@@ -1658,7 +1654,7 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let calls = std::sync::Arc::new(PluginCalls::default());
-        renderer
+        let first = renderer
             .with_item_type_plugin(
                 &device,
                 Box::new(MockPlugin {
@@ -1703,7 +1699,8 @@ mod tests {
             "a plugin without draws_ldr is not painted on the LDR path"
         );
 
-        // Re-register as an opted-in plugin: paint now runs.
+        // Replace it with an opted-in plugin: paint now runs.
+        renderer.remove_item_type_plugin(first).unwrap();
         renderer
             .with_item_type_plugin(
                 &device,

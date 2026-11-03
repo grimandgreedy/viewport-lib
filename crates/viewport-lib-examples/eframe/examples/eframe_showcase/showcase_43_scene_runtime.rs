@@ -2,7 +2,7 @@
 //!
 //! Two demos showing the ViewportRuntime layer.
 //!
-//! Orbit: five bodies orbit a common center driven by an external RuntimePlugin
+//! Orbit: five bodies orbit a common centre driven by an external RuntimePlugin
 //! that writes transforms via TransformWriteback. All other phases are empty.
 //!
 //! Simulation: five spheres fall and bounce under gravity (PhysicsLitePlugin);
@@ -291,23 +291,19 @@ pub(crate) fn update_rt_demo(app: &mut App, dt: f32) {
         match app.rt_state.demo {
             RuntimeDemo::Orbit => {
                 populate_orbit(app);
-                app.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
+                app.camera = Camera::orbit(
+                    glam::DVec3::ZERO,
+                    14.0,
+                    glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+                );
             }
             RuntimeDemo::Simulation => {
                 populate_simulation(app);
-                app.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 4.5),
-                    distance: 20.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
+                app.camera = Camera::orbit(
+                    glam::DVec3::new(0.0, 0.0, 4.5),
+                    20.0,
+                    glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+                );
             }
         }
         app.rt_state.active_demo = app.rt_state.demo;
@@ -361,7 +357,7 @@ fn step_simulation(app: &mut App, dt: f32) {
             .read::<vpl::runtime::CameraFollowTarget>()
             .next()
         {
-            app.camera.center = target.0;
+            app.camera.set_orbit_centre(target.0.as_dvec3());
         }
     }
 }
@@ -382,7 +378,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
         for (node_id, _) in &node_ids {
             let node_id = *node_id;
             let (material, world) = match app.rt_state.scene.node(node_id) {
-                Some(n) => (n.material().clone(), n.world_transform()),
+                Some(n) => (n.material().clone(), n.world_transform().to_mat4()),
                 None => continue,
             };
             let model = if let Some(t) = app
@@ -397,7 +393,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
             };
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = model.to_cols_array_2d();
+            item.model = model.into();
             item.material = material;
             items.push(item);
         }
@@ -442,7 +438,7 @@ pub(crate) fn controls_rt_demo(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn controls_orbit(app: &mut App, ui: &mut egui::Ui) {
-    ui.label("Five bodies orbit a common center, driven by an external RuntimePlugin.");
+    ui.label("Five bodies orbit a common centre, driven by an external RuntimePlugin.");
     ui.add_space(6.0);
 
     ui.label("Simulation fps:");
@@ -581,7 +577,7 @@ fn controls_simulation(app: &mut App, ui: &mut egui::Ui) {
     ui.label("What this shows:");
     ui.label("- PhysicsLitePlugin: gravity, velocity integration, bounded reflection.");
     ui.label("- AnimationPlugin: keyframed looping path.");
-    ui.label("- CameraFollow: orbit camera center tracks a physics body.");
+    ui.label("- CameraFollow: orbit camera centre tracks a physics body.");
     ui.label("- FixedTimestep + interpolation: smooth rendering at any display fps.");
 }
 
@@ -598,12 +594,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_rt_demo_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        14.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -681,8 +676,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

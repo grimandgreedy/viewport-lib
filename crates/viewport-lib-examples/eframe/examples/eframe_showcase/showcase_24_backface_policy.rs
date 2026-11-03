@@ -2,7 +2,7 @@
 //!
 //! Four rows of shapes demonstrate every [`BackfacePolicy`] variant:
 //! - **Row 1 : Toruses** clipped through the ring.
-//! - **Row 2 : Spheres** clipped through the center.
+//! - **Row 2 : Spheres** clipped through the centre.
 //! - **Row 3 : Cones** clipped through the middle.
 //! - **Row 4 : Springs** clipped through the coils.
 //! - **Row 5 : Spheres** (normal winding) -- zoom inside to see back faces with each policy.
@@ -381,14 +381,13 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_sa_scene(renderer);
-    app.camera = vpl::Camera {
-        // Pull back so both the front spheres and the background
-        // SSAA stress-grid are fully visible.
-        center: glam::Vec3::new(0.0, 0.0, -1.5),
-        distance: 16.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    // Pull back so both the front spheres and the background
+    // SSAA stress-grid are fully visible.
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, -1.5),
+        16.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -459,8 +458,6 @@ pub(crate) fn overlay(
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

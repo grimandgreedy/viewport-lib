@@ -11,7 +11,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -101,16 +100,6 @@ impl ItemTypePlugin for TensorFieldPlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.layouts = Some(TensorFieldResources::new(device));
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -139,7 +128,8 @@ impl ItemTypePlugin for TensorFieldPlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let built = build_tensor_field(device, queue, &binds, item, 0);
+            let built =
+                build_tensor_field(device, queue, &binds, item, 0, Some(ctx.world_origin()));
             let draw = built.draw();
             let pick_bind_group = (draw.pick_id != PickId::NONE)
                 .then(|| gpu.pick_bind_group(device, queue, draw.pick_id, built.uniform_buf()));
@@ -166,7 +156,8 @@ impl ItemTypePlugin for TensorFieldPlugin {
             let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
-            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&ref_item.model));
+            let model = crate::item_types::origin::rel_model(ref_item.model, ctx.world_origin());
+            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&model));
             let mut draw = entry.draw();
             // The pick id comes from the reference, not from the upload: the
             // same stored field can be drawn twice under two ids.
@@ -191,7 +182,7 @@ impl ItemTypePlugin for TensorFieldPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         let mut bound = false;
         for entry in &self.frame {
             if entry.draw.instance_count == 0 {
@@ -336,7 +327,7 @@ impl ItemTypePlugin for TensorFieldPlugin {
             ) else {
                 continue;
             };
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if wants_instance {
                 if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                     hit.sub_object = Some(SubObjectRef::Instance(idx));
@@ -493,7 +484,7 @@ impl TensorFieldPlugin {
             .layouts
             .get_or_insert_with(|| TensorFieldResources::new(device));
         let binds = resolve_bindings(resources, layouts, item);
-        build_tensor_field(device, queue, &binds, item, capacity)
+        build_tensor_field(device, queue, &binds, item, capacity, None)
     }
 
     /// Pre-upload a tensor field and return its handle.
@@ -625,7 +616,7 @@ impl TensorFieldPlugin {
         let binds = resolve_bindings(resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_tensor_field(&device, &queue, &binds, &item, 0))
+        jobs.submit_cpu(move || build_tensor_field(&device, &queue, &binds, &item, 0, None))
     }
 
     /// Store the field a finished job built and hand back its handle.

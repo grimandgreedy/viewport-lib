@@ -573,12 +573,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_volume_scene(renderer);
     app.ensure_surface_slice_mesh(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        12.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -638,8 +637,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

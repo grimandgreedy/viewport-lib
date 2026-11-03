@@ -57,9 +57,7 @@ fn solid_rgba(w: u32, h: u32, colour: [u8; 4]) -> Vec<u8> {
 /// below cover a good part of it.
 fn frame_from(orientation: glam::Quat) -> FrameData {
     let mut cam = Camera::default();
-    cam.orientation = orientation;
-    cam.center = glam::Vec3::ZERO;
-    cam.distance = 6.0;
+    cam.set_orbit(glam::DVec3::ZERO, 6.0, orientation);
     cam.aspect = W as f32 / H as f32;
     FrameData::new(
         CameraFrame::new(RenderCamera::from_camera(&cam), [W as f32, H as f32]),

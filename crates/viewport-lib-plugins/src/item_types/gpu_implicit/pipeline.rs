@@ -27,6 +27,7 @@ pub(super) struct GpuImplicitRecipe {
     mask_shader: viewport_lib::plugin_api::LazyModule,
     pick_shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The render pipeline in both formats, the two masks and the pick pipeline.
@@ -55,9 +56,11 @@ fn build(r: &GpuImplicitRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == COLOUR_HDR,
         ),
@@ -160,10 +163,7 @@ impl GpuImplicitGpu {
         let shader = resources.lazy_module(
             device,
             "implicit_shader",
-            lit_shader(
-                &[shared_wgsl::SHARED_CLIP_WGSL],
-                wgsl_source!("implicit"),
-            ),
+            lit_shader(&[shared_wgsl::SHARED_CLIP_WGSL], wgsl_source!("implicit")),
         );
         // Group 0 reuses the shared camera layout (CameraUniform + LightsUniform).
         let layout = builders::standard_scene_layout(
@@ -206,6 +206,7 @@ impl GpuImplicitGpu {
                 mask_shader,
                 pick_shader,
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );
@@ -224,12 +225,14 @@ impl GpuImplicitGpu {
         self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
-    /// Build the per-item uniform + bind group.
+    /// Build the per-item uniform + bind group, with the primitives placed
+    /// relative to `origin`.
     pub(super) fn upload_item(
         &self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         item: &GpuImplicitItem,
+        origin: glam::DVec3,
     ) -> GpuImplicitFrame {
         use gpu::util::DeviceExt as _;
 
@@ -252,7 +255,7 @@ impl GpuImplicitGpu {
             primitives: [ImplicitPrimitive::zeroed(); 16],
         };
         for (i, prim) in item.primitives.iter().take(16).enumerate() {
-            raw.primitives[i] = *prim;
+            raw.primitives[i] = relative_primitive(prim, origin);
         }
 
         let uniform_buf = device.create_buffer_init(&gpu::util::BufferInitDescriptor {
@@ -297,4 +300,32 @@ impl GpuImplicitGpu {
             settings: item.settings,
         }
     }
+}
+
+/// `prim` with its positions moved relative to `origin`, subtracted in f64.
+/// Sizes, normals and blend radii are unchanged.
+fn relative_primitive(prim: &ImplicitPrimitive, origin: glam::DVec3) -> ImplicitPrimitive {
+    use crate::item_types::origin::rel_point;
+    if origin == glam::DVec3::ZERO {
+        return *prim;
+    }
+    let mut out = *prim;
+    let p = prim.params;
+    let at = |i: usize| rel_point([p[i], p[i + 1], p[i + 2]], origin);
+    match prim.kind {
+        // Sphere and box: the centre.
+        1 | 2 => out.params[..3].copy_from_slice(&at(0)),
+        // Plane `dot(n, x) + d`: only `d` moves.
+        3 => {
+            let n = glam::Vec3::new(p[0], p[1], p[2]).normalize_or_zero();
+            out.params[3] = (f64::from(p[3]) + n.as_dvec3().dot(origin)) as f32;
+        }
+        // Capsule: both ends.
+        4 => {
+            out.params[..3].copy_from_slice(&at(0));
+            out.params[4..7].copy_from_slice(&at(4));
+        }
+        _ => {}
+    }
+    out
 }

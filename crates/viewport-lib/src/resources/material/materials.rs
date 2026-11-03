@@ -26,6 +26,7 @@ impl DeviceResources {
         &mut self,
         material: Material,
     ) -> crate::error::ViewportResult<MaterialId> {
+        self.require_live()?;
         self.validate_plugin_values(&material)?;
         let block = self.build_material_block(&material, &ItemShading::for_material(&material));
         let Some(index) = self.material_table.alloc(block, self.material_gpu_limit) else {
@@ -60,6 +61,7 @@ impl DeviceResources {
         id: MaterialId,
         material: Material,
     ) -> crate::error::ViewportResult<()> {
+        self.require_live()?;
         let Some(stored) = self.content.materials.get(id) else {
             return Err(self.content.materials.stale(id));
         };
@@ -152,10 +154,7 @@ impl DeviceResources {
     /// Zero without a registered plugin.
     fn plugin_param_window(&self, m: &Material) -> [[f32; 4]; MATERIAL_PLUGIN_MAX_PARAMS] {
         let mut window = [[0.0; 4]; MATERIAL_PLUGIN_MAX_PARAMS];
-        let Some(gpu) = m
-            .shading_plugin
-            .and_then(|p| self.material_plugins.get(&p.plugin_index()))
-        else {
+        let Some(gpu) = m.shading_plugin.and_then(|p| self.material_plugin_gpu(p)) else {
             return window;
         };
         for (word, (desc, key)) in window
@@ -181,7 +180,7 @@ impl DeviceResources {
         let invalid =
             |reason: String| crate::error::ViewportError::InvalidMaterialParams { reason };
         let names_textures = m.plugin_textures.iter().any(Option::is_some);
-        let Some(gpu) = self.material_plugins.get(&plugin.plugin_index()) else {
+        let Some(gpu) = self.material_plugin_gpu(plugin) else {
             if m.plugin_params.is_empty() && !names_textures {
                 return Ok(());
             }
@@ -190,7 +189,7 @@ impl DeviceResources {
                 plugin.plugin_index()
             )));
         };
-        let name = self.shade_hooks[plugin.plugin_index() as usize].desc.name;
+        let name = self.material_plugin_name(plugin).unwrap_or_default();
         if m.plugin_params.overflowed() {
             return Err(invalid(format!(
                 "more than {MATERIAL_PLUGIN_MAX_PARAMS} parameters set for '{name}'"

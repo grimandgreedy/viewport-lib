@@ -901,8 +901,8 @@ impl OverlayShapeItem {
 
     /// Pin the shape to a 3D world position, projected to screen each frame.
     /// Sugar for `with_anchor(OverlayOrigin::World(pos))`.
-    pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchoring.origin = OverlayOrigin::World(pos);
+    pub fn with_world_anchor(mut self, pos: impl crate::scene::IntoWorldPosition) -> Self {
+        self.anchoring.origin = OverlayOrigin::World(pos.into_world_position());
         self
     }
 
@@ -936,7 +936,26 @@ impl OverlayShapeItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
+        self.resolve_top_left_at(viewport_size, view, proj, glam::DVec3::ZERO)
+    }
+
+    /// [`resolve_top_left`](Self::resolve_top_left) for a camera drawn
+    /// relative to `world_origin`; see
+    /// [`resolve_anchor_origin_at`](crate::overlay::resolve_anchor_origin_at).
+    pub fn resolve_top_left_at(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+        world_origin: glam::DVec3,
+    ) -> Option<[f32; 2]> {
+        let origin = crate::overlay::resolve_anchor_origin_at(
+            &self.anchoring.origin,
+            viewport_size,
+            view,
+            proj,
+            world_origin,
+        )?;
         Some([
             origin[0]
                 + self.transform.translate[0]

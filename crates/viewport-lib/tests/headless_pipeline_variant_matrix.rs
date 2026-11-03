@@ -62,9 +62,11 @@ fn coverage(px: &[u8]) -> usize {
 
 fn top_down_camera(distance: f32) -> Camera {
     let mut c = Camera::default();
-    c.center = glam::Vec3::ZERO;
-    c.distance = distance;
-    c.orientation = glam::Quat::from_rotation_x(0.15);
+    c.set_orbit(
+        glam::DVec3::ZERO,
+        distance,
+        glam::Quat::from_rotation_x(0.15),
+    );
     c
 }
 
@@ -79,11 +81,7 @@ fn base_frame(target: PipelineMode, size: u32, generation: u64) -> FrameData {
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = target;
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&top_down_camera(6.0));
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&top_down_camera(6.0));
     frame.camera.viewport_size = [size as f32, size as f32];
     frame
 }
@@ -94,8 +92,7 @@ fn base_frame(target: PipelineMode, size: u32, generation: u64) -> FrameData {
 fn route_filler(renderer: &mut ViewportRenderer, mesh_id: MeshId) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(-500.0, -500.0, -500.0)).into();
     item.material = upload_material(
         renderer,
         Material::from_colour(Colour::linear_rgb(0.1, 0.9, 0.1)),
@@ -527,8 +524,7 @@ fn shadow_alpha_mask_matrix() {
                 let mut caster = SceneRenderItem::default();
                 let mut caster_mat = Material::default();
                 caster.mesh_id = caster_id;
-                caster.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).to_cols_array_2d();
+                caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.6)).into();
                 caster_mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
                 caster_mat.texture_id = Some(tex);
                 caster_mat.alpha_mode = AlphaMode::Mask(0.5);

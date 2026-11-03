@@ -23,11 +23,7 @@ use viewport_lib::{
 fn overlay_frame(size: u32) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
@@ -668,8 +664,9 @@ fn retained_group_anchors_to_a_corner_and_a_world_point() {
     // A world anchor behind the camera culls the group rather than drawing it
     // at a projected-but-meaningless position.
     let mut behind = overlay_frame(size);
-    behind.overlays.retained =
-        vec![RetainedOverlay::new(id).with_anchor(OverlayOrigin::World([0.0, 0.0, -1000.0]))];
+    behind.overlays.retained = vec![
+        RetainedOverlay::new(id).with_anchor(OverlayOrigin::World([0.0, 0.0, -1000.0].into())),
+    ];
     let px = renderer.render_offscreen(&device, &queue, &behind, size, size);
     assert!(
         px.chunks_exact(4).all(|p| !is_red((p[0], p[1], p[2]))),

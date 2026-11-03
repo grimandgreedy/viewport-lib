@@ -546,12 +546,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_iso_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(2.5, 0.0, 0.5),
-        distance: 17.0,
-        orientation: glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.8),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(2.5, 0.0, 0.5),
+        17.0,
+        glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.8),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -638,8 +637,6 @@ pub(crate) fn flush_gpu(app: &mut crate::App, cx: &crate::ViewportCtx) {
     }
     block.extract(offset);
 }
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

@@ -694,7 +694,7 @@ impl DeviceResources {
                 // ------------------------------------------------------------------
                 // Shadow map texture, sampler, and bind group
                 // ------------------------------------------------------------------
-                // A 1x1 placeholder, not the real atlas. At SHADOW_ATLAS_SIZE the atlas
+                // A 1x1 placeholder, not the real atlas. At its default 4096 the atlas
                 // is 64 MB, and a viewport whose scene casts no cascade shadow never
                 // samples it, so the bind groups start on a placeholder the same way
                 // the IBL slots below do. `ensure_shadow_atlas` swaps in the full
@@ -705,31 +705,17 @@ impl DeviceResources {
                 let shadow_sampler = crate::resources::builders::comparison_sampler(
                     device,
                     "shadow_sampler",
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::SHADOW_DEPTH_COMPARE,
                 );
 
-                // ------------------------------------------------------------------
-                // Point-light cubemap shadow texture array.
-                //
-                // Stored as a 2D texture array of `MAX_POINT_SHADOW_LIGHTS * 6`
-                // layers and viewed two ways:
-                //  - Per-face 2D-array views (one per face) for shadow render passes.
-                //  - A `CubeArray` view bound to the lit pass for sampling.
-                // ------------------------------------------------------------------
-                // Also a placeholder: one 1x1 cube rather than the real
-                // MAX_POINT_SHADOW_LIGHTS array, which is 192 MB at
-                // POINT_SHADOW_FACE_SIZE. Most scenes have no shadow-casting point
-                // light at all. `ensure_point_shadow_cubes` swaps in the full array the
-                // first time a frame queues point-shadow faces.
-                let (point_shadow_cube_texture, point_shadow_cube_view, point_shadow_face_views) =
-                    crate::resources::shadow::create_point_cube_array(
-                        device,
-                        1,
-                        1,
-                        capabilities.cube_array_textures,
-                    );
+                // Punctual (point and spot) shadow array: a placeholder of one
+                // 1x1 layer. Most scenes have no shadow-casting point or spot
+                // light; `ensure_punctual_shadow_array` sizes it to the layers a
+                // frame places.
+                let (punctual_shadow_texture, punctual_shadow_view, punctual_shadow_layer_views) =
+                    crate::resources::shadow::create_punctual_array(device, 1, 1);
 
-                // The directional atlas and the point-shadow cube array are placeholders
+                // The directional atlas and the punctual shadow array are placeholders
                 // at this point; both are promoted on the first frame that needs them.
                 mark("buffers_and_shadow_textures");
 
@@ -796,10 +782,10 @@ impl DeviceResources {
                         ..Default::default()
                     });
 
-                // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
-                // 128x128 LUT on the first call to `upload_environment`. The LUT is scene-independent
-                // (function of roughness x N.V only); idempotent caching inside `upload_environment`
-                // means subsequent uploads skip its ~16.7M Hammersley samples.
+                // BRDF integration LUT, from the embedded bytes, and a 1x1 (1, 0, 0, 1)
+                // fallback. Both are written on the first `process_uploads`.
+                let (ibl_brdf_lut_texture, ibl_brdf_lut_view) =
+                    crate::resources::material::environment::create_brdf_lut(device);
                 let ibl_fallback_brdf_texture =
                     device.logged_texture(&crate::gpu::TextureDescriptor {
                         label: Some("ibl_fallback_brdf"),
@@ -880,7 +866,7 @@ impl DeviceResources {
                             crate::gpu::BindGroupEntry {
                                 binding: 9,
                                 resource: crate::gpu::BindingResource::TextureView(
-                                    &ibl_fallback_brdf_view,
+                                    &ibl_brdf_lut_view,
                                 ),
                             },
                             crate::gpu::BindGroupEntry {
@@ -908,7 +894,7 @@ impl DeviceResources {
                             crate::gpu::BindGroupEntry {
                                 binding: 17,
                                 resource: crate::gpu::BindingResource::TextureView(
-                                    &point_shadow_cube_view,
+                                    &punctual_shadow_view,
                                 ),
                             },
                             crate::gpu::BindGroupEntry {
@@ -979,16 +965,16 @@ impl DeviceResources {
                     });
 
                 // ------------------------------------------------------------------
-                // Point-light cubemap shadow pipeline.
+                // Punctual shadow pipeline (point-light cube faces and spot maps).
                 //
-                // One render pass per (light slot, face) writes linear distance to
-                // the light into a per-face depth attachment. The bind group layout
-                // mirrors the cascade pipeline (same object bind group) and carries a
-                // per-face uniform with view_proj + light_pos + range, and the deform
+                // One render pass per layer writes linear distance to the light
+                // into that layer. The bind group layout mirrors the cascade
+                // pipeline (same object bind group) and carries a per-layer
+                // uniform with view_proj + light_pos + range, and the deform
                 // header.
                 // ------------------------------------------------------------------
                 // The pipeline itself is built by `ensure_point_shadow_pipeline` on the
-                // first frame with point-shadow faces to draw.
+                // first frame with punctual layers to draw.
                 let shadow_point_face_bgl =
                     device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                         label: Some("shadow_point_face_bgl"),
@@ -1010,44 +996,23 @@ impl DeviceResources {
                             ),
                         ],
                     });
-                // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
-                // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
-                const SHADOW_POINT_FACE_STRIDE: u64 = 256;
-                let shadow_point_face_count = (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as u64;
+                // Per-layer uniform buffer at a 256-byte stride (wgpu's
+                // dynamic-offset alignment), sized for the default layer budget
+                // and grown with the punctual array.
                 let shadow_point_face_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("shadow_point_face_buf"),
-                    size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
+                    size: 48 * crate::resources::shadow::PUNCTUAL_FACE_STRIDE,
                     usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let shadow_point_face_bind_group =
-                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("shadow_point_face_bind_group"),
-                        layout: &shadow_point_face_bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::Buffer(
-                                    crate::gpu::BufferBinding {
-                                        buffer: &shadow_point_face_buf,
-                                        offset: 0,
-                                        // Bind one PointFace slot worth (96 bytes rounded up
-                                        // to 16-byte alignment is fine here).
-                                        size: Some(crate::gpu::BufferSize::new(96).unwrap()),
-                                    },
-                                ),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 23,
-                                resource: deform.header_buffer.as_entire_binding(),
-                            },
-                        ],
-                    });
+                let shadow_point_face_bind_group = crate::resources::shadow::face_bind_group(
+                    device,
+                    &shadow_point_face_bgl,
+                    &shadow_point_face_buf,
+                    &deform.header_buffer,
+                );
 
                 mark("shadow_pipelines");
-
-                // The transform gizmo no longer has its own pipeline or geometry: it
-                // draws through the 2D overlay system (see `gizmo_overlay`).
 
                 // ------------------------------------------------------------------
                 // Ground plane pipeline
@@ -1533,6 +1498,7 @@ impl DeviceResources {
                         probes: None,
                         indirect_buf: indirect_light_buf,
                         has_probe_volume: false,
+                        probe_volume_min: None,
                         custom_data_base_bytes,
                     },
                     clustered,
@@ -1542,10 +1508,10 @@ impl DeviceResources {
                         map_view: shadow_map_view,
                         atlas_allocated: false,
                         sampler: shadow_sampler,
-                        point_cube_texture: point_shadow_cube_texture,
-                        point_cube_view: point_shadow_cube_view,
-                        point_cubes_allocated: false,
-                        point_face_views: point_shadow_face_views,
+                        punctual_texture: punctual_shadow_texture,
+                        punctual_view: punctual_shadow_view,
+                        punctual_allocated: false,
+                        punctual_layer_views: punctual_shadow_layer_views,
                         point_pipeline: None,
                         point_face_bgl: shadow_point_face_bgl,
                         point_face_buf: shadow_point_face_buf,
@@ -1555,7 +1521,7 @@ impl DeviceResources {
                         uniform_buf: shadow_uniform_buf,
                         bind_group: shadow_bind_group,
                         info_buf: shadow_info_buf,
-                        atlas_size: SHADOW_ATLAS_SIZE,
+                        atlas_size: 1,
                         atlas_depth_sampler: shadow_atlas_depth_sampler,
                         atlas_viewer_bg: shadow_atlas_viewer_bg,
                         atlas_viewer_bgl: atlas_blit_bgl,
@@ -1603,7 +1569,7 @@ impl DeviceResources {
                     ibl: crate::resources::material::environment::IblResources {
                         irradiance_view: None,
                         prefiltered_view: None,
-                        brdf_lut_view: None,
+                        brdf_lut_view: Some(ibl_brdf_lut_view),
                         sampler: ibl_sampler,
                         skybox_view: None,
                         fallback_texture: ibl_fallback_texture,
@@ -1621,7 +1587,8 @@ impl DeviceResources {
                         zones: Vec::new(),
                         zones_dirty: false,
                         env_zone_count: 0,
-                        brdf_lut_texture: None,
+                        brdf_lut_texture: Some(ibl_brdf_lut_texture),
+                        brdf_lut_written: false,
                         skybox_pipeline: None,
                         skybox_bgl: None,
                     },
@@ -1629,6 +1596,9 @@ impl DeviceResources {
                 (scene_tier, cube_mesh, plugin_texture_budget)
             });
             if let Some(error) = error {
+                if crate::renderer::device_lost::is_device_lost_error(&error) {
+                    return Err(crate::renderer::device_lost::scope_lost_error(&error));
+                }
                 return Err(crate::ViewportError::DeviceUnsupported {
                     reason: format!("building the scene resources failed validation: {error}"),
                 });
@@ -1692,6 +1662,7 @@ impl DeviceResources {
                 grid_bgl,
                 constraint_lines: Vec::new(),
             },
+            section_cap: None,
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
                 texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
@@ -1725,6 +1696,7 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             oit: crate::resources::postprocess::OitResources::default(),
+            transmission: Default::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
             pick: crate::resources::types::PickResources::default(),
 
@@ -1756,10 +1728,14 @@ impl DeviceResources {
             mesh_sidecar_epoch: 0,
             pending_closed_checks: Vec::new(),
             closed_flipped: Vec::new(),
+            world_origin: Default::default(),
             material_plugin_epoch: 0,
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
+            notices: crate::notice::NoticeSink::new(),
+            device_lost: crate::renderer::DeviceLostWatcher::detached(),
+            device_lost_reported: std::sync::atomic::AtomicBool::new(false),
             mesh_universal: dev_knob!("VIEWPORT_MESH_UNIVERSAL").is_some(),
             frame_feature_sets_capped: std::sync::atomic::AtomicU32::new(0),
             frame_stand_in_draws: std::sync::atomic::AtomicU32::new(0),

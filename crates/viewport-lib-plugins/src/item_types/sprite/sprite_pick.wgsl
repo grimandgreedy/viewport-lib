@@ -133,7 +133,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
                    + local_up    * (rotated.y * half);
         out.clip_pos = camera.view_proj * vec4<f32>(ws_pos, 1.0);
     } else {
-        let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
         let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
         let half_px    = inst.size * 0.5;
@@ -144,13 +144,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
         if sprite_ub.orientation == 0u {
             let ndc_off = rotated * half_px * inv_vp;
             out.clip_pos = vec4<f32>(
-                center.x + ndc_off.x * center.w,
-                center.y + ndc_off.y * center.w,
-                center.z,
-                center.w,
+                centre.x + ndc_off.x * centre.w,
+                centre.y + ndc_off.y * centre.w,
+                centre.z,
+                centre.w,
             );
         } else {
-            out.clip_pos = center + offset_clip * center.w;
+            out.clip_pos = centre + offset_clip * centre.w;
         }
     }
 

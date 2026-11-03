@@ -71,6 +71,7 @@ struct InstanceAabb {
 }
 
 // #include "helpers/instance_data.wgsl"
+// #include "helpers/depth.wgsl"
 
 struct BatchMeta {
     index_count:     u32,
@@ -196,8 +197,8 @@ fn aabb_occluded(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> bool {
         ndc_max = max(ndc_max, ndc);
     }
 
-    // Nearest depth the box can reach (wgpu NDC z is 0 at the near plane).
-    let nearest_z = ndc_min.z;
+    // Nearest depth the box can reach.
+    let nearest_z = viewport_depth_nearest(ndc_min.z, ndc_max.z);
 
     // NDC xy [-1,1] -> uv [0,1] with y flipped, then to pixels.
     let uv_min = vec2<f32>(ndc_min.x * 0.5 + 0.5, 1.0 - (ndc_max.y * 0.5 + 0.5));
@@ -224,18 +225,21 @@ fn aabb_occluded(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> bool {
     let t_max = vec2<i32>(floor(px_max * scale));
     let lvl_last = vec2<i32>(lvl_dim) - vec2<i32>(1, 1);
 
-    var hiz_max = 0.0;
+    var hiz_far = VIEWPORT_DEPTH_NEAR;
     for (var y = t_min.y; y <= t_max.y; y++) {
         for (var x = t_min.x; x <= t_max.x; x++) {
             let cx = clamp(x, 0, lvl_last.x);
             let cy = clamp(y, 0, lvl_last.y);
-            hiz_max = max(hiz_max, textureLoad(hiz_tex, vec2<i32>(cx, cy), level).r);
+            hiz_far = viewport_depth_farthest(
+                hiz_far,
+                textureLoad(hiz_tex, vec2<i32>(cx, cy), level).r,
+            );
         }
     }
 
     // Occluded when the closest the box can be is still farther than the
     // farthest occluder pixel in its footprint.
-    return nearest_z > hiz_max;
+    return viewport_depth_nearer(hiz_far, nearest_z);
 }
 
 @compute @workgroup_size(64)

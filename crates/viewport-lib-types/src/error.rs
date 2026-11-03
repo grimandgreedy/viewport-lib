@@ -471,14 +471,21 @@ pub enum ViewportError {
         reason: &'static str,
     },
 
-    /// No deformer slots remain. The registry has a fixed budget set by the
-    /// vertex-stage storage-buffer limit; once all slots are taken, callers
-    /// must release one with `unregister_deformer` (when implemented) before
+    /// No deformer slots remain. The registry has a fixed number of slots;
+    /// once all are taken, release one with `remove_deformer` before
     /// registering another.
     #[error("deformer registry exhausted: {max} slots in use")]
     DeformSlotsExhausted {
         /// Total number of slots the registry exposes.
         max: usize,
+    },
+
+    /// The deformer is one the renderer registers for itself (skinning) and
+    /// cannot be removed.
+    #[error("deformer '{name}' is built in and cannot be removed")]
+    DeformerReserved {
+        /// The built-in deformer's name.
+        name: String,
     },
 
     /// A deformer with this name is already registered.
@@ -581,6 +588,28 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// `RendererConfig::scene_depth_format` named a format the scene passes
+    /// cannot use. They need a depth aspect and a stencil aspect:
+    /// `Depth24PlusStencil8` or `Depth32FloatStencil8`.
+    #[error(
+        "scene depth format {format} is not supported: use Depth24PlusStencil8 or Depth32FloatStencil8"
+    )]
+    InvalidSceneDepthFormat {
+        /// The rejected format, as its wgpu debug name.
+        format: String,
+    },
+
+    /// The GPU device was lost (a driver reset, a watchdog kill, out of memory,
+    /// or `device.destroy()`). The renderer stays lost: drop it and build a new
+    /// one on a new device. Every handle it returned is invalid.
+    #[error("the GPU device was lost ({reason}): {message}")]
+    DeviceLost {
+        /// Why the device was lost, as the backend's `DeviceLostReason`.
+        reason: String,
+        /// The backend's message, possibly empty.
+        message: String,
+    },
+
     /// A plugin needs more than the device offers, so it was not registered.
     #[error("plugin '{type_name}' was not registered: the device lacks {}", .missing.join(", "))]
     PluginUnsupported {
@@ -588,6 +617,14 @@ pub enum ViewportError {
         type_name: String,
         /// One entry per capability the device lacks.
         missing: Vec<String>,
+    },
+
+    /// An item type is already registered under this name. Remove it first to
+    /// register a different plugin under the same name.
+    #[error("item type name '{name}' is already registered")]
+    ItemTypeNameTaken {
+        /// The name that is taken.
+        name: String,
     },
 
     /// The call needs a higher tier than the renderer runs at: scene content on

@@ -4,16 +4,16 @@
 ///
 /// The host application owns playback state, time, and scene content.
 /// `RuntimeMode` tells the renderer what workload to expect so it can adjust
-/// internal defaults (e.g. picking rate) accordingly.
+/// internal defaults accordingly. Picking runs the same in every mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RuntimeMode {
-    /// Prioritize responsiveness and picking accuracy.
+    /// Prioritize responsiveness.
     #[default]
     Interactive,
-    /// Prioritize steady frame pacing; picking may be throttled.
+    /// Prioritize steady frame pacing.
     Playback,
-    /// Restore full quality; picking runs at full rate.
+    /// Restore full quality.
     Paused,
     /// Full-quality render intended for screenshot or export workflows.
     ///
@@ -118,7 +118,8 @@ pub struct PerformancePolicy {
     /// Allow the viewport to skip non-essential HDR effect passes under load.
     ///
     /// When `true` and the previous frame exceeded the target budget, the SSAO,
-    /// contact shadow, and bloom passes are skipped for that frame.
+    /// contact shadow, bloom and depth of field passes are skipped for that
+    /// frame.
     /// Ignored when `preset` is `Some`.
     pub allow_effect_throttling: bool,
 }
@@ -194,8 +195,8 @@ pub struct PrepareBreakdown {
     /// this dominates wants coarser culling granularity, not cheaper uploads.
     /// One dispatch covers all plugins, so this is not broken out per plugin.
     pub plugin_cull_ms: f32,
-    /// Lighting setup: directional shadow cascade matrices, point-light cube-map
-    /// faces, and light clustering.
+    /// Lighting setup: directional shadow cascade matrices, the point and spot
+    /// shadow layers, and light clustering.
     pub lighting_ms: f32,
     /// Per-object uniform writes on the non-instanced path. Zero when the scene
     /// is above the instancing threshold and all meshes batch.
@@ -206,8 +207,8 @@ pub struct PrepareBreakdown {
     /// Uploading non-mesh geometry: fields, point clouds, polylines, decals,
     /// images, tubes, ribbons, slices, and volumes.
     pub geometry_ms: f32,
-    /// Recording the shadow depth pass (directional cascades and point-light
-    /// cube-map faces) into the atlas.
+    /// Recording the shadow depth pass (directional cascades into the atlas,
+    /// point and spot light layers into the punctual array).
     pub shadow_ms: f32,
     /// Per-viewport prepare: camera and clip uniforms, grid, outlines, and
     /// interaction state. Runs once per viewport. Overlay prepare is measured
@@ -282,10 +283,10 @@ pub struct GpuBreakdown {
     pub cull_count_ms: f32,
     /// Third cull dispatch: scattering the surviving instances into the list.
     pub cull_scatter_ms: f32,
-    /// Point-light cubemap shadow faces, spanning the first to the last face
-    /// pass rendered this frame (up to casters x 6 depth passes). This work
-    /// used to be invisible to the breakdown and can dominate frames with
-    /// several shadow-casting point lights over heavy geometry.
+    /// Point and spot light shadow layers, spanning the first to the last
+    /// layer pass rendered this frame (six per point light, one per spot).
+    /// Can dominate frames with several shadow-casting lights over heavy
+    /// geometry.
     pub point_shadow_ms: f32,
     /// Clustered-lighting build compute pass. `0.0` when the frame ran the
     /// small-N fallback (under 16 active lights).
@@ -313,6 +314,7 @@ pub struct GpuBreakdown {
 /// [`ViewportRenderer::last_frame_stats`](crate::ViewportRenderer::last_frame_stats).
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct FrameStats {
     /// Total mesh-family objects considered for rendering.
     ///
@@ -428,6 +430,20 @@ pub struct FrameStats {
     /// `shadow_draw_calls` (the pre-collapse batch-draw count) to read the shadow
     /// collapse ratio.
     pub shadow_draw_commands: u32,
+    /// Directional shadow cascades rasterised into the atlas this frame. Zero
+    /// when no directional light casts, shadows are off, or nothing casts.
+    pub shadow_cascade_passes: u32,
+    /// Times this frame the directional shadow fit rebuilt its caster and
+    /// scene bounds: one when the mesh instances' bounds changed since the
+    /// last rebuild, zero otherwise and when no directional light casts.
+    pub shadow_bounds_rebuilds: u32,
+    /// Layers of the punctual shadow array held by this frame's point and spot
+    /// casters: six per point light, one per spot light.
+    pub punctual_shadow_layers: u32,
+    /// Punctual shadow layers rendered this frame. A light whose casters and
+    /// own inputs are unchanged since its layers were last rendered keeps them
+    /// and adds nothing here, so a static scene reads zero once settled.
+    pub punctual_shadow_layer_passes: u32,
     /// Number of chunk buffers backing the geometry slab (vertex chunks + index
     /// chunks). Grows only when a scene's geometry exceeds the current chunk
     /// capacity; a steady value of 2 means all mesh geometry fits one vertex and
@@ -454,7 +470,7 @@ pub struct FrameStats {
     /// GPU frame time in milliseconds, if timestamp queries are available.
     ///
     /// The span from the first to the last measured pass this frame (shadow
-    /// cascades, point-shadow cubemap faces, cluster build, cull, scene, OIT,
+    /// cascades, punctual shadow layers, cluster build, cull, scene, OIT,
     /// and post; see [`GpuBreakdown`] for the split). Work between and around
     /// those passes on the same queue is included in the span; passes with no
     /// timestamp slot that run outside it are not. Previously this field
@@ -573,7 +589,8 @@ pub struct FrameStats {
     /// Set when `allow_volume_quality_reduction` is true and the previous frame
     /// missed the target budget. Always false in [`RuntimeMode::Capture`].
     pub volume_quality_reduced: bool,
-    /// True when SSAO, contact shadows, and bloom were skipped this frame.
+    /// True when SSAO, contact shadows, bloom and depth of field were skipped
+    /// this frame.
     ///
     /// Set when `allow_effect_throttling` is true and the previous frame missed
     /// the target budget. Always false in [`RuntimeMode::Capture`].
@@ -620,6 +637,13 @@ pub struct FrameStats {
     /// A level, not a per-frame count, and independent of what was submitted
     /// this frame.
     pub overlay_retained_bytes: u64,
+    /// Section cap meshes generated this frame, for the most recently
+    /// prepared viewport.
+    ///
+    /// Caps are cached per mesh, transform and clip plane, so a static
+    /// section reads zero after its first frame. A value that tracks the
+    /// capped item count every frame means the cache is missing.
+    pub cap_meshes_built: u32,
 
     /// Objects that resolved through a LOD group this frame.
     ///
@@ -668,6 +692,16 @@ pub struct FrameStats {
     /// tier and [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) on
     /// the compatibility tier.
     pub lights_dropped: u32,
+    /// Notices waiting for
+    /// [`ViewportRenderer::take_notices`](crate::ViewportRenderer::take_notices),
+    /// by severity, and how many the buffer dropped since the last take.
+    pub notices: crate::NoticeCounts,
+    /// Set once the device is lost or destroyed. From then on every frame is
+    /// skipped: drop the renderer and build a new one on a new device.
+    pub device_lost: bool,
+    /// Frames the renderer skipped because the device was lost, counted from
+    /// construction. One per `render`, `prepare` or `prepare_scene` call.
+    pub frames_skipped_device_lost: u32,
 }
 
 #[cfg(test)]

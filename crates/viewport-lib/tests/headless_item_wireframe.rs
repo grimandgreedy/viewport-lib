@@ -24,11 +24,7 @@ fn render(
     mode: viewport_lib::PipelineMode,
 ) -> Vec<u8> {
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -40,7 +36,7 @@ fn render(
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
             item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.material = material;
             item.settings.wireframe = wireframe;
             item.settings.opacity = opacity;

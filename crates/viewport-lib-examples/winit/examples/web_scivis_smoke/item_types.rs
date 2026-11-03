@@ -232,11 +232,8 @@ impl Target {
     }
 
     fn frame(scene: SceneFrame, yaw: f32) -> FrameData {
-        let mut camera = Camera {
-            distance: 7.0,
-            ..Camera::default()
-        };
-        camera.orientation = glam::Quat::from_rotation_z(yaw) * camera.orientation;
+        let mut camera = Camera::orbit(glam::DVec3::ZERO, 7.0, Camera::default().orientation());
+        camera.set_orbit_orientation(glam::Quat::from_rotation_z(yaw) * camera.orientation());
         camera.set_aspect_ratio(W as f32, H as f32);
         FrameData::new(
             CameraFrame::from_camera(&camera, [W as f32, H as f32]),

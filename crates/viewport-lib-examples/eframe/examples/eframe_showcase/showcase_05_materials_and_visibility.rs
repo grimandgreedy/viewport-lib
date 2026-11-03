@@ -182,12 +182,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_materials_visibility_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 2.0, 0.5),
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 2.0, 0.5),
+        14.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -269,8 +268,6 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

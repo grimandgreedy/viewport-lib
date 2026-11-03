@@ -71,8 +71,10 @@ pub struct DeviceProfile {
 impl DeviceProfile {
     /// The harness default: a high-performance adapter with `wgpu` default
     /// limits, opportunistically enabling `INDIRECT_FIRST_INSTANCE` (the
-    /// GPU-culled indirect draw path) and `TIMESTAMP_QUERY` (GPU frame timing)
-    /// when the adapter has them. This is what [`headless_device`] uses.
+    /// GPU-culled indirect draw path), `TIMESTAMP_QUERY` (GPU frame timing),
+    /// `DEPTH_CLIP_CONTROL` (depth-clamped shadow cascades) and
+    /// `DEPTH32FLOAT_STENCIL8` (the 32-bit float scene depth) when the adapter
+    /// has them. This is what [`headless_device`] uses.
     pub fn harness() -> Self {
         Self {
             label: "viewport-lib-testkit",
@@ -81,7 +83,9 @@ impl DeviceProfile {
             max_bind_groups: None,
             required_features: wgpu::Features::empty(),
             optional_features: wgpu::Features::INDIRECT_FIRST_INSTANCE
-                | wgpu::Features::TIMESTAMP_QUERY,
+                | wgpu::Features::TIMESTAMP_QUERY
+                | wgpu::Features::DEPTH_CLIP_CONTROL
+                | wgpu::Features::DEPTH32FLOAT_STENCIL8,
             recommended_features: false,
             remove_downlevel: wgpu::DownlevelFlags::empty(),
         }

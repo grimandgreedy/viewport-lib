@@ -65,7 +65,7 @@ fn per_vertex_deformer_addresses_vertices_by_index() {
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
     item.material = harness
         .renderer
         .resources_mut()
@@ -158,7 +158,7 @@ fn textured_material_plugin_samples_its_texture_and_params() {
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
     let mut tinted = Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8))
         .with_plugin(plugin_id)
         .with_param("tint", [1.0, 0.0, 0.0])

@@ -26,7 +26,10 @@ use viewport_lib_types::ids::TextureId;
 /// pipeline set and a group-2 bind group per texture set that apply to the
 /// whole draw, so two items batch together only when their plugin and plugin
 /// textures match (`None` for built-in shading). Plugin parameters ride each
-/// material's block and do not split. Carried as `(plugin_index, textures)`.
+/// material's block and do not split. Carried as
+/// `(plugin_index, generation, textures)`, so a material naming an
+/// unregistered plugin never shares a batch with one on a plugin registered
+/// into the same slot later.
 type MaterialKey = (
     usize,
     Option<TextureId>,
@@ -36,25 +39,34 @@ type MaterialKey = (
     Option<TextureId>,
     bool,
     bool,
-    Option<(u32, crate::resources::mesh_sidecar::shade::PluginTextures)>,
+    Option<(
+        u32,
+        u32,
+        crate::resources::mesh_sidecar::shade::PluginTextures,
+    )>,
     u32,
 );
 
-/// The batch key of one record: its material key, what it draws, the
+/// The batch key of one record: its draw priority, its material key, what it draws, the
 /// colourmap and matcap its group-1 bind group binds, and the deform instance
 /// whose table it reads. The per-record stream words (scalar attribute, warp,
 /// lightmap) are not in it: each record carries its own, and the batch's
 /// feature set is the union over its records.
 ///
 /// Used by both the sort comparator and the batch-split predicate below, so the
-/// two cannot drift out of sync.
+/// two cannot drift out of sync. Priority comes first, so batches sort by it
+/// and never merge across it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct BatchKey {
+    priority: i8,
     material: MaterialKey,
     draw: crate::renderer::types::DrawKind,
     lut: u64,
     matcap: u64,
     deform_instance: Option<u32>,
+    /// The record draws in the HDR transmission pass. Last, so batches
+    /// without it keep their order.
+    transmits: bool,
 }
 
 impl BatchKey {
@@ -80,7 +92,9 @@ impl BatchKey {
 /// The group key mirrors the draw loop's run key exactly (transparency,
 /// two-sidedness, discard-free eligibility, and geometry chunk over contiguous
 /// batches), so the groups drawn here match the runs the CPU path would have
-/// formed. The texture bind group is constant under bindless, so it is not part of
+/// formed. It also holds the draw priority, so a group never spans two
+/// priorities; batches are sorted by priority, so the CPU runs already draw in
+/// that order. The texture bind group is constant under bindless, so it is not part of
 /// the key. Each group also carries that geometry chunk and its pipeline selectors,
 /// so the draw loop binds and draws straight from the group without a per-group
 /// mesh-store lookup.
@@ -155,6 +169,7 @@ fn build_and_upload_draw_groups(
         let mut next_group = 0u32;
         // (run key, index within the group vec the key's transparency bit selects).
         type RunKey = (
+            i8,
             bool,
             bool,
             bool,
@@ -191,6 +206,7 @@ fn build_and_upload_draw_groups(
             let index_chunk = mesh.index_span.chunk;
             let features = crate::renderer::types::draw_features(resources, batch);
             let key = (
+                batch.priority,
                 transparent,
                 batch.two_sided,
                 no_discard,
@@ -377,11 +393,13 @@ fn batch_key(
         }
     };
     Some(BatchKey {
+        priority: item.settings.draw_priority,
         material: material_group_key(item.mesh_id, material, item.settings.opacity, binding),
         draw,
         lut: item.colourmap_id.map_or(u64::MAX, |c| c.0 as u64),
         matcap: material.matcap_id().map_or(u64::MAX, |m| m.index() as u64),
         deform_instance: item.deform_instance,
+        transmits: false,
     })
 }
 
@@ -517,7 +535,7 @@ fn material_group_key(
         // Materials on one plugin share a batch when they name the same
         // textures; their parameters ride their own blocks.
         m.shading_plugin
-            .map(|p| (p.plugin_index(), m.plugin_textures)),
+            .map(|p| (p.plugin_index(), p.generation(), m.plugin_textures)),
         // The sampler binds at group-1 binding 2 for the whole batch, on both
         // texture bindings. No key and the default key share a code.
         crate::resources::material::fallbacks::sampler_code(
@@ -644,6 +662,7 @@ impl ViewportRenderer {
         scene_items: &[SceneRenderItem],
         frame: &FrameData,
         hdr_family: bool,
+        origin_epoch: u32,
     ) -> bool {
         // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
         //
@@ -674,6 +693,7 @@ impl ViewportRenderer {
             && featured_count == instancing.last_instancable_count
             && visible_count == instancing.last_visible_count
             && frame.scene.generation == instancing.last_scene_generation
+            && origin_epoch == instancing.last_origin_epoch
             && frame.interaction.selection_generation == instancing.last_selection_generation
             && scene_items.len() == instancing.last_scene_items_count
             // Cached batches reference mesh and texture ids by slot, so a free can
@@ -733,6 +753,7 @@ impl ViewportRenderer {
             // recovered after sorting reorders the list.
             let binding = resources.instancing.material_texture_binding;
             let wireframe_mode = frame.viewport.wireframe_mode;
+            let transmission_pass = hdr_family && resources.transmission_supported();
             // One entry per record: every visible item, plus a record per
             // submesh range and one for its normal lines. Hidden items are
             // never packed.
@@ -746,15 +767,26 @@ impl ViewportRenderer {
                 };
                 let mut push = |kind: RecordKind, material: crate::resources::MaterialId| {
                     let material = resources.material_or_default(material);
-                    let Some(key) =
+                    let Some(mut key) =
                         batch_key(item, material, kind, resources, wireframe_mode, binding)
                     else {
                         return;
                     };
+                    // An opaque transmissive surface draws in the HDR
+                    // transmission pass, sorted back to front by item.
+                    key.transmits = transmission_pass
+                        && crate::resources::material_gpu::transmits(material)
+                        && !key.blends()
+                        && matches!(
+                            key.draw,
+                            crate::renderer::types::DrawKind::Triangles
+                                | crate::renderer::types::DrawKind::Range(..)
+                                | crate::renderer::types::DrawKind::FaceVertices
+                        );
                     // HDR resolves blended batches through OIT, which needs no
                     // order. The LDR pass blends in draw order, so there each
                     // blended record is its own batch and the pass sorts them.
-                    let solo = (!hdr_family && key.blends()).then_some(idx);
+                    let solo = ((!hdr_family && key.blends()) || key.transmits).then_some(idx);
                     entries.push(Entry {
                         idx,
                         item,
@@ -789,14 +821,19 @@ impl ViewportRenderer {
                 // spatially close instances adjacent in the buffer, which
                 // reduces GPU cache pressure through the visibility-index
                 // indirection in the culled draw path.
-                for col in [3, 0, 1, 2] {
-                    for row in 0..4 {
-                        let ord = a.item.model[col][row]
-                            .to_bits()
-                            .cmp(&b.item.model[col][row].to_bits());
-                        if ord != std::cmp::Ordering::Equal {
-                            return ord;
-                        }
+                let (ta, tb) = (a.item.model.translation, b.item.model.translation);
+                for (x, y) in ta.to_array().into_iter().zip(tb.to_array()) {
+                    let ord = x.to_bits().cmp(&y.to_bits());
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+                let ra = a.item.model.rotation_scale.to_cols_array();
+                let rb = b.item.model.rotation_scale.to_cols_array();
+                for (x, y) in ra.into_iter().zip(rb) {
+                    let ord = x.to_bits().cmp(&y.to_bits());
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
                     }
                 }
                 // Final tiebreaker: pick_id is a stable, application-assigned
@@ -886,7 +923,7 @@ impl ViewportRenderer {
                                 // supplies the rest.
                                 use crate::resources::mesh::instancing::instance_flags as f;
                                 InstanceData {
-                                    model: item.model,
+                                    model: item.model.to_mat4().to_cols_array_2d(),
                                     colour: [1.0, 1.0, 1.0, 1.0],
                                     flags: f::RECEIVE_SHADOWS
                                         | f::when(item.settings.ignore_clip, f::IGNORE_CLIP),
@@ -949,7 +986,7 @@ impl ViewportRenderer {
                             );
                             all_instances.push(record);
                             if let Some(aabb) = &mesh_aabb {
-                                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                                let model = item.model.to_mat4();
                                 let world_aabb = aabb.transformed(&model);
                                 bounds_min = bounds_min.min(world_aabb.min);
                                 bounds_max = bounds_max.max(world_aabb.max);
@@ -1007,6 +1044,7 @@ impl ViewportRenderer {
                             instance_offset,
                             instance_count: batch_entries.len() as u32,
                             is_transparent,
+                            is_transmissive: rep.key.transmits,
                             // A range draws two-sided when its own material or
                             // the item's says so.
                             two_sided: rep_material.is_two_sided()
@@ -1021,8 +1059,10 @@ impl ViewportRenderer {
                             has_alpha_mask,
                             // Batch-uniform: `shading_plugin` is part of the
                             // batch key, so every item in the batch selects the
-                            // same plugin (or built-in shading).
-                            shading_plugin: rep_material.shading_plugin,
+                            // same plugin (or built-in shading). A plugin that
+                            // is no longer registered draws built-in shading.
+                            shading_plugin: resources
+                                .live_material_plugin(rep_material.shading_plugin),
                             plugin_textures: rep_material.plugin_textures,
                             // Batch-uniform: the sampler is part of the batch key.
                             sampler: rep_material.selected_sampler().unwrap_or_default(),
@@ -1031,6 +1071,8 @@ impl ViewportRenderer {
                             } else {
                                 [0.0; 3]
                             },
+                            priority: rep.key.priority,
+                            blend_order: rep.item.settings.blend_order,
                         });
 
                         batch_start = i;
@@ -1128,6 +1170,11 @@ impl ViewportRenderer {
             }
 
             instancing.cached_instance_count = all_instances.len();
+            if bytemuck::cast_slice::<InstanceAabb, u8>(&all_aabbs)
+                != bytemuck::cast_slice::<InstanceAabb, u8>(&instancing.cached_aabbs)
+            {
+                instancing.aabbs_gen = instancing.aabbs_gen.wrapping_add(1);
+            }
             instancing.cached_aabbs = all_aabbs;
             #[cfg(debug_assertions)]
             {
@@ -1320,6 +1367,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        origin: &crate::renderer::origin::OriginState,
         hdr_family: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
@@ -1434,8 +1482,12 @@ impl ViewportRenderer {
             cull_state.visibility_index_buf.as_ref(),
             cull_state.indirect_args_buf.as_ref(),
         ) {
-            let vp_mat = frame.camera.render_camera.view_proj();
-            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
+            // Frustum planes from the finite culling projection; the HiZ test
+            // projects with the matrix the scene draws with.
+            // The instance bounds are relative to the origin, so the camera is.
+            let camera = origin.camera(&frame.camera.render_camera);
+            let vp_mat = camera.view_proj();
+            let cpu_frustum = camera.culling_frustum();
 
             // `gpu_culling_enabled` is only set once the compute is built.
             let Some(cull) = instancing.cull_resources.ready() else {
@@ -1463,7 +1515,7 @@ impl ViewportRenderer {
             // the cull frustum-only for that frame.
             let vp_cols = vp_mat.to_cols_array_2d();
             let built = resources.occlusion_culling_enabled()
-                && cull_state.build_hiz_reprojected(queue, &mut encoder, vp_cols);
+                && cull_state.build_hiz_reprojected(queue, &mut encoder, vp_cols, origin.origin());
             let (hiz_view, hiz_dims) = if built {
                 let (view, dims) = cull_state.hiz_cull_view().unwrap();
                 (Some(view), dims)

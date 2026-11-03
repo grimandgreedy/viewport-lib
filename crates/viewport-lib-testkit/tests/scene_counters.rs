@@ -56,12 +56,29 @@ fn expected(name: &str) -> Option<Expected> {
         // and draw their edges per-object.
         "surface_wireframe" => e(3, 3, 3, 3, 1116),
         "materials_pbr" => e(25, 25, 1, 1, 55200),
+        // The environment-lit grid: the AO-mapped row's texture set splits
+        // it from the other twenty spheres.
+        "materials_ibl" => e(25, 25, 2, 2, 55200),
+        // The layered-lobe grids: one material per sphere, one mesh, so each
+        // grid is a single batch whose feature set is the union of its lobes.
+        "lobes_clearcoat" => e(25, 25, 1, 1, 55200),
+        "lobes_sheen" => e(25, 25, 1, 1, 55200),
+        "lobes_anisotropy" => e(25, 25, 1, 1, 55200),
+        // A checker floor and four glass spheres. Each transmissive item is
+        // its own batch so the transmission pass can sort them by depth.
+        "transmission_checker" => e(5, 5, 5, 5, 15874),
         // Material grids: half the items are pinned per-object, which no
         // longer splits a batch, so each pinned copy shares its batch with
         // its twin by mesh and texture set. The alpha grid's backdrop wall
         // is the extra item.
         "materials_textures" => e(42, 42, 7, 7, 22176),
         "materials_alpha" => e(65, 65, 11, 11, 130),
+        // Three normal-mapped spheres (BC5 is left out without the device
+        // feature) and an open two-sided sheet.
+        "normalmap_bc5_and_backface" => e(4, 4, 4, 4, 11906),
+        // A skinned tube and a squashed sphere: the skinned mesh draws in its
+        // own batch, as does the sphere.
+        "skinned_normalmap" => e(2, 2, 2, 2, 6272),
         // Each column's pinned and batched copies share a batch where the
         // copies match.
         "materials_fallbacks" => e(44, 44, 20, 20, 21128),
@@ -72,6 +89,31 @@ fn expected(name: &str) -> Option<Expected> {
         "exposure_physical_sunny16" => e(13, 13, 2, 2, 26),
         "exposure_auto" => e(13, 13, 2, 2, 26),
         "exposure_auto_partial" => e(13, 13, 2, 2, 26),
+        "light_transport_emitter_ev0" => e(5, 5, 2, 2, 10),
+        "light_transport_emitter_sunny16" => e(5, 5, 2, 2, 10),
+        "light_transport_emitter_weights" => e(5, 5, 2, 2, 10),
+        "light_transport_bloom_physical" => e(4, 4, 3, 3, 1934),
+        "light_transport_bloom_unit" => e(4, 4, 3, 3, 1934),
+        "light_transport_helmet_ibl" => e(2, 2, 2, 2, 3980),
+        "light_transport_helmet_zone" => e(2, 2, 2, 2, 3980),
+        "light_transport_probe_x1" => e(4, 4, 3, 3, 2234),
+        "light_transport_probe_x4" => e(4, 4, 3, 3, 2234),
+        "occlusion_ssao" => e(2, 2, 2, 2, 14),
+        "occlusion_contact" => e(2, 2, 2, 2, 14),
+        "light_transport_recolour_physical" => e(3, 3, 3, 3, 4418),
+        "light_transport_colourmap_physical" => e(4, 4, 3, 3, 966),
+        "light_transport_no_environment" => e(9, 9, 2, 2, 12162),
+        // Grading charts: the plate and the twelve cards, as the exposure
+        // charts.
+        "grade_scene_teal_orange" => e(13, 13, 2, 2, 26),
+        "grade_scene_teal_orange_sunny16" => e(13, 13, 2, 2, 26),
+        // Operator charts: sixteen ramp cards and twelve hue cards, one
+        // mesh, one batch.
+        "tone_agx" => e(28, 28, 1, 1, 56),
+        "tone_agx_punchy" => e(28, 28, 1, 1, 56),
+        "tone_aces_rrt" => e(28, 28, 1, 1, 56),
+        "tone_generic" => e(28, 28, 1, 1, 56),
+        "tone_custom_baked" => e(28, 28, 1, 1, 56),
         "many_objects" => e(144, 144, 2, 2, 16992),
         "lights_eight" => e(4, 4, 2, 2, 2892),
         "game_mix" => e(85, 85, 4, 4, 2972),
@@ -109,6 +151,8 @@ fn expected(name: &str) -> Option<Expected> {
         // These item-type scenes include mesh geometry (ground and receivers
         // for scatter and decals), so the mesh counters are live for them.
         "scatter_volume" => e(2, 2, 2, 2, 972),
+        // The slab and the contoured sphere, 2^20 m out under a snapped origin.
+        "item_types_far_origin" => e(2, 2, 2, 2, 972),
         // A fog box containing a dense sphere, downsampled: two volumes over a
         // slab and a pillar, so the back-to-front order has something to get
         // wrong.
@@ -167,6 +211,13 @@ fn expected(name: &str) -> Option<Expected> {
         "slab_stack_sun" => e(10, 10, 10, 10, 120),
         "slab_stack_point" => e(10, 10, 10, 10, 120),
         "long_hall" => e(26, 26, 5, 5, 312),
+        "spot_and_sun" => e(10, 10, 10, 10, 1068),
+        "spots_wide_narrow" => e(4, 4, 4, 4, 48),
+        // Ground, post, two cubes, a plank and its two legs: each its own
+        // mesh, so its own batch.
+        "pcss_sun" => e(7, 7, 7, 7, 84),
+        // Ground, tube and cube; the section caps are not batch draws.
+        "section_caps" => e(3, 3, 3, 3, 408),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),
@@ -292,4 +343,89 @@ fn camera_motion_does_no_reupload() {
             scene.name
         );
     }
+}
+
+/// Main-pass draw commands and batch counts of scenes whose items all leave
+/// `draw_priority` and `blend_order` at their defaults: the order key must
+/// not split a batch, a group or a run. Each scene on a fresh harness, so slab
+/// residency reflects that scene alone. The LDR scenes draw every blended
+/// item as its own batch through the uncounted direct loop, hence zero
+/// commands with five batches.
+#[test]
+fn default_draw_order_keeps_draw_commands() {
+    let (w, h) = (320u32, 240u32);
+    // (scene, instanced_batches, main_draw_commands)
+    let expected = [
+        ("primitives_trio", 3, 3),
+        ("transparent", 1, 1),
+        ("transparent_background", 2, 2),
+        ("materials_pbr", 1, 1),
+        ("ldr_blended_order_front", 5, 0),
+        ("ldr_blended_order_back", 5, 0),
+    ];
+    for (name, batches, commands) in expected {
+        let Some(mut harness) = Harness::new() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let scene = viewport_lib_testkit::scene_by_name(name).expect("scene in catalogue");
+        let built = harness.build_scene(&scene);
+        let frame = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
+        let s = harness.render_two_frames(&frame, w, h);
+        assert_eq!(s.instanced_batches, batches, "{name}: instanced_batches");
+        assert_eq!(s.main_draw_commands, commands, "{name}: main_draw_commands");
+    }
+}
+
+/// Section caps are cached per mesh, transform and plane: a static capped
+/// frame generates none on its second render, and moving one plane
+/// regenerates only the caps on that plane. The scene's tube is the one item
+/// the clip applies to, cut by two planes, so the first frame builds two
+/// caps and the moved plane rebuilds one.
+#[test]
+fn section_caps_regenerate_only_on_change() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (w, h) = (320u32, 240u32);
+    let scene = viewport_lib_testkit::scene_by_name("section_caps").expect("scene in catalogue");
+    let built = harness.build_scene(&scene);
+    let frame = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
+
+    let _ = harness.render(&frame, w, h);
+    assert_eq!(
+        harness.stats().cap_meshes_built,
+        2,
+        "first frame builds each cap"
+    );
+    let _ = harness.render(&frame, w, h);
+    assert_eq!(
+        harness.stats().cap_meshes_built,
+        0,
+        "a static section regenerated its caps"
+    );
+
+    let mut moved = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
+    let across = moved
+        .effects
+        .clip
+        .objects
+        .iter_mut()
+        .find_map(|o| match &mut o.shape {
+            viewport_lib::ClipShape::Plane {
+                normal, distance, ..
+            } if normal[2] != 0.0 => Some(distance),
+            _ => None,
+        })
+        .expect("the horizontal plane");
+    *across -= 0.2;
+    let _ = harness.render(&moved, w, h);
+    assert_eq!(
+        harness.stats().cap_meshes_built,
+        1,
+        "moving one plane rebuilds only its cap"
+    );
+    let _ = harness.render(&moved, w, h);
+    assert_eq!(harness.stats().cap_meshes_built, 0);
 }

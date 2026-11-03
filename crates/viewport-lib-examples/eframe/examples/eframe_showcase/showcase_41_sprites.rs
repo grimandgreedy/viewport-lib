@@ -1611,7 +1611,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, 2.0),
             )
-            .to_cols_array_2d();
+            .into();
             vec![item]
         }
         SpriteSubMode::Distortion => {
@@ -1634,7 +1634,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                 .iter()
                 .map(|m| {
                     let mut item = SceneRenderItem::new(app.sprite_state.wall_id, wall_mat);
-                    item.model = m.to_cols_array_2d();
+                    item.model = (*m).into();
                     item
                 })
                 .collect()
@@ -1652,7 +1652,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     glam::Quat::IDENTITY,
                     glam::Vec3::new(0.0, 0.0, -0.05),
                 )
-                .to_cols_array_2d();
+                .into();
                 item.settings.colour = Some(Colour::linear_rgb(0.18, 0.12, 0.08));
                 vec![item]
             }
@@ -1665,7 +1665,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     glam::Quat::IDENTITY,
                     glam::Vec3::new(0.0, 0.0, -0.5),
                 )
-                .to_cols_array_2d();
+                .into();
                 item.settings.colour = Some(Colour::linear_rgb(0.18, 0.22, 0.28));
                 vec![item]
             }
@@ -1845,7 +1845,7 @@ fn gpu_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
         max_speed: 4.5,
     };
     item.emitter.spawn_shape = SpawnShape::Sphere {
-        center: [0.0, 0.0, 0.0],
+        centre: [0.0, 0.0, 0.0],
         radius: 0.2,
     };
     item.emitter.colour = Colour::linear(1.0, 0.55, 0.15, 1.0);
@@ -1884,7 +1884,7 @@ fn gpu_mesh_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
         max_speed: 7.0,
     };
     item.emitter.spawn_shape = SpawnShape::Sphere {
-        center: [0.0, 0.0, 0.0],
+        centre: [0.0, 0.0, 0.0],
         radius: 0.3,
     };
     item.emitter.colour = Colour::linear(0.85, 0.7, 0.5, 1.0);
@@ -1897,7 +1897,7 @@ fn gpu_mesh_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
 /// Sprite items for the `Orientations` sub-mode.
 ///
 /// Each focus picks the scene that orientation is actually for:
-/// camera-facing for world-space labels over a centerpiece, velocity-stretched
+/// camera-facing for world-space labels over a centrepiece, velocity-stretched
 /// for falling rain, axis-locked for vertical grass on a ground plane.
 fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
     match app.sprite_state.orientation_focus {
@@ -2117,12 +2117,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_sprite_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 10.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        10.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2190,8 +2189,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

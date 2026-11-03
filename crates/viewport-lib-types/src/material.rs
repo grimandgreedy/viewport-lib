@@ -105,6 +105,27 @@ pub struct ItemSettings {
     /// stamp it takes every decal whatever its mask; one that writes no depth
     /// takes none.
     pub visibility_mask: u32,
+    /// Draw order of the item within its pass. Default `0`; lower draws first.
+    ///
+    /// Opaque mesh draws are ordered by priority before anything else in their
+    /// pass, so a later priority draws over an earlier one where depth testing
+    /// lets it (equal depth, or depth writes off). Blended mesh draws on the
+    /// LDR path and in the foreground layer sort by priority first and view
+    /// depth second. On the HDR path the scene's blended draws resolve through
+    /// order-independent transparency, which ignores priority. Shadow passes
+    /// ignore it, and so do non-mesh item types.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub draw_priority: i8,
+    /// Fixed blend order for a blended mesh item. Default `None`.
+    ///
+    /// `None` sorts the item back to front by view depth. `Some(n)` replaces
+    /// the depth with `n`: within one `draw_priority`, items with a blend order
+    /// draw before every depth-sorted item, lowest `n` first, so a higher `n`
+    /// draws on top whatever the distance. Honoured where blended draws are
+    /// sorted (the LDR path and the foreground layer); the HDR path's
+    /// order-independent transparency ignores it. Opaque draws ignore it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub blend_order: Option<u16>,
 }
 
 impl Default for ItemSettings {
@@ -122,6 +143,8 @@ impl Default for ItemSettings {
             ignore_clip: false,
             custom_data: [0.0; 8],
             visibility_mask: !0,
+            draw_priority: 0,
+            blend_order: None,
         }
     }
 }
@@ -267,7 +290,7 @@ impl Default for PatternConfig {
 /// Controls how back faces of a mesh are rendered.
 ///
 /// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
-/// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColour`]
+/// to shade them as front faces lit from the viewer's side, or [`BackfacePolicy::DifferentColour`]
 /// to shade back faces in a distinct colour : useful for spotting mesh orientation errors or
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -276,7 +299,9 @@ impl Default for PatternConfig {
 pub enum BackfacePolicy {
     /// Back faces are culled (invisible). Default.
     Cull,
-    /// Back faces are visible and shaded identically to front faces.
+    /// Back faces are visible and shaded as front faces, with the normal
+    /// flipped toward the viewer, so an open sheet seen from behind is lit from
+    /// the side the camera is on.
     Identical,
     /// Back faces are visible and shaded in the given colour.
     ///
@@ -571,11 +596,16 @@ pub struct Material {
     /// [`Colour::linear_rgb`](crate::colour::Colour::linear_rgb) for one already in
     /// linear space. Default is linear `[0.7, 0.7, 0.7]`.
     pub base_colour: crate::colour::Colour,
-    /// Ambient light coefficient. Default 0.15.
+    /// Ambient light coefficient of [`ShadingModel::Phong`] and
+    /// [`ShadingModel::Flat`], added to the hemisphere fill. PBR shading does
+    /// not read it: with image-based lighting off its ambient is the hemisphere
+    /// fill alone. Default 0.15.
     pub ambient: f32,
     /// Diffuse light coefficient. Default 0.75.
     pub diffuse: f32,
-    /// Specular highlight coefficient. Default 0.4.
+    /// Blinn-Phong specular highlight coefficient. Default 0.4. Only the Phong
+    /// shading model reads it; PBR takes its dielectric reflectance from
+    /// [`reflectance`](Self::reflectance).
     pub specular: f32,
     /// Specular shininess exponent. Default 32.0.
     pub shininess: f32,
@@ -630,7 +660,8 @@ pub struct Material {
     /// **nits** is `emissive * emissive_strength`, so this sets the hue and
     /// `emissive_strength` sets the brightness. Applied to both the Blinn-Phong
     /// and PBR paths. When `emissive_texture_id` is set, it is multiplied by the
-    /// texture sample.
+    /// texture sample. The camera's exposure scales it as set by
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight).
     pub emissive: crate::colour::Colour,
     /// Emissive luminance in **nits**, multiplying [`Self::emissive`]. Default
     /// `1.0`.
@@ -639,7 +670,21 @@ pub struct Material {
     /// an emitter must reach a luminance comparable to the lit scene to read as
     /// glowing: a few hundred nits for a soft indoor glow, thousands to stay
     /// bright against daylight. `emissive = [0, 0, 0]` emits nothing regardless.
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight) sets how
+    /// far the camera's exposure scales it.
     pub emissive_strength: f32,
+    /// How far the camera's exposure scales this material's emissive, 0..1.
+    /// Default `1.0`.
+    ///
+    /// At 1 the emissive is radiance in nits, exposed with the rest of the
+    /// scene. At 0 it is display-relative: added after exposure, so an
+    /// emitter of 1 nit adds 1 to the exposed colour whatever the exposure,
+    /// for annotation and UI-like surfaces that should read the same in
+    /// daylight and indoors. Values between blend the scale linearly,
+    /// `mix(1, exposure, weight)`. Applies to the emissive factor and map, the
+    /// item's custom-data emissive and a material plugin's emissive.
+    #[cfg_attr(feature = "serde", serde(default = "default_emissive_exposure_weight"))]
+    pub emissive_exposure_weight: f32,
     /// Optional emissive texture identifier. Default None.
     ///
     /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`
@@ -761,6 +806,89 @@ pub struct Material {
     /// a plugin, and past the plugin's `texture_count`.
     #[cfg_attr(feature = "serde", serde(default))]
     pub plugin_textures: [Option<crate::ids::TextureId>; MATERIAL_PLUGIN_MAX_TEXTURES],
+    /// Dielectric reflectance at normal incidence, as a perceptual 0..1 value:
+    /// PBR shading takes F0 = `0.16 * reflectance^2`. Default 0.5 (F0 = 0.04,
+    /// the reflectance of most plastics and glass). 0 removes the dielectric
+    /// specular; 1 gives F0 = 0.16, about a gemstone. Metals ignore it: their
+    /// F0 is the base colour. Set it from an index of refraction with
+    /// [`with_ior`](Self::with_ior).
+    #[cfg_attr(feature = "serde", serde(default = "default_reflectance"))]
+    pub reflectance: f32,
+    /// Scales the dielectric specular at normal and grazing incidence, as glTF
+    /// `KHR_materials_specular`'s `specularFactor`. Default 1.0. 0 removes the
+    /// dielectric specular lobe entirely, grazing Fresnel included.
+    #[cfg_attr(feature = "serde", serde(default = "default_specular_factor"))]
+    pub specular_factor: f32,
+    /// Tints the dielectric F0, as glTF `KHR_materials_specular`'s
+    /// `specularColorFactor`. Default linear white. The tinted F0 is clamped
+    /// to 1 before [`specular_factor`](Self::specular_factor) scales it.
+    #[cfg_attr(feature = "serde", serde(default = "default_specular_colour"))]
+    pub specular_colour: crate::colour::Colour,
+    /// Index of refraction, for refraction and transmission only. Default 1.5.
+    /// It bends the light [`transmission`](Self::transmission) lets through;
+    /// F0 comes from [`reflectance`](Self::reflectance), which
+    /// [`with_ior`](Self::with_ior) sets together with this field.
+    #[cfg_attr(feature = "serde", serde(default = "default_ior"))]
+    pub ior: f32,
+    /// Strength of a clear coat layered over the base, 0..1, as glTF
+    /// `KHR_materials_clearcoat`'s `clearcoatFactor`. Default 0 (no coat). The
+    /// coat is a dielectric (F0 0.04) GGX lobe on the shading normal; the
+    /// light it reflects is taken from the base beneath it. PBR shading only.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clearcoat: f32,
+    /// Perceptual roughness of the clear coat, 0..1. Default 0. The base's
+    /// roughness is raised toward it by [`clearcoat`](Self::clearcoat).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clearcoat_roughness: f32,
+    /// Colour of a sheen layer (a Charlie microfibre lobe, for cloth and
+    /// velvet), as glTF `KHR_materials_sheen`'s `sheenColorFactor`. Default
+    /// black (no sheen). The base is dimmed by the light the sheen reflects.
+    #[cfg_attr(feature = "serde", serde(default = "default_sheen_colour"))]
+    pub sheen_colour: crate::colour::Colour,
+    /// Perceptual roughness of the sheen, 0..1. Default 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub sheen_roughness: f32,
+    /// Anisotropy of the base specular lobe, -1..1. Default 0 (isotropic).
+    /// Positive values stretch the highlight along the tangent, negative along
+    /// the bitangent. Reads the mesh's tangents, or a frame built from the
+    /// normal when the mesh has none.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub anisotropy: f32,
+    /// Rotation of the anisotropy direction from the tangent toward the
+    /// bitangent, in radians. Default 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub anisotropy_rotation: f32,
+    /// Fraction of light that passes through the surface rather than being
+    /// diffusely reflected, 0..1, as glTF `KHR_materials_transmission`'s
+    /// `transmissionFactor`. Default 0 (opaque). The transmitted light is
+    /// tinted by the base colour and refracted by [`ior`](Self::ior). PBR
+    /// shading in the opaque or mask alpha mode only; metals do not transmit.
+    ///
+    /// An opaque-mode transmissive mesh draws after the opaque scene and reads
+    /// a copy of it, blurred by roughness. It sees opaque geometry only: a
+    /// transmissive surface behind another shows through as the environment.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub transmission: f32,
+    /// Thickness of the volume under the surface, in world units, as glTF
+    /// `KHR_materials_volume`'s `thicknessFactor`. Default 0 (a thin wall that
+    /// does not bend what is behind it). Sets how far the refracted ray
+    /// travels before it reads the scene behind, and the path length for
+    /// [`attenuation_colour`](Self::attenuation_colour).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub thickness: f32,
+    /// Colour white light becomes after travelling
+    /// [`attenuation_distance`](Self::attenuation_distance) through the
+    /// volume, as `KHR_materials_volume`'s `attenuationColor`. Default linear
+    /// white (no absorption).
+    #[cfg_attr(feature = "serde", serde(default = "default_attenuation_colour"))]
+    pub attenuation_colour: crate::colour::Colour,
+    /// Distance in world units over which light is absorbed to
+    /// [`attenuation_colour`](Self::attenuation_colour), as
+    /// `KHR_materials_volume`'s `attenuationDistance`. Default `f32::MAX`
+    /// (no absorption); `f32::MAX` rather than infinity so the value survives
+    /// formats without infinities.
+    #[cfg_attr(feature = "serde", serde(default = "default_attenuation_distance"))]
+    pub attenuation_distance: f32,
 }
 
 /// A material's values for its plugin's declared parameters, keyed by name.
@@ -868,13 +996,17 @@ pub fn param_name_hash(name: &str) -> u64 {
 /// a plugin shares its WGSL and pipelines; each carries its own
 /// [`plugin_params`](Material::plugin_params) and
 /// [`plugin_textures`](Material::plugin_textures). The renderer resolves the id
-/// against its registry at draw time; an id from a different session (e.g. a
-/// deserialized scene rendered before the plugin is re-registered) falls back
-/// to built-in shading.
+/// against its registry at draw time. An id that does not resolve falls back
+/// to built-in shading: one from a different session (e.g. a deserialized
+/// scene rendered before the plugin is re-registered), or one whose plugin
+/// was unregistered. Unregistering moves the slot's generation on, so the id
+/// does not resolve to a plugin registered into the same slot later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MaterialPluginId {
     pub(crate) plugin: u32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) generation: u32,
 }
 
 impl MaterialPluginId {
@@ -883,12 +1015,25 @@ impl MaterialPluginId {
         self.plugin
     }
 
-    /// Build a handle from a plugin registration index. Crate-internal: the
-    /// shading-hook registry mints these; outside code obtains them from
-    /// registration calls and treats them as opaque.
+    /// Generation of the registration slot when this id was issued.
+    pub fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// Build a handle from a plugin registration index, at the slot's first
+    /// generation. Crate-internal: the shading-hook registry mints these;
+    /// outside code obtains them from registration calls and treats them as
+    /// opaque.
     #[doc(hidden)]
     pub fn from_index(plugin: u32) -> Self {
-        Self { plugin }
+        Self::from_parts(plugin, 0)
+    }
+
+    /// Build a handle from a registration index and slot generation.
+    /// Crate-internal, like [`from_index`](Self::from_index).
+    #[doc(hidden)]
+    pub fn from_parts(plugin: u32, generation: u32) -> Self {
+        Self { plugin, generation }
     }
 }
 
@@ -898,6 +1043,46 @@ impl MaterialPluginId {
 #[cfg(feature = "serde")]
 fn default_normal_strength() -> f32 {
     1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_reflectance() -> f32 {
+    0.5
+}
+
+#[cfg(feature = "serde")]
+fn default_specular_factor() -> f32 {
+    1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_specular_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0)
+}
+
+#[cfg(feature = "serde")]
+fn default_emissive_exposure_weight() -> f32 {
+    1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_ior() -> f32 {
+    1.5
+}
+
+#[cfg(feature = "serde")]
+fn default_attenuation_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0)
+}
+
+#[cfg(feature = "serde")]
+fn default_attenuation_distance() -> f32 {
+    f32::MAX
+}
+
+#[cfg(feature = "serde")]
+fn default_sheen_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0)
 }
 
 impl Default for Material {
@@ -917,6 +1102,7 @@ impl Default for Material {
             metallic_roughness_texture_id: None,
             emissive: crate::colour::Colour::BLACK,
             emissive_strength: 1.0,
+            emissive_exposure_weight: 1.0,
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
             shading_model: ShadingModel::Phong,
@@ -933,6 +1119,20 @@ impl Default for Material {
             shading_plugin: None,
             plugin_params: PluginParams::default(),
             plugin_textures: [None; MATERIAL_PLUGIN_MAX_TEXTURES],
+            reflectance: 0.5,
+            specular_factor: 1.0,
+            specular_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
+            ior: 1.5,
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
+            sheen_colour: crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0),
+            sheen_roughness: 0.0,
+            anisotropy: 0.0,
+            anisotropy_rotation: 0.0,
+            transmission: 0.0,
+            thickness: 0.0,
+            attenuation_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
+            attenuation_distance: f32::MAX,
         }
     }
 }
@@ -995,6 +1195,64 @@ impl Material {
         self
     }
 
+    /// Set how far the camera's exposure scales the emissive: 1 exposes it with
+    /// the scene, 0 keeps it display-relative. See
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight).
+    pub fn with_emissive_exposure_weight(mut self, weight: f32) -> Self {
+        self.emissive_exposure_weight = weight;
+        self
+    }
+
+    /// Set the index of refraction and derive [`reflectance`](Self::reflectance)
+    /// from it, so F0 = `((ior - 1) / (ior + 1))^2`. An IOR of 1.5 gives the
+    /// default reflectance of 0.5.
+    pub fn with_ior(mut self, ior: f32) -> Self {
+        self.ior = ior;
+        self.reflectance = ((ior - 1.0) / (ior + 1.0)).abs() / 0.4;
+        self
+    }
+
+    /// Layer a clear coat of `amount` (0..1) and perceptual `roughness` over
+    /// the base. See [`clearcoat`](Self::clearcoat).
+    pub fn with_clearcoat(mut self, amount: f32, roughness: f32) -> Self {
+        self.clearcoat = amount;
+        self.clearcoat_roughness = roughness;
+        self
+    }
+
+    /// Layer a sheen of `colour` and perceptual `roughness` over the base. See
+    /// [`sheen_colour`](Self::sheen_colour).
+    pub fn with_sheen(mut self, colour: crate::colour::Colour, roughness: f32) -> Self {
+        self.sheen_colour = colour;
+        self.sheen_roughness = roughness;
+        self
+    }
+
+    /// Stretch the base specular lobe by `strength` (-1..1), turned by
+    /// `rotation` radians from the tangent. See [`anisotropy`](Self::anisotropy).
+    pub fn with_anisotropy(mut self, strength: f32, rotation: f32) -> Self {
+        self.anisotropy = strength;
+        self.anisotropy_rotation = rotation;
+        self
+    }
+
+    /// Let `transmission` (0..1) of the light through a volume `thickness`
+    /// world units deep. See [`transmission`](Self::transmission).
+    pub fn with_transmission(mut self, transmission: f32, thickness: f32) -> Self {
+        self.transmission = transmission;
+        self.thickness = thickness;
+        self
+    }
+
+    /// Absorb light inside the volume so white becomes `colour` after
+    /// `distance` world units. See
+    /// [`attenuation_colour`](Self::attenuation_colour).
+    pub fn with_attenuation(mut self, colour: crate::colour::Colour, distance: f32) -> Self {
+        self.attenuation_colour = colour;
+        self.attenuation_distance = distance;
+        self
+    }
+
     /// Shade through a registered material plugin. See
     /// [`shading_plugin`](Self::shading_plugin).
     pub fn with_plugin(mut self, plugin: MaterialPluginId) -> Self {
@@ -1053,11 +1311,11 @@ impl Material {
     /// Returns `true` if back faces need the per-object draw path.
     ///
     /// `Cull` and `Identical` render correctly through the instanced path: `Cull`
-    /// uses back-face culling and `Identical` disables culling but shades back
-    /// faces with the geometric normal, neither of which needs per-item state the
-    /// instanced shader does not carry. The styled policies (`DifferentColour`,
-    /// `Tint`, `Pattern`) flip the normal and read a per-item back-face colour, so
-    /// they stay on the per-object path.
+    /// uses back-face culling and `Identical` disables culling and flips the
+    /// normal on back faces, neither of which needs per-item state the instanced
+    /// shader does not carry. The styled policies (`DifferentColour`, `Tint`,
+    /// `Pattern`) also read a per-item back-face colour, so they stay on the
+    /// per-object path.
     pub fn backface_needs_per_object(&self) -> bool {
         matches!(
             self.backface_policy,
@@ -1226,6 +1484,31 @@ impl Material {
 mod tests {
     use super::*;
     use crate::colour::Colour;
+
+    #[test]
+    fn with_ior_derives_reflectance() {
+        let m = Material::default().with_ior(1.5);
+        assert_eq!(m.ior, 1.5);
+        assert!((m.reflectance - Material::default().reflectance).abs() < 1e-6);
+        // F0 = 0.16 r^2 reproduces ((ior - 1) / (ior + 1))^2.
+        let m = Material::default().with_ior(2.4);
+        let f0 = 0.16 * m.reflectance * m.reflectance;
+        let expected = ((2.4f32 - 1.0) / (2.4 + 1.0)).powi(2);
+        assert!((f0 - expected).abs() < 1e-6, "{f0} vs {expected}");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn emissive_exposure_weight_defaults_to_one_when_absent() {
+        let mut json =
+            serde_json::to_value(Material::default().with_emissive_exposure_weight(0.25)).unwrap();
+        assert_eq!(json["emissive_exposure_weight"], 0.25);
+        json.as_object_mut()
+            .unwrap()
+            .remove("emissive_exposure_weight");
+        let m: Material = serde_json::from_value(json).unwrap();
+        assert_eq!(m.emissive_exposure_weight, 1.0);
+    }
 
     #[test]
     fn texture_slots_list_in_index_order() {

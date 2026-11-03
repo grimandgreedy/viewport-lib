@@ -24,7 +24,7 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
@@ -32,8 +32,8 @@ use vpl::{
     BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, LightKind,
     LightSource, LightingSettings, MatcapId, Material, MaterialId, MeshId, OffscreenViewportTarget,
     OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask, SceneFrame,
-    SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer,
+    SceneRenderItem, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
@@ -529,10 +529,7 @@ impl App {
         skin_pivot_z: f32,
     ) -> Self {
         Self {
-            camera: Camera {
-                distance: 22.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 22.0, Camera::default().orientation()),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             meshes,
@@ -586,12 +583,12 @@ impl App {
         let mut light = LightSource::default();
         light.kind = match self.light_kind {
             1 => LightKind::Point {
-                position: self.point_position,
+                position: glam::Vec3::from(self.point_position).as_dvec3(),
                 range: self.point_range,
                 radius: 0.1,
             },
             2 => LightKind::Spot {
-                position: self.spot_position,
+                position: glam::Vec3::from(self.spot_position).as_dvec3(),
                 direction: self.spot_direction,
                 range: self.spot_range,
                 inner_angle: self.spot_inner_deg.to_radians(),
@@ -627,7 +624,7 @@ impl App {
 
         let mut place = |mesh: MeshId, pick_id: u64, configure: &dyn Fn(&mut SceneRenderItem)| {
             let mut item = SceneRenderItem::new(mesh, mats[pick_id as usize]);
-            item.model = glam::Mat4::from_translation(grid_pos(pick_id)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(grid_pos(pick_id)).into();
             item.settings.pick_id = PickId(pick_id);
             item.settings.selected = self.selection.contains(&pick_id);
             configure(&mut item);
@@ -684,8 +681,7 @@ impl App {
 
         // Ground platform: instanced opaque, receives every object's shadow.
         let mut ground = SceneRenderItem::new(self.meshes.ground, mats[0]);
-        ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         items.push(ground);
 
         items
@@ -711,71 +707,41 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.input.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.has_focus(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+            self.input.begin_frame(ViewportContext::new(
+                ownership,
+                [rect.width(), rect.height()],
+            ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);
 
+            let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.input
-                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
                 if let Some(p) = i.pointer.interact_pos() {
-                    let local = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
-                    self.last_cursor = local;
-                    self.input
-                        .push_event(ViewportEvent::PointerMoved { position: local });
+                    self.last_cursor = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
                 }
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            // Left is reserved for selection (click = pick, drag = box).
-                            // Orbit is on middle, pan on right, so left never reaches
-                            // the camera controller.
-                            if *button == egui::PointerButton::Primary {
-                                self.drag_start = if *pressed {
-                                    Some(self.last_cursor)
-                                } else {
-                                    self.drag_start
-                                };
-                                continue;
-                            }
-                            let vp_button = match button {
-                                egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.input.push_event(ViewportEvent::MouseButton {
-                                button: vp_button,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.input.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                // Left is reserved for selection (click = pick, drag = box). Orbit is
+                // on middle, pan on right, so left never reaches the camera controller.
+                if let ViewportEvent::MouseButton {
+                    button: vpl::MouseButton::Left,
+                    state,
+                } = ev
+                {
+                    if state == ButtonState::Pressed {
+                        self.drag_start = Some(self.last_cursor);
+                    }
+                    continue;
+                }
+                self.input.push_event(ev);
+            }
 
             let w = rect.width();
             let h = rect.height();

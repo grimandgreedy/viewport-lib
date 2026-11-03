@@ -39,6 +39,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::{AdapterCtx, winit as vpl_winit};
 
 use web_time::Instant;
 
@@ -48,14 +49,13 @@ use viewport_lib::picking::screen_to_ray;
 use viewport_lib::vplg::volume::grid::VolumeData;
 use viewport_lib::vplg::volume::marching_cubes::extract_isosurface;
 use viewport_lib::{
-    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LabelItem, Material,
-    MaterialId, MeshId, MouseButton, OrbitCameraController, OverlayFill, OverlayShape,
-    OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, SceneRenderItem,
-    ScrollUnits, Tier, ViewportContext, ViewportError, ViewportEvent, ViewportInput,
-    ViewportRenderer, wgpu,
+    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LabelItem,
+    Material, MaterialId, MeshId, MouseButton, OrbitCameraController, OverlayFill, OverlayShape,
+    OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, SceneRenderItem, Tier,
+    ViewportContext, ViewportError, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -224,53 +224,38 @@ impl ApplicationHandler<State> for App {
                     .configure(&state.device, &state.surface_config);
                 state.window.request_redraw();
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                state.cursor = glam::Vec2::new(position.x as f32, position.y as f32);
-                state.input.push_event(ViewportEvent::PointerMoved {
-                    position: state.cursor,
-                });
-                state.window.request_redraw();
-            }
-            WindowEvent::MouseInput {
-                button: WinitMouseButton::Left,
-                state: element_state,
-                ..
-            } => {
-                state.input.push_event(ViewportEvent::MouseButton {
-                    button: MouseButton::Left,
-                    state: match element_state {
-                        ElementState::Pressed => ButtonState::Pressed,
-                        ElementState::Released => ButtonState::Released,
-                    },
-                });
-                // A release is the click: run a pick at the cursor and report
-                // it, so the CPU pick path is exercised on demand and not only
-                // once during setup.
-                if element_state == ElementState::Released {
-                    state.pick_at_cursor();
-                }
-                state.window.request_redraw();
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state
-                    .input
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
-            }
             WindowEvent::RedrawRequested => {
                 state.render();
                 state.window.request_redraw();
             }
-            _ => {}
+            // The viewport fills the canvas, so it owns everything; positions
+            // stay in physical pixels, the units the surface size is given in.
+            other => {
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &AdapterCtx::default(), &mut events);
+                if !events.is_empty() {
+                    state.window.request_redraw();
+                }
+                for ev in events {
+                    let left_release = matches!(
+                        ev,
+                        ViewportEvent::MouseButton {
+                            button: MouseButton::Left,
+                            state: ButtonState::Released,
+                        }
+                    );
+                    if let ViewportEvent::PointerMoved { position } = ev {
+                        state.cursor = position;
+                    }
+                    state.input.push_event(ev);
+                    // A release is the click: run a pick at the cursor and report
+                    // it, so the CPU pick path is exercised on demand and not only
+                    // once during setup.
+                    if left_release {
+                        state.pick_at_cursor();
+                    }
+                }
+            }
         }
     }
 }
@@ -300,16 +285,13 @@ impl State {
     }
 
     fn render(&mut self) {
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+        let frame = match viewport_lib::gpu::acquire_surface(&self.surface) {
+            viewport_lib::gpu::SurfaceFrame::Acquired(f) => f,
+            viewport_lib::gpu::SurfaceFrame::Recreate => {
                 self.surface.configure(&self.device, &self.surface_config);
                 return;
             }
-            Err(e) => {
-                log_line(&format!("surface error: {e:?}"));
-                return;
-            }
+            viewport_lib::gpu::SurfaceFrame::Skip => return,
         };
         let view = frame
             .texture
@@ -334,13 +316,10 @@ impl State {
             .owned()
             .render(&self.device, &self.queue, &view, &frame_data);
         self.queue.submit(std::iter::once(cmd));
-        frame.present();
+        viewport_lib::gpu::present(&self.queue, frame);
 
-        self.input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [w, h],
-        });
+        self.input
+            .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
         // Pan reads the viewport height off the controller.
         self.controller.set_viewport_size([w, h]);
     }
@@ -349,16 +328,21 @@ impl State {
 async fn build_state(window: Arc<Window>) -> State {
     let mut results = Results::default();
 
+    // The surface comes from the canvas element rather than the winit window: a
+    // window brings its own display handle, a bare canvas does not, and the
+    // canvas is the target a host without winit hands over.
     #[cfg(target_arch = "wasm32")]
     let (_instance, surface, adapter) = viewport_lib::gpu::request_adapter_with_gl_fallback(
-        window.clone(),
+        wgpu::SurfaceTarget::Canvas(
+            winit::platform::web::WindowExtWebSys::canvas(&*window).expect("winit made a canvas"),
+        ),
         wgpu::PowerPreference::HighPerformance,
     )
     .await
     .expect("neither WebGPU nor WebGL2 gave an adapter");
     #[cfg(not(target_arch = "wasm32"))]
     let (surface, adapter) = {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = viewport_lib::gpu::default_instance();
         let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -415,16 +399,13 @@ async fn build_state(window: Arc<Window>) -> State {
         .find(|f| f.is_srgb())
         .copied()
         .unwrap_or(caps.formats[0]);
-    let surface_config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    let surface_config = viewport_lib::gpu::runner_surface_config(
         format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode: caps.alpha_modes[0],
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
+        size.width.max(1),
+        size.height.max(1),
+        wgpu::PresentMode::AutoVsync,
+        caps.alpha_modes[0],
+    );
     surface.configure(&device, &surface_config);
 
     let config = RendererConfig::new(format).with_adapter(&adapter);
@@ -541,17 +522,13 @@ async fn build_state(window: Arc<Window>) -> State {
         None => results.fail("CPU pick returned no hit against a surface on the ray"),
     }
 
-    let camera = Camera {
-        distance: 4.0,
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(glam::DVec3::ZERO, 4.0, Camera::default().orientation());
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-    input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [surface_config.width as f32, surface_config.height as f32],
-    });
+    input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [surface_config.width as f32, surface_config.height as f32],
+    ));
 
     State {
         window,

@@ -278,7 +278,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     };
 
     let mut item = SceneRenderItem::new(plane_id, water);
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = app.wave_state.select_surface;
 
     // The buoys are not scene items: they render as an external instance set
@@ -571,12 +571,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_wave_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        14.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -647,8 +646,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

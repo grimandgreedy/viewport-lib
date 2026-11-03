@@ -9,7 +9,8 @@
 //! Run: `cargo run -p viewport-lib-input --example custom_controller`
 
 use viewport_lib_input::input::{
-    BindingPreset, ButtonState, MouseButton, ViewportContext, ViewportEvent, ViewportInput,
+    BindingPreset, ButtonState, InputOwnership, MouseButton, ViewportContext, ViewportEvent,
+    ViewportInput,
 };
 use viewport_lib_input::{Camera, CameraController};
 use viewport_lib_types::input::ActionFrame;
@@ -25,7 +26,9 @@ impl CameraController for HalfSpeedOrbit {
     fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, _dt: f32) {
         let nav = &frame.navigation;
         if nav.orbit.x != 0.0 || nav.orbit.y != 0.0 {
-            camera.orbit(nav.orbit.x * 0.5, nav.orbit.y * 0.5);
+            let mut target = camera.orbit_target();
+            target.orbit(nav.orbit.x * 0.5, nav.orbit.y * 0.5);
+            camera.set_orbit_target(target);
         }
         // A real custom controller might map zoom to dolly, add inertia, clamp
         // pitch differently, etc. The point is the app decides here.
@@ -35,11 +38,10 @@ impl CameraController for HalfSpeedOrbit {
 fn main() {
     // 1. RESOLVE: feed native-shaped events into ViewportInput for one frame.
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-    input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [800.0, 600.0],
-    });
+    input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [800.0, 600.0],
+    ));
 
     // In the primitives preset, plain left-drag (no modifiers) orbits. Drive it
     // by hand: place the pointer, press the button there (that sets the drag
@@ -59,16 +61,16 @@ fn main() {
 
     // 2. APPLY: hand the resolved frame to your controller.
     let mut camera = Camera::default();
-    let before = camera.orientation;
+    let before = camera.orientation();
 
     let mut controller = HalfSpeedOrbit;
     controller.apply(&mut camera, &frame, 1.0 / 60.0);
 
     println!("resolved orbit delta : {:?}", frame.navigation.orbit);
     println!("camera orientation before : {before:?}");
-    println!("camera orientation after  : {:?}", camera.orientation);
+    println!("camera orientation after  : {:?}", camera.orientation());
     println!(
         "moved: {}",
-        before.abs_diff_eq(camera.orientation, 1e-6) == false
+        before.abs_diff_eq(camera.orientation(), 1e-6) == false
     );
 }

@@ -196,9 +196,10 @@ impl ParamDesc {
 ///   `material_texture_0..N` with `material_sampler`. Each material names its own
 ///   set; materials naming different sets draw in separate batches.
 pub trait MaterialPlugin {
-    /// Plugin name: a unique, valid WGSL identifier.
-    fn name(&self) -> &'static str;
-    /// The WGSL body defining `shade_light` / `shade_ambient` / `recolor`
+    /// Plugin name: a unique, valid WGSL identifier. The registry stores
+    /// its own copy, so the name can be built at run time.
+    fn name(&self) -> &str;
+    /// The WGSL body defining `shade_light` / `shade_ambient` / `recolour`
     /// (any non-empty subset) plus helpers.
     fn wgsl_body(&self) -> String;
     /// Whether `shade_light` wants lights with `dot(N, L) <= 0` (wrap
@@ -225,5 +226,13 @@ pub trait MaterialPlugin {
     /// declared.
     fn param_layout(&self) -> Vec<ParamDesc> {
         Vec::new()
+    }
+    /// Wrap and filter for `material_sampler`, the one sampler every
+    /// plugin texture is read through. Only used when
+    /// [`texture_count`](Self::texture_count) is non-zero. Default
+    /// [`SamplerKey::default`](crate::material::SamplerKey::default): repeat,
+    /// linear.
+    fn sampler(&self) -> crate::material::SamplerKey {
+        crate::material::SamplerKey::default()
     }
 }

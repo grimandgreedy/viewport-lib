@@ -28,6 +28,10 @@ pub(crate) struct InstancedBatch {
     pub instance_offset: u32,
     pub instance_count: u32,
     pub is_transparent: bool,
+    /// `true` when the batch draws in the HDR transmission pass rather than
+    /// the opaque scene: one transmissive record, opaque-mode, on a device
+    /// with the pass. Never set with `is_transparent`.
+    pub is_transmissive: bool,
     /// `true` when the batch's material uses the `Identical` backface policy, so
     /// it must be drawn with the two-sided (`cull_mode: None`) instanced pipeline.
     pub two_sided: bool,
@@ -89,6 +93,11 @@ pub(crate) struct InstancedBatch {
     /// blended batches back to front by it; on an LDR frame each blended item
     /// is its own batch, so the sort is per item.
     pub sort_centre: [f32; 3],
+    /// The records' `draw_priority` (part of the batch key).
+    pub priority: i8,
+    /// The first record's `blend_order`. Only read for a blended batch on an
+    /// LDR frame, where each blended record is its own batch.
+    pub blend_order: Option<u16>,
 }
 
 /// Which geometry a batch draws.
@@ -257,6 +266,8 @@ pub(crate) enum BatchPass<'a> {
     },
     /// The weighted-blended OIT pass.
     Oit,
+    /// The HDR transmission pass. Groups 2 and 3 are the caller's to bind.
+    Transmission,
 }
 
 /// Draw one batch: bind its group-1 bind group and the geometry its
@@ -343,6 +354,20 @@ pub(crate) fn draw_batch<'a, E: MeshDrawEncoder<'a>>(
             } else {
                 let key = opaque_key(resources, batch, *clipping_active);
                 (take(family.opaque_features(key, feats)), None)
+            }
+        }
+        BatchPass::Transmission => {
+            if lines || batch.shading_plugin.is_some() {
+                (None, None)
+            } else {
+                (
+                    take(resources.transmission.mesh_features(
+                        batch.two_sided,
+                        feats,
+                        batch.bindless,
+                    )),
+                    None,
+                )
             }
         }
         BatchPass::Oit => {
@@ -631,9 +656,10 @@ pub(crate) fn draw_culled_batches(
 
 impl InstancedBatch {
     /// Whether the batch draws from the GPU cull's indirect args when the
-    /// cull runs: an indexed draw of its mesh or a submesh range.
+    /// cull runs: an indexed draw of its mesh or a submesh range. A
+    /// transmissive batch draws directly in its own pass.
     pub(crate) fn draws_culled(&self) -> bool {
-        matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..))
+        matches!(self.draw, DrawKind::Triangles | DrawKind::Range(..)) && !self.is_transmissive
     }
 
     /// Whether the batch can join a GPU-driven draw group: a culled draw
@@ -656,6 +682,7 @@ impl InstancedBatch {
 
 mod clip;
 pub mod debug;
+pub(crate) mod draw_order;
 mod frame;
 pub(crate) mod items;
 mod lighting;
@@ -669,6 +696,7 @@ pub use self::items::*;
 pub use self::lighting::*;
 pub use self::overlay::*;
 pub use self::postprocess::*;
+pub use viewport_lib_types::frame_time::FrameTime;
 // ---------------------------------------------------------------------------
 
 /// All data needed to render one frame of the viewport.
@@ -684,13 +712,18 @@ pub struct FrameData {
     pub scene: SceneFrame,
     /// Viewport presentation settings (background, grid, axes indicator).
     pub viewport: ViewportFrame,
-    /// Interaction and selection visualization (gizmo, outline, x-ray).
+    /// Interaction and selection visualisation (outline, x-ray, constraint guides).
     pub interaction: InteractionFrame,
     /// Global rendering effects (lighting, clipping, post-process).
     pub effects: EffectsFrame,
     /// Screen-space overlays rendered after post-processing (shapes, labels,
     /// glyph runs, polylines).
     pub overlays: OverlayFrame,
+    /// The time this frame renders at, read by time-driven shaders through
+    /// the camera uniform and the deform header. `None` (the default) uses
+    /// the renderer's monotonic clock, started when it was created; set a
+    /// fixed time when two renders must match exactly.
+    pub time: Option<FrameTime>,
 }
 
 impl Default for FrameData {
@@ -702,6 +735,7 @@ impl Default for FrameData {
             interaction: InteractionFrame::default(),
             effects: EffectsFrame::default(),
             overlays: OverlayFrame::default(),
+            time: None,
         }
     }
 }
@@ -744,6 +778,12 @@ impl FrameData {
             interaction: InteractionFrame::from_selection(selection),
             ..Self::default()
         }
+    }
+
+    /// Render this frame at `time` instead of the renderer's clock.
+    pub fn with_time(mut self, time: FrameTime) -> Self {
+        self.time = Some(time);
+        self
     }
 
     /// Set the viewport background clear colour.
@@ -910,14 +950,17 @@ macro_rules! emit_draw_calls {
             }
 
             // Blended batches, after every opaque draw. There is no OIT here,
-            // so they draw back to front by view depth. Prepare gives each
+            // so they draw by priority, then back to front by view depth or by
+            // their fixed blend order. Prepare gives each
             // blended item its own batch on this path, so the order is per
             // item.
             if !transparent_batches.is_empty() {
-                let view = frame.camera.render_camera.view;
-                let depth =
-                    |b: &InstancedBatch| -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
-                transparent_batches.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+                let view = frame.camera.render_camera.view();
+                // Stable, so batches with equal keys keep their batch order.
+                transparent_batches.sort_by_key(|b| {
+                    let depth = -view.transform_point3(glam::Vec3::from(b.sort_centre)).z;
+                    crate::renderer::types::draw_order::blend_key(b.priority, b.blend_order, depth)
+                });
                 for batch in &transparent_batches {
                     crate::renderer::types::draw_batch(
                         resources,
@@ -930,9 +973,6 @@ macro_rules! emit_draw_calls {
                 }
             }
         }
-
-        // The transform gizmo now draws in the 2D overlay pass; see
-        // `gizmo_overlay::build_gizmo_overlays` and `prepare_overlay_labels`.
 
         // Constraint guide line pass.
         if let Some(slot) = _vp_slot {
@@ -951,11 +991,11 @@ macro_rules! emit_draw_calls {
             }
         }
 
-        // Cap fill pass (section view cross-section fill).
+        // Section caps, clipped by the other planes and the clip volumes.
         if let Some(slot) = _vp_slot {
             if let (false, Some(pipeline)) = (
                 slot.cap_buffers.is_empty(),
-                resources.guide_pipeline(crate::resources::overlay::guides::GUIDE_TRIANGLES),
+                resources.section_cap_pipeline(false),
             ) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
@@ -1040,12 +1080,16 @@ mod tests {
     fn render_camera_from_camera_roundtrip() {
         let cam = crate::camera::Camera::default();
         let rc = RenderCamera::from_camera(&cam);
-        assert_eq!(rc.eye_position, cam.eye_position().to_array());
-        assert_eq!(rc.orientation, cam.orientation);
-        assert_eq!(rc.near, cam.effective_znear());
-        assert_eq!(rc.far, cam.zfar);
-        assert_eq!(rc.fov, cam.fov_y);
-        assert_eq!(rc.aspect, cam.aspect);
+        assert!(rc.eye_position().abs_diff_eq(cam.eye(), 1e-5));
+        assert!(rc.orientation().dot(cam.orientation()).abs() > 1.0 - 1e-5);
+        let (near, far) = rc.depth_range();
+        let (cam_near, cam_far) = cam.depth_range();
+        assert!((near - cam_near).abs() <= 1e-5);
+        // A perspective far plane keeps about f32 epsilon * far / near.
+        let far_eps = 4.0 * f32::EPSILON * cam_far / cam_near;
+        assert!((far - cam_far).abs() <= far_eps * cam_far);
+        assert_eq!(rc.fov_y(), cam.fov_y());
+        assert!((rc.aspect() - cam.aspect).abs() <= 1e-5);
         // view_proj should match Camera's own method
         let expected_vp = cam.view_proj_matrix();
         let actual_vp = rc.view_proj();
@@ -1057,11 +1101,10 @@ mod tests {
 
     #[test]
     fn render_camera_uniform_contains_eye_and_forward() {
-        let rc = RenderCamera {
-            eye_position: [1.0, 2.0, 3.0],
-            forward: [0.0, 0.0, -1.0],
-            ..RenderCamera::default()
-        };
+        let rc = RenderCamera::from_matrices(
+            glam::Mat4::from_translation(glam::Vec3::new(-1.0, -2.0, -3.0)),
+            RenderCamera::default().projection(),
+        );
         let u = rc.camera_uniform();
         assert_eq!(u.eye_pos, [1.0, 2.0, 3.0]);
         assert_eq!(u.forward, [0.0, 0.0, -1.0]);

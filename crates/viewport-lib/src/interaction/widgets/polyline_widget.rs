@@ -149,7 +149,7 @@ impl PolylineWidget {
         if ctx.drag_started {
             if let Some(idx) = self.hovered_point {
                 self.active_point = Some(idx);
-                self.drag_plane_normal = -glam::Vec3::from(ctx.camera.forward);
+                self.drag_plane_normal = -ctx.camera.forward();
                 self.drag_plane_d = -self.drag_plane_normal.dot(self.points[idx]);
             }
         }

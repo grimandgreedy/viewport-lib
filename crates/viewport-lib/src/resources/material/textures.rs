@@ -241,7 +241,7 @@ impl DeviceResources {
         // contiguous, so the whole array uploads in one write_texture.
         let mut bytes = Vec::with_capacity(rgba.len() * 2);
         for &v in rgba {
-            bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+            bytes.extend_from_slice(&f16_le_bytes(v));
         }
         let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("lightmap_array_texture"),
@@ -792,6 +792,12 @@ impl DeviceResources {
     /// renderer's target. Pass an sRGB view (the material path samples with an sRGB
     /// decode); draw it with an unlit material for a faithful 1:1 blit. `width` /
     /// `height` are informational.
+    ///
+    /// The id can also go on `Material::normal_map_id`. A normal map view should
+    /// be linear; only its red and green channels are read and Z is rebuilt, so
+    /// a two-channel format such as `Rg8Unorm` works. Snorm formats
+    /// (`Rg8Snorm`, `Bc5RgSnorm`, `EacRg11Snorm`, ...) are decoded as signed,
+    /// unorm ones are remapped from [0, 1].
     ///
     /// The store borrows the view: it never writes to or resizes it, and
     /// [`replace_texture`](Self::replace_texture) (the CPU-write path) should not be
@@ -2495,18 +2501,19 @@ mod async_texture_tests {
             )
             .unwrap();
         assert!(
-            resources.texture_slot_mismatch().is_ok(),
+            resources.first_texture_slot_mismatch().is_ok(),
             "nothing bound yet"
         );
 
         resources.check_texture_slot(Some(right), crate::TextureSlot::Normal.requirement());
         assert!(
-            resources.texture_slot_mismatch().is_ok(),
+            resources.first_texture_slot_mismatch().is_ok(),
             "a linear upload into a linear slot is not a mismatch"
         );
+        assert!(resources.notices.take().is_empty());
 
         resources.check_texture_slot(Some(wrong), crate::TextureSlot::Normal.requirement());
-        let err = resources.texture_slot_mismatch().unwrap_err();
+        let err = resources.first_texture_slot_mismatch().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("normal_map_id"), "{msg}");
         assert!(msg.contains("TextureData::normal_map"), "{msg}");
@@ -2515,8 +2522,15 @@ mod async_texture_tests {
         resources.check_texture_slot(Some(wrong), crate::TextureSlot::Normal.requirement());
         assert_eq!(resources.texture_slot_mismatches().len(), 1);
 
+        // Both binds are one coalesced error notice.
+        let notices = resources.notices.take();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].count, 2);
+        assert_eq!(notices[0].severity, crate::Severity::Error);
+        assert_eq!(notices[0].detail.to_string(), msg);
+
         resources.clear_texture_slot_mismatches();
-        assert!(resources.texture_slot_mismatch().is_ok());
+        assert!(resources.first_texture_slot_mismatch().is_ok());
     }
 
     #[test]
@@ -2901,6 +2915,18 @@ pub struct GpuTexture {
     pub colour_space: Option<crate::ColourSpace>,
 }
 
+/// `v` as little-endian half-float bytes, clamped to the largest finite half
+/// float, as environment uploads are, so a bright texel does not become
+/// infinite. NaN becomes 0.
+fn f16_le_bytes(v: f32) -> [u8; 2] {
+    let v = if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(-super::environment::F16_MAX, super::environment::F16_MAX)
+    };
+    half::f16::from_f32(v).to_le_bytes()
+}
+
 /// Pick the texture format for a payload and hand back the levels to write.
 ///
 /// The format comes from the payload kind and the colour space: an 8-bit or
@@ -2925,7 +2951,7 @@ pub(crate) fn texture_format_and_levels(
             // Pack to half-float bytes (2 bytes per channel, little-endian).
             let mut bytes = Vec::with_capacity(texels.len() * 2);
             for &v in &texels {
-                bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+                bytes.extend_from_slice(&f16_le_bytes(v));
             }
             (crate::gpu::TextureFormat::Rgba16Float, vec![bytes])
         }
@@ -3171,6 +3197,16 @@ impl DeviceResources {
         if found == required.colour_space() {
             return;
         }
+        let texture = id.raw();
+        self.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::ResourceSlot,
+                "texture_slot_mismatch",
+                [texture, crate::notice::name_id(required.field_name())],
+            ),
+            crate::Severity::Error,
+            || slot_mismatch_notice(texture, required),
+        );
         let Ok(mut recorded) = self.content.texture_slot_mismatches.lock() else {
             return;
         };
@@ -3182,8 +3218,7 @@ impl DeviceResources {
         {
             return;
         }
-        recorded.push((id.raw(), required));
-        tracing::error!("{}", slot_mismatch_error(id.raw(), required));
+        recorded.push((texture, required));
     }
 
     /// The recorded slot mismatches, oldest first, as `(raw texture id,
@@ -3203,12 +3238,18 @@ impl DeviceResources {
     /// The first recorded slot mismatch, as an error naming the slot and the
     /// constructor that fixes it.
     ///
-    /// Call it after a frame to turn a mismatch into a hard failure: a test gate,
-    /// an asset-pipeline check, or a debug build that should not start with the
-    /// wrong textures loaded. The mismatch is also logged at error level as soon
-    /// as it is seen, because it renders a plausible image and nothing else about
-    /// the frame goes wrong.
+    /// Each mismatch is also reported as an error-severity
+    /// [`NoticeDetail::TextureSlotMismatch`](crate::NoticeDetail::TextureSlotMismatch)
+    /// notice, read with `ViewportRenderer::take_notices`.
+    #[deprecated(
+        note = "read NoticeDetail::TextureSlotMismatch from ViewportRenderer::take_notices instead"
+    )]
     pub fn texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
+        self.first_texture_slot_mismatch()
+    }
+
+    /// The first recorded slot mismatch, as an error.
+    pub(crate) fn first_texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
         let Ok(recorded) = self.content.texture_slot_mismatches.lock() else {
             return Ok(());
         };
@@ -3227,13 +3268,27 @@ impl DeviceResources {
     }
 }
 
-/// Build the error for one recorded mismatch. Shared by the log line and the
-/// accessor so both say the same thing.
-fn slot_mismatch_error(raw: u64, required: TextureRequirement) -> crate::error::ViewportError {
-    let found = match required.colour_space() {
+/// The colour space a texture in the wrong slot was uploaded in: the other one.
+fn slot_mismatch_found(required: TextureRequirement) -> &'static str {
+    match required.colour_space() {
         crate::ColourSpace::Srgb => "linear",
         crate::ColourSpace::Linear => "sRGB",
-    };
+    }
+}
+
+/// The notice for one mismatch. Says the same thing as the error.
+fn slot_mismatch_notice(raw: u64, required: TextureRequirement) -> crate::NoticeDetail {
+    crate::NoticeDetail::TextureSlotMismatch {
+        texture: raw,
+        slot: required.field_name(),
+        found: slot_mismatch_found(required),
+        constructor: required.constructor(),
+    }
+}
+
+/// Build the error for one recorded mismatch.
+fn slot_mismatch_error(raw: u64, required: TextureRequirement) -> crate::error::ViewportError {
+    let found = slot_mismatch_found(required);
     crate::error::ViewportError::TextureColourSpaceMismatch {
         slot: required.field_name(),
         found,
@@ -3336,4 +3391,23 @@ pub(crate) fn create_builtin_colourmaps(
 
     let ids = std::array::from_fn(ColourmapId);
     (textures, views, cpu, ids)
+}
+
+#[cfg(test)]
+mod half_float_payload_tests {
+    use super::{TextureData, texture_format_and_levels};
+
+    /// A float payload brighter than a half float holds is clamped, not made
+    /// infinite, and a NaN texel becomes 0.
+    #[test]
+    fn float_payload_is_clamped_to_the_half_float_range() {
+        let data = TextureData::hdr(1, 1, vec![1.0e6, -1.0e6, f32::NAN, 0.5]);
+        let (format, levels) = texture_format_and_levels(data);
+        assert_eq!(format, crate::gpu::TextureFormat::Rgba16Float);
+        let texels: Vec<f32> = levels[0]
+            .chunks_exact(2)
+            .map(|b| half::f16::from_le_bytes([b[0], b[1]]).to_f32())
+            .collect();
+        assert_eq!(texels, vec![65504.0, -65504.0, 0.0, 0.5]);
+    }
 }

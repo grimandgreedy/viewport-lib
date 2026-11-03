@@ -32,11 +32,10 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
     }
     let mut opaque = SceneRenderItem::default();
     opaque.mesh_id = box_id;
-    opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).to_cols_array_2d();
+    opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).into();
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = sphere_id;
-    transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).to_cols_array_2d();
+    transparent.model = glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
     transparent.settings.opacity = 0.5;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
     frame
@@ -45,6 +44,12 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
 /// The build log is process-wide, so the tests that read it or race the
 /// workers take turns.
 static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serialises the tests on the build log. A test that panics while holding
+/// the lock poisons it; the next test takes it anyway rather than failing too.
+fn log_lock() -> std::sync::MutexGuard<'static, ()> {
+    LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn pipelines_built() -> Vec<String> {
     viewport_lib::resources::build_log::drain()
@@ -58,7 +63,7 @@ fn pipelines_built() -> Vec<String> {
 /// frame of two boxes compiles a handful, not the family.
 #[test]
 fn a_mesh_frame_builds_only_the_pipelines_it_binds() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -103,7 +108,7 @@ fn a_mesh_frame_builds_only_the_pipelines_it_binds() {
 /// worker and later frames draw the same image as `Blocking`.
 #[test]
 fn a_mesh_frame_under_background_catches_up() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -133,10 +138,13 @@ fn a_mesh_frame_under_background_catches_up() {
             if out == expected {
                 break;
             }
+            // A frame can hand further sets to the workers; wait for those
+            // rather than spinning, and allow for a loaded machine.
             assert!(
-                start.elapsed() < std::time::Duration::from_secs(30),
+                start.elapsed() < std::time::Duration::from_secs(120),
                 "hdr {hdr}: the background renderer never drew the blocking frame"
             );
+            background.wait_for_pipelines(&device);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert_eq!(background.last_frame_stats().pipelines_pending, 0);
@@ -147,7 +155,7 @@ fn a_mesh_frame_under_background_catches_up() {
 /// frame never shows a shadow with nothing above it.
 #[test]
 fn a_compiling_item_casts_no_shadow() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -189,7 +197,7 @@ fn a_compiling_item_casts_no_shadow() {
 /// on the first call.
 #[test]
 fn a_read_back_under_background_is_complete() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -218,7 +226,7 @@ fn a_read_back_under_background_is_complete() {
 /// pipelines are built, and the image then matches a `Blocking` renderer's.
 #[test]
 fn an_effect_switched_on_under_background_catches_up() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -289,7 +297,7 @@ fn an_effect_switched_on_under_background_catches_up() {
 /// relies on.
 #[test]
 fn a_warmed_renderer_compiles_nothing_afterwards() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -319,7 +327,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
             let points = (0..24).map(|i| {
                 let mut light = viewport_lib::LightSource::default();
                 light.kind = viewport_lib::LightKind::Point {
-                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.0],
+                    position: glam::DVec3::new((i % 6) as f64 - 2.5, (i / 6) as f64 - 1.5, 1.0),
                     range: 3.0,
                     radius: 0.05,
                 };
@@ -346,8 +354,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
                 items[0].settings.selected = true;
                 let mut third = items[0].clone();
                 third.settings.selected = false;
-                third.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).to_cols_array_2d();
+                third.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.5)).into();
                 items.push(third);
                 frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
             }
@@ -375,7 +382,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
 /// cull takes over.
 #[test]
 fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device_recommended_limits() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -386,10 +393,11 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
             .upload_mesh_data(&device, &box_mesh())
             .unwrap();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = RenderCamera::from_camera(&Camera {
-            distance: 14.0,
-            ..Camera::default()
-        });
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
+            glam::DVec3::ZERO,
+            14.0,
+            Camera::default().orientation(),
+        ));
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -400,7 +408,7 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
                 item.mesh_id = mesh;
                 item.model =
                     glam::Mat4::from_translation(glam::Vec3::new((i as f32 - 3.5) * 1.2, 0.0, 0.0))
-                        .to_cols_array_2d();
+                        .into();
                 item
             })
             .collect();
@@ -453,7 +461,7 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
 /// request order.
 #[test]
 fn warm_up_asks_for_plain_sets_before_universal_members() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -499,7 +507,7 @@ fn warm_up_asks_for_plain_sets_before_universal_members() {
 /// those draws; once it lands the count is back to zero.
 #[test]
 fn a_new_feature_set_draws_on_the_stand_in_and_is_counted() {
-    let _guard = LOG_LOCK.lock().unwrap();
+    let _guard = log_lock();
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;

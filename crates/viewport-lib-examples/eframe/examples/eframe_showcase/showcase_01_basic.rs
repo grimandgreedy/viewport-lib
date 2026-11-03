@@ -4,7 +4,7 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{Projection, SceneRenderItem, ViewportRenderer};
+use vpl::{SceneRenderItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // State
@@ -60,8 +60,7 @@ impl App {
             .map(|pos| {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.model =
-                    glam::Mat4::from_translation(glam::Vec3::from(*pos)).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::from(*pos)).into();
                 item
             })
             .collect()
@@ -76,22 +75,16 @@ pub(crate) fn controls_basic(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Projection:");
     ui.horizontal(|ui| {
         if ui
-            .radio(
-                app.camera.projection == Projection::Perspective,
-                "Perspective",
-            )
+            .radio(!app.camera.is_orthographic(), "Perspective")
             .clicked()
         {
-            app.camera.projection = Projection::Perspective;
+            app.camera.set_orthographic(false);
         }
         if ui
-            .radio(
-                app.camera.projection == Projection::Orthographic,
-                "Orthographic",
-            )
+            .radio(app.camera.is_orthographic(), "Orthographic")
             .clicked()
         {
-            app.camera.projection = Projection::Orthographic;
+            app.camera.set_orthographic(true);
         }
     });
     ui.separator();
@@ -142,7 +135,7 @@ pub(crate) fn scene(
             vec![{
                 let mut _t = vpl::LightSource::default();
                 _t.kind = vpl::LightKind::Point {
-                    position: [5.0, 5.0, 5.0],
+                    position: [5.0, 5.0, 5.0].into(),
                     range: 30.0,
                     radius: 0.1,
                 };
@@ -202,8 +195,6 @@ pub(crate) fn scene(
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

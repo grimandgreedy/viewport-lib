@@ -19,8 +19,25 @@ struct Camera {
     // Rgba16Float target ahead of tone mapping.
     lit_clamp: f32,
     forward: vec3<f32>,
-    _pad1: f32,
+    // The camera's exposure, applied to every radiance source where it is
+    // read.
+    exposure: f32,
     inv_view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    // View -> clip and its inverse.
+    proj: mat4x4<f32>,
+    inv_proj: mat4x4<f32>,
+    // Viewport in physical pixels: width, height, 1 / width, 1 / height.
+    viewport: vec4<f32>,
+    // Near, far, 1 when orthographic (0 when perspective), reserved.
+    clip: vec4<f32>,
+    // Frame time: seconds as f32, the remainder f32 drops from the f64
+    // seconds, delta seconds, frame index modulo 2^24.
+    time: vec4<f32>,
+    // The world origin positions are relative to, rounded to f32, and a
+    // counter bumped each time it moves.
+    world_origin: vec3<f32>,
+    origin_epoch: u32,
 };
 
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
@@ -40,17 +57,10 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-struct ShadowAtlas {
-    cascade_vp: array<mat4x4<f32>, 4>,
-    cascade_splits: vec4<f32>,
-    cascade_count: u32,
-    atlas_size: f32,
-    shadow_filter: u32,
-    pcss_light_radius: f32,
-    atlas_rects: array<vec4<f32>, 8>,
-};
+// #include "helpers/shadow_atlas.wgsl"
 
 // #include "helpers/instance_data.wgsl"
+// #include "helpers/depth.wgsl"
 
 // The per-draw view the shader body reads: assembled by `load_object` from
 // the instance record and its material block. Not a GPU layout.
@@ -110,8 +120,8 @@ struct Object {
     has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     ignore_clip: u32,                      // offset 360 : 1 = exempt from clip planes/volumes
     object_mask: u32,                      // offset 364 : layer mask, AND-tested per light
-    // The vec4 higher up keeps the struct 16-aligned, so its size is 368 and
-    // matches the Rust ObjectUniform.
+    dielectric_f0: vec3<f32>,              // dielectric reflectance at normal incidence
+    dielectric_f90: f32,                   // dielectric reflectance at grazing incidence
 };
 
 // Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
@@ -122,7 +132,7 @@ struct TexTransform {
 }
 // The per-object mesh path only reads the UV transforms (`xf`); the scalar and
 // flag blocks are consumed by the instanced path. They are declared here so the
-// WGSL array stride matches the Rust MaterialGpu (368 bytes): omitting them
+// WGSL array stride matches the Rust MaterialGpu (MATERIAL_GPU_BYTES): omitting them
 // shrinks the stride and misreads every entry past material_id 0.
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
@@ -139,8 +149,18 @@ struct MaterialGpu {
     nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
     item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, 0, 0)
     params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
+    specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
+    layers0: vec4<f32>,      // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
+    layers1: vec4<f32>,      // (sheen colour rgb, sheen roughness)
+    volume0: vec4<f32>,      // (transmission, thickness, ior, emissive exposure weight)
+    volume1: vec4<f32>,      // (absorption coefficient rgb, 0)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
+
+// Largest finite half float. The shaded colour and each accumulation write
+// are clamped to it: the weight reaches 3e3, so a bright exposed colour would
+// otherwise write an infinity into the Rgba16Float accumulation target.
+const OIT_ACCUM_MAX: f32 = 65504.0;
 
 // `item_flags.x` bits of MaterialGpu (mirrors the Rust `item_flags` module).
 const MAT_USE_NAN_COLOUR: u32 = 1u;
@@ -151,6 +171,10 @@ const MAT_HAS_SHADOWMASK: u32 = 16u;
 const MAT_HAS_EMISSIVE_TEX: u32 = 32u;
 const MAT_USES_UV1: u32 = 64u;
 const MAT_UV_TRANSFORM: u32 = 128u;
+const MAT_HAS_CLEARCOAT: u32 = 256u;
+const MAT_HAS_SHEEN: u32 = 512u;
+const MAT_HAS_ANISOTROPY: u32 = 1024u;
+const MAT_HAS_TRANSMISSION: u32 = 2048u;
 
 struct SlotUv {
     uv: vec2<f32>,
@@ -200,7 +224,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -258,6 +282,10 @@ override FEAT_EMISSIVE_MAP: bool = true;
 override FEAT_UV1: bool = true;
 override FEAT_UV_TRANSFORM: bool = true;
 override FEAT_LIGHT_PROBE: bool = true;
+override FEAT_CLEARCOAT: bool = true;
+override FEAT_SHEEN: bool = true;
+override FEAT_ANISOTROPY: bool = true;
+override FEAT_TRANSMISSION: bool = true;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
@@ -292,7 +320,8 @@ fn load_object_vertex(i: u32) -> Object {
     o.selected = u32((bit & INST_SELECTED) != 0u);
     o.wireframe = u32((bit & INST_WIREFRAME) != 0u);
     o.has_texture = u32((bit & INST_HAS_TEXTURE) != 0u);
-    o.has_normal_map = u32((bit & INST_HAS_NORMAL_MAP) != 0u);
+    // 0 none, 1 unsigned map (remapped from [0, 1]), 2 signed map.
+    o.has_normal_map = select(0u, select(1u, 2u, (bit & INST_NORMAL_MAP_SIGNED) != 0u), (bit & INST_HAS_NORMAL_MAP) != 0u);
     o.has_ao_map = u32((bit & INST_HAS_AO_MAP) != 0u);
     o.has_attribute = u32((bit & INST_HAS_ATTRIBUTE) != 0u);
     o.use_face_colour = u32((bit & INST_USE_FACE_COLOUR) != 0u);
@@ -345,6 +374,8 @@ fn load_object(i: u32) -> Object {
     o.lightmap_mode = mat.item_flags.y;
     o.lightmap_directional = u32((mbit & MAT_LIGHTMAP_DIRECTIONAL) != 0u);
     o.has_shadowmask = u32((mbit & MAT_HAS_SHADOWMASK) != 0u);
+    o.dielectric_f0 = mat.specular.xyz;
+    o.dielectric_f90 = mat.specular.w;
     return o;
 }
 
@@ -554,7 +585,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
             );
         }
     }
-    var dv = DeformVertex(local_pos, local_normal, vi);
+    var dv = DeformVertex(local_pos, local_normal, vi, in.tangent);
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
@@ -566,7 +597,16 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     );
     let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
-    dv.normal = normalize(model3 * dv.normal);
+    // Normals take the cofactor (the inverse transpose up to scale), signed
+    // so a mirroring transform keeps the normal's side.
+    let normal3 = mat3x3<f32>(
+        cross(model3[1], model3[2]),
+        cross(model3[2], model3[0]),
+        cross(model3[0], model3[1]),
+    );
+    let normal_sign = select(1.0, -1.0, dot(model3[0], normal3[0]) < 0.0);
+    dv.normal = normalize(normal3 * dv.normal) * normal_sign;
+    dv.tangent = vec4<f32>(normalize(model3 * dv.tangent.xyz), dv.tangent.w);
     if FEAT_DEFORM {
         dv = viewport_deform_world_space(dv, dctx);
     }
@@ -576,7 +616,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     out.colour = in.colour;
     out.world_pos = world_pos.xyz;
     out.world_normal = dv.normal;
-    out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
+    out.world_tangent = dv.tangent;
     out.uv = in.uv;
     // Second UV set from the parallel uv1 stream. See mesh.wgsl:vs_body.
     out.uv1 = vec2<f32>(0.0);
@@ -626,11 +666,14 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 // ---------------------------------------------------------------------------
 // PBR BRDF helpers (Cook-Torrance)
 // ---------------------------------------------------------------------------
-// Shared direct BRDF: D_GGX, G1_Smith, G_Smith, F_Schlick, pbr_light_contrib.
+// Shared direct BRDF (the viewport_brdf_* functions).
 // #include "helpers/brdf.wgsl"
 
 // Shared ambient / IBL helpers (equirect sampling, split-sum ambient).
 // #include "helpers/ambient.wgsl"
+
+// The PBR surface model: PbrPixel, pbr_resolve, pbr_direct, pbr_ambient.
+// #include "helpers/pbr_model.wgsl"
 
 // UV parameterization visualization : procedural RGB colour from UV coordinates.
 // Matches the implementation in mesh.wgsl exactly.
@@ -697,6 +740,10 @@ fn build_shading_surface(
     metallic: f32,
     roughness: f32,
     F0: vec3<f32>,
+    energy_compensation: vec3<f32>,
+    spec_ao: f32,
+    dielectric_f0: vec3<f32>,
+    f90: f32,
 ) -> ShadingSurface {
     var surf: ShadingSurface;
     surf.base_colour = surface.base_colour;
@@ -723,6 +770,10 @@ fn build_shading_surface(
     surf.tangent = t;
     surf.bitangent = cross(n, t) * handedness;
     surf.f0 = F0;
+    surf.dielectric_f0 = dielectric_f0;
+    surf.f90 = f90;
+    surf.energy_compensation = energy_compensation;
+    surf.spec_ao = spec_ao;
     surf.metallic = metallic;
     surf.roughness = roughness;
     surf.ao = surface.ao_factor;
@@ -731,11 +782,24 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
+    surf.vertex_colour = in.colour;
     // The instance's raw material channel: custom data slots 4..8 (`data1`),
     // the block reserved for material plugins. A module whose hook reads the
     // per-vertex extension attribute replaces it with that attribute.
     // `custom_data_id` 0 is the shared all-zero block.
     surf.attr = custom_data1(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id);
+    // The material's layers, raw; zero where the material has none.
+    if pbr_layers_compiled() {
+        let mid = instances[in.obj_idx].material_id;
+        let l0 = material_gpu_buf[mid].layers0;
+        let l1 = material_gpu_buf[mid].layers1;
+        surf.clearcoat = l0.x;
+        surf.clearcoat_roughness = l0.y;
+        surf.sheen_colour = l1.xyz;
+        surf.sheen_roughness = l1.w;
+        surf.anisotropy = l0.z;
+        surf.anisotropy_direction = surf.tangent * cos(l0.w) + surf.bitangent * sin(l0.w);
+    }
     return surf;
 }
 
@@ -840,9 +904,9 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
         }
         let alpha = fc.a * object.colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
-        out.out_oit.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
+        out.out_oit.accum  = min(vec4<f32>(fc.rgb * alpha, alpha) * w, vec4<f32>(OIT_ACCUM_MAX));
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -854,10 +918,10 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
                 discard;
             }
             let alpha = object.nan_colour.a;
-            let z = in.clip_pos.z;
+            let z = viewport_depth_from_near(in.clip_pos.z);
             let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
             out.resolved = true;
-            out.out_oit.accum  = vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w);
+            out.out_oit.accum  = min(vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w), vec4<f32>(OIT_ACCUM_MAX));
             out.out_oit.reveal = alpha;
             return out;
         }
@@ -873,12 +937,12 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // Unlit: skip all lighting, return raw colour directly through OIT.
     if object.unlit != 0u {
         let alpha = obj_colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
         // alpha_mode == 3 means the colour is already premultiplied by alpha, so
         // it is weighted directly; straight blend premultiplies here.
         let premult_rgb = select(base_colour * alpha, base_colour, object.alpha_mode == 3u);
-        out.out_oit.accum  = vec4<f32>(premult_rgb, alpha) * w;
+        out.out_oit.accum  = min(vec4<f32>(premult_rgb, alpha) * w, vec4<f32>(OIT_ACCUM_MAX));
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -887,9 +951,9 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     if object.uv_vis_mode != 0u {
         let vis   = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
         let alpha = obj_colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(viewport_depth_from_near(in.clip_pos.z) / in.clip_pos.w), 4.0))));
         out.resolved = true;
-        out.out_oit.accum  = vec4<f32>(vis * alpha, alpha) * w;
+        out.out_oit.accum  = min(vec4<f32>(vis * alpha, alpha) * w, vec4<f32>(OIT_ACCUM_MAX));
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -905,11 +969,14 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
-        var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
-        ts_unpacked.x = ts_unpacked.x * object.normal_strength;
-        ts_unpacked.y = ts_unpacked.y * object.normal_strength;
-        let ts_normal = normalize(ts_unpacked);
+        // Only XY is read and Z is rebuilt, so two-channel maps (BC5, RG8,
+        // EAC) decode the same as RGB ones. A signed format samples in
+        // [-1, 1] already and skips the remap.
+        let nm_xy = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).xy;
+        var ts_xy = select(nm_xy * 2.0 - vec2<f32>(1.0), nm_xy, object.has_normal_map == 2u);
+        ts_xy = ts_xy * object.normal_strength;
+        let ts_z = sqrt(max(1.0 - dot(ts_xy, ts_xy), 0.0));
+        let ts_normal = normalize(vec3<f32>(ts_xy, ts_z));
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
         let T_orth = normalize(T - dot(T, Ng) * Ng);
@@ -920,15 +987,16 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         N = normalize(in.world_normal);
     }
 
-    // Back-face policy handling: flip normal and optionally override colour for back faces.
+    // Back-face policy handling: every two-sided policy flips the normal toward
+    // the viewer on back faces; the styled ones also override the colour.
     // 0=Cull, 1=Identical, 2=DifferentColour, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
-    if !is_front && object.backface_policy >= 2u {
+    if !is_front && object.backface_policy >= 1u {
         N = -N;
         if object.backface_policy == 2u {
             base_colour = object.backface_colour.rgb;
         } else if object.backface_policy == 3u {
             base_colour = base_colour * (1.0 - object.backface_colour.r);
-        } else {
+        } else if object.backface_policy >= 4u {
             let pattern_colour = object.backface_colour.rgb;
             let pattern_type = object.backface_policy - 4u;
             let wp = in.world_pos * object.backface_colour.w;
@@ -1015,24 +1083,22 @@ fn compute_lit(
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
     if shading_is_pbr(object.use_pbr) {
-        var metallic  = clamp(object.metallic,  0.0, 1.0);
-        var roughness = max(object.roughness, 0.04);
-        if object.has_metallic_roughness_tex != 0u {
-            // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
-            // `metallic_range` / `roughness_range` remap the raw samples before the
-            // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = surface.mr_sample;
-            let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.y);
-            let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.x);
-            metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
-            roughness = max(r_remapped * roughness, 0.04);
-        }
-        roughness = specular_aa_roughness_kernel(roughness, saa_kernel);
-        var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
+        var px = pbr_resolve(N, V, base_colour, object.metallic, object.roughness,
+                                 object.has_metallic_roughness_tex != 0u, surface.mr_sample,
+                                 object.metallic_range, object.roughness_range,
+                                 saa_kernel, ao_factor, object.dielectric_f0, object.dielectric_f90);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>
         // </viewport-shade-slot:surface>
+        // Clear coat, sheen and anisotropy, each compiled in only when a draw
+        // of this pipeline uses it.
+        if pbr_layers_compiled() {
+            let mid = object.material_id;
+            px = pbr_resolve_layers(px, N, in.world_tangent, material_gpu_buf[mid].layers0,
+                                    material_gpu_buf[mid].layers1,
+                                    material_gpu_buf[mid].item_flags.x, saa_kernel);
+        }
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.
@@ -1043,98 +1109,42 @@ fn compute_lit(
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
-            let radiance = ev.radiance;
-            // Backfacing: pbr_light_contrib returns exactly zero; skip it.
+            var radiance = ev.radiance;
+            // Backfacing: the direct BRDF returns exactly zero; skip it.
             // <viewport-shade-slot:backface-cull>
             if dot(N, L) <= 0.0 { continue; }
             // </viewport-shade-slot:backface-cull>
             // Transparent surfaces do not cast/receive shadows (no CSM sampling).
+            // Micro-shadowing from material AO still applies to a directional
+            // light; with no shadow factor here it scales the radiance.
+            if (lights_uniform.ao_flags & AO_FLAG_MICRO_SHADOW) != 0u
+                && lights_storage[i].light_type == 0u {
+                radiance *= pbr_micro_shadow(dot(N, L), px.diffuse_ao);
+            }
             // <viewport-shade-slot:light>
             // Subtractive lightmap: the main directional light is baked in, so
             // suppress its realtime direct to avoid double counting (transparent
             // surfaces have no realtime shadow to add back).
             if !(FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u) {
-                Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+                Lo += pbr_direct(px, N, V, L, radiance);
             }
             // </viewport-shade-slot:light>
         }
         dbg_direct_lum = dot(Lo, lum_weights);
-        dbg_roughness  = roughness;
-        dbg_metallic   = metallic;
+        dbg_roughness  = px.perceptual_roughness;
+        dbg_metallic   = px.metallic;
         // <viewport-shade-slot:ambient>
-        var ambient: vec3<f32>;
-        // The environment's specular, kept apart so a light probe or lightmap
-        // that replaces the baked diffuse below leaves the reflection in place,
-        // and the weight the environment's own diffuse gets.
-        var ibl_specular = vec3<f32>(0.0);
-        let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness(max(dot(N, V), 0.001), F0, roughness))
-            * (1.0 - metallic);
-        if lights_uniform.ibl_enabled != 0u {
-            var ibl: IblContrib;
-            if lights_uniform.env_zone_count != 0u {
-                // Per-fragment environment selection. `refl_dr` is the reflection
-                // footprint computed in uniform control flow by the caller.
-                ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
-                                        ao_factor, lights_uniform.ibl_intensity,
-                                        lights_uniform.ibl_rotation, refl_dr, in.world_pos,
-                                        lights_uniform.env_zone_count);
-            } else {
-                ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
-                                       ao_factor, lights_uniform.ibl_intensity,
-                                       lights_uniform.ibl_rotation, refl_dr);
-            }
-            ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
-            ibl.specular *= lights_uniform.ibl_specular_scale;
-            ibl_specular = ibl.specular;
-            ambient = ibl.diffuse + ibl.specular;
-            dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
-            dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
-            dbg_ambient_lum  = dbg_ibl_diff_lum + dbg_ibl_spec_lum;
-        } else {
-            let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
-            let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-            let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
-            ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
-        // Light-probe objects take their indirect diffuse from the SH field; with
-        // an environment, its reflection stays.
-        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
-            let probe = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
-            if lights_uniform.ibl_enabled != 0u {
-                ambient = probe * ambient_kd + ibl_specular;
-            } else {
-                ambient = probe;
-            }
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
-        // Baked lightmap: replace, add, or occlude the ambient term. Force the
-        // base mip: derivative-based selection over tightly-packed atlas charts
-        // reads as blocky bands on the mesh.
-        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
-            // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
-            // and add its base layer to the per-vertex page. Identity scale/bias and
-            // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
-            let lm_uv = in.lightmap_uv;
-            let lm_page = i32(round(in.lightmap_page));
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
-            if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
-                lm = vec4<f32>(lm.rgb * f, lm.a);
-            }
-            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode, 1.0);
-            // Replace and Subtractive bake the diffuse only: weight it like the
-            // environment's diffuse and keep the environment's reflection.
-            if lights_uniform.ibl_enabled != 0u
-                && (object.lightmap_mode == 1u || object.lightmap_mode == 4u) {
-                ambient = ambient * ambient_kd + ibl_specular;
-            }
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
+        // No realtime shadow here, so a shadowed bake is never darkened.
+        let amb = pbr_ambient(px, N, V, in.world_normal, in.world_pos,
+                              in.lightmap_uv, in.lightmap_page, refl_dr, 1.0);
+        var ambient: vec3<f32> = amb.ambient;
+        dbg_ibl_diff_lum = dot(amb.ibl_diffuse, lum_weights);
+        dbg_ibl_spec_lum = dot(amb.ibl_specular, lum_weights);
+        dbg_ambient_lum  = amb.ambient_lum;
         // </viewport-shade-slot:ambient>
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
-        // <viewport-shade-slot:recolor>
-        // </viewport-shade-slot:recolor>
+        // <viewport-shade-slot:recolour>
+        // </viewport-shade-slot:recolour>
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
@@ -1162,7 +1172,7 @@ fn compute_lit(
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
         let direct_rgb = base_colour * total_colour_contrib;
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
-        var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        var hemi_rgb = base_colour * ((ambient_contrib + hemi_ambient) * camera.exposure) * ao_factor;
         // Light-probe objects take their indirect diffuse from the SH field.
         if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             hemi_rgb = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
@@ -1180,7 +1190,7 @@ fn compute_lit(
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode, 1.0);
+            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, vec3<f32>(ao_factor), lm, object.lightmap_mode, 1.0);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;
@@ -1248,12 +1258,17 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // Per-instance custom data slots 0..3 add to emissive (nits); zero is a
     // no-op.
     emissive += custom_data0(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id).xyz;
-    final_rgb += emissive;
-    var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here
     // in plugin-composed modules; inert in the base module.
     // <viewport-shade-slot:emissive>
     // </viewport-shade-slot:emissive>
+    // Emissive is radiance in nits. The material's exposure weight (volume0.w)
+    // sets how far exposure scales it: 1 with the scene, 0 display-relative.
+    // `mix(1, exposure, w)`, written so weight 1 is exactly the exposure.
+    let emissive_weight = material_gpu_buf[object.material_id].volume0.w;
+    emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
+    final_rgb = min(final_rgb + emissive, vec3<f32>(OIT_ACCUM_MAX));
+    let dbg_emissive_lum = dot(emissive, lum_weights);
 
     // #include "helpers/debug_vis.wgsl"
 
@@ -1266,14 +1281,14 @@ fn fs_body(in: VertexOut, is_front: bool) -> OitOut {
     // <viewport-shade-slot:alpha>
     // </viewport-shade-slot:alpha>
     let alpha = final_alpha;
-    let z = in.clip_pos.z;  // NDC depth 0..1
+    let z = viewport_depth_from_near(in.clip_pos.z);  // 0 near, 1 far
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 
     var out: OitOut;
     // alpha_mode == 3 (BlendPremultiplied): final_rgb already carries the alpha
     // premultiply, so weight it as-is. Straight blend applies `* alpha` here.
     let premult_rgb = select(final_rgb * alpha, final_rgb, object.alpha_mode == 3u);
-    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
+    out.accum  = min(vec4<f32>(premult_rgb * w, alpha * w), vec4<f32>(OIT_ACCUM_MAX));
     out.reveal = alpha;
     return out;
 }

@@ -20,17 +20,19 @@
 use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
+use crate::scene_gizmo::{self, Snapshots};
 use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
+use viewport_lib_gizmo::actions;
+use viewport_lib_gizmo::{
+    FrameInput as GizmoInput, GizmoDriver, GizmoMode, GizmoSpace, GizmoStyle, ManipResult,
+};
 use vpl::{
-    Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
-    GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext,
-    ManipulationController, Material, MouseButton, NodeId, OrbitCameraController, PickBackend,
-    PickMask, Projection, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer,
-    gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
+    Material, MouseButton, OrbitCameraController, PickBackend, PickMask, SceneFrame, Selection,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -47,16 +49,16 @@ pub(crate) struct MvState {
     pub inputs: [ViewportInput; 4],
     pub viewports: Option<[vpl::ViewportId; 4]>,
     pub built: bool,
-    pub gizmo: Gizmo,
+    /// The transform gizmo, driven from the hovered quadrant and drawn in all four.
+    pub gizmo: GizmoDriver,
+    pub gizmo_style: GizmoStyle,
     pub hovered_quad: usize,
     pub cursor_local: glam::Vec2,
     /// Deferred pick request `(quad, cursor_local)`, set on a click and consumed
     /// at the render site with that quad's frame via the unified GPU picker.
     pub pending_pick: Option<(usize, glam::Vec2)>,
-    pub gizmo_center: Option<glam::Vec3>,
-    pub gizmo_scales: [f32; 4],
-    pub manip: ManipulationController,
-    pub transforms_snapshot: std::collections::HashMap<NodeId, glam::Mat4>,
+    /// The selection's poses when the current session began.
+    pub snapshots: Snapshots,
     pub left_held: bool,
 }
 
@@ -66,35 +68,25 @@ impl Default for MvState {
             scene: vpl::scene::Scene::new(),
             selection: Selection::new(),
             cameras: [
-                Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                },
-                Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::IDENTITY,
-                    projection: Projection::Orthographic,
-                    ..Camera::default()
-                },
-                Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    projection: Projection::Orthographic,
-                    ..Camera::default()
-                },
-                Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
+                Camera::orbit(
+                    glam::DVec3::ZERO,
+                    12.0,
+                    glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+                ),
+                Camera::orbit(glam::DVec3::ZERO, 10.0, glam::Quat::IDENTITY).orthographic(),
+                Camera::orbit(
+                    glam::DVec3::ZERO,
+                    10.0,
+                    glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                )
+                .orthographic(),
+                Camera::orbit(
+                    glam::DVec3::ZERO,
+                    10.0,
+                    glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
                         * glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    projection: Projection::Orthographic,
-                    ..Camera::default()
-                },
+                )
+                .orthographic(),
             ],
             controllers: [
                 OrbitCameraController::new_stateless(),
@@ -102,22 +94,20 @@ impl Default for MvState {
                 OrbitCameraController::new_stateless(),
                 OrbitCameraController::new_stateless(),
             ],
-            inputs: [
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-                ViewportInput::from_preset(BindingPreset::Default),
-            ],
+            // Each view's resolver drives its camera and, while hovered, the
+            // gizmo, so each carries the gizmo's keys.
+            inputs: std::array::from_fn(|_| {
+                ViewportInput::from_preset(BindingPreset::Default)
+                    .with_bindings(viewport_lib_gizmo::manipulation_bindings())
+            }),
             viewports: None,
             built: false,
-            gizmo: Gizmo::new(),
+            gizmo: GizmoDriver::new(),
+            gizmo_style: GizmoStyle::default(),
             hovered_quad: 0,
             cursor_local: glam::Vec2::ZERO,
             pending_pick: None,
-            gizmo_center: None,
-            gizmo_scales: [1.0; 4],
-            manip: ManipulationController::new(),
-            transforms_snapshot: std::collections::HashMap::new(),
+            snapshots: Snapshots::default(),
             left_held: false,
         }
     }
@@ -151,7 +141,7 @@ impl App {
             [0.60, 0.50, 0.05],
             [0.75, 0.28, 0.05],
         ];
-        let names = ["Center", "Right", "Left", "Front", "Back", "Top"];
+        let names = ["Centre", "Right", "Left", "Front", "Back", "Top"];
 
         for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
@@ -228,14 +218,17 @@ impl App {
         let hq = self.mv_state.hovered_quad;
 
         // begin_frame for all four resolvers; the controllers only need the size
-        // their pan reads.
+        // their pan reads. Events go to the hovered quad alone, so it takes the
+        // viewport widget's ownership and the others have none.
         for i in 0..4 {
             let qr = quad_rects[i];
-            self.mv_state.inputs[i].begin_frame(ViewportContext {
-                hovered: i == hq && response.hovered(),
-                focused: i == hq && response.hovered(),
-                viewport_size: [qr.width(), qr.height()],
-            });
+            let ownership = if i == hq {
+                vpl_egui::ownership(response, ui.ctx(), qr, self.mv_state.gizmo.is_active())
+            } else {
+                InputOwnership::NONE
+            };
+            self.mv_state.inputs[i]
+                .begin_frame(ViewportContext::new(ownership, [qr.width(), qr.height()]));
             self.mv_state.controllers[i].set_viewport_size([qr.width(), qr.height()]);
         }
 
@@ -244,197 +237,86 @@ impl App {
             self.mv_state.inputs[prev_hq].push_event(ViewportEvent::PointerLeft);
         }
 
-        let manip_active_for_text = self.mv_state.manip.is_active();
-
-        // Push this frame's input events to the hovered controller.
+        // Push this frame's input events to the hovered controller, in its local
+        // coordinates.
+        let qr = quad_rects[hq];
+        let actx = AdapterCtx::new(1.0, glam::Vec2::new(qr.left(), qr.top()));
+        let mut events = Vec::new();
+        let mut press_inside = false;
         ui.input(|i| {
-            let mods = modifiers_from_egui(&i.modifiers);
-            self.mv_state.inputs[hq].push_event(ViewportEvent::ModifiersChanged(mods));
-            self.mv_state.inputs[hq].push_event(ViewportEvent::PointerMoved {
-                position: self.mv_state.cursor_local,
-            });
-
+            press_inside = i.pointer.press_origin().is_some_and(|p| rect.contains(p));
+            vpl_egui::begin_frame(i, &actx, &mut events);
             for event in &i.events {
-                match event {
-                    egui::Event::Key {
-                        key,
-                        pressed,
-                        repeat,
-                        ..
-                    } => {
-                        if let Some(kc) = crate::shared::egui_key_to_keycode(*key) {
-                            self.mv_state.inputs[hq].push_event(ViewportEvent::Key {
-                                key: kc,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                                repeat: *repeat,
-                                logical: None,
-                            });
-                        }
-                    }
-
-                    egui::Event::Text(text) if manip_active_for_text => {
-                        for c in text.chars() {
-                            self.mv_state.inputs[hq].push_event(ViewportEvent::Character(c));
-                        }
-                    }
-
-                    egui::Event::PointerButton {
-                        button,
-                        pressed,
-                        pos,
-                        ..
-                    } => {
-                        let vp_button = match button {
-                            egui::PointerButton::Primary => MouseButton::Left,
-                            egui::PointerButton::Secondary => MouseButton::Right,
-                            egui::PointerButton::Middle => MouseButton::Middle,
-                            _ => continue,
-                        };
-
-                        // Ignore presses that originate outside the full viewport.
-                        if *pressed && !rect.contains(*pos) {
-                            continue;
-                        }
-
-                        // Track raw left-button held state for ManipulationContext.
-                        if *button == egui::PointerButton::Primary {
-                            self.mv_state.left_held = *pressed;
-                        }
-
-                        let state = if *pressed {
-                            ButtonState::Pressed
-                        } else {
-                            ButtonState::Released
-                        };
-                        self.mv_state.inputs[hq].push_event(ViewportEvent::MouseButton {
-                            button: vp_button,
-                            state,
-                        });
-                    }
-
-                    egui::Event::MouseWheel { unit, delta, .. } => {
-                        let over_vp = hover_pos.map(|p| rect.contains(p)).unwrap_or(false);
-                        if over_vp {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.mv_state.inputs[hq].push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                    }
-
-                    _ => {}
-                }
+                vpl_egui::translate(event, &actx, &mut events);
             }
         });
-
-        // ----- ManipulationController update (G/R/S) -----
-        {
-            let qr = quad_rects[hq];
-            let w = qr.width();
-            let h = qr.height();
-            let viewport_size = glam::Vec2::new(w, h);
-
-            // Per-frame gizmo hover when no session is active.
-            if !self.mv_state.manip.is_active() {
-                if let Some(center) = self.mv_state.gizmo_center {
-                    let cam = &self.mv_state.cameras[hq];
-                    let ray_origin = cam.eye_position();
-                    let view_proj = cam.proj_matrix() * cam.view_matrix();
-                    let cursor = self.mv_state.cursor_local;
-                    let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
-                    let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
-                    let inv_vp = view_proj.inverse();
-                    let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                    let ray_dir = (far - ray_origin).normalize_or_zero();
-                    let orient = mv_gizmo_orientation(
-                        self.mv_state.gizmo.space,
-                        &self.mv_state.selection,
-                        &self.mv_state.scene,
-                    );
-                    self.mv_state.gizmo.hovered_axis = self.mv_state.gizmo.hit_test_oriented(
-                        ray_origin,
-                        ray_dir,
-                        center,
-                        self.mv_state.gizmo_scales[hq],
-                        orient,
-                    );
-                } else {
-                    self.mv_state.gizmo.hovered_axis = GizmoAxis::None;
+        for ev in events {
+            // Track the left button for the gizmo, ignoring presses that
+            // originate outside the full viewport.
+            if let ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state,
+            } = ev
+            {
+                let pressed = state == ButtonState::Pressed;
+                if !pressed || press_inside {
+                    self.mv_state.left_held = pressed;
                 }
             }
+            self.mv_state.inputs[hq].push_event(ev);
+        }
 
-            // Build GizmoInfo.
-            let orient = mv_gizmo_orientation(
-                self.mv_state.gizmo.space,
-                &self.mv_state.selection,
-                &self.mv_state.scene,
-            );
-            let gizmo_info = self.mv_state.gizmo_center.map(|center| GizmoInfo {
-                center,
-                scale: self.mv_state.gizmo_scales[hq],
-                orientation: orient,
-                mode: self.mv_state.gizmo.mode,
-            });
-
-            // Build ManipulationContext.
-            let pointer_delta =
-                ui.input(|i| glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y));
-            let manip_ctx = ManipulationContext {
-                camera: self.mv_state.cameras[hq].clone(),
-                viewport_size,
-                cursor_viewport: Some(self.mv_state.cursor_local),
-                pointer_delta,
-                selection_center: self.mv_state.gizmo_center,
-                gizmo: gizmo_info,
-                drag_started: response.drag_started(),
-                dragging: self.mv_state.left_held,
-                clicked: response.clicked(),
-            };
+        // ----- Gizmo update (G/R/S and handle drags) -----
+        {
+            let qr = quad_rects[hq];
+            let viewport_size = glam::Vec2::new(qr.width(), qr.height());
 
             // One resolve for the hovered quadrant; its camera holds still while
-            // a manipulation session owns the pointer.
+            // a gizmo session owns the pointer.
             let action_frame = self.mv_state.inputs[hq].resolve();
-            if !self.mv_state.manip.is_active() {
+            if !self.mv_state.gizmo.is_active() {
                 let camera = &mut self.mv_state.cameras[hq];
                 let dt = ui.input(|i| i.stable_dt);
                 self.mv_state.controllers[hq].apply(camera, &action_frame, dt);
             }
 
-            // Tab cycles gizmo mode when no session is active.
-            if !self.mv_state.manip.is_active() && action_frame.is_active(Action::CycleGizmoMode) {
-                self.mv_state.gizmo.mode = match self.mv_state.gizmo.mode {
-                    GizmoMode::Translate => GizmoMode::Rotate,
-                    GizmoMode::Rotate => GizmoMode::Scale,
-                    GizmoMode::Scale => GizmoMode::Translate,
-                    _ => GizmoMode::Translate,
-                };
+            let state = &mut self.mv_state;
+            // Tab cycles the gizmo mode (ignored while a session runs).
+            if action_frame.is_active(actions::CYCLE_GIZMO_MODE) {
+                state.gizmo.cycle_mode();
             }
 
-            match self.mv_state.manip.update(&action_frame, manip_ctx) {
+            // The hovered quadrant drives the gizmo. The press and hold come
+            // from egui so a drag keeps going when it crosses into another
+            // quadrant.
+            let centre = scene_gizmo::selection_centre(&state.selection, &state.scene);
+            let orientation = scene_gizmo::selection_orientation(&state.selection, &state.scene);
+            let input = GizmoInput {
+                cursor_viewport: Some(state.cursor_local),
+                pointer_delta: ui
+                    .input(|i| glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y)),
+                drag_started: response.drag_started(),
+                dragging: state.left_held,
+                clicked: response.clicked(),
+                ..GizmoInput::from_action(&action_frame, &state.cameras[hq], viewport_size, centre)
+            }
+            .with_selection_orientation(orientation);
+            match state.gizmo.update(input) {
                 ManipResult::Update(delta) => {
-                    self.apply_mv_delta(delta, hq);
-                }
-                ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                    self.restore_mv_snapshots();
-                }
-                ManipResult::Commit => {
-                    self.save_mv_snapshots();
-                }
-                ManipResult::None => {
-                    if !self.mv_state.manip.is_active() {
-                        self.save_mv_snapshots();
+                    if let Some(session) = state.gizmo.state() {
+                        state
+                            .snapshots
+                            .apply(&delta, session.centre, &mut state.scene);
                     }
                 }
+                ManipResult::Cancel | ManipResult::ConstraintChanged => {
+                    state.snapshots.restore(&mut state.scene);
+                }
                 _ => {}
+            }
+            // Idle: keep the snapshots current so G/R/S always starts clean.
+            if !state.gizmo.is_active() {
+                state.snapshots.save(&state.selection, &state.scene);
             }
 
             // Apply remaining controllers (non-hq); hq already applied/resolved above.
@@ -451,27 +333,8 @@ impl App {
 
             // Click-to-select only when no session is active. Resolved at the
             // render site against the clicked quad's frame (unified GPU picker).
-            if response.clicked() && !self.mv_state.manip.is_active() {
+            if response.clicked() && !self.mv_state.gizmo.is_active() {
                 self.mv_state.pending_pick = Some((hq, self.mv_state.cursor_local));
-            }
-        }
-
-        // Update shared gizmo center and per-quad screen-space scales.
-        self.mv_state.gizmo_center = gizmo_center_from_selection(&self.mv_state.selection, |id| {
-            self.mv_state.scene.node(id).map(|n| {
-                let t = n.world_transform();
-                glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
-            })
-        });
-        for i in 0..4 {
-            if let Some(center) = self.mv_state.gizmo_center {
-                let qr = quad_rects[i];
-                self.mv_state.gizmo_scales[i] = compute_gizmo_scale(
-                    center,
-                    self.mv_state.cameras[i].eye_position(),
-                    self.mv_state.cameras[i].fov_y,
-                    qr.height(),
-                );
             }
         }
 
@@ -492,19 +355,9 @@ impl App {
         let scene_gen = self.mv_state.scene.version();
         let sel_gen = self.mv_state.selection.version();
         let has_selection = !self.mv_state.selection.is_empty();
-        let gizmo_center = self.mv_state.gizmo_center;
-        let gizmo_scales = self.mv_state.gizmo_scales;
-        let gizmo_mode = self.mv_state.gizmo.mode;
-        let gizmo_hovered_axis = if let Some(state) = self.mv_state.manip.state() {
-            state.axis.unwrap_or(GizmoAxis::None)
-        } else {
-            self.mv_state.gizmo.hovered_axis
-        };
-        let gizmo_orient = mv_gizmo_orientation(
-            self.mv_state.gizmo.space,
-            &self.mv_state.selection,
-            &self.mv_state.scene,
-        );
+        let gizmo = &self.mv_state.gizmo;
+        let gizmo_style = &self.mv_state.gizmo_style;
+        let cameras = &self.mv_state.cameras;
 
         let frames: [FrameData; 4] = std::array::from_fn(|i| {
             let qr = quad_rects[i];
@@ -528,18 +381,16 @@ impl App {
             fd.scene.generation = scene_gen;
             fd.interaction.selection_generation = sel_gen;
 
-            // Gizmo : appears in every viewport with its own screen-space scale.
-            if let Some(center) = gizmo_center {
-                let scale = gizmo_scales[i];
-                fd.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
-                    glam::Vec3::splat(scale),
-                    gizmo_orient,
-                    center,
-                ));
-                fd.interaction.gizmo_mode = gizmo_mode;
-                fd.interaction.gizmo_space_orientation = gizmo_orient;
-                fd.interaction.gizmo_hovered = gizmo_hovered_axis;
-            }
+            // Gizmo: drawn in every viewport at its own screen-space scale; only
+            // the driving quadrant shows the hovered handle.
+            gizmo.build_view_overlays(
+                gizmo_style,
+                &cameras[i],
+                glam::Vec2::new(qw, qh),
+                i == hq,
+                &mut fd.overlays.shapes,
+                &mut fd.overlays.polylines,
+            );
 
             fd
         });
@@ -678,42 +529,27 @@ pub(crate) fn controls_mv(app: &mut App, ui: &mut egui::Ui) {
     ui.label(format!("Objects: {node_count}   Selected: {sel_count}"));
     ui.separator();
 
+    let gizmo = &mut app.mv_state.gizmo;
     ui.label("Gizmo Mode:");
     ui.horizontal(|ui| {
-        if ui
-            .radio(app.mv_state.gizmo.mode == GizmoMode::Translate, "Move")
-            .clicked()
-        {
-            app.mv_state.gizmo.mode = GizmoMode::Translate;
-        }
-        if ui
-            .radio(app.mv_state.gizmo.mode == GizmoMode::Rotate, "Rotate")
-            .clicked()
-        {
-            app.mv_state.gizmo.mode = GizmoMode::Rotate;
-        }
-        if ui
-            .radio(app.mv_state.gizmo.mode == GizmoMode::Scale, "Scale")
-            .clicked()
-        {
-            app.mv_state.gizmo.mode = GizmoMode::Scale;
+        for (mode, label) in [
+            (GizmoMode::Translate, "Move"),
+            (GizmoMode::Rotate, "Rotate"),
+            (GizmoMode::Scale, "Scale"),
+        ] {
+            if ui.radio(gizmo.mode() == mode, label).clicked() {
+                gizmo.set_mode(mode);
+            }
         }
     });
 
     ui.separator();
     ui.label("Space:");
     ui.horizontal(|ui| {
-        if ui
-            .radio(app.mv_state.gizmo.space == GizmoSpace::World, "World")
-            .clicked()
-        {
-            app.mv_state.gizmo.space = GizmoSpace::World;
-        }
-        if ui
-            .radio(app.mv_state.gizmo.space == GizmoSpace::Local, "Local")
-            .clicked()
-        {
-            app.mv_state.gizmo.space = GizmoSpace::Local;
+        for (space, label) in [(GizmoSpace::World, "World"), (GizmoSpace::Local, "Local")] {
+            if ui.radio(gizmo.space() == space, label).clicked() {
+                gizmo.set_space(space);
+            }
         }
     });
 
@@ -748,105 +584,6 @@ pub(crate) fn controls_mv(app: &mut App, ui: &mut egui::Ui) {
 // ---------------------------------------------------------------------------
 // Picking
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Manipulation helpers
-// ---------------------------------------------------------------------------
-
-impl crate::App {
-    /// Apply a [`viewport_lib::TransformDelta`] to all selected mv scene nodes.
-    pub(crate) fn apply_mv_delta(&mut self, delta: vpl::TransformDelta, hq: usize) {
-        let Some(center) = self.mv_state.gizmo_center else {
-            return;
-        };
-
-        let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
-        let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
-
-        if has_pos_override || has_scale_override {
-            self.restore_mv_snapshots();
-        }
-
-        let translation = if has_pos_override {
-            glam::Vec3::new(
-                delta.position_override[0].unwrap_or(0.0),
-                delta.position_override[1].unwrap_or(0.0),
-                delta.position_override[2].unwrap_or(0.0),
-            )
-        } else {
-            delta.translation
-        };
-
-        let scale = if has_scale_override {
-            glam::Vec3::new(
-                delta.scale_override[0].unwrap_or(1.0),
-                delta.scale_override[1].unwrap_or(1.0),
-                delta.scale_override[2].unwrap_or(1.0),
-            )
-        } else {
-            delta.scale
-        };
-
-        let _ = hq;
-        let rot_mat = glam::Mat4::from_quat(delta.rotation);
-        let scale_mat = glam::Mat4::from_scale(scale);
-        let translate_mat = glam::Mat4::from_translation(translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
-
-        for id in self.mv_state.selection.iter().copied().collect::<Vec<_>>() {
-            if let Some(node) = self.mv_state.scene.node(id) {
-                let cur = node.local_transform();
-                let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
-                self.mv_state.scene.set_local_transform(id, new_t);
-            }
-        }
-        self.mv_state.scene.update_transforms();
-    }
-
-    /// Snapshot the current local transforms of all selected mv nodes.
-    pub(crate) fn save_mv_snapshots(&mut self) {
-        self.mv_state.transforms_snapshot.clear();
-        for id in self.mv_state.selection.iter().copied().collect::<Vec<_>>() {
-            if let Some(node) = self.mv_state.scene.node(id) {
-                self.mv_state
-                    .transforms_snapshot
-                    .insert(id, node.local_transform());
-            }
-        }
-    }
-
-    /// Restore local transforms from the last mv snapshot.
-    pub(crate) fn restore_mv_snapshots(&mut self) {
-        let ids: Vec<_> = self.mv_state.transforms_snapshot.keys().copied().collect();
-        for id in ids {
-            if let Some(&t) = self.mv_state.transforms_snapshot.get(&id) {
-                self.mv_state.scene.set_local_transform(id, t);
-            }
-        }
-        self.mv_state.scene.update_transforms();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Gizmo orientation: identity for World space; first selected node's rotation for Local.
-fn mv_gizmo_orientation(
-    space: GizmoSpace,
-    selection: &vpl::Selection,
-    scene: &vpl::scene::Scene,
-) -> glam::Quat {
-    match space {
-        GizmoSpace::World => glam::Quat::IDENTITY,
-        GizmoSpace::Local => selection
-            .primary()
-            .and_then(|id| scene.node(id))
-            .map(|n| glam::Quat::from_mat4(&n.world_transform()))
-            .unwrap_or(glam::Quat::IDENTITY),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Lazy scene build
@@ -917,8 +654,6 @@ pub(crate) fn scene(
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame: this showcase drives four
 /// quadrants itself rather than the host's single-viewport path.

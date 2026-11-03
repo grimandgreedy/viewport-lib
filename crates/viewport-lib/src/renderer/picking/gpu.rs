@@ -36,6 +36,31 @@ fn snap_priority(sub: Option<SubObjectRef>) -> i32 {
     }
 }
 
+/// Block until the pick submission `index` has completed. Returns `false`, after
+/// a rate-limited warning, when the wait fails (timeout or a lost device). The
+/// caller then reports no hit and drops its staging buffers unread, which
+/// releases their pending maps.
+fn wait_for_pick(
+    device: &crate::gpu::Device,
+    index: &crate::gpu::SubmissionIndex,
+    what: &str,
+) -> bool {
+    match device.poll(crate::gpu::PollType::Wait {
+        submission_index: Some(index.clone()),
+        timeout: Some(std::time::Duration::from_secs(5)),
+    }) {
+        Ok(_) => true,
+        Err(e) => {
+            crate::notice::log_rate_limited(
+                "pick_poll_failed",
+                crate::Severity::Warning,
+                format_args!("GPU {what} read-back failed, reporting no hit: {e}"),
+            );
+            false
+        }
+    }
+}
+
 impl PickItemType {
     /// Whether this type answers any level requested in `mask`. A type is drawn
     /// only when the caller asked for something it can resolve.
@@ -75,6 +100,25 @@ enum PickSubKind {
     /// `resolve_sub_object`; a plugin without the hook stays object-level. The
     /// payload is the plugin's `type_name`, the `item_type_plugins` key.
     Plugin(&'static str),
+    /// [`MeshInstanceItem`](crate::renderer::MeshInstanceItem) batch: the pick
+    /// pass writes the transform index into the primitive channel, which
+    /// resolves to [`SubObjectRef::Instance`] under [`PickMask::INSTANCE`].
+    Instance,
+}
+
+/// `PickInstance` flag words, matching the pick shaders' `PICK_*` constants.
+/// The Rust struct keeps them in `_pad`: `_pad[0]` is the flags word and
+/// `_pad[1]` the instance index written when `PICK_WRITE_INSTANCE` is set.
+const PICK_IGNORE_CLIP: u32 = 1;
+const PICK_WRITE_INSTANCE: u32 = 2;
+
+/// One mesh-instance batch in the pick pass: `count` consecutive
+/// `PickInstance` slots from `first` in `PickDrawSet::batch_instances`, drawn
+/// with one instanced draw of `mesh_id`.
+struct PickInstanceBatch {
+    mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    first: u32,
+    count: u32,
 }
 
 /// Marker that the pick pipelines this query needs have been built. The pass
@@ -166,6 +210,10 @@ impl PickInstanceGroups {
 /// pixel or a whole rect region back, only which types answer `mask`.
 struct PickDrawSet {
     draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)>,
+    /// Instance slots for the mesh-instance batches, stored after `draws` in
+    /// the pick instance buffer.
+    batch_instances: Vec<PickInstance>,
+    batches: Vec<PickInstanceBatch>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -188,7 +236,7 @@ impl PickDrawSet {
     /// `true` when nothing would be drawn: the pass has nothing to submit, so
     /// the caller can report a miss without touching the GPU.
     fn is_empty(&self) -> bool {
-        self.draws.is_empty() && !self.has_plugin_pick
+        self.draws.is_empty() && self.batches.is_empty() && !self.has_plugin_pick
     }
 }
 
@@ -211,7 +259,12 @@ struct PickTargets {
 }
 
 impl PickTargets {
-    fn new(device: &crate::gpu::Device, vp_w: u32, vp_h: u32) -> Self {
+    fn new(
+        device: &crate::gpu::Device,
+        depth_format: crate::gpu::TextureFormat,
+        vp_w: u32,
+        vp_h: u32,
+    ) -> Self {
         let extent = crate::gpu::Extent3d {
             width: vp_w,
             height: vp_h,
@@ -268,7 +321,7 @@ impl PickTargets {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            format: depth_format,
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
@@ -333,7 +386,7 @@ impl PickTargets {
                     depth_slice: None,
                     ops: crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                            r: 1.0,
+                            r: f64::from(crate::plugin_api::depth::DEPTH_CLEAR),
                             g: 0.0,
                             b: 0.0,
                             a: 0.0,
@@ -345,7 +398,7 @@ impl PickTargets {
             depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                 view: &self.ds_view,
                 depth_ops: Some(crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Clear(1.0),
+                    load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                     store: crate::gpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -415,14 +468,6 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> Option<GpuPickHit> {
-        // In Playback mode, throttle picking to every 4th frame to reduce overhead
-        // during animation. Interactive, Paused, and Capture modes always pick.
-        if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
-            && self.frame_counter % 4 != 0
-        {
-            return None;
-        }
-
         let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
             PickBegin::Miss => return None,
             PickBegin::Pending(p) => p,
@@ -431,12 +476,9 @@ impl ViewportRenderer {
         // Synchronous resolve: wait on this pick's submission (and thus its
         // staging maps), then read the pixel. The wait is targeted at the pick
         // submission index, so it does not drain frames queued after it.
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(pending.submission.clone()),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &pending.submission, "point pick") {
+            return None;
+        }
         pending.read_hit()
     }
 
@@ -454,23 +496,13 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> Option<PickHit> {
-        // Mirror the Playback throttle in pick_scene_gpu_masked.
-        if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
-            && self.frame_counter % 4 != 0
-        {
-            return None;
-        }
-
         let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
             PickBegin::Miss => return None,
             PickBegin::Pending(p) => p,
         };
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(pending.submission.clone()),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &pending.submission, "point pick") {
+            return None;
+        }
         pending
             .read_hit()
             .map(|h| self.resolve_pending_hit(&pending, h))
@@ -532,12 +564,11 @@ impl ViewportRenderer {
         // The buffer half of each pair only needs to live through
         // `create_bind_group` (which retains its own GPU-side reference), not
         // beyond, so neither is named further.
-        let (_, pick_instance_bg) =
-            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
 
-        let targets = PickTargets::new(device, vp_w, vp_h);
+        let targets = PickTargets::new(device, self.resources.scene_depth_format(), vp_w, vp_h);
 
         // A second flush catches geometry that pick-draw building itself uploaded
         // (scatter volumes, decal boxes), so every mesh the pass rasterises is
@@ -684,7 +715,8 @@ impl ViewportRenderer {
             submission,
             cursor,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
-            view_proj: frame.camera.render_camera.view_proj(),
+            view_proj: self.origin.camera(&frame.camera.render_camera).view_proj(),
+            origin: self.origin.origin(),
             mask,
             kinds: draw_set.kinds,
             surface_meta: draw_set.surface_meta,
@@ -741,6 +773,7 @@ impl ViewportRenderer {
         // are hidden or have pick_id 0 are skipped; clear value 0 means "no hit".
         // An item whose colour pipeline is still compiling is not on screen,
         // so it is not under the cursor either.
+        let clip_flag = |ignore_clip: bool| if ignore_clip { PICK_IGNORE_CLIP } else { 0 };
         let colour_hdr = self.draws_hdr(frame);
         let clipping_active = crate::resources::DeviceResources::clipping_active(frame);
         let pickable = |item: &SceneRenderItem| {
@@ -753,7 +786,7 @@ impl ViewportRenderer {
         // The instance reads the same deform table as the item's colour draw,
         // so a deformed mesh is picked where it is drawn.
         let to_instance = |item: &SceneRenderItem| {
-            let m = item.model;
+            let m = self.origin.rel_transform(&item.model);
             let record = self
                 .resources
                 .mesh_store
@@ -770,7 +803,7 @@ impl ViewportRenderer {
                     item.deform_instance,
                     record,
                 ),
-                _pad: [0; 2],
+                _pad: [clip_flag(item.settings.ignore_clip), 0],
             }
         };
 
@@ -794,10 +827,47 @@ impl ViewportRenderer {
             }
         }
 
-        // Glyph and tensor-glyph sets draw with their own pick pipelines. Each
-        // set builds a group-1 bind group (the set uniform + a per-set object-id
-        // uniform) here so it outlives the render pass. The buffers behind the
-        // bind group stay alive through it, so the temporary id buffer can drop.
+        // Mesh-instance batches: one slot per transform, all carrying the
+        // batch's pick id and writing their transform index into the
+        // primitive channel. A LOD batch picks against its full-detail mesh.
+        let mut batch_instances: Vec<PickInstance> = Vec::new();
+        let mut batches: Vec<PickInstanceBatch> = Vec::new();
+        if mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
+            for item in frame.scene.mesh_instances.iter() {
+                if item.settings.hidden
+                    || item.settings.pick_id == PickId::NONE
+                    || item.transforms.is_empty()
+                {
+                    continue;
+                }
+                let mesh_id = item
+                    .lod_group
+                    .and_then(|id| self.resources.lod_group(id))
+                    .map_or(item.mesh_id, |g| g.mesh_at(0));
+                if self.resources.mesh_store.get(mesh_id).is_none() {
+                    continue;
+                }
+                let flags = clip_flag(item.settings.ignore_clip) | PICK_WRITE_INSTANCE;
+                let first = batch_instances.len() as u32;
+                for (i, m) in item.transforms.iter().enumerate() {
+                    let m = self.origin.rel_model(*m);
+                    batch_instances.push(PickInstance {
+                        model_c0: m[0],
+                        model_c1: m[1],
+                        model_c2: m[2],
+                        model_c3: m[3],
+                        object_id: item.settings.pick_id.0 as u32,
+                        deform_table: 0,
+                        _pad: [flags, i as u32],
+                    });
+                }
+                batches.push(PickInstanceBatch {
+                    mesh_id,
+                    first,
+                    count: item.transforms.len() as u32,
+                });
+            }
+        }
 
         // Registered plugins draw their own pick-ids into the pass. They answer
         // the same level set as built-in surfaces (object plus the mesh
@@ -831,6 +901,8 @@ impl ViewportRenderer {
 
         PickDrawSet {
             draws,
+            batch_instances,
+            batches,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -840,15 +912,20 @@ impl ViewportRenderer {
     }
 
     /// Build the group-1 `PickInstance` storage buffer and its bind groups for
-    /// the surface-pipeline `draws` list, one per sidecar chunk the draws'
-    /// meshes sit in. Shared by the point and rect pick passes.
+    /// the surface-pipeline draws and mesh-instance batches, one per sidecar
+    /// chunk their meshes sit in. Shared by the point and rect pick passes.
     fn build_pick_instance_bind_group(
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        draws: &[(crate::resources::mesh::mesh_store::MeshId, PickInstance)],
+        draw_set: &PickDrawSet,
     ) -> (crate::gpu::Buffer, PickInstanceGroups) {
-        let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
+        let pick_instances: Vec<PickInstance> = draw_set
+            .draws
+            .iter()
+            .map(|(_, inst)| *inst)
+            .chain(draw_set.batch_instances.iter().copied())
+            .collect();
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
         let pick_instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_instance_buf"),
@@ -884,11 +961,16 @@ impl ViewportRenderer {
             fallback: group(self.resources.sidecar.fallback()),
             chunks: std::collections::HashMap::new(),
         };
-        for (mesh_id, _) in draws {
+        let mesh_ids = draw_set
+            .draws
+            .iter()
+            .map(|(mesh_id, _)| *mesh_id)
+            .chain(draw_set.batches.iter().map(|b| b.mesh_id));
+        for mesh_id in mesh_ids {
             let Some(record) = self
                 .resources
                 .mesh_store
-                .get(*mesh_id)
+                .get(mesh_id)
                 .and_then(|g| g.sidecar.as_ref())
             else {
                 continue;
@@ -902,14 +984,15 @@ impl ViewportRenderer {
     }
 
     /// Build the group-0 minimal pick camera uniform buffer + bind group
-    /// (camera + clip volume). Shared by the point and rect pick passes.
+    /// (camera, clip planes, clip volumes, deform header). Shared by the point and rect pick passes.
     fn build_pick_camera_bind_group(
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
-        let camera_uniform = frame.camera.render_camera.camera_uniform();
+        let time = frame.time.unwrap_or_else(|| self.frame_clock.current());
+        let camera_uniform = frame.camera.camera_uniform(&time, &self.origin);
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_camera_buf"),
@@ -919,14 +1002,15 @@ impl ViewportRenderer {
         });
         queue.write_buffer(&pick_camera_buf, 0, camera_bytes);
 
-        // The picked viewport's clip volumes, not whichever viewport was
-        // prepared last.
-        let clip_volume_buf = self
-            .viewport_slots
-            .get(frame.camera.viewport_index)
-            .map_or(&self.resources.scene_tier.binds.clip_volume_buf, |slot| {
-                &slot.clip_volume_buf
-            });
+        // The picked viewport's clip planes and volumes, not whichever
+        // viewport was prepared last.
+        let slot = self.viewport_slots.get(frame.camera.viewport_index);
+        let clip_planes_buf = slot.map_or(&self.resources.scene_tier.binds.clip_planes_buf, |s| {
+            &s.clip_planes_buf
+        });
+        let clip_volume_buf = slot.map_or(&self.resources.scene_tier.binds.clip_volume_buf, |s| {
+            &s.clip_volume_buf
+        });
         let pick_camera_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pick_camera_bg"),
             layout: self
@@ -939,6 +1023,10 @@ impl ViewportRenderer {
                 crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: pick_camera_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: clip_planes_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
@@ -1074,6 +1162,25 @@ impl ViewportRenderer {
             pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
         }
 
+        // Mesh-instance batches: one instanced draw per batch over its
+        // consecutive slots, after the single-slot draws in the buffer.
+        let batch_base = draw_set.draws.len() as u32;
+        for batch in &draw_set.batches {
+            let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
+                continue;
+            };
+            let first = batch_base + batch.first;
+            pick_pass.set_pipeline(default_pipeline);
+            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+            pick_pass.set_bind_group(1, pick_instance_bg.for_mesh(mesh), &[]);
+            pick_pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+            pick_pass.set_index_buffer(
+                self.resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            pick_pass.draw_indexed(0..mesh.index_count, 0, first..first + batch.count);
+        }
+
         // Item-type plugins render their own pick-ids last. They build their
         // pipelines against the full shared group-0 layout, so bind the picked
         // viewport's full camera bind group before handing them the pass.
@@ -1165,11 +1272,10 @@ impl ViewportRenderer {
             std::collections::HashMap::new()
         };
 
-        let (_, pick_instance_bg) =
-            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
-        let targets = PickTargets::new(device, vp_w, vp_h);
+        let targets = PickTargets::new(device, self.resources.scene_depth_format(), vp_w, vp_h);
 
         self.resources.geometry.flush(queue);
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
@@ -1259,12 +1365,12 @@ impl ViewportRenderer {
         if let Some(depth) = &depth_staging {
             depth.slice(..).map_async(crate::gpu::MapMode::Read, |_| {});
         }
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &submission, "rect pick") {
+            return crate::renderer::picking::PickRectResult {
+                objects: Vec::new(),
+                elements: Vec::new(),
+            };
+        }
 
         let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut objects: Vec<u64> = Vec::new();
@@ -1279,7 +1385,12 @@ impl ViewportRenderer {
             let depth_view = depth_staging
                 .as_ref()
                 .map(|s| crate::gpu::mapped_range(s.slice(..)));
-            let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
+            let view_proj_inv = self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .inverse();
+            let origin = self.origin.origin();
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
@@ -1316,7 +1427,7 @@ impl ViewportRenderer {
                             let phys_y = (ry + row as u32) as f32 + 0.5;
                             let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
                             let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                            view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+                            pick_world(view_proj_inv, origin, ndc_x, ndc_y, depth).as_vec3()
                         });
                         if let Some(sub) = self.resolve_gpu_sub_object_rect(
                             id as u64,
@@ -1368,12 +1479,9 @@ impl ViewportRenderer {
         mask: PickMask,
     ) -> Option<crate::renderer::picking::SnapHit> {
         let pending = self.snap_query_submit(device, queue, cursor, radius_px, frame, mask)?;
-        device
-            .poll(crate::gpu::PollType::Wait {
-                submission_index: Some(pending.submission.clone()),
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
+        if !wait_for_pick(device, &pending.submission, "snap query") {
+            return None;
+        }
         self.snap_read(&pending, frame)
     }
 
@@ -1434,11 +1542,10 @@ impl ViewportRenderer {
             std::collections::HashMap::new()
         };
 
-        let (_, pick_instance_bg) =
-            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_instance_bg) = self.build_pick_instance_bind_group(device, queue, &draw_set);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
-        let targets = PickTargets::new(device, vp_w, vp_h);
+        let targets = PickTargets::new(device, self.resources.scene_depth_format(), vp_w, vp_h);
 
         self.resources.geometry.flush(queue);
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
@@ -1534,7 +1641,12 @@ impl ViewportRenderer {
             rw,
             rh,
             bytes_per_row,
-            view_proj_inv: frame.camera.render_camera.view_proj().inverse(),
+            view_proj_inv: self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .inverse(),
+            origin: self.origin.origin(),
             mask,
             kinds,
             surface_meta: draw_set.surface_meta,
@@ -1562,6 +1674,7 @@ impl ViewportRenderer {
             rh,
             bytes_per_row,
             view_proj_inv,
+            origin,
             mask,
             ..
         } = *pending;
@@ -1613,7 +1726,7 @@ impl ViewportRenderer {
                     ]);
                     let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
                     let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                    let world = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth));
+                    let world = pick_world(view_proj_inv, origin, ndc_x, ndc_y, depth).as_vec3();
                     let sub = self.resolve_gpu_sub_object_rect(
                         id as u64,
                         prim,
@@ -1647,7 +1760,7 @@ impl ViewportRenderer {
             .snap_world_pos(object_id, sub_object, pixel_world, frame)
             .unwrap_or(pixel_world);
         Some(crate::renderer::picking::SnapHit {
-            world_pos,
+            world_pos: world_pos.as_dvec3(),
             object_id,
             sub_object,
         })
@@ -1784,6 +1897,9 @@ impl ViewportRenderer {
     /// per-object decode map. Shared by the blocking and async paths.
     fn resolve_pending_hit(&self, pending: &PendingPick, gpu_hit: GpuPickHit) -> PickHit {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
+        // The pass drew relative to the origin; put the hit back in world
+        // coordinates.
+        hit.world_pos = pending.hit_world(gpu_hit.depth);
         hit.sub_object = self.resolve_gpu_sub_object(
             gpu_hit.object_id.0,
             gpu_hit.sub_primitive,
@@ -1791,7 +1907,7 @@ impl ViewportRenderer {
             &pending.kinds,
             &pending.surface_meta,
             pending.primitive_index_supported,
-            Some(hit.world_pos),
+            Some(hit.world_pos.as_vec3()),
         );
         hit
     }
@@ -1831,6 +1947,9 @@ impl ViewportRenderer {
                 primitive_index_supported,
                 world_pos,
             ),
+            PickSubKind::Instance => mask
+                .intersects(PickMask::INSTANCE)
+                .then_some(SubObjectRef::Instance(sub_primitive)),
         }
     }
 
@@ -1934,6 +2053,9 @@ impl ViewportRenderer {
                 primitive_index_supported,
                 world_pos,
             ),
+            PickSubKind::Instance => mask
+                .intersects(PickMask::INSTANCE)
+                .then_some(SubObjectRef::Instance(sub_primitive)),
         }
     }
 
@@ -2014,6 +2136,13 @@ impl ViewportRenderer {
             }
         }
 
+        // Mesh-instance batches: the channel holds the transform index.
+        for item in frame.scene.mesh_instances.iter() {
+            if !item.settings.hidden && item.settings.pick_id != PickId::NONE {
+                kinds.insert(item.settings.pick_id.0, PickSubKind::Instance);
+            }
+        }
+
         // Surfaces and opaque/transparent volume-mesh boundaries.
         for item in scene_items
             .iter()
@@ -2064,7 +2193,9 @@ pub(crate) struct PendingSnap {
     rw: u32,
     rh: u32,
     bytes_per_row: u32,
+    /// Inverse of the pass's view-projection, relative to `origin`.
     view_proj_inv: glam::Mat4,
+    origin: glam::DVec3,
     mask: PickMask,
     kinds: std::collections::HashMap<u64, PickSubKind>,
     surface_meta: SurfacePickMeta,
@@ -2087,7 +2218,10 @@ pub(crate) struct PendingPick {
     submission: crate::gpu::SubmissionIndex,
     cursor: glam::Vec2,
     viewport_size: glam::Vec2,
+    /// The pass's view-projection, relative to `origin`.
     view_proj: glam::Mat4,
+    /// The world origin the pass drew relative to.
+    origin: glam::DVec3,
     /// The mask the pick was submitted with. Decides which sub-object level the
     /// read-back primitive index resolves to (face vs cell vs vertex, etc.).
     mask: PickMask,
@@ -2105,6 +2239,13 @@ pub(crate) struct PendingPick {
 }
 
 impl PendingPick {
+    /// World position of the picked pixel at `depth`, in f64.
+    fn hit_world(&self, depth: f32) -> glam::DVec3 {
+        let ndc_x = (self.cursor.x / self.viewport_size.x) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (self.cursor.y / self.viewport_size.y) * 2.0;
+        pick_world(self.view_proj.inverse(), self.origin, ndc_x, ndc_y, depth)
+    }
+
     /// Read the object id and depth from the mapped staging buffers and unmap
     /// them. Only valid once both maps have completed (the caller has waited or
     /// seen `ready == 3`). Returns `None` for id 0, which is the clear value and
@@ -2136,5 +2277,87 @@ impl PendingPick {
             depth,
             sub_primitive,
         })
+    }
+}
+
+/// World position of a pick-pass pixel: unprojected with the pass's relative
+/// `inv_view_proj`, then moved back by `origin` in f64.
+pub(crate) fn pick_world(
+    inv_view_proj: glam::Mat4,
+    origin: glam::DVec3,
+    ndc_x: f32,
+    ndc_y: f32,
+    depth: f32,
+) -> glam::DVec3 {
+    inv_view_proj
+        .project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+        .as_dvec3()
+        + origin
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::renderer::{CameraFrame, RenderCamera, SceneFrame, WorldOrigin};
+
+    /// A GPU pick of a surface 1,000 km from the world origin reports a
+    /// `PickHit::world_pos` within a millimetre of the true hit when drawn
+    /// relative to a snapped origin.
+    #[test]
+    fn pick_round_trip_far_from_origin() {
+        let Some((device, queue)) = crate::resources::test_support::try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let (w, h) = (64u32, 64u32);
+        // Exactly representable in f32, so the inputs carry no rounding.
+        let centre = glam::Vec3::new(1_000_000.0, 200_000.0, 10.0);
+        let eye = centre - glam::Vec3::new(5.0, 0.0, 0.0);
+        // The camera looks along +X at the face x = centre.x - 1.
+        let truth = glam::DVec3::new(999_999.0, 200_000.0, 10.0);
+
+        let error = |origin: WorldOrigin| -> f64 {
+            let mut renderer = ViewportRenderer::with_config(
+                &device,
+                &crate::RendererConfig::new(crate::gpu::TextureFormat::Rgba8UnormSrgb)
+                    .with_pipeline_compilation(crate::PipelineCompilation::Blocking)
+                    .with_world_origin(origin),
+            );
+            let mesh = renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &crate::geometry::primitives::cube(2.0))
+                .expect("cube upload");
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh;
+            item.model = glam::Mat4::from_translation(centre).into();
+            item.settings.pick_id = PickId(3);
+            let camera = RenderCamera::from_matrices(
+                glam::Mat4::look_at_rh(eye, centre, glam::Vec3::Z),
+                glam::Mat4::perspective_infinite_reverse_rh(0.8, 1.0, 0.1),
+            )
+            .with_depth_range(0.1, 100.0);
+            let frame = FrameData::new(
+                CameraFrame::new(camera, [w as f32, h as f32]),
+                SceneFrame::from_surface_items(vec![item]),
+            );
+            let _ = renderer.render_offscreen(&device, &queue, &frame, w, h);
+            let cursor = glam::Vec2::new(w as f32 * 0.5, h as f32 * 0.5);
+            let hit = renderer
+                .pick_object(
+                    crate::renderer::PickBackend::Gpu,
+                    cursor,
+                    &frame,
+                    &device,
+                    &queue,
+                    PickMask::OBJECT,
+                )
+                .expect("the cube is under the cursor");
+            (hit.world_pos - truth).length()
+        };
+
+        let snapped = error(WorldOrigin::snapped().with_cell(16.0));
+        let zero = error(WorldOrigin::Zero);
+        eprintln!("pick error at 1e6 m: snapped {snapped:e} m, zero {zero:e} m");
+        assert!(snapped < 1.0e-3, "snapped pick missed by {snapped} m");
     }
 }

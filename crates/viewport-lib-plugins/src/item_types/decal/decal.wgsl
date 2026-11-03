@@ -14,7 +14,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -33,20 +34,12 @@ struct Camera {
 @group(0) @binding(1) var shadow_map:     texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 
-struct ShadowAtlas {
-    cascade_vp: array<mat4x4<f32>, 4>,
-    cascade_splits: vec4<f32>,
-    cascade_count: u32,
-    atlas_size: f32,
-    shadow_filter: u32,
-    pcss_light_radius: f32,
-    atlas_rects: array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 @group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 
-// Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
+// Scene depth written by the opaque pass (depth-only aspect of the scene depth).
 @group(1) @binding(0) var scene_depth:   texture_2d<f32>;
-// Scene stencil (stencil-only aspect, Depth24PlusStencil8). Holds the surface
+// Scene stencil (stencil-only aspect of the scene depth). Holds the surface
 // mask: the layers of the item that owns each pixel.
 @group(1) @binding(1) var scene_stencil: texture_2d<u32>;
 @group(1) @binding(2) var scene_sampler: sampler;
@@ -71,7 +64,7 @@ struct DecalUniform {
     has_emissive_tex:      u32,   // 1 when emissive_tex is bound
     // Edge fade and the ambient floor.
     edge_fade:             f32,   // [0, 0.5]: fraction of half-extent over which alpha fades
-    ambient:               f32,   // constant ambient coefficient, matching Material::ambient
+    ambient:               f32,   // constant ambient added to the hemisphere fill
     // Projection mode.
     projection:            u32,   // 0 = Planar, 1 = TriPlanar
     tri_blend_sharpness:   f32,
@@ -125,13 +118,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let stencil = stencil_texel(scene_stencil, scene_sampler, pix);
     if (stencil & u.surface_mask) == 0u { discard; }
 
-    // depth == 1.0 means background -- no surface.
-    if depth >= 1.0 {
+    // Background: no surface.
+    if viewport_depth_is_background(depth) {
         discard;
     }
 
     // Reconstruct world-space position from NDC.
-    let ndc     = vec4<f32>(in.ndc_xy, depth, 1.0);
+    let ndc     = vec4<f32>(in.ndc_xy, viewport_depth_finite(depth), 1.0);
     let world_h = camera.inv_view_proj * ndc;
     let world   = world_h.xyz / world_h.w;
 
@@ -324,7 +317,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // twice.
     if u.blend_mode == 0u {
         let albedo   = tex_col.rgb;
-        let rough    = specular_aa_roughness_kernel(clamp(roughness_val, 0.04, 1.0), saa_kernel);
+        let rough    = viewport_brdf_specular_aa_roughness_kernel(clamp(roughness_val, 0.04, 1.0), saa_kernel);
         let metallic = clamp(metallic_val, 0.0, 1.0);
         let F0       = mix(vec3<f32>(0.04), albedo, metallic);
 
@@ -335,8 +328,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let light = lights_storage[idx];
             let ev = eval_light(light, world);
             if !ev.in_range { continue; }
-            // pbr_light_contrib returns zero on the back hemisphere; skipping
-            // early also skips the shadow taps.
+            // viewport_brdf_light_contrib returns zero on the back hemisphere;
+            // skipping early also skips the shadow taps.
             if dot(N_final, ev.l) <= 0.0 { continue; }
             var radiance = ev.radiance;
             // Shadowing follows the primary directional light only. Point-light
@@ -349,7 +342,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let s = sample_shadow_csm(world, camera.eye_pos, N_recv, ev.l, 0u);
                 radiance = radiance * s.factor;
             }
-            lo = lo + pbr_light_contrib(
+            lo = lo + viewport_brdf_light_contrib(
                 N_final, view_dir, ev.l, radiance, albedo, metallic, rough, F0,
             );
         }
@@ -361,19 +354,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let hemi_t = clamp(N_final.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi   = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t)
                      * lights_uniform.hemisphere_intensity;
-        let ambient = (vec3<f32>(u.ambient) + hemi)
+        let ambient = ((vec3<f32>(u.ambient) + hemi) * camera.exposure)
                       * (albedo * (1.0 - metallic) + F0 * metallic);
 
         out_rgb = lo + ambient;
     }
 
-    // Emissive contribution: always additive on top of the blend result.
+    // Emissive contribution: always additive on top of the blend result. On
+    // the lit path the result is exposed radiance, so an emissive map is
+    // exposed to match; under Multiply it scales a factor and is not.
     if u.emissive > 0.0 {
+        let emissive_exposure = select(1.0, camera.exposure, u.blend_mode == 0u);
         let emissive_col = select(out_rgb,
-                                  textureSample(emissive_tex, decal_samp, uv).rgb,
+                                  textureSample(emissive_tex, decal_samp, uv).rgb * emissive_exposure,
                                   u.has_emissive_tex != 0u);
         out_rgb = out_rgb + emissive_col * u.emissive;
     }
 
-    return vec4<f32>(out_rgb, alpha);
+    // The largest finite half float: the emissive multiplier is unbounded.
+    return vec4<f32>(min(out_rgb, vec3<f32>(65504.0)), alpha);
 }

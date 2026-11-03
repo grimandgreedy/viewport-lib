@@ -11,8 +11,8 @@ use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId,
-    Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController, RenderCamera,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
+    MeshId, Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController, RenderCamera,
     SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer, primitives,
 };
@@ -59,12 +59,11 @@ pub struct ViewportState {
 impl Default for ViewportState {
     fn default() -> Self {
         Self {
-            camera: Camera {
-                center: glam::Vec3::ZERO,
-                distance: 12.0,
-                orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-                ..Camera::default()
-            },
+            camera: Camera::orbit(
+                glam::DVec3::ZERO,
+                12.0,
+                glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+            ),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(BindingPreset::Viewer),
             any_pressed: false,
@@ -281,7 +280,7 @@ impl shader::Primitive for ViewportPrimitive {
                 let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = mesh_id;
-                item.model = model.to_cols_array_2d();
+                item.model = model.into();
                 Some(item)
             })
             .collect();
@@ -404,11 +403,10 @@ impl shader::Program<Message> for SceneSnapshot {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<Message>> {
-        let vp_ctx = ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: glam::vec2(bounds.width, bounds.height).into(),
-        };
+        let vp_ctx = ViewportContext::new(
+            InputOwnership::full_window(),
+            glam::vec2(bounds.width, bounds.height).into(),
+        );
         // Pan reads the viewport height off the controller.
         state.controller.set_viewport_size(vp_ctx.viewport_size);
 

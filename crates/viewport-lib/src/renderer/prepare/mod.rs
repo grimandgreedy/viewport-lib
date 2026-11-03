@@ -1,6 +1,9 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
+mod cascade_bounds;
+pub(crate) use cascade_bounds::CascadeBounds;
+mod cascade_fit;
 pub(crate) mod compatibility;
 mod instanced;
 pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
@@ -14,6 +17,7 @@ mod overlay_vector;
 mod per_object;
 mod projection;
 mod scene_uploads;
+mod shadow_casters;
 mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
@@ -25,28 +29,40 @@ pub(crate) use mesh_material::{active_submesh_materials, has_transparent_draws};
 use overlay_geometry::*;
 use projection::*;
 
-/// One cube-map face of a point-light shadow: which atlas slot and face it
-/// occupies, the light-space view-projection used to render it, and the light
-/// position and range for depth reconstruction.
-pub(super) struct PointShadowFace {
-    pub(super) slot: u32,
-    pub(super) face: u32,
+/// One layer of the punctual shadow array to render this frame: a point
+/// light's cube face or a spot light's map.
+pub(super) struct PunctualShadowFace {
+    /// Layer in the punctual shadow array.
+    pub(super) layer: u32,
+    /// First layer of the light: a cube's base layer, or the spot's own. The
+    /// content cache is kept per light at this layer.
+    pub(super) base: u32,
+    /// Hash of the light's own inputs (kind, position, range, and a spot's
+    /// direction and cone), seeding the layer's content hash.
+    pub(super) light_hash: u64,
+    /// The light-space view-projection used to render it.
     pub(super) view_proj: glam::Mat4,
     pub(super) light_pos: glam::Vec3,
     pub(super) range: f32,
 }
 
-/// Byte stride between consecutive point-light cube-map face entries in the
-/// per-face dynamic-offset uniform buffer.
-pub(super) const POINT_FACE_STRIDE: u64 = 256;
-
 /// Transient per-frame lighting results produced by the lighting phase and
 /// consumed by the shadow depth pass: the directional cascade matrices and the
-/// point-light cube-map faces to render this frame.
+/// punctual shadow layers to render this frame.
 pub(super) struct LightingFrame {
-    pub(super) point_shadow_faces: Vec<PointShadowFace>,
+    pub(super) punctual_faces: Vec<PunctualShadowFace>,
+    /// Layers placed this frame (rendered or served from cache).
+    pub(super) punctual_layers_in_use: u32,
     pub(super) tile_size: u32,
+    /// Side of the shadow atlas texture, two cascade tiles wide.
+    pub(super) atlas_size: u32,
+    /// Cascades the settings ask for, clamped to 1..=4.
+    pub(super) cascade_count: usize,
+    /// Direction of the directional light that takes the cascades, if any.
+    pub(super) csm_direction: Option<glam::Vec3>,
+    /// Filled in by `fit_cascades`.
     pub(super) cascade_view_projs: [glam::Mat4; 4],
+    /// Filled in by `fit_cascades`.
     pub(super) effective_cascade_count: usize,
 }
 
@@ -86,7 +102,7 @@ impl ViewportRenderer {
                 continue;
             };
 
-            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let model = item.model.to_mat4();
             let size = crate::resources::projected_screen_size(&mesh.aabb, &model, camera);
 
             // Too small to bother drawing: hide it for this frame. Hidden items
@@ -144,6 +160,10 @@ impl ViewportRenderer {
         scene_fx: &SceneEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare_scene").entered();
+        if self.direct_paint {
+            self.resources.ensure_host_depth_reset_pipeline(device);
+        }
         // Start of frame: rotate the double-buffered timestamp query sets.
         // Passes write this frame's timestamps into `ts_query_set`, setting
         // their slot bit as they encode (shadow here in prepare, scene/oit/post
@@ -157,10 +177,21 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
+        self.resolve_world_origin(frame);
+
         let scene_tier = self.resources.scene_tier.is_built();
         if scene_tier {
             self.ensure_frame_pipelines(device, frame);
         }
+
+        // The time this frame renders at, for the camera uniform and the
+        // deform header.
+        let time = self.frame_clock.resolve(
+            frame.time,
+            self.render_advances_state(),
+            self.frame_counter,
+        );
+        self.resources.feed_deform_time(queue, time.seconds as f32);
 
         // A glyph atlas that filled up last frame is cleared here, before any
         // text this frame is laid out against it. A derivative render leaves it
@@ -282,38 +313,50 @@ impl ViewportRenderer {
                 &mut scene_items_owned,
             );
 
+        // Everything from here draws relative to the frame's origin. LOD above
+        // measured the items where they are.
+        if !self.origin.is_zero() {
+            for item in &mut scene_items_owned {
+                item.model.translation -= self.origin.origin();
+            }
+        }
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let lighting_start = web_time::Instant::now();
-        let lighting_frame = Self::prepare_lighting(
+        let lighting_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "lighting").entered();
+        let mut lighting_frame = Self::prepare_lighting(
             resources,
             &mut self.shadow,
             &mut self.last_cluster_stats,
             &mut self.last_frustum_culled_lights,
             &mut self.last_lights_dropped,
-            &self.viewport_slots,
             &self.item_type_plugins,
             plugin_frame_index,
             scene_fx,
             device,
             queue,
             frame,
+            &self.origin,
             sink,
             self.ts_query_set.as_ref(),
             &self.ts_written_mask,
         );
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
+        drop(lighting_span);
 
         // Every mesh draw is an instanced draw; a one-item scene is one batch.
         self.instancing.use_instancing = true;
 
         let per_object_start = web_time::Instant::now();
+        let uniforms_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "uniforms").entered();
         // Set up the pipeline sets of the material plugins the frame references,
         // and the group-2 bind groups of the texture sets it draws, before draw
         // time (paint has no mutable access). This compiles nothing: each
         // pipeline is built by the first draw that selects it. Unknown ids are
         // ignored and those items fall back to built-in shading.
-        let mut seen: Vec<u32> = Vec::new();
+        let mut seen: Vec<crate::scene::material::MaterialPluginId> = Vec::new();
         let mut texture_sets: Vec<(
             crate::scene::material::MaterialPluginId,
             crate::resources::mesh_sidecar::shade::PluginTextures,
@@ -329,10 +372,10 @@ impl ViewportRenderer {
                 if set.1.iter().any(Option::is_some) && !texture_sets.contains(&set) {
                     texture_sets.push(set);
                 }
-                if seen.contains(&pid.plugin_index()) {
+                if seen.contains(&pid) {
                     continue;
                 }
-                seen.push(pid.plugin_index());
+                seen.push(pid);
                 if resources.material_plugin_needs_build(pid) {
                     resources.ensure_material_plugin_pipelines(device, pid);
                 }
@@ -344,7 +387,8 @@ impl ViewportRenderer {
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
         // same block. No probes uploaded -> all None and nothing written.
-        let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
+        let probe_indices =
+            per_object::prepare_light_probe_sh(resources, scene_items, queue, &self.origin);
 
         // Material blocks persist for their material's lifetime. The shading
         // variants and the custom-data table hold while the instanced batch
@@ -357,14 +401,18 @@ impl ViewportRenderer {
             scene_items,
             frame,
             hdr_family,
+            self.origin.epoch(),
         );
         if !instanced_cache_valid {
             resources.material_table.clear_variants();
             resources.custom_data_builder.reset();
         }
         let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
+        drop(uniforms_span);
 
         let instanced_start = web_time::Instant::now();
+        let instancing_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "instancing").entered();
         let (batches_reuploaded, batches_skipped, per_object_bind_groups_built) =
             Self::prepare_instanced(
                 resources,
@@ -379,7 +427,23 @@ impl ViewportRenderer {
                 hdr_family,
                 self.frame_counter,
             );
+        self.instancing.last_origin_epoch = self.origin.epoch();
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
+        // The cascades are fit after the instanced batches are built: only the
+        // shadow pass reads them.
+        Self::fit_cascades(
+            resources,
+            &mut self.shadow,
+            &self.instancing,
+            &self.item_type_plugins,
+            &self.viewport_slots,
+            scene_fx,
+            queue,
+            frame,
+            &self.origin,
+            &mut lighting_frame,
+            &mut self.last_stats,
+        );
         #[cfg(debug_assertions)]
         {
             let wrong = instanced::feature_set_violations(resources, &self.instancing);
@@ -390,8 +454,11 @@ impl ViewportRenderer {
             );
         }
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
+        drop(instancing_span);
 
         let geometry_start = web_time::Instant::now();
+        let geometry_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "geometry").entered();
         // The particle systems' draw bind groups bake a texture view in at
         // creation, so a free or replace since the last frame has to be picked
         // up before the item type draws from them. The store stays here, so
@@ -436,7 +503,7 @@ impl ViewportRenderer {
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);
             let mut record: crate::resources::InstanceData = bytemuck::Zeroable::zeroed();
-            record.model = item.model;
+            record.model = self.origin.rel_model(item.model);
             record.colour = [0.75, 0.75, 0.75, 1.0];
             record.flags = crate::resources::mesh::instancing::instance_flags::WIREFRAME;
             tvm_wireframe_records.push(record);
@@ -572,6 +639,7 @@ impl ViewportRenderer {
         }
 
         let geometry_ms = geometry_start.elapsed().as_secs_f32() * 1000.0;
+        drop(geometry_span);
 
         // -- Frame stats --
         {
@@ -652,6 +720,7 @@ impl ViewportRenderer {
 
         // ------------------------------------------------------------------
         let shadow_start = web_time::Instant::now();
+        let shadow_span = tracing::debug_span!(target: "viewport_lib::frame", "shadow").entered();
         let colour_hdr = frame.effects.display.is_hdr() && !self.direct_paint;
         Self::prepare_shadow_pass(
             resources,
@@ -674,6 +743,7 @@ impl ViewportRenderer {
             sink,
         );
         let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
+        drop(shadow_span);
 
         // Hand the LOD-resolved items to the paint pass. `scene_items_owned`
         // carries the surface submission with each item's level mesh selected
@@ -709,6 +779,28 @@ impl ViewportRenderer {
         self.dispatch_plugin_wireframes(device, queue, frame);
 
         self.flush_camera_bind_group_rebuild(device);
+    }
+
+    /// Choose the origin every position this frame is drawn relative to, from
+    /// the frame's camera. Runs before plugin prepare and again at scene
+    /// prepare; a second call with the same frame changes nothing. A derivative
+    /// render (a capture or bake from another camera) keeps the presented
+    /// frame's snapped origin rather than moving it.
+    pub(crate) fn resolve_world_origin(&mut self, frame: &FrameData) {
+        let mode = frame.scene.world_origin.unwrap_or(self.world_origin_mode);
+        if !self.render_advances_state()
+            && matches!(mode, crate::renderer::WorldOrigin::Snapped { .. })
+        {
+            return;
+        }
+        if self.origin.resolve(mode, &frame.camera.render_camera)
+            && self.resources.scene_tier.is_built()
+        {
+            // World-space volumes in the shared indirect buffer are rewritten
+            // relative to the new origin. Below the full tier there are none.
+            self.resources.scene_tier.ibl.zones_dirty = true;
+        }
+        self.resources.world_origin = self.origin;
     }
 
     /// Rebuild the camera bind groups if something they name was replaced this
@@ -841,6 +933,12 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) {
         // Ensure a per-viewport camera slot exists for this viewport index.
+        let _span = tracing::debug_span!(
+            target: "viewport_lib::frame",
+            "prepare_viewport",
+            vp = frame.camera.viewport_index
+        )
+        .entered();
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
         if self.resources.scene_tier.is_built() {
             self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
@@ -882,6 +980,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            &self.origin,
             hdr_family,
             sink,
         );
@@ -954,6 +1053,7 @@ impl ViewportRenderer {
         // their own z_order and are separate draws), so force the ordered path
         // whenever any are present, even if no immediate item sets a z_order.
         let overlay_start = web_time::Instant::now();
+        let overlay_span = tracing::debug_span!(target: "viewport_lib::frame", "overlay").entered();
         // Each viewport keeps its own overlay buffers: the split API prepares
         // every viewport before rendering any, so a shared set would leave each
         // viewport drawing the last one's overlays.
@@ -973,6 +1073,7 @@ impl ViewportRenderer {
         Self::finalize_overlay_draw_order(&mut ov);
         self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
+        drop(overlay_span);
         // Publish the retained counters here rather than in the stats assembly:
         // the split API reaches this phase through `prepare_viewport` without
         // assembling a `FrameStats`, and `last_frame_stats()` should still show
@@ -1037,10 +1138,18 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = web_time::Instant::now();
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare").entered();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
+        self.begin_notice_frame();
 
         let plugin_start = web_time::Instant::now();
+        let plugin_prepare_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "plugin_prepare").entered();
 
+        // The origin is chosen before plugins prepare, which read it. The
+        // split API resolves it in `prepare_scene` instead, once for every
+        // viewport.
+        self.resolve_world_origin(frame);
         // Dispatch item-type plugin prepare work first so any GPU outputs
         // the plugin produces are visible to the rest of `prepare`.
         let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
@@ -1049,17 +1158,20 @@ impl ViewportRenderer {
         }
 
         self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
+        drop(plugin_prepare_span);
 
         // Run plugin culling for the current camera frustum so subsequent
         // plugin paint/shadow calls can skip culled items. Timed apart from
         // prepare above: the two scale with different things.
         let cull_start = web_time::Instant::now();
+        let plugin_cull_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "plugin_cull").entered();
         if !self.item_type_plugins.is_empty() {
-            let vp = frame.camera.render_camera.view_proj();
-            let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
+            let frustum = frame.camera.render_camera.culling_frustum();
             self.dispatch_plugin_cull(&frustum, frame);
         }
         self.prepare_breakdown.plugin_cull_ms = cull_start.elapsed().as_secs_f32() * 1000.0;
+        drop(plugin_cull_span);
 
         // Read back GPU timestamps without blocking. The staging buffer is
         // mapped on one frame and read on a later one; a non-blocking poll
@@ -1424,6 +1536,7 @@ impl ViewportRenderer {
             },
             hdr_drawn_as_ldr: false,
             lights_dropped: self.last_lights_dropped,
+            notices: self.resources.notices.counts(),
             ..self.last_stats
         };
         self.last_stats = stats;
@@ -1493,15 +1606,15 @@ mod lod_resolve_tests {
     }
 
     fn looking_down_z() -> RenderCamera {
-        let mut camera = RenderCamera::default();
-        camera.eye_position = [0.0, 0.0, 0.0];
-        camera.forward = [0.0, 0.0, -1.0];
-        camera
+        RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
+        )
     }
 
     fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> SceneRenderItem {
         let mut item = SceneRenderItem::default();
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).into();
         item.lod_group = Some(group);
         item.settings.pick_id = crate::renderer::PickId(pick);
         item

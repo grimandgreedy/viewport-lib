@@ -22,9 +22,9 @@ use viewport_lib::Colour;
 
 use slint::wgpu_29::{self, wgpu};
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
+    Material, MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 slint::slint! {
@@ -142,17 +142,14 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let make = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
         let mut item = SceneRenderItem::new(mesh_id, material);
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
         item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
         item
     };
 
     let state = Rc::new(RefCell::new(State {
         renderer,
-        camera: Camera {
-            distance: 10.0,
-            ..Camera::default()
-        },
+        camera: Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation()),
         controller: OrbitCameraController::new_stateless(),
         last_frame: Instant::now(),
         input: ViewportInput::from_preset(BindingPreset::Viewer),
@@ -250,11 +247,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     s.target = Some((texture, view, pw, ph));
                 }
 
-                s.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                s.input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 s.controller.set_viewport_size([w, h]);
                 for event in s.events.drain(..) {

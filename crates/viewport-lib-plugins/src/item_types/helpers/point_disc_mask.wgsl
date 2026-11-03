@@ -54,17 +54,17 @@ fn vs_main(
     var out: VsOut;
 
     let world_pos = (u.model * vec4<f32>(position, 1.0)).xyz;
-    let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
     // Expand to a screen-space quad.  ndc_offset is scaled by w so the
     // perspective divide in the rasteriser produces the correct pixel offset.
     let corner      = quad_corner(vertex_index);
     let ndc_offset  = corner * inst_radius / vec2<f32>(u.viewport_w, u.viewport_h);
     out.clip_pos = vec4<f32>(
-        center.x + ndc_offset.x * center.w,
-        center.y + ndc_offset.y * center.w,
-        center.z,
-        center.w,
+        centre.x + ndc_offset.x * centre.w,
+        centre.y + ndc_offset.y * centre.w,
+        centre.z,
+        centre.w,
     );
     out.uv = corner;
     return out;

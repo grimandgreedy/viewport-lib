@@ -31,6 +31,9 @@ viewport-lib-io = { version = "0.8", optional = true, features = ["stl"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [dev-dependencies]
+# The path tracer, for the raster-versus-tracer parity test only, and the egui
+# adapter for the catalogue-viewer example.
+viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false, features = ["raytrace", "egui-adapter"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 # For the startup-cost examples: they read the library's own init-phase marks off
 # the `viewport_lib::init` tracing target.

@@ -9,7 +9,7 @@ A viewport-lib scene on Android and iOS: winit for the window and the touch even
 | Pinch | Zoom |
 | 2-finger rotate | Twist |
 
-`src/app.rs` holds the whole example and runs unchanged on both platforms. The gestures are not written there: `from_winit` translates the winit events, `ViewportInput` recognises the contacts, and the orbit controller applies the frame that resolves. One thing does vary by target, and it is not input: Android asks for the Vulkan backend so the device does not pick GLES instead.
+`src/app.rs` holds the whole example and runs unchanged on both platforms. The gestures are not written there: the winit adapter's `translate` turns the winit events into viewport events, `ViewportInput` recognises the contacts, and the orbit controller applies the frame that resolves. One thing does vary by target, and it is not input: Android asks for the Vulkan backend so the device does not pick GLES instead.
 
 The crate sits outside the parent workspace. cargo-mobile2's generated projects build the Rust side by running cargo from this directory and looking for the library under `./target`, and a workspace member writes to the workspace root's target directory instead.
 

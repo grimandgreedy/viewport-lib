@@ -141,7 +141,7 @@ fn project_splat(
 ) -> VsOut {
     var out: VsOut;
 
-    // World-space splat center.
+    // World-space splat centre.
     let world_h   = splat_u.model * vec4<f32>(pos_obj, 1.0);
     let world_pos = world_h.xyz;
     out.world_pos = world_pos;
@@ -217,10 +217,10 @@ fn project_splat(
     out.opacity = opacity;
 
     // -- Billboard quad expansion in screen space --
-    // NDC of splat center.
-    let clip_center = camera.view_proj * vec4<f32>(world_pos, 1.0);
-    let w_inv = 1.0 / clip_center.w;
-    let ndc_xy = clip_center.xy * w_inv;
+    // NDC of splat centre.
+    let clip_centre = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let w_inv = 1.0 / clip_centre.w;
+    let ndc_xy = clip_centre.xy * w_inv;
     // Corner offset in NDC.
     let corner = QUAD_UV[vi];
     let offset_px = corner * radius_px;
@@ -229,7 +229,7 @@ fn project_splat(
 
     // Reconstruct clip position from NDC + offset.
     let ndc_final = ndc_xy + offset_ndc;
-    out.clip_pos = vec4<f32>(ndc_final * clip_center.w, clip_center.z, clip_center.w);
+    out.clip_pos = vec4<f32>(ndc_final * clip_centre.w, clip_centre.z, clip_centre.w);
 
     return out;
 }
@@ -240,8 +240,7 @@ fn splat_view_dir(pos_obj: vec3<f32>) -> vec3<f32> {
     return normalize(world_pos - camera.eye_pos);
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VsOut) -> vec4<f32> {
     // Clip planes and clip volumes, on the splat's centre: a splat is kept
     // or cut whole.
     if splat_u.ignore_clip == 0u && !viewport_clip_test(in.world_pos) {
@@ -260,4 +259,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if alpha < 1.0 / 255.0 { discard; }
 
     return vec4<f32>(in.colour, alpha);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VsOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

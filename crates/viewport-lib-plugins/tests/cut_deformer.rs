@@ -60,9 +60,7 @@ fn scene() -> Option<Scene> {
 
 fn camera() -> RenderCamera {
     let mut cam = Camera::default();
-    cam.orientation = glam::Quat::IDENTITY;
-    cam.center = glam::Vec3::ZERO;
-    cam.distance = 5.0;
+    cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
     cam.aspect = 1.0;
     RenderCamera::from_camera(&cam)
 }
@@ -70,7 +68,7 @@ fn camera() -> RenderCamera {
 fn flat(mesh: MeshId, translation: glam::Vec3, colour: [f32; 3]) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::from_translation(translation).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(translation).into();
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(
         colour[0], colour[1], colour[2],
     ));
@@ -290,7 +288,7 @@ fn the_cut_lands_where_other_deformers_moved_the_mesh() {
         .register_deformer(
             &s.device,
             DeformerDesc {
-                name: "test_slide",
+                name: "test_slide".into(),
                 stage: DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    \

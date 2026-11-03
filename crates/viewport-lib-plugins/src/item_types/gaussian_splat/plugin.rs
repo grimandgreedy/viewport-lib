@@ -10,6 +10,7 @@
 //! rasterisation and the polyline overlay produced in the renderer's prepare
 //! draws instead.
 
+use crate::item_types::origin::rel_model;
 use viewport_lib::Colour;
 
 use super::pipeline;
@@ -25,7 +26,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -138,15 +138,6 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         gpu.pipelines.request_all();
     }
 
-    fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.packed_gpu = None;
-        self.sorts.clear();
-        self.packed_sets.clear();
-        self.frame.clear();
-        self.outlines.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -193,7 +184,10 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         }
 
         let vp_idx = ctx.viewport_index;
-        let eye = ctx.camera.eye_position;
+        // The sort and the draw share the uniform, so both take the eye and
+        // the model relative to the world origin.
+        let origin = ctx.world_origin();
+        let eye = (ctx.camera.eye_position() - origin).as_vec3().to_array();
         let vp_w = ctx.viewport_size.x.max(1.0);
         let vp_h = ctx.viewport_size.y.max(1.0);
         let mut encoder: Option<gpu::CommandEncoder> = None;
@@ -236,7 +230,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 set,
                 sort,
                 eye,
-                item.model,
+                rel_model(item.model, origin),
                 vp_w,
                 vp_h,
                 item.settings.ignore_clip,
@@ -315,7 +309,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             };
             if !bound {
                 // Still compiling: the sets draw next frame.
-                let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+                let colour = if ctx.is_hdr_pass() {
                     pipeline::COLOUR_HDR
                 } else {
                     pipeline::COLOUR_LDR
@@ -392,9 +386,9 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 scales.iter().map(|s| s[0].max(s[1]).max(s[2])).sum::<f32>() / scales.len() as f32
             };
             let world_radius = mean_max_scale * 3.0;
-            let center_w = model.transform_point3(glam::Vec3::ZERO);
-            let p0_clip = ctx.view_proj * center_w.extend(1.0);
-            let p1_clip = ctx.view_proj * (center_w + glam::Vec3::X * world_radius).extend(1.0);
+            let centre_w = model.transform_point3(glam::Vec3::ZERO);
+            let p0_clip = ctx.view_proj * centre_w.extend(1.0);
+            let p1_clip = ctx.view_proj * (centre_w + glam::Vec3::X * world_radius).extend(1.0);
             let radius_px = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                 let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
                 let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
@@ -414,7 +408,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             ) {
                 // pick_gaussian_splat_cpu returns SubObjectRef::Point; remap
                 // to Splat, or clear it for object-level queries.
-                let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
                 if wants_splat {
                     if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                         hit.sub_object = Some(SubObjectRef::Splat(idx));
@@ -792,8 +786,8 @@ impl GaussianSplatPlugin {
                 gpu,
                 set,
                 ctx.viewport_index,
-                ctx.camera.eye_position,
-                item.model,
+                (ctx.camera.eye_position() - ctx.world_origin()).as_vec3().to_array(),
+                rel_model(item.model, ctx.world_origin()),
                 viewport_size,
                 item.settings.ignore_clip,
             );
@@ -842,14 +836,14 @@ impl GaussianSplatPlugin {
         };
         let view_proj = ctx.camera.view_proj();
         let (vp_w, vp_h) = (ctx.viewport_size.x, ctx.viewport_size.y);
-        let cam_right = ctx.camera.view.row(0).truncate().normalize();
+        let cam_right = ctx.camera.view().row(0).truncate().normalize();
 
-        // Project a world-space radius at `center_w` to a pixel half-size,
+        // Project a world-space radius at `centre_w` to a pixel half-size,
         // offsetting along the camera right vector so the measurement never
         // collapses when looking down an axis.
-        let radius_px = |center_w: glam::Vec3, world_radius: f32| -> f32 {
-            let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
-            let p1_world = center_w + cam_right * world_radius;
+        let radius_px = |centre_w: glam::Vec3, world_radius: f32| -> f32 {
+            let p0_clip = view_proj * glam::Vec4::new(centre_w.x, centre_w.y, centre_w.z, 1.0);
+            let p1_world = centre_w + cam_right * world_radius;
             let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
             if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                 let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
@@ -889,8 +883,8 @@ impl GaussianSplatPlugin {
                 };
                 let world_radius = mean_max_scale * 3.0;
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let center_w = model.transform_point3(glam::Vec3::ZERO);
-                let pixel_radius = radius_px(center_w, world_radius).max(1.0);
+                let centre_w = model.transform_point3(glam::Vec3::ZERO);
+                let pixel_radius = radius_px(centre_w, world_radius).max(1.0);
 
                 let position_buf = device.create_buffer_init(&gpu::util::BufferInitDescriptor {
                     label: Some("splat_outline_pos_buf"),
@@ -898,7 +892,7 @@ impl GaussianSplatPlugin {
                     usage: gpu::BufferUsages::VERTEX,
                 });
                 let uniform = PointDiscMaskUniform {
-                    model: item.model,
+                    model: rel_model(item.model, ctx.world_origin()),
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
@@ -955,8 +949,8 @@ impl GaussianSplatPlugin {
                         } else {
                             0.15
                         };
-                        let center_w = model.transform_point3(glam::Vec3::from(pos));
-                        sizes.push(radius_px(center_w, world_radius).max(1.0));
+                        let centre_w = model.transform_point3(glam::Vec3::from(pos));
+                        sizes.push(radius_px(centre_w, world_radius).max(1.0));
                     }
                 }
                 if positions.is_empty() {
@@ -969,7 +963,7 @@ impl GaussianSplatPlugin {
                     .fold(f32::NEG_INFINITY, f32::max)
                     .max(1.0);
                 let uniform = PointDiscMaskUniform {
-                    model: item.model,
+                    model: rel_model(item.model, ctx.world_origin()),
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,

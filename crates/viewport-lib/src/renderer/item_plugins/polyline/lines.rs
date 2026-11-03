@@ -50,6 +50,7 @@ pub(crate) struct PolylineRecipe {
     wf_shader: crate::resources::pipeline_slot::LazyModule,
     sample_count: u32,
     ldr_format: crate::gpu::TextureFormat,
+    depth_format: crate::gpu::TextureFormat,
 }
 
 // Instance buffer layout (112 bytes per segment):
@@ -177,10 +178,10 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
     let slot = i / 2;
     let skip_clip = slot & 1 != 0;
     let wireframe = slot & 2 != 0;
-    let fragment_entry = if skip_clip {
-        "fs_main_no_clip"
+    let (fragment_entry, scene_entry) = if skip_clip {
+        ("fs_main_no_clip", "fs_scene_no_clip")
     } else {
-        "fs_main"
+        ("fs_main", "fs_scene")
     };
     let instance_layout = [pl_instance_layout()];
     let endpoint_layout = [pl_endpoint_layout()];
@@ -196,9 +197,12 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             topology: crate::gpu::PrimitiveTopology::LineList,
             cull_mode: None,
             depth_write: true,
-            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
+            // Unlit: fraction 0.
+            indirect_fraction_entry: Some(scene_entry),
         }
     } else {
         crate::resources::builders::DualPipelineDesc {
@@ -212,9 +216,12 @@ fn build_polyline(r: &PolylineRecipe, i: usize) -> crate::gpu::RenderPipeline {
             topology: crate::gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             depth_write: true,
-            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
+            // Unlit: fraction 0.
+            indirect_fraction_entry: Some(scene_entry),
         }
     };
     crate::resources::builders::build_dual_pipeline_variant(&r.device, &desc, i & 1 != 0)
@@ -313,6 +320,7 @@ impl Lines {
             ),
             sample_count: resources.sample_count(),
             ldr_format: resources.target_format(),
+            depth_format: resources.scene_depth_format(),
         };
         Self {
             pipelines: PolylineVariantSet(resources.lazy_pipelines(recipe, build_polyline)),
@@ -552,7 +560,8 @@ impl Lines {
             _pad: [f32; 2],           // offset 120 (total 128 bytes)
         }
         let uniform_data = PolylineUniform {
-            model: item.model,
+            // Drawn relative to the frame's world origin.
+            model: resources.world_origin.rel_model(item.model),
             default_colour: item.default_colour.to_linear_rgba(),
             line_width: item.line_width,
             scalar_min,

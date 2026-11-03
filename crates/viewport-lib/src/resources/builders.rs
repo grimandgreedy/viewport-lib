@@ -44,15 +44,15 @@ pub fn wgsl_module<'a>(
 /// is replaced by its `ALT(<NAME>)` lines' code; everywhere else the source is
 /// unchanged. The alternatives and the conditions:
 ///
-/// - `POINT_SHADOW_SAMPLE` / `NO_CUBE_ARRAY`: no cube-array textures. The
-///   point-light shadow array is also declared `texture_depth_2d_array`, to
-///   match the `D2Array` view binding 17 carries there.
 /// - `PCSS_BLOCKER_SEARCH` / `NO_DEPTH_LOADS`: shaders cannot load from depth
 ///   textures (wgpu's GL backend). The PCSS tiers filter as PCF.
 /// - `LIGHT_LIST` / `UNIFORM`: the group 0 profile holds the light list in a
 ///   uniform array (the compatibility tier).
 /// - `CLUSTER_LOOKUP` and `CLUSTER_INDEX` / `UNCLUSTERED`: the group 0
 ///   profile has no clusters, so the lighting loops walk every light.
+/// - `TRANSMISSION_PASS` / `NO_TRANSMISSION_PASS`: fewer than four bind
+///   groups, so the mesh shader leaves out the transmission entry points and
+///   their group 3.
 pub fn adapt_wgsl<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     caps: &crate::capabilities::Capabilities,
@@ -60,15 +60,11 @@ pub fn adapt_wgsl<'a>(
     let mut source = source.into();
     let profile = crate::resources::group0::Group0Profile::for_caps(caps);
     let mut picks: Vec<(&str, &str)> = Vec::new();
-    if !caps.cube_array_textures {
-        const CUBE: &str = "texture_depth_cube_array";
-        if source.contains(CUBE) {
-            source = std::borrow::Cow::Owned(source.replace(CUBE, "texture_depth_2d_array"));
-        }
-        picks.push(("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"));
-    }
     if !caps.depth_texture_loads {
         picks.push(("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"));
+    }
+    if caps.bind_groups < 4 {
+        picks.push(("TRANSMISSION_PASS", "NO_TRANSMISSION_PASS"));
     }
     if let Some(profile) = profile {
         if profile.uniform_light_list.is_some() {
@@ -156,6 +152,7 @@ mod adapt_wgsl_tests {
             assert!(src.contains("textureLoad(shadow_map"));
             let gl = adapt_wgsl(src, &caps(crate::gpu::Backend::Gl));
             assert!(!gl.contains("textureLoad(shadow_map"));
+            assert!(!gl.contains("textureLoad(punctual_shadow_tex"));
             assert!(!gl.contains("BEGIN_PCSS_BLOCKER_SEARCH"));
         }
     }
@@ -210,7 +207,14 @@ mod adapt_wgsl_tests {
     }
 
     const LIT_BODY: &str = "
-@group(0) @binding(0) var<uniform> test_view_proj: mat4x4<f32>;
+struct TestCamera {
+    view_proj: mat4x4<f32>,
+    eye_pos: vec3<f32>,
+    _pad: f32,
+    forward: vec3<f32>,
+    exposure: f32,
+};
+@group(0) @binding(0) var<uniform> camera: TestCamera;
 @group(0) @binding(3) var<uniform> test_lights: Lights;
 struct TestOut {
     @builtin(position) clip: vec4<f32>,
@@ -219,7 +223,7 @@ struct TestOut {
 @vertex
 fn vs_main(@location(0) position: vec3<f32>) -> TestOut {
     var out: TestOut;
-    out.clip = test_view_proj * vec4<f32>(position, 1.0);
+    out.clip = camera.view_proj * vec4<f32>(position, 1.0);
     out.world = position;
     return out;
 }
@@ -292,7 +296,6 @@ fn fs_main() -> @location(0) vec4<f32> {
             crate::plugin_api::shared_wgsl::SHARED_CSM_WGSL,
         ];
         let wants = [
-            ("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"),
             ("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"),
             ("LIGHT_LIST", "UNIFORM"),
             ("CLUSTER_LOOKUP", "UNCLUSTERED"),
@@ -727,13 +730,14 @@ pub(crate) fn strip_mesh_discards<'a>(
     if dev_knob!("VIEWPORT_MESH_NO_DISCARD").is_none() {
         return source;
     }
-    static NOTICE: std::sync::Once = std::sync::Once::new();
-    NOTICE.call_once(|| {
-        eprintln!(
+    crate::notice::log_rate_limited(
+        "VIEWPORT_MESH_NO_DISCARD",
+        crate::Severity::Info,
+        format_args!(
             "VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
              discard (clip planes, clip volumes, and alpha mask are no-ops)"
-        );
-    });
+        ),
+    );
     std::borrow::Cow::Owned(strip_discards(&source))
 }
 
@@ -761,13 +765,14 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     if !source.contains(BEGIN) {
         return source;
     }
-    static NOTICE: std::sync::Once = std::sync::Once::new();
-    NOTICE.call_once(|| {
-        eprintln!(
+    crate::notice::log_rate_limited(
+        "VIEWPORT_MESH_PBR_ONLY",
+        crate::Severity::Info,
+        format_args!(
             "VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
              (Blinn-Phong, matcap, uv-vis, and per-face colour paths removed)"
-        );
-    });
+        ),
+    );
     std::borrow::Cow::Owned(strip_pbr_regions(&source))
 }
 
@@ -779,7 +784,7 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
 ///
 /// This is the A/B tool for "what does the hook mechanism itself cost": the
 /// composed module computes identical lighting via the same
-/// `pbr_light_contrib`, plus the ShadingSurface fill and per-light
+/// `viewport_brdf_light_contrib`, plus the ShadingSurface fill and per-light
 /// LightSample construction a real material plugin pays. Compare against the
 /// plain baseline and against `VIEWPORT_MESH_PBR_ONLY` (which strips the
 /// alternate branches without the hook) to separate branch-stripping gains
@@ -797,13 +802,14 @@ pub(crate) fn builtin_hook_env<'a>(
     else {
         return source;
     };
-    static NOTICE: std::sync::Once = std::sync::Once::new();
-    NOTICE.call_once(|| {
-        eprintln!(
+    crate::notice::log_rate_limited(
+        "VIEWPORT_MESH_BUILTIN_HOOK",
+        crate::Severity::Info,
+        format_args!(
             "VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
              through the shading-hook seam (render PBR materials only)"
-        );
-    });
+        ),
+    );
     std::borrow::Cow::Owned(composed)
 }
 
@@ -1146,8 +1152,7 @@ pub const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
 };
 
 /// The parts of a scene render pipeline that vary between features. The rest of
-/// the descriptor (depth format `Depth24PlusStencil8`, default stencil and
-/// bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
+/// the descriptor (default stencil and bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
 /// constant by [`build_dual_pipeline`]. The vertex and fragment stages share
 /// one shader module, which is the shape every scivis feature uses.
 pub struct DualPipelineDesc<'a> {
@@ -1177,13 +1182,21 @@ pub struct DualPipelineDesc<'a> {
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
     pub ldr_format: crate::gpu::TextureFormat,
+    /// The fragment entry the HDR variant uses to also write the scene pass's
+    /// indirect fraction at `@location(1)` (see
+    /// [`indirect_fraction_target`](crate::plugin_api::target_desc::indirect_fraction_target)).
+    /// `None` keeps `fragment_entry` and leaves the fraction unwritten.
+    pub indirect_fraction_entry: Option<&'a str>,
+    /// Scene depth-stencil format, from
+    /// [`DeviceResources::scene_depth_format`](crate::resources::DeviceResources::scene_depth_format).
+    pub depth_format: crate::gpu::TextureFormat,
 }
 
 /// Build the LDR + HDR pair of a scene render pipeline from the parts that vary
 /// ([`DualPipelineDesc`]), holding the shared depth / stencil / target-write
-/// state constant. The two variants differ only in colour target format
-/// (`desc.ldr_format` vs `Rgba16Float`), which is the invariant `DualPipeline`
-/// encodes.
+/// state constant. The two variants differ in colour target format
+/// (`desc.ldr_format` vs `Rgba16Float`) and in the HDR variant's second
+/// target, the scene pass's indirect fraction.
 pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
@@ -1194,7 +1207,7 @@ pub fn build_dual_pipeline(
     }
 }
 
-/// One half of [`build_dual_pipeline`]: the HDR (`Rgba16Float`) pipeline when
+/// One half of [`build_dual_pipeline`]: the HDR scene-pass pipeline when
 /// `hdr`, else the LDR one in `desc.ldr_format`. For a type that builds each
 /// on first use rather than both together.
 pub fn build_dual_pipeline_variant(
@@ -1207,6 +1220,27 @@ pub fn build_dual_pipeline_variant(
     } else {
         desc.ldr_format
     };
+    let colour = crate::gpu::ColorTargetState {
+        format,
+        blend: desc.blend,
+        write_mask: crate::gpu::ColorWrites::ALL,
+    };
+    // The HDR variant draws into the scene pass and declares its second
+    // target.
+    let (targets, fragment_entry) = if hdr {
+        (
+            crate::plugin_api::SceneColourTargets::hdr(
+                colour,
+                desc.indirect_fraction_entry.is_some(),
+            ),
+            desc.indirect_fraction_entry.unwrap_or(desc.fragment_entry),
+        )
+    } else {
+        (
+            crate::plugin_api::SceneColourTargets::single(colour),
+            desc.fragment_entry,
+        )
+    };
     render_pipeline(
         device,
         RenderPipelineDesc {
@@ -1217,12 +1251,8 @@ pub fn build_dual_pipeline_variant(
             vertex_buffers: desc.vertex_buffers,
             fragment: Some(crate::gpu::FragmentState {
                 module: desc.shader,
-                entry_point: Some(desc.fragment_entry),
-                targets: &[Some(crate::gpu::ColorTargetState {
-                    format,
-                    blend: desc.blend,
-                    write_mask: crate::gpu::ColorWrites::ALL,
-                })],
+                entry_point: Some(fragment_entry),
+                targets: targets.as_slice(),
                 compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
             primitive: crate::gpu::PrimitiveState {
@@ -1230,7 +1260,11 @@ pub fn build_dual_pipeline_variant(
                 cull_mode: desc.cull_mode,
                 ..Default::default()
             },
-            depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
+            depth_stencil: Some(scene_depth_stencil(
+                desc.depth_format,
+                desc.depth_write,
+                desc.depth_compare,
+            )),
             multisample: crate::gpu::MultisampleState {
                 count: desc.sample_count,
                 ..Default::default()
@@ -1287,10 +1321,10 @@ pub fn build_fullscreen_pipeline(
 
 /// Build an outline selection-mask pipeline: the item's geometry drawn into a
 /// single-channel mask target, depth-tested against the scene so only visible
-/// pixels are marked. The mask format, vertex layout, cull mode, depth write,
-/// and depth compare vary per item and are passed in; the rest is fixed
-/// (triangle list, `Depth24PlusStencil8`, default stencil and bias, single
-/// sample, no blend, both stages `vs_main` / `fs_main`).
+/// pixels are marked. The mask format, scene depth format, vertex layout, cull
+/// mode, depth write, and depth compare vary per item and are passed in; the
+/// rest is fixed (triangle list, default stencil and bias, single sample, no
+/// blend, both stages `vs_main` / `fs_main`).
 ///
 /// `depth_compare` must match the item's main opaque pipeline so the mask marks
 /// exactly the pixels that survived the depth test in the colour pass. `cull` is
@@ -1302,6 +1336,7 @@ pub fn build_outline_mask_pipeline(
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     mask_format: crate::gpu::TextureFormat,
+    depth_format: crate::gpu::TextureFormat,
     vertex_buffers: &[crate::gpu::VertexBufferLayout],
     cull: Option<crate::gpu::Face>,
     depth_write: bool,
@@ -1330,7 +1365,11 @@ pub fn build_outline_mask_pipeline(
                 cull_mode: cull,
                 ..Default::default()
             },
-            depth_stencil: Some(scene_depth_stencil(depth_write, depth_compare)),
+            depth_stencil: Some(scene_depth_stencil(
+                depth_format,
+                depth_write,
+                depth_compare,
+            )),
             multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
@@ -1342,13 +1381,14 @@ pub fn build_outline_mask_pipeline(
 /// stamped with the pass's stencil reference. Used from
 /// [`ItemTypePlugin::surface_mask`](crate::plugin_api::ItemTypePlugin::surface_mask).
 ///
-/// The vertex layout and cull mode vary per item and are passed in; the rest is
-/// fixed: triangle list, `Depth24PlusStencil8`, no colour target, no depth
+/// The scene depth format, vertex layout and cull mode vary per item and are
+/// passed in; the rest is fixed: triangle list, no colour target, no depth
 /// write, single sample, both stages `vs_main` / `fs_main`. The fragment stage
 /// has nothing to output: leave it empty, or have it `discard` where the item's
 /// own fragment stage would, so a cut-out stamps only what it drew.
 ///
-/// The depth test is `LessEqual` with a small bias towards the camera. This is
+/// The depth test is [`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE)
+/// with a small bias towards the camera. This is
 /// a second draw of geometry the opaque pass already drew, and without the
 /// bias rounding differences between the two passes leave holes in the stamp.
 pub fn build_surface_mask_pipeline(
@@ -1356,6 +1396,7 @@ pub fn build_surface_mask_pipeline(
     label: &str,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
     vertex_buffers: &[crate::gpu::VertexBufferLayout],
     cull: Option<crate::gpu::Face>,
 ) -> crate::gpu::RenderPipeline {
@@ -1378,7 +1419,7 @@ pub fn build_surface_mask_pipeline(
                 cull_mode: cull,
                 ..Default::default()
             },
-            depth_stencil: Some(surface_mask_depth_stencil()),
+            depth_stencil: Some(surface_mask_depth_stencil(depth_format)),
             multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
@@ -1388,7 +1429,9 @@ pub fn build_surface_mask_pipeline(
 /// The depth-stencil state of a surface-mask pipeline: test against the scene
 /// depth without writing it, and replace the stencil with the pass's reference
 /// where the test passes.
-pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
+pub(crate) fn surface_mask_depth_stencil(
+    format: crate::gpu::TextureFormat,
+) -> crate::gpu::DepthStencilState {
     let stamp = crate::gpu::StencilFaceState {
         compare: crate::gpu::CompareFunction::Always,
         fail_op: crate::gpu::StencilOperation::Keep,
@@ -1396,20 +1439,16 @@ pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
         pass_op: crate::gpu::StencilOperation::Replace,
     };
     crate::gpu::DepthStencilState {
-        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+        format,
         depth_write_enabled: dwrite(false),
-        depth_compare: dcompare(crate::gpu::CompareFunction::LessEqual),
+        depth_compare: dcompare(crate::plugin_api::depth::DEPTH_COMPARE),
         stencil: crate::gpu::StencilState {
             front: stamp,
             back: stamp,
             read_mask: 0xff,
             write_mask: 0xff,
         },
-        bias: crate::gpu::DepthBiasState {
-            constant: -2,
-            slope_scale: 0.0,
-            clamp: 0.0,
-        },
+        bias: crate::plugin_api::depth::scene_depth_bias(-2, 0.0),
     }
 }
 
@@ -2015,18 +2054,16 @@ pub fn depth_stencil(
     }
 }
 
-/// The scene depth-stencil state: `Depth24PlusStencil8` shared by every scene
-/// render pass, parameterised by the depth write flag and compare function that
-/// vary per pipeline.
+/// The scene depth-stencil state for `format`, the renderer's
+/// [`scene_depth_format`](crate::resources::DeviceResources::scene_depth_format),
+/// parameterised by the depth write flag and compare function that vary per
+/// pipeline.
 pub fn scene_depth_stencil(
+    format: crate::gpu::TextureFormat,
     depth_write_enabled: bool,
     depth_compare: crate::gpu::CompareFunction,
 ) -> crate::gpu::DepthStencilState {
-    depth_stencil(
-        crate::gpu::TextureFormat::Depth24PlusStencil8,
-        depth_write_enabled,
-        depth_compare,
-    )
+    depth_stencil(format, depth_write_enabled, depth_compare)
 }
 
 /// Create a render-bundle encoder, filling `multiview: None`. This is the one

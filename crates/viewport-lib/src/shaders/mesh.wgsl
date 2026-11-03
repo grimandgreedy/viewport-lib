@@ -21,6 +21,10 @@
 // Normal maps: tangent-space normal mapping via TBN when object.has_normal_map != 0u.
 // AO maps: ambient occlusion applied to ambient + diffuse when object.has_ao_map != 0u.
 
+// Largest finite half float: the bound on any colour written to the scene
+// target.
+const HDR_COLOUR_MAX: f32 = 65504.0;
+
 struct Camera {
     view_proj: mat4x4<f32>,
     eye_pos: vec3<f32>,
@@ -29,9 +33,25 @@ struct Camera {
     // Rgba16Float target ahead of tone mapping.
     lit_clamp: f32,
     forward: vec3<f32>,
-    _pad1: f32,
+    // The camera's exposure, applied to every radiance source where it is
+    // read.
+    exposure: f32,
     inv_view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
+    // View -> clip and its inverse.
+    proj: mat4x4<f32>,
+    inv_proj: mat4x4<f32>,
+    // Viewport in physical pixels: width, height, 1 / width, 1 / height.
+    viewport: vec4<f32>,
+    // Near, far, 1 when orthographic (0 when perspective), reserved.
+    clip: vec4<f32>,
+    // Frame time: seconds as f32, the remainder f32 drops from the f64
+    // seconds, delta seconds, frame index modulo 2^24.
+    time: vec4<f32>,
+    // The world origin positions are relative to, rounded to f32, and a
+    // counter bumped each time it moves.
+    world_origin: vec3<f32>,
+    origin_epoch: u32,
 };
 
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
@@ -52,16 +72,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Shadow atlas uniform : 416 bytes.
-struct ShadowAtlas {
-    cascade_vp: array<mat4x4<f32>, 4>,   // 256 bytes
-    cascade_splits: vec4<f32>,            //  16 bytes
-    cascade_count: u32,                   //   4 bytes
-    atlas_size: f32,                      //   4 bytes
-    shadow_filter: u32,                   //   4 bytes (0=PCF, 1=PCSS)
-    pcss_light_radius: f32,               //   4 bytes
-    atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
-};
+// #include "helpers/shadow_atlas.wgsl"
 
 // Per-object uniform. Layout mirrors the renderer's `ObjectUniform`
 // (320 bytes); keep the field offsets in sync with its doc table.
@@ -128,8 +139,8 @@ struct Object {
     has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     ignore_clip: u32,                      // offset 360 : 1 = exempt from clip planes/volumes
     object_mask: u32,                      // offset 364 : layer mask, AND-tested per light
-    // The vec4 higher up keeps the struct 16-aligned, so its size is 368 and
-    // matches the Rust ObjectUniform.
+    dielectric_f0: vec3<f32>,              // dielectric reflectance at normal incidence
+    dielectric_f90: f32,                   // dielectric reflectance at grazing incidence
 };
 
 // Per-material UV transform block (group 0, binding 21). One entry per distinct
@@ -141,7 +152,7 @@ struct TexTransform {
 }
 // The per-object mesh path only reads the UV transforms (`xf`); the scalar and
 // flag blocks are consumed by the instanced path. They are declared here so the
-// WGSL array stride matches the Rust MaterialGpu (368 bytes): omitting them
+// WGSL array stride matches the Rust MaterialGpu (MATERIAL_GPU_BYTES): omitting them
 // shrinks the stride and misreads every entry past material_id 0.
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
@@ -158,6 +169,11 @@ struct MaterialGpu {
     nan_colour: vec4<f32>,   // colour for NaN scalar attribute samples
     item_flags: vec4<u32>,   // (MAT_* bits, lightmap_mode, 0, 0)
     params: array<vec4<f32>, 16>, // material plugin parameters, declaration order
+    specular: vec4<f32>,     // (dielectric F0 rgb, dielectric F90)
+    layers0: vec4<f32>,      // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
+    layers1: vec4<f32>,      // (sheen colour rgb, sheen roughness)
+    volume0: vec4<f32>,      // (transmission, thickness, ior, emissive exposure weight)
+    volume1: vec4<f32>,      // (absorption coefficient rgb, 0)
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -170,6 +186,10 @@ const MAT_HAS_SHADOWMASK: u32 = 16u;
 const MAT_HAS_EMISSIVE_TEX: u32 = 32u;
 const MAT_USES_UV1: u32 = 64u;
 const MAT_UV_TRANSFORM: u32 = 128u;
+const MAT_HAS_CLEARCOAT: u32 = 256u;
+const MAT_HAS_SHEEN: u32 = 512u;
+const MAT_HAS_ANISOTROPY: u32 = 1024u;
+const MAT_HAS_TRANSMISSION: u32 = 2048u;
 
 // A transformed UV plus its screen-space derivatives, for textureSampleGrad.
 struct SlotUv {
@@ -227,7 +247,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -268,6 +288,11 @@ struct ClipVolumeUB {
 // plugin hook still read `object.FIELD` unchanged.
 @group(1) @binding(0) var<storage, read> instances: array<InstanceData>;
 var<private> object: Object;
+// The fragment's transmission, written by compute_lit for the transmission
+// entry points to finish.
+var<private> transmission_out: PbrTransmission;
+// The scene pass's output and the light split, which fs_body sets.
+// #include "helpers/scene_fragment.wgsl"
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
 @group(1) @binding(3) var normal_map: texture_2d<f32>;
@@ -293,6 +318,10 @@ override FEAT_EMISSIVE_MAP: bool = true;
 override FEAT_UV1: bool = true;
 override FEAT_UV_TRANSFORM: bool = true;
 override FEAT_LIGHT_PROBE: bool = true;
+override FEAT_CLEARCOAT: bool = true;
+override FEAT_SHEEN: bool = true;
+override FEAT_ANISOTROPY: bool = true;
+override FEAT_TRANSMISSION: bool = true;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
@@ -349,7 +378,8 @@ fn load_object_vertex(i: u32) -> Object {
     o.selected = u32((bit & INST_SELECTED) != 0u);
     o.wireframe = u32((bit & INST_WIREFRAME) != 0u);
     o.has_texture = u32((bit & INST_HAS_TEXTURE) != 0u);
-    o.has_normal_map = u32((bit & INST_HAS_NORMAL_MAP) != 0u);
+    // 0 none, 1 unsigned map (remapped from [0, 1]), 2 signed map.
+    o.has_normal_map = select(0u, select(1u, 2u, (bit & INST_NORMAL_MAP_SIGNED) != 0u), (bit & INST_HAS_NORMAL_MAP) != 0u);
     o.has_ao_map = u32((bit & INST_HAS_AO_MAP) != 0u);
     o.has_attribute = u32((bit & INST_HAS_ATTRIBUTE) != 0u);
     o.use_face_colour = u32((bit & INST_USE_FACE_COLOUR) != 0u);
@@ -405,6 +435,8 @@ fn load_object(i: u32) -> Object {
     o.lightmap_mode = mat.item_flags.y;
     o.lightmap_directional = u32((mbit & MAT_LIGHTMAP_DIRECTIONAL) != 0u);
     o.has_shadowmask = u32((mbit & MAT_HAS_SHADOWMASK) != 0u);
+    o.dielectric_f0 = mat.specular.xyz;
+    o.dielectric_f90 = mat.specular.w;
     return o;
 }
 
@@ -623,7 +655,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
             );
         }
     }
-    var dv = DeformVertex(local_pos, local_normal, vi);
+    var dv = DeformVertex(local_pos, local_normal, vi, in.tangent);
     let dctx = DeformContext(model, model[3].xyz, 0.0, deform_flags, 0u);
     if FEAT_DEFORM {
         dv = viewport_deform_object_space(dv, dctx);
@@ -635,7 +667,16 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     );
     let world_pos4 = model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
-    dv.normal = normalize(model3 * dv.normal);
+    // Normals take the cofactor (the inverse transpose up to scale), signed
+    // so a mirroring transform keeps the normal's side.
+    let normal3 = mat3x3<f32>(
+        cross(model3[1], model3[2]),
+        cross(model3[2], model3[0]),
+        cross(model3[0], model3[1]),
+    );
+    let normal_sign = select(1.0, -1.0, dot(model3[0], normal3[0]) < 0.0);
+    dv.normal = normalize(normal3 * dv.normal) * normal_sign;
+    dv.tangent = vec4<f32>(normalize(model3 * dv.tangent.xyz), dv.tangent.w);
     if FEAT_DEFORM {
         dv = viewport_deform_world_space(dv, dctx);
     }
@@ -645,7 +686,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     out.colour = in.colour;
     out.world_pos = world_pos.xyz;
     out.world_normal = dv.normal;
-    out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
+    out.world_tangent = dv.tangent;
     out.uv = in.uv;
     // Second UV set: the parallel uv1 stream, indexed by the chunk vertex
     // index. Zero for a mesh without one, whose chunk may bind another mesh's
@@ -699,70 +740,23 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
 }
 
 // ---------------------------------------------------------------------------
-// 32-sample Poisson disk (first 16 used for blocker search, all 32 for filter)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // CSM shadow sampling : selects cascade by eye distance, samples atlas tile
 // ---------------------------------------------------------------------------
 
-fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32 {
-    if light.point_shadow_slot < 0 {
-        return 1.0;
-    }
-    // The cube stores linear distance-to-light over range, one value per
-    // texel, so across one texel a receiver's own distance changes by
-    // texel_world * tan(theta) (theta between the normal and the light ray).
-    // A flat receiver near the light and nearly parallel to it (a ceiling
-    // slab over a room light) sees that exceed any fixed constant and reads
-    // its own recorded distance as an occluder, in bands aligned with the
-    // cube-face texel rows. Two receiver-side terms clear it:
-    //   - normal offset: the sample point is lifted off the surface along the
-    //     normal by a couple of texels, scaled by sin(theta) so perpendicular
-    //     receivers stay put. Lifting by e buys a distance margin of e /
-    //     cos(theta), the same growth as a slope-scaled bias, but the world
-    //     displacement stays bounded at grazing angles;
-    //   - a constant distance bias of one texel, plus the consumer knob.
-    // Both scale with the cube-face texel footprint at the receiver, so the
-    // bias is a fixed number of texels at any distance and face resolution.
-    let to_light = light.pos_or_dir - world_pos;
-    let dist = length(to_light);
-    let l = to_light / max(dist, 1e-5);
-    // A cube face spans two units at unit distance over face_size texels.
-    let face_size = f32(textureDimensions(point_shadow_cube_tex).x);
-    let texel_world = dist * 2.0 / max(face_size, 1.0);
-    // Whichever side of the surface faces the light: two-sided receivers are
-    // shaded from either side and the offset must always lift toward the
-    // light.
-    let n = geo_normal * select(-1.0, 1.0, dot(geo_normal, l) >= 0.0);
-    let n_dot_l = clamp(dot(n, l), 0.0, 1.0);
-    let sin_t = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0));
-    let offset_pos = world_pos + n * (texel_world * 2.0 * sin_t);
-    let to_frag = offset_pos - light.pos_or_dir;
-    let offset_dist = length(to_frag);
-    let dir = to_frag / max(offset_dist, 1e-5);
-    let range = max(light.range, 1e-5);
-    let normalised = clamp((offset_dist - texel_world) / range, 0.0, 1.0)
-        - lights_uniform.shadow_bias;
-    // BEGIN_POINT_SHADOW_SAMPLE
-    return textureSampleCompareLevel(
-        point_shadow_cube_tex,
-        shadow_sampler,
-        dir,
-        light.point_shadow_slot,
-        normalised,
-    );
-    // ALT(NO_CUBE_ARRAY): return 1.0;
-    // END_POINT_SHADOW_SAMPLE
-}
-
 // #include "helpers/csm.wgsl"
+
+// ---------------------------------------------------------------------------
+// Point and spot light shadow sampling, and the per-light shadow dispatch
+// ---------------------------------------------------------------------------
+
+// #include "helpers/punctual_shadow.wgsl"
+
 
 // ---------------------------------------------------------------------------
 // PBR BRDF helpers (Cook-Torrance)
 // ---------------------------------------------------------------------------
 
-// Shared direct BRDF: D_GGX, G1_Smith, G_Smith, F_Schlick, pbr_light_contrib.
+// Shared direct BRDF (the viewport_brdf_* functions).
 // #include "helpers/brdf.wgsl"
 
 // ---------------------------------------------------------------------------
@@ -771,6 +765,9 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec
 
 // Shared ambient / IBL helpers (equirect sampling, split-sum ambient).
 // #include "helpers/ambient.wgsl"
+
+// The PBR surface model: PbrPixel, pbr_resolve, pbr_direct, pbr_ambient.
+// #include "helpers/pbr_model.wgsl"
 
 // UV parameterization visualization : returns a procedural RGB colour from UV coordinates.
 // mode: 1=checker, 2=grid, 3=localcheck (polar checker), 4=localrad (concentric rings).
@@ -839,6 +836,10 @@ fn build_shading_surface(
     metallic: f32,
     roughness: f32,
     F0: vec3<f32>,
+    energy_compensation: vec3<f32>,
+    spec_ao: f32,
+    dielectric_f0: vec3<f32>,
+    f90: f32,
 ) -> ShadingSurface {
     var surf: ShadingSurface;
     surf.base_colour = surface.base_colour;
@@ -865,6 +866,10 @@ fn build_shading_surface(
     surf.tangent = t;
     surf.bitangent = cross(n, t) * handedness;
     surf.f0 = F0;
+    surf.dielectric_f0 = dielectric_f0;
+    surf.f90 = f90;
+    surf.energy_compensation = energy_compensation;
+    surf.spec_ao = spec_ao;
     surf.metallic = metallic;
     surf.roughness = roughness;
     surf.ao = surface.ao_factor;
@@ -873,16 +878,33 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
+    surf.vertex_colour = in.colour;
     // The instance's raw material channel: custom data slots 4..8 (`data1`),
     // the block reserved for material plugins. A module whose hook reads the
     // per-vertex extension attribute replaces it with that attribute.
     // `custom_data_id` 0 is the shared all-zero block.
     surf.attr = custom_data1(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id);
+    // The material's layers, raw; zero where the material has none.
+    if pbr_layers_compiled() {
+        let mid = instances[in.obj_idx].material_id;
+        let l0 = material_gpu_buf[mid].layers0;
+        let l1 = material_gpu_buf[mid].layers1;
+        surf.clearcoat = l0.x;
+        surf.clearcoat_roughness = l0.y;
+        surf.sheen_colour = l1.xyz;
+        surf.sheen_roughness = l1.w;
+        surf.anisotropy = l0.z;
+        surf.anisotropy_direction = surf.tangent * cos(l0.w) + surf.bitangent * sin(l0.w);
+    }
     return surf;
 }
 
 struct LitResult {
     rgb: vec3<f32>,
+    // The indirect (ambient, IBL, probe, lightmap) and direct (light loop)
+    // terms behind `rgb`, exposed, for the indirect fraction.
+    indirect: vec3<f32>,
+    direct: vec3<f32>,
     dbg_direct_lum: f32,
     dbg_ambient_lum: f32,
     dbg_ibl_diff_lum: f32,
@@ -1037,11 +1059,14 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
-        var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
-        ts_unpacked.x = ts_unpacked.x * object.normal_strength;
-        ts_unpacked.y = ts_unpacked.y * object.normal_strength;
-        let ts_normal = normalize(ts_unpacked);
+        // Only XY is read and Z is rebuilt, so two-channel maps (BC5, RG8,
+        // EAC) decode the same as RGB ones. A signed format samples in
+        // [-1, 1] already and skips the remap.
+        let nm_xy = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).xy;
+        var ts_xy = select(nm_xy * 2.0 - vec2<f32>(1.0), nm_xy, object.has_normal_map == 2u);
+        ts_xy = ts_xy * object.normal_strength;
+        let ts_z = sqrt(max(1.0 - dot(ts_xy, ts_xy), 0.0));
+        let ts_normal = normalize(vec3<f32>(ts_xy, ts_z));
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
         let T_orth = normalize(T - dot(T, Ng) * Ng);
@@ -1052,10 +1077,11 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         N = normalize(in.world_normal);
     }
 
-    // Back-face policy handling: flip normal and optionally override colour for back faces.
+    // Back-face policy handling: every two-sided policy flips the normal toward
+    // the viewer on back faces; the styled ones also override the colour.
     // Runs before matcap/uv_vis/PBR so all downstream lighting paths use the substituted values.
     // 0=Cull, 1=Identical, 2=DifferentColour, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
-    if !is_front && object.backface_policy >= 2u {
+    if !is_front && object.backface_policy >= 1u {
         N = -N;
         if object.backface_policy == 2u {
             // DifferentColour: replace base_colour entirely.
@@ -1063,7 +1089,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         } else if object.backface_policy == 3u {
             // Tint: darken base_colour by factor stored in backface_colour.r.
             base_colour = base_colour * (1.0 - object.backface_colour.r);
-        } else {
+        } else if object.backface_policy >= 4u {
             // Pattern modes (4..7): procedural pattern scaled to object size.
             let pattern_colour = object.backface_colour.rgb;
             let pattern_type = object.backface_policy - 4u;
@@ -1205,6 +1231,8 @@ fn compute_lit(
 
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
+    var lit_indirect = vec3<f32>(0.0);
+    var lit_direct = vec3<f32>(0.0);
 
     var dbg_direct_lum   = 0.0;
     var dbg_ambient_lum  = 0.0;
@@ -1226,26 +1254,39 @@ fn compute_lit(
     }
 
     if shading_is_pbr(object.use_pbr) {
-        // Cook-Torrance PBR path
-        var metallic  = clamp(object.metallic,  0.0, 1.0);
-        var roughness = max(object.roughness, 0.04);
-        if object.has_metallic_roughness_tex != 0u {
-            // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
-            // `metallic_range` / `roughness_range` remap the raw samples before the
-            // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = surface.mr_sample;
-            let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.y);
-            let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.x);
-            metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
-            roughness = max(r_remapped * roughness, 0.04);
-        }
-        roughness = specular_aa_roughness_kernel(roughness, saa_kernel);
-        var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
+        // Cook-Torrance PBR path. The glTF ORM texture's G and B channels
+        // (roughness, metallic) are remapped by the material's ranges inside
+        // pbr_resolve; identity `(0, 1)` is a no-op.
+        var px = pbr_resolve(N, V, base_colour, object.metallic, object.roughness,
+                                 object.has_metallic_roughness_tex != 0u, surface.mr_sample,
+                                 object.metallic_range, object.roughness_range,
+                                 saa_kernel, ao_factor, object.dielectric_f0, object.dielectric_f90);
 
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>
         // </viewport-shade-slot:surface>
+        // Clear coat, sheen and anisotropy, each compiled in only when a draw
+        // of this pipeline uses it.
+        if pbr_layers_compiled() {
+            let mid = object.material_id;
+            px = pbr_resolve_layers(px, N, in.world_tangent, material_gpu_buf[mid].layers0,
+                                    material_gpu_buf[mid].layers1,
+                                    material_gpu_buf[mid].item_flags.x, saa_kernel);
+        }
+
+        // Transmission: the diffuse lobe gives way to light refracted through
+        // the surface. The environment along the refracted ray stands in for
+        // the scene behind; the transmission pass replaces it.
+        if FEAT_TRANSMISSION {
+            let mid = object.material_id;
+            if (material_gpu_buf[mid].item_flags.x & MAT_HAS_TRANSMISSION) != 0u {
+                transmission_out = pbr_transmission(px, N, V, in.world_pos,
+                                                    material_gpu_buf[mid].volume0,
+                                                    material_gpu_buf[mid].volume1, refl_dr);
+                px.diffuse_colour *= 1.0 - transmission_out.amount;
+            }
+        }
 
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
@@ -1259,18 +1300,16 @@ fn compute_lit(
             if !ev.in_range { continue; }
             let L = ev.l;
             var radiance = ev.radiance;
-            // Backfacing: pbr_light_contrib returns exactly zero, so skip
+            // Backfacing: the direct BRDF returns exactly zero, so skip
             // the shadow samples and the BRDF outright. Plugin modules whose
             // hook wants the back hemisphere empty this region instead.
             // <viewport-shade-slot:backface-cull>
             if dot(N, L) <= 0.0 { continue; }
             // </viewport-shade-slot:backface-cull>
 
-            // Shadow factor. Directional `lights[0]` uses CSM; point lights
-            // with an allocated cubemap slot sample the point shadow array.
-            // Spot lights keep their existing single-face perspective path
-            // (sampled inside `sample_shadow_csm` when lights[0] is a spot;
-            // unshadowed otherwise). Per-receiver opt-out via
+            // Shadow factor: the cascades for the cascade caster, the
+            // punctual array for a point or spot light with layers (see
+            // `shadow_for_light`). Per-receiver opt-out via
             // ItemSettings.receive_shadows skips the sample.
             // <viewport-shade-slot:shadow>
             var shadow_factor = 1.0;
@@ -1284,11 +1323,12 @@ fn compute_lit(
                     // one, and comparing a surface against itself at grazing
                     // angles is what shadow acne is.
                     shadow_factor = 0.0;
-                } else if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L, receiver_two_sided);
-                    shadow_factor = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
-                    shadow_factor = sample_point_shadow(l, in.world_pos, geo_normal);
+                } else {
+                    let ss = shadow_for_light(l, in.world_pos, camera.eye_pos, shadow_normal, geo_normal, L, receiver_two_sided);
+                    if l.shadow_kind == 1u {
+                        last_shadow_sample = ss;
+                    }
+                    shadow_factor = ss.factor;
                 }
             }
             // </viewport-shade-slot:shadow>
@@ -1297,6 +1337,11 @@ fn compute_lit(
             // and dynamic ones come from the realtime shadow above.
             if FEAT_LIGHTMAP && object.has_shadowmask != 0u && i < 4u {
                 shadow_factor = min(shadow_factor, shadowmask[i]);
+            }
+            // Micro-shadowing: material AO shadows a directional light where
+            // it grazes a cavity.
+            if (lights_uniform.ao_flags & AO_FLAG_MICRO_SHADOW) != 0u && l.light_type == 0u {
+                shadow_factor *= pbr_micro_shadow(dot(N, L), px.diffuse_ao);
             }
             // <viewport-shade-slot:light>
             radiance *= shadow_factor;
@@ -1307,95 +1352,36 @@ fn compute_lit(
             if FEAT_LIGHTMAP && object.lightmap_mode == 4u && i == 0u {
                 radiance = vec3<f32>(0.0);
             }
-            Lo += pbr_light_contrib(N, V, L, radiance, base_colour,
-                                    metallic, roughness, F0);
+            Lo += pbr_direct(px, N, V, L, radiance);
             // </viewport-shade-slot:light>
         }
 
         dbg_direct_lum = dot(Lo, lum_weights);
-        dbg_roughness  = roughness;
-        dbg_metallic   = metallic;
+        dbg_roughness  = px.perceptual_roughness;
+        dbg_metallic   = px.metallic;
 
-        // Ambient: IBL when enabled, hemisphere fallback otherwise.
+        // Ambient: IBL when enabled, hemisphere fallback otherwise, then the
+        // light probe and the lightmap.
         // <viewport-shade-slot:ambient>
-        var ambient: vec3<f32>;
-        // The environment's specular, kept apart so a light probe or lightmap
-        // that replaces the baked diffuse below leaves the reflection in place,
-        // and the weight the environment's own diffuse gets.
-        var ibl_specular = vec3<f32>(0.0);
-        let ambient_kd = (vec3<f32>(1.0) - F_Schlick_roughness(max(dot(N, V), 0.001), F0, roughness))
-            * (1.0 - metallic);
-        if lights_uniform.ibl_enabled != 0u {
-            var ibl: IblContrib;
-            if lights_uniform.env_zone_count != 0u {
-                // Per-fragment environment selection. `refl_dr` is the reflection
-                // footprint computed in uniform control flow by the caller.
-                ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
-                                        ao_factor, lights_uniform.ibl_intensity,
-                                        lights_uniform.ibl_rotation, refl_dr, in.world_pos,
-                                        lights_uniform.env_zone_count);
-            } else {
-                ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
-                                       ao_factor, lights_uniform.ibl_intensity,
-                                       lights_uniform.ibl_rotation, refl_dr);
-            }
-            ibl.diffuse *= lights_uniform.ibl_diffuse_scale;
-            ibl.specular *= lights_uniform.ibl_specular_scale;
-            ibl_specular = ibl.specular;
-            ambient = ibl.diffuse + ibl.specular;
-            dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
-            dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
-            dbg_ambient_lum  = dbg_ibl_diff_lum + dbg_ibl_spec_lum;
-        } else {
-            let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
-            let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-            let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
-            ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
-            dbg_ambient_lum = dot(ambient, lum_weights);
+        let amb = pbr_ambient(px, N, V, in.world_normal, in.world_pos,
+                              in.lightmap_uv, in.lightmap_page, refl_dr,
+                              last_shadow_sample.factor);
+        var ambient: vec3<f32> = amb.ambient;
+        if FEAT_TRANSMISSION && transmission_out.enabled {
+            ambient += transmission_out.fallback;
         }
-        // Light-probe objects take their indirect diffuse from the SH field
-        // sampled at the object position, replacing the global-IBL / hemisphere
-        // diffuse above. SH probes carry diffuse only: with an environment, the
-        // probe takes the diffuse weight and the environment's reflection stays.
-        if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
-            let probe = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
-            if lights_uniform.ibl_enabled != 0u {
-                ambient = probe * ambient_kd + ibl_specular;
-            } else {
-                ambient = probe;
-            }
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
-        // Baked lightmap: replace, add, or occlude the ambient term. Sample the
-        // base mip explicitly: a lightmap packs charts tightly, so UV
-        // derivatives across a chart are large and derivative-based mip
-        // selection would snap to a coarse level and show the atlas texels as
-        // blocky bands on the mesh. The atlas has no detail to lose at range.
-        if FEAT_LIGHTMAP && object.lightmap_mode != 0u {
-            // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
-            // and add its base layer to the per-vertex page. Identity scale/bias and
-            // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
-            let lm_uv = in.lightmap_uv;
-            let lm_page = i32(round(in.lightmap_page));
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
-            if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
-                lm = vec4<f32>(lm.rgb * f, lm.a);
-            }
-            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode, last_shadow_sample.factor);
-            // Replace and Subtractive bake the diffuse only: weight it like the
-            // environment's diffuse and keep the environment's reflection.
-            if lights_uniform.ibl_enabled != 0u
-                && (object.lightmap_mode == 1u || object.lightmap_mode == 4u) {
-                ambient = ambient * ambient_kd + ibl_specular;
-            }
-            dbg_ambient_lum = dot(ambient, lum_weights);
-        }
+        dbg_ibl_diff_lum = dot(amb.ibl_diffuse, lum_weights);
+        dbg_ibl_spec_lum = dot(amb.ibl_specular, lum_weights);
+        dbg_ambient_lum  = amb.ambient_lum;
         // </viewport-shade-slot:ambient>
 
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
-        // <viewport-shade-slot:recolor>
-        // </viewport-shade-slot:recolor>
+        // <viewport-shade-slot:recolour>
+        // </viewport-shade-slot:recolour>
+        // A hook's recolour replaces the colour but not the split, which
+        // stays the light loop's and the ambient term's.
+        lit_indirect = ambient;
+        lit_direct = Lo;
         // BEGIN_PBR_STRIP
     } else {
         // Multi-light Blinn-Phong path
@@ -1417,11 +1403,12 @@ fn compute_lit(
                 if object.mesh_closed != 0u && surface.front_facing == 0u {
                     // Inside a closed solid: see the loop above.
                     shadow = 0.0;
-                } else if i == 0u && lights_storage[0].light_type != 1u {
-                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir, receiver_two_sided);
-                    shadow = last_shadow_sample.factor;
-                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
-                    shadow = sample_point_shadow(l, in.world_pos, geo_normal);
+                } else {
+                    let ss = shadow_for_light(l, in.world_pos, camera.eye_pos, shadow_normal, geo_normal, light_dir, receiver_two_sided);
+                    if l.shadow_kind == 1u {
+                        last_shadow_sample = ss;
+                    }
+                    shadow = ss.factor;
                 }
             }
             if FEAT_LIGHTMAP && object.has_shadowmask != 0u && i < 4u {
@@ -1454,7 +1441,7 @@ fn compute_lit(
 
         let direct_rgb = base_colour * total_colour_contrib;
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
-        var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        var hemi_rgb = base_colour * ((ambient_contrib + hemi_ambient) * camera.exposure) * ao_factor;
         // Light-probe objects take their indirect diffuse from the SH field.
         if FEAT_LIGHT_PROBE && object.has_light_probe != 0u {
             hemi_rgb = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
@@ -1473,17 +1460,21 @@ fn compute_lit(
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode, last_shadow_sample.factor);
+            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, vec3<f32>(ao_factor), lm, object.lightmap_mode, last_shadow_sample.factor);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
 
         let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
+        lit_indirect = hemi_rgb;
+        lit_direct = direct_rgb;
         // END_PBR_STRIP
     }
 
     var res: LitResult;
     res.rgb = final_rgb;
+    res.indirect = lit_indirect;
+    res.direct = lit_direct;
     res.dbg_direct_lum = dbg_direct_lum;
     res.dbg_ambient_lum = dbg_ambient_lum;
     res.dbg_ibl_diff_lum = dbg_ibl_diff_lum;
@@ -1505,6 +1496,76 @@ fn fs_main_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @l
     return fs_body(from_plain(p), is_front);
 }
 
+// `fs_main` and `fs_main_plain` for the HDR scene pass, which also takes the
+// indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut, @builtin(front_facing) is_front: bool) -> SceneFragment {
+    let colour = fs_body(in, is_front);
+    return scene_fragment(colour);
+}
+
+@fragment
+fn fs_scene_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> SceneFragment {
+    let colour = fs_body(from_plain(p), is_front);
+    return scene_fragment(colour);
+}
+
+// BEGIN_TRANSMISSION_PASS
+// A device with fewer than four bind groups compiles the module without this
+// region; it has no transmission pass.
+// ALT(NO_TRANSMISSION_PASS):
+// `fs_main` for a transmissive surface, drawn after the opaque scene with a
+// copy of it bound at group 3: the scene behind replaces the environment
+// that stood in for it.
+@fragment
+fn fs_main_transmission(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return transmission_resolve(fs_body(in, is_front), in.clip_pos.z);
+}
+
+@fragment
+fn fs_main_transmission_plain(p: VertexOutPlain, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let in = from_plain(p);
+    return transmission_resolve(fs_body(in, is_front), in.clip_pos.z);
+}
+
+// The opaque scene colour, its mips blurred for rough surfaces, with the
+// scene depth in alpha at mip 0.
+@group(3) @binding(0) var transmission_scene: texture_2d<f32>;
+@group(3) @binding(1) var transmission_sampler: sampler;
+
+// Swap the environment stand-in in `colour` for the scene behind the
+// surface. Kept where the exit point leaves the screen, lands on the
+// background, or lands on opaque geometry nearer than the surface at
+// `frag_depth` (depth is reversed: larger is nearer).
+fn transmission_resolve(colour: vec4<f32>, frag_depth: f32) -> vec4<f32> {
+    let t = transmission_out;
+    if !t.enabled {
+        return colour;
+    }
+    let clip = camera.view_proj * vec4<f32>(t.exit_pos, 1.0);
+    if clip.w <= 0.0 {
+        return colour;
+    }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
+        return colour;
+    }
+    let size = textureDimensions(transmission_scene, 0);
+    let texel = min(vec2<u32>(uv * vec2<f32>(size)), size - vec2<u32>(1u));
+    let behind_depth = textureLoad(transmission_scene, texel, 0).a;
+    if behind_depth <= 0.0 || behind_depth > frag_depth {
+        return colour;
+    }
+    // The copy has one mip per halving of its shorter side; derived from the
+    // size, since GLSL ES has no level-count query.
+    let top_mip = floor(log2(f32(max(min(size.x, size.y), 1u))));
+    let lod = t.roughness * top_mip;
+    let behind = textureSampleLevel(transmission_scene, transmission_sampler, uv, lod).rgb;
+    return vec4<f32>(colour.rgb + t.weight * behind - t.fallback, colour.a);
+}
+// END_TRANSMISSION_PASS
+
 fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     object = load_object(in.obj_idx);
     let surface = compute_surface(in, is_front);
@@ -1521,6 +1582,8 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
 
     if surface.resolved {
+        // Unlit, wireframe, face colour, matcap: never darkened.
+        scene_light_split(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
         return surface.out_colour;
     }
 
@@ -1545,12 +1608,21 @@ fn fs_body(in: VertexOut, is_front: bool) -> vec4<f32> {
     // Per-instance custom data slots 0..3 add to emissive (nits); zero is a
     // no-op.
     emissive += custom_data0(lights_uniform.custom_data_base, instances[in.obj_idx].custom_data_id).xyz;
-    final_rgb += emissive;
-    var dbg_emissive_lum = dot(emissive, lum_weights);
     // Surface-hook emissive: the composer adds the hook's emissive term here
     // in plugin-composed modules; inert in the base module.
     // <viewport-shade-slot:emissive>
     // </viewport-shade-slot:emissive>
+    // Emissive is radiance in nits. The material's exposure weight (volume0.w)
+    // sets how far exposure scales it: 1 with the scene, 0 display-relative.
+    // `mix(1, exposure, w)`, written so weight 1 is exactly the exposure.
+    let emissive_weight = material_gpu_buf[object.material_id].volume0.w;
+    emissive *= emissive_weight * camera.exposure + (1.0 - emissive_weight);
+    // The sum is clamped to the largest finite half float, so a bright
+    // emissive cannot write an infinity into a half-float target.
+    final_rgb = min(final_rgb + emissive, vec3<f32>(HDR_COLOUR_MAX));
+    let dbg_emissive_lum = dot(emissive, lum_weights);
+    // Emission is neither: no occlusion term darkens it.
+    scene_light_split(lit.indirect, lit.direct, emissive);
 
     // #include "helpers/debug_vis.wgsl"
 

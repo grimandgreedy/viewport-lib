@@ -1,6 +1,7 @@
-//! Pure-math snap helpers for gizmo transforms.
+//! Pure-math snap helpers for transform tools, and the constraint guides the
+//! renderer draws during a transform session.
 //!
-//! All functions are stateless : the application wraps gizmo drag results with
+//! All functions are stateless: the application wraps a tool's drag results with
 //! these when snapping is enabled.
 
 /// Configuration for transform snapping.

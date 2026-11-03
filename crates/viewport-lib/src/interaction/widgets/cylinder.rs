@@ -37,9 +37,9 @@ enum CylinderHandle {
 /// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct CylinderWidget {
-    /// World-space position of the first endpoint (bottom cap center).
+    /// World-space position of the first endpoint (bottom cap centre).
     pub start: glam::Vec3,
-    /// World-space position of the second endpoint (top cap center).
+    /// World-space position of the second endpoint (top cap centre).
     pub end: glam::Vec3,
     /// Cylinder radius in world units.
     pub radius: f32,
@@ -97,7 +97,7 @@ impl CylinderWidget {
         if ctx.drag_started {
             if let Some(handle) = self.hovered_handle {
                 let anchor = self.handle_pos(handle);
-                let n = -glam::Vec3::from(ctx.camera.forward);
+                let n = -ctx.camera.forward();
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
                 self.drag_anchor = anchor;

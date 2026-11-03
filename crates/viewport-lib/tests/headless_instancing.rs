@@ -55,11 +55,7 @@ fn position_override_takes_effect_through_render_path() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -78,7 +74,7 @@ fn position_override_takes_effect_through_render_path() {
     // side so it doesn't overdraw the red region we measure.
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
-    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    red_item.model = glam::Mat4::IDENTITY.into();
     red_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
@@ -86,8 +82,7 @@ fn position_override_takes_effect_through_render_path() {
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
-    blue_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
+    blue_item.model = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).into();
     blue_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0)),
@@ -176,11 +171,7 @@ fn outline_mask_follows_position_override() {
     let make_frame = |items: Vec<SceneRenderItem>| -> FrameData {
         let cam = Camera::default();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -191,7 +182,7 @@ fn outline_mask_follows_position_override() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
@@ -289,11 +280,7 @@ fn position_override_slice_reads_correct_pool_window() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -310,7 +297,7 @@ fn position_override_slice_reads_correct_pool_window() {
 
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
-    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    red_item.model = glam::Mat4::IDENTITY.into();
     red_item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
@@ -398,11 +385,7 @@ fn occlusion_culling_render_path_runs() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -419,7 +402,7 @@ fn occlusion_culling_render_path_runs() {
         let s = if i == 0 { 4.0 } else { 1.0 };
         item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
             * glam::Mat4::from_scale(glam::Vec3::splat(s)))
-        .to_cols_array_2d();
+        .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -429,11 +412,11 @@ fn occlusion_culling_render_path_runs() {
     // view-projection path, not just a static-camera no-op). Frame 0 stores the
     // first depth, later frames reproject it and cull; the stats readback lags a
     // couple of frames before it lands.
-    let base_view = frame.camera.render_camera.view;
+    let base_view = frame.camera.render_camera.view();
     let mut last_pixels = Vec::new();
     for i in 0..4 {
         let nudge = glam::Mat4::from_translation(glam::Vec3::new(0.05 * i as f32, 0.0, 0.0));
-        frame.camera.render_camera.view = base_view * nudge;
+        frame.camera.render_camera.set_view(base_view * nudge);
         last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     }
     assert_eq!(last_pixels.len(), 64 * 64 * 4);
@@ -480,11 +463,7 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     let dim = 2048u32;
     frame.camera.viewport_size = [dim as f32, dim as f32];
     frame.viewport.show_grid = false;
@@ -495,8 +474,8 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
     for i in 0..4 {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_idx;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5))
-            .to_cols_array_2d();
+        item.model =
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5)).into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -530,11 +509,7 @@ fn occlusion_culling_ldr_path_runs() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -549,16 +524,16 @@ fn occlusion_culling_ldr_path_runs() {
         let s = if i == 0 { 4.0 } else { 1.0 };
         item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
             * glam::Mat4::from_scale(glam::Vec3::splat(s)))
-        .to_cols_array_2d();
+        .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
 
-    let base_view = frame.camera.render_camera.view;
+    let base_view = frame.camera.render_camera.view();
     let mut last_pixels = Vec::new();
     for i in 0..4 {
         let nudge = glam::Mat4::from_translation(glam::Vec3::new(0.05 * i as f32, 0.0, 0.0));
-        frame.camera.render_camera.view = base_view * nudge;
+        frame.camera.render_camera.set_view(base_view * nudge);
         last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     }
     assert_eq!(last_pixels.len(), 64 * 64 * 4);
@@ -597,11 +572,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -615,7 +586,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
     item.lod_group = Some(group);
     mat.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
     item.material = upload_material(&mut renderer, mat);
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
 
     // Empty scene baseline.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
@@ -700,8 +671,7 @@ fn multi_draw_collapse_is_pixel_identical() {
             item.mesh_id = mesh_id;
             let x = (i as f32 - 2.0) * 1.3;
             let y = inst as f32 * 1.1;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = materials[i];
             if i == 2 {
                 item.settings.opacity = 0.5;
@@ -715,14 +685,11 @@ fn multi_draw_collapse_is_pixel_identical() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     let cam = Camera::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        let eye = glam::Vec3::new(0.0, -8.0, 5.0);
-        rc.eye_position = eye.into();
-        rc.forward = (-eye).normalize().into();
-        rc.aspect = 1.0;
-        rc
-    };
+    let eye = glam::Vec3::new(0.0, -8.0, 5.0);
+    frame.camera.render_camera = RenderCamera::from_matrices(
+        glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z),
+        cam.proj_matrix(),
+    );
     frame.camera.viewport_size = [96.0, 96.0];
 
     // Directional light with shadows on (the defaults) so the shadow cascade
@@ -845,7 +812,7 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
     let at = |x: f32, opacity: f32| {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         item.settings.opacity = opacity;
         item
     };
@@ -854,14 +821,11 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
     let mut generation = 0;
     let mut draw = |items: Vec<SceneRenderItem>| {
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&Camera {
-                distance: 6.0,
-                ..Camera::default()
-            });
-            rc.aspect = W as f32 / H as f32;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
+            glam::DVec3::ZERO,
+            6.0,
+            Camera::default().orientation(),
+        ));
         frame.camera.viewport_size = [W as f32, H as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -953,8 +917,7 @@ fn textured_casters_share_shadow_draw_runs() {
                 item.mesh_id = mesh_id;
                 let x = (i as f32 - MESHES as f32 / 2.0) * 1.3;
                 let y = inst as f32 * 1.1;
-                item.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
                 item.material = materials[i];
                 surfaces.push(item);
             }
@@ -965,14 +928,11 @@ fn textured_casters_share_shadow_draw_runs() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         let cam = Camera::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            let eye = glam::Vec3::new(0.0, -12.0, 8.0);
-            rc.eye_position = eye.into();
-            rc.forward = (-eye).normalize().into();
-            rc.aspect = 1.0;
-            rc
-        };
+        let eye = glam::Vec3::new(0.0, -12.0, 8.0);
+        frame.camera.render_camera = RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z),
+            cam.proj_matrix(),
+        );
         frame.camera.viewport_size = [96.0, 96.0];
         let mut light = LightSource::default();
         light.kind = LightKind::Directional {
@@ -1029,7 +989,7 @@ fn direct_path_clip_plane_still_discards() {
         item.mesh_id = mesh_id;
         item.material = material;
         let x = (i as f32 - 2.5) * 1.2;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         surfaces.push(item);
     }
     let mut frame = FrameData::default();
@@ -1039,14 +999,11 @@ fn direct_path_clip_plane_still_discards() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     let cam = Camera::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        let eye = glam::Vec3::new(0.0, -10.0, 0.0);
-        rc.eye_position = eye.into();
-        rc.forward = (-eye).normalize().into();
-        rc.aspect = 1.0;
-        rc
-    };
+    let eye = glam::Vec3::new(0.0, -10.0, 0.0);
+    frame.camera.render_camera = RenderCamera::from_matrices(
+        glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z),
+        cam.proj_matrix(),
+    );
     frame.camera.viewport_size = [64.0, 64.0];
 
     // Lit pixels in the left and right halves of the frame.

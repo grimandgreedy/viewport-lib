@@ -213,7 +213,7 @@ mod tests {
     // ---- disk ----
 
     #[test]
-    fn disk_center_at_origin() {
+    fn disk_centre_at_origin() {
         let m = disk(2.0, 12);
         assert!((m.positions[0][0]).abs() < 1e-6);
         assert!((m.positions[0][1]).abs() < 1e-6);
@@ -238,7 +238,7 @@ mod tests {
     fn disk_vertex_count() {
         let sectors = 12u32;
         let m = disk(1.0, sectors);
-        assert_eq!(m.positions.len(), (sectors + 1) as usize); // center + rim
+        assert_eq!(m.positions.len(), (sectors + 1) as usize); // centre + rim
     }
 
     // ---- ring ----

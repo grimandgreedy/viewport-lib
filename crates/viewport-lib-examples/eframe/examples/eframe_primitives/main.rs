@@ -8,12 +8,12 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
-    Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshId,
+    OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext,
+    ViewportInput, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -88,8 +88,7 @@ fn main() -> eframe::Result {
 
             let item = |mesh_id: MeshId, x, z, colour: [f32; 3]| {
                 let mut s = SceneRenderItem::new(mesh_id, material);
-                s.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
+                s.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).into();
                 s.settings.colour = Some(Colour::from_linear_rgb_array(colour));
                 s
             };
@@ -114,7 +113,7 @@ fn main() -> eframe::Result {
                     let mut s = item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]);
                     s.model = (glam::Mat4::from_translation(glam::Vec3::new(cx[2], 0.0, rz[3]))
                         * glam::Mat4::from_rotation_x(std::f32::consts::PI))
-                    .to_cols_array_2d();
+                    .into();
                     s
                 },
                 item(m_arrow, cx[3], rz[3], [0.90, 0.25, 0.30]),
@@ -151,14 +150,13 @@ impl App {
         Self {
             renderer,
             target: None,
-            camera: Camera {
-                center: glam::Vec3::ZERO,
-                distance: 28.0,
-                // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
-                // orientation * Y ~ world Z (screen up), orientation * Z points from center to eye.
-                orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-                ..Camera::default()
-            },
+            // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
+            // orientation * Y ~ world Z (screen up), orientation * Z points from centre to eye.
+            camera: Camera::orbit(
+                glam::DVec3::ZERO,
+                28.0,
+                glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+            ),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             scene_items,
@@ -194,62 +192,26 @@ impl App {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-                self.input.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.has_focus(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+                self.input.begin_frame(ViewportContext::new(
+                    ownership,
+                    [rect.width(), rect.height()],
+                ));
                 // Pan reads the viewport height off the controller.
                 self.controller
                     .set_viewport_size([rect.width(), rect.height()]);
 
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.input
-                        .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                            &i.modifiers,
-                        )));
-
-                    if let Some(pos) = i.pointer.interact_pos() {
-                        self.input.push_event(ViewportEvent::PointerMoved {
-                            position: glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top()),
-                        });
-                    }
-
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        match event {
-                            egui::Event::PointerButton {
-                                button, pressed, ..
-                            } => {
-                                let vp_button = match button {
-                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
-                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                    _ => continue,
-                                };
-                                self.input.push_event(ViewportEvent::MouseButton {
-                                    button: vp_button,
-                                    state: if *pressed {
-                                        ButtonState::Pressed
-                                    } else {
-                                        ButtonState::Released
-                                    },
-                                });
-                            }
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let units = match unit {
-                                    egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                    egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                    egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                };
-                                self.input.push_event(ViewportEvent::Wheel {
-                                    delta: glam::Vec2::new(delta.x, delta.y),
-                                    units,
-                                });
-                            }
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.input.push_event(ev);
+                }
 
                 let w = rect.width();
                 let h = rect.height();

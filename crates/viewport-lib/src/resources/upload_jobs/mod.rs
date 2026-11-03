@@ -563,6 +563,9 @@ impl JobRunner {
         let worker_tx = tx.clone();
 
         par::spawn(move || {
+            let _span =
+                tracing::debug_span!(target: "viewport_lib::frame", "upload_job", job = id.0)
+                    .entered();
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
                 Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
@@ -612,6 +615,9 @@ impl JobRunner {
         let worker_tx = tx.clone();
 
         par::spawn(move || {
+            let _span =
+                tracing::debug_span!(target: "viewport_lib::frame", "upload_job", job = id.0)
+                    .entered();
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
                 Ok(Ok(gpu_work)) => {
@@ -661,6 +667,9 @@ impl JobRunner {
         let worker_tx = tx.clone();
 
         par::spawn(move || {
+            let _span =
+                tracing::debug_span!(target: "viewport_lib::frame", "upload_job", job = id.0)
+                    .entered();
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
                 Ok(Ok(gpu_work)) => {
@@ -1192,6 +1201,17 @@ impl super::DeviceResources {
         budget: FrameBudget,
         clear_finished: bool,
     ) {
+        let span = tracing::debug_span!(
+            target: "viewport_lib::frame",
+            "process_uploads",
+            bytes = tracing::field::Empty
+        )
+        .entered();
+        let bytes_before = self.frame_upload_bytes;
+        if self.scene_tier.is_built() {
+            self.scene_tier.ibl.write_brdf_lut(queue);
+            self.scene_tier.deform.flush_params_clear(queue);
+        }
         // Stage 1: advance the runner and drain immediate (failure /
         // no-apply) completions. Their callbacks fire here regardless of
         // budget: they do no main-thread work and dropping them would
@@ -1252,6 +1272,10 @@ impl super::DeviceResources {
         self.geometry.flush(queue);
         self.flush_sidecars(device, queue);
         self.resolve_closed_checks();
+        span.record(
+            "bytes",
+            self.frame_upload_bytes.saturating_sub(bytes_before),
+        );
     }
 
     /// Total wall-clock work duration for a completed job.

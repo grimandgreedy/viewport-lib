@@ -32,11 +32,8 @@ mod ui;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
-use vpl::{
-    ManipulationController, OffscreenViewportTarget, RendererConfig, Tier, ViewportContext,
-    ViewportEvent, ViewportInstance,
-};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
+use vpl::{OffscreenViewportTarget, RendererConfig, Tier, ViewportContext, ViewportInstance};
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -94,8 +91,7 @@ impl Tab {
     ) -> Self {
         let config = RendererConfig::new(OffscreenViewportTarget::render_format(target_format))
             .with_max_tier(tier);
-        let mut session = ViewportInstance::with_config(device, &config)
-            .with_manipulation(ManipulationController::new());
+        let mut session = ViewportInstance::with_config(device, &config);
         // Below the full tier there is no GPU pick pass; picks run on the CPU
         // against the cached scene items.
         session.renderer_mut().set_cpu_pick_cache(true);
@@ -343,21 +339,23 @@ impl App {
                 tab.target = Some(Target { inner, id });
             }
 
-            tab.session.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.hovered(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            let ownership =
+                vpl_egui::ownership(&response, ui.ctx(), rect, self.camera.tool_active());
+            tab.session.begin_frame(ViewportContext::new(
+                ownership,
+                [rect.width(), rect.height()],
+            ));
+            self.camera
+                .begin_frame(ownership, [rect.width(), rect.height()]);
             tab.session.set_pixels_per_point(ppp);
 
             let origin = glam::Vec2::new(rect.left(), rect.top());
             let mut keys_pressed = Vec::new();
             let keys_down: Vec<egui::Key> = ui.input(|i| i.keys_down.iter().copied().collect());
+            let actx = AdapterCtx::new(1.0, origin);
+            let mut events = Vec::new();
             ui.input(|i| {
-                tab.session
-                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
                     if let egui::Event::Key {
                         key,
@@ -368,11 +366,13 @@ impl App {
                     {
                         keys_pressed.push(*key);
                     }
-                    if let Some(ev) = from_egui(event, origin) {
-                        tab.session.handle_event(ev);
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.camera.push_event(ev.clone());
+                tab.session.handle_event(ev);
+            }
 
             {
                 let mut sctx = ShowcaseCtx::new(
@@ -382,8 +382,7 @@ impl App {
                     &rs.queue,
                     ppp,
                     dt,
-                    response.hovered(),
-                    response.hovered(),
+                    ownership,
                     [rect.width(), rect.height()],
                     &keys_pressed,
                     &keys_down,

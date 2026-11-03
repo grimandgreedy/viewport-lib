@@ -70,6 +70,10 @@ pub(crate) struct InstancingState {
         crate::resources::pipeline_slot::PipelineSlot<indirect::CullResources>,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
     pub(crate) last_scene_generation: u64,
+    /// World origin epoch the cached records were packed against. The records
+    /// hold positions relative to the origin, so a move invalidates them even
+    /// when the scene generation and item count are unchanged.
+    pub(crate) last_origin_epoch: u32,
     /// Global wireframe toggle (`frame.viewport.wireframe_mode`) at the last
     /// rebuild. Baked into each instance's per-instance `wireframe` shading
     /// flag (`INST_WIREFRAME`), so a toggle with
@@ -120,6 +124,10 @@ pub(crate) struct InstancingState {
     /// instance buffer. Used by the CPU per-cascade shadow cull on devices
     /// without GPU-driven culling.
     pub(crate) cached_aabbs: Vec<crate::resources::InstanceAabb>,
+    /// Bumped whenever a rebuild leaves `cached_aabbs` with different contents.
+    /// Unlike `instance_gen` it also moves on the partial-upload path, so a
+    /// cache derived from the bounds can key on it.
+    pub(crate) aabbs_gen: u64,
     /// The instance records from the last rebuild, kept in debug builds so the
     /// feature-set check can read them.
     #[cfg(debug_assertions)]
@@ -197,6 +205,7 @@ impl InstancingState {
             multi_draw_forced: false,
             cull_resources: crate::resources::pipeline_slot::PipelineSlot::new(),
             last_scene_generation: u64::MAX,
+            last_origin_epoch: 0,
             last_wireframe_mode: false,
             last_hdr_family: false,
             last_selection_generation: u64::MAX,
@@ -211,6 +220,7 @@ impl InstancingState {
             cached_instance_hashes: Vec::new(),
             cached_batches: Vec::new(),
             cached_aabbs: Vec::new(),
+            aabbs_gen: 0,
             #[cfg(debug_assertions)]
             cached_records: Vec::new(),
             force_full_upload: false,

@@ -54,10 +54,20 @@ pub fn screen_to_ray(
 ) -> (glam::Vec3, glam::Vec3) {
     let ndc_x = (screen_pos.x / viewport_size.x) * 2.0 - 1.0;
     let ndc_y = 1.0 - (screen_pos.y / viewport_size.y) * 2.0; // Y flipped (screen Y down, NDC Y up)
-    let near = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, 0.0));
-    let far = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-    let dir = (far - near).normalize();
-    (near, dir)
+    ndc_to_ray(view_proj_inv, glam::Vec2::new(ndc_x, ndc_y))
+}
+
+/// The world-space ray through `ndc`, as (point on the near plane, unit
+/// direction), from an inverse view-projection in the scene depth convention.
+///
+/// The second point sits just short of the far end of the depth range, so it
+/// stays finite for a projection with no far plane.
+pub(crate) fn ndc_to_ray(view_proj_inv: glam::Mat4, ndc: glam::Vec2) -> (glam::Vec3, glam::Vec3) {
+    use crate::plugin_api::depth::{DEPTH_FAR, DEPTH_NEAR};
+    let toward_far = DEPTH_FAR + (DEPTH_NEAR - DEPTH_FAR) * 1.0e-3;
+    let near = view_proj_inv.project_point3(glam::Vec3::new(ndc.x, ndc.y, DEPTH_NEAR));
+    let far = view_proj_inv.project_point3(glam::Vec3::new(ndc.x, ndc.y, toward_far));
+    (near, (far - near).normalize())
 }
 
 /// Cast a ray against all visible viewport objects. Returns a [`PickHit`] for the
@@ -129,7 +139,7 @@ pub fn pick_scene_cpu(
                             let hit = PickHit {
                                 id: obj.id(),
                                 sub_object,
-                                world_pos,
+                                world_pos: world_pos.as_dvec3(),
                                 normal,
                                 scalar_value: None,
                                 sub_object_world_pos: None,
@@ -190,14 +200,14 @@ fn pick_light_indicators_cpu(
             continue;
         }
         let world = node.world_transform();
-        let center = world.col(3).truncate();
-        let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, center, LIGHT_GLYPH_PICK_RADIUS)
+        let centre = world.translation.as_vec3();
+        let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, centre, LIGHT_GLYPH_PICK_RADIUS)
         else {
             continue;
         };
         if best.as_ref().map(|(t, _)| toi < *t).unwrap_or(true) {
             let world_pos = ray_origin + ray_dir * toi;
-            let normal = (world_pos - center).normalize_or_zero();
+            let normal = (world_pos - centre).normalize_or_zero();
             best = Some((toi, PickHit::object_hit(node.id(), world_pos, normal)));
         }
     }
@@ -209,10 +219,10 @@ fn pick_light_indicators_cpu(
 fn ray_sphere_intersect(
     origin: glam::Vec3,
     dir: glam::Vec3,
-    center: glam::Vec3,
+    centre: glam::Vec3,
     radius: f32,
 ) -> Option<f32> {
-    let oc = origin - center;
+    let oc = origin - centre;
     let a = dir.dot(dir);
     if a <= 0.0 {
         return None;
@@ -342,7 +352,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                 let a = glam::Vec3::from(binding.positions[i0]);
                 let b = glam::Vec3::from(binding.positions[i1]);
                 let c = glam::Vec3::from(binding.positions[i2]);
-                let (u, v, w) = barycentric(hit.world_pos, a, b, c);
+                let (u, v, w) = barycentric(hit.world_pos.as_vec3(), a, b, c);
                 hit.scalar_value = Some(data[i0] * u + data[i1] * v + data[i2] * w);
             }
         }
@@ -369,7 +379,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                         let a = glam::Vec3::from(binding.positions[i0]);
                         let b = glam::Vec3::from(binding.positions[i1]);
                         let c = glam::Vec3::from(binding.positions[i2]);
-                        let (u, v, w) = barycentric(hit.world_pos, a, b, c);
+                        let (u, v, w) = barycentric(hit.world_pos.as_vec3(), a, b, c);
                         hit.scalar_value = Some(data[i0] * u + data[i1] * v + data[i2] * w);
                     }
                 }
@@ -712,7 +722,7 @@ pub fn pick_volume_cpu(
             return Some(PickHit {
                 id,
                 sub_object: Some(SubObjectRef::Voxel(flat)),
-                world_pos,
+                world_pos: world_pos.as_dvec3(),
                 normal: world_normal,
                 scalar_value: Some(scalar),
                 sub_object_world_pos: None,
@@ -861,7 +871,7 @@ pub fn nearest_vertex_on_hit(
         .iter()
         .map(|&i| {
             let p = model.transform_point3(glam::Vec3::from(positions[i]));
-            (i, p.distance(hit.world_pos))
+            (i, p.distance(hit.world_pos.as_vec3()))
         })
         .fold(
             (vi[0], f32::MAX),
@@ -887,7 +897,7 @@ pub fn nearest_vertex_on_hit(
 /// # Arguments
 /// * `click_pos`     - screen-space click in viewport pixels (top-left origin)
 /// * `id`            - object identifier embedded in the returned [`PickHit`]
-/// * `positions`     - local-space splat center positions
+/// * `positions`     - local-space splat centre positions
 /// * `model`         - world transform for the splat object
 /// * `view_proj`     - combined view x projection matrix
 /// * `viewport_size` - viewport width x height in pixels
@@ -932,7 +942,7 @@ pub fn pick_gaussian_splat_cpu(
     Some(PickHit {
         id,
         sub_object: Some(SubObjectRef::Point(idx)),
-        world_pos: best_world,
+        world_pos: best_world.as_dvec3(),
         normal: glam::Vec3::Y,
         scalar_value: None,
         sub_object_world_pos: None,
@@ -1080,7 +1090,7 @@ pub fn pick_transparent_volume_mesh_cpu(
     Some(PickHit {
         id,
         sub_object: Some(SubObjectRef::Cell(cell_idx)),
-        world_pos: world_hit,
+        world_pos: world_hit.as_dvec3(),
         normal: -ray_dir.normalize(),
         scalar_value: None,
         sub_object_world_pos: None,
@@ -1118,7 +1128,7 @@ fn in_rect(sx: f32, sy: f32, rect_min: glam::Vec2, rect_max: glam::Vec2) -> bool
 
 /// Rect-select above-threshold voxels from a volume object.
 ///
-/// Projects each voxel center through `view_proj` and collects those that fall
+/// Projects each voxel centre through `view_proj` and collects those that fall
 /// inside the selection rectangle and have a scalar value within
 /// `[region.threshold_min, region.threshold_max]`.
 ///
@@ -1161,9 +1171,9 @@ pub fn pick_volume_rect(
                 {
                     continue;
                 }
-                let local_center = bbox_min
+                let local_centre = bbox_min
                     + cell * glam::Vec3::new(ix as f32 + 0.5, iy as f32 + 0.5, iz as f32 + 0.5);
-                let Some((sx, sy)) = project_to_screen(mvp, local_center, viewport_size) else {
+                let Some((sx, sy)) = project_to_screen(mvp, local_centre, viewport_size) else {
                     continue;
                 };
                 if in_rect(sx, sy, rect_min, rect_max) {
@@ -1254,7 +1264,7 @@ pub fn pick_transparent_volume_mesh_rect(
 /// # Arguments
 /// * `rect_min/max`  - selection rectangle in viewport pixels (top-left origin)
 /// * `id`            - object identifier used as the key in the result
-/// * `positions`     - local-space splat center positions
+/// * `positions`     - local-space splat centre positions
 /// * `model`         - world transform for the splat object
 /// * `view_proj`     - combined view x projection matrix
 /// * `viewport_size` - viewport width x height in pixels
@@ -1313,7 +1323,7 @@ mod tests {
         assert_eq!(pick.id, 42);
         assert!(pick.sub_object.is_none());
         assert!(pick.scalar_value.is_none());
-        assert!((pick.world_pos - glam::Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5);
+        assert!((pick.world_pos.as_vec3() - glam::Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5);
     }
 
     struct TestObject {
@@ -1347,7 +1357,7 @@ mod tests {
         }
     }
 
-    /// Unit cube centered at origin: 8 vertices, 12 triangles.
+    /// Unit cube centred at origin: 8 vertices, 12 triangles.
     fn unit_cube_mesh() -> (Vec<[f32; 3]>, Vec<u32>) {
         let positions = vec![
             [-0.5, -0.5, -0.5],
@@ -1371,8 +1381,8 @@ mod tests {
     }
 
     #[test]
-    fn test_screen_to_ray_center() {
-        // Identity view-proj: screen center should produce a ray along -Z.
+    fn test_screen_to_ray_centre() {
+        // Identity view-proj: screen centre should produce a ray along -Z.
         let vp_inv = glam::Mat4::IDENTITY;
         let (origin, dir) = screen_to_ray(
             glam::Vec2::new(400.0, 300.0),
@@ -1725,7 +1735,7 @@ mod tests {
     #[test]
     fn test_pick_volume_basic_hit() {
         // 3x3x3 volume, bbox [0,0,0]->[3,3,3], all scalars 0.8.
-        // Ray from +y: hits the top-center voxel (ix=1, iy=2, iz=1).
+        // Ray from +y: hits the top-centre voxel (ix=1, iy=2, iz=1).
         let item = make_volume_item([0.0; 3], [3.0, 3.0, 3.0], 0.5, 1.0);
         let volume = make_volume_data([3, 3, 3], 0.8);
 
@@ -1906,6 +1916,7 @@ mod tests {
 
         let flat = hit.sub_object.unwrap().index();
         let (lo, hi) = super::voxel_world_aabb(flat, &volume, &item);
+        let (lo, hi) = (lo.as_dvec3(), hi.as_dvec3());
 
         let tol = 1e-3;
         assert!(

@@ -13,7 +13,7 @@
 //!
 //! Structure mirrors `eframe_exposure`: a `ViewportInstance` renders into an
 //! app-owned offscreen texture that egui displays as an image, and events come
-//! through the `from_egui` adapter driving an `OrbitCameraController`. The
+//! through the egui adapter driving an `OrbitCameraController`. The
 //! offscreen texture is the sRGB variant of egui's format so the tone map's
 //! linear output gets the hardware linear->sRGB encode on write. The scene items
 //! are rebuilt per frame (per-tab geometry, live material toggles) and injected
@@ -28,15 +28,14 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
     LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
     OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
-    ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportInstance,
-    primitives,
+    ShadowFilter, ToneMapping, ViewportContext, ViewportId, ViewportInstance, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -205,7 +204,7 @@ fn main() -> eframe::Result {
                 65.0 / 255.0,
                 1.0,
             ));
-            session.camera_mut().distance = 18.0;
+            session.camera_mut().set_orbit_distance(18.0);
 
             Ok(Box::new(App::new(
                 session,
@@ -329,7 +328,7 @@ struct App {
     shadow_bias: f32,
     shadow_cascade_count: u32,
     shadow_filter: ShadowFilter,
-    pcss_light_radius: f32,
+    sun_angular_radius: f32,
     shadow_atlas_resolution: u32,
     shadow_extent_enabled: bool,
     shadow_extent_value: f32,
@@ -535,7 +534,7 @@ impl App {
             shadow_bias: 0.0,
             shadow_cascade_count: 4,
             shadow_filter: ShadowFilter::Pcf,
-            pcss_light_radius: 0.02,
+            sun_angular_radius: 0.01,
             shadow_atlas_resolution: 4096,
             shadow_extent_enabled: false,
             shadow_extent_value: 20.0,
@@ -629,7 +628,7 @@ impl App {
             _t.shadows.bias = self.shadow_bias;
             _t.shadows.cascade_count = self.shadow_cascade_count;
             _t.shadows.filter = self.shadow_filter;
-            _t.shadows.pcss_light_radius = self.pcss_light_radius;
+            _t.shadows.sun_angular_radius = self.sun_angular_radius;
             _t.shadows.atlas_resolution = self.shadow_atlas_resolution;
             _t.shadows.extent_override = if self.shadow_extent_enabled {
                 Some(self.shadow_extent_value)
@@ -764,8 +763,7 @@ impl App {
         if self.show_platform {
             let mut ground = SceneRenderItem::default();
             ground.mesh_id = self.m_ground;
-            ground.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+            ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
             ground.material = self.mats.ground;
             items.push(ground);
         }
@@ -773,16 +771,14 @@ impl App {
         // Sphere: light sage green. Acne is easy to spot on light curved surfaces.
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = self.m_sphere;
-        sphere.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
+        sphere.model = glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).into();
         sphere.material = self.mats.sphere;
         items.push(sphere);
 
         // Cube: light periwinkle. Flat faces isolate bias and gap artifacts.
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = self.m_cube;
-        cube.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+        cube.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
         cube.material = self.mats.cube;
         items.push(cube);
 
@@ -790,8 +786,7 @@ impl App {
         // Z offset 0.18 = torus minor radius, places the bottom of the tube on the ground.
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = self.m_torus;
-        torus.model =
-            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
+        torus.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).into();
         torus.material = self.mats.torus;
         items.push(torus);
         items
@@ -804,8 +799,7 @@ impl App {
         if self.show_platform {
             let mut ground = SceneRenderItem::default();
             ground.mesh_id = self.m_ground2;
-            ground.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+            ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
             ground.material = self.mats.ground2;
             items.push(ground);
         }
@@ -814,8 +808,7 @@ impl App {
         // surfaces light enough to show shadow detail.
         let mut clay = SceneRenderItem::default();
         clay.mesh_id = self.m_clay;
-        clay.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).to_cols_array_2d();
+        clay.model = glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).into();
         clay.material = self.mats.clay;
         items.push(clay);
 
@@ -823,8 +816,7 @@ impl App {
         // Good for checking shadow edge quality.
         let mut ceramic = SceneRenderItem::default();
         ceramic.mesh_id = self.m_ceramic;
-        ceramic.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).to_cols_array_2d();
+        ceramic.model = glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).into();
         ceramic.material = self.mats.ceramic;
         items.push(ceramic);
 
@@ -832,16 +824,14 @@ impl App {
         // terminator and banding at glancing angles.
         let mut metal = SceneRenderItem::default();
         metal.mesh_id = self.m_metal;
-        metal.model =
-            glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).to_cols_array_2d();
+        metal.model = glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).into();
         metal.material = self.mats.metal;
         items.push(metal);
 
         // PBR rough sphere: near-white diffuse. High roughness maximises shadow acne visibility.
         let mut rough = SceneRenderItem::default();
         rough.mesh_id = self.m_rough;
-        rough.model =
-            glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).to_cols_array_2d();
+        rough.model = glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).into();
         rough.material = self.mats.rough;
         items.push(rough);
 
@@ -849,8 +839,7 @@ impl App {
         // as clean rectangular stripes rather than complex shadow shapes.
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = self.m_cube2;
-        cube.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).to_cols_array_2d();
+        cube.model = glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).into();
         cube.material = self.mats.cube2;
         items.push(cube);
 
@@ -858,8 +847,7 @@ impl App {
         // Real-world image content makes acne and bias gaps easy to judge perceptually.
         let mut percy = SceneRenderItem::default();
         percy.mesh_id = self.m_percy;
-        percy.model =
-            glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).to_cols_array_2d();
+        percy.model = glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).into();
         percy.material = self.mats.percy;
         items.push(percy);
         items
@@ -927,24 +915,24 @@ impl eframe::App for App {
             let target = self.target.as_ref().unwrap();
 
             // Feed input to the instance's own input pipeline via the egui adapter.
-            self.session.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.has_focus(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+            self.session.begin_frame(ViewportContext::new(
+                ownership,
+                [rect.width(), rect.height()],
+            ));
             self.session.set_pixels_per_point(ppp);
             let origin = glam::Vec2::new(rect.left(), rect.top());
+            let actx = AdapterCtx::new(1.0, origin);
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    if let Some(ev) = from_egui(event, origin) {
-                        self.session.handle_event(ev);
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.session.handle_event(ev);
+            }
 
             // Frame time for auto-exposure smoothing. Exposure lives outside the
             // scene, so a control change would not dirty anything: request a
@@ -1270,8 +1258,8 @@ impl App {
                     ShadowFilter::Pcss | ShadowFilter::PcssFast
                 ) {
                     ui.add(
-                        egui::Slider::new(&mut self.pcss_light_radius, 0.001..=0.2)
-                            .text("PCSS radius"),
+                        egui::Slider::new(&mut self.sun_angular_radius, 0.0..=0.05)
+                            .text("Sun angular radius (rad)"),
                     );
                 }
 
@@ -1725,12 +1713,13 @@ impl App {
         // Side-on view of the sphere at (-4, 0, 0.6), low camera angle.
         // SplitScreen: left = normal, right = ShadowFactor.
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(-4.0, 0.0, 0.6);
-        self.session.camera_mut().distance = 7.0;
         // Looking from the Y+ side, slightly above horizontal.
-        self.session.camera_mut().orientation =
+        self.session.camera_mut().set_orbit(
+            glam::DVec3::new(-4.0, 0.0, 0.6),
+            7.0,
             glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
-                * glam::Quat::from_rotation_x(1.42);
+                * glam::Quat::from_rotation_x(1.42),
+        );
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::ShadowFactor;
@@ -1744,11 +1733,12 @@ impl App {
         // Steep top-down view of the rough sphere in the Materials tab.
         // SplitScreen: left = normal, right = ShadowFactor (acne appears as bright speckles).
         self.tab = Tab::Materials;
-        self.session.camera_mut().center = glam::Vec3::new(4.5, 2.5, 0.7);
-        self.session.camera_mut().distance = 4.0;
         // Looking down at steep angle.
-        self.session.camera_mut().orientation =
-            glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.5);
+        self.session.camera_mut().set_orbit(
+            glam::DVec3::new(4.5, 2.5, 0.7),
+            4.0,
+            glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.5),
+        );
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::ShadowFactor;
@@ -1762,10 +1752,11 @@ impl App {
         // Pulled back to see the full scene from a moderate angle.
         // SplitScreen: left = normal, right = CascadeIndex (bands as distinct colours).
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(0.0, 0.0, 0.5);
-        self.session.camera_mut().distance = 22.0;
-        self.session.camera_mut().orientation =
-            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
+        self.session.camera_mut().set_orbit(
+            glam::DVec3::new(0.0, 0.0, 0.5),
+            22.0,
+            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0),
+        );
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::CascadeIndex;
@@ -1779,10 +1770,11 @@ impl App {
         // Mid-distance orbit view. Orbit while watching AtlasUV on the right half.
         // Unstable UVs during orbit point to cascade matrix instability.
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(0.0, 0.0, 0.5);
-        self.session.camera_mut().distance = 12.0;
-        self.session.camera_mut().orientation =
-            glam::Quat::from_rotation_z(1.0) * glam::Quat::from_rotation_x(1.15);
+        self.session.camera_mut().set_orbit(
+            glam::DVec3::new(0.0, 0.0, 0.5),
+            12.0,
+            glam::Quat::from_rotation_z(1.0) * glam::Quat::from_rotation_x(1.15),
+        );
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::AtlasUvX;
@@ -1796,10 +1788,11 @@ impl App {
         // Looking at the torus from above at a low angle so the inner ring is visible.
         // SplitScreen: left = normal, right = ContactShadowFactor.
         self.tab = Tab::Basic;
-        self.session.camera_mut().center = glam::Vec3::new(4.0, 0.0, 0.18);
-        self.session.camera_mut().distance = 5.0;
-        self.session.camera_mut().orientation =
-            glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(1.3);
+        self.session.camera_mut().set_orbit(
+            glam::DVec3::new(4.0, 0.0, 0.18),
+            5.0,
+            glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(1.3),
+        );
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::ContactShadowFactor;

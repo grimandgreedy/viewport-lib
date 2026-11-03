@@ -3,9 +3,11 @@
 //! Mirrors the clustered-shading resource pattern: shared compute pipelines and
 //! a bind group layout on `DeviceResources`, with the per-viewport buffers
 //! (histogram, adaptation state, params) living on `ViewportHdrState`. The three
-//! entry points of `exposure.wgsl` (clear -> build -> resolve) run between the
-//! HDR pass and the tone map in the same submission, so a single dirty render is
-//! correctly exposed on its own frame with no CPU readback.
+//! entry points of `exposure.wgsl` (clear -> build -> resolve) run after the
+//! HDR pass in the same submission, with no CPU readback. The HDR path copies
+//! the state's `exposure` into the camera uniform before the scene draws, so a
+//! frame shades with the exposure the previous frame resolved and the meter
+//! divides it back out.
 
 use crate::resources::builders::LoggedAlloc;
 
@@ -58,8 +60,8 @@ pub struct ExposureParams {
     pub tex_width: f32,
     /// HDR target height in texels.
     pub tex_height: f32,
-    /// Center-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
-    pub center_weight: f32,
+    /// Centre-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
+    pub centre_weight: f32,
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
     /// metered scene. `1` drives the metered value to middle grey (full
     /// auto-exposure); `0` holds a fixed exposure; between, the image keeps some
@@ -74,12 +76,12 @@ const _: () = assert!(std::mem::size_of::<ExposureParams>() == 80);
 
 /// Persistent adaptation state. Matches `ExposureState` in `exposure.wgsl` and
 /// the tone-map exposure buffer (16 bytes). `exposure` is the linear multiplier
-/// the tone map reads; the other fields carry adaptation state and the
+/// the camera uniform carries; the other fields carry adaptation state and the
 /// "still adapting" signal for the optional readback.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ExposureState {
-    /// Linear exposure multiplier applied before tone mapping.
+    /// Linear exposure multiplier the shaders apply at each radiance read.
     pub exposure: f32,
     /// Current adapted EV100 (persists across frames for smoothing).
     pub current_ev: f32,

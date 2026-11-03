@@ -9,7 +9,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -18,10 +17,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     vec![
         (
             "implicit.wgsl",
-            lit_shader(
-                &[shared_wgsl::SHARED_CLIP_WGSL],
-                wgsl_source!("implicit"),
-            ),
+            lit_shader(&[shared_wgsl::SHARED_CLIP_WGSL], wgsl_source!("implicit")),
         ),
         (
             "implicit_outline_mask.wgsl",
@@ -78,11 +74,6 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         gpu.pipelines.request_all();
     }
 
-    fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -104,7 +95,8 @@ impl ItemTypePlugin for GpuImplicitPlugin {
             if item.settings.hidden || item.primitives.is_empty() {
                 continue;
             }
-            self.frame.push(gpu.upload_item(device, queue, item));
+            self.frame
+                .push(gpu.upload_item(device, queue, item, ctx.world_origin()));
             if item.settings.pick_id != PickId::NONE {
                 self.pick_items.push(ImplicitPickItem {
                     id: item.settings.pick_id.0,
@@ -130,7 +122,7 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         if self.frame.is_empty() {
             return;
         }
-        let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+        let colour = if ctx.is_hdr_pass() {
             pipeline::COLOUR_HDR
         } else {
             pipeline::COLOUR_LDR

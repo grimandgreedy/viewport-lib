@@ -67,7 +67,7 @@ fn expand_point(p: PointInputs, vertex_index: u32) -> VertexOut {
     var out: VertexOut;
 
     let world_pos = (pc_uniform.model * vec4<f32>(p.position, 1.0)).xyz;
-    let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
     // Expand to a screen-space quad. corner is in [-1,1]^2, mapped to pixels via
     // half_size. The NDC offset is scaled by w so the division in the rasteriser
@@ -78,10 +78,10 @@ fn expand_point(p: PointInputs, vertex_index: u32) -> VertexOut {
     let ndc_offset  = corner * half_size
                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
     out.clip_pos  = vec4<f32>(
-        center.x + ndc_offset.x * center.w,
-        center.y + ndc_offset.y * center.w,
-        center.z,
-        center.w,
+        centre.x + ndc_offset.x * centre.w,
+        centre.y + ndc_offset.y * centre.w,
+        centre.z,
+        centre.w,
     );
     out.world_pos = world_pos;
     out.uv        = corner;
@@ -113,8 +113,7 @@ fn expand_point(p: PointInputs, vertex_index: u32) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Section-view clipping: planes and volumes together.
     if !viewport_clip_test(in.world_pos) { discard; }
 
@@ -144,9 +143,26 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let specular = pow(max(dot(n, h), 0.0), 32.0) * 0.4;
 
         let brightness = ambient + (1.0 - ambient) * diffuse + specular;
+        scene_light_split(
+            vec3<f32>(ambient),
+            vec3<f32>((1.0 - ambient) * diffuse + specular),
+            vec3<f32>(0.0),
+        );
         colour = vec4<f32>(colour.rgb * brightness, colour.a);
     }
     // render_mode == 0 (ScreenSpaceCircle): flat disc, no shading beyond the circle clip above.
 
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

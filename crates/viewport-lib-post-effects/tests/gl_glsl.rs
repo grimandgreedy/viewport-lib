@@ -133,11 +133,13 @@ fn post_effect_shaders_translate_to_gl_glsl() {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        // The depth passes compose the depth-texel helper in front of their
-        // body; composing it in front of every shader is harmless.
+        // The depth passes compose the depth-texel and depth convention
+        // helpers in front of their body; composing them in front of every
+        // shader is harmless.
         let src = format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
             viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL,
+            viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_WGSL,
             std::fs::read_to_string(&path).expect("shader source")
         );
         if let Some(at) = naga::front::wgsl::parse_str(&src)

@@ -4,6 +4,7 @@
 //! applies resolved orbit / pan / zoom actions directly to a [`crate::Camera`].
 
 use crate::{Camera, LookAngles};
+use viewport_lib_types::camera::{CameraTarget, Pose};
 
 use crate::input::action::Action;
 use crate::input::action_frame::ActionFrame;
@@ -21,18 +22,24 @@ use super::movement::wish_from_actions;
 /// Wraps the lower-level [`ViewportInput`] resolver and applies semantic
 /// camera actions to a [`Camera`] in a single `apply_to_camera` call.
 ///
+/// The controller keeps the orbit centre and distance as its own state and
+/// writes the camera's pose, with the focus distance set to the orbit
+/// distance. When something else moves the camera (a fly-to, a preset, a
+/// host writing the pose), the next call reads the pivot back from the
+/// camera's focus point, so the orbit continues from the new view.
+///
 /// # Integration pattern (winit / single window)
 ///
 /// ```text
 /// // --- AppState construction ---
-/// controller.begin_frame(ViewportContext { hovered: true, focused: true, viewport_size });
+/// controller.begin_frame(ViewportContext::new(InputOwnership::full_window(), viewport_size));
 ///
 /// // --- window_event ---
 /// controller.push_event(translated_event);
 ///
 /// // --- RedrawRequested ---
 /// controller.apply_to_camera(&mut state.camera);
-/// controller.begin_frame(ViewportContext { hovered: true, focused: true, viewport_size });
+/// controller.begin_frame(ViewportContext::new(InputOwnership::full_window(), viewport_size));
 /// // ... render ...
 /// ```
 ///
@@ -40,12 +47,20 @@ use super::movement::wish_from_actions;
 ///
 /// ```text
 /// // --- update() ---
-/// controller.begin_frame(ViewportContext {
-///     hovered: response.hovered(),
-///     focused: response.has_focus(),
-///     viewport_size: [rect.width(), rect.height()],
+/// use viewport_lib_input::input::adapters::{AdapterCtx, egui};
+/// let ownership = egui::ownership(&response, ui.ctx(), rect, session_active);
+/// controller.begin_frame(ViewportContext::new(ownership, [rect.width(), rect.height()]));
+/// let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+/// let mut events = Vec::new();
+/// ui.input(|i| {
+///     egui::begin_frame(i, &actx, &mut events);
+///     for ev in &i.events {
+///         egui::translate(ev, &actx, &mut events);
+///     }
 /// });
-/// // push events from ui.input(|i| { ... })
+/// for ev in events {
+///     controller.push_event(ev);
+/// }
 /// controller.apply_to_camera(&mut self.camera);
 /// ```
 pub struct OrbitCameraController {
@@ -74,6 +89,11 @@ pub struct OrbitCameraController {
     pub gesture_sensitivity: f32,
     /// Current viewport size (cached from the last `begin_frame`).
     viewport_size: [f32; 2],
+    /// The orbit centre, distance and orientation the controller turns about.
+    pivot: Option<CameraTarget>,
+    /// The camera pose and focus distance last written, to tell when something
+    /// else has moved the camera and the pivot must be read from it again.
+    written: Option<(Pose, f32)>,
 }
 
 impl OrbitCameraController {
@@ -126,6 +146,8 @@ impl OrbitCameraController {
             zoom_sensitivity: Self::DEFAULT_ZOOM_SENSITIVITY,
             gesture_sensitivity: Self::DEFAULT_GESTURE_SENSITIVITY,
             viewport_size: [1.0, 1.0],
+            pivot: None,
+            written: None,
         }
     }
 
@@ -228,13 +250,54 @@ impl OrbitCameraController {
     /// Use this for a drag the viewport did not see itself, such as a drag on
     /// an orientation widget, so it moves the camera the same way a drag in the
     /// scene does.
-    pub fn orbit_by(&self, camera: &mut Camera, delta: glam::Vec2) {
+    pub fn orbit_by(&mut self, camera: &mut Camera, delta: glam::Vec2) {
+        if delta == glam::Vec2::ZERO {
+            return;
+        }
+        let mut target = self.pivot(camera);
+        self.orbit_target_by(&mut target, delta);
+        self.write(camera, target);
+    }
+
+    /// The orbit centre, distance and orientation the controller last wrote,
+    /// or `None` before it has moved a camera.
+    pub fn target(&self) -> Option<CameraTarget> {
+        self.pivot
+    }
+
+    /// Read the pivot from `camera`'s focus point now rather than on the next
+    /// call that sees the camera has moved.
+    pub fn sync_from_camera(&mut self, camera: &Camera) {
+        self.pivot = Some(camera.orbit_target());
+        self.written = Some((camera.pose, camera.focus_distance()));
+    }
+
+    /// The pivot to work from: the controller's own, unless the camera has
+    /// moved since the controller last wrote it.
+    fn pivot(&mut self, camera: &Camera) -> CameraTarget {
+        let current = (camera.pose, camera.focus_distance());
+        match self.pivot {
+            Some(pivot) if self.written == Some(current) => pivot,
+            _ => {
+                self.sync_from_camera(camera);
+                camera.orbit_target()
+            }
+        }
+    }
+
+    fn write(&mut self, camera: &mut Camera, target: CameraTarget) {
+        camera.set_orbit_target(target);
+        self.pivot = Some(target);
+        self.written = Some((camera.pose, camera.focus_distance()));
+    }
+
+    fn orbit_target_by(&self, target: &mut CameraTarget, delta: glam::Vec2) {
         if delta == glam::Vec2::ZERO {
             return;
         }
         let yaw = delta.x * self.orbit_sensitivity;
         let pitch = delta.y * self.orbit_sensitivity;
-        orbit_in_mode(camera, self.navigation_mode, yaw, pitch);
+        orbit_in_mode(target, self.navigation_mode, yaw, pitch);
     }
 
     /// Apply an already-resolved [`ActionFrame`] to the camera without draining
@@ -253,68 +316,76 @@ impl OrbitCameraController {
     /// `dt` is the frame time in seconds. Only held input reads it: fly movement
     /// in [`NavigationMode::Fly`]. Drags, the wheel and touch arrive as deltas
     /// and move the camera the same at any frame rate.
-    pub fn apply(&self, camera: &mut Camera, frame: &ActionFrame, dt: f32) {
+    pub fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, dt: f32) {
         let nav = &frame.navigation;
         let h = self.viewport_size[1];
+        let start = self.pivot(camera);
+        let mut t = start;
+        let gesture = nav.twist * self.gesture_sensitivity;
+        let pan = |t: &mut CameraTarget| {
+            if nav.pan != glam::Vec2::ZERO {
+                let scale = camera.view_height_at(t.distance) / h.max(1.0);
+                t.pan_world(nav.pan.x * scale, nav.pan.y * scale);
+            }
+        };
+        let zoom = |t: &mut CameraTarget| {
+            if nav.zoom != 0.0 {
+                t.zoom_by_factor(1.0 - nav.zoom * self.zoom_sensitivity);
+            }
+        };
 
         match self.navigation_mode {
             NavigationMode::Arcball => {
-                self.orbit_by(camera, nav.orbit);
-                if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
-                    camera.orbit(nav.twist * self.gesture_sensitivity, 0.0);
+                self.orbit_target_by(&mut t, nav.orbit);
+                if gesture != 0.0 {
+                    t.orbit(gesture, 0.0);
                 }
-                if nav.pan != glam::Vec2::ZERO {
-                    camera.pan_pixels(nav.pan, h);
-                }
-                if nav.zoom != 0.0 {
-                    camera.zoom_by_factor(1.0 - nav.zoom * self.zoom_sensitivity);
-                }
+                pan(&mut t);
+                zoom(&mut t);
             }
 
             NavigationMode::Turntable => {
-                self.orbit_by(camera, nav.orbit);
-                if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
+                self.orbit_target_by(&mut t, nav.orbit);
+                if gesture != 0.0 {
                     // Gesture twist is yaw-only in turntable mode.
-                    apply_turntable(camera, nav.twist * self.gesture_sensitivity, 0.0);
+                    apply_turntable(&mut t, gesture, 0.0);
                 }
-                if nav.pan != glam::Vec2::ZERO {
-                    camera.pan_pixels(nav.pan, h);
-                }
-                if nav.zoom != 0.0 {
-                    camera.zoom_by_factor(1.0 - nav.zoom * self.zoom_sensitivity);
-                }
+                pan(&mut t);
+                zoom(&mut t);
             }
 
             NavigationMode::Planar => {
                 // Orbit input is silently ignored; pan and zoom still work.
-                if nav.pan != glam::Vec2::ZERO {
-                    camera.pan_pixels(nav.pan, h);
-                }
-                if nav.zoom != 0.0 {
-                    camera.zoom_by_factor(1.0 - nav.zoom * self.zoom_sensitivity);
-                }
+                pan(&mut t);
+                zoom(&mut t);
             }
 
             NavigationMode::Fly => {
                 // Mouselook: drag rotates the view while the eye stays fixed.
-                self.orbit_by(camera, nav.orbit);
-                if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
-                    apply_fly_look(camera, nav.twist * self.gesture_sensitivity, 0.0);
+                self.orbit_target_by(&mut t, nav.orbit);
+                if gesture != 0.0 {
+                    apply_fly_look(&mut t, gesture, 0.0);
                 }
 
                 // WASD / QE translation in the view's own basis.
-                let wish = wish_from_actions(frame, camera.forward(), camera.right(), camera.up());
+                let q = t.orientation;
+                let forward = -(q * glam::Vec3::Z);
+                let wish = wish_from_actions(frame, forward, q * glam::Vec3::X, q * glam::Vec3::Y);
                 let speed = if frame.is_active(Action::FlySpeedBoost) {
                     self.fly_speed * self.fly_boost
                 } else {
                     self.fly_speed
                 };
-                // Translate center (and thus eye) without changing orientation or distance.
-                camera.center += wish * speed * dt;
+                // Translate the centre (and so the eye) without turning or zooming.
+                t.centre += (wish * speed * dt).as_dvec3();
             }
 
             // NavigationMode is non_exhaustive; no-op for modes not handled here.
             _ => {}
+        }
+
+        if t != start {
+            self.write(camera, t);
         }
     }
 }
@@ -327,33 +398,33 @@ impl OrbitCameraController {
 /// look reach: just short of the poles, where yaw stops meaning anything.
 const POLE_LIMIT: f32 = 89.0 * std::f32::consts::PI / 180.0;
 
-/// Rotate `camera` by `yaw` and `pitch` radians the way `mode` interprets an
-/// orbit drag. Planar ignores it.
+/// Rotate an orbit view by `yaw` and `pitch` radians the way `mode` interprets
+/// an orbit drag. Planar ignores it.
 ///
 /// The one rotation path for the orbit controller and for a
 /// [`CameraAnimator`](crate::controllers::CameraAnimator) coasting in a mode, so
 /// a coast after a drag turns the camera the way the drag did.
-pub(crate) fn orbit_in_mode(camera: &mut Camera, mode: NavigationMode, yaw: f32, pitch: f32) {
+pub(crate) fn orbit_in_mode(target: &mut CameraTarget, mode: NavigationMode, yaw: f32, pitch: f32) {
     match mode {
-        NavigationMode::Arcball => camera.orbit(yaw, pitch),
-        NavigationMode::Turntable => apply_turntable(camera, yaw, pitch),
-        NavigationMode::Fly => apply_fly_look(camera, yaw, pitch),
+        NavigationMode::Arcball => target.orbit(yaw, pitch),
+        NavigationMode::Turntable => apply_turntable(target, yaw, pitch),
+        NavigationMode::Fly => apply_fly_look(target, yaw, pitch),
         // Planar ignores orbit; NavigationMode is non_exhaustive.
         _ => {}
     }
 }
 
-/// Apply a turntable yaw + clamped pitch to the camera.
+/// Apply a turntable yaw + clamped pitch to an orbit view.
 ///
 /// Yaw rotates around world Z. Pitch changes elevation in camera-local space,
 /// stopping at [`POLE_LIMIT`] above or below the XY plane. A step that would
 /// cross the limit takes the part of it that reaches the limit, so a fast drag
 /// ends at the limit rather than short of it, and a step that starts past the
 /// limit can still come back toward the horizon.
-fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
+fn apply_turntable(view: &mut CameraTarget, yaw: f32, pitch: f32) {
     // Yaw: pre-multiply by a world-Z rotation (same as the yaw component of Camera::orbit).
     if yaw != 0.0 {
-        camera.orientation = (glam::Quat::from_rotation_z(-yaw) * camera.orientation).normalize();
+        view.orientation = (glam::Quat::from_rotation_z(-yaw) * view.orientation).normalize();
     }
 
     if pitch != 0.0 {
@@ -361,28 +432,28 @@ fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
         // `orientation * Z`, and its z-component is the sine of the elevation.
         let elevation = |q: glam::Quat| (q * glam::Vec3::Z).z.clamp(-1.0, 1.0).asin();
         let pitched =
-            |amount: f32| (camera.orientation * glam::Quat::from_rotation_x(-amount)).normalize();
+            |amount: f32| (view.orientation * glam::Quat::from_rotation_x(-amount)).normalize();
 
         // How fast elevation moves per radian of pitch, from a small probe step:
         // +/-1 when the camera carries no roll, less when it does. Working from the
         // rate rather than the end orientation keeps a step large enough to pass
         // over the pole from looking like a small one.
         const PROBE: f32 = 1e-3;
-        let current = elevation(camera.orientation);
+        let current = elevation(view.orientation);
         let rate = (elevation(pitched(PROBE)) - current) / PROBE;
         if rate.abs() < 1e-3 {
             // Rolled on its side: pitch does not move the elevation.
-            camera.orientation = pitched(pitch);
+            view.orientation = pitched(pitch);
             return;
         }
 
         let target = current + rate * pitch;
         if target.abs() <= POLE_LIMIT {
-            camera.orientation = pitched(pitch);
+            view.orientation = pitched(pitch);
         } else if target.abs() > current.abs() && current.abs() >= POLE_LIMIT {
             // Already at or past the limit and heading further out.
         } else {
-            camera.orientation = pitched((POLE_LIMIT.copysign(target) - current) / rate);
+            view.orientation = pitched((POLE_LIMIT.copysign(target) - current) / rate);
         }
     }
 }
@@ -391,29 +462,34 @@ fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
 ///
 /// Yaw turns around world Z and pitch tilts the view, held to [`POLE_LIMIT`]
 /// so the view cannot go over the top and roll. Roll the camera carried in from
-/// another mode is levelled out. The orbit center moves so the eye stays put.
-fn apply_fly_look(camera: &mut Camera, yaw: f32, pitch: f32) {
-    let eye = camera.eye_position();
+/// another mode is levelled out. The orbit centre moves so the eye stays put.
+fn apply_fly_look(view: &mut CameraTarget, yaw: f32, pitch: f32) {
+    let eye = view.eye();
     // A positive pitch delta is a downward drag, which looks down.
-    let look = LookAngles::from_orientation(camera.orientation)
+    let look = LookAngles::from_orientation(view.orientation)
         .turned(yaw, -pitch)
         .with_pitch_clamped(-POLE_LIMIT, POLE_LIMIT);
-    camera.orientation = look.orientation();
-    camera.center = eye + look.direction() * camera.distance;
+    view.orientation = look.orientation();
+    view.centre = eye + (look.direction() * view.distance).as_dvec3();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::input::binding::KeyCode;
+    use glam::DVec3;
+
+    fn camera_facing(orientation: glam::Quat) -> Camera {
+        Camera::orbit(DVec3::ZERO, 5.0, orientation)
+    }
+
+    fn default_target() -> CameraTarget {
+        Camera::default().orbit_target()
+    }
     use crate::input::event::{ButtonState, ScrollUnits, ViewportEvent};
 
     fn make_ctx() -> ViewportContext {
-        ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [800.0, 600.0],
-        }
+        ViewportContext::new(crate::input::InputOwnership::full_window(), [800.0, 600.0])
     }
 
     #[test]
@@ -442,14 +518,14 @@ mod tests {
         let mut ctrl = OrbitCameraController::viewport_primitives();
         ctrl.begin_frame(make_ctx());
         let mut cam = Camera::default();
-        let d0 = cam.distance;
+        let d0 = cam.focus_distance();
         ctrl.push_event(ViewportEvent::Wheel {
             delta: glam::Vec2::new(0.0, 100.0),
             units: ScrollUnits::Pixels,
         });
         ctrl.apply_to_camera(&mut cam);
         assert!(
-            (cam.distance - d0).abs() > 1e-4,
+            (cam.focus_distance() - d0).abs() > 1e-4,
             "zoom should change camera distance"
         );
     }
@@ -459,11 +535,8 @@ mod tests {
         let delta = glam::Vec2::new(37.0, -21.0);
         let mut frame = ActionFrame::default();
         frame.navigation.orbit = delta;
-        let start = || {
-            let mut cam = Camera::default();
-            cam.orientation = glam::Quat::from_rotation_z(0.7) * glam::Quat::from_rotation_x(0.9);
-            cam
-        };
+        let start =
+            || camera_facing(glam::Quat::from_rotation_z(0.7) * glam::Quat::from_rotation_x(0.9));
         for mode in [
             NavigationMode::Arcball,
             NavigationMode::Turntable,
@@ -477,19 +550,21 @@ mod tests {
             let mut by_call = start();
             ctrl.orbit_by(&mut by_call, delta);
             assert!(
-                by_drag.orientation.angle_between(by_call.orientation) < 1e-5,
+                by_drag.orientation().angle_between(by_call.orientation()) < 1e-5,
                 "{mode:?}: orientation differs"
             );
             assert!(
-                (by_drag.center - by_call.center).length() < 1e-4,
+                (by_drag.target() - by_call.target()).length() < 1e-4,
                 "{mode:?}: centre differs"
             );
             match mode {
-                NavigationMode::Planar => assert_eq!(by_call.orientation, start().orientation),
+                NavigationMode::Planar => assert_eq!(by_call.orientation(), start().orientation()),
                 // Mouselook keeps the eye still, so the centre moves: proof the
                 // mode's own rotation ran rather than the arcball one.
-                NavigationMode::Fly => assert!((by_call.center - start().center).length() > 1e-3),
-                _ => assert!(by_call.orientation.angle_between(start().orientation) > 1e-3),
+                NavigationMode::Fly => {
+                    assert!((by_call.target() - start().target()).length() > 1e-3)
+                }
+                _ => assert!(by_call.orientation().angle_between(start().orientation()) > 1e-3),
             }
         }
     }
@@ -500,7 +575,7 @@ mod tests {
         ctrl.navigation_mode = NavigationMode::Planar;
         ctrl.begin_frame(make_ctx());
         let mut cam = Camera::default();
-        let orient_before = cam.orientation;
+        let orient_before = cam.orientation();
         // Simulate a left-drag (orbit gesture in primitives preset)
         ctrl.push_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(100.0, 100.0),
@@ -513,18 +588,19 @@ mod tests {
             position: glam::Vec2::new(200.0, 200.0),
         });
         ctrl.apply_to_camera(&mut cam);
+        let after = cam.orientation();
         assert!(
-            (cam.orientation.x - orient_before.x).abs() < 1e-6
-                && (cam.orientation.y - orient_before.y).abs() < 1e-6
-                && (cam.orientation.z - orient_before.z).abs() < 1e-6
-                && (cam.orientation.w - orient_before.w).abs() < 1e-6,
+            (after.x - orient_before.x).abs() < 1e-6
+                && (after.y - orient_before.y).abs() < 1e-6
+                && (after.z - orient_before.z).abs() < 1e-6
+                && (after.w - orient_before.w).abs() < 1e-6,
             "planar mode should not change orientation"
         );
     }
 
     #[test]
     fn turntable_pitch_clamped() {
-        let mut cam = Camera::default();
+        let mut cam = default_target();
         // Try to apply extreme pitch
         for _ in 0..1000 {
             apply_turntable(&mut cam, 0.0, 0.1);
@@ -540,10 +616,10 @@ mod tests {
 
     #[test]
     fn fly_look_preserves_eye() {
-        let mut cam = Camera::default();
-        let eye_before = cam.eye_position();
+        let mut cam = default_target();
+        let eye_before = cam.eye();
         apply_fly_look(&mut cam, 0.3, 0.2);
-        let eye_after = cam.eye_position();
+        let eye_after = cam.eye();
         let diff = (eye_after - eye_before).length();
         assert!(
             diff < 1e-3,
@@ -558,10 +634,8 @@ mod tests {
         // The deprecated path assumes 60 Hz: 60 units per second is 1 per frame.
         ctrl.fly_speed = 60.0;
         ctrl.begin_frame(make_ctx());
-        let mut cam = Camera::default();
-        cam.center = glam::Vec3::ZERO;
-        cam.orientation = glam::Quat::IDENTITY;
-        let center_before = cam.center;
+        let mut cam = camera_facing(glam::Quat::IDENTITY);
+        let centre_before = cam.target();
         ctrl.push_event(ViewportEvent::Key {
             key: KeyCode::W,
             state: ButtonState::Pressed,
@@ -570,8 +644,8 @@ mod tests {
         });
         ctrl.apply_to_camera(&mut cam);
         assert!(
-            (cam.center - center_before).length() > 0.5,
-            "FlyForward should move camera center"
+            (cam.target() - centre_before).length() > 0.5,
+            "FlyForward should move camera centre"
         );
     }
 
@@ -580,16 +654,60 @@ mod tests {
         // The frame-consumer path applies an already-resolved ActionFrame
         // without draining events, the basis for sharing one resolver across
         // the controller family.
-        let ctrl = OrbitCameraController::viewport_primitives();
+        let mut ctrl = OrbitCameraController::viewport_primitives();
         let mut cam = Camera::default();
-        let before = cam.orientation;
+        let before = cam.orientation();
         let mut frame = ActionFrame::default();
         frame.navigation.orbit = glam::Vec2::new(20.0, 0.0);
         ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
         assert_ne!(
-            cam.orientation, before,
+            cam.orientation(),
+            before,
             "apply(&frame) should orbit from the frame's nav delta"
         );
+    }
+
+    #[test]
+    fn pivot_follows_a_camera_moved_elsewhere() {
+        let mut ctrl = OrbitCameraController::new_stateless();
+        let mut cam = Camera::default();
+        let mut frame = ActionFrame::default();
+        frame.navigation.orbit = glam::Vec2::new(10.0, 0.0);
+        ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
+        assert_eq!(ctrl.target().unwrap().centre, DVec3::ZERO);
+
+        // A preset or fly-to moves the camera; the next drag orbits about the
+        // new focus point at the new distance.
+        let centre = DVec3::new(10.0, -3.0, 2.0);
+        cam = Camera::orbit(centre, 4.0, cam.orientation());
+        ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
+        assert!((cam.target() - centre).length() < 1e-4);
+        assert_eq!(cam.focus_distance(), 4.0);
+        assert_eq!(ctrl.target().unwrap().centre, centre);
+    }
+
+    #[test]
+    fn no_input_leaves_the_camera_alone() {
+        let mut ctrl = OrbitCameraController::new_stateless();
+        let mut cam = Camera::default();
+        cam.set_orthographic(true);
+        let before = cam.clone();
+        ctrl.apply(&mut cam, &ActionFrame::default(), 1.0 / 60.0);
+        assert_eq!(cam, before);
+    }
+
+    #[test]
+    fn zoom_scales_an_orthographic_view() {
+        let mut ctrl = OrbitCameraController::new_stateless();
+        let mut cam = Camera::default();
+        cam.set_orthographic(true);
+        let height = cam.view_height_at(1.0);
+        let mut frame = ActionFrame::default();
+        frame.navigation.zoom = 500.0;
+        ctrl.apply(&mut cam, &frame, 1.0 / 60.0);
+        let ratio = cam.focus_distance() / 5.0;
+        assert!(ratio < 1.0);
+        assert!((cam.view_height_at(1.0) - height * ratio).abs() < 1e-4);
     }
 
     fn fly_frame(actions: &[Action]) -> ActionFrame {
@@ -611,14 +729,13 @@ mod tests {
 
     #[test]
     fn fly_diagonal_moves_as_far_as_straight() {
-        let ctrl = fly_controller();
+        let mut ctrl = fly_controller();
         let level = LookAngles::FORWARD.orientation();
-        let moved = |actions: &[Action]| {
-            let mut cam = Camera::default();
-            cam.orientation = level;
-            let before = cam.center;
+        let mut moved = |actions: &[Action]| {
+            let mut cam = camera_facing(level);
+            let before = cam.target();
             ctrl.apply(&mut cam, &fly_frame(actions), 1.0);
-            (cam.center - before).length()
+            (cam.target() - before).length()
         };
         let straight = moved(&[Action::FlyForward]);
         let diagonal = moved(&[Action::FlyForward, Action::FlyRight]);
@@ -630,7 +747,7 @@ mod tests {
 
     #[test]
     fn fly_look_stops_short_of_vertical() {
-        let mut cam = Camera::default();
+        let mut cam = default_target();
         cam.orientation = LookAngles::FORWARD.orientation();
         // Drag up a long way: negative pitch delta looks up.
         for _ in 0..200 {
@@ -648,7 +765,7 @@ mod tests {
 
     #[test]
     fn fly_look_matches_the_old_turn_directions() {
-        let mut cam = Camera::default();
+        let mut cam = default_target();
         cam.orientation = LookAngles::FORWARD.orientation();
         apply_fly_look(&mut cam, 0.2, 0.1);
         let look = LookAngles::from_orientation(cam.orientation);
@@ -658,7 +775,7 @@ mod tests {
 
     #[test]
     fn turntable_fast_step_reaches_the_limit() {
-        let mut cam = Camera::default();
+        let mut cam = default_target();
         cam.orientation = LookAngles::FORWARD.orientation();
         // One step far past the limit lands on it instead of being dropped.
         apply_turntable(&mut cam, 0.0, 2.0);
@@ -671,7 +788,7 @@ mod tests {
 
     #[test]
     fn turntable_can_back_away_from_past_the_limit() {
-        let mut cam = Camera::default();
+        let mut cam = default_target();
         // Arcball left the eye past the limit, looking almost straight down.
         cam.orientation = LookAngles::new(0.0, -1.565).orientation();
         let before = (cam.orientation * glam::Vec3::Z).z;
@@ -686,15 +803,14 @@ mod tests {
 
     #[test]
     fn fly_speed_is_per_second() {
-        let ctrl = fly_controller();
-        let moved = |dt: f32, frames: usize| {
-            let mut cam = Camera::default();
-            cam.orientation = LookAngles::FORWARD.orientation();
-            let before = cam.center;
+        let mut ctrl = fly_controller();
+        let mut moved = |dt: f32, frames: usize| {
+            let mut cam = camera_facing(LookAngles::FORWARD.orientation());
+            let before = cam.target();
             for _ in 0..frames {
                 ctrl.apply(&mut cam, &fly_frame(&[Action::FlyForward]), dt);
             }
-            (cam.center - before).length()
+            (cam.target() - before).length()
         };
         // One second at 30, 60 and 144 Hz covers the same ground.
         for (dt, frames) in [(1.0 / 30.0, 30), (1.0 / 60.0, 60), (1.0 / 144.0, 144)] {
@@ -704,17 +820,19 @@ mod tests {
 
     #[test]
     fn fly_boost_multiplies_speed() {
-        let ctrl = fly_controller();
-        let mut cam = Camera::default();
-        cam.orientation = LookAngles::FORWARD.orientation();
-        let before = cam.center;
+        let mut ctrl = fly_controller();
+        let mut cam = camera_facing(LookAngles::FORWARD.orientation());
+        let before = cam.target();
         ctrl.apply(
             &mut cam,
             &fly_frame(&[Action::FlyForward, Action::FlySpeedBoost]),
             1.0,
         );
-        let moved = (cam.center - before).length();
-        assert!((moved - ctrl.fly_boost).abs() < 1e-5, "moved={moved}");
+        let moved = (cam.target() - before).length();
+        assert!(
+            (moved - f64::from(ctrl.fly_boost)).abs() < 1e-5,
+            "moved={moved}"
+        );
     }
 
     #[test]

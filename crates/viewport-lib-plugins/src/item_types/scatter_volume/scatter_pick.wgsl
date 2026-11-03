@@ -7,9 +7,9 @@
 // matrix stand in for either and keeps this in step with the CPU analytic
 // pick.
 //
-// Group 0: the shared scene bind group (camera at binding 0, clip volumes at
-//          binding 6). Only clip volumes are tested, matching the renderer's
-//          own object-id pass, which does not apply clip planes.
+// Group 0: the shared scene bind group (camera at binding 0, clip planes at
+//          binding 4, clip volumes at binding 6). Both are tested, as in the
+//          colour pass.
 // Group 1: per-volume proxy uniform (model matrix + pick id).
 
 /// The volume's unit-shape-to-world transform plus the id it answers with.
@@ -45,7 +45,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
-    if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if !viewport_clip_test(in.world_pos) { discard; }
 
     var out: FragOut;
     out.object_id    = proxy.object_id;

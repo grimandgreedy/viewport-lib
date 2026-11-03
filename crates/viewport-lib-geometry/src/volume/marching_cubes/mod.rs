@@ -307,14 +307,14 @@ mod tests {
     fn test_sphere_isosurface() {
         let n = 32u32;
         let mut data = vec![0.0f32; (n * n * n) as usize];
-        let center = n as f32 / 2.0;
+        let centre = n as f32 / 2.0;
 
         for iz in 0..n {
             for iy in 0..n {
                 for ix in 0..n {
-                    let dx = ix as f32 - center;
-                    let dy = iy as f32 - center;
-                    let dz = iz as f32 - center;
+                    let dx = ix as f32 - centre;
+                    let dy = iy as f32 - centre;
+                    let dz = iz as f32 - centre;
                     let dist = (dx * dx + dy * dy + dz * dz).sqrt();
                     data[(ix + iy * n + iz * n * n) as usize] = dist;
                 }
@@ -377,14 +377,14 @@ mod tests {
         // align with the gradient-based vertex normals (which point outward for SDF).
         // A winding mismatch means some fraction of triangles would be back-face culled.
         let n = 32u32;
-        let center = n as f32 / 2.0;
+        let centre = n as f32 / 2.0;
         let mut data = vec![0.0f32; (n * n * n) as usize];
         for iz in 0..n {
             for iy in 0..n {
                 for ix in 0..n {
-                    let dx = ix as f32 - center;
-                    let dy = iy as f32 - center;
-                    let dz = iz as f32 - center;
+                    let dx = ix as f32 - centre;
+                    let dy = iy as f32 - centre;
+                    let dz = iz as f32 - centre;
                     data[(ix + iy * n + iz * n * n) as usize] =
                         (dx * dx + dy * dy + dz * dz).sqrt();
                 }

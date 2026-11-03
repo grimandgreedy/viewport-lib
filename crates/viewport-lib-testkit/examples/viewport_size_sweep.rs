@@ -157,11 +157,7 @@ fn main() {
         let _ = vpl::resources::build_log::drain_textures();
 
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&Camera::default());
-            rc.aspect = w as f32 / h as f32;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
         frame.camera.viewport_size = [w as f32, h as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;

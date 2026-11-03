@@ -29,11 +29,13 @@
 mod assemble;
 mod extras;
 mod offscreen;
+mod rebuild;
 mod render;
 mod settings;
 
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
+pub use rebuild::StaleHandles;
 
 /// The winit runner: `ViewportApp` owns one or more OS windows, one
 /// `ViewportInstance` each (feature-gated behind `app`).
@@ -42,9 +44,9 @@ pub mod viewport_app;
 
 use crate::camera::Camera;
 use crate::interaction::input::{
-    ActionFrame, BindingPreset, TouchSettings, ViewportBinding, ViewportContext, ViewportEvent,
+    ActionFrame, BindingPreset, InputOwnership, TouchSettings, ViewportBinding, ViewportContext,
+    ViewportEvent,
 };
-use crate::interaction::manipulation::{ManipResult, ManipulationController};
 use crate::interaction::select::selection::Selection;
 use crate::resources::DeviceResources;
 use crate::runtime::ViewportRuntime;
@@ -62,11 +64,12 @@ use crate::{FrameData, InteractionFrame, ViewportInput, ViewportRenderer};
 /// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass framework).
 pub struct ViewportInstance {
     renderer: ViewportRenderer,
+    /// The config the renderer was built with, for [`rebuild`](Self::rebuild).
+    config: crate::RendererConfig,
     scene: Scene,
     selection: Selection,
     camera: Camera,
     input: ViewportInput,
-    manip: Option<ManipulationController>,
     runtime: Option<ViewportRuntime>,
 
     /// Retained frame. Its `effects` and `viewport` sub-frames hold persistent
@@ -75,8 +78,6 @@ pub struct ViewportInstance {
     frame: FrameData,
     /// Resolved input for the current frame. Set by [`resolve`](Self::resolve).
     action: ActionFrame,
-    /// Result of the last manipulation update, surfaced via [`last_manip`](Self::last_manip).
-    last_manip: ManipResult,
 
     /// Viewport size in logical pixels, recorded by [`begin_frame`](Self::begin_frame).
     viewport_size: [f32; 2],
@@ -104,6 +105,7 @@ pub(crate) fn runner_renderer_config(
     format: crate::gpu::TextureFormat,
     cache_data: Option<Vec<u8>>,
     adapter: &crate::gpu::Adapter,
+    device: &crate::gpu::Device,
 ) -> crate::RendererConfig {
     let mut config = base.clone().with_target_format(format).with_sample_count(1);
     if cache_data.is_some() {
@@ -114,6 +116,15 @@ pub(crate) fn runner_renderer_config(
     }
     if config.backend.is_none() {
         config.backend = Some(adapter.get_info().backend);
+    }
+    // The runner owns the surface depth target, so it takes the float depth
+    // the device was created with; a host that pinned a format keeps it.
+    if config.scene_depth_format.is_none()
+        && device
+            .features()
+            .contains(crate::gpu::Features::DEPTH32FLOAT_STENCIL8)
+    {
+        config.scene_depth_format = Some(crate::gpu::TextureFormat::Depth32FloatStencil8);
     }
     config
 }
@@ -217,18 +228,16 @@ impl ViewportInstance {
         let defaults = InteractionFrame::default();
         Ok(Self {
             renderer,
+            config: config.clone(),
             scene: Scene::new(),
             selection: Selection::new(),
             camera: Camera::default(),
-            // The default preset carries the manipulation keybindings (G/R/S, axis
-            // constraints) as well as camera navigation, so an instance with a
-            // ManipulationController resolves them without extra setup.
+            // Camera navigation only. A host with a transform gizmo appends the
+            // gizmo's own bindings through `set_bindings`.
             input: ViewportInput::from_preset(BindingPreset::Default),
-            manip: None,
             runtime: None,
             frame: FrameData::default(),
             action: ActionFrame::default(),
-            last_manip: ManipResult::None,
             viewport_size: [1.0, 1.0],
             pixels_per_point: 1.0,
             outline_selected: defaults.outline_selected,
@@ -276,17 +285,6 @@ impl ViewportInstance {
         self
     }
 
-    /// Attach a [`ManipulationController`] for move/rotate/scale sessions.
-    ///
-    /// Without it, [`update_orbit`](Self::update_orbit) skips the manipulation
-    /// step entirely. With it, the controller runs each frame and its result is
-    /// available from [`last_manip`](Self::last_manip); applying that result to
-    /// scene nodes stays with the application.
-    pub fn with_manipulation(mut self, manip: ManipulationController) -> Self {
-        self.manip = Some(manip);
-        self
-    }
-
     // ---- per-frame input (universal, all setups) --------------------------------
 
     /// Begin a frame: record the viewport context and reset the input
@@ -307,6 +305,15 @@ impl ViewportInstance {
     pub fn begin_frame_at(&mut self, ctx: ViewportContext, time_seconds: f32) {
         self.viewport_size = ctx.viewport_size;
         self.input.begin_frame_at(ctx, time_seconds);
+    }
+
+    /// Change who owns the input without starting a new frame or resetting the
+    /// input accumulator. Events fed after this are routed on the new ownership.
+    ///
+    /// For a host that learns of a change between frames, such as the cursor
+    /// entering the window or the window gaining focus.
+    pub fn set_input_ownership(&mut self, ownership: InputOwnership) {
+        self.input.set_ownership(ownership);
     }
 
     /// The numbers touch recognition is calibrated on: sensitivities with per-axis
@@ -388,27 +395,6 @@ impl ViewportInstance {
         &self.action
     }
 
-    /// The result of the last manipulation update. [`ManipResult::None`] when no
-    /// controller is attached or nothing happened this frame.
-    pub fn last_manip(&self) -> ManipResult {
-        self.last_manip
-    }
-
-    /// Whether a move/rotate/scale session is currently active. An application driving
-    /// its own camera (first-person, fly) uses this to suppress camera motion
-    /// while a manipulation drag owns the pointer, the way
-    /// [`update_orbit`](Self::update_orbit) suppresses orbit internally.
-    pub fn is_manipulating(&self) -> bool {
-        self.manip.as_ref().is_some_and(|m| m.is_active())
-    }
-
-    /// Snapshot of the active manipulation session, or `None` when idle. The
-    /// `center` field is the pivot to rotate and scale about when applying a
-    /// [`last_manip`](Self::last_manip) delta to the selection.
-    pub fn manip_state(&self) -> Option<crate::interaction::manipulation::ManipulationState> {
-        self.manip.as_ref().and_then(|m| m.state())
-    }
-
     // ---- camera ---------------------------------------------------------------
 
     /// The current camera.
@@ -483,8 +469,17 @@ impl ViewportInstance {
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) -> Result<(), crate::ViewportError> {
+    ) -> Result<crate::plugin_api::ItemTypeId, crate::ViewportError> {
         self.renderer.with_item_type_plugin(device, plugin)
+    }
+
+    /// Unregister an item type, the same call as
+    /// [`ViewportRenderer::remove_item_type_plugin`](crate::renderer::ViewportRenderer::remove_item_type_plugin).
+    pub fn remove_item_type_plugin(
+        &mut self,
+        id: crate::plugin_api::ItemTypeId,
+    ) -> Option<Box<dyn crate::plugin_api::ItemTypePlugin>> {
+        self.renderer.remove_item_type_plugin(id)
     }
 
     /// Why an item type was refused, the same call as
@@ -612,19 +607,6 @@ impl ViewportInstance {
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.renderer.upload_status(id)
     }
-
-    /// Forward a device recreation from your application to the renderer and runtime so their
-    /// GPU state re-initialises. Call after your application rebuilds the device.
-    pub fn notify_device_recreated(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        self.renderer.notify_device_recreated(device, queue);
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.notify_device_recreated(device, queue);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -657,11 +639,7 @@ mod tests {
     }
 
     fn ctx() -> ViewportContext {
-        ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [256.0, 256.0],
-        }
+        ViewportContext::new(InputOwnership::full_window(), [256.0, 256.0])
     }
 
     #[test]
@@ -726,7 +704,7 @@ mod tests {
         session
             .scene_mut()
             .add(Some(cube), glam::Mat4::IDENTITY, material);
-        session.camera_mut().distance = 6.0;
+        session.camera_mut().set_orbit_distance(6.0);
 
         session.begin_frame(ctx());
         let mut orbit = OrbitCameraController::new_stateless();

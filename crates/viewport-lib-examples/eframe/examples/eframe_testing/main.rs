@@ -14,13 +14,12 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
-    LightingSettings, Material, MaterialId, MeshId, OffscreenViewportTarget, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
+    Material, MaterialId, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame,
+    SceneRenderItem, ViewportContext, ViewportInput, ViewportRenderer, primitives,
 };
 
 // Solid unlit colours for the subsurface objects. Picked to be visually distinct
@@ -172,11 +171,7 @@ impl App {
         lighting.shadows.enabled = true;
 
         Self {
-            camera: Camera {
-                distance: 20.0,
-                zfar: 1000.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 20.0, Camera::default().orientation()),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             ground_id,
@@ -205,8 +200,7 @@ impl App {
             } else {
                 self.materials.ground_one_sided
             };
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).into();
             item
         };
 
@@ -224,7 +218,7 @@ impl App {
             item.mesh_id = self.box_id;
 
             item.material = self.materials.boxes;
-            item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(*pos).into();
             items.push(item);
         }
 
@@ -234,8 +228,7 @@ impl App {
             item.mesh_id = self.sphere_id;
 
             item.material = self.materials.sphere;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).into();
             items.push(item);
         }
 
@@ -248,8 +241,7 @@ impl App {
                 item.mesh_id = self.unlit_sphere_id;
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_MAGENTA));
-                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
-                    .to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)).into();
                 items.push(item);
             }
 
@@ -259,8 +251,7 @@ impl App {
 
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_CYAN));
-                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
-                    .to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5)).into();
                 items.push(item);
             }
         }
@@ -315,9 +306,8 @@ impl eframe::App for App {
                 ui.separator();
                 ui.label("Camera");
 
-                let dist = self.camera.distance;
-                let eff_near = self.camera.effective_znear();
-                let eff_far = self.camera.effective_zfar();
+                let dist = self.camera.focus_distance();
+                let (eff_near, eff_far) = self.camera.depth_range();
                 let precision_limit = (2.0_f32 * eff_near * eff_far / (eff_far - eff_near)).sqrt();
                 ui.label(format!("distance:         {:.2}", dist));
                 ui.label(format!("znear (eff):      {:.4}", eff_near));
@@ -327,7 +317,7 @@ impl eframe::App for App {
 
                 ui.separator();
                 ui.label("Cascade splits (world depth)");
-                let shadow_far = (self.camera.distance * 3.0).max(10.0).min(eff_far);
+                let shadow_far = (self.camera.focus_distance() * 3.0).max(10.0).min(eff_far);
                 let splits =
                     cascade_splits(eff_near, shadow_far, self.lighting.shadows.cascade_count);
                 let mut prev = eff_near;
@@ -358,69 +348,29 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.input.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.has_focus(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+            self.input.begin_frame(ViewportContext::new(
+                ownership,
+                [rect.width(), rect.height()],
+            ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);
 
+            let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+            let mut events = Vec::new();
             ui.input(|i| {
                 if i.key_pressed(egui::Key::P) {
                     self.log_next_frame = true;
                 }
-
-                self.input
-                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
-
-                let local_pos = i
-                    .pointer
-                    .interact_pos()
-                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-                if let Some(pos) = local_pos {
-                    self.input
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
-                }
-
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            let vp_btn = match button {
-                                egui::PointerButton::Primary => vpl::MouseButton::Left,
-                                egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.input.push_event(ViewportEvent::MouseButton {
-                                button: vp_btn,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.input.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.input.push_event(ev);
+            }
 
             let w = rect.width();
             let h = rect.height();

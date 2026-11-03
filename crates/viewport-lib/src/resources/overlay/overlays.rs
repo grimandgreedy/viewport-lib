@@ -221,7 +221,7 @@ pub(crate) struct GroundPlaneUniform {
     pub shadow_bias: f32,         // offset 236,  4 bytes
     pub mode: u32,                // offset 240,  4 bytes
     pub shadow_opacity: f32,      // offset 244,  4 bytes
-    pub _pad: [f32; 2],           // offset 248,  8 bytes
+    pub tile_origin: [f32; 2],    // offset 248,  8 bytes : tile phase at the world origin
     pub colour2: [f32; 4],        // offset 256, 16 bytes : second tile colour
 } // total  272 bytes
 

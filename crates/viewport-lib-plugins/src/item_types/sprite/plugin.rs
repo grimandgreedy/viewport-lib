@@ -23,6 +23,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     let lit_extra = [
         shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
         shared_wgsl::SHARED_CSM_WGSL,
+        shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
     ];
     vec![
         ("sprite.wgsl", scene_shader(&[], wgsl_source!("sprite"))),
@@ -391,7 +392,7 @@ impl SpritePlugin {
     fn draw_bucket(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
-        hdr: bool,
+        target: pipeline::SpritePass,
         group2: &viewport_lib::gpu::BindGroup,
         wanted: impl Fn(&SpriteGpuData) -> bool,
     ) {
@@ -407,7 +408,7 @@ impl SpritePlugin {
                 }
                 if !bound {
                     // Still compiling: this key's sprites draw next frame.
-                    let Some(pl) = gpu.pipelines.get(pipeline::sprite_index(key, hdr)) else {
+                    let Some(pl) = gpu.pipelines.get(pipeline::sprite_index(key, target)) else {
                         break;
                     };
                     pass.set_pipeline(pl);
@@ -480,20 +481,6 @@ impl ItemTypePlugin for SpritePlugin {
         self.sets.allocated_bytes() + self.instance_sets.allocated_bytes()
     }
 
-    fn on_device_recreated(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.layouts = Some(SpriteLayouts::new(device));
-        self.gpu = None;
-        self.frame.clear();
-        self.frame_settings.clear();
-        self.outlines.clear();
-        self.pick_bind_groups.clear();
-        self.refraction.lock().unwrap().clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -506,6 +493,11 @@ impl ItemTypePlugin for SpritePlugin {
         self.outlines.clear();
         self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
+        let origin = ctx.world_origin();
+        let sets = self.sets.iter_mut().map(|(_, s)| s);
+        for stored in sets.chain(self.instance_sets.iter_mut().map(|(_, s)| s)) {
+            stored.rebase(queue, origin);
+        }
         let items = items.of::<SpriteItem>();
         let set_refs = ctx.refs_of::<SpriteSetRefItem>();
         let instance_refs = ctx.refs_of::<SpriteInstanceSetRefItem>();
@@ -530,7 +522,9 @@ impl ItemTypePlugin for SpritePlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let mut gd = build_sprite(device, queue, &binds, item, 0).draw;
+            let mut stored = build_sprite(device, queue, &binds, item, 0);
+            stored.rebase(queue, ctx.world_origin());
+            let mut gd = stored.draw;
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
             let frame_index = self.frame.len();
             self.frame.push(gd);
@@ -618,8 +612,12 @@ impl ItemTypePlugin for SpritePlugin {
         // The depth attachment is writable in this pass and is the same buffer
         // the soft fade would sample, so group 2 gets the 1x1 fallback. A
         // depth-writing batch has no soft fade to lose by it.
-        let hdr = ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT;
-        self.draw_bucket(pass, hdr, &gpu.soft_fallback_bg, is_opaque);
+        let target = if ctx.is_hdr_pass() {
+            pipeline::SpritePass::Scene
+        } else {
+            pipeline::SpritePass::Ldr
+        };
+        self.draw_bucket(pass, target, &gpu.soft_fallback_bg, is_opaque);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -642,7 +640,12 @@ impl ItemTypePlugin for SpritePlugin {
         // The depth attachment is read-only here, so the live scene depth can
         // be sampled for the soft fade. The ready-made group matches the layout
         // these pipelines were built against.
-        self.draw_bucket(pass, true, ctx.scene_depth_bind_group, is_soft);
+        self.draw_bucket(
+            pass,
+            pipeline::SpritePass::DepthRead,
+            ctx.scene_depth_bind_group,
+            is_soft,
+        );
     }
 
     fn paint_transparent(
@@ -888,7 +891,7 @@ impl ItemTypePlugin for SpritePlugin {
             if !wants_instance {
                 hit.sub_object = None;
             }
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if best.as_ref().is_none_or(|(t, _)| toi < *t) {
                 best = Some((toi, hit));
             }
@@ -1100,7 +1103,7 @@ fn sprite_quad_outlines_polyline(
     viewport_size: glam::Vec2,
     model: glam::Mat4,
 ) -> viewport_lib::renderer::PolylineItem {
-    let view = &camera.view;
+    let view = &camera.view();
     // Row 0 of the view matrix = camera right in world space.
     // Row 1 of the view matrix = camera up in world space.
     // glam Mat4 is column-major: view[col][row], matching view[0][0]/view[1][0]/view[2][0] in WGSL.
@@ -1151,20 +1154,20 @@ fn sprite_quad_outlines_polyline(
                 pts.push(p.to_array());
             }
         } else {
-            let clip_center = view_proj * world_pos.extend(1.0);
-            if clip_center.w <= 0.0 {
+            let clip_centre = view_proj * world_pos.extend(1.0);
+            if clip_centre.w <= 0.0 {
                 // Behind camera -- skip this sprite.
                 ok = false;
             } else {
-                let ndc_center =
-                    glam::Vec3::new(clip_center.x, clip_center.y, clip_center.z) / clip_center.w;
+                let ndc_centre =
+                    glam::Vec3::new(clip_centre.x, clip_centre.y, clip_centre.z) / clip_centre.w;
                 for (cx, cy) in CORNERS {
                     let rx = cos_r * cx - sin_r * cy;
                     let ry = sin_r * cx + cos_r * cy;
                     let ndc = glam::Vec3::new(
-                        ndc_center.x + rx * half / vw,
-                        ndc_center.y + ry * half / vh,
-                        ndc_center.z,
+                        ndc_centre.x + rx * half / vw,
+                        ndc_centre.y + ry * half / vh,
+                        ndc_centre.z,
                     );
                     let world_h = inv_view_proj * ndc.extend(1.0);
                     if world_h.w.abs() < 1e-7 {

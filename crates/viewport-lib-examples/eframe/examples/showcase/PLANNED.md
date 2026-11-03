@@ -8,7 +8,7 @@ cover, so a new showcase distils those rather than copying them.
 
 | # | Showcase | Demonstrates | Folds in (old #s) |
 |---|----------|--------------|-------------------|
-| 1 | Objects & manipulation (exists) | Scene graph, selection, G/R/S gizmo, orbit/fly camera | 1, 2, 4, 10 |
+| 1 | Objects & manipulation (exists) | Scene graph, selection, G/R/S gizmo (viewport-lib-gizmo), orbit/fly camera | 1, 2, 4, 10 |
 | 2 | Overlays & annotations (exists) | Labels, scalar bars, rulers, 2D overlay shapes, HUD, depth compositing | 9, 27, 29, 34, 35 |
 | 3 | Picking (exists) | Unified object + sub-object picking (face/vert/point/cell) with masks | 33 |
 | 4 | Materials & shading (exists) | PBR / matcap / textured / normal+AO / vertex-colour, one stage + picker | 5, 7, 19, 20, 21, 22, 53 |

@@ -758,7 +758,7 @@ fn build_runtime_for_demo(
 const CROWD_SPACING: f32 = 3.0;
 
 /// Compute a world-space translation for one crowd actor placed on a roughly
-/// square grid centered on the origin.
+/// square grid centred on the origin.
 fn crowd_translation(actor_idx: usize, total: usize) -> glam::Vec3 {
     let cols = (total as f32).sqrt().ceil().max(1.0) as usize;
     let row = (actor_idx / cols) as f32;
@@ -1904,12 +1904,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_skin47_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 2.0),
-        distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 2.0),
+        12.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1995,8 +1994,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

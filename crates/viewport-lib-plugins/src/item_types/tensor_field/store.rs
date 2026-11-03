@@ -163,17 +163,29 @@ struct TensorFieldUniform {
 ///
 /// Shared by the build and the in-place replace, so a stored field rewritten in
 /// place is bit-for-bit what a fresh build would have produced.
+///
+/// `origin` is the frame's world origin for a draw built for one frame: the
+/// samples are then built around their first position when they sit far from
+/// zero, and the uniform's model matrix is written relative to the origin.
+/// A stored field passes `None` and keeps world-space samples, since a channel
+/// write lands in its buffer as given.
 fn build_instances_and_uniform(
     item: &super::types::TensorFieldItem,
+    origin: Option<glam::DVec3>,
 ) -> (Vec<TensorFieldInstance>, TensorFieldUniform) {
     let count = item.positions.len();
+    let (anchor, local) = match origin {
+        Some(_) => crate::item_types::origin::anchored(&item.positions),
+        None => (glam::Vec3::ZERO, None),
+    };
+    let positions = local.as_deref().unwrap_or(&item.positions);
     let natural = dominant_eigenvalues(item);
     let extents = sample_extents(item);
     let colours = colour_plan(&item.colour, count, &natural);
 
     let instances: Vec<TensorFieldInstance> = (0..count)
         .map(|i| {
-            let pos = glam::Vec3::from(item.positions[i]);
+            let pos = glam::Vec3::from(positions[i]);
             let axes = item.tensors.eigen_at(i).vectors;
             let [s0, s1, s2] = extents[i];
 
@@ -210,7 +222,11 @@ fn build_instances_and_uniform(
 
     let (scalar_min, scalar_max) = colours.lut_range.unwrap_or((0.0, 1.0));
     let uniform_data = TensorFieldUniform {
-        model: item.model,
+        model: crate::item_types::origin::anchored_model(
+            item.model,
+            anchor,
+            origin.unwrap_or(glam::DVec3::ZERO),
+        ),
         use_lut: colours.lut_range.is_some() as u32,
         scalar_min,
         scalar_max,
@@ -227,16 +243,18 @@ fn build_instances_and_uniform(
 /// groups.
 ///
 /// Shared by the per-frame item path and the store, so a reference draw and an
-/// inline draw are bit-for-bit the same work.
+/// inline draw are bit-for-bit the same work. `origin` is as for
+/// [`build_instances_and_uniform`].
 pub(super) fn build_tensor_field(
     device: &viewport_lib::gpu::Device,
     queue: &viewport_lib::gpu::Queue,
     binds: &TensorFieldBindings,
     item: &super::types::TensorFieldItem,
     capacity: u32,
+    origin: Option<glam::DVec3>,
 ) -> TensorFieldGpuData {
     let count = item.positions.len();
-    let (instances, uniform_data) = build_instances_and_uniform(item);
+    let (instances, uniform_data) = build_instances_and_uniform(item, origin);
 
     let mut samples = ContentBuffer::new(
         device,
@@ -359,7 +377,7 @@ pub(super) fn try_replace_in_place(
         return false;
     }
 
-    let (instances, uniform_data) = build_instances_and_uniform(item);
+    let (instances, uniform_data) = build_instances_and_uniform(item, None);
     if gpu.samples.set_len(count).is_err()
         || gpu
             .samples

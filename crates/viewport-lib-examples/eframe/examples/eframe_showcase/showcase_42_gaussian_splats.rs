@@ -227,7 +227,7 @@ fn generate_tgv() -> GaussianSplatData {
                     max_mag = mag;
                 }
 
-                // Shift to center at origin for display.
+                // Shift to centre at origin for display.
                 pts.push(([x - PI, y - PI, z - PI], [ox, oy, oz]));
             }
         }
@@ -410,12 +410,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_gaussian_splat_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 12.0,
-        orientation: glam::Quat::from_rotation_x(0.5),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(glam::DVec3::ZERO, 12.0, glam::Quat::from_rotation_x(0.5));
 }
 
 // ---------------------------------------------------------------------------
@@ -483,8 +478,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

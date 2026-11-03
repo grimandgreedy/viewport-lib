@@ -51,7 +51,7 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
 /// that runs it lands somewhere else on screen.
 fn shift_deformer() -> viewport_lib::resources::DeformerDesc {
     viewport_lib::resources::DeformerDesc {
-        name: "shift_x",
+        name: "shift_x".into(),
         stage: viewport_lib::resources::DeformStage::ObjectSpace,
         priority: 0,
         wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if deform_slot_stride(ctx.slot) > 0u {\n        o.position.x = o.position.x + deform_read_f32(ctx.slot, v.vertex_index, 0u);\n    }\n    return o;\n}\n".to_string(),
@@ -129,7 +129,7 @@ fn two_bind_group_device_renders_without_validation_errors() {
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // LDR path.
@@ -172,11 +172,11 @@ fn two_bind_group_device_renders_without_validation_errors() {
 fn three_bind_group_device_draws_a_material_plugin() {
     struct SampleTexture;
     impl viewport_lib::MaterialPlugin for SampleTexture {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "sample_texture"
         }
         fn wgsl_body(&self) -> String {
-            "fn recolor(surf: ShadingSurface, lit: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {\n    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;\n}\n".to_string()
+            "fn recolour(surf: ShadingSurface, lit: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {\n    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;\n}\n".to_string()
         }
         fn texture_count(&self) -> u32 {
             1
@@ -275,7 +275,7 @@ fn items_select_distinct_records() {
         it.mesh_id = mesh_id;
         it.material = upload_material(&mut renderer, m);
         it.settings.unlit = true;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         it
     };
     frame.scene.surfaces = SurfaceSubmission::Flat(
@@ -343,7 +343,7 @@ fn renderer_fits_recommended_device_limits() {
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // HDR path builds the clustered lit / OIT pipeline layouts.
@@ -402,11 +402,7 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
     let size = 96u32;
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -464,11 +460,7 @@ fn overlay_shape_backdrop_filters_render() {
     let size = 96u32;
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -505,11 +497,7 @@ fn overlay_shape_pivot_rotation_not_clipped() {
     let size = 160u32;
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

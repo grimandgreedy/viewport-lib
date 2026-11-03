@@ -21,7 +21,7 @@ fn directional(direction: [f32; 3], intensity: f32) -> LightSource {
 fn point(position: [f32; 3], range: f32, colour: [f32; 3], intensity: f32) -> LightSource {
     let mut s = LightSource::default();
     s.kind = LightKind::Point {
-        position,
+        position: glam::Vec3::from(position).as_dvec3(),
         range,
         radius: 0.0,
     };

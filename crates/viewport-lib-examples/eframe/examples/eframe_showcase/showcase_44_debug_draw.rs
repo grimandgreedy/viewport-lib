@@ -73,15 +73,15 @@ impl RuntimePlugin for DebugOverlayPlugin {
             let Some(node) = ctx.scene.node(id) else {
                 continue;
             };
-            let center = node.world_transform().col(3).truncate();
+            let centre = node.world_transform().to_mat4().col(3).truncate();
             let half = glam::Vec3::splat(self.body_radius);
             dd.aabb(
-                center - half,
-                center + half,
+                centre - half,
+                centre + half,
                 Colour::linear(0.3, 0.9, 0.4, 1.0),
             );
             dd.label(
-                center + glam::Vec3::Z * (self.body_radius + 0.12),
+                centre + glam::Vec3::Z * (self.body_radius + 0.12),
                 format!("body {}", i),
                 Colour::linear(1.0, 1.0, 1.0, 0.85),
             );
@@ -351,12 +351,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_dbg_draw_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 4.0),
-        distance: 18.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 4.0),
+        18.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -438,8 +437,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

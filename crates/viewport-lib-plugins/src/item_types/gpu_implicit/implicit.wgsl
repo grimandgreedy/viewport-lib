@@ -23,7 +23,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -198,21 +199,30 @@ struct FragOutput {
     @builtin(frag_depth) depth: f32,
 };
 
+// `FragOutput` for the HDR scene pass, with the indirect fraction.
+struct SceneFragOutput {
+    @location(0)         colour: vec4<f32>,
+    @location(1)         indirect_fraction: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+};
+
 @fragment
 fn fs_main(in: VertexOutput) -> FragOutput {
+    return fs_main_body(in);
+}
+
+@fragment
+fn fs_scene(in: VertexOutput) -> SceneFragOutput {
+    let out = fs_main_body(in);
+    let scene = scene_fragment(out.colour);
+    return SceneFragOutput(scene.colour, scene.indirect_fraction, out.depth);
+}
+
+fn fs_main_body(in: VertexOutput) -> FragOutput {
     // Reconstruct world-space ray from NDC position.
-    // Unproject two clip-space points at Z=0 (near) and Z=1 (far).
-    let near_clip = vec4<f32>(in.ndc_xy, 0.0, 1.0);
-    let far_clip  = vec4<f32>(in.ndc_xy, 1.0, 1.0);
-
-    let near_world_h = camera.inv_view_proj * near_clip;
-    let far_world_h  = camera.inv_view_proj * far_clip;
-
-    let near_world = near_world_h.xyz / near_world_h.w;
-    let far_world  = far_world_h.xyz  / far_world_h.w;
-
-    let ray_origin = near_world;
-    let ray_dir    = normalize(far_world - near_world);
+    let ray = viewport_ndc_ray(camera.inv_view_proj, in.ndc_xy);
+    let ray_origin = ray.origin;
+    let ray_dir    = ray.dir;
 
     // Sphere-march.
     var t       = 0.0;
@@ -256,7 +266,9 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     // Normal and shading via the shared helper. Implicit surfaces have a
     // well-defined outward normal so one-sided weighting is appropriate.
     let normal = estimate_normal(hit_pos);
-    let shaded_rgb = apply_scene_lighting(normal, base_colour.rgb, false, hit_pos, lights);
+    let shaded_rgb_terms = scene_lighting_terms(normal, false, hit_pos, lights);
+    let shaded_rgb = base_colour.rgb * (shaded_rgb_terms.indirect + shaded_rgb_terms.direct);
+    scene_light_split(base_colour.rgb * shaded_rgb_terms.indirect, base_colour.rgb * shaded_rgb_terms.direct, vec3<f32>(0.0));
     let shaded    = vec4<f32>(shaded_rgb, alpha);
 
     // Compute NDC depth of the hit point so the hardware depth test fires correctly.

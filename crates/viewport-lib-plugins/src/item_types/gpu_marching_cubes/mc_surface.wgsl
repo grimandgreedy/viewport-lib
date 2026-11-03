@@ -33,10 +33,21 @@ fn vs_main(v: VertexInput) -> VertexOutput {
 // Fragment stage
 // ---------------------------------------------------------------------------
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOutput) -> vec4<f32> {
     if !mc_clip_keep(in.world_pos) {
         discard;
     }
     return shade_mc(in.world_pos, in.world_norm);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOutput) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

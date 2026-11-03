@@ -54,7 +54,7 @@ fn generate<F: Fn(f32, f32, f32) -> [u8; 4]>(f: F) -> Vec<u8> {
     let mut data = Vec::with_capacity(SIZE * SIZE * 4);
     for y in 0..SIZE {
         for x in 0..SIZE {
-            // Map pixel center to UV, then to view-space normal.
+            // Map pixel centre to UV, then to view-space normal.
             // Convention: y=0 -> ny=+1 (up-facing normals, top of image = bright).
             let u = (x as f32 + 0.5) / SIZE as f32; // [0, 1]
             let v = (y as f32 + 0.5) / SIZE as f32; // [0, 1], v=0 -> top

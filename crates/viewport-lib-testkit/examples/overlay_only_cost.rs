@@ -290,11 +290,7 @@ fn main() {
     let view = colour.create_view(&wgpu::TextureViewDescriptor::default());
 
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = W as f32 / H as f32;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [W as f32, H as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -502,7 +498,7 @@ fn main() {
             .expect("upload cube");
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = renderer
             .resources_mut()
             .upload_material(vpl::Material::from_colour(Colour::linear_rgb(
@@ -539,7 +535,7 @@ fn main() {
             .expect("upload cube");
         let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = cube;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = renderer
             .resources_mut()
             .upload_material(vpl::Material::from_colour(Colour::linear_rgb(

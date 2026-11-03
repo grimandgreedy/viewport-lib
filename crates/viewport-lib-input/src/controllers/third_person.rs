@@ -29,8 +29,8 @@ use crate::{Camera, LookAngles};
 ///
 /// Call [`apply`](Self::apply) once per frame with the resolved
 /// [`ActionFrame`] and the world-space target position. The host owns the
-/// [`Camera`]; this controller writes its `center` / `distance` / `orientation`
-/// each frame.
+/// [`Camera`]; this controller places it on an orbit around the pivot each
+/// frame, focused on the pivot.
 pub struct ThirdPersonCameraController {
     /// Horizontal look angle in radians (rotation around world Z).
     pub yaw: f32,
@@ -134,9 +134,7 @@ impl ThirdPersonCameraController {
             pivot += Vec3::Z * self.shoulder_offset.y;
         }
 
-        camera.center = pivot;
-        camera.distance = self.distance;
-        camera.orientation = orientation;
+        camera.set_orbit(pivot.as_dvec3(), self.distance, orientation);
     }
 
     /// The current look.
@@ -155,7 +153,7 @@ impl ThirdPersonCameraController {
     /// so switching into third-person continues from the existing view instead
     /// of snapping. Call this when entering third-person mode.
     pub fn sync_from_camera(&mut self, camera: &Camera) {
-        let look = LookAngles::from_orientation(camera.orientation);
+        let look = LookAngles::from_orientation(camera.orientation());
         self.set_look(look.yaw, look.pitch);
     }
 
@@ -226,7 +224,7 @@ mod tests {
         let mut camera = Camera::default();
         c.apply(&mut camera, &look(0.0, 0.0), Vec3::ZERO);
         // yaw 0, pitch 0: aim +Y, so the eye sits 6 units along -Y at z=1.2.
-        let eye = camera.eye_position();
+        let eye = camera.eye().as_vec3();
         assert!(approx_eq(eye, Vec3::new(0.0, -6.0, 1.2)), "eye={eye:?}");
     }
 
@@ -238,8 +236,8 @@ mod tests {
             .with_shoulder_offset(Vec2::new(0.5, 0.0));
         let mut camera = Camera::default();
         c.apply(&mut camera, &look(0.0, 0.0), Vec3::ZERO);
-        assert!((camera.center.x - 0.5).abs() < 1e-5);
-        assert!((camera.center.z - 1.2).abs() < 1e-5);
+        assert!((camera.target().x - 0.5).abs() < 1e-5);
+        assert!((camera.target().z - 1.2).abs() < 1e-5);
     }
 
     #[test]

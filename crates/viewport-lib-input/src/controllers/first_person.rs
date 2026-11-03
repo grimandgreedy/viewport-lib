@@ -49,13 +49,14 @@ use glam::Vec3;
 
 use crate::input::action_frame::ActionFrame;
 use crate::{Camera, LookAngles};
+use viewport_lib_types::camera::Pose;
 
 /// Body-attached first-person camera controller.
 ///
 /// Call [`apply`](Self::apply) once per frame with the resolved
 /// [`ActionFrame`] and the world-space eye position. The host owns the
-/// [`Camera`]; this controller writes its `center` / `distance` / `orientation`
-/// each frame. Read [`forward_dir`](Self::forward_dir) /
+/// [`Camera`]; this controller writes its pose each frame and leaves the
+/// projection and focus distance alone. Read [`forward_dir`](Self::forward_dir) /
 /// [`right_dir`](Self::right_dir) to drive character movement.
 pub struct FirstPersonCameraController {
     /// Horizontal look angle in radians (rotation around world Z).
@@ -113,18 +114,21 @@ impl FirstPersonCameraController {
     ///
     /// `eye_position` is the world-space eye point, typically the player body
     /// origin offset by eye height.
-    pub fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, eye_position: Vec3) {
+    pub fn apply(
+        &mut self,
+        camera: &mut Camera,
+        frame: &ActionFrame,
+        eye_position: impl Into<glam::DVec3>,
+    ) {
         let look = frame.navigation.orbit;
         // Mouse right -> yaw increases (turn right, clockwise from above).
         // Mouse down -> pitch decreases (look down).
         self.turn_by(look.x * self.sensitivity, -look.y * self.sensitivity);
 
-        let look = self.look();
-        // distance 1 keeps the orbit centre one unit ahead of the eye so the
-        // view matrix is non-degenerate; it does not affect rendering.
-        camera.center = eye_position + look.direction();
-        camera.distance = 1.0;
-        camera.orientation = look.orientation();
+        camera.set_pose(Pose::new(
+            eye_position,
+            self.look().orientation().as_dquat(),
+        ));
     }
 
     /// The current look.
@@ -143,7 +147,7 @@ impl FirstPersonCameraController {
     /// so switching into first-person continues from the existing view instead
     /// of snapping. Call this when entering first-person mode.
     pub fn sync_from_camera(&mut self, camera: &Camera) {
-        let look = LookAngles::from_orientation(camera.orientation);
+        let look = LookAngles::from_orientation(camera.orientation());
         self.set_look(look.yaw, look.pitch);
     }
 
@@ -225,7 +229,7 @@ mod tests {
         let mut camera = Camera::default();
         let eye = Vec3::new(3.0, 4.0, 1.8);
         c.apply(&mut camera, &look(0.0, 0.0), eye);
-        assert!((camera.eye_position() - eye).length() < 1e-4);
+        assert!((camera.eye().as_vec3() - eye).length() < 1e-4);
     }
 
     #[test]

@@ -12,10 +12,11 @@
 #
 # --check builds nothing to serve: it compile-checks the library crates (with
 # their default features, which the examples do not all use, plus the
-# post-effects crate) and both web examples for wasm32. Code that only breaks on wasm,
-# such as a rayon call the serial stand-in in util/par.rs does not cover, builds
-# on every native target, so this is the quick way to catch it. It needs no
-# wasm-bindgen.
+# post-effects crate) and both web examples for wasm32, then checks the library
+# crates again on the wgpu29 and wgpu30 legs (the web examples are wgpu27 only).
+# Code that only breaks on wasm, such as a rayon call the serial stand-in in
+# util/par.rs does not cover, builds on every native target, so this is the
+# quick way to catch it. It needs no wasm-bindgen.
 #
 # The default Homebrew rustc does not ship the wasm32 std, so this routes the
 # build through the rustup stable toolchain (which does, once you have run
@@ -24,10 +25,11 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: scripts/build_web.sh [--release] [example]"
+    echo "usage: scripts/build_web.sh [--release] [--leg=wgpu29] [example]"
     echo "       scripts/build_web.sh --check"
     echo "  builds a web example for wasm32 and runs wasm-bindgen into its pkg/"
     echo "  example defaults to winit-web; web-scivis-smoke is the other one"
+    echo "  --leg builds on another wgpu leg (wgpu27, wgpu29, wgpu30); the default is wgpu27"
     echo "  --check compile-checks the library crates and both web examples instead"
 }
 
@@ -35,9 +37,11 @@ profile="debug"
 cargo_profile_flag=""
 example="winit-web"
 check_only=0
+leg_flags=()
 for arg in "$@"; do
     case "$arg" in
         --release) profile="release"; cargo_profile_flag="--release" ;;
+        --leg=wgpu27|--leg=wgpu29|--leg=wgpu30) leg_flags=(--no-default-features --features "${arg#--leg=}") ;;
         --check) check_only=1 ;;
         -h|--help) usage; exit 0 ;;
         -*) echo "unknown arg: $arg" >&2; usage; exit 1 ;;
@@ -76,6 +80,16 @@ if [ "$check_only" -eq 1 ]; then
     echo "checking web examples for wasm32-unknown-unknown ..."
     RUSTC="$tc_rustc" "$tc_cargo" check --target wasm32-unknown-unknown \
         -p viewport-lib-examples-winit --example winit-web --example web-scivis-smoke
+    for leg in wgpu29 wgpu30; do
+        echo "checking library crates for wasm32-unknown-unknown on $leg ..."
+        RUSTC="$tc_rustc" "$tc_cargo" check --target wasm32-unknown-unknown \
+            --no-default-features --features "viewport-lib/$leg" \
+            --features "viewport-lib-plugins/$leg,viewport-lib-plugins/item-types,viewport-lib-plugins/deformers" \
+            --features "viewport-lib-post-effects/$leg" \
+            -p viewport-lib \
+            -p viewport-lib-plugins \
+            -p viewport-lib-post-effects
+    done
     echo "done."
     exit 0
 fi
@@ -88,7 +102,8 @@ fi
 
 echo "building $example ($profile) for wasm32-unknown-unknown ..."
 RUSTC="$tc_rustc" "$tc_cargo" build $cargo_profile_flag \
-    --target wasm32-unknown-unknown -p viewport-lib-examples-winit --example "$example"
+    --target wasm32-unknown-unknown -p viewport-lib-examples-winit --example "$example" \
+    ${leg_flags[@]+"${leg_flags[@]}"}
 
 wasm_in="$(cargo metadata --format-version 1 --no-deps \
     | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"

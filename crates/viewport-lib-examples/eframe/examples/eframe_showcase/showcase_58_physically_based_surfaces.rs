@@ -33,7 +33,7 @@ const EMISSIVE_COL_SPACING: f32 = 2.4;
 /// Equirectangular sky/ground gradient (RGBA f32), sky at the top row. The stored
 /// values are relative; `LightingSettings::environment_intensity` scales them to
 /// nits.
-fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
+pub(crate) fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
     let mut px = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         let v = y as f32 / (h - 1).max(1) as f32;
@@ -124,12 +124,11 @@ impl App {
         renderer: &mut ViewportRenderer,
     ) {
         self.build_emissive_scene(renderer);
-        self.camera = vpl::Camera {
-            center: glam::Vec3::new(4.8, 0.5, 0.8),
-            distance: 17.0,
-            orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
-            ..vpl::Camera::default()
-        };
+        self.camera = vpl::Camera::orbit(
+            glam::DVec3::new(4.8, 0.5, 0.8),
+            17.0,
+            glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+        );
     }
 
     fn build_emissive_scene(&mut self, renderer: &mut ViewportRenderer) {
@@ -310,10 +309,10 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
         if !app.surfaces_state.show_skybox {
             fd.viewport.environment_background = EnvironmentBackground::colour();
         }
-        let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-        rc.far = (app.camera.distance * 3.0).max(60.0);
-        rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-        fd.camera.render_camera = rc;
+        let cam = &app.camera;
+        let far = (cam.focus_distance() * 3.0).max(60.0);
+        fd.camera.render_camera =
+            vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
     }
 }
 
@@ -347,8 +346,6 @@ pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

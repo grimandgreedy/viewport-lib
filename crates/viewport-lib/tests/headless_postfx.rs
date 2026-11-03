@@ -29,11 +29,7 @@ fn quad_mesh() -> MeshData {
 fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -68,7 +64,7 @@ fn transparent_over_empty_background_not_darker() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     // Cover the centre but leave the corners as background.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
     item.material = upload_material(
         &mut renderer,
         Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
@@ -82,7 +78,7 @@ fn transparent_over_empty_background_not_darker() {
         let i = ((y * size + x) * 4) as usize;
         px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
     };
-    let center = luma(size / 2, size / 2);
+    let centre = luma(size / 2, size / 2);
     let corner = luma(1, 1);
 
     // Corner must be the pure grey background (guards against the quad covering
@@ -93,8 +89,8 @@ fn transparent_over_empty_background_not_darker() {
     );
     // Centre (transparent quad over background) must not be darker than it.
     assert!(
-        center >= corner,
-        "transparent quad centre {center} darker than background {corner}"
+        centre >= corner,
+        "transparent quad centre {centre} darker than background {corner}"
     );
 }
 
@@ -130,7 +126,7 @@ fn bloom_glows_into_empty_background() {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
         // Small, so there is surrounding background for the halo to fall on.
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).into();
         item.material = glow;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
@@ -178,11 +174,7 @@ fn bloom_glows_into_empty_background() {
 fn foreground_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -206,7 +198,7 @@ fn coloured_item(
         renderer,
         Material::from_colour(Colour::from_linear_rgb_array(colour)),
     );
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item
 }
 
@@ -277,8 +269,8 @@ fn foreground_override_projection_avoids_near_clip() {
 
     // A small box held 0.05 world units in front of the eye: inside the
     // scene near plane (0.1 for the default camera).
-    let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-    let fwd = glam::Vec3::from(frame.camera.render_camera.forward);
+    let eye = frame.camera.render_camera.eye_position().as_vec3();
+    let fwd = frame.camera.render_camera.forward();
     let model = glam::Mat4::from_translation(eye + fwd * 0.05)
         * glam::Mat4::from_scale(glam::Vec3::splat(0.02));
     let fg = coloured_item(&mut renderer, mesh_id, [0.9, 0.1, 0.1], model);
@@ -619,18 +611,14 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     // Ambient-only lighting: the hemisphere term is uniform per face, so a
@@ -699,11 +687,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -712,7 +696,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     let mut mat = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
     mat.emissive = Colour::linear_rgb(400.0, 400.0, 400.0);
     item.material = upload_material(&mut renderer, mat);
@@ -788,9 +772,9 @@ fn vignette_darkens_corners_only() {
     );
 }
 
-/// Colour-grading LUT: a strip LUT that zeroes the red channel must remove
-/// red from the output while leaving green essentially unchanged, and an
-/// unset `grade_lut` must not change the image.
+/// Display-referred colour-grading LUT: a strip LUT that zeroes the red
+/// channel must remove red from the background while leaving green
+/// essentially unchanged, and an unset `grade_lut` must not change the image.
 #[test]
 fn grade_lut_remaps_colour() {
     let Some((device, queue)) = headless_device() else {
@@ -828,6 +812,7 @@ fn grade_lut_remaps_colour() {
         let mut frame = tonemap_frame(size, bg);
         if grade {
             frame.effects.post_process.grade_lut = Some(lut_id);
+            frame.effects.post_process.grading_space = viewport_lib::GradingSpace::Display;
         }
         renderer.render_offscreen(&device, &queue, &frame, size, size)
     };
@@ -1054,12 +1039,14 @@ fn post_effect_producer_fills_slot() {
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
         item.material = upload_material(
             &mut renderer,
             Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
         );
-        item.settings.unlit = true;
+        // Ambient occlusion darkens the indirect share of the light, so the
+        // quad is lit by the hemisphere fill alone.
+        frame.effects.lighting.lights.clear();
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         renderer.render_offscreen(&device, &queue, &frame, size, size)
     };
@@ -1249,7 +1236,7 @@ fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
         item.material = upload_material(
             &mut renderer,
             Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)),

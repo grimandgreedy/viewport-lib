@@ -42,6 +42,16 @@ struct Material {
     ior: f32,
     _pad0: f32,
     _pad1: f32,
+    // Dielectric reflectance at normal incidence (rgb) and grazing (w).
+    dielectric: vec4<f32>,
+    // (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation).
+    layers0: vec4<f32>,
+    // (sheen colour rgb, sheen roughness).
+    layers1: vec4<f32>,
+    // (absorption coefficient rgb, emissive exposure weight): Beer-Lambert,
+    // per world unit, inside a transmissive mesh; the weight is read by
+    // `emitted`.
+    volume: vec4<f32>,
 }
 
 // data.xyz = direction (toward light, normalised) for kind 0, or position for
@@ -63,6 +73,7 @@ struct Frame {
     env_dist: vec4<f32>,  // env-IS: width, height, integral, enabled
     emit: vec4<u32>,      // area-light NEE: count, offset into env_tables, _, _
     inst: vec4<u32>,      // two-level BVH: instance count, offset into env_tables, _, _
+    exposure: vec4<f32>,  // x = exposure multiplier at the radiance sources; 1 for bakes
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -96,8 +107,79 @@ struct Frame {
 // Built on the CPU by EnvDistribution; sliced by env_func_at / env_cond_at /
 // env_marg_at below.
 @group(0) @binding(14) var<storage, read> env_tables: array<f32>;
+// The split-sum BRDF LUT (x = N.V, y = roughness), read for the specular
+// energy compensation, as the raster path does.
+@group(0) @binding(15) var brdf_lut: texture_2d<f32>;
+@group(0) @binding(16) var brdf_lut_samp: sampler;
 
 // #include "helpers/brdf.wgsl"
+// #include "helpers/depth.wgsl"
+
+// The raster path's specular energy compensation for this surface.
+fn energy_comp(n: vec3<f32>, v: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
+    let uv = vec2<f32>(max(dot(n, v), 1e-3), roughness);
+    let dfg = textureSampleLevel(brdf_lut, brdf_lut_samp, uv, 0.0).rg;
+    return viewport_brdf_energy_compensation(f0, dfg);
+}
+
+// ----- Layered lobes -----
+
+// The layers over material `m` at a hit with shading normal `n`, as the
+// rasteriser resolves them. The tracer has no mesh tangents, so anisotropy
+// turns the frame the rasteriser builds from the normal for a mesh without
+// them.
+fn rt_layers(m: Material, n: vec3<f32>, v: vec3<f32>) -> ViewportBrdfLayers {
+    var ly: ViewportBrdfLayers;
+    var flags = 0u;
+    if m.layers0.x > 0.0 {
+        flags = flags | VIEWPORT_BRDF_LAYER_CLEARCOAT;
+        ly.clearcoat = m.layers0.x;
+        ly.clearcoat_roughness = max(m.layers0.y, 0.04);
+    }
+    if max(m.layers1.r, max(m.layers1.g, m.layers1.b)) > 0.0 {
+        flags = flags | VIEWPORT_BRDF_LAYER_SHEEN;
+        let sr = max(m.layers1.w, 0.04);
+        ly.sheen_colour = m.layers1.rgb;
+        ly.sheen_roughness = sr;
+        let uv = vec2<f32>(max(dot(n, v), 1e-3), sr);
+        ly.sheen_dfg = textureSampleLevel(brdf_lut, brdf_lut_samp, uv, 0.0).b;
+        ly.sheen_scaling = viewport_brdf_sheen_scaling(ly.sheen_colour, ly.sheen_dfg);
+    }
+    if m.layers0.z != 0.0 {
+        flags = flags | VIEWPORT_BRDF_LAYER_ANISOTROPY;
+        let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.z) < 0.9);
+        let t = normalize(cross(up, n));
+        let b = cross(n, t);
+        let c = cos(m.layers0.w);
+        let sn = sin(m.layers0.w);
+        ly.anisotropy = m.layers0.z;
+        ly.anisotropy_t = t * c + b * sn;
+        ly.anisotropy_b = b * c - t * sn;
+    }
+    ly.flags = flags;
+    return ly;
+}
+
+// The base roughness under the layers: a coat raises it toward its own.
+fn rt_base_roughness(m: Material, ly: ViewportBrdfLayers) -> f32 {
+    if (ly.flags & VIEWPORT_BRDF_LAYER_CLEARCOAT) == 0u {
+        return m.roughness;
+    }
+    let r = max(m.roughness, 0.04);
+    return mix(r, max(r, ly.clearcoat_roughness), ly.clearcoat);
+}
+
+// The surface's BSDF times N.L for light of `radiance` from `l`: the shared
+// direct BRDF, layered when the material has layers.
+fn rt_eval(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, radiance: vec3<f32>, m: Material,
+           f0: vec3<f32>, f90: f32, ec: vec3<f32>, ly: ViewportBrdfLayers) -> vec3<f32> {
+    if ly.flags != 0u {
+        return viewport_brdf_light_contrib_layered(n, v, l, radiance, m.base, m.metallic,
+                                                   m.roughness, f0, f90, ec, ly);
+    }
+    return viewport_brdf_light_contrib_f90(n, v, l, radiance, m.base, m.metallic, m.roughness,
+                                           f0, f90, ec);
+}
 
 // ----- RNG (PCG hash) -----
 
@@ -426,15 +508,30 @@ fn dir_to_equirect_uv(dir: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(0.5 + phi / (2.0 * PI), 0.5 - theta / PI);
 }
 
+// Radiance `c` scaled by the exposure factor `k`. A factor of exactly 1
+// returns `c` untouched, so the compiler cannot fold the multiply into the
+// arithmetic around it and an unexposed trace stays bit-exact.
+fn expose(c: vec3<f32>, k: f32) -> vec3<f32> {
+    if k == 1.0 { return c; }
+    return c * k;
+}
+
+// Exposed radiance on ray miss: the environment or the hemisphere gradient.
 fn sky(dir: vec3<f32>) -> vec3<f32> {
     if frame.params.w != 0u {
         // Equirect environment (image-based lighting).
         let uv = dir_to_equirect_uv(dir);
-        return textureSampleLevel(env_tex, env_samp, uv, 0.0).rgb;
+        return expose(textureSampleLevel(env_tex, env_samp, uv, 0.0).rgb, frame.exposure.x);
     }
     // Z-up hemisphere gradient.
     let t = clamp(dir.z * 0.5 + 0.5, 0.0, 1.0);
-    return mix(frame.sky_bottom.rgb, frame.sky_top.rgb, t);
+    return expose(mix(frame.sky_bottom.rgb, frame.sky_top.rgb, t), frame.exposure.x);
+}
+
+// A material's emitted radiance, exposed by its weight: `mix(1, exposure, w)`.
+// Weight 0 keeps it display-relative.
+fn emitted(m: Material) -> vec3<f32> {
+    return expose(m.emissive, 1.0 + m.volume.w * (frame.exposure.x - 1.0));
 }
 
 // ----- Environment importance sampling -----
@@ -614,13 +711,14 @@ fn fresnel_dielectric(cos_i: f32, n1: f32, n2: f32) -> f32 {
 
 // ----- Direct lighting (NEE to analytic delta lights) -----
 
-fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>) -> vec3<f32> {
+fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32, ly: ViewportBrdfLayers) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
+    let ec = energy_comp(n, v, m.roughness, f0);
     let count = frame.dims.z;
     for (var i = 0u; i < count; i = i + 1u) {
         let lt = lights[i];
         var l: vec3<f32>;
-        var radiance = lt.colour.rgb;
+        var radiance = expose(lt.colour.rgb, frame.exposure.x);
         var max_t = T_MAX;
         if lt.data.w < 0.5 {
             // Directional.
@@ -642,7 +740,7 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
         }
         if dot(n, l) <= 0.0 { continue; }
         if any_hit(pos + n * EPS, l, max_t) { continue; }
-        sum = sum + pbr_light_contrib(n, v, l, radiance, m.base, m.metallic, m.roughness, f0);
+        sum = sum + rt_eval(n, v, l, radiance, m, f0, f90, ec, ly);
     }
     return sum;
 }
@@ -650,11 +748,11 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
 // Pdf (per solid angle) of the opaque-lobe sampler below for direction `l`,
 // matching its diffuse/specular mixture. Needed to MIS environment NEE against
 // BSDF sampling. Returns 0 for directions at or below the surface.
-fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: f32, f0: vec3<f32>) -> f32 {
+fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: f32, f0: vec3<f32>, f90: f32) -> f32 {
     let ndotl = dot(n, l);
     if ndotl <= 0.0 { return 0.0; }
     let ndotv = max(dot(n, v), 1.0e-3);
-    let fr = F_Schlick(ndotv, f0);
+    let fr = viewport_brdf_f_schlick_f90(ndotv, f0, f90);
     var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
     p_spec = mix(p_spec, 1.0, metallic * 0.5);
     let rough = clamp(roughness, 0.04, 1.0);
@@ -662,9 +760,88 @@ fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: 
     let hvec = normalize(v + l);
     let ndoth = max(dot(n, hvec), 1.0e-4);
     let vdoth = max(dot(v, hvec), 1.0e-4);
-    let d = D_GGX(ndoth, rough);
+    let d = viewport_brdf_d_ggx(ndoth, rough);
     let pdf_spec = d * ndoth / (4.0 * vdoth);
     return p_spec * pdf_spec + (1.0 - p_spec) * pdf_diff;
+}
+
+// The probabilities the layered sampler picks each strategy with:
+// (coat GGX, base specular, cosine). The cosine strategy covers the diffuse
+// and sheen lobes.
+fn layered_probs(n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32,
+                 ly: ViewportBrdfLayers) -> vec3<f32> {
+    let ndotv = max(dot(n, v), 1.0e-3);
+    let fr = viewport_brdf_f_schlick_f90(ndotv, f0, f90);
+    var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
+    p_spec = mix(p_spec, 1.0, m.metallic * 0.5);
+    var p_coat = 0.0;
+    if (ly.flags & VIEWPORT_BRDF_LAYER_CLEARCOAT) != 0u {
+        p_coat = clamp(viewport_brdf_coat_fresnel(ndotv, ly.clearcoat), 0.1, 0.5);
+    }
+    let base = 1.0 - p_coat;
+    return vec3<f32>(p_coat, base * p_spec, base * (1.0 - p_spec));
+}
+
+// Solid-angle pdf of the GGX half-vector sampler at `roughness` for `l`.
+fn ggx_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f32 {
+    let hvec = normalize(v + l);
+    let ndoth = max(dot(n, hvec), 1.0e-4);
+    let vdoth = max(dot(v, hvec), 1.0e-4);
+    return viewport_brdf_d_ggx(ndoth, roughness) * ndoth / (4.0 * vdoth);
+}
+
+// Solid-angle pdf of the anisotropic GGX half-vector sampler for `l`.
+fn ggx_aniso_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32,
+                 ly: ViewportBrdfLayers) -> f32 {
+    let hvec = normalize(v + l);
+    let ndoth = max(dot(n, hvec), 1.0e-4);
+    let vdoth = max(dot(v, hvec), 1.0e-4);
+    let a = viewport_brdf_aniso_alphas(roughness, ly.anisotropy);
+    let d = viewport_brdf_d_ggx_aniso(a.x, a.y, dot(ly.anisotropy_t, hvec),
+                                      dot(ly.anisotropy_b, hvec), ndoth);
+    return d * ndoth / (4.0 * vdoth);
+}
+
+// Anisotropic GGX half-vector sample: an isotropic unit-roughness slope
+// stretched by the two alphas, so the pdf over half vectors is D * N.H.
+fn ggx_aniso_sample_h(n: vec3<f32>, roughness: f32, ly: ViewportBrdfLayers,
+                      rng: ptr<function, u32>) -> vec3<f32> {
+    let a = viewport_brdf_aniso_alphas(roughness, ly.anisotropy);
+    let u1 = rand(rng);
+    let u2 = min(rand(rng), 0.999999);
+    let phi = 2.0 * PI * u1;
+    let r = sqrt(u2 / (1.0 - u2));
+    let h = normalize(vec3<f32>(-a.x * r * cos(phi), -a.y * r * sin(phi), 1.0));
+    return normalize(ly.anisotropy_t * h.x + ly.anisotropy_b * h.y + n * h.z);
+}
+
+// Pdf (per solid angle) of the layered sampler for direction `l`: the
+// mixture of the coat, base specular and cosine strategies.
+fn layered_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32,
+               ly: ViewportBrdfLayers) -> f32 {
+    let ndotl = dot(n, l);
+    if ndotl <= 0.0 { return 0.0; }
+    let p = layered_probs(n, v, m, f0, f90, ly);
+    let rough = clamp(m.roughness, 0.04, 1.0);
+    var pdf = p.z * ndotl / PI;
+    if (ly.flags & VIEWPORT_BRDF_LAYER_ANISOTROPY) != 0u {
+        pdf += p.y * ggx_aniso_pdf(n, v, l, rough, ly);
+    } else {
+        pdf += p.y * ggx_pdf(n, v, l, rough);
+    }
+    if p.x > 0.0 {
+        pdf += p.x * ggx_pdf(n, v, l, ly.clearcoat_roughness);
+    }
+    return pdf;
+}
+
+// The pdf of whichever sampler the surface uses.
+fn surface_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32,
+               ly: ViewportBrdfLayers) -> f32 {
+    if ly.flags != 0u {
+        return layered_pdf(n, v, l, m, f0, f90, ly);
+    }
+    return bsdf_pdf(n, v, l, m.metallic, m.roughness, f0, f90);
 }
 
 // One environment next-event-estimation sample at an opaque surface: sample a
@@ -672,14 +849,15 @@ fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: 
 // (power heuristic) radiance for unit throughput. The matching BSDF-sampled
 // environment hit is weighted on ray miss in trace_path, so the two strategies
 // combine without double counting.
-fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32, ly: ViewportBrdfLayers, rng: ptr<function, u32>) -> vec3<f32> {
     if !env_is_enabled() { return vec3<f32>(0.0); }
     let es = sample_env(rand(rng), rand(rng));
     if es.pdf <= 0.0 || dot(n, es.dir) <= 0.0 { return vec3<f32>(0.0); }
     if any_hit(pos + n * EPS, es.dir, T_MAX) { return vec3<f32>(0.0); }
     let env_rad = sky(es.dir);
-    let bsdf_cos = pbr_light_contrib(n, v, es.dir, vec3<f32>(1.0), m.base, m.metallic, m.roughness, f0);
-    let pdf_b = bsdf_pdf(n, v, es.dir, m.metallic, m.roughness, f0);
+    let ec = energy_comp(n, v, m.roughness, f0);
+    let bsdf_cos = rt_eval(n, v, es.dir, vec3<f32>(1.0), m, f0, f90, ec, ly);
+    let pdf_b = surface_pdf(n, v, es.dir, m, f0, f90, ly);
     let w = power_heuristic(es.pdf, pdf_b);
     return bsdf_cos * env_rad * (w / es.pdf);
 }
@@ -698,7 +876,7 @@ fn emitter_tri(i: u32) -> u32 {
 // the matching BSDF-sampled emitter hit is dropped in trace_path (counted only on
 // delta/camera arrivals), so the two do not double count. Emitters are treated as
 // two-sided. Returns zero when the scene has no emitters.
-fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, f90: f32, ly: ViewportBrdfLayers, rng: ptr<function, u32>) -> vec3<f32> {
     let count = frame.emit.x;
     if count == 0u { return vec3<f32>(0.0); }
 
@@ -728,11 +906,12 @@ fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: 
     if cos_l < 1.0e-4 { return vec3<f32>(0.0); }
     if any_hit(pos + n * EPS, wi, dist - 1.0e-3) { return vec3<f32>(0.0); }
 
-    let le = materials[tri.mat].emissive;
+    let le = emitted(materials[tri.mat]);
     // Estimator: (f * cos_surface * Le) / pdf_sa, with the solid-angle pdf of
     // uniform-over-emitters, uniform-on-triangle sampling
     //   pdf_sa = dist^2 / (count * area * cos_light),  area = area2 / 2.
-    let bsdf_cos = pbr_light_contrib(n, v, wi, le, m.base, m.metallic, m.roughness, f0);
+    let ec = energy_comp(n, v, m.roughness, f0);
+    let bsdf_cos = rt_eval(n, v, wi, le, m, f0, f90, ec, ly);
     let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
     return bsdf_cos * inv_pdf;
 }
@@ -769,7 +948,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
             break;
         }
 
-        let m = materials[h.mat];
+        let mat = materials[h.mat];
         // Emissive surfaces: counted on a delta or camera arrival (mis_bsdf_pdf
         // < 0), where no area-light NEE sampled them. Opaque bounces reach
         // emitters through sample_emitters below instead, so counting the
@@ -777,23 +956,34 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
         // scene m.emissive is zero and the gate falls back to counting always, so
         // scenes without emissive geometry are unchanged.
         if mis_bsdf_pdf < 0.0 || frame.emit.x == 0u {
-            radiance = radiance + throughput * m.emissive;
+            radiance = radiance + throughput * emitted(mat);
+        }
+
+        // Leaving a transmissive volume through its back face: the segment
+        // just travelled was inside it, so absorb over its length.
+        if !h.front && mat.transmission > 0.0 {
+            throughput = throughput * exp(-mat.volume.xyz * h.t);
         }
 
         let n = h.ns;
         let v = -rd;
-        let f0 = mix(vec3<f32>(0.04), m.base, m.metallic);
+        // Layers over the base, and the base with the coat's roughness raise.
+        let ly = rt_layers(mat, n, v);
+        var m = mat;
+        m.roughness = rt_base_roughness(mat, ly);
+        let f0 = mix(m.dielectric.xyz, m.base, m.metallic);
+        let f90 = m.dielectric.w + (1.0 - m.dielectric.w) * m.metallic;
         let rough = clamp(m.roughness, 0.04, 1.0);
 
         // Next-event estimation to analytic lights, scaled down by the
         // transmission fraction so clear glass is not diffusely lit.
         let opacity = 1.0 - select(0.0, m.transmission, m.metallic < 0.5);
-        radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0) * opacity;
+        radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0, f90, ly) * opacity;
         // Environment NEE (importance-sampled), same opaque-only scaling.
-        radiance = radiance + throughput * env_nee(h.pos, n, v, m, f0, rng) * opacity;
+        radiance = radiance + throughput * env_nee(h.pos, n, v, m, f0, f90, ly, rng) * opacity;
         // Area-light NEE toward emissive geometry, same opaque-only scaling. Paired
         // with the delta-gated emission above so an emitter is counted once.
-        radiance = radiance + throughput * sample_emitters(h.pos, n, v, m, f0, rng) * opacity;
+        radiance = radiance + throughput * sample_emitters(h.pos, n, v, m, f0, f90, ly, rng) * opacity;
 
         // Choose the interaction: a dielectric transmission event through a
         // sampled microfacet, or the opaque reflection lobes. Metals never
@@ -819,7 +1009,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 let l = reflect(-v, hvec);
                 if dot(h.ng, l) <= 0.0 { break; }
                 let ndotl = max(dot(n, l), 1.0e-4);
-                let g = G_Smith(ndotv, ndotl, rough);
+                let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
                 throughput = throughput * (g * cos_i / (ndotv * ndoth));
                 ro = h.pos + h.ng * EPS;
                 rd = l;
@@ -829,16 +1019,42 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 if dot(l, l) < 1.0e-6 { break; }
                 let ln = normalize(l);
                 let ndotl = max(abs(dot(n, ln)), 1.0e-4);
-                let g = G_Smith(ndotv, ndotl, rough);
+                let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
                 throughput = throughput * m.base * (g * cos_i / (ndotv * max(abs(dot(n, hvec)), 1.0e-4)));
                 ro = h.pos - h.ng * EPS;
                 rd = ln;
             }
+        } else if ly.flags != 0u {
+            throughput = throughput / opacity;
+            // Layered surface: pick a strategy, then weight the sample by the
+            // whole BSDF over the mixture pdf.
+            let p = layered_probs(n, v, m, f0, f90, ly);
+            let u = rand(rng);
+            var l: vec3<f32>;
+            if u < p.x {
+                l = reflect(-v, ggx_sample_h(n, ly.clearcoat_roughness, rng));
+            } else if u < p.x + p.y {
+                if (ly.flags & VIEWPORT_BRDF_LAYER_ANISOTROPY) != 0u {
+                    l = reflect(-v, ggx_aniso_sample_h(n, rough, ly, rng));
+                } else {
+                    l = reflect(-v, ggx_sample_h(n, rough, rng));
+                }
+            } else {
+                l = cosine_sample(n, rng);
+            }
+            if dot(n, l) <= 0.0 { break; }
+            let pdf = layered_pdf(n, v, l, m, f0, f90, ly);
+            if pdf <= 0.0 { break; }
+            let ec = energy_comp(n, v, m.roughness, f0);
+            throughput = throughput * rt_eval(n, v, l, vec3<f32>(1.0), m, f0, f90, ec, ly) / pdf;
+            ro = h.pos + n * EPS;
+            rd = l;
+            mis_bsdf_pdf = pdf;
         } else {
             throughput = throughput / opacity;
             // Sample a new direction: pick specular vs diffuse lobe.
             let ndotv = max(dot(n, v), 1.0e-3);
-            let fr = F_Schlick(ndotv, f0);
+            let fr = viewport_brdf_f_schlick_f90(ndotv, f0, f90);
             var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
             p_spec = mix(p_spec, 1.0, m.metallic * 0.5);
 
@@ -850,8 +1066,8 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
                 if ndotl <= 0.0 { break; }
                 let ndoth = max(dot(n, hvec), 1.0e-4);
                 let vdoth = max(dot(v, hvec), 1.0e-4);
-                let g = G_Smith(ndotv, ndotl, rough);
-                let f = F_Schlick(vdoth, f0);
+                let g = viewport_brdf_g_smith(ndotv, ndotl, rough);
+                let f = viewport_brdf_f_schlick_f90(vdoth, f0, f90);
                 // weight = brdf * ndotl / pdf = G F VdotH / (NdotV NdotH), then / p_spec.
                 let weight = f * (g * vdoth / (ndotv * ndoth));
                 throughput = throughput * weight / p_spec;
@@ -866,7 +1082,7 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
             }
             // Record the pdf of the sampled direction so a following environment
             // hit is MIS-weighted against the env NEE done above.
-            mis_bsdf_pdf = bsdf_pdf(n, v, rd, m.metallic, m.roughness, f0);
+            mis_bsdf_pdf = bsdf_pdf(n, v, rd, m.metallic, m.roughness, f0, f90);
         }
 
         // Russian roulette.
@@ -882,9 +1098,10 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0:
 fn ray_through(uv: vec2<f32>) -> vec3<f32> {
     var ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
-    let far = frame.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
-    let far_point = far.xyz / far.w;
-    return normalize(far_point - frame.cam_pos.xyz);
+    // The far end of the depth range; with no far plane it is at infinity
+    // (w = 0) and its xyz is the direction.
+    let far = frame.inv_view_proj * vec4<f32>(ndc, VIEWPORT_DEPTH_FAR, 1.0);
+    return normalize(far.xyz - frame.cam_pos.xyz * far.w);
 }
 
 fn camera_ray(px: vec2<f32>, rng: ptr<function, u32>) -> vec3<f32> {
@@ -971,7 +1188,7 @@ fn texel_direct(pos: vec3<f32>, n: vec3<f32>) -> DirectLighting {
     for (var i = 0u; i < count; i = i + 1u) {
         let lt = lights[i];
         var l: vec3<f32>;
-        var radiance = lt.colour.rgb;
+        var radiance = expose(lt.colour.rgb, frame.exposure.x);
         var max_t = T_MAX;
         if lt.data.w < 0.5 {
             l = normalize(lt.data.xyz);
@@ -1035,7 +1252,7 @@ fn texel_emitter_nee(pos: vec3<f32>, n: vec3<f32>, rng: ptr<function, u32>) -> D
     if any_hit(pos + n * EPS, wi, dist - 1.0e-3) { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
 
     // E = Le * cos_surface / pdf_sa, pdf_sa = dist^2 / (count * area * cos_light).
-    let le = materials[tri.mat].emissive;
+    let le = emitted(materials[tri.mat]);
     let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
     let contrib = le * ndl * inv_pdf;
     return DirectLighting(contrib, wi * luminance(contrib));

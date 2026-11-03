@@ -46,11 +46,7 @@ fn sphere_frame(
         .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 32, 16))
         .unwrap();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -60,7 +56,7 @@ fn sphere_frame(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(renderer, material);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
@@ -254,15 +250,8 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
     let plane = upload_material(&mut renderer, plane);
     let render = |renderer: &mut ViewportRenderer, from_environment: bool| {
         let mut frame = FrameData::default();
-        let camera = Camera {
-            orientation: glam::Quat::from_rotation_x(0.2),
-            ..Camera::default()
-        };
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&camera);
-            rc.aspect = 1.0;
-            rc
-        };
+        let camera = Camera::orbit(glam::DVec3::ZERO, 5.0, glam::Quat::from_rotation_x(0.2));
+        frame.camera.render_camera = RenderCamera::from_camera(&camera);
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -284,7 +273,7 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
         }
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = plane;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         centre(&renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE))[0]
@@ -474,4 +463,58 @@ fn compressed_sky_needs_device_support() {
         "{err:?}"
     );
     assert_eq!(renderer.resources().uploads_pending(), 0);
+}
+
+/// White furnace: a white rough metal under a uniform environment of radiance
+/// 1 reflects close to all of it. Without multiple-scattering compensation a
+/// single-scattering GGX lobe at roughness 1 loses about a third. The specular
+/// scale halves the reflection to keep it below the default Khronos Neutral
+/// tone map's highlight compression, where that map is a 0.04 offset.
+#[test]
+fn rough_metal_conserves_energy_in_a_white_furnace() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let white = solid(&mut renderer, &device, &queue, [1.0, 1.0, 1.0]);
+    let mut lighting = EnvironmentLighting::new(white);
+    let scale = 0.5;
+    lighting.specular_scale = scale;
+    let metal = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 1.0);
+    let mut frame = sphere_frame(&mut renderer, &device, lighting, metal);
+    frame.viewport.environment_background = EnvironmentBackground::colour();
+    let px = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+
+    // Mean red radiance over a disc at the sphere's centre, where N faces V.
+    let decode = |v: u8| {
+        let c = v as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (c, r) = (SIZE as i32 / 2, 4);
+    let mut sum = 0.0;
+    let mut n = 0;
+    for y in c - r..=c + r {
+        for x in c - r..=c + r {
+            if (x - c) * (x - c) + (y - c) * (y - c) <= r * r {
+                sum += decode(pixel(&px, x as u32, y as u32)[0]);
+                n += 1;
+            }
+        }
+    }
+    let mean = sum / n as f32;
+    assert!(
+        (0.04..0.76).contains(&mean),
+        "outside the offset band: {mean}"
+    );
+    let mean = (mean + 0.04) / scale;
+    eprintln!("white furnace centre-disc radiance: {mean}");
+    assert!(
+        (0.95..=1.05).contains(&mean),
+        "a white rough metal reflects the furnace's radiance, got {mean}"
+    );
 }

@@ -138,7 +138,9 @@ fn a_selected_batch_outlines_every_billboard() {
 
     let outlined_pixels = |renderer: &mut ViewportRenderer, count: usize| {
         let mut frame = sub_object_pick_frame();
-        frame.camera.render_camera.aspect = 4.0;
+        frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(
+            &viewport_lib::Camera::default().with_aspect(4.0),
+        );
         frame.camera.viewport_size = [512.0, 128.0];
         frame.camera.pixels_per_point = 1.0;
         frame.interaction.outline_selected = true;

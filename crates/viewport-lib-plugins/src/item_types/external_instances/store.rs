@@ -79,6 +79,7 @@ pub(super) fn build_draw_data(
     bgl: &gpu::BindGroupLayout,
     set: &ExternalInstanceSet,
     item: &ExternalInstancesItem,
+    origin: glam::DVec3,
 ) -> Option<ExternalInstancesGpuData> {
     // Clamp the requested window to the buffer's whole elements so a stale
     // count after a pool shrink cannot read past the end.
@@ -89,7 +90,7 @@ pub(super) fn build_draw_data(
         return None;
     }
     let uniform = ExternalInstancesUniform {
-        model: item.model,
+        model: crate::item_types::origin::rel_model(item.model, origin),
         colour: item.colour.to_linear_rgba(),
         scale: item.scale,
         _pad: [0.0; 3],

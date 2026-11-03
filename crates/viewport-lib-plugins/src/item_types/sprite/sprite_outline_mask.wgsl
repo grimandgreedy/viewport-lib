@@ -75,15 +75,15 @@ fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
                       + cam_up    * (rotated.y * half);
         return camera.view_proj * vec4<f32>(ws_pos, 1.0);
     } else {
-        let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px   = inst.size * 0.5;
         let ndc_off   = rotated * half_px
                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         return vec4<f32>(
-            center.x + ndc_off.x * center.w,
-            center.y + ndc_off.y * center.w,
-            center.z,
-            center.w,
+            centre.x + ndc_off.x * centre.w,
+            centre.y + ndc_off.y * centre.w,
+            centre.z,
+            centre.w,
         );
     }
 }

@@ -351,12 +351,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_nm_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.8),
-        distance: 10.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 0.8),
+        10.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +392,7 @@ pub(crate) fn scene(
                 {
                     let mut _t = vpl::LightSource::default();
                     _t.kind = vpl::LightKind::Point {
-                        position: [3.0, 3.0, 3.0],
+                        position: [3.0, 3.0, 3.0].into(),
                         range: 15.0,
                         radius: 0.1,
                     };
@@ -435,10 +434,10 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     fd.effects.display.mode = vpl::PipelineMode::Direct;
     // Cap far plane for better cascade distribution, but track orbit
     // distance so the scene doesn't disappear when zooming out.
-    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(60.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.focus_distance() * 3.0).max(60.0);
+    fd.camera.render_camera =
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
 }
 
 // ---------------------------------------------------------------------------
@@ -462,8 +461,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

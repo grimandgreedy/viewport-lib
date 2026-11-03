@@ -12,9 +12,9 @@
 //! | 2-finger rotate | twist |
 //! | tap, double tap, long press | reported, unused here |
 //!
-//! None of that is written here: the winit events go through `from_winit` into a
-//! `ViewportInput`, which recognises the gestures and resolves them into the
-//! `ActionFrame` the orbit controller applies.
+//! None of that is written here: the winit events go through the winit adapter's
+//! `translate` into a `ViewportInput`, which recognises the gestures and resolves
+//! them into the `ActionFrame` the orbit controller applies.
 //!
 //! The example owns its wgpu surface and calls `Surface::get_current_texture`,
 //! which returns a `Result` on wgpu 27 and a `CurrentSurfaceTexture` enum from

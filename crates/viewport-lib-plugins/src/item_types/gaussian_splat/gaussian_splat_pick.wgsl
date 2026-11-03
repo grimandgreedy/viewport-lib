@@ -16,8 +16,8 @@
 //
 // Group 0: the shared scene bindings, prefixed from SHARED_BINDINGS_WGSL; the
 //          vertex stage reads the camera and the fragment stage needs none.
-//          The pick pass binds clip volumes and no clip planes, so a splat
-//          whose centre a clip volume cuts away is not picked.
+//          A splat whose centre a clip plane or clip volume cuts away is
+//          not picked.
 // Group 1: SplatUniform + sorted_indices + positions + scales + rotations
 //          (bindings 0-4), reused unchanged from the render bind group.
 //          Bindings 5 (opacities) is read; binding 6 (sh_coefficients) is
@@ -170,16 +170,16 @@ fn vs_main(
     out.sigma_inv_c =  s00 * inv_det;
     out.opacity = opacity;
 
-    let clip_center = camera.view_proj * vec4<f32>(world_pos, 1.0);
-    let w_inv = 1.0 / clip_center.w;
-    let ndc_xy = clip_center.xy * w_inv;
+    let clip_centre = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let w_inv = 1.0 / clip_centre.w;
+    let ndc_xy = clip_centre.xy * w_inv;
     let corner = QUAD_UV[vi];
     let offset_px = corner * radius_px;
     let offset_ndc = vec2<f32>(offset_px.x * 2.0 / vp_w, offset_px.y * 2.0 / vp_h);
     out.uv = offset_px;
 
     let ndc_final = ndc_xy + offset_ndc;
-    out.clip_pos = vec4<f32>(ndc_final * clip_center.w, clip_center.z, clip_center.w);
+    out.clip_pos = vec4<f32>(ndc_final * clip_centre.w, clip_centre.z, clip_centre.w);
     // Forward the de-sorted splat index, not the sorted draw position: the
     // primitive channel must name the actual splat so the pick resolves to a
     // stable SubObjectRef::Splat regardless of the back-to-front sort order.
@@ -197,7 +197,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VsOut) -> FragOut {
-    if splat_u.ignore_clip == 0u && !viewport_pass_clip_volumes(in.centre) { discard; }
+    if splat_u.ignore_clip == 0u && !viewport_clip_test(in.centre) { discard; }
     let ux = in.uv.x;
     let uy = in.uv.y;
     let d2 = ux*ux*in.sigma_inv_a + 2.0*ux*uy*in.sigma_inv_b + uy*uy*in.sigma_inv_c;

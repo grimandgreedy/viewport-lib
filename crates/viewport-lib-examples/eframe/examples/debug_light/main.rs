@@ -21,13 +21,12 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    MaterialId, MeshData, MeshId, MouseButton, OffscreenViewportTarget, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId,
+    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
+    ViewportContext, ViewportInput, ViewportRenderer, primitives,
 };
 
 const SLAB_HALF_EXTENTS: [f32; 3] = [0.5, 0.5, 0.005];
@@ -41,7 +40,7 @@ const SLAB_COLOUR: [f32; 3] = [0.85, 0.55, 0.35];
 const TVM_COLOUR: [f32; 3] = [0.45, 0.75, 0.95];
 const TVM_OPACITY: f32 = 0.18;
 
-/// A lattice of tetrahedra filling a cube centered at the origin.
+/// A lattice of tetrahedra filling a cube centred at the origin.
 ///
 /// `n` cells per axis, each split into five tets with orientation alternating
 /// by cell parity so shared diagonals match across neighbours. This mirrors
@@ -159,7 +158,7 @@ fn main() -> eframe::Result {
             // A handful of translucent tet volumes floating above the floor,
             // rendered as face soup (all tet faces, flat normals) through the
             // OIT pass exactly as viewport-lib-mesh-assembly's `TetVolume` does.
-            // Each lattice is built centered at the origin and placed via the
+            // Each lattice is built centred at the origin and placed via the
             // render item's model matrix.
             let tvm_specs: [(usize, f32, glam::Vec3); 3] = [
                 // The cube: the shape in the original report (matches material_lab).
@@ -200,7 +199,7 @@ fn main() -> eframe::Result {
                 item.mesh_id = mesh_id;
                 item.model = (glam::Mat4::from_translation(translation)
                     * glam::Mat4::from_scale(scale))
-                .to_cols_array_2d();
+                .into();
                 item.material = tvm_material;
                 item.settings.opacity = TVM_OPACITY;
                 tvm_items.push(item);
@@ -241,11 +240,11 @@ impl App {
         tvm_items: Vec<SceneRenderItem>,
     ) -> Self {
         Self {
-            camera: Camera {
-                center: glam::Vec3::new(0.0, 0.0, 1.0),
-                distance: 8.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(
+                glam::DVec3::new(0.0, 0.0, 1.0),
+                8.0,
+                Camera::default().orientation(),
+            ),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             floor,
@@ -257,11 +256,10 @@ impl App {
 
     fn build_items(&self) -> Vec<SceneRenderItem> {
         let mut floor = SceneRenderItem::new(self.floor.0, self.floor.1);
-        floor.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        floor.model = glam::Mat4::IDENTITY.into();
 
         let mut slab = SceneRenderItem::new(self.slab.0, self.slab.1);
-        slab.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).to_cols_array_2d();
+        slab.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).into();
 
         let mut items = vec![slab, floor];
         items.extend(self.tvm_items.iter().cloned());
@@ -295,63 +293,26 @@ impl App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.input.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.has_focus(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+            let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+            self.input.begin_frame(ViewportContext::new(
+                ownership,
+                [rect.width(), rect.height()],
+            ));
             // Pan reads the viewport height off the controller.
             self.controller
                 .set_viewport_size([rect.width(), rect.height()]);
 
+            let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+            let mut events = Vec::new();
             ui.input(|i| {
-                self.input
-                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
-                let local = i
-                    .pointer
-                    .interact_pos()
-                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-                if let Some(pos) = local {
-                    self.input
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
-                }
+                vpl_egui::begin_frame(i, &actx, &mut events);
                 for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            let vp_btn = match button {
-                                egui::PointerButton::Primary => MouseButton::Left,
-                                egui::PointerButton::Secondary => MouseButton::Right,
-                                egui::PointerButton::Middle => MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.input.push_event(ViewportEvent::MouseButton {
-                                button: vp_btn,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.input.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
-                    }
+                    vpl_egui::translate(event, &actx, &mut events);
                 }
             });
+            for ev in events {
+                self.input.push_event(ev);
+            }
 
             let action_frame = self.input.resolve();
             let dt = ui.input(|i| i.stable_dt);

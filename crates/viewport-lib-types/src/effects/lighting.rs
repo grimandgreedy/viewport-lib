@@ -119,8 +119,9 @@ pub enum LightKind {
     },
     /// Omnidirectional point light with physical inverse-square falloff.
     Point {
-        /// World-space position of the light source.
-        position: [f32; 3],
+        /// World-space position of the light source, in f64 so a light far
+        /// from the world origin keeps its place.
+        position: glam::DVec3,
         /// Reach (world units): the falloff is windowed smoothly to zero at
         /// this distance and the light is culled beyond it. This bounds how far
         /// the light reaches; it does not scale brightness. Brightness comes
@@ -130,13 +131,17 @@ pub enum LightKind {
         /// this radius, so it both removes the near-field singularity and models
         /// a finite-size emitter (a larger radius is a softer, less point-like
         /// light). `0.0` is a mathematical point source (clamped internally to a
-        /// tiny epsilon). It also sizes the soft-shadow penumbra.
+        /// tiny epsilon). Under the PCSS shadow filters it also sizes the
+        /// penumbra: a blocker `h` in front of a receiver `d` from the light
+        /// casts one about `2 * radius * h / (d - h)` wide. Radii below 0.01
+        /// shadow as 0.01.
         radius: f32,
     },
     /// Cone-shaped spotlight with physical inverse-square falloff.
     Spot {
-        /// World-space position of the light source.
-        position: [f32; 3],
+        /// World-space position of the light source, in f64 as for
+        /// [`LightKind::Point::position`].
+        position: glam::DVec3,
         /// World-space direction the cone points toward.
         direction: [f32; 3],
         /// Reach (world units): see [`LightKind::Point::range`]. Bounds reach,
@@ -193,11 +198,13 @@ pub struct LightSource {
     pub importance: f32,
     /// When true, this light contributes to shadow casting.
     ///
-    /// Directional lights cast cascaded shadows into the shared atlas (only
-    /// the first directional light is treated as the CSM caster). Point
-    /// lights with `cast_shadows = true` acquire a slot in the cubemap
-    /// shadow pool, up to `MAX_POINT_SHADOW_LIGHTS` active casters. Spot
-    /// lights cast a single-face perspective shadow.
+    /// The first directional light with `cast_shadows` set casts cascaded
+    /// shadows into the shared atlas; other directional lights cast none.
+    /// Point and spot lights take layers of the punctual shadow array, 6 for
+    /// a point light and 1 for a spot, in rank order until
+    /// [`ShadowSettings::punctual_shadow_layers`] is spent. A light that does
+    /// not fit renders unshadowed. A spot's shadow covers cones up to 85
+    /// degrees from the axis; past that the rim is unshadowed.
     ///
     /// Default: true. Disable per-light to skip the shadow render work.
     pub cast_shadows: bool,
@@ -250,10 +257,15 @@ impl LightSource {
     /// A point light at `position` with luminous intensity in [`Candela`].
     /// `range` bounds reach (not brightness) and `radius` is the source size
     /// (clamps the near-field and sizes the penumbra). See [`LightKind::Point`].
-    pub fn point_candela(position: [f32; 3], intensity: Candela, range: f32, radius: f32) -> Self {
+    pub fn point_candela(
+        position: impl crate::scene::IntoWorldPosition,
+        intensity: Candela,
+        range: f32,
+        radius: f32,
+    ) -> Self {
         Self {
             kind: LightKind::Point {
-                position,
+                position: position.into_world_position(),
                 range,
                 radius,
             },
@@ -265,7 +277,12 @@ impl LightSource {
     /// A point light specified by its total luminous flux in [`Lumen`] (as
     /// printed on a bulb). The flux is converted to candela over the full sphere
     /// via [`Lumen::to_point_candela`].
-    pub fn point_lumens(position: [f32; 3], flux: Lumen, range: f32, radius: f32) -> Self {
+    pub fn point_lumens(
+        position: impl crate::scene::IntoWorldPosition,
+        flux: Lumen,
+        range: f32,
+        radius: f32,
+    ) -> Self {
         Self::point_candela(position, flux.to_point_candela(), range, radius)
     }
 
@@ -274,7 +291,7 @@ impl LightSource {
     /// `range`/`radius` behave as on [`LightKind::Spot`].
     #[allow(clippy::too_many_arguments)]
     pub fn spot_candela(
-        position: [f32; 3],
+        position: impl crate::scene::IntoWorldPosition,
         direction: [f32; 3],
         intensity: Candela,
         range: f32,
@@ -284,7 +301,7 @@ impl LightSource {
     ) -> Self {
         Self {
             kind: LightKind::Spot {
-                position,
+                position: position.into_world_position(),
                 direction,
                 range,
                 inner_angle,
@@ -301,7 +318,7 @@ impl LightSource {
     /// a narrower `outer_angle` yields a brighter beam for the same lumens.
     #[allow(clippy::too_many_arguments)]
     pub fn spot_lumens(
-        position: [f32; 3],
+        position: impl crate::scene::IntoWorldPosition,
         direction: [f32; 3],
         flux: Lumen,
         range: f32,
@@ -321,41 +338,18 @@ impl LightSource {
     }
 }
 
-/// Point-light shadow technique.
-///
-/// `Cube` (default) renders six cubemap faces per shadow-casting point light,
-/// giving omnidirectional coverage. `Cone` is the legacy single-perspective
-/// path: a 90 degree view from the light toward the scene centre. The cone
-/// path is kept temporarily for sanity comparison; objects outside the cone
-/// receive no shadow data.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum PointShadowMode {
-    /// Legacy single-face perspective from the light toward the scene centre.
-    Cone,
-    /// Cubemap-array point shadows. Default.
-    #[default]
-    Cube,
-}
-
-/// Maximum number of point lights that can cast shadows simultaneously.
-///
-/// Bounds the size of the cubemap shadow texture array. Lights beyond this
-/// count are evicted from the pool by LRU on `last_frame_used`.
-pub const MAX_POINT_SHADOW_LIGHTS: u32 = 8;
-
-/// Resolution of a single cubemap face for point-light shadows (pixels).
-///
-/// Total VRAM cost is `6 * MAX_POINT_SHADOW_LIGHTS * size^2 * 4` bytes for
-/// the Depth32Float format. Default 1024 -> 48 MB at MAX=8.
-pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
-
 /// Shadow filtering mode.
 ///
 /// Two axes in one enum: the penumbra model (hard edge, fixed-width PCF,
 /// or variable-width PCSS with contact hardening) and the sampling budget
 /// within that model. Receiver-side filtering runs per lit fragment, so
 /// the tap count is a whole-scene cost multiplier on shadowed frames.
+///
+/// Point and spot light shadows follow the same tiers, with the disk laid on
+/// the cube face around the light-to-receiver direction for a point light and
+/// on the spot's map for a spot. The PCSS tiers size a directional penumbra by
+/// [`ShadowSettings::sun_angular_radius`] and a point or spot penumbra by the
+/// light's `radius`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -382,31 +376,39 @@ pub enum ShadowFilter {
 
 /// Per-frame lighting configuration for the viewport.
 ///
-/// Supports up to 8 light sources; each casts shadows when its `cast_shadows`
-/// flag is set. Blinn-Phong shading coefficients (ambient, diffuse, specular,
-/// shininess) have moved to per-object [`Material`](crate::material::Material) structs.
+/// Lights are clustered, so a frame can carry up to 512 of them on the full
+/// tier (16 on the compatibility tier); past that the renderer keeps the
+/// first directional light and the highest-ranked of the rest. Each light casts
+/// shadows when its `cast_shadows` flag is set: the first casting directional
+/// light owns the cascades, and point and spot lights take layers of the
+/// punctual shadow array in rank order. Blinn-Phong shading coefficients
+/// (ambient, diffuse, specular, shininess) live on per-object
+/// [`Material`](crate::material::Material) structs.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LightingSettings {
-    /// Active light sources (max 8). Default: one directional light.
+    /// Active light sources. Default: one directional light.
     pub lights: Vec<LightSource>,
-    /// Sky colour for the hemisphere ambient fill: the tint of light arriving
-    /// from above, with the magnitude in
+    /// Sky colour of the hemisphere fill: the tint of light arriving from
+    /// above, with the magnitude in
     /// [`hemisphere_intensity`](Self::hemisphere_intensity). Default white.
     ///
-    /// This is not the skybox, which comes from the environment map; with IBL
-    /// off, this and `ground_colour` are what a surface picks up as ambient.
+    /// This is not the skybox, which comes from the environment map. With
+    /// image-based lighting off, a surface's ambient blends from
+    /// `ground_colour` to this colour by the Z of its normal.
     pub sky_colour: crate::colour::Colour,
-    /// Ground colour for the hemisphere ambient fill: the tint of light bounced
-    /// from below. Default a neutral grey, a little darker than the sky.
+    /// Ground colour of the hemisphere fill: the tint of light arriving from
+    /// below, reached by a surface whose normal points down (-Z). Default a
+    /// neutral grey, a little darker than the sky.
     pub ground_colour: crate::colour::Colour,
-    /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
-    /// lights' lux/candela. `0.0` disables it. The default is a gentle fill so
-    /// shadowed surfaces stay readable rather than pitch black without washing
-    /// out a surface's own colour; scale it with your key light. (This term is a
-    /// provisional ambient approximation until image-based lighting carries
-    /// absolute nits.)
+    /// Radiance of the hemisphere fill in nits, scaling `sky_colour` and
+    /// `ground_colour`. With image-based lighting off it is the whole ambient
+    /// of a PBR material, so an upward-facing surface under a white sky
+    /// receives this times its albedo; a Blinn-Phong material adds its own
+    /// [`Material::ambient`](crate::material::Material::ambient) to it.
+    /// Default 0.55. `0.0` disables the fill, leaving surfaces dark where no
+    /// light reaches.
     pub hemisphere_intensity: f32,
     /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
     pub shadows: ShadowSettings,
@@ -416,6 +418,23 @@ pub struct LightingSettings {
     /// sets a lux target to match its sun.
     #[cfg_attr(feature = "serde", serde(default))]
     pub environment_intensity: crate::effects::environment::EnvironmentIntensity,
+    /// Brighten material ambient occlusion by the light that bounces between
+    /// the occluding surfaces (Jimenez's multi-bounce fit), coloured by the
+    /// surface's albedo, so AO on bright materials does not read as dirt.
+    /// Applies to the environment, hemisphere, probe and lightmap ambient.
+    /// Default: true.
+    #[cfg_attr(feature = "serde", serde(default = "default_multi_bounce_ao"))]
+    pub multi_bounce_ao: bool,
+    /// Let material ambient occlusion shadow directional lights too: a cavity
+    /// darkens where the light grazes it (micro-shadowing). Point and spot
+    /// lights are not affected. Default: false.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub ao_micro_shadowing: bool,
+}
+
+#[cfg(feature = "serde")]
+fn default_multi_bounce_ao() -> bool {
+    true
 }
 
 impl Default for LightingSettings {
@@ -424,9 +443,11 @@ impl Default for LightingSettings {
             lights: vec![LightSource::default()],
             sky_colour: crate::colour::Colour::WHITE,
             ground_colour: crate::colour::Colour::linear_rgb(0.6, 0.6, 0.6),
-            hemisphere_intensity: 0.4,
+            hemisphere_intensity: 0.55,
             shadows: ShadowSettings::default(),
             environment_intensity: Default::default(),
+            multi_bounce_ao: true,
+            ao_micro_shadowing: false,
         }
     }
 }
@@ -441,20 +462,114 @@ pub struct ShadowSettings {
     pub enabled: bool,
     /// Constant NDC depth bias subtracted from the receiver comparison depth. Default: 0.0.
     pub bias: f32,
-    /// Override the shadow frustum half-extent (world units). None = auto (20.0).
-    /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
+    /// Half-extent in world units of the single shadow map a directional
+    /// light gets when the camera has no view matrix to fit cascades to.
+    /// `None` sizes it to the shadow casters. Does not affect the cascades.
     pub extent_override: Option<f32>,
     /// Number of cascaded shadow map splits (1-4). Default: 4.
     pub cascade_count: u32,
     /// Shadow atlas resolution (width = height). Default: 4096.
-    /// Each cascade tile is `atlas_resolution / 2`.
+    /// Each cascade tile is `atlas_resolution / 2`. The atlas texture is made at
+    /// this size, clamped to 256..=8192 and the device's largest 2D texture and
+    /// rounded down to even (a clamp is reported as a notice), and is recreated
+    /// when the value changes. Its memory is `4 * atlas_resolution^2` bytes.
     pub atlas_resolution: u32,
     /// Shadow filtering mode. Default: PCF.
     pub filter: ShadowFilter,
-    /// PCSS light source radius in shadow-map UV space. Controls penumbra width. Default: 0.02.
-    pub pcss_light_radius: f32,
-    /// Point-light shadow technique. Default: cubemap.
-    pub point_shadow_mode: PointShadowMode,
+    /// Angular radius of the directional light's disc, in radians, for the
+    /// PCSS tiers. A blocker `h` world units above a receiver casts a
+    /// penumbra about `2 * h * tan(sun_angular_radius)` wide, so the same
+    /// pair gives the same penumbra in every cascade. The real sun is about
+    /// 0.0047, which at shadow-map resolution reads close to PCF; the
+    /// default is wider so the PCSS tiers look soft. Point and spot lights
+    /// size their penumbra by their own `radius` instead. Default: 0.01.
+    #[cfg_attr(feature = "serde", serde(default = "default_sun_angular_radius"))]
+    pub sun_angular_radius: f32,
+    /// Layers of the punctual shadow array shared by point and spot lights.
+    /// A shadow-casting point light takes 6 layers (one per cube face) and a
+    /// spot light 1. Lights are given layers in rank order until the budget
+    /// is spent; a light that does not fit renders unshadowed. Default: 48,
+    /// room for 8 point lights. Rounded down to a multiple of 6 and clamped
+    /// to the device's `max_texture_array_layers`.
+    ///
+    /// The array grows in steps of 6 layers as casters need them, so the
+    /// memory taken is `4 * punctual_shadow_resolution^2` bytes per layer in
+    /// use, not per layer of budget.
+    #[cfg_attr(feature = "serde", serde(default = "default_punctual_shadow_layers"))]
+    pub punctual_shadow_layers: u32,
+    /// Side of each punctual shadow layer in texels. Default: 1024 (24 MB per
+    /// point light, 4 MB per spot light). Clamped to 64..=4096 and the device's
+    /// largest 2D texture.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "default_punctual_shadow_resolution")
+    )]
+    pub punctual_shadow_resolution: u32,
+    /// How far along the view direction directional shadows reach. `None`
+    /// fits the cascades to the depth range in which the scene's casters
+    /// can throw a visible shadow; `Some(d)` ends them `d` world units in
+    /// front of the camera, clamped to its far plane, whatever the scene.
+    /// Default: `None`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub shadow_distance: Option<f32>,
+    /// Where the cascade boundaries fall inside that range. Default:
+    /// [`CascadeSplit::Practical`] with `lambda` 0.75.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub cascade_split: CascadeSplit,
+    /// The fraction of the shadow distance, at its far end, over which
+    /// directional shadows fade out where the cascades stop short of the
+    /// scene: at a set [`shadow_distance`](Self::shadow_distance), or when
+    /// there are no mesh bounds to fit them to. Past the end shadows are
+    /// off. A range fitted to the scene already reaches every shadow in
+    /// view and is not faded. `0.0` leaves a hard edge where the last
+    /// cascade's map runs out. Clamped to `0.0..=1.0`. Default: 0.1.
+    #[cfg_attr(feature = "serde", serde(default = "default_fade_fraction"))]
+    pub fade_fraction: f32,
+}
+
+/// Where the boundaries between directional shadow cascades fall, within
+/// the view depth range the cascades cover.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CascadeSplit {
+    /// A blend of logarithmic and even splits: `lambda` 1.0 is fully
+    /// logarithmic (dense near the camera), 0.0 fully even.
+    Practical {
+        /// Weight of the logarithmic split, `0.0..=1.0`.
+        lambda: f32,
+    },
+    /// Boundaries as fractions of the covered range, nearest first: cascade
+    /// `i` ends at `near + (far - near) * fractions[i]` and the last ends at
+    /// `far`. With fewer than four cascades only the first
+    /// `cascade_count - 1` are read.
+    Fractions([f32; 3]),
+}
+
+#[cfg(feature = "serde")]
+fn default_fade_fraction() -> f32 {
+    ShadowSettings::default().fade_fraction
+}
+
+impl Default for CascadeSplit {
+    fn default() -> Self {
+        Self::Practical { lambda: 0.75 }
+    }
+}
+
+#[cfg(feature = "serde")]
+fn default_sun_angular_radius() -> f32 {
+    ShadowSettings::default().sun_angular_radius
+}
+
+#[cfg(feature = "serde")]
+fn default_punctual_shadow_layers() -> u32 {
+    ShadowSettings::default().punctual_shadow_layers
+}
+
+#[cfg(feature = "serde")]
+fn default_punctual_shadow_resolution() -> u32 {
+    ShadowSettings::default().punctual_shadow_resolution
 }
 
 impl Default for ShadowSettings {
@@ -466,8 +581,12 @@ impl Default for ShadowSettings {
             cascade_count: 4,
             atlas_resolution: 4096,
             filter: ShadowFilter::Pcf,
-            pcss_light_radius: 0.02,
-            point_shadow_mode: PointShadowMode::default(),
+            sun_angular_radius: 0.01,
+            punctual_shadow_layers: 48,
+            punctual_shadow_resolution: 1024,
+            shadow_distance: None,
+            cascade_split: CascadeSplit::default(),
+            fade_fraction: 0.1,
         }
     }
 }

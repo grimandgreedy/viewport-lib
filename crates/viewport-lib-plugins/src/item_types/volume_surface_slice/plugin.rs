@@ -8,7 +8,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext, SurfaceMaskContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -56,11 +55,6 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &gpu::Device, _queue: &gpu::Queue) {
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
         self.gpu
             .get_or_insert_with(|| pipeline::SliceGpu::new(device, resources))
@@ -90,7 +84,9 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
             if item.settings.hidden {
                 continue;
             }
-            if let Some(entry) = gpu.upload_item(device, queue, ctx.resources, item) {
+            if let Some(entry) =
+                gpu.upload_item(device, queue, ctx.resources, item, ctx.world_origin())
+            {
                 self.frame.push(entry);
             }
         }
@@ -108,7 +104,7 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
             return;
         }
         // Still compiling: the slices draw next frame.
-        let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+        let colour = if ctx.is_hdr_pass() {
             pipeline::COLOUR_HDR
         } else {
             pipeline::COLOUR_LDR

@@ -15,7 +15,7 @@
 //!
 //! Structure mirrors `eframe_minimal`: a `ViewportInstance` renders into an
 //! app-owned offscreen texture that egui displays as an image, and events come
-//! through the standard `from_egui` adapter driving an `OrbitCameraController`
+//! through the standard egui adapter driving an `OrbitCameraController`
 //! (left/middle drag orbit, right drag pan, scroll zoom). The offscreen texture
 //! is the sRGB variant of egui's format so the tone map's linear output gets the
 //! hardware linear->sRGB encode on write; egui runs on a non-sRGB surface, and
@@ -31,10 +31,10 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::{from_egui, modifiers_from_egui};
+use vpl::input::adapters::{AdapterCtx, egui as vpl_egui};
 use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, ItemSettings, LightKind, LightSource,
-    LightingSettings, Lumen, Lux, Material, OrbitCameraController, ViewportContext, ViewportEvent,
+    LightingSettings, Lumen, Lux, Material, OrbitCameraController, ViewportContext,
     ViewportInstance, primitives,
 };
 
@@ -142,10 +142,11 @@ fn main() -> eframe::Result {
             session.viewport_frame_mut().background_colour =
                 Some(Colour::linear(0.12, 0.12, 0.14, 1.0));
 
-            let cam = session.camera_mut();
-            cam.center = glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7);
-            cam.distance = 17.0;
-            cam.orientation = glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2);
+            session.camera_mut().set_orbit(
+                glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7).as_dvec3(),
+                17.0,
+                glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
+            );
 
             Ok(Box::new(App {
                 session,
@@ -496,23 +497,24 @@ impl eframe::App for App {
 
                 // Screen-space state stays in logical points; pixels_per_point
                 // sizes the physical render target and keeps overlays crisp.
-                self.session.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.has_focus(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+                self.session.begin_frame(ViewportContext::new(
+                    ownership,
+                    [rect.width(), rect.height()],
+                ));
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
+                let actx = AdapterCtx::new(1.0, origin);
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.session.handle_event(ViewportEvent::ModifiersChanged(
-                        modifiers_from_egui(&i.modifiers),
-                    ));
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin) {
-                            self.session.handle_event(ev);
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.session.handle_event(ev);
+                }
 
                 // Per-frame exposure + lighting (both driven by live controls),
                 // selected by the active tab.
@@ -639,10 +641,10 @@ impl App {
                         .text("Meter high clip"),
                 );
                 ui.add(
-                    egui::Slider::new(&mut self.auto.center_weight, 0.0..=1.0)
-                        .text("Center weighting"),
+                    egui::Slider::new(&mut self.auto.centre_weight, 0.0..=1.0)
+                        .text("Centre weighting"),
                 );
-                ui.label("Metering holds the image steady while scene brightness moves. dt<=0 snaps; smoothing eases. Center weighting keeps exposure stable on zoom/pan (set 0 to meter the whole frame).");
+                ui.label("Metering holds the image steady while scene brightness moves. dt<=0 snaps; smoothing eases. Centre weighting keeps exposure stable on zoom/pan (set 0 to meter the whole frame).");
             }
         }
 

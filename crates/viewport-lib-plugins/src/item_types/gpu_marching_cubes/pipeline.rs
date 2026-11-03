@@ -64,6 +64,7 @@ pub(super) struct McRecipe {
     pick_shader: viewport_lib::plugin_api::LazyModule,
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The surface and wireframe pipelines in both formats, the shadow caster,
@@ -91,9 +92,11 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == SURFACE_HDR,
         ),
@@ -110,13 +113,15 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: viewport_lib::gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: 1,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == WIREFRAME_HDR,
         ),
-        // Depth-only shadow caster. MC vertices are already world-space (no
+        // Depth-only shadow caster. MC vertices are already in group 0's frame (no
         // per-item model matrix anywhere in the MC path), so there is no
         // group-1 bind group at all: just the shadow pass's camera layout at
         // group 0. The surface draws with `cull_mode: None` (open isosurfaces
@@ -132,11 +137,11 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             )
             // The isosurface is an open, thin shell.
             .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
-            opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
+            opts.depth_compare = viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT;
             r.builder.build_shadow_pipeline(&r.device, &opts)
         }
         // Outline mask: the generated vertex buffer rasterised into the R8
-        // mask. MC vertices are world-space, so there is no model transform
+        // mask. MC vertices are in group 0's frame, so there is no model transform
         // and no group-1 data at all. LessEqual matches the surface pipeline
         // so the mask marks the surface's own front pixels instead of
         // rejecting them at equal depth.
@@ -217,7 +222,11 @@ fn build_compute(r: &McComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePip
 /// The triangle surface's shader: the shared shading, then its entry points.
 pub(crate) fn surface_source() -> String {
     lit_shader(
-        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_CLIP_WGSL],
+        &[
+            shared_wgsl::SHARED_CSM_WGSL,
+            shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+            shared_wgsl::SHARED_CLIP_WGSL,
+        ],
         &[wgsl_source!("mc_shading"), wgsl_source!("mc_surface")].join("\n"),
     )
 }
@@ -444,6 +453,7 @@ impl McGpu {
                 pick_shader,
                 pick_id_bgl: pick_id_bgl.clone(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );
@@ -515,6 +525,7 @@ impl McGpu {
         device: &viewport_lib::gpu::Device,
         volumes: &super::store::McVolumeStore,
         jobs: &[GpuMarchingCubesItem],
+        origin: glam::DVec3,
     ) -> (Vec<McFrame>, Option<viewport_lib::gpu::CommandBuffer>) {
         if jobs.is_empty() {
             return (Vec::new(), None);
@@ -694,14 +705,16 @@ impl McGpu {
                 // ----------------------------------------------------------
                 // Per-slab generate uniform (origin_z shifted by slab offset).
                 // ----------------------------------------------------------
+                // The vertices come out relative to the world origin.
+                let slab_origin = crate::item_types::origin::rel_point(slab.origin, origin);
                 let generate_params = GenerateParams {
                     nx: slab.dims[0],
                     ny: slab.dims[1],
                     nz: slab.dims[2],
                     isovalue: job.isovalue,
-                    origin_x: slab.origin[0],
-                    origin_y: slab.origin[1],
-                    origin_z: slab.origin[2],
+                    origin_x: slab_origin[0],
+                    origin_y: slab_origin[1],
+                    origin_z: slab_origin[2],
                     _pad0: 0.0,
                     spacing_x: slab.spacing[0],
                     spacing_y: slab.spacing[1],

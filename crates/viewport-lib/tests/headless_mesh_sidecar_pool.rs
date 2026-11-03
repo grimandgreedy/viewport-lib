@@ -16,11 +16,7 @@ const H: u32 = 64;
 fn frame_of(items: Vec<SceneRenderItem>) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [W as f32, H as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -277,7 +273,7 @@ fn a_shadow_caster_follows_its_override_window() {
     caster_material.backface_policy = viewport_lib::BackfacePolicy::Identical;
     let mut caster = SceneRenderItem::default();
     caster.mesh_id = caster_mesh;
-    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, 1.0, 1.5)).to_cols_array_2d();
+    caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, 1.0, 1.5)).into();
     caster.material = upload_material(&mut renderer, caster_material);
 
     let mut sun = LightSource::default();
@@ -286,7 +282,7 @@ fn a_shadow_caster_follows_its_override_window() {
     };
     let mut bulb = LightSource::default();
     bulb.kind = LightKind::Point {
-        position: [3.0, 0.0, 3.0],
+        position: [3.0, 0.0, 3.0].into(),
         range: 30.0,
         radius: 0.0,
     };
@@ -306,12 +302,8 @@ fn a_shadow_caster_follows_its_override_window() {
         frame.effects.lighting.hemisphere_intensity = 0.05;
         frame.camera.render_camera = {
             let mut cam = Camera::default();
-            cam.center = glam::Vec3::ZERO;
-            cam.distance = 6.0;
-            cam.orientation = glam::Quat::IDENTITY;
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
+            cam.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::IDENTITY);
+            RenderCamera::from_camera(&cam)
         };
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![floor.clone(), caster.clone()].into());
@@ -399,7 +391,7 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
         let mut it = SceneRenderItem::default();
         it.mesh_id = quad;
         it.material = white;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         it.lightmap_placement = Some(viewport_lib::resources::LightmapPlacementId::from_index(
             placement,
         ));
@@ -412,9 +404,7 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
     ];
     frame.camera.render_camera = {
         let mut cam = Camera::default();
-        cam.orientation = glam::Quat::IDENTITY;
-        cam.center = glam::Vec3::ZERO;
-        cam.distance = 5.0;
+        cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
         cam.aspect = 1.0;
         RenderCamera::from_camera(&cam)
     };
@@ -584,7 +574,7 @@ fn an_attribute_fed_deform_slot_follows_a_record_move() {
         .register_deformer(
             &device,
             viewport_lib::resources::DeformerDesc {
-                name: "lift_x",
+                name: "lift_x".into(),
                 stage: viewport_lib::resources::DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if deform_slot_stride(ctx.slot) > 0u {\n        o.position.x = o.position.x + deform_read_f32(ctx.slot, v.vertex_index, 0u);\n    }\n    return o;\n}\n".to_string(),

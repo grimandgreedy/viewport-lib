@@ -7,7 +7,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext, ShadowCastContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 use viewport_lib_geometry::volume::grid::VolumeData;
 
 use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
@@ -121,18 +120,6 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         gpu.pipelines.request_all();
     }
 
-    fn on_device_recreated(
-        &mut self,
-        _device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.gpu = None;
-        self.iso_gpu = None;
-        self.frame.clear();
-        self.iso_frame.clear();
-        self.pick_bgs.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -163,19 +150,23 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             let gpu = self
                 .iso_gpu
                 .get_or_insert_with(|| iso::McIsoGpu::new(device, ctx.resources));
-            self.iso_frame = gpu.frame(device, volumes, items);
+            self.iso_frame = gpu.frame(device, volumes, items, ctx.world_origin());
             return Vec::new();
         }
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::McGpu::new(device, ctx.resources));
 
-        let (frame, buf) = gpu.run_jobs(device, volumes, items);
+        let (frame, buf) = gpu.run_jobs(device, volumes, items, ctx.world_origin());
         self.frame = frame;
 
         for entry in &self.frame {
-            self.pick_bgs
-                .push(gpu.pick_bind_group(device, queue, entry.pick_id, entry.settings.ignore_clip));
+            self.pick_bgs.push(gpu.pick_bind_group(
+                device,
+                queue,
+                entry.pick_id,
+                entry.settings.ignore_clip,
+            ));
         }
         buf.into_iter().collect()
     }
@@ -200,7 +191,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             return;
         }
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         for entry in &self.frame {
             if entry.hidden {
                 continue;
@@ -245,7 +236,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
     /// Always casts from the solid slab data regardless of `wireframe`:
     /// shadows reflect the actual surface, not its display mode. MC vertices
-    /// are world-space, so there is no group-1 bind group and no per-item
+    /// are written relative to the world origin, the frame group 0 draws
+    /// in, so there is no group-1 bind group and no per-item
     /// cascade cull (the frame data carries no world AABB).
     fn cast_shadow_pass(
         &self,

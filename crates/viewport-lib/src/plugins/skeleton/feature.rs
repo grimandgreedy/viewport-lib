@@ -19,7 +19,7 @@ use crate::error::ViewportResult;
 use crate::plugin_api::{PluginInstallCtx, PluginInstaller};
 use crate::plugins::skinning::{SkinWeights, SkinnedPoseUpdate, SkinningPlugin};
 use crate::resources::DeviceResources;
-use crate::runtime::{RuntimeOutput, RuntimePlugin};
+use crate::runtime::{RuntimeOutput, RuntimePlugin, RuntimePluginId};
 
 /// Installs GPU skinning for one or more meshes in a single call.
 ///
@@ -63,15 +63,22 @@ impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
 
         let skinning = SkinningPlugin::install(ctx.renderer.resources_mut(), ctx.device)?;
 
-        ctx.runtime
+        let pose_plugin = ctx
+            .runtime
             .as_deref_mut()
             .expect("runtime presence checked above")
             .add_plugin(self.pose_plugin);
 
         Ok(SkinnedMeshHandle {
             skinning,
+            pose_plugin,
             weights: self.weights,
         })
+    }
+
+    fn uninstall(handle: SkinnedMeshHandle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()> {
+        handle.uninstall(ctx);
+        Ok(())
     }
 }
 
@@ -83,6 +90,7 @@ impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
 /// palette for each update.
 pub struct SkinnedMeshHandle {
     skinning: SkinningPlugin,
+    pose_plugin: RuntimePluginId,
     weights: HashMap<MeshId, SkinWeights>,
 }
 
@@ -91,6 +99,23 @@ impl SkinnedMeshHandle {
     /// palettes directly.
     pub fn skinning(&self) -> &SkinningPlugin {
         &self.skinning
+    }
+
+    /// The id of the pose plugin the feature added to the runtime.
+    pub fn pose_plugin(&self) -> RuntimePluginId {
+        self.pose_plugin
+    }
+
+    /// Detach the skin weights of every mesh this handle skinned and remove
+    /// the pose plugin from the runtime, consuming the handle. See
+    /// [`SkinningPlugin::uninstall`]: the skinning deformer itself stays
+    /// registered, so a later install reuses it.
+    pub fn uninstall(self, ctx: &mut PluginInstallCtx<'_>) {
+        self.skinning
+            .uninstall(ctx.renderer.resources_mut(), ctx.device);
+        if let Some(runtime) = ctx.runtime.as_deref_mut() {
+            runtime.remove_plugin(self.pose_plugin);
+        }
     }
 
     /// Drain pose updates from `output` and upload them.
@@ -253,6 +278,54 @@ mod tests {
                 .deformer_id_by_name("viewport_skin")
                 .is_none(),
             "a missing runtime leaves the deformer unregistered"
+        );
+    }
+
+    #[test]
+    fn uninstall_detaches_the_meshes_and_removes_the_pose_plugin() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::geometry::primitives::cube(1.0))
+            .expect("upload");
+        let vertex_count = crate::geometry::primitives::cube(1.0).positions.len();
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 0, 0, 0]; vertex_count],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0]; vertex_count],
+        };
+        let mut runtime = ViewportRuntime::new();
+
+        let mut ctx = PluginInstallCtx::new(&device, &queue, Some(&mut runtime), &mut renderer);
+        let handle = SkinnedMeshFeature::new(gpu_skeleton_plugin(mesh_id))
+            .install(&mut ctx)
+            .expect("install");
+        let skinning = handle.skinning().clone();
+        skinning.attach_weights(ctx.renderer.resources_mut(), &device, mesh_id, &weights);
+        assert!(skinning.is_skinned_mesh(mesh_id));
+
+        let pose_plugin = handle.pose_plugin();
+        assert_eq!(
+            ctx.runtime
+                .as_deref()
+                .map(|r| r.plugin_ids().collect::<Vec<_>>()),
+            Some(vec![pose_plugin])
+        );
+
+        SkinnedMeshFeature::<SkeletonPlugin>::uninstall(handle, &mut ctx).expect("uninstall");
+        assert!(
+            !skinning.is_skinned_mesh(mesh_id),
+            "uninstall detached the mesh's skin weights"
+        );
+        assert_eq!(
+            ctx.runtime.as_deref().map(|r| r.plugin_count()),
+            Some(0),
+            "uninstall removed the pose plugin from the runtime"
         );
     }
 

@@ -166,14 +166,14 @@ impl LodGroup {
 /// or behind the near plane are clamped to the near distance.
 pub fn projected_screen_size(local_aabb: &Aabb, model: &glam::Mat4, camera: &RenderCamera) -> f32 {
     let world = local_aabb.transformed(model);
-    let center = world.center();
+    let centre = world.centre();
     let radius = (world.max - world.min).length() * 0.5;
     if radius <= 0.0 {
         return 0.0;
     }
-    let eye = glam::Vec3::from(camera.eye_position);
-    let distance = (center - eye).length().max(camera.near);
-    let half_fov_tan = (camera.fov * 0.5).tan().max(1e-4);
+    let eye = camera.eye_position().as_vec3();
+    let distance = (centre - eye).length().max(camera.depth_range().0);
+    let half_fov_tan = (camera.fov_y() * 0.5).tan().max(1e-4);
     radius / (distance * half_fov_tan)
 }
 
@@ -442,6 +442,14 @@ impl crate::resources::DeviceResources {
 mod tests {
     use super::*;
 
+    /// A perspective camera at the origin looking down `-Z`.
+    fn camera_at_origin(fov_y: f32) -> RenderCamera {
+        RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            glam::Mat4::perspective_rh(fov_y, 1.333, 0.1, 1000.0),
+        )
+    }
+
     fn group(levels: Vec<LodLevel>, cull_below: Option<f32>) -> LodGroup {
         LodGroup {
             levels,
@@ -461,9 +469,7 @@ mod tests {
             min: glam::Vec3::splat(-0.5),
             max: glam::Vec3::splat(0.5),
         };
-        let mut camera = RenderCamera::default();
-        camera.eye_position = [0.0, 0.0, 0.0];
-        camera.fov = std::f32::consts::FRAC_PI_4;
+        let camera = camera_at_origin(std::f32::consts::FRAC_PI_4);
 
         let near = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0));
         let far = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -50.0));
@@ -482,11 +488,8 @@ mod tests {
             max: glam::Vec3::splat(0.5),
         };
         let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -10.0));
-        let mut narrow = RenderCamera::default();
-        narrow.eye_position = [0.0, 0.0, 0.0];
-        narrow.fov = std::f32::consts::FRAC_PI_4;
-        let mut wide = narrow.clone();
-        wide.fov = std::f32::consts::FRAC_PI_2;
+        let narrow = camera_at_origin(std::f32::consts::FRAC_PI_4);
+        let wide = camera_at_origin(std::f32::consts::FRAC_PI_2);
 
         assert!(
             projected_screen_size(&aabb, &model, &narrow)

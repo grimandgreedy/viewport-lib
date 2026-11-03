@@ -18,6 +18,7 @@ use super::draw::{
 use super::pipeline::{CurveFrame, CurveMeshGpu};
 use super::types::TubeId;
 use super::types::{TubeItem, TubeRefItem};
+use crate::item_types::origin::anchored_model;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, RectPickContext,
@@ -86,16 +87,6 @@ impl ItemTypePlugin for TubePlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(
-        &mut self,
-        device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.layouts = Some(super::store::StreamtubeResources::new(device));
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -131,7 +122,16 @@ impl ItemTypePlugin for TubePlugin {
                 continue;
             }
             gpu_data.pick_id = item.settings.pick_id;
-            gpu_data.model = item.model;
+            // The build wrote the model relative to zero; under a moved origin
+            // the uniform takes the relative one.
+            gpu_data.model = anchored_model(item.model, gpu_data.anchor, ctx.world_origin());
+            if ctx.world_origin() != glam::DVec3::ZERO {
+                queue.write_buffer(
+                    &gpu_data._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&gpu_data.model),
+                );
+            }
             gpu_data.cast_shadows = item.settings.cast_shadows;
             self.frame.push(build_frame(
                 device,
@@ -157,13 +157,13 @@ impl ItemTypePlugin for TubePlugin {
             if gpu_data.index_count == 0 {
                 continue;
             }
+            gpu_data.model = anchored_model(ref_item.model, gpu_data.anchor, ctx.world_origin());
             queue.write_buffer(
                 &gpu_data._uniform_buf,
                 0,
-                bytemuck::bytes_of(&ref_item.model),
+                bytemuck::bytes_of(&gpu_data.model),
             );
             gpu_data.pick_id = ref_item.settings.pick_id;
-            gpu_data.model = ref_item.model;
             gpu_data.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             gpu_data.cast_shadows = ref_item.settings.cast_shadows;
             self.frame.push(build_frame(
@@ -244,7 +244,7 @@ impl ItemTypePlugin for TubePlugin {
                     ctx.viewport_size,
                     radius_px.max(8.0),
                 ) {
-                    let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                    let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
                     consider(toi, hit);
                 }
             }

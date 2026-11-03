@@ -190,6 +190,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
+        if self.device_lost_now() {
+            return None;
+        }
         // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
         // has no GPU pick pass, so it picks its surfaces on the CPU.
         let backend = if self.resources.scene_tier.is_built() {
@@ -214,7 +217,9 @@ impl ViewportRenderer {
         // replace the camera-facing normal stand-in with the real geometric
         // face normal, for align-to-surface placement.
         hit.map(|mut h| {
-            h.sub_object_world_pos = self.snap_world_pos(h.id, h.sub_object, h.world_pos, frame);
+            h.sub_object_world_pos = self
+                .snap_world_pos(h.id, h.sub_object, h.world_pos.as_vec3(), frame)
+                .map(|p| p.as_dvec3());
             if let Some(n) = self.pick_face_normal(&h, frame) {
                 h.normal = n;
             }
@@ -256,8 +261,7 @@ impl ViewportRenderer {
         // The pick struck the front face, so the outward normal points back
         // toward the eye. Orient it that way to resolve the winding sign, which
         // also matches the previous camera-facing stand-in.
-        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-        let to_eye = eye - hit.world_pos;
+        let to_eye = (frame.camera.render_camera.eye_position() - hit.world_pos).as_vec3();
         Some(if n.dot(to_eye) < 0.0 { -n } else { n })
     }
 
@@ -331,12 +335,12 @@ impl ViewportRenderer {
             .iter()
             .find(|i| i.settings.pick_id.0 == id && !i.settings.hidden)
         {
-            return Some((it.mesh_id, it.model));
+            return Some((it.mesh_id, it.model.to_mat4().to_cols_array_2d()));
         }
         for vm in &frame.scene.volume_meshes {
             let ri = vm.to_render_item();
             if ri.settings.pick_id.0 == id && !ri.settings.hidden {
-                return Some((ri.mesh_id, ri.model));
+                return Some((ri.mesh_id, ri.model.to_mat4().to_cols_array_2d()));
             }
         }
         None
@@ -426,6 +430,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
+        if self.device_lost_now() {
+            return PickRectResult::default();
+        }
         // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
         // has no GPU pick pass, so it picks on the CPU.
         let backend = if self.resources.scene_tier.is_built() {
@@ -474,7 +481,7 @@ impl ViewportRenderer {
         mask: PickMask,
     ) -> Option<SnapHit> {
         // Nothing pickable is drawn without the scene resources.
-        if !self.resources.scene_tier.is_built() {
+        if !self.resources.scene_tier.is_built() || self.device_lost_now() {
             return None;
         }
         self.snap_query_gpu(device, queue, cursor, radius_px, frame, mask)

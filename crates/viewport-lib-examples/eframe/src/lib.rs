@@ -38,7 +38,7 @@
 //! | example | legs |
 //! | --- | --- |
 //! | `eframe-minimal`, `eframe-minimal-callback`, `eframe-primitives`, `eframe-retained-overlay`, `eframe-multi-viewport`, `debug-light`, `showcase` | 27, 29, 30 |
-//! | `eframe-exposure`, `eframe-lighting-shadows`, `eframe-input-controllers`, `eframe-render-paths`, `eframe-testing`, `eframe-showcase` | 27 only (side/top panel layout) |
+//! | `eframe-exposure`, `eframe-lighting-shadows`, `eframe-input-controllers`, `eframe-render-paths`, `eframe-testing`, `eframe-precision`, `eframe-showcase` | 27 only (side/top panel layout) |
 //!
 //! Check a non-default leg with:
 //!
@@ -106,9 +106,31 @@ pub fn native_options(size: [f32; 2]) -> eframe::NativeOptions {
 
     eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default().with_inner_size(size),
-        depth_buffer: 24,
-        stencil_buffer: 8,
+        depth_buffer: PASS_DEPTH_BITS,
+        stencil_buffer: PASS_STENCIL_BITS,
         wgpu_options,
         ..Default::default()
     }
+}
+
+/// The depth and stencil bits `native_options` asks eframe for, and the
+/// `wgpu::TextureFormat` eframe allocates from them.
+///
+/// eframe allocates its pass's depth attachment from these, and the renderer's
+/// default scene depth format is the same 24-bit one, so a paint callback
+/// drawing into eframe's pass matches with `RendererConfig::new`.
+/// [`pass_renderer_config`] states the pairing explicitly for a callback that
+/// configures other things and must not change the depth format. An example
+/// that renders offscreen and shows the result as an image owns its depth
+/// target and can ask for `Depth32FloatStencil8` instead.
+pub const PASS_DEPTH_BITS: u8 = 24;
+pub const PASS_STENCIL_BITS: u8 = 8;
+pub const PASS_DEPTH_FORMAT: eframe::wgpu::TextureFormat =
+    eframe::wgpu::TextureFormat::Depth24PlusStencil8;
+
+/// A renderer config for a paint callback that draws into the pass eframe
+/// built from [`native_options`]: `format` is `RenderState::target_format`, and
+/// the scene depth format is pinned to the attachment eframe allocated.
+pub fn pass_renderer_config(format: eframe::wgpu::TextureFormat) -> viewport_lib::RendererConfig {
+    viewport_lib::RendererConfig::new(format).with_scene_depth_format(PASS_DEPTH_FORMAT)
 }

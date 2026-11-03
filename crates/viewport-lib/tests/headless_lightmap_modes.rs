@@ -15,7 +15,7 @@ use common::*;
 /// 16), the lightmap texture (binding 17), the `lightmap_mode` object field, and
 /// the `apply_lightmap` blend in the ambient slot.
 #[test]
-fn lightmap_replace_mode_recolors_object() {
+fn lightmap_replace_mode_recolours_object() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -50,11 +50,7 @@ fn lightmap_replace_mode_recolors_object() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -63,7 +59,7 @@ fn lightmap_replace_mode_recolors_object() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     let mut m = Material::default();
     m.shading_model = ShadingModel::Pbr;
     m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
@@ -107,11 +103,7 @@ fn lightmap_ao_mode_darkens_object() {
     let build_frame = || {
         let cam = Camera::default();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -124,7 +116,7 @@ fn lightmap_ao_mode_darkens_object() {
         frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         item.material = white;
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame
@@ -133,7 +125,7 @@ fn lightmap_ao_mode_darkens_object() {
     let (w, h) = (64u32, 64u32);
     // Mean over the central region, which the box fills, so the AO multiply on
     // the box's ambient is not diluted by the sky background.
-    let center_mean = |pixels: &[u8]| -> f64 {
+    let centre_mean = |pixels: &[u8]| -> f64 {
         let (mut sum, mut n) = (0.0f64, 0u64);
         for y in (h / 4)..(3 * h / 4) {
             for x in (w / 4)..(3 * w / 4) {
@@ -145,7 +137,7 @@ fn lightmap_ao_mode_darkens_object() {
         sum / n as f64
     };
 
-    let baseline = center_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
+    let baseline = centre_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
 
     // Dark occlusion factor (0.1) multiplies the ambient term.
     let dark = vec![[26u8, 26, 26, 255]; 16].concat();
@@ -168,7 +160,7 @@ fn lightmap_ao_mode_darkens_object() {
         )
         .expect("set lightmap");
 
-    let occluded = center_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
+    let occluded = centre_mean(&renderer.render_offscreen(&device, &queue, &build_frame(), w, h));
 
     assert!(
         occluded < baseline * 0.75,

@@ -131,14 +131,9 @@ struct PickOut {
 @fragment
 fn fs_pick(in: VertexOutput) -> PickOut {
     // Reconstruct the world-space ray, matching implicit.wgsl fs_main.
-    let near_clip = vec4<f32>(in.ndc_xy, 0.0, 1.0);
-    let far_clip  = vec4<f32>(in.ndc_xy, 1.0, 1.0);
-    let near_world_h = camera.inv_view_proj * near_clip;
-    let far_world_h  = camera.inv_view_proj * far_clip;
-    let near_world = near_world_h.xyz / near_world_h.w;
-    let far_world  = far_world_h.xyz  / far_world_h.w;
-    let ray_origin = near_world;
-    let ray_dir    = normalize(far_world - near_world);
+    let ray = viewport_ndc_ray(camera.inv_view_proj, in.ndc_xy);
+    let ray_origin = ray.origin;
+    let ray_dir    = ray.dir;
 
     var t       = 0.0;
     var hit     = false;
@@ -156,8 +151,8 @@ fn fs_pick(in: VertexOutput) -> PickOut {
         }
     }
 
-    // The pick pass binds clip volumes and no clip planes.
-    if !hit || (u.ignore_clip == 0u && !viewport_pass_clip_volumes(hit_pos)) {
+    // A hit a clip plane or clip volume cuts away is not picked.
+    if !hit || (u.ignore_clip == 0u && !viewport_clip_test(hit_pos)) {
         discard;
     }
 

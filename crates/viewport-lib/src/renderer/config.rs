@@ -64,6 +64,52 @@ pub struct RendererConfig {
     /// [`Capabilities::capped_at`](crate::Capabilities::capped_at) for what it
     /// does and does not model. Default `None`.
     pub max_tier: Option<crate::capabilities::Tier>,
+    /// A device-lost watcher the host installed on the device, shared with
+    /// this renderer. `None` has the renderer install its own, which replaces
+    /// any lost callback set on the device before: wgpu keeps one per device.
+    /// Pass one when several renderers share a device, or when the host sets
+    /// the callback itself. Default `None`.
+    pub device_lost_watcher: Option<crate::renderer::DeviceLostWatcher>,
+    /// Frames a viewport's post-process, transparency or foreground targets
+    /// stay allocated after the frames stop using them. A target released this
+    /// way is allocated again by the next frame that needs it, so the value
+    /// trades memory held by idle effects against reallocating when an effect
+    /// is toggled back on. `Some(0)` releases after one idle frame. `None`
+    /// keeps every target a viewport has used for as long as the viewport
+    /// exists. Default `None`.
+    pub target_release_frames: Option<u32>,
+    /// The scene depth-stencil format. `None`, the default, is
+    /// `Depth24PlusStencil8` on every device: the format any framework's render
+    /// pass can carry, so a host that paints into a pass it does not allocate
+    /// (an eframe callback with 24 depth and 8 stencil bits) matches without
+    /// configuration. `Some(Depth32FloatStencil8)` draws the scene into a
+    /// 32-bit float depth, which keeps reversed-Z precise on Vulkan and DX12,
+    /// where the 24-bit format is unorm; it needs
+    /// `Features::DEPTH32FLOAT_STENCIL8` (which
+    /// [`ViewportRenderer::recommended_device_features`](crate::ViewportRenderer::recommended_device_features)
+    /// requests) and without it falls back to `Depth24PlusStencil8` with a
+    /// [`NoticeDetail::SceneDepthFormatFallback`](crate::NoticeDetail::SceneDepthFormatFallback).
+    /// Any other format fails construction with
+    /// [`ViewportError::InvalidSceneDepthFormat`](crate::ViewportError::InvalidSceneDepthFormat).
+    ///
+    /// Ask for the float format only where the renderer or your own code
+    /// allocates the depth target: `owned()`, `render_offscreen`, or a pass you
+    /// build yourself with an attachment of
+    /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format).
+    /// `ViewportApp` asks for it on its own when the device has the feature,
+    /// since it owns the surface depth. A host that paints into a framework's
+    /// pass ([`PassPath::paint`](crate::PassPath::paint), `paint_viewport`,
+    /// `paint_hdr_blit`, the `*_with_depth` blits) leaves `None` unless it
+    /// also made the framework allocate the float format.
+    pub scene_depth_format: Option<crate::gpu::TextureFormat>,
+    /// The point positions are measured from on their way to the GPU. A
+    /// frame can replace it with
+    /// [`SceneFrame::with_world_origin`](crate::SceneFrame::with_world_origin).
+    /// Default [`WorldOrigin::default`](crate::WorldOrigin::default), which
+    /// is [`snapped`](crate::WorldOrigin::snapped): the origin follows the
+    /// camera, so precision does not fall away with distance from the world
+    /// origin.
+    pub world_origin: crate::renderer::WorldOrigin,
 }
 
 impl RendererConfig {
@@ -78,6 +124,10 @@ impl RendererConfig {
             downlevel_capabilities: None,
             backend: None,
             max_tier: None,
+            device_lost_watcher: None,
+            target_release_frames: None,
+            scene_depth_format: None,
+            world_origin: crate::renderer::WorldOrigin::default(),
         }
     }
 
@@ -122,6 +172,34 @@ impl RendererConfig {
     /// [`max_tier`](Self::max_tier).
     pub fn with_max_tier(mut self, tier: crate::capabilities::Tier) -> Self {
         self.max_tier = Some(tier);
+        self
+    }
+
+    /// Share a watcher the host installed on the device, rather than have the
+    /// renderer install its own. See [`device_lost_watcher`](Self::device_lost_watcher).
+    pub fn with_device_lost_watcher(mut self, watcher: crate::renderer::DeviceLostWatcher) -> Self {
+        self.device_lost_watcher = Some(watcher);
+        self
+    }
+
+    /// Release a viewport's unused targets after `frames` frames. See
+    /// [`target_release_frames`](Self::target_release_frames).
+    pub fn with_target_release_frames(mut self, frames: u32) -> Self {
+        self.target_release_frames = Some(frames);
+        self
+    }
+
+    /// Set the scene depth-stencil format. See
+    /// [`scene_depth_format`](Self::scene_depth_format).
+    pub fn with_scene_depth_format(mut self, format: crate::gpu::TextureFormat) -> Self {
+        self.scene_depth_format = Some(format);
+        self
+    }
+
+    /// Set the origin positions are drawn relative to. See
+    /// [`world_origin`](Self::world_origin).
+    pub fn with_world_origin(mut self, origin: crate::renderer::WorldOrigin) -> Self {
+        self.world_origin = origin;
         self
     }
 

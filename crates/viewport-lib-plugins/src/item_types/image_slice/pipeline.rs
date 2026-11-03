@@ -4,6 +4,7 @@
 
 use super::types::ImageSliceItem;
 use super::types::SliceAxis;
+use crate::item_types::origin::rel_point;
 use crate::item_types::shader::{scene_shader, wgsl_source};
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::builders;
@@ -28,6 +29,7 @@ pub(super) struct ImageSliceRecipe {
     mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The render pipeline in both formats, the pick pipeline and the outline
@@ -54,9 +56,11 @@ fn build(r: &ImageSliceRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: gpu::CompareFunction::LessEqual,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == COLOUR_HDR,
         ),
@@ -234,6 +238,7 @@ impl ImageSliceGpu {
                 mask_shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );
@@ -253,14 +258,15 @@ impl ImageSliceGpu {
         self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
-    /// Build the per-item uniform + bind group, or `None` when the item's
-    /// volume is not resident.
+    /// Build the per-item uniform + bind group, with the box placed relative
+    /// to `origin`, or `None` when the item's volume is not resident.
     pub(super) fn upload_item(
         &self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         resources: &DeviceResources,
         item: &ImageSliceItem,
+        origin: glam::DVec3,
     ) -> Option<ImageSliceFrame> {
         // Check volume exists before allocating anything.
         let vol_view = resources.volume_view(item.volume_id)?;
@@ -271,9 +277,9 @@ impl ImageSliceGpu {
             SliceAxis::Z => 2u32,
         };
         let uniform_data = ImageSliceUniform {
-            bbox_min: item.bbox_min,
+            bbox_min: rel_point(item.bbox_min, origin),
             axis: axis_u32,
-            bbox_max: item.bbox_max,
+            bbox_max: rel_point(item.bbox_max, origin),
             offset: item.offset.clamp(0.0, 1.0),
             scalar_min: item.scalar_range.0,
             scalar_max: item.scalar_range.1,

@@ -45,11 +45,7 @@ fn fill_quad() -> MeshData {
 fn probe_frame(quad: Quad, bg_alpha: f32, opacity: f32) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -61,7 +57,7 @@ fn probe_frame(quad: Quad, bg_alpha: f32, opacity: f32) -> FrameData {
     if opacity > 0.0 {
         let mut item = SceneRenderItem::default();
         item.mesh_id = quad.0;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.2)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.2)).into();
         item.material = quad.1;
         item.settings.unlit = true;
         item.settings.opacity = opacity;

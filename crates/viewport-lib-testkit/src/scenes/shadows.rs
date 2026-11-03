@@ -1,5 +1,6 @@
 //! Shadow regression scenes: enclosed rooms, thin stacked receivers, clipped
-//! solids and a long hall. The open platform under a high sun that most
+//! solids, a long hall, and spot lights beside a sun and at both extremes of
+//! cone width. The open platform under a high sun that most
 //! examples use hides the shadow failure classes; these put the receivers at
 //! grazing angles, inside closed geometry, and under cascades wide enough for
 //! the texel size to matter. Interiors run with the hemisphere near zero so
@@ -10,7 +11,7 @@ use glam::Vec3;
 use viewport_lib::Colour;
 use viewport_lib::{
     BackfacePolicy, ClipObject, LightKind, LightSource, LightingSettings, Material,
-    SceneRenderItem, primitives,
+    SceneRenderItem, ShadowFilter, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item, orbit_camera, upload};
@@ -27,6 +28,21 @@ fn sun(direction: [f32; 3], intensity: f32) -> LightSource {
 fn lamp(position: [f32; 3], candela: f32, range: f32) -> LightSource {
     let mut s = LightSource::point_candela(position, viewport_lib::Candela(candela), range, 0.05);
     s.colour = Colour::linear_rgb(1.0, 0.92, 0.8);
+    s.cast_shadows = true;
+    s
+}
+
+fn spot(position: [f32; 3], direction: [f32; 3], candela: f32, outer: f32) -> LightSource {
+    let mut s = LightSource::spot_candela(
+        position,
+        direction,
+        viewport_lib::Candela(candela),
+        12.0,
+        outer * 0.8,
+        outer,
+        0.05,
+    );
+    s.colour = Colour::linear_rgb(1.0, 0.88, 0.7);
     s.cast_shadows = true;
     s
 }
@@ -330,6 +346,118 @@ fn build_long_hall(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
+/// A sun from low on +X and a spot straight down beside it, each with a
+/// caster in its light. The spot comes second in the light list, so its
+/// shadow is the one a renderer that shadows only its first light loses.
+fn build_spot_and_sun(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut items = vec![super::ground(ctx, 0.0)];
+    items.push(slab(
+        ctx,
+        [0.3, 0.3, 1.6],
+        [0.0, -1.5, 0.8],
+        [0.7, 0.8, 0.95],
+    ));
+    items.push(slab(
+        ctx,
+        [0.5, 0.5, 0.5],
+        [1.6, 1.0, 0.25],
+        [0.95, 0.8, 0.7],
+    ));
+    items.extend(table_set(ctx, Vec3::new(-1.6, 0.8, 0.0)));
+    BuiltScene {
+        items,
+        lighting: interior(vec![
+            sun([1.0, 0.3, 0.45], 0.6),
+            spot([0.6, -1.5, 3.0], [0.0, 0.0, -1.0], 60.0, 0.6),
+        ]),
+        ..Default::default()
+    }
+}
+
+/// A 70 degree spot and a 12 degree spot, each over its own casters. The wide
+/// cone's shadow has to reach a caster near its rim and the narrow cone's has
+/// to resolve a thin post near its axis.
+fn build_spots_wide_narrow(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut items = vec![super::ground(ctx, 0.0)];
+    items.push(slab(
+        ctx,
+        [0.5, 0.5, 0.5],
+        [-3.4, 0.5, 0.25],
+        [0.7, 0.8, 0.95],
+    ));
+    items.push(slab(
+        ctx,
+        [0.5, 0.5, 0.5],
+        [-3.0, -3.6, 0.25],
+        [0.95, 0.8, 0.7],
+    ));
+    items.push(slab(
+        ctx,
+        [0.12, 0.12, 0.8],
+        [3.35, 0.25, 0.4],
+        [0.8, 0.9, 0.8],
+    ));
+    BuiltScene {
+        items,
+        lighting: interior(vec![
+            spot([-3.0, 0.0, 2.5], [0.0, 0.0, -1.0], 40.0, 70f32.to_radians()),
+            spot([3.0, 0.0, 4.0], [0.0, 0.0, -1.0], 40.0, 12f32.to_radians()),
+        ]),
+        ..Default::default()
+    }
+}
+
+/// A sun under the PCSS filter over casters of different heights: a tall
+/// thin post, a cube, a small cube, and a plank held 1.2 m up on thin legs.
+/// The penumbra should be sharp where each caster meets the ground and widen
+/// with height: widest at the post's tip and under the plank, and never wide
+/// enough to swallow the small cube's shadow. The sun's angular radius is the
+/// default.
+fn build_pcss_sun(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut items = vec![super::ground(ctx, 0.0)];
+    items.push(slab(
+        ctx,
+        [0.1, 0.1, 2.5],
+        [-2.2, 1.0, 1.25],
+        [0.8, 0.75, 0.7],
+    ));
+    items.push(slab(
+        ctx,
+        [0.8, 0.8, 0.8],
+        [1.1, 1.0, 0.4],
+        [0.7, 0.8, 0.95],
+    ));
+    items.push(slab(
+        ctx,
+        [0.15, 0.15, 0.15],
+        [-1.4, -1.0, 0.075],
+        [0.95, 0.8, 0.7],
+    ));
+    items.push(slab(
+        ctx,
+        [1.4, 0.35, 0.05],
+        [0.9, -1.4, 1.225],
+        [0.6, 0.45, 0.3],
+    ));
+    for x in [0.3, 1.5] {
+        items.push(slab(
+            ctx,
+            [0.04, 0.04, 1.2],
+            [x, -1.4, 0.6],
+            [0.5, 0.38, 0.25],
+        ));
+    }
+    let mut l = LightingSettings::default();
+    l.lights = vec![sun([-0.45, 0.35, 0.8], 1.5)];
+    l.hemisphere_intensity = 0.2;
+    l.shadows.filter = ShadowFilter::Pcss;
+    BuiltScene {
+        items,
+        lighting: l,
+        ..Default::default()
+    }
+}
+
 fn hall_cameras() -> Vec<NamedCamera> {
     vec![NamedCamera {
         name: "end",
@@ -377,6 +505,30 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "long_hall",
             cameras: hall_cameras(),
             build: build_long_hall,
+        },
+        NamedScene {
+            name: "spot_and_sun",
+            cameras: vec![NamedCamera {
+                name: "iso",
+                camera: orbit_camera(Vec3::new(0.0, -0.5, 0.5), 7.0, 0.5, 0.95),
+            }],
+            build: build_spot_and_sun,
+        },
+        NamedScene {
+            name: "spots_wide_narrow",
+            cameras: vec![NamedCamera {
+                name: "iso",
+                camera: orbit_camera(Vec3::new(0.0, -0.8, 0.0), 11.0, 0.0, 0.9),
+            }],
+            build: build_spots_wide_narrow,
+        },
+        NamedScene {
+            name: "pcss_sun",
+            cameras: vec![NamedCamera {
+                name: "iso",
+                camera: orbit_camera(Vec3::new(0.0, -0.4, 0.4), 8.0, 0.4, 0.7),
+            }],
+            build: build_pcss_sun,
         },
     ]
 }

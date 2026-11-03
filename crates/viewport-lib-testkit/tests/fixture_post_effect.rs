@@ -26,8 +26,9 @@ fn luma(pixels: &[u8], x: u32, y: u32) -> i32 {
     pixels[i] as i32 + pixels[i + 1] as i32 + pixels[i + 2] as i32
 }
 
-/// A frame with one bright unlit quad filling the middle of the view.
-fn quad_frame(harness: &mut Harness) -> viewport_lib::FrameData {
+/// A frame with one bright quad filling the middle of the view: unlit, or
+/// with `fill_lit` lit by the hemisphere fill alone.
+fn quad_frame(harness: &mut Harness, fill_lit: bool) -> viewport_lib::FrameData {
     let mesh = harness
         .renderer
         .resources_mut()
@@ -36,13 +37,19 @@ fn quad_frame(harness: &mut Harness) -> viewport_lib::FrameData {
     let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
     item.material = harness
         .renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.8, 0.8)))
         .expect("material upload");
-    item.settings.unlit = true;
+    if fill_lit {
+        // Ambient occlusion darkens the indirect share of the light, so a
+        // quad lit by the hemisphere fill alone takes all of it.
+        frame.effects.lighting.lights.clear();
+    } else {
+        item.settings.unlit = true;
+    }
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
 }
@@ -118,7 +125,7 @@ fn producer_fixture_fills_its_slot() {
                 ))
                 .unwrap();
         }
-        let frame = quad_frame(&mut harness);
+        let frame = quad_frame(&mut harness, true);
         harness.render(&frame, SIZE, SIZE)
     };
 
@@ -163,7 +170,7 @@ fn stage_fixture_is_in_the_image_path() {
                 )
                 .unwrap();
         }
-        let frame = quad_frame(&mut harness);
+        let frame = quad_frame(&mut harness, false);
         harness.render(&frame, SIZE, SIZE)
     };
 
@@ -236,7 +243,7 @@ fn stage_fixtures_chain_in_order_key_order() {
         )
         .unwrap();
 
-    let frame = quad_frame(&mut harness);
+    let frame = quad_frame(&mut harness, false);
     let both = harness.render(&frame, SIZE, SIZE);
     log.assert_before("first:encode:0", "second:encode:0");
 
@@ -257,4 +264,127 @@ fn stage_fixtures_chain_in_order_key_order() {
         both_centre < one_centre - 100,
         "the halving stage must apply on top of the pass-through: both {both_centre}, one {one_centre}"
     );
+}
+
+/// Releasing an idle target group and promoting it again keeps the scene
+/// colour and depth in place, so a producer runs every frame through both
+/// without a resize signal, and still gets one when the viewport is resized.
+#[test]
+fn producer_fixture_survives_a_target_release() {
+    let Some((device, queue)) = viewport_lib_testkit::headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut harness = Harness::from_device(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+    );
+    harness.renderer = viewport_lib::ViewportRenderer::with_config(
+        &device,
+        &viewport_lib::RendererConfig::new(wgpu::TextureFormat::Bgra8UnormSrgb)
+            .with_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking)
+            .with_target_release_frames(2),
+    );
+    let log = CallLog::new();
+    harness
+        .renderer
+        .add_post_effect_producer(Box::new(LoggingPostEffectProducer::new(
+            log.clone(),
+            PostEffectSlot::AmbientOcclusion,
+            Arc::new(AtomicBool::new(true)),
+        )))
+        .unwrap();
+    let mut bloom = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
+    bloom.effects.post_process.bloom.enabled = true;
+    let plain = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
+    let per_frame = ["prepare:0".to_string(), format!("encode:0:{SIZE}x{SIZE}")];
+    let per_frame: Vec<&str> = per_frame.iter().map(String::as_str).collect();
+    let bloom_held = |harness: &Harness| {
+        harness
+            .renderer
+            .debug_viewport_live_targets(0)
+            .contains(&"bloom")
+    };
+
+    harness.render(&bloom, SIZE, SIZE);
+    log.assert_take(&[
+        "init_gpu",
+        &format!("resize:0:{SIZE}x{SIZE}"),
+        per_frame[0],
+        per_frame[1],
+    ]);
+    for _ in 0..2 {
+        harness.render(&plain, SIZE, SIZE);
+        log.assert_take(&per_frame);
+    }
+    assert!(!bloom_held(&harness), "bloom must be released by now");
+    harness.render(&bloom, SIZE, SIZE);
+    log.assert_take(&per_frame);
+    assert!(bloom_held(&harness), "bloom must be promoted again");
+
+    let resized = SIZE * 2;
+    let mut bigger = probe_frame(resized, [0.3, 0.3, 0.3, 1.0]);
+    bigger.effects.post_process.bloom.enabled = true;
+    harness.render(&bigger, resized, resized);
+    log.assert_take(&[
+        &format!("resize:0:{resized}x{resized}"),
+        "prepare:0",
+        &format!("encode:0:{resized}x{resized}"),
+    ]);
+}
+
+/// An external producer is untouched by a target-group demotion: with
+/// bloom's group released after it goes idle, the producer still prepares and
+/// encodes every frame, and a later resize still reaches it.
+#[test]
+fn producer_fixture_survives_a_group_demotion() {
+    let Some((device, queue)) = viewport_lib_testkit::headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let config = viewport_lib::RendererConfig::new(wgpu::TextureFormat::Rgba8UnormSrgb)
+        .with_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking)
+        .with_target_release_frames(2);
+    let mut renderer = viewport_lib::ViewportRenderer::with_config(&device, &config);
+    let log = CallLog::new();
+    renderer
+        .add_post_effect_producer(Box::new(LoggingPostEffectProducer::new(
+            log.clone(),
+            PostEffectSlot::Bloom,
+            Arc::new(AtomicBool::new(true)),
+        )))
+        .unwrap();
+    let mut frame = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
+    frame.effects.post_process.bloom.enabled = true;
+    renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    assert!(renderer.debug_viewport_live_targets(0).contains(&"bloom"));
+    log.assert_take(&[
+        "init_gpu",
+        &format!("resize:0:{SIZE}x{SIZE}"),
+        "prepare:0",
+        &format!("encode:0:{SIZE}x{SIZE}"),
+    ]);
+
+    frame.effects.post_process.bloom.enabled = false;
+    for _ in 0..2 {
+        renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+        log.assert_take(&["prepare:0", &format!("encode:0:{SIZE}x{SIZE}")]);
+    }
+    assert!(
+        !renderer.debug_viewport_live_targets(0).contains(&"bloom"),
+        "test premise: the bloom group must be released"
+    );
+    renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);
+    log.assert_take(&["prepare:0", &format!("encode:0:{SIZE}x{SIZE}")]);
+
+    let big = SIZE * 2;
+    let mut resized = probe_frame(big, [0.3, 0.3, 0.3, 1.0]);
+    resized.effects.post_process.bloom.enabled = false;
+    renderer.render_offscreen(&device, &queue, &resized, big, big);
+    log.assert_take(&[
+        &format!("resize:0:{big}x{big}"),
+        "prepare:0",
+        &format!("encode:0:{big}x{big}"),
+    ]);
 }

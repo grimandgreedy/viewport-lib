@@ -2,13 +2,13 @@
 
 /// Append a closed circle to `out` as `steps + 1` points.
 ///
-/// The circle is centered at `center` and lies in the plane spanned by the
+/// The circle is centred at `centre` and lies in the plane spanned by the
 /// orthonormal axes `u` and `v`, with radius `r`. The first and last points
 /// coincide, so the points form a closed loop when drawn as one polyline strip
 /// of length `steps + 1`.
 pub fn push_circle_loop(
     out: &mut Vec<[f32; 3]>,
-    center: glam::Vec3,
+    centre: glam::Vec3,
     u: glam::Vec3,
     v: glam::Vec3,
     r: f32,
@@ -17,7 +17,7 @@ pub fn push_circle_loop(
     for i in 0..=steps {
         let a = i as f32 * std::f32::consts::TAU / steps as f32;
         let (s, c) = a.sin_cos();
-        out.push((center + u * (c * r) + v * (s * r)).to_array());
+        out.push((centre + u * (c * r) + v * (s * r)).to_array());
     }
 }
 
@@ -42,7 +42,7 @@ mod tests {
         let first = glam::Vec3::from(pts[0]);
         let last = glam::Vec3::from(pts[steps]);
         assert!((first - last).length() < 1e-5);
-        // Every point sits at radius 2 from the center in the XY plane.
+        // Every point sits at radius 2 from the centre in the XY plane.
         for p in &pts {
             let d = glam::Vec3::from(*p) - glam::Vec3::new(1.0, 2.0, 3.0);
             assert!((d.length() - 2.0).abs() < 1e-5);

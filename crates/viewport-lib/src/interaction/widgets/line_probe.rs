@@ -101,7 +101,7 @@ impl LineProbeWidget {
         if ctx.drag_started {
             if let Some(ep) = self.hovered_endpoint {
                 let ep_world = self.endpoint_pos(ep);
-                let fwd = glam::Vec3::from(ctx.camera.forward);
+                let fwd = ctx.camera.forward();
                 let n = -fwd;
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(ep_world);

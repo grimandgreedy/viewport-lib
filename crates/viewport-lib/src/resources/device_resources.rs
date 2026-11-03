@@ -22,6 +22,12 @@ pub(crate) struct ViewportHdrState {
     pub hdr_depth_view: crate::gpu::TextureView,
     pub hdr_depth_only_view: crate::gpu::TextureView,
     pub hdr_stencil_only_view: crate::gpu::TextureView,
+    /// The indirect share of each opaque pixel's light, at scene resolution:
+    /// the scene pass's second colour attachment (the SSAA resolve's under
+    /// SSAA), which the composite scales ambient occlusion and contact shadows
+    /// by. The foreground pass attaches it too.
+    pub indirect_fraction_texture: crate::gpu::Texture,
+    pub indirect_fraction_view: crate::gpu::TextureView,
 
     // --- Composite-input producers (targets, bind groups, uniforms) ---
     pub bloom: crate::resources::postprocess::producer::BloomViewport,
@@ -36,6 +42,11 @@ pub(crate) struct ViewportHdrState {
     /// Supersampled colour render target. `None` when ssaa_factor == 1.
     pub ssaa_colour_texture: Option<crate::gpu::Texture>,
     pub ssaa_colour_view: Option<crate::gpu::TextureView>,
+    /// Supersampled indirect fraction, the scene pass's second attachment
+    /// under SSAA; the resolve averages it into `indirect_fraction_view`.
+    /// `None` when ssaa_factor == 1.
+    pub ssaa_indirect_fraction_texture: Option<crate::gpu::Texture>,
+    pub ssaa_indirect_fraction_view: Option<crate::gpu::TextureView>,
     /// Supersampled depth render target. `None` when ssaa_factor == 1.
     pub ssaa_depth_texture: Option<crate::gpu::Texture>,
     pub ssaa_depth_view: Option<crate::gpu::TextureView>,
@@ -83,9 +94,10 @@ pub(crate) struct ViewportHdrState {
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
     /// The views `tone_map_bind_group` was last built over (HDR input, bloom,
-    /// AO, contact shadow, scene depth, foreground depth, grade LUT), so a
-    /// frame that binds the same ones reuses it. `None` until the first rebuild.
-    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 7]>,
+    /// AO, contact shadow, scene depth, foreground depth, grade and view LUTs,
+    /// indirect fraction), so a frame that binds the same ones reuses it.
+    /// `None` until the first rebuild.
+    pub tone_map_bg_views: Option<[crate::gpu::TextureView; 9]>,
     /// The foreground view the DOF bind group was last built with.
     pub dof_bg_foreground: Option<crate::gpu::TextureView>,
     /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.
@@ -154,7 +166,8 @@ pub(crate) struct ViewportHdrState {
 pub struct DualPipeline {
     /// Variant compiled for the LDR swapchain format.
     pub ldr: crate::gpu::RenderPipeline,
-    /// Variant compiled for the HDR intermediate format (`Rgba16Float`).
+    /// Variant compiled for the HDR scene pass: the `Rgba16Float`
+    /// intermediate and the indirect fraction.
     pub hdr: crate::gpu::RenderPipeline,
 }
 
@@ -277,9 +290,9 @@ pub struct ContentResources {
     pub(crate) material_bind_groups:
         std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
     /// Textures found bound into a slot that needs the other colour space,
-    /// recorded as (raw texture id, slot) where the binding is built and drained
-    /// by `prepare` into a `TextureColourSpaceMismatch`. One entry per pair, so a
-    /// scene that keeps redrawing does not grow it.
+    /// recorded as (raw texture id, slot) where the binding is built. One entry
+    /// per pair, so a scene that keeps redrawing does not grow it. Each bind is
+    /// also reported as a notice.
     /// Behind a lock so a binding built from a shared borrow can record one:
     /// item types prepare against `&DeviceResources`.
     pub(crate) texture_slot_mismatches:
@@ -420,9 +433,46 @@ impl SceneTierSlot {
 }
 
 impl DeviceResources {
+    /// What the device-lost callback reported, once the device is lost or
+    /// destroyed. The first call that sees it reports a `Device` notice.
+    pub(crate) fn device_lost_info(&self) -> Option<crate::renderer::DeviceLostInfo> {
+        if !self.device_lost.is_lost_or_destroyed() {
+            return None;
+        }
+        let info = self
+            .device_lost
+            .info()
+            .unwrap_or_else(|| crate::renderer::DeviceLostInfo {
+                reason: crate::gpu::DeviceLostReason::Unknown,
+                message: String::new(),
+            });
+        if !self
+            .device_lost_reported
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            let reason = format!("{:?}: {}", info.reason, info.message);
+            self.notices.report(
+                crate::notice::NoticeKey::single(crate::NoticeCategory::Device, "device_lost"),
+                crate::Severity::Error,
+                || crate::NoticeDetail::DeviceLost { reason },
+            );
+        }
+        Some(info)
+    }
+
+    /// `Err(DeviceLost)` once the device is lost or destroyed.
+    pub(crate) fn require_live(&self) -> Result<(), crate::ViewportError> {
+        match self.device_lost_info() {
+            Some(info) => Err(info.to_error()),
+            None => Ok(()),
+        }
+    }
+
     /// `Err(TierUnsupported)` when the scene resources were not built, for
-    /// the calls that add scene content.
+    /// the calls that add scene content. `Err(DeviceLost)` first, once the
+    /// device is lost.
     pub(crate) fn require_scene_tier(&self) -> Result<(), crate::ViewportError> {
+        self.require_live()?;
         if self.scene_tier.is_built() {
             Ok(())
         } else {
@@ -436,6 +486,7 @@ impl DeviceResources {
     /// `Err(TierUnsupported)` when there is no lit group 0 for an item type
     /// to bind: the overlay-only tier.
     pub(crate) fn require_lit_group0(&self) -> Result<(), crate::ViewportError> {
+        self.require_live()?;
         if self.lit_group0_layouts().is_some() {
             Ok(())
         } else {
@@ -536,10 +587,11 @@ pub struct DeviceResources {
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,
-    /// Registered fragment shading hooks (`register_shading_hook`). Each
-    /// entry composes its own lit-shader modules; the base pipelines are
-    /// untouched by registrations.
-    pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
+    /// Registered fragment shading hooks (`register_shading_hook`), one slot
+    /// per registration index. Each live entry composes its own lit-shader
+    /// modules; the base pipelines are untouched by registrations. A slot
+    /// empties on unregistration and is reused by a later registration.
+    pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::ShadeHookSlot>,
     /// Per-material-plugin GPU state (`register_material_plugin`), keyed by
     /// hook index: declared parameters, group-2 texture sets and the lazily
     /// built lit pipeline sets.
@@ -561,12 +613,12 @@ pub struct DeviceResources {
     /// Which form each group 0 binding takes here; `None` on the overlay-only
     /// tier, which has no lit group 0.
     pub(crate) group0_profile: Option<crate::resources::group0::Group0Profile>,
-    // --- Gizmo resources ---
-
     // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
     /// Floor grid, axes indicator, base overlay pipelines, and constraint guide
     /// lines. See `resources::overlay::guides::OverlayGuideResources`.
     pub(crate) guides: crate::resources::overlay::guides::OverlayGuideResources,
+    /// The section cap fill pipelines, composed on the first frame with a cap.
+    pub(crate) section_cap: Option<crate::resources::overlay::section_cap::SectionCapPipelines>,
 
     // --- Texture system ---
     /// Uploaded GPU assets and their handle registries (textures, geometry /
@@ -616,6 +668,9 @@ pub struct DeviceResources {
     // size live on ViewportHdrState; only the shared pipelines and layout sit here.
     /// Weighted-blended OIT pipelines and composite layout.
     pub(crate) oit: crate::resources::postprocess::OitResources,
+    /// Transmission pipelines and layouts; the per-viewport scene copy lives
+    /// on the viewport slot.
+    pub(crate) transmission: crate::resources::postprocess::transmission::TransmissionResources,
 
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.
@@ -720,6 +775,9 @@ pub struct DeviceResources {
     /// renderer last looked. The renderer repacks its instanced batches only
     /// when one of them names such a mesh.
     pub(crate) closed_flipped: Vec<crate::resources::mesh::mesh_store::MeshId>,
+    /// The world origin of the last scene prepare, for the world-space
+    /// volumes written outside it (environment zones, the probe volume).
+    pub(crate) world_origin: crate::renderer::origin::OriginState,
     /// Bumped whenever a material plugin's pipeline set is built or dropped,
     /// or one of its texture groups is built or evicted. A recorded render
     /// bundle that draws plugin batches keys on it.
@@ -762,6 +820,17 @@ pub struct DeviceResources {
     /// camera bind groups had to be rebuilt. The renderer clears it after
     /// rebuilding the per-viewport groups, which it owns and this cannot reach.
     pub(crate) camera_bind_groups_dirty: bool,
+
+    /// Notices reported while preparing and drawing. Here rather than on the
+    /// renderer so code holding only `&DeviceResources` (plugin contexts, the
+    /// texture slot check) can report.
+    pub(crate) notices: crate::notice::NoticeSink,
+
+    /// Whether the device has been lost. The renderer swaps in its own watcher
+    /// at construction; uploads and frames check it.
+    pub(crate) device_lost: crate::renderer::DeviceLostWatcher,
+    /// Set once the loss has been reported as a notice.
+    pub(crate) device_lost_reported: std::sync::atomic::AtomicBool,
 }
 
 /// Per-viewport GPU culling outputs.
@@ -1093,6 +1162,16 @@ impl DeviceResources {
         self.sample_count
     }
 
+    /// The scene depth-stencil format every scene pipeline here was built
+    /// with: `Depth24PlusStencil8` unless
+    /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+    /// asked for `Depth32FloatStencil8` on a device that has it. Build plugin
+    /// pipelines that draw into a scene pass against
+    /// this, not a fixed format.
+    pub fn scene_depth_format(&self) -> crate::gpu::TextureFormat {
+        self.capabilities.scene_depth_format
+    }
+
     /// Create a camera bind group (group 0) for the given per-viewport buffers.
     ///
     /// Per-viewport buffers (camera, clip planes, shadow info, clip volume) are
@@ -1204,9 +1283,14 @@ impl DeviceResources {
         self.custom_data_written.extend_from_slice(data);
         let bytes = data.len() as u64;
         if self.custom_data_builder.overflowed {
-            tracing::warn!(
-                capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY,
-                "per-instance custom-data buffer overflowed; excess instances fell back to the zero block"
+            let capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY as u32;
+            self.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::ResourceSlot,
+                    "custom_data_overflow",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::CustomDataOverflow { capacity },
             );
         }
         self.frame_upload_bytes += bytes;
@@ -1253,8 +1337,9 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     true,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: self.sample_count,
@@ -1293,6 +1378,7 @@ impl DeviceResources {
             device,
             &self.outline_pipeline_layout(device),
             &mask_shader,
+            self.scene_depth_format(),
             crate::gpu::TextureFormat::R8Unorm,
             self.pipeline_cache.as_ref(),
         );
@@ -1339,6 +1425,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -1407,11 +1494,17 @@ impl DeviceResources {
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
+                    // The sky is background, which the composite never
+                    // occludes: the fraction is left at its clear value.
+                    targets: crate::plugin_api::SceneColourTargets::hdr(
+                        crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::Rgba16Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        },
+                        false,
+                    )
+                    .as_slice(),
                     compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: crate::gpu::PrimitiveState {
@@ -1419,8 +1512,9 @@ impl DeviceResources {
                     cull_mode: None,
                     ..Default::default()
                 },
-                // Drawn after opaques: only sky pixels (depth == 1.0) pass.
+                // Drawn after opaques: only sky pixels (depth at the clear value) pass.
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Equal,
                 )),
@@ -1479,15 +1573,16 @@ impl DeviceResources {
                 device: device.clone(),
                 layout,
                 shader,
+                depth_clamp: self.capabilities.depth_clip_control,
             },
             std::sync::Arc::clone(&self.pipeline_compiler),
             crate::resources::shadow::build_cascade,
         ));
     }
 
-    /// Build the point-light cubemap shadow pipeline and its module. Called from
-    /// the point-shadow branch of the lighting prepare, the same point the cube
-    /// array is allocated. A no-op once built.
+    /// Build the punctual shadow pipeline (point-light cube faces and spot
+    /// maps) and its module. Called from the lighting prepare when it places a
+    /// light in the punctual array. A no-op once built.
     pub(crate) fn ensure_point_shadow_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.scene_tier.shadow.point_pipeline.is_some() {
             return;
@@ -1517,65 +1612,112 @@ impl DeviceResources {
                     device: device.clone(),
                     layout,
                     shader,
+                    depth_clamp: false,
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
                 crate::resources::shadow::build_point,
             ));
     }
 
-    /// Promote the cascade shadow atlas from its 1x1 placeholder to the full
-    /// `SHADOW_ATLAS_SIZE` depth texture and rebuild every bind group that
-    /// samples it. A no-op once promoted.
+    /// Make the cascade shadow atlas a `size` square depth texture, promoting
+    /// it from its 1x1 placeholder or recreating it at a new size, and rebuild
+    /// every bind group that samples it. A no-op when it already is one.
+    /// `size` comes from [`shadow_atlas_size`](Self::shadow_atlas_size).
     ///
-    /// Returns whether it allocated, so the renderer knows to rebuild the
-    /// per-viewport camera bind groups it owns (this can only reach the ones
-    /// hanging off `DeviceResources`).
-    pub(crate) fn ensure_shadow_atlas(&mut self, device: &crate::gpu::Device) -> bool {
-        if self.scene_tier.shadow.atlas_allocated {
+    /// Returns whether it allocated. The per-viewport camera bind groups the
+    /// renderer owns are flagged through `camera_bind_groups_dirty`.
+    pub(crate) fn ensure_shadow_atlas(&mut self, device: &crate::gpu::Device, size: u32) -> bool {
+        let shadow = &self.scene_tier.shadow;
+        if shadow.atlas_allocated && shadow.atlas_size == size {
             return false;
         }
-        let (texture, view) = crate::resources::shadow::create_atlas_texture(
-            device,
-            crate::resources::SHADOW_ATLAS_SIZE,
-        );
+        let (texture, view) = crate::resources::shadow::create_atlas_texture(device, size);
         self.scene_tier.shadow.map_texture = texture;
         self.scene_tier.shadow.map_view = view;
+        self.scene_tier.shadow.atlas_size = size;
         self.scene_tier.shadow.atlas_allocated = true;
         self.rebuild_shadow_sampling_bind_groups(device);
         tracing::debug!(
             target: "viewport_lib::init",
-            size = crate::resources::SHADOW_ATLAS_SIZE,
+            size,
             "allocated the cascade shadow atlas"
         );
         true
     }
 
-    /// Promote the point-light cube array from its single 1x1 cube to the full
-    /// `MAX_POINT_SHADOW_LIGHTS` array at `POINT_SHADOW_FACE_SIZE`, and rebuild
-    /// the bind groups that sample it. A no-op once promoted.
+    /// The cascade atlas side for a requested `ShadowSettings::atlas_resolution`
+    /// on this device. A request the device cannot take as asked is reported
+    /// as a [`NoticeDetail::ShadowAtlasClamped`](crate::NoticeDetail::ShadowAtlasClamped).
+    pub(crate) fn shadow_atlas_size(&self, requested: u32) -> u32 {
+        let used = crate::resources::shadow::atlas_size_for(
+            requested,
+            self.capabilities.texture_dimension_2d,
+        );
+        if used != requested {
+            self.notices.report(
+                crate::notice::NoticeKey::new(
+                    crate::NoticeCategory::ResourceSlot,
+                    "shadow_atlas_clamped",
+                    [u64::from(requested), u64::from(used)],
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::ShadowAtlasClamped { requested, used },
+            );
+        }
+        used
+    }
+
+    /// Make the punctual shadow array `layers` layers of `size` square,
+    /// recreating it when either differs from what it holds, and rebuild the
+    /// bind groups that sample it. The per-layer uniform buffer grows to
+    /// match. A no-op when the array already has that shape.
     ///
-    /// Returns whether it allocated. See [`ensure_shadow_atlas`](Self::ensure_shadow_atlas)
-    /// for why the caller cares.
-    pub(crate) fn ensure_point_shadow_cubes(&mut self, device: &crate::gpu::Device) -> bool {
-        if self.scene_tier.shadow.point_cubes_allocated {
+    /// Returns whether it allocated: a recreated array holds nothing, so the
+    /// caller forgets what its layers held. See
+    /// [`ensure_shadow_atlas`](Self::ensure_shadow_atlas) for the bind groups.
+    pub(crate) fn ensure_punctual_shadow_array(
+        &mut self,
+        device: &crate::gpu::Device,
+        layers: u32,
+        size: u32,
+    ) -> bool {
+        let shadow = &self.scene_tier.shadow;
+        if shadow.punctual_allocated
+            && shadow.punctual_layer_views.len() == layers as usize
+            && shadow.punctual_texture.width() == size
+        {
             return false;
         }
-        let (texture, cube_view, face_views) = crate::resources::shadow::create_point_cube_array(
-            device,
-            crate::renderer::POINT_SHADOW_FACE_SIZE,
-            crate::renderer::MAX_POINT_SHADOW_LIGHTS,
-            self.capabilities.cube_array_textures,
-        );
-        self.scene_tier.shadow.point_cube_texture = texture;
-        self.scene_tier.shadow.point_cube_view = cube_view;
-        self.scene_tier.shadow.point_face_views = face_views;
-        self.scene_tier.shadow.point_cubes_allocated = true;
+        let (texture, view, layer_views) =
+            crate::resources::shadow::create_punctual_array(device, size, layers);
+        self.scene_tier.shadow.punctual_texture = texture;
+        self.scene_tier.shadow.punctual_view = view;
+        self.scene_tier.shadow.punctual_layer_views = layer_views;
+        self.scene_tier.shadow.punctual_allocated = true;
+        let face_bytes = u64::from(layers) * crate::resources::shadow::PUNCTUAL_FACE_STRIDE;
+        use crate::resources::builders::LoggedAlloc;
+        if self.scene_tier.shadow.point_face_buf.size() < face_bytes {
+            let buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("shadow_point_face_buf"),
+                size: face_bytes,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.scene_tier.shadow.point_face_bind_group =
+                crate::resources::shadow::face_bind_group(
+                    device,
+                    &self.scene_tier.shadow.point_face_bgl,
+                    &buf,
+                    &self.scene_tier.deform.header_buffer,
+                );
+            self.scene_tier.shadow.point_face_buf = buf;
+        }
         self.rebuild_shadow_sampling_bind_groups(device);
         tracing::debug!(
             target: "viewport_lib::init",
-            lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS,
-            face = crate::renderer::POINT_SHADOW_FACE_SIZE,
-            "allocated the point-light shadow cube array"
+            layers,
+            size,
+            "allocated the punctual shadow array"
         );
         true
     }
@@ -1725,7 +1867,7 @@ impl DeviceResources {
             ibl_sampler: &ibl.sampler,
             skybox: ibl.skybox_view.as_ref().unwrap_or(&ibl.fallback_view),
             light_list: &tier.lighting.storage_buf,
-            point_shadows: &tier.shadow.point_cube_view,
+            point_shadows: &tier.shadow.punctual_view,
             clusters: Some((
                 &tier.clustered.grid_uniform_buf,
                 &tier.clustered.cluster_buf,

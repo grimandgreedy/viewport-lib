@@ -76,7 +76,7 @@ fn deformers_register_on_default_limits() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
     let desc = viewport_lib::resources::DeformerDesc {
-        name: "wave",
+        name: "wave".into(),
         stage: viewport_lib::resources::DeformStage::ObjectSpace,
         priority: 0,
         wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { return v; }\n"
@@ -103,7 +103,7 @@ fn deformer_registration_succeeds_with_recommended_limits() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
     let desc = viewport_lib::resources::DeformerDesc {
-        name: "wave",
+        name: "wave".into(),
         stage: viewport_lib::resources::DeformStage::ObjectSpace,
         priority: 0,
         wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { return v; }\n"

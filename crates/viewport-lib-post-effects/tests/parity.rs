@@ -70,11 +70,7 @@ fn box_mesh() -> MeshData {
 fn base_frame(background: [f32; 4]) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -108,7 +104,7 @@ fn contact_shadow_items(
         .unwrap();
     let mut ground_item = SceneRenderItem::default();
     ground_item.mesh_id = ground;
-    ground_item.model = glam::Mat4::from_scale(glam::Vec3::splat(8.0)).to_cols_array_2d();
+    ground_item.model = glam::Mat4::from_scale(glam::Vec3::splat(8.0)).into();
     ground_item.material = renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
@@ -117,7 +113,7 @@ fn contact_shadow_items(
     cube_item.mesh_id = cube;
     cube_item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.25))
         * glam::Mat4::from_scale(glam::Vec3::splat(0.4)))
-    .to_cols_array_2d();
+    .into();
     cube_item.material = renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.3, 0.2)))

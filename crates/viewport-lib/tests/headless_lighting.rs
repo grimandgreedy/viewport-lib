@@ -46,7 +46,7 @@ fn capture_hdr_preserves_values_above_one() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -55,8 +55,7 @@ fn capture_hdr_preserves_values_above_one() {
     let orig_viewport_size = frame.camera.viewport_size;
     let orig_pp_enabled = frame.effects.display.mode;
 
-    let mut face_cam = RenderCamera::from_camera(&cam);
-    face_cam.aspect = 1.0;
+    let face_cam = RenderCamera::from_camera(&cam);
     let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
 
     assert_eq!(captured.width, 64);
@@ -189,14 +188,13 @@ fn directional_lightmap_responds_to_normal() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         mat.normal_map_id = Some(nm);
         mat.normal_strength = 1.0;
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         // Sample the centre pixel (on the quad) rather than the global peak, which
         // would pick up the background clear when the quad is dim.
@@ -297,12 +295,11 @@ fn shadowmask_attenuates_direct_light() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         let c = ((32 * 64 + 32) * 4) as usize;
         captured.rgba[c]
@@ -363,12 +360,11 @@ fn hdr_lightmap_survives_above_one() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         captured.rgba.iter().copied().fold(0.0f32, f32::max)
     };
@@ -469,12 +465,11 @@ fn multi_page_lightmap_selects_layer_per_vertex() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         // Peak over RGB only; the alpha channel is 1.0 and would mask a dim layer.
         captured
@@ -579,12 +574,11 @@ fn scene_lightmap_addresses_shared_atlas_per_object() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         // Peak over RGB only; alpha is 1.0 and would mask the dim object.
         captured
@@ -707,12 +701,11 @@ fn packed_scene_atlas_round_trips_through_the_packer() {
         let mut item = SceneRenderItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.model = glam::Mat4::IDENTITY.into();
         mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
         item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let mut face_cam = RenderCamera::from_camera(&cam);
-        face_cam.aspect = 1.0;
+        let face_cam = RenderCamera::from_camera(&cam);
         let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
         captured
             .rgba
@@ -764,7 +757,7 @@ fn capture_equirect_maps_direction_like_the_shader() {
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     // Place the box along +X so it fills only the +X face from the origin.
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(8.0, 8.0, 8.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -831,7 +824,7 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(8.0, 8.0, 8.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -852,8 +845,8 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
     let mut diff = 0.0f64;
     let mut mag = 0.0f64;
     let texels = (cpu.width * cpu.height) as usize;
-    let (mut cpu_best, mut cpu_i) = (f32::NEG_INFINITY, 0usize);
-    let (mut gpu_best, mut gpu_i) = (f32::NEG_INFINITY, 0usize);
+    let mut cpu_best = f32::NEG_INFINITY;
+    let mut gpu_best = f32::NEG_INFINITY;
     for i in 0..texels {
         let o = i * 4;
         let mut cl = 0.0f32;
@@ -866,14 +859,8 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
             cl += c;
             gl += g;
         }
-        if cl > cpu_best {
-            cpu_best = cl;
-            cpu_i = i;
-        }
-        if gl > gpu_best {
-            gpu_best = gl;
-            gpu_i = i;
-        }
+        cpu_best = cpu_best.max(cl);
+        gpu_best = gpu_best.max(gl);
     }
     let rel = diff / mag.max(1e-6);
     assert!(
@@ -881,15 +868,26 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
         "GPU resolve diverged from the CPU resolve: relative error {rel:.4}"
     );
 
-    // The brightest texel must land on the same equirect location (allow a
-    // one-texel slop for the bilinear difference).
-    let cx = (cpu_i as u32 % cpu.width) as i32;
-    let cy = (cpu_i as u32 / cpu.width) as i32;
-    let gx = (gpu_i as u32 % gpu.width) as i32;
-    let gy = (gpu_i as u32 / gpu.width) as i32;
+    // The emissive face is a near-flat plateau, so its brightest texel is
+    // decided by rounding. Compare the centre of the texels within 5% of the
+    // peak instead (allow a one-texel slop for the bilinear difference).
+    let lobe_centre = |rgba: &[f32], width: u32, best: f32| {
+        let (mut sx, mut sy, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        for i in 0..texels {
+            let l: f32 = rgba[i * 4..i * 4 + 3].iter().sum();
+            if l >= best * 0.95 {
+                sx += (i as u32 % width) as f64;
+                sy += (i as u32 / width) as f64;
+                n += 1.0;
+            }
+        }
+        (sx / n, sy / n)
+    };
+    let (cx, cy) = lobe_centre(&cpu.rgba, cpu.width, cpu_best);
+    let (gx, gy) = lobe_centre(&gpu.rgba, gpu.width, gpu_best);
     assert!(
-        (cx - gx).abs() <= 1 && (cy - gy).abs() <= 1,
-        "brightest texel moved: cpu ({cx}, {cy}) vs gpu ({gx}, {gy})"
+        (cx - gx).abs() <= 1.0 && (cy - gy).abs() <= 1.0,
+        "bright lobe moved: cpu ({cx:.1}, {cy:.1}) vs gpu ({gx:.1}, {gy:.1})"
     );
     assert!(
         gpu_best > 1.0,
@@ -921,18 +919,14 @@ fn light_probe_object_is_lit_by_the_probe_field() {
     sh.r[0] = 1.0 / 0.282095;
     let probes =
         viewport_lib::resources::LightProbeSet::new(vec![viewport_lib::resources::LightProbe {
-            position: [0.0, 0.0, 0.0],
+            position: [0.0, 0.0, 0.0].into(),
             sh,
         }]);
     renderer.set_light_probes(probes);
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -942,7 +936,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.shading_model = ShadingModel::Pbr;
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.indirect_light = IndirectLightSource::LightProbe;
@@ -968,7 +962,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
 /// APV: an object marked `IndirectLightSource::ProbeVolume` takes its indirect
 /// diffuse from the uploaded volume, sampled per fragment. A volume bright on one
 /// X side must light that side of a large object; flipping which side is bright
-/// must move the bright region. A per-object (center-sampled) path would render
+/// must move the bright region. A per-object (centre-sampled) path would render
 /// both the same, so the two images differing proves the lookup is per-fragment.
 #[test]
 fn probe_volume_lights_object_per_fragment() {
@@ -1005,11 +999,7 @@ fn probe_volume_lights_object_per_fragment() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1019,7 +1009,7 @@ fn probe_volume_lights_object_per_fragment() {
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     // Scale the unit box up so it spans the volume's X gradient.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
     mat.shading_model = ShadingModel::Pbr;
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.indirect_light = IndirectLightSource::ProbeVolume;
@@ -1043,7 +1033,7 @@ fn probe_volume_lights_object_per_fragment() {
     );
 
     // Flipping the bright side must change the image: sum the per-pixel red
-    // difference. A center-sampled (per-object) path would leave the two
+    // difference. A centre-sampled (per-object) path would leave the two
     // identical.
     let red_diff: u64 = a
         .chunks_exact(4)
@@ -1079,7 +1069,7 @@ fn bake_light_probes_captures_directional_radiance() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(6.0, 6.0, 6.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1123,7 +1113,7 @@ fn capture_reflection_probe_bakes_a_parallax_zone() {
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
     mat.emissive = Colour::linear_rgb(5.0, 5.0, 5.0);
     item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1206,18 +1196,8 @@ fn environment_zones_select_the_second_zone() {
     renderer.set_environment_zones(
         &queue,
         &[
-            viewport_lib::EnvironmentZone {
-                bounds: far,
-                environment: red,
-                fade_distance: 0.5,
-                parallax: false,
-            },
-            viewport_lib::EnvironmentZone {
-                bounds: here,
-                environment: green,
-                fade_distance: 0.5,
-                parallax: false,
-            },
+            viewport_lib::EnvironmentZone::from_aabb(far, red).with_fade_distance(0.5),
+            viewport_lib::EnvironmentZone::from_aabb(here, green).with_fade_distance(0.5),
         ],
     );
 
@@ -1227,11 +1207,7 @@ fn environment_zones_select_the_second_zone() {
         .unwrap();
 
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1246,7 +1222,7 @@ fn environment_zones_select_the_second_zone() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
         &mut renderer,
         Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0),
@@ -1281,6 +1257,418 @@ fn environment_zones_select_the_second_zone() {
     );
 }
 
+/// The camera the sphere tests below render through: the default orbit at a
+/// square aspect, pulled back to fit two spheres side by side.
+fn sphere_test_camera() -> Camera {
+    let mut cam = Camera::default();
+    cam.set_orbit_distance(8.0);
+    cam.set_aspect_ratio(1.0, 1.0);
+    cam
+}
+
+/// Render unit spheres at `spheres` (centre, material) to a 64x64 frame with a
+/// black background, lit by `environment` (IBL) and `lights`. `tweak` adjusts
+/// the frame before the render.
+fn render_spheres(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    environment: Option<viewport_lib::EnvironmentLighting>,
+    lights: Vec<LightSource>,
+    spheres: &[(glam::Vec3, Material)],
+    tweak: impl FnOnce(&mut FrameData),
+) -> Vec<u8> {
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 48, 24))
+        .unwrap();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&sphere_test_camera());
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
+    frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
+    frame.effects.environment = environment;
+    frame.effects.lighting.lights = lights;
+    let items: Vec<SceneRenderItem> = spheres
+        .iter()
+        .map(|(centre, material)| {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh;
+            item.model = glam::Mat4::from_translation(*centre).into();
+            item.material = upload_material(renderer, material.clone());
+            item
+        })
+        .collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    // A fresh generation per render, so the instanced batches are rebuilt for
+    // the new materials rather than reused from the previous call.
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    frame.scene.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    tweak(&mut frame);
+    renderer.render_offscreen(device, queue, &frame, 64, 64)
+}
+
+/// A 4x4 linear texture holding `value` in every channel: a constant AO map.
+fn constant_ao_map(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    value: u8,
+) -> viewport_lib::TextureId {
+    renderer
+        .resources_mut()
+        .upload_texture(
+            device,
+            queue,
+            viewport_lib::TextureData::linear(4, 4, [value, value, value, 255].repeat(16)),
+        )
+        .unwrap()
+}
+
+/// Upload a solid-colour environment.
+fn solid_environment(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    rgb: [f32; 3],
+) -> viewport_lib::EnvironmentMapId {
+    renderer
+        .upload_environment(
+            device,
+            queue,
+            viewport_lib::TextureData::hdr(8, 4, solid_env(rgb, 8, 4)),
+            viewport_lib::EnvironmentOptions::default(),
+        )
+        .unwrap()
+}
+
+/// A captured reflection probe is world-aligned: rotating the lighting
+/// environment must not turn the probe's reflection, while rotating the zone
+/// itself does.
+#[test]
+fn captured_probe_ignores_the_lighting_rotation() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A bright emissive box off to +X gives the probe structure to turn.
+    let box_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let mut capture_frame = FrameData::default();
+    capture_frame.viewport.show_grid = false;
+    capture_frame.viewport.show_axes_indicator = false;
+    let mut emitter = SceneRenderItem::default();
+    let mut mat = Material::default();
+    emitter.mesh_id = box_idx;
+    emitter.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
+    mat.emissive = Colour::linear_rgb(5.0, 5.0, 5.0);
+    emitter.material = upload_material(&mut renderer, mat);
+    capture_frame.scene.surfaces = SurfaceSubmission::Flat(vec![emitter].into());
+    let bounds = viewport_lib::Aabb {
+        min: glam::Vec3::splat(-3.0),
+        max: glam::Vec3::splat(3.0),
+    };
+    let zone = renderer
+        .capture_reflection_probe(&device, &queue, &mut capture_frame, bounds, 1.0, 64, 48)
+        .unwrap();
+    assert_eq!(zone.rotation, 0.0);
+    assert_eq!(
+        zone.intensity,
+        viewport_lib::EnvironmentIntensity::Multiplier(1.0)
+    );
+
+    // A uniform lighting environment: its own rotation changes nothing.
+    let grey = solid_environment(&mut renderer, &device, &queue, [0.2, 0.2, 0.2]);
+    let mirror = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 1.0, 0.1);
+    let render = |renderer: &mut ViewportRenderer, zone, rotation| {
+        renderer.set_environment_zones(&queue, &[zone]);
+        let mut env = viewport_lib::EnvironmentLighting::new(grey);
+        env.rotation = rotation;
+        render_spheres(
+            renderer,
+            &device,
+            &queue,
+            Some(env),
+            vec![],
+            &[(glam::Vec3::ZERO, mirror.clone())],
+            |f| f.effects.lighting.hemisphere_intensity = 0.0,
+        )
+    };
+    let unrotated = render(&mut renderer, zone, 0.0);
+    let rotated = render(&mut renderer, zone, 1.3);
+    assert!(
+        unrotated.chunks_exact(4).any(|p| p[0] > 20),
+        "the mirror sphere reflects the probe"
+    );
+    assert!(
+        rotated == unrotated,
+        "the lighting environment's rotation turned a captured probe"
+    );
+    let turned = render(&mut renderer, zone.with_rotation(1.3), 0.0);
+    assert!(
+        turned != unrotated,
+        "the zone's own rotation turns its environment"
+    );
+}
+
+/// A zone's environment is scaled by the zone's own intensity, not the
+/// lighting environment's: a sphere inside a zone under a lighting multiplier
+/// of 2 reads exactly like the same environment lighting it unzoned at 1.
+#[test]
+fn zone_ignores_the_lighting_intensity() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let black = solid_environment(&mut renderer, &device, &queue, [0.0, 0.0, 0.0]);
+    let warm = solid_environment(&mut renderer, &device, &queue, [0.6, 0.45, 0.3]);
+    let material = Material::pbr(Colour::linear_rgb(0.8, 0.8, 0.8), 0.0, 0.5);
+    let sphere = [(glam::Vec3::ZERO, material)];
+    let here = viewport_lib::Aabb {
+        min: glam::Vec3::splat(-3.0),
+        max: glam::Vec3::splat(3.0),
+    };
+
+    renderer.set_environment_zones(&queue, &[]);
+    let unzoned = render_spheres(
+        &mut renderer,
+        &device,
+        &queue,
+        Some(viewport_lib::EnvironmentLighting::new(warm)),
+        vec![],
+        &sphere,
+        |f| f.effects.lighting.hemisphere_intensity = 0.0,
+    );
+
+    renderer.set_environment_zones(
+        &queue,
+        &[viewport_lib::EnvironmentZone::from_aabb(here, warm)],
+    );
+    let zoned = render_spheres(
+        &mut renderer,
+        &device,
+        &queue,
+        Some(viewport_lib::EnvironmentLighting::new(black)),
+        vec![],
+        &sphere,
+        |f| {
+            f.effects.lighting.hemisphere_intensity = 0.0;
+            f.effects.lighting.environment_intensity =
+                viewport_lib::EnvironmentIntensity::Multiplier(2.0);
+        },
+    );
+    assert!(
+        unzoned.chunks_exact(4).any(|p| p[0] > 20),
+        "the sphere is lit"
+    );
+    assert!(
+        zoned == unzoned,
+        "the lighting intensity scaled a zone's environment"
+    );
+
+    // The zone's own intensity does scale it.
+    renderer.set_environment_zones(
+        &queue,
+        &[viewport_lib::EnvironmentZone::from_aabb(here, warm)
+            .with_intensity(viewport_lib::EnvironmentIntensity::Multiplier(2.0))],
+    );
+    let brighter = render_spheres(
+        &mut renderer,
+        &device,
+        &queue,
+        Some(viewport_lib::EnvironmentLighting::new(black)),
+        vec![],
+        &sphere,
+        |f| f.effects.lighting.hemisphere_intensity = 0.0,
+    );
+    let sum = |px: &[u8]| px.chunks_exact(4).map(|p| p[0] as u64).sum::<u64>();
+    assert!(
+        sum(&brighter) > sum(&unzoned) * 6 / 5,
+        "the zone's intensity brightens it"
+    );
+}
+
+/// Adding a zone that covers nothing leaves the image unchanged: the zoned
+/// path's lighting-environment remainder occludes AO exactly like the unzoned
+/// path, on an AO-mapped surface too.
+#[test]
+fn empty_zone_far_away_leaves_the_image_unchanged() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let sky = solid_environment(&mut renderer, &device, &queue, [0.7, 0.75, 0.8]);
+    let red = solid_environment(&mut renderer, &device, &queue, [1.0, 0.0, 0.0]);
+    let ao = constant_ao_map(&mut renderer, &device, &queue, 128);
+    let material = Material::pbr(Colour::linear_rgb(0.8, 0.6, 0.4), 0.3, 0.35)
+        .with_texture(viewport_lib::TextureSlot::Ao, ao);
+    let sphere = [(glam::Vec3::ZERO, material)];
+    let light = LightSource::default();
+
+    let render = |renderer: &mut ViewportRenderer| {
+        render_spheres(
+            renderer,
+            &device,
+            &queue,
+            Some(viewport_lib::EnvironmentLighting::new(sky)),
+            vec![light.clone()],
+            &sphere,
+            |_| {},
+        )
+    };
+    let without = render(&mut renderer);
+    let far = viewport_lib::Aabb {
+        min: glam::Vec3::splat(-31.0),
+        max: glam::Vec3::splat(-29.0),
+    };
+    renderer.set_environment_zones(
+        &queue,
+        &[viewport_lib::EnvironmentZone::from_aabb(far, red)],
+    );
+    let with = render(&mut renderer);
+    assert!(
+        without.chunks_exact(4).any(|p| p[0] > 20),
+        "the sphere is lit"
+    );
+    assert!(
+        with == without,
+        "a zone covering nothing changed the shading"
+    );
+}
+
+/// Material AO only changes the fragments it occludes: with a constant 0.5 AO
+/// map on the left sphere, the right sphere (no AO map) is byte-identical to a
+/// render without the map, and an all-white AO map is identical to none.
+#[test]
+fn ao_map_leaves_unoccluded_fragments_unchanged() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let sky = solid_environment(&mut renderer, &device, &queue, [0.7, 0.75, 0.8]);
+    let half = constant_ao_map(&mut renderer, &device, &queue, 128);
+    let white = constant_ao_map(&mut renderer, &device, &queue, 255);
+    let right = sphere_test_camera().right() * 1.6;
+    let plain = Material::pbr(Colour::linear_rgb(0.9, 0.85, 0.8), 0.5, 0.4);
+    let other = Material::pbr(Colour::linear_rgb(0.3, 0.6, 0.9), 0.0, 0.6);
+
+    let render = |renderer: &mut ViewportRenderer, left: Material| {
+        render_spheres(
+            renderer,
+            &device,
+            &queue,
+            Some(viewport_lib::EnvironmentLighting::new(sky)),
+            vec![LightSource::default()],
+            &[(-right, left), (right, other.clone())],
+            |_| {},
+        )
+    };
+    let none = render(&mut renderer, plain.clone());
+    let occluded = render(
+        &mut renderer,
+        plain
+            .clone()
+            .with_texture(viewport_lib::TextureSlot::Ao, half),
+    );
+    let unoccluded = render(
+        &mut renderer,
+        plain
+            .clone()
+            .with_texture(viewport_lib::TextureSlot::Ao, white),
+    );
+
+    assert!(unoccluded == none, "an all-white AO map changed the image");
+    let (mut left_darker, mut right_changed) = (0, 0);
+    for (i, (a, b)) in none
+        .chunks_exact(4)
+        .zip(occluded.chunks_exact(4))
+        .enumerate()
+    {
+        let column = i % 64;
+        if column >= 32 {
+            if a != b {
+                right_changed += 1;
+            }
+        } else if b[..3].iter().zip(&a[..3]).any(|(o, n)| o < n) {
+            left_darker += 1;
+        }
+    }
+    assert_eq!(
+        right_changed, 0,
+        "the AO map leaked onto the sphere without one"
+    );
+    assert!(
+        left_darker > 50,
+        "the AO map darkens its sphere ({left_darker} px)"
+    );
+}
+
+/// Micro-shadowing darkens a lit AO-mapped sphere toward the terminator of a
+/// directional light, leaves the side the light does not reach unchanged, and
+/// never brightens a pixel.
+#[test]
+fn ao_micro_shadowing_darkens_the_terminator() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let ao = constant_ao_map(&mut renderer, &device, &queue, 128);
+    let material = Material::pbr(Colour::linear_rgb(0.8, 0.8, 0.8), 0.0, 0.5)
+        .with_texture(viewport_lib::TextureSlot::Ao, ao);
+    // Light from the camera's right: the right half of the sphere is lit, the
+    // terminator runs down the middle column.
+    let mut light = LightSource::default();
+    let toward = sphere_test_camera().right();
+    light.kind = LightKind::Directional {
+        direction: toward.to_array(),
+    };
+    light.intensity = 4.0;
+
+    let render = |renderer: &mut ViewportRenderer, on: bool| {
+        render_spheres(
+            renderer,
+            &device,
+            &queue,
+            None,
+            vec![light.clone()],
+            &[(glam::Vec3::ZERO, material.clone())],
+            |f| f.effects.lighting.ao_micro_shadowing = on,
+        )
+    };
+    let off = render(&mut renderer, false);
+    let on = render(&mut renderer, true);
+
+    let (mut darker, mut brighter, mut unlit_changed) = (0, 0, 0);
+    for (i, (a, b)) in off.chunks_exact(4).zip(on.chunks_exact(4)).enumerate() {
+        let column = i % 64;
+        if b[..3].iter().zip(&a[..3]).any(|(o, n)| o > n) {
+            brighter += 1;
+        }
+        if b[..3].iter().zip(&a[..3]).any(|(o, n)| o < n) {
+            darker += 1;
+            if column < 30 {
+                unlit_changed += 1;
+            }
+        }
+    }
+    assert_eq!(brighter, 0, "micro-shadowing brightened a pixel");
+    assert_eq!(unlit_changed, 0, "micro-shadowing changed the unlit side");
+    assert!(
+        darker > 20,
+        "micro-shadowing darkens the terminator ({darker} px)"
+    );
+}
+
 /// Render a matte white sphere lit only by the environment and return the
 /// summed RGB of the frame (the background is black).
 fn environment_lit_sphere(
@@ -1294,11 +1682,7 @@ fn environment_lit_sphere(
         .upload_mesh_data(device, &viewport_lib::primitives::sphere(1.0, 24, 12))
         .unwrap();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&Camera::default());
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -1309,7 +1693,7 @@ fn environment_lit_sphere(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
         renderer,
         Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 1.0),
@@ -1445,14 +1829,13 @@ fn capture_lit_box_max(
     let mut item = SceneRenderItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
     item.settings.visibility_mask = visibility_mask;
     item.material = upload_material(renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
-    let mut face_cam = RenderCamera::from_camera(&Camera::default());
-    face_cam.aspect = 1.0;
+    let face_cam = RenderCamera::from_camera(&Camera::default());
     let captured = renderer.capture_hdr(device, queue, &mut frame, face_cam, 64);
     captured
         .rgba
@@ -1547,7 +1930,7 @@ fn clustered_lighting_matches_the_per_light_fallback() {
             .map(|i| {
                 let mut light = LightSource::default();
                 light.kind = LightKind::Point {
-                    position: [(i % 6) as f32 - 2.5, (i / 6) as f32 - 1.5, 1.5],
+                    position: glam::DVec3::new((i % 6) as f64 - 2.5, (i / 6) as f64 - 1.5, 1.5),
                     range: 3.0,
                     radius: 0.05,
                 };
@@ -1556,7 +1939,7 @@ fn clustered_lighting_matches_the_per_light_fallback() {
             .collect();
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         let lights = std::mem::take(&mut frame.effects.lighting.lights);
         frame.effects.lighting.lights = vec![lights[0].clone()];

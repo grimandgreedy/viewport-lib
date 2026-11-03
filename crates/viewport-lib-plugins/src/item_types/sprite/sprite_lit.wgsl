@@ -22,7 +22,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -40,7 +41,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -78,15 +79,7 @@ struct SpriteUniform {
     _pad_lit_c:             u32,
 };
 
-struct ShadowAtlas {
-    cascade_vp:        array<mat4x4<f32>, 4>,
-    cascade_splits:    vec4<f32>,
-    cascade_count:     u32,
-    atlas_size:        f32,
-    shadow_filter:     u32,
-    pcss_light_radius: f32,
-    atlas_rects:       array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 
 struct SpriteInstance {
     colour:        vec4<f32>,
@@ -202,24 +195,24 @@ fn vs_main(in: VertexIn) -> VertexOut {
                        + local_up    * (rotated.y * half);
         out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
-        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px = inst.size * 0.5;
         let inv_vp  = vec2<f32>(1.0, 1.0)
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         if sprite_ub.orientation == 0u {
             let ndc_off = rotated * half_px * inv_vp;
             out.clip_pos = vec4<f32>(
-                center.x + ndc_off.x * center.w,
-                center.y + ndc_off.y * center.w,
-                center.z,
-                center.w,
+                centre.x + ndc_off.x * centre.w,
+                centre.y + ndc_off.y * centre.w,
+                centre.z,
+                centre.w,
             );
         } else {
             let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
             let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
             let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
                             + up_clip    * (rotated.y * half_px * inv_vp.y);
-            out.clip_pos = center + offset_clip * center.w;
+            out.clip_pos = centre + offset_clip * centre.w;
         }
         // Approximate world position on the screen-space quad for lighting.
         // The hemispherical normal uses the same offsets so the result lines
@@ -269,8 +262,7 @@ fn build_normal(local_offset: vec2<f32>,
     return normalize(n);
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
             discard;
@@ -294,13 +286,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         var lights_for_shader = lights_uniform;
         lights_for_shader.hemisphere_intensity =
             lights_uniform.hemisphere_intensity * sprite_ub.ambient_scale;
-        let lit_rgb = apply_scene_lighting(
-            n,
-            colour.rgb,
-            false,
-            in.world_pos,
-            lights_for_shader,
-        );
+        let lit_rgb_terms = scene_lighting_terms(n, false, in.world_pos, lights_for_shader);
+        let lit_rgb = colour.rgb * (lit_rgb_terms.indirect + lit_rgb_terms.direct);
+        scene_light_split(colour.rgb * lit_rgb_terms.indirect, colour.rgb * lit_rgb_terms.direct, vec3<f32>(0.0));
 
         // When `receive_shadows` is set, attenuate the direct-light contribution
         // by the cascade shadow map. The hemisphere ambient survives shadow so
@@ -319,9 +307,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                     lights_for_shader.ground_colour,
                     lights_for_shader.sky_colour,
                     up_weight,
-                ) * lights_for_shader.hemisphere_intensity;
+                ) * (lights_for_shader.hemisphere_intensity * camera.exposure);
                 let ambient_rgb = colour.rgb * ambient;
                 colour = vec4<f32>(mix(ambient_rgb, lit_rgb, shadow_factor), colour.a);
+                scene_light_split(ambient_rgb, colour.rgb - ambient_rgb, vec3<f32>(0.0));
             } else {
                 colour = vec4<f32>(lit_rgb, colour.a);
             }
@@ -355,7 +344,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let ndc = vec4<f32>(
             screen_uv.x * 2.0 - 1.0,
             1.0 - screen_uv.y * 2.0,
-            scene_ndc_z,
+            viewport_depth_finite(scene_ndc_z),
             1.0,
         );
         let world_h     = camera.inv_view_proj * ndc;
@@ -368,4 +357,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     if colour.a <= 0.001 { discard; }
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

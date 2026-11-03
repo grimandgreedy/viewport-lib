@@ -44,15 +44,16 @@ pub enum DebugQuantity {
     Metallic,
     /// Ambient occlusion factor.
     AoFactor,
-    /// Direct light luminance (all lights, no ambient).
+    /// Direct light luminance (all lights, no ambient), exposed by the
+    /// camera's exposure like the shaded colour.
     DirectLightLuminance,
-    /// Hemisphere or IBL ambient luminance.
+    /// Hemisphere or IBL ambient luminance, exposed.
     AmbientLuminance,
-    /// IBL diffuse luminance only.
+    /// IBL diffuse luminance only, exposed.
     IblDiffuseLuminance,
-    /// IBL specular luminance only.
+    /// IBL specular luminance only, exposed.
     IblSpecularLuminance,
-    /// Emissive luminance only.
+    /// Emissive luminance only, exposed.
     EmissiveLuminance,
 }
 
@@ -138,7 +139,7 @@ pub struct DebugVis {
     /// Use values > 1.0 to bring small quantities (e.g. bias in world units) into visible range.
     pub scale: f32,
     /// Split position for `SplitScreen` mode, in normalised viewport coordinates (0..1).
-    /// 0.5 = center. Ignored unless mode is `SplitScreen`.
+    /// 0.5 = centre. Ignored unless mode is `SplitScreen`.
     pub split_x: f32,
 }
 

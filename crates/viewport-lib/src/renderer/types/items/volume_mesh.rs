@@ -123,7 +123,7 @@ impl VolumeMeshItem {
     pub fn to_render_item(&self) -> SceneRenderItem {
         SceneRenderItem {
             mesh_id: self.boundary_mesh_id,
-            model: self.model,
+            model: self.model.into(),
             settings: self.settings,
             material: self.material,
             active_attribute: self.active_attribute.clone(),

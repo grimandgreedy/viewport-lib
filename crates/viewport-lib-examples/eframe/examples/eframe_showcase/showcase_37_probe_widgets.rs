@@ -4,10 +4,10 @@
 //! applied to a point cloud:
 //!
 //! - **Line Probe**: drag endpoints; select points near the segment.
-//! - **Sphere Widget**: drag center/radius handles; select points inside.
-//! - **Box Widget**: drag center/face/rotation handles; select points inside the OBB.
-//! - **Plane Widget**: drag center/normal handles; select points on the positive side.
-//! - **Disk Widget**: drag center/normal/radius handles; select points inside the disk region.
+//! - **Sphere Widget**: drag centre/radius handles; select points inside.
+//! - **Box Widget**: drag centre/face/rotation handles; select points inside the OBB.
+//! - **Plane Widget**: drag centre/normal handles; select points on the positive side.
+//! - **Disk Widget**: drag centre/normal/radius handles; select points inside the disk region.
 //! - **Cylinder Widget**: drag endpoints/radius; select points inside the cylinder.
 //! - **Polyline Widget**: N draggable waypoints; select points near the path (double-click to add/remove).
 //!
@@ -137,7 +137,7 @@ impl ProbeWidgetState {
     }
 
     pub fn apply_sphere_selection(&mut self, add: bool) {
-        let c = self.sphere.center;
+        let c = self.sphere.centre;
         let r = self.sphere.radius;
         for (i, p) in self.cloud_positions.iter().enumerate() {
             if (glam::Vec3::from(*p) - c).length() <= r {
@@ -156,7 +156,7 @@ impl ProbeWidgetState {
 
     pub fn apply_plane_selection(&mut self, add: bool) {
         // Select points on the positive-normal side of the plane.
-        let c = self.plane.center;
+        let c = self.plane.centre;
         let n = self.plane.normal;
         for (i, p) in self.cloud_positions.iter().enumerate() {
             if (glam::Vec3::from(*p) - c).dot(n) >= 0.0 {
@@ -166,7 +166,7 @@ impl ProbeWidgetState {
     }
 
     pub fn apply_disk_selection(&mut self, add: bool) {
-        let c = self.disk.center;
+        let c = self.disk.centre;
         let n = self.disk.normal;
         let r = self.disk.radius;
         let ht = self.disk_half_thickness;
@@ -528,12 +528,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_probe_widgets_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 8.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        8.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -619,19 +618,19 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
             selection_buttons(ui, state, PwSubMode::LineProbe);
         }
         PwSubMode::Sphere => {
-            let c = state.sphere.center;
-            ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
+            let c = state.sphere.centre;
+            ui.label(format!("Centre: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
             ui.label(format!("Radius: {:.3}", state.sphere.radius));
             ui.separator();
             selection_buttons(ui, state, PwSubMode::Sphere);
         }
         PwSubMode::Box => {
-            let c = state.bw.center;
+            let c = state.bw.centre;
             let h = state.bw.half_extents;
             let (_, _, rot) = state.bw.obb();
             let (axis, angle) = rot.to_axis_angle();
             ui.label(format!(
-                "Center:       [{:.2}, {:.2}, {:.2}]",
+                "Centre:       [{:.2}, {:.2}, {:.2}]",
                 c.x, c.y, c.z
             ));
             ui.label(format!(
@@ -651,9 +650,9 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
             selection_buttons(ui, state, PwSubMode::Box);
         }
         PwSubMode::Plane => {
-            let c = state.plane.center;
+            let c = state.plane.centre;
             let n = state.plane.normal;
-            ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
+            ui.label(format!("Centre: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
             ui.label(format!("Normal: [{:.2}, {:.2}, {:.2}]", n.x, n.y, n.z));
             ui.separator();
             ui.label("Select: points on positive-normal side.");
@@ -661,9 +660,9 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
             selection_buttons(ui, state, PwSubMode::Plane);
         }
         PwSubMode::Disk => {
-            let c = state.disk.center;
+            let c = state.disk.centre;
             let n = state.disk.normal;
-            ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
+            ui.label(format!("Centre: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
             ui.label(format!("Normal: [{:.2}, {:.2}, {:.2}]", n.x, n.y, n.z));
             ui.label(format!("Radius: {:.3}", state.disk.radius));
             ui.horizontal(|ui| {
@@ -735,8 +734,6 @@ pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
 }
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

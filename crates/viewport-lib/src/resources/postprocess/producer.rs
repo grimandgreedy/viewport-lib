@@ -8,6 +8,7 @@
 //! frame loop drives every producer through the same three calls, so adding
 //! an effect of this shape means adding a producer, not editing the loop.
 
+use super::targets::{TargetId, TargetSet};
 use crate::resources::ViewportHdrState;
 
 /// Per-frame inputs a producer may read: the active settings plus the camera
@@ -23,6 +24,9 @@ pub(crate) struct ProducerFrameInputs<'a> {
     /// through unblurred).
     pub(crate) foreground_active: bool,
     pub(crate) exposure: crate::ExposureSettings,
+    /// The render presents a frame. False for a capture or snapshot, which
+    /// leaves the viewport's exposure state as the presented frames left it.
+    pub(crate) presented: bool,
 }
 
 /// GPU timestamp plumbing for producer passes, mirroring the renderer's
@@ -96,6 +100,8 @@ fn ready(pipeline: &Option<super::LazyFullscreen>) -> bool {
 
 /// A pre-tone-map effect that fills a composite input slot.
 pub(crate) trait PostProducer {
+    /// A short name for the producer's pass, as the frame's pass list shows it.
+    fn name(&self) -> &'static str;
     /// Whether the effect is switched on this frame (settings only; the
     /// degradation throttle is applied by the caller at encode time).
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool;
@@ -110,6 +116,17 @@ pub(crate) trait PostProducer {
     /// in the state buffer the tone map always reads.
     fn throttleable(&self) -> bool {
         true
+    }
+    /// The targets the producer's passes read. The default names the scene
+    /// colour and depth, which keeps a producer that does not say otherwise
+    /// from being culled.
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour).with(TargetId::HdrDepth)
+    }
+    /// The targets the producer's passes write. The default is as
+    /// conservative as [`reads`](Self::reads).
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour).with(TargetId::HdrDepth)
     }
     /// Write this frame's uniforms into the viewport's buffers.
     fn upload(
@@ -158,8 +175,20 @@ pub(crate) struct SsaoViewport {
 }
 
 impl PostProducer for SsaoProducer {
+    fn name(&self) -> &'static str {
+        "ssao"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.ssao
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrDepth)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Ssao)
     }
 
     fn ready(&self) -> bool {
@@ -239,8 +268,20 @@ pub(crate) struct ContactShadowViewport {
 }
 
 impl PostProducer for ContactShadowProducer {
+    fn name(&self) -> &'static str {
+        "contact_shadow"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.contact_shadows.enabled
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrDepth)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::ContactShadow)
     }
 
     fn ready(&self) -> bool {
@@ -352,8 +393,20 @@ pub(crate) struct BloomViewport {
 }
 
 impl PostProducer for BloomProducer {
+    fn name(&self) -> &'static str {
+        "bloom"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.bloom.enabled
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Bloom)
     }
 
     fn ready(&self) -> bool {
@@ -465,8 +518,22 @@ pub(crate) struct DofViewport {
 }
 
 impl PostProducer for DofProducer {
+    fn name(&self) -> &'static str {
+        "dof"
+    }
+
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         inputs.post.dof.enabled
+    }
+
+    fn reads(&self, inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour)
+            .with(TargetId::HdrDepth)
+            .with_if(TargetId::ForegroundDepth, inputs.foreground_active)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Dof)
     }
 
     fn ready(&self) -> bool {
@@ -481,15 +548,18 @@ impl PostProducer for DofProducer {
     ) {
         let settings = &inputs.post.dof;
         let [sw, sh] = hdr.scene_size;
+        let clip = crate::plugin_api::depth::clip_lane(inputs.proj, inputs.near, inputs.far);
         let uniform = super::uniforms::DofUniform {
             focal_distance: settings.focal_distance,
             focal_range: settings.focal_range,
             max_blur_radius: settings.max_blur_radius,
-            near_plane: inputs.near,
-            far_plane: inputs.far,
+            near_plane: clip[0],
+            far_plane: clip[1],
             viewport_width: sw as f32,
             viewport_height: sh as f32,
             foreground_enabled: if inputs.foreground_active { 1.0 } else { 0.0 },
+            orthographic: clip[2],
+            _pad: [0.0; 3],
         };
         queue.write_buffer(&hdr.dof.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
     }
@@ -519,17 +589,31 @@ impl PostProducer for DofProducer {
 
 // --- Auto-exposure ---
 
-/// Exposure as a producer: it fills the composite's exposure-state buffer
-/// slot rather than a texture. Manual / PhysicalCamera modes write the
-/// multiplier CPU-side at upload; Automatic writes the metering params at
-/// upload and dispatches the clear -> build -> resolve compute passes at
-/// encode, in the same submission, before the tone map, so a single dirty
-/// render is correctly exposed on its own frame.
+/// Exposure as a producer: it fills the viewport's exposure-state buffer
+/// rather than a texture. Manual / PhysicalCamera modes write the multiplier
+/// CPU-side at upload, for the readback; their camera uniform already carries
+/// it. Automatic writes the metering params at upload and dispatches the
+/// clear -> build -> resolve compute passes at encode, in the same
+/// submission; the next frame copies the resolved multiplier into its camera
+/// uniform before it draws.
 impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
-    fn enabled(&self, _inputs: &ProducerFrameInputs<'_>) -> bool {
+    fn name(&self) -> &'static str {
+        "exposure"
+    }
+
+    fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
         // Some exposure mode is always active; Manual still needs its
-        // upload-time state write.
-        true
+        // upload-time state write. A capture or snapshot neither meters nor
+        // writes the state, so the presented frames keep their adaptation.
+        inputs.presented
+    }
+
+    fn reads(&self, _inputs: &ProducerFrameInputs<'_>) -> TargetSet {
+        TargetSet::of(TargetId::HdrColour)
+    }
+
+    fn writes(&self) -> TargetSet {
+        TargetSet::of(TargetId::Exposure)
     }
 
     fn throttleable(&self) -> bool {
@@ -583,7 +667,7 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
             high_percent: auto.high_percent.clamp(0.02, 1.0),
             tex_width: sw as f32,
             tex_height: sh as f32,
-            center_weight: auto.center_weight.clamp(0.0, 1.0),
+            centre_weight: auto.centre_weight.clamp(0.0, 1.0),
             adaptation: auto.adaptation.clamp(0.0, 1.0),
             _pad: [0.0; 3],
         };

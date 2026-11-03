@@ -21,6 +21,7 @@ pub(super) struct ExternalInstancesRecipe {
     shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The draw pipeline in both formats.
@@ -43,9 +44,11 @@ fn build(r: &ExternalInstancesRecipe, i: usize) -> gpu::RenderPipeline {
             topology: gpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(gpu::Face::Back),
             depth_write: true,
-            depth_compare: gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
+            indirect_fraction_entry: Some("fs_scene"),
         },
         i == COLOUR_HDR,
     )
@@ -79,6 +82,7 @@ impl ExternalInstancesGpu {
                 shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

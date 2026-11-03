@@ -17,9 +17,25 @@ struct Camera {
     // Upper bound on the lit (pre-emissive) colour: 1.0 on the LDR path.
     lit_clamp: f32,
     forward: vec3<f32>,
-    _pad1: f32,
+    // The camera's exposure, applied to every radiance source where it is
+    // read.
+    exposure: f32,
     inv_view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
+    // View -> clip and its inverse.
+    proj: mat4x4<f32>,
+    inv_proj: mat4x4<f32>,
+    // Viewport in physical pixels: width, height, 1 / width, 1 / height.
+    viewport: vec4<f32>,
+    // Near, far, 1 when orthographic (0 when perspective), reserved.
+    clip: vec4<f32>,
+    // Frame time: seconds as f32, the remainder f32 drops from the f64
+    // seconds, delta seconds, frame index modulo 2^24.
+    time: vec4<f32>,
+    // The world origin positions are relative to, rounded to f32, and a
+    // counter bumped each time it moves.
+    world_origin: vec3<f32>,
+    origin_epoch: u32,
 };
 
 struct ClipPlanes {
@@ -35,7 +51,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -93,7 +109,7 @@ struct VertexIn {
     @location(10) emissive: vec4<f32>,
     // Metallic, roughness, scalar range min, scalar range max.
     @location(11) material: vec4<f32>,
-    // Flags, NaN colour (RGBA8), unused, unused.
+    // Flags, NaN colour (RGBA8), emissive exposure weight (f32 bits), unused.
     @location(12) params: vec4<u32>,
 };
 
@@ -108,6 +124,7 @@ struct VertexOut {
     @location(6) is_nan: f32,
     @location(7) @interpolate(flat) flags: u32,
     @location(8) @interpolate(flat) nan_colour: u32,
+    @location(9) @interpolate(flat) emissive_weight: f32,
 };
 
 fn vertex_common(in: VertexIn, scalar: f32, has_scalar: bool) -> VertexOut {
@@ -127,6 +144,7 @@ fn vertex_common(in: VertexIn, scalar: f32, has_scalar: bool) -> VertexOut {
     out.colour = in.base_colour * in.colour;
     out.uv = in.uv;
     out.emissive = in.emissive;
+    out.emissive_weight = bitcast<f32>(in.params.z);
     out.flags = in.params.x;
     out.nan_colour = in.params.y;
 
@@ -212,6 +230,15 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         n = -n;
     }
     let lit = apply_scene_lighting(n, base_colour, two_sided, in.world_pos, lights_uniform);
-    let rgb = min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb;
+    // Emissive is in nits; the weight sets how far exposure scales it, 1 with
+    // the scene and 0 display-relative. Written so weight 1 is exactly the
+    // exposure.
+    let w = in.emissive_weight;
+    let emissive_scale = w * camera.exposure + (1.0 - w);
+    // The sum is clamped to the largest finite half float.
+    let rgb = min(
+        min(lit, vec3<f32>(camera.lit_clamp)) + in.emissive.rgb * emissive_scale,
+        vec3<f32>(65504.0),
+    );
     return vec4<f32>(rgb, colour.a);
 }

@@ -40,6 +40,9 @@ pub(crate) struct LightingResources {
     pub(crate) indirect_buf: crate::gpu::Buffer,
     /// Whether `set_light_probe_volume` has put a volume in `indirect_buf`.
     pub(crate) has_probe_volume: bool,
+    /// World-space minimum corner of the uploaded probe volume, rewritten
+    /// relative to the world origin when the origin moves.
+    pub(crate) probe_volume_min: Option<glam::DVec3>,
     /// Byte offset of the custom-data region in `indirect_buf`, the end of the
     /// probe volume. Carried to the shaders as `LightsUniform::custom_data_base`.
     pub(crate) custom_data_base_bytes: u64,

@@ -160,11 +160,6 @@ impl CompatibilityTier {
             ],
         });
 
-        let point_dimension = profile.point_shadow_dimension;
-        let point_layers = match point_dimension {
-            crate::gpu::TextureViewDimension::CubeArray => 6,
-            _ => 1,
-        };
         Self {
             camera_bgl,
             shadow_camera_bgl,
@@ -182,7 +177,7 @@ impl CompatibilityTier {
             shadow_sampler: crate::resources::builders::comparison_sampler(
                 device,
                 "forward_shadow_sampler",
-                crate::gpu::CompareFunction::LessEqual,
+                crate::plugin_api::depth::SHADOW_DEPTH_COMPARE,
             ),
             ibl_sampler: device.create_sampler(&crate::gpu::SamplerDescriptor {
                 label: Some("forward_ibl_sampler"),
@@ -199,8 +194,8 @@ impl CompatibilityTier {
             point_shadow_view: placeholder(
                 "forward_point_shadow",
                 crate::gpu::TextureFormat::Depth32Float,
-                point_layers,
-                point_dimension,
+                1,
+                crate::gpu::TextureViewDimension::D2Array,
             ),
             ibl_array_view: placeholder(
                 "forward_ibl",

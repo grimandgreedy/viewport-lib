@@ -33,7 +33,7 @@ struct ClipVolumeEntry {
     _pad_a: u32,
     _pad_b: u32,
     _pad_c: u32,
-    center: vec3<f32>,
+    centre: vec3<f32>,
     radius: f32,
     half_extents: vec3<f32>,
     _pad1: f32,
@@ -73,13 +73,13 @@ fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     // Perform perspective divide to get NDC position.
     let ndc = clip_pos.xy / clip_pos.w;
 
-    // Compute the object center in NDC for a stable expansion direction.
-    let center_world = outline.model * vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    let center_clip  = camera.view_proj * center_world;
-    let center_ndc   = center_clip.xy / center_clip.w;
+    // Compute the object centre in NDC for a stable expansion direction.
+    let centre_world = outline.model * vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let centre_clip  = camera.view_proj * centre_world;
+    let centre_ndc   = centre_clip.xy / centre_clip.w;
 
-    // Direction from object center to this vertex in NDC (screen space).
-    let dir = ndc - center_ndc;
+    // Direction from object centre to this vertex in NDC (screen space).
+    let dir = ndc - centre_ndc;
     let len = length(dir);
 
     // Expand outward by pixel_offset pixels.
@@ -88,7 +88,7 @@ fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     let vp_h = max(clip_planes.viewport_height, 1.0);
     let px = vec2<f32>(2.0 / vp_w, 2.0 / vp_h);
 
-    // If the vertex is at the center (degenerate), fall back to no expansion.
+    // If the vertex is at the centre (degenerate), fall back to no expansion.
     var offset_ndc = vec2<f32>(0.0);
     if len > 0.0001 {
         let norm_dir = dir / len;

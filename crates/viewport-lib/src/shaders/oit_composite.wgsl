@@ -33,7 +33,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let accum = textureSample(accum_tex, samp, in.uv);
+    // Clamped to the largest finite half float: the additive blend can still
+    // overflow the accumulation to infinity, and inf / inf is NaN.
+    let accum = min(textureSample(accum_tex, samp, in.uv), vec4<f32>(65504.0));
     let r     = textureSample(reveal_tex, samp, in.uv).r;
 
     // reveal starts at 1.0 (cleared) and decreases via dst*(1-alpha) per fragment.

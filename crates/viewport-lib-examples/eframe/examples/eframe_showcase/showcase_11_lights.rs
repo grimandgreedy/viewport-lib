@@ -157,7 +157,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
             app.lights_state.sources.push({
                 let mut _t = LightSource::default();
                 _t.kind = LightKind::Point {
-                    position: [0.0, 3.0, 3.0],
+                    position: [0.0, 3.0, 3.0].into(),
                     range: 15.0,
                     radius: 0.1,
                 };
@@ -172,7 +172,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
             app.lights_state.sources.push({
                 let mut _t = LightSource::default();
                 _t.kind = LightKind::Spot {
-                    position: [0.0, 3.0, 6.0],
+                    position: [0.0, 3.0, 6.0].into(),
                     direction: [0.0, 0.0, -1.0],
                     range: 20.0,
                     inner_angle: 0.25,
@@ -373,12 +373,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_lights_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        14.0,
+        glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -435,10 +434,10 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // Cap the far plane so depth values span a useful range for EDL.
     // Without this, all scene geometry clusters near depth 0.99, making
     // the log-space neighbor differences too small to see.
-    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(30.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.focus_distance() * 3.0).max(30.0);
+    fd.camera.render_camera =
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
     if app.lights_state.edl_enabled {
         fd.effects.post_process = {
             let mut _t = vpl::PostProcessSettings::default();
@@ -471,8 +470,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

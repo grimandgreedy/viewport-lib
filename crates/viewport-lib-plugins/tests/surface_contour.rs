@@ -60,7 +60,7 @@ const MODEL: [[f32; 4]; 4] = [
 fn surface(mesh: MeshId) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = MODEL;
+    item.model = MODEL.into();
     item.settings.colour = Some(Colour::linear_rgb(1.0, 1.0, 1.0));
     item.settings.unlit = true;
     item

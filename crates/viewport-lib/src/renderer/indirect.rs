@@ -135,9 +135,18 @@ pub(super) struct CullResources {
     /// Stats slot for non-main dispatches (shadow, single-mesh). Written but
     /// never read back.
     scratch_stats_buf: crate::gpu::Buffer,
+    /// Sizes of the last submission whose compaction scratch did not fit one
+    /// storage binding. Taken by the renderer, which reports it as a notice.
+    over_capacity: std::sync::Mutex<Option<(u32, u32)>>,
 }
 
 impl CullResources {
+    /// The sizes of a submission that overflowed the compaction scratch since
+    /// the last call, if any.
+    pub(super) fn take_over_capacity(&self) -> Option<(u32, u32)> {
+        self.over_capacity.lock().ok().and_then(|mut s| s.take())
+    }
+
     /// Build the pipelines, BGL, and the shared scratch buffers.
     pub(super) fn new(device: &crate::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -311,6 +320,7 @@ impl CullResources {
             fallback_instance_data,
             main_stats_buf,
             scratch_stats_buf,
+            over_capacity: std::sync::Mutex::new(None),
         }
     }
 
@@ -341,6 +351,12 @@ impl CullResources {
         ts: Option<(&crate::gpu::QuerySet, &std::sync::atomic::AtomicU32)>,
         extras: Option<&MainCullExtras<'_>>,
     ) {
+        let _span = tracing::debug_span!(
+            target: "viewport_lib::frame",
+            "cull_pass",
+            shadow = cascade.is_some()
+        )
+        .entered();
         let frustum_buf = match cascade {
             None => &self.frustum_buf,
             Some(c) => &self.cascade_frustum_bufs[c],
@@ -399,7 +415,9 @@ impl CullResources {
         let max_storage = u64::from(device.limits().max_storage_buffer_binding_size);
         let plan_fits = scratch_u32s * 4 <= max_storage;
         if !plan_fits {
-            crate::renderer::warn_once_cull_plan_capacity(sub.batch_count, sub.instance_count);
+            if let Ok(mut slot) = self.over_capacity.lock() {
+                *slot = Some((sub.batch_count, sub.instance_count));
+            }
         }
 
         let frustum_uniform = FrustumUniform {

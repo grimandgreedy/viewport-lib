@@ -75,11 +75,6 @@ impl PostEffectProducer for LoggingPostEffectProducer {
         self.log.record("init_gpu");
     }
 
-    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
-        self.log.record("on_device_recreated");
-        self.textures.clear();
-    }
-
     fn on_viewport_resized(&mut self, device: &wgpu::Device, ctx: &PostEffectResizeContext<'_>) {
         self.log.record(format!(
             "resize:{}:{}x{}",

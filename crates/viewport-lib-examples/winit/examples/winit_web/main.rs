@@ -41,14 +41,15 @@
 use std::sync::Arc;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::{AdapterCtx, winit as vpl_winit};
 
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, Material, MeshId,
-    OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    BindingPreset, Camera, CameraFrame, EffectsFrame, FrameData, InputOwnership, Material, MeshId,
+    OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext,
+    ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -173,53 +174,6 @@ impl ApplicationHandler<State> for App {
                 }
             }
 
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => {
-                let vp_button = match button {
-                    MouseButton::Left => vpl::MouseButton::Left,
-                    MouseButton::Middle => vpl::MouseButton::Middle,
-                    MouseButton::Right => vpl::MouseButton::Right,
-                    _ => return,
-                };
-                let vp_state = if btn_state == ElementState::Pressed {
-                    ButtonState::Pressed
-                } else {
-                    ButtonState::Released
-                };
-                state.input.push_event(ViewportEvent::MouseButton {
-                    button: vp_button,
-                    state: vp_state,
-                });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                state
-                    .input
-                    .push_event(ViewportEvent::PointerMoved { position: pos });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state
-                    .input
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
-            }
-
             WindowEvent::RedrawRequested => {
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
@@ -250,8 +204,7 @@ impl ApplicationHandler<State> for App {
 
                 // Z-up: spin one item about the world up axis.
                 let t = state.start.elapsed().as_secs_f32();
-                state.scene_items[state.spin_item].model =
-                    glam::Mat4::from_rotation_z(t).to_cols_array_2d();
+                state.scene_items[state.spin_item].model = glam::Mat4::from_rotation_z(t).into();
 
                 let mut frame_data = FrameData::new(
                     CameraFrame::from_camera(&state.camera, [w, h]),
@@ -277,11 +230,9 @@ impl ApplicationHandler<State> for App {
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();
 
-                state.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                state
+                    .input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 state.controller.set_viewport_size([w, h]);
 
@@ -289,7 +240,19 @@ impl ApplicationHandler<State> for App {
                 state.window.request_redraw();
             }
 
-            _ => {}
+            // Pointer, wheel, keys, modifiers, focus and trackpad gestures. The
+            // viewport fills the window, so it owns everything; positions stay in
+            // physical pixels, the units the surface size is given in.
+            other => {
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &AdapterCtx::default(), &mut events);
+                if !events.is_empty() {
+                    state.window.request_redraw();
+                }
+                for ev in events {
+                    state.input.push_event(ev);
+                }
+            }
         }
     }
 }
@@ -384,7 +347,7 @@ async fn build_state(window: Arc<Window>) -> State {
         // A little emissive above 1.0 gives bloom some HDR energy to extract.
         material.emissive = Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
         let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
         item
     };
     let scene_items = vec![
@@ -393,17 +356,13 @@ async fn build_state(window: Arc<Window>) -> State {
         make_item(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
     ];
 
-    let camera = Camera {
-        distance: 10.0,
-        ..Camera::default()
-    };
+    let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
     let controller = OrbitCameraController::new_stateless();
     let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-    input.begin_frame(ViewportContext {
-        hovered: true,
-        focused: true,
-        viewport_size: [surface_config.width as f32, surface_config.height as f32],
-    });
+    input.begin_frame(ViewportContext::new(
+        InputOwnership::full_window(),
+        [surface_config.width as f32, surface_config.height as f32],
+    ));
 
     State {
         window,

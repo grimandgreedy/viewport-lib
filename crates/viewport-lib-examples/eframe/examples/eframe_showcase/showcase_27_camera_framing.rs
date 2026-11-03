@@ -112,9 +112,9 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
     );
     let orientation = glam::Quat::from_mat3(&rot).normalize();
     let distance = (f.near * 0.5_f32).max(0.01);
-    let center = eye + orientation * (-glam::Vec3::Z) * distance;
+    let centre = eye + orientation * (-glam::Vec3::Z) * distance;
     vpl::CameraTarget {
-        center,
+        centre: centre.as_dvec3(),
         distance,
         orientation,
     }
@@ -123,7 +123,7 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
 /// Build the default demo track: overview -> A -> B -> C -> overview.
 fn build_demo_track(frustums: &[FrustumData]) -> CameraTrack {
     let overview = CameraTarget {
-        center: glam::Vec3::new(0.0, 0.0, 0.5),
+        centre: glam::DVec3::new(0.0, 0.0, 0.5),
         distance: 30.0,
         orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
     };
@@ -410,7 +410,7 @@ fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
         Some(AuxAction::LookThrough(i)) => {
             let t = frustum_view_target(&app.aux_state.frustums[i]);
             app.cam_animator
-                .fly_to(&app.camera, t.center, t.distance, t.orientation, 1.2);
+                .fly_to(&app.camera, t.centre, t.distance, t.orientation, 1.2);
             app.aux_state.active_frustum = Some(i);
         }
         Some(AuxAction::Overview) => {
@@ -449,7 +449,7 @@ fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
 fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new("Turntable Camera").strong());
     ui.label(
-        "Continuously orbits around the scene center at a fixed elevation. \
+        "Continuously orbits around the scene centre at a fixed elevation. \
              Adjust speed and tilt, then press Start.",
     );
     ui.add_space(4.0);
@@ -469,8 +469,9 @@ fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
     if (speed_changed || tilt_changed) && app.aux_state.turntable_running {
         let az = app.aux_state.turntable.azimuth;
         let tilt = app.aux_state.turntable.tilt;
-        app.camera
-            .set_orientation(glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt));
+        app.camera.set_orbit_orientation(
+            glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt),
+        );
     }
 
     ui.add_space(4.0);
@@ -557,9 +558,9 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
             app.aux_state.track_playing = false;
             // Apply scrubbed position immediately.
             let target = interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-            app.camera.center = target.center;
-            app.camera.set_distance(target.distance);
-            app.camera.set_orientation(target.orientation);
+            app.camera.set_orbit_centre(target.centre);
+            app.camera.set_orbit_distance(target.distance);
+            app.camera.set_orbit_orientation(target.orientation);
         }
     }
 
@@ -583,9 +584,9 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
         if ui.button("Add current view").clicked() {
             let t = if duration > 0.0 { duration + 2.5 } else { 0.0 };
             let target = CameraTarget {
-                center: app.camera.center,
-                distance: app.camera.distance,
-                orientation: app.camera.orientation,
+                centre: app.camera.target(),
+                distance: app.camera.focus_distance(),
+                orientation: app.camera.orientation(),
             };
             app.aux_state.track.push(t, target);
         }
@@ -615,12 +616,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_aux_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.5),
-        distance: 30.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 0.5),
+        30.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -669,10 +669,10 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 
     // Cap far plane for better cascade distribution, but track orbit
     // distance so the scene doesn't disappear when zooming out.
-    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(60.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.focus_distance() * 3.0).max(60.0);
+    fd.camera.render_camera =
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
 }
 
 // ---------------------------------------------------------------------------
@@ -710,9 +710,9 @@ pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
                 app.aux_state.track_t = 0.0;
             }
             let target = vpl::interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-            app.camera.center = target.center;
-            app.camera.set_distance(target.distance);
-            app.camera.set_orientation(target.orientation);
+            app.camera.set_orbit_centre(target.centre);
+            app.camera.set_orbit_distance(target.distance);
+            app.camera.set_orbit_orientation(target.orientation);
         }
         _ => {}
     }
@@ -722,8 +722,6 @@ pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

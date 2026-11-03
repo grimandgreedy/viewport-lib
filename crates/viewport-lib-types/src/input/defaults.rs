@@ -54,12 +54,11 @@ fn mouse_click(btn: MouseButton) -> Trigger {
     }
 }
 
-/// Returns the default binding table for viewport navigation and manipulation.
+/// Returns the default binding table for viewport navigation and fly mode.
 #[deprecated(note = "superseded by viewport_default_bindings")]
 pub fn default_bindings() -> Vec<Binding> {
     let normal = &[InputMode::Normal];
     let fly = &[InputMode::FlyMode];
-    let manip = &[InputMode::Manipulating];
     let fly_manip = &[InputMode::FlyMode, InputMode::Manipulating];
 
     vec![
@@ -95,16 +94,6 @@ pub fn default_bindings() -> Vec<Binding> {
             key_press(KeyCode::R, Modifiers::NONE),
             normal,
         ),
-        Binding::in_modes(
-            Action::ToggleWireframe,
-            key_press(KeyCode::W, Modifiers::NONE),
-            normal,
-        ),
-        Binding::in_modes(
-            Action::CycleGizmoMode,
-            key_press(KeyCode::Tab, Modifiers::NONE),
-            normal,
-        ),
         // -- Fly mode --
         Binding::in_modes(
             Action::EnterFlyMode,
@@ -120,69 +109,6 @@ pub fn default_bindings() -> Vec<Binding> {
         // FlySpeedBoost has no binding in this legacy set: Shift is a modifier, not a
         // key, and a Trigger names a key. viewport_default_bindings binds it with
         // ViewportGesture::ModifiersHeld.
-        // -- Gizmo space toggle --
-        Binding::in_modes(
-            Action::ToggleGizmoSpace,
-            key_press(KeyCode::Backtick, Modifiers::NONE),
-            normal,
-        ),
-        // -- Pivot mode cycling --
-        Binding::in_modes(
-            Action::CyclePivotModeForward,
-            key_press(KeyCode::LeftBracket, Modifiers::NONE),
-            &[InputMode::Normal, InputMode::Manipulating],
-        ),
-        Binding::in_modes(
-            Action::CyclePivotModeBackward,
-            key_press(KeyCode::RightBracket, Modifiers::NONE),
-            &[InputMode::Normal, InputMode::Manipulating],
-        ),
-        // -- Object manipulation --
-        Binding::in_modes(
-            Action::BeginMove,
-            key_press(KeyCode::G, Modifiers::NONE),
-            normal,
-        ),
-        Binding::in_modes(
-            Action::BeginRotate,
-            key_press(KeyCode::R, Modifiers::NONE),
-            normal,
-        ),
-        Binding::in_modes(
-            Action::BeginScale,
-            key_press(KeyCode::S, Modifiers::NONE),
-            normal,
-        ),
-        Binding::in_modes(
-            Action::ConstrainX,
-            key_press(KeyCode::X, Modifiers::NONE),
-            manip,
-        ),
-        Binding::in_modes(
-            Action::ConstrainY,
-            key_press(KeyCode::Y, Modifiers::NONE),
-            manip,
-        ),
-        Binding::in_modes(
-            Action::ConstrainZ,
-            key_press(KeyCode::Z, Modifiers::NONE),
-            manip,
-        ),
-        Binding::in_modes(
-            Action::ExcludeX,
-            key_press(KeyCode::X, Modifiers::SHIFT),
-            manip,
-        ),
-        Binding::in_modes(
-            Action::ExcludeY,
-            key_press(KeyCode::Y, Modifiers::SHIFT),
-            manip,
-        ),
-        Binding::in_modes(
-            Action::ExcludeZ,
-            key_press(KeyCode::Z, Modifiers::SHIFT),
-            manip,
-        ),
         // -- Confirm / Cancel (fly mode + manipulation) --
         Binding::in_modes(
             Action::Confirm,
@@ -196,21 +122,6 @@ pub fn default_bindings() -> Vec<Binding> {
             fly_manip,
         ),
         Binding::in_modes(Action::Cancel, mouse_click(MouseButton::Right), fly_manip),
-        // -- Scene object shortcuts --
-        Binding::in_modes(
-            Action::OpenAddMenu,
-            key_press(KeyCode::A, Modifiers::SHIFT),
-            normal,
-        ),
-        Binding::in_modes(
-            Action::DeleteSelected,
-            key_press(KeyCode::X, Modifiers::NONE),
-            normal,
-        ),
-        // -- Global (all modes) --
-        Binding::global(Action::Undo, key_press(KeyCode::Z, Modifiers::CTRL)),
-        Binding::global(Action::Redo, key_press(KeyCode::Z, Modifiers::CTRL_SHIFT)),
-        Binding::global(Action::Redo, key_press(KeyCode::Y, Modifiers::CTRL)),
     ]
 }
 
@@ -220,16 +131,17 @@ mod tests {
     use crate::input::viewport_default_bindings;
     use std::collections::HashSet;
 
-    // One list of every action, expanded into both the array the coverage test
-    // walks and an exhaustive `match`. Adding an `Action` variant fails to
+    // One list of every named action, expanded into both the array the coverage
+    // test walks and an exhaustive `match`. Adding an `Action` variant fails to
     // compile here until it is listed, which forces a decision: bind it, or add
-    // it to the documented exceptions below.
+    // it to the documented exceptions below. `Custom` is the application's and
+    // is never bound by the library.
     macro_rules! all_actions {
         ($($v:ident),* $(,)?) => {
             const ALL_ACTIONS: &[Action] = &[$(Action::$v),*];
             #[allow(dead_code)]
             fn actions_are_exhaustive(a: Action) {
-                match a { $(Action::$v => {}),* }
+                match a { $(Action::$v => {}),* Action::Custom(_) => {} }
             }
         };
     }
@@ -240,8 +152,6 @@ mod tests {
         Zoom,
         FocusObject,
         ResetView,
-        ToggleWireframe,
-        CycleGizmoMode,
         EnterFlyMode,
         FlyForward,
         FlyBackward,
@@ -250,26 +160,8 @@ mod tests {
         FlyUp,
         FlyDown,
         FlySpeedBoost,
-        BeginMove,
-        BeginRotate,
-        BeginScale,
-        ConstrainX,
-        ConstrainY,
-        ConstrainZ,
-        ExcludeX,
-        ExcludeY,
-        ExcludeZ,
         Confirm,
         Cancel,
-        NumericBackspace,
-        NumericNextAxis,
-        Undo,
-        Redo,
-        ToggleGizmoSpace,
-        CyclePivotModeForward,
-        CyclePivotModeBackward,
-        OpenAddMenu,
-        DeleteSelected,
     );
 
     /// Every action must be reachable from at least one of the two shipped

@@ -16,7 +16,20 @@ const NO_LIT_GROUP0: &str = "item types register only where there is a lit group
 /// path build pipelines against this format.
 pub const HDR_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba16Float;
 
-/// Depth-stencil format shared by every scene render pass.
+/// Format of the HDR scene pass's second colour target, the indirect
+/// fraction: the indirect share of each opaque pixel's light in red and the
+/// direct share in green (see
+/// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)).
+pub const INDIRECT_FRACTION_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rg8Unorm;
+
+/// The default scene depth-stencil format, `Depth24PlusStencil8`.
+///
+/// A renderer configured with
+/// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)
+/// (as `ViewportApp` and the testkit harness are on a device with
+/// `Features::DEPTH32FLOAT_STENCIL8`) uses another one: build pipelines against
+/// [`DeviceResources::scene_depth_format`] or a target descriptor's
+/// `depth_format`, not this constant.
 pub const SCENE_DEPTH_FORMAT: crate::gpu::TextureFormat =
     crate::gpu::TextureFormat::Depth24PlusStencil8;
 
@@ -104,6 +117,7 @@ impl DeviceResources {
             mask: self.mask_target_desc(),
             pick: self.pick_target_desc(),
             shadow: self.shadow_target_desc(),
+            shadow_depth_clamp: self.capabilities.depth_clip_control,
         }
     }
 
@@ -132,9 +146,7 @@ impl DeviceResources {
     /// Adapt a shader source that includes the shared group 0 declarations
     /// to this device, before handing it to `create_shader_module`.
     ///
-    /// On a device without cube-array textures binding 17 is a
-    /// `texture_depth_2d_array`, so a source declaring it
-    /// `texture_depth_cube_array` would not match the layout. On the compatibility
+    /// On the compatibility
     /// tier the light list at binding 13 is a uniform array of
     /// [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) and the
     /// cluster lookups in `apply_scene_lighting` walk every light, since that
@@ -148,7 +160,8 @@ impl DeviceResources {
     pub fn opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: HDR_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            indirect_fraction_format: Some(INDIRECT_FRACTION_FORMAT),
+            depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
     }
@@ -165,7 +178,8 @@ impl DeviceResources {
     pub fn ldr_opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: self.target_format,
-            depth_format: SCENE_DEPTH_FORMAT,
+            indirect_fraction_format: None,
+            depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
     }
@@ -174,7 +188,8 @@ impl DeviceResources {
     pub fn foreground_target_desc(&self) -> ForegroundTargetDesc {
         ForegroundTargetDesc {
             color_format: HDR_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            indirect_fraction_format: INDIRECT_FRACTION_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: 1,
         }
     }
@@ -184,7 +199,7 @@ impl DeviceResources {
         OitTargetDesc {
             accum_format: HDR_COLOR_FORMAT,
             reveal_format: MASK_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             accum_blend: OIT_ACCUM_BLEND,
             reveal_blend: OIT_REVEAL_BLEND,
             sample_count: self.sample_count,
@@ -195,7 +210,7 @@ impl DeviceResources {
     pub fn depth_read_target_desc(&self) -> DepthReadTargetDesc {
         DepthReadTargetDesc {
             color_format: HDR_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: self.sample_count,
         }
     }
@@ -204,7 +219,7 @@ impl DeviceResources {
     pub fn mask_target_desc(&self) -> MaskTargetDesc {
         MaskTargetDesc {
             color_format: MASK_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            depth_format: self.scene_depth_format(),
             sample_count: 1,
         }
     }
@@ -215,7 +230,7 @@ impl DeviceResources {
             object_id_format: PICK_COLOR_FORMAT,
             primitive_id_format: PICK_COLOR_FORMAT,
             depth_channel_format: PICK_DEPTH_CHANNEL_FORMAT,
-            depth_stencil_format: SCENE_DEPTH_FORMAT,
+            depth_stencil_format: self.scene_depth_format(),
             sample_count: 1,
         }
     }
@@ -317,7 +332,7 @@ impl DeviceResources {
         &self.scene_tier.material.depth_read_bgl
     }
 
-    /// Shared linear-clamp sampler used by the lib for colormap LUTs.
+    /// Shared linear-clamp sampler used by the lib for colourmap LUTs.
     ///
     /// Use this when sampling 1D LUT-style data (colourmaps, transfer
     /// functions) where the texture should not wrap.
@@ -429,10 +444,18 @@ impl DeviceResources {
 
     /// Build an opaque scene pipeline that draws into the HDR scene pass.
     ///
-    /// Standard depth state: `LessEqual` test, depth write on. The pipeline
+    /// Standard depth state: `opts.depth_compare` test
+    /// ([`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE) by default),
+    /// depth write on. The pipeline
     /// layout lists [`group0_layout`](Self::group0_layout) as group 0,
     /// then `extra_bind_group_layouts` as groups 1.., in order. The plugin
     /// owns all groups past 0.
+    ///
+    /// The pass has two colour targets, the scene colour and the indirect
+    /// fraction (see [`OpaqueTargetDesc`]); the pipeline declares both. With
+    /// [`writes_indirect_fraction`](PluginPipelineOpts::writes_indirect_fraction)
+    /// off, the default, the fragment entry writes `@location(0)` only and the
+    /// fraction is left as it was.
     pub fn build_opaque_pipeline(
         &self,
         device: &crate::gpu::Device,
@@ -498,7 +521,7 @@ impl DeviceResources {
     ///
     /// One colour target (the HDR scene buffer) with the caller's blend state,
     /// and the scene depth attachment bound read-only: the pipeline tests
-    /// against opaque depth (`opts.depth_compare`, `LessEqual` by default) but
+    /// against opaque depth (`opts.depth_compare`, `DEPTH_COMPARE` by default) but
     /// never writes it, since the pass binds depth read-only. Set
     /// `opts.color_blend` to alpha blending for soft particles.
     ///
@@ -570,7 +593,10 @@ impl DeviceResources {
     /// No fragment output. The fragment entry is optional; pass an empty
     /// string to use a depth-only configuration with no fragment stage.
     /// Standard depth state: `LessEqual` test, depth write on, with the
-    /// lib's standard depth bias.
+    /// lib's standard depth bias. On a device with
+    /// [`depth_clip_control`](crate::Capabilities::depth_clip_control) the
+    /// primitive state's `unclipped_depth` is set, so casters in front of a
+    /// cascade clamp to its near plane rather than vanish.
     ///
     /// Group 0 is the shadow pass's own camera, not the scene bind group the
     /// other builders use: the lib binds the cascade's light view-projection
@@ -631,9 +657,18 @@ pub struct PipelineBuilder {
     mask: MaskTargetDesc,
     pick: PickTargetDesc,
     shadow: ShadowTargetDesc,
+    /// Shadow pipelines clamp casters in front of a cascade to its near
+    /// plane (`unclipped_depth`) rather than clip them.
+    shadow_depth_clamp: bool,
 }
 
 impl PipelineBuilder {
+    /// The scene depth-stencil format these pipelines are built against. See
+    /// [`DeviceResources::scene_depth_format`].
+    pub fn scene_depth_format(&self) -> crate::gpu::TextureFormat {
+        self.opaque.depth_format
+    }
+
     /// See [`DeviceResources::build_opaque_pipeline`].
     pub fn build_opaque_pipeline(
         &self,
@@ -675,11 +710,9 @@ impl PipelineBuilder {
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: desc.color_format,
-                        blend: opts.color_blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
+                    targets: desc
+                        .colour_targets(opts.color_blend, opts.writes_indirect_fraction)
+                        .as_slice(),
                     compilation_options: Default::default(),
                 }),
                 primitive: opts.primitive,
@@ -721,11 +754,9 @@ impl PipelineBuilder {
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: desc.color_format,
-                        blend: opts.color_blend,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
+                    targets: desc
+                        .colour_targets(opts.color_blend, opts.writes_indirect_fraction)
+                        .as_slice(),
                     compilation_options: Default::default(),
                 }),
                 primitive: opts.primitive,
@@ -785,7 +816,7 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_format,
                     false,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -877,7 +908,7 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_format,
                     false,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -915,7 +946,9 @@ impl PipelineBuilder {
                     compilation_options: Default::default(),
                 }),
                 primitive: opts.primitive,
-                depth_stencil: Some(crate::resources::builders::surface_mask_depth_stencil()),
+                depth_stencil: Some(crate::resources::builders::surface_mask_depth_stencil(
+                    self.opaque.depth_format,
+                )),
                 multisample: crate::gpu::MultisampleState::default(),
                 cache: None,
             },
@@ -967,7 +1000,7 @@ impl PipelineBuilder {
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_stencil_format,
                     true,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -1003,6 +1036,10 @@ impl PipelineBuilder {
                 compilation_options: Default::default(),
             })
         };
+        // The cascade fit relies on every caster clamping when the device
+        // can, so a caster above the cascade's depth range still lands in it.
+        let mut primitive = opts.primitive;
+        primitive.unclipped_depth |= self.shadow_depth_clamp;
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -1012,11 +1049,15 @@ impl PipelineBuilder {
                 vertex_entry: opts.vs_entry,
                 vertex_buffers: opts.vertex_layouts,
                 fragment,
-                primitive: opts.primitive,
+                primitive,
                 depth_stencil: Some(crate::gpu::DepthStencilState {
                     format: desc.depth_format,
                     depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(opts.depth_compare),
+                    // `opts.depth_compare` is written for scene depth; the
+                    // shadow map keeps its own convention.
+                    depth_compare: crate::resources::builders::dcompare(
+                        crate::plugin_api::depth::scene_to_shadow_compare(opts.depth_compare),
+                    ),
                     stencil: crate::gpu::StencilState::default(),
                     bias: opts.depth_bias.unwrap_or(crate::gpu::DepthBiasState {
                         constant: 2,
@@ -1061,8 +1102,12 @@ pub struct PluginPipelineOpts<'a> {
     /// Whether the opaque builder writes depth. Ignored by the other
     /// builders. Default `true`.
     pub depth_write: bool,
-    /// Depth-compare function for the opaque and shadow builders. Ignored by
-    /// the others.
+    /// Depth-compare function for the opaque and shadow builders, written
+    /// for scene depth. Ignored by the others. Default
+    /// [`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE); use the
+    /// [`depth`](crate::plugin_api::depth) constants rather than naming a
+    /// direction. The shadow builder translates it into the shadow map's own
+    /// convention.
     pub depth_compare: crate::gpu::CompareFunction,
     /// Depth bias for the shadow builder. Ignored by the others.
     ///
@@ -1070,6 +1115,12 @@ pub struct PluginPipelineOpts<'a> {
     /// [`shadow_caster`](Self::shadow_caster), which sets this and the cull
     /// mode to the pair the renderer's own meshes cast with.
     pub depth_bias: Option<crate::gpu::DepthBiasState>,
+    /// Whether the fragment entry writes the HDR scene pass's indirect
+    /// fraction at `@location(1)`, for the opaque and foreground builders (see
+    /// [`indirect_fraction_target`](crate::plugin_api::target_desc::indirect_fraction_target)).
+    /// Ignored by the others and on the LDR pass. Default `false`: the target
+    /// is declared with an empty write mask.
+    pub writes_indirect_fraction: bool,
 }
 
 /// How a shadow pipeline's triangles cast into the cascade atlas. Each case
@@ -1132,8 +1183,9 @@ impl<'a> PluginPipelineOpts<'a> {
             },
             color_blend: None,
             depth_write: true,
-            depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_compare: crate::plugin_api::depth::DEPTH_COMPARE,
             depth_bias: None,
+            writes_indirect_fraction: false,
         }
     }
 

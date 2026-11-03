@@ -33,7 +33,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 6;
+pub const WGSL_VERSION: u32 = 12;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -59,7 +59,23 @@ pub const WGSL_VERSION: u32 = 6;
 /// | 10 | IBL sampler | `ibl_sampler` |
 /// | 11 | Skybox equirect | `skybox_tex` |
 /// | 13 | per-light array | `lights_storage` |
-/// | 17 | point-light shadow cubemap array | `point_shadow_cube` |
+/// | 17 | point and spot light shadow array (`texture_depth_2d_array`) | `punctual_shadow_tex` |
+///
+/// Positions in group 0 are relative to the renderer's world origin (see
+/// [`WorldOrigin`](crate::WorldOrigin)): `camera.view_proj`, `camera.eye_pos`,
+/// the light positions and the clip planes all are, and a vertex shader
+/// multiplies a model matrix whose translation the renderer has already made
+/// relative. `camera.world_origin` holds the origin rounded to f32 and
+/// `camera.origin_epoch` counts its moves. `viewport_absolute_pos(rel)` adds
+/// the origin back for procedural effects that key on world position; it is
+/// lossy far from zero, so never use it to place geometry.
+///
+/// `camera.exposure` is the camera's exposure, the linear multiplier every
+/// radiance source takes where a shader reads it: a light's colour times its
+/// intensity, the environment, the hemisphere fill, an emissive term. The
+/// helpers in [`SHARED_PBR_WGSL`] apply it; a shader that reads `lights` or
+/// the IBL textures itself multiplies by it. A colour the item draws without
+/// lighting does not take it.
 pub const SHARED_BINDINGS_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_bindings.wgsl"));
 
@@ -69,11 +85,11 @@ pub const SHARED_BINDINGS_WGSL: &str =
 /// lights)`, the per-light `eval_light`, the cluster lookup, and the
 /// environment-zone and probe-volume declarations they read. Unlike
 /// [`SHARED_PBR_WGSL`]'s `viewport_apply_scene_lighting`, which is a
-/// self-contained Lambert loop over `lights_storage`, this is the same code
-/// path the renderer's own mesh and item shaders take: clustered iteration,
-/// physical inverse-square falloff with a source-radius clamp, and light
-/// channel masks. Compose it when an item has to match a built-in type's
-/// shading exactly.
+/// self-contained Lambert loop over every entry of `lights_storage`, this is
+/// the same code path the renderer's own mesh and item shaders take:
+/// clustered iteration and light channel masks. Both use the same
+/// inverse-square falloff with a source-radius clamp. Compose it when an item
+/// has to match a built-in type's shading exactly.
 ///
 /// It brings its own group-0 declarations for the lighting bindings (13 to 18
 /// and 20) along with the `SingleLight` and `Lights` structs, which overlap
@@ -81,11 +97,48 @@ pub const SHARED_BINDINGS_WGSL: &str =
 /// not both: a body using this declares its own camera at binding 0 and the
 /// `Lights` uniform at binding 3.
 ///
+/// The camera it declares must carry the uniform's layout as far as
+/// `exposure` (`view_proj`, `eye_pos`, a `f32`, `forward`, `exposure`), named
+/// `camera`: `eval_light` and `apply_scene_lighting` return exposed radiance,
+/// multiplied by `camera.exposure`. A body that reads another radiance source
+/// itself (the hemisphere colours, an emissive term) multiplies it the same
+/// way.
+///
 /// It applies no shadow term. Multiply by
 /// [`viewport_sample_csm`](SHARED_PBR_WGSL) yourself if the item casts into
-/// the cascade atlas.
+/// the cascade atlas, or compose [`SHARED_CSM_WGSL`] and
+/// [`SHARED_PUNCTUAL_SHADOW_WGSL`] for the per-light shadow the mesh shaders
+/// take.
 pub const SHARED_SCENE_LIGHTING_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/scene_lighting.wgsl"));
+
+/// The HDR scene pass's fragment output and the indirect fraction.
+///
+/// Provides:
+///
+/// ```ignore
+/// struct SceneFragment {
+///     @location(0) colour: vec4<f32>,
+///     @location(1) indirect_fraction: vec4<f32>,
+/// };
+/// fn scene_light_split(indirect: vec3<f32>, direct: vec3<f32>, emitted: vec3<f32>);
+/// fn scene_fragment(colour: vec4<f32>) -> SceneFragment;
+/// var<private> scene_indirect_fraction: f32; // 0 unless the body sets it
+/// var<private> scene_direct_fraction: f32;   // 0 unless the body sets it
+/// ```
+///
+/// The HDR scene pass has a second colour target holding how each pixel's
+/// light splits: the indirect share, which the composite scales by ambient
+/// occlusion, and the direct share, which it scales by contact shadows. A lit
+/// body calls `scene_light_split(ambient, direct, emitted)` with exposed
+/// radiance in each term, and the fragment entry its HDR pipeline uses
+/// returns `scene_fragment(colour)`. An unlit body sets nothing, leaving both
+/// shares at 0, so neither term darkens it. The LDR pass has one
+/// target, so the LDR pipeline keeps a separate entry returning the colour.
+/// [`scene_lighting_terms`](SHARED_SCENE_LIGHTING_WGSL) gives the two terms
+/// of the shared light loop. Declares no bindings.
+pub const SHARED_SCENE_FRAGMENT_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/scene_fragment.wgsl"));
 
 /// The cascaded shadow-map sampler the renderer's own lit shaders use.
 ///
@@ -105,6 +158,45 @@ pub const SHARED_SCENE_LIGHTING_WGSL: &str =
 /// factor. Take this one when the item needs the full sample, or when it is
 /// already composing the clustered lighting path.
 pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/csm.wgsl"));
+
+/// Point and spot light shadows, and the per-light shadow the renderer's own
+/// lit shaders take.
+///
+/// Provides:
+///
+/// ```ignore
+/// fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: vec3<f32>) -> f32;
+/// fn shadow_for_light(
+///     light: SingleLight,
+///     world_pos: vec3<f32>,
+///     eye_pos: vec3<f32>,
+///     shadow_normal: vec3<f32>,
+///     geo_normal: vec3<f32>,
+///     light_dir: vec3<f32>,
+///     receiver_two_sided: u32,
+/// ) -> ShadowSample;
+/// ```
+///
+/// `shadow_for_light` picks by the light's `shadow_kind`: the cascades for the
+/// directional light that casts them, the punctual shadow array at binding 17
+/// for a point or spot light that was given layers this frame, and 1.0 for
+/// any other light. Call it once per light in the shading loop.
+///
+/// Compose it after [`SHARED_CSM_WGSL`], in a body that declares the same
+/// bindings that one reads plus `punctual_shadow_tex` at group 0 binding 17,
+/// which [`SHARED_SCENE_LIGHTING_WGSL`] declares. A body that never declares
+/// binding 17 leaves this out and keeps directional shadows only.
+pub const SHARED_PUNCTUAL_SHADOW_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/punctual_shadow.wgsl"));
+
+/// The `ShadowAtlas` struct: the cascade shadow uniform at group 0 binding 5.
+///
+/// For a body that declares its own group-0 bindings and binds
+/// `shadow_atlas: ShadowAtlas` for [`SHARED_CSM_WGSL`]. It declares the struct
+/// only, no binding, so compose it once next to the body that binds it.
+/// [`SHARED_BINDINGS_WGSL`] users do not need it.
+pub const SHARED_SHADOW_ATLAS_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/shadow_atlas.wgsl"));
 
 /// The section-view clip-volume test, for a body that declares its own group-0
 /// bindings.
@@ -141,6 +233,46 @@ pub const SHARED_CLIP_VOLUME_WGSL: &str =
 pub const SHARED_CLIP_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_bindings.wgsl"));
 
+/// The scene depth convention for shaders, matching [`crate::plugin_api::depth`].
+///
+/// Scene depth is reversed: 1 at the near plane and 0 at the far plane, which
+/// for a perspective camera is at infinity. The depth buffer clears to 0.
+///
+/// Provides:
+///
+/// ```ignore
+/// const VIEWPORT_DEPTH_NEAR: f32; // 1.0
+/// const VIEWPORT_DEPTH_FAR: f32;  // 0.0
+/// fn viewport_depth_is_background(d: f32) -> bool;
+/// fn viewport_depth_nearer(a: f32, b: f32) -> bool;
+/// fn viewport_depth_nearest(a: f32, b: f32) -> f32;
+/// fn viewport_depth_farthest(a: f32, b: f32) -> f32;
+/// fn viewport_depth_toward_near(d: f32, amount: f32) -> f32;
+/// fn viewport_depth_from_near(d: f32) -> f32;
+/// fn viewport_depth_to_view_z(d: f32, clip: vec4<f32>) -> f32;
+/// fn viewport_ndc_ray(inv_view_proj: mat4x4<f32>, ndc_xy: vec2<f32>) -> ViewportRay;
+/// ```
+///
+/// Use these rather than literal `1.0` / `0.0` depth values or `min` / `max`
+/// over depths, so a shader follows the convention the renderer draws with.
+/// `viewport_depth_is_background` tests a value read from the scene depth
+/// buffer for the clear value. A shader writing `@builtin(frag_depth)` writes
+/// a value in the same convention; nudge it toward the camera with
+/// `viewport_depth_toward_near`. `viewport_depth_from_near` gives a 0..1
+/// value that grows away from the camera, for weights written against
+/// standard depth.
+///
+/// `viewport_depth_to_view_z` turns a stored depth into positive view-space
+/// distance; pass `camera.clip` from [`SHARED_BINDINGS_WGSL`], whose lanes are
+/// (near, far, is_ortho, 0) with far 0 for a projection with no far plane.
+/// `viewport_ndc_ray` builds the ray through a screen point from the near
+/// plane; do not unproject depth 1 and 0 and divide by `w`, since the far
+/// point is at infinity. `viewport_view_z` and
+/// `viewport_scene_view_z_from_ndc` in [`SHARED_DEPTH_READ_WGSL`] go through
+/// the camera's matrices and work under any convention. It declares no
+/// bindings, so it composes anywhere.
+pub const SHARED_DEPTH_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/depth.wgsl"));
+
 /// Read one texel of a depth or stencil texture on every backend, GL included.
 ///
 /// Provides:
@@ -164,8 +296,9 @@ pub const SHARED_DEPTH_TEXEL_WGSL: &str =
 
 /// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
 ///
-/// Provides `D_GGX`, `G1_Smith` and the functions built on them, for a body
-/// that shades with the scene's lights itself and wants its highlights to
+/// Provides `viewport_brdf_d_ggx`, `viewport_brdf_g1_smith` and the functions
+/// built on them (`viewport_brdf_light_contrib` evaluates one light), for a
+/// body that shades with the scene's lights itself and wants its highlights to
 /// match the surface it sits on. It declares no bindings and reads none, so
 /// it composes after either set of group-0 declarations.
 pub const SHARED_BRDF_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helpers/brdf.wgsl"));
@@ -190,17 +323,20 @@ pub const SHARED_OUTLINE_EDGE_WGSL: &str =
 /// fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32>;
 /// fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32;
 /// fn viewport_apply_scene_lighting(N, base_colour, two_sided, world_pos) -> vec3<f32>;
+/// fn viewport_ibl_ambient(n, v, albedo, metallic, roughness, f0, ao) -> vec3<f32>;
 /// ```
 ///
 /// `viewport_pbr_shade` returns the final lit colour for a fragment given a
 /// `PbrInputs` populated with albedo / normal / metallic / roughness / AO /
-/// emissive. It applies the lib's standard hemisphere ambient + light loop
-/// and attenuates the primary light's contribution by the CSM shadow factor
-/// when `lights.shadows_enabled != 0`. Plugins that compose this helper get
+/// emissive. Each light goes through the same attenuation and direct BRDF as
+/// the lit mesh shaders; the ambient is `viewport_ibl_ambient` when an environment is
+/// active and the hemisphere ambient otherwise. It attenuates the primary
+/// light's contribution by the CSM shadow factor when
+/// `lights.shadows_enabled != 0`. Plugins that compose this helper get
 /// shadows automatically; do not multiply by `viewport_sample_csm` again.
-/// Future revisions may add IBL and SSAO sampling inside this function;
-/// consumers should rebuild their shaders when the catalog version bumps to
-/// pick up the upgrade.
+///
+/// The section carries [`SHARED_BRDF_WGSL`] and [`SHARED_SHADOW_ATLAS_WGSL`]
+/// itself, so do not compose either of those next to it.
 ///
 /// `viewport_sample_csm` returns a 0..1 shadow factor for `world_pos`.
 /// Returns 1.0 (fully lit) when shadows are disabled or the position is
@@ -211,6 +347,10 @@ pub const SHARED_OUTLINE_EDGE_WGSL: &str =
 /// `viewport_apply_scene_lighting` is the simpler Lambert helper used by
 /// non-PBR pipelines (glyphs, tubes, ribbons). Use it when a plugin wants
 /// scene-light parity with those built-in items.
+///
+/// Every helper here returns exposed radiance: lights, the environment, the
+/// hemisphere fill and `PbrInputs::emissive` are multiplied by
+/// `camera.exposure`.
 pub const SHARED_PBR_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_pbr.wgsl"));
 
@@ -392,3 +532,108 @@ pub const BINDING_ARRAY_ENABLE_WGSL: &str = "enable wgpu_binding_array;\n";
 ///   `format!("{PICK_PRIM_ENABLE_WGSL}{MY_VS}{SHARED_PICK_PRIM_WGSL}")`.
 pub const SHARED_PICK_PRIM_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_pick_prim.wgsl"));
+
+#[cfg(test)]
+mod tests {
+    #[cfg(wgpu29)]
+    use naga29 as naga;
+    #[cfg(wgpu30)]
+    use naga30 as naga;
+
+    use super::*;
+
+    fn validate(label: &str, src: &str) {
+        let module = naga::front::wgsl::parse_str(src)
+            .unwrap_or_else(|e| panic!("{label} failed to parse: {}", e.emit_to_string(src)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{label} failed to validate: {e:?}"));
+    }
+
+    // A fragment calling every lighting helper the PBR catalogue publishes,
+    // composed the way a plugin composes it.
+    const PBR_CALLER: &str = "
+@fragment
+fn fs_main(@location(0) world_pos: vec3<f32>, @location(1) n: vec3<f32>) -> @location(0) vec4<f32> {
+    let v = normalize(camera.eye_pos - world_pos);
+    var inputs: PbrInputs;
+    inputs.world_pos = world_pos;
+    inputs.world_n = n;
+    inputs.view_dir = v;
+    inputs.albedo = vec3<f32>(0.8);
+    inputs.metallic = 0.5;
+    inputs.roughness = 0.4;
+    inputs.ao = 1.0;
+    inputs.emissive = vec3<f32>(0.0);
+    let lit = viewport_pbr_shade(inputs);
+    let lambert = viewport_apply_scene_lighting(n, vec3<f32>(0.8), false, world_pos);
+    let ibl = viewport_ibl_ambient(n, v, vec3<f32>(0.8), 0.5, 0.4, vec3<f32>(0.04), 1.0);
+    let shadow = viewport_sample_csm(world_pos, n);
+    return vec4<f32>((lit + lambert + ibl) * shadow, 1.0);
+}
+";
+
+    #[test]
+    fn pbr_catalogue_composes_after_the_shared_bindings() {
+        let src = format!("{SHARED_BINDINGS_WGSL}\n{SHARED_PBR_WGSL}\n{PBR_CALLER}");
+        validate("SHARED_BINDINGS_WGSL + SHARED_PBR_WGSL", &src);
+    }
+
+    // The bindings SHARED_CSM_WGSL and SHARED_PUNCTUAL_SHADOW_WGSL read that
+    // SHARED_SCENE_LIGHTING_WGSL does not declare, and a light loop calling
+    // the per-light shadow.
+    const SHADOW_CALLER: &str = "
+struct ShadowCamera {
+    view_proj: mat4x4<f32>,
+    eye_pos:   vec3<f32>,
+    _pad0:     f32,
+    forward:   vec3<f32>,
+    exposure:  f32,
+};
+@group(0) @binding(0) var<uniform> camera: ShadowCamera;
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var<uniform> lights_uniform: Lights;
+@group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
+";
+
+    const SHADOW_LOOP: &str = "
+@fragment
+fn fs_main(@location(0) world_pos: vec3<f32>, @location(1) n: vec3<f32>) -> @location(0) vec4<f32> {
+    var lit = 0.0;
+    for (var i = 0u; i < lights_uniform.count; i++) {
+        let l = lights_storage[i];
+        let s = shadow_for_light(l, world_pos, camera.eye_pos, n, n, n, 0u);
+        lit += s.factor;
+    }
+    return vec4<f32>(lit, 0.0, 0.0, 1.0);
+}
+";
+
+    #[test]
+    fn punctual_shadows_compose_after_the_cascades() {
+        let src = format!(
+            "{SHARED_SCENE_LIGHTING_WGSL}\n{SHARED_SHADOW_ATLAS_WGSL}\n{SHADOW_CALLER}\n\
+             {SHARED_CSM_WGSL}\n{SHARED_PUNCTUAL_SHADOW_WGSL}\n{SHADOW_LOOP}"
+        );
+        validate("SHARED_CSM_WGSL + SHARED_PUNCTUAL_SHADOW_WGSL", &src);
+    }
+
+    #[test]
+    fn brdf_section_composes_alone() {
+        let src = format!(
+            "{SHARED_BRDF_WGSL}
+@fragment
+fn fs_main(@location(0) n: vec3<f32>) -> @location(0) vec4<f32> {{
+    let l = normalize(vec3<f32>(0.0, 0.0, 1.0));
+    let c = viewport_brdf_light_contrib(n, l, l, vec3<f32>(1.0), vec3<f32>(0.5), 0.0, 0.5, vec3<f32>(0.04));
+    return vec4<f32>(c, 1.0);
+}}
+"
+        );
+        validate("SHARED_BRDF_WGSL", &src);
+    }
+}

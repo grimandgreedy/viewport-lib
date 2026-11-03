@@ -29,9 +29,8 @@ const C_SWAP: [u8; 4] = [200, 180, 160, 255];
 // planes (normal +Z) face the camera and cover a large part of the frame.
 fn top_down_camera() -> Camera {
     let mut cam = Camera::default();
-    cam.orientation = glam::Quat::IDENTITY; // identity = top view in a Z-up world
-    cam.center = glam::Vec3::ZERO;
-    cam.distance = 5.0;
+    // identity = top view in a Z-up world
+    cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
     cam.aspect = W as f32 / H as f32;
     cam
 }
@@ -100,7 +99,7 @@ fn upload_plane_material(renderer: &mut ViewportRenderer, tex: TextureId) -> Mat
 fn textured_plane(mesh: MeshId, material: MaterialId, x: f32) -> viewport_lib::SceneRenderItem {
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
     item.material = material;
     item.settings = unlit_settings();
     item
@@ -239,7 +238,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         let mut items = Vec::new();
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
-        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         g.material = ground_mat;
         items.push(g);
         if with_casters {
@@ -248,18 +247,17 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
             for x in [-1.0f32, 1.0] {
                 let mut c = viewport_lib::SceneRenderItem::default();
                 c.mesh_id = caster_mesh;
-                c.model =
-                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
+                c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).into();
                 c.material = caster_mat;
                 items.push(c);
             }
         }
-        let mut cam = Camera {
-            distance: 16.0,
-            ..Camera::default()
-        };
-        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
-        cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
+        let mut cam = Camera::orbit(glam::DVec3::ZERO, 16.0, Camera::default().orientation());
+        cam.set_orbit(
+            glam::DVec3::new(-4.0, 0.0, 0.0),
+            cam.focus_distance(),
+            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0),
+        );
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
         let mut fd = FrameData::new(cf, SceneFrame::from_surface_items(items));
@@ -425,8 +423,7 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
     untextured_mat.base_colour = viewport_lib::Colour::srgb(0.85, 0.15, 0.5, 1.0);
     let mut untextured = viewport_lib::SceneRenderItem::default();
     untextured.mesh_id = mesh;
-    untextured.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).to_cols_array_2d();
+    untextured.model = glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).into();
     untextured.material = upload_material(&mut renderer, untextured_mat);
     untextured.settings = unlit_settings();
 
@@ -693,7 +690,7 @@ fn bindless_survives_deformer_pipeline_rebuild() {
         .register_deformer(
             &device,
             viewport_lib::resources::DeformerDesc {
-                name: "bindless_noop",
+                name: "bindless_noop".into(),
                 stage: DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: body.to_string(),
@@ -774,7 +771,7 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
 struct AlbedoPlugin;
 #[cfg(test)]
 impl viewport_lib::MaterialPlugin for AlbedoPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "bindless_albedo_test"
     }
     fn wgsl_body(&self) -> String {
@@ -1381,22 +1378,22 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         let mut items = Vec::new();
         let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
-        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         g.material = ground_mat;
         items.push(g);
         for x in [-1.0f32, 1.0] {
             let mut c = viewport_lib::SceneRenderItem::default();
             c.mesh_id = caster_mesh;
-            c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
+            c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).into();
             c.material = caster_mat;
             items.push(c);
         }
-        let mut cam = Camera {
-            distance: 16.0,
-            ..Camera::default()
-        };
-        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
-        cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
+        let mut cam = Camera::orbit(glam::DVec3::ZERO, 16.0, Camera::default().orientation());
+        cam.set_orbit(
+            glam::DVec3::new(-4.0, 0.0, 0.0),
+            cam.focus_distance(),
+            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0),
+        );
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
         let mut fd = FrameData::new(cf, SceneFrame::from_surface_items(items));

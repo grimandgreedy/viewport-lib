@@ -63,7 +63,8 @@ impl DeviceResources {
                 ..PipelineKey::default()
             },
         ];
-        match self.material_plugin_draw(material.shading_plugin, &material.plugin_textures, false) {
+        let plugin = self.live_material_plugin(material.shading_plugin);
+        match self.material_plugin_draw(plugin, &material.plugin_textures, false) {
             Some((set, _)) => keys.iter().any(|&k| {
                 set.opaque_ready(
                     hdr,
@@ -73,7 +74,7 @@ impl DeviceResources {
                 )
             }),
             // A plugin item whose set is not composed yet draws nothing.
-            None if material.shading_plugin.is_some() => false,
+            None if plugin.is_some() => false,
             None => keys.iter().any(|&k| self.scene.opaque_ready(hdr, k)),
         }
     }
@@ -89,6 +90,16 @@ impl DeviceResources {
     ) -> bool {
         if self.pipeline_compiler.policy() == crate::resources::PipelineCompilation::Blocking {
             return true;
+        }
+        if batch.is_transmissive {
+            let feats = if self.mesh_universal {
+                crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
+            } else {
+                batch.features
+            };
+            return self
+                .transmission
+                .mesh_ready(batch.two_sided, feats, batch.bindless);
         }
         // Either the
         // discarding pipeline or its discard-free twin counts as ready,

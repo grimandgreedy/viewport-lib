@@ -52,7 +52,7 @@ impl SurfaceMaskState {
         }
     }
 
-    fn active(&self) -> bool {
+    pub(crate) fn active(&self) -> bool {
         !self.readers.is_empty() && (!self.mesh_stamps.is_empty() || self.plugin_stamps)
     }
 }
@@ -66,6 +66,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
+        let origin = self.origin;
         let state = &mut self.surface_mask;
         state.readers.clear();
         state.mesh_stamps.clear();
@@ -105,7 +106,7 @@ impl ViewportRenderer {
                     value,
                     visibility_mask: item.settings.visibility_mask,
                 });
-                state.models.push(item.model);
+                state.models.push(origin.rel_transform(&item.model));
             }
         }
 
@@ -256,6 +257,7 @@ fn build_mesh_pipeline(
         "surface_mask_mesh_pipeline",
         &layout,
         &shader,
+        resources.scene_depth_format(),
         &[vertex_layout, model_layout],
         None,
     )

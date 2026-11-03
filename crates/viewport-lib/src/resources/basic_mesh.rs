@@ -19,7 +19,8 @@ pub(crate) struct BasicInstance {
     /// are carried for a lighting model that reads them; the basic one does
     /// not.
     pub(crate) material: [f32; 4],
-    /// Flags, the NaN colour as RGBA8, two unused words.
+    /// Flags, the NaN colour as RGBA8, the emissive exposure weight as `f32`
+    /// bits, one unused word.
     pub(crate) params: [u32; 4],
 }
 
@@ -136,9 +137,9 @@ impl BasicMeshPipelines {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
-                    crate::resources::SCENE_DEPTH_FORMAT,
+                    capabilities.scene_depth_format,
                     !key.blend,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState::default(),
                 cache: None,

@@ -36,7 +36,9 @@ pub mod viewport_binding;
 pub use action::Action;
 pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trigger, TriggerKind};
-pub use context::{PointerOwnership, ViewportContext, forward_to_viewport};
+pub use context::{
+    InputOwnership, KeyboardOwnership, PointerOwnership, ViewportContext, forward_to_viewport,
+};
 pub use cursor::{CursorShape, UnknownCursorShape};
 pub use defaults::default_bindings;
 pub use event::{ButtonState, ImeEvent, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent};

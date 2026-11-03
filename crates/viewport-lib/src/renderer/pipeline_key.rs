@@ -117,6 +117,15 @@ impl FeatureSet {
     /// Light-probe indirect diffuse. Off, the environment's specular is not
     /// held past the ambient block for a probe to keep.
     pub const LIGHT_PROBE: u16 = 1 << 10;
+    /// The clear coat layer.
+    pub const CLEARCOAT: u16 = 1 << 11;
+    /// The sheen layer.
+    pub const SHEEN: u16 = 1 << 12;
+    /// The anisotropic base specular lobe.
+    pub const ANISOTROPY: u16 = 1 << 13;
+    /// Transmission: the diffuse lobe gives way to light refracted through
+    /// the surface. Bit 15 is the one left in the set.
+    pub const TRANSMISSION: u16 = 1 << 14;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
@@ -144,6 +153,10 @@ impl FeatureSet {
         (Self::UV1, "FEAT_UV1"),
         (Self::UV_TRANSFORM, "FEAT_UV_TRANSFORM"),
         (Self::LIGHT_PROBE, "FEAT_LIGHT_PROBE"),
+        (Self::CLEARCOAT, "FEAT_CLEARCOAT"),
+        (Self::SHEEN, "FEAT_SHEEN"),
+        (Self::ANISOTROPY, "FEAT_ANISOTROPY"),
+        (Self::TRANSMISSION, "FEAT_TRANSMISSION"),
     ];
 
     pub fn bits(self) -> u16 {
@@ -197,6 +210,13 @@ impl FeatureSet {
             .with(Self::UV1, material_flags[0] & m::USES_UV1 != 0)
             .with(Self::UV_TRANSFORM, material_flags[0] & m::UV_TRANSFORM != 0)
             .with(Self::LIGHT_PROBE, flag(f::HAS_LIGHT_PROBE))
+            .with(Self::CLEARCOAT, material_flags[0] & m::HAS_CLEARCOAT != 0)
+            .with(Self::SHEEN, material_flags[0] & m::HAS_SHEEN != 0)
+            .with(Self::ANISOTROPY, material_flags[0] & m::HAS_ANISOTROPY != 0)
+            .with(
+                Self::TRANSMISSION,
+                material_flags[0] & m::HAS_TRANSMISSION != 0,
+            )
     }
 
     /// The pipeline constants for this set: the features it leaves out set
@@ -227,5 +247,21 @@ mod feature_set_tests {
         inst.flags |= instance_flags::HAS_LIGHT_PROBE;
         assert!(FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
         assert!(FeatureSet::UNIVERSAL.has(FeatureSet::LIGHT_PROBE));
+    }
+
+    #[test]
+    fn each_layer_bit_names_its_feature() {
+        use crate::resources::material_gpu::item_flags as m;
+        let inst: InstanceData = bytemuck::Zeroable::zeroed();
+        assert_eq!(FeatureSet::of_record(&inst, [0; 4]), FeatureSet::NONE);
+        for (bit, feat) in [
+            (m::HAS_CLEARCOAT, FeatureSet::CLEARCOAT),
+            (m::HAS_SHEEN, FeatureSet::SHEEN),
+            (m::HAS_ANISOTROPY, FeatureSet::ANISOTROPY),
+            (m::HAS_TRANSMISSION, FeatureSet::TRANSMISSION),
+        ] {
+            assert_eq!(FeatureSet::of_record(&inst, [bit, 0, 0, 0]).bits(), feat);
+            assert!(FeatureSet::UNIVERSAL.has(feat));
+        }
     }
 }

@@ -145,21 +145,33 @@ struct VectorFieldUniform {
 ///
 /// Shared by the per-frame item path and the store, so a reference draw and an
 /// inline draw are bit-for-bit the same work.
+///
+/// `origin` is the frame's world origin for a draw built for one frame: the
+/// samples are then built around their first position when they sit far from
+/// zero, and the uniform's model matrix is written relative to the origin.
+/// A stored field passes `None` and keeps world-space samples, since a channel
+/// write lands in its buffer as given.
 pub(super) fn build_vector_field(
     device: &viewport_lib::gpu::Device,
     queue: &viewport_lib::gpu::Queue,
     binds: &VectorFieldBindings,
     item: &super::types::VectorFieldItem,
     capacity: u32,
+    origin: Option<glam::DVec3>,
 ) -> VectorFieldGpuData {
     let count = item.positions.len();
+    let (anchor, local) = match origin {
+        Some(_) => crate::item_types::origin::anchored(&item.positions),
+        None => (glam::Vec3::ZERO, None),
+    };
+    let positions = local.as_deref().unwrap_or(&item.positions);
     let mags = magnitudes(item);
     let sizes = sample_sizes(item, &mags);
     let colours = colour_plan(&item.colour, count, &mags);
 
     let instances: Vec<VectorFieldInstance> = (0..count)
         .map(|i| VectorFieldInstance {
-            position: item.positions[i],
+            position: positions[i],
             size: sizes[i],
             vector: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
             scalar: colours.scalars[i],
@@ -178,7 +190,11 @@ pub(super) fn build_vector_field(
 
     let (scalar_min, scalar_max) = colours.lut_range.unwrap_or((0.0, 1.0));
     let uniform_data = VectorFieldUniform {
-        model: item.model,
+        model: crate::item_types::origin::anchored_model(
+            item.model,
+            anchor,
+            origin.unwrap_or(glam::DVec3::ZERO),
+        ),
         global_scale: item.scale,
         use_lut: colours.lut_range.is_some() as u32,
         scalar_min,

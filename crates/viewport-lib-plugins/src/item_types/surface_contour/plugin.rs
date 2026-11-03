@@ -108,16 +108,28 @@ struct ContourRecipe {
     shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The colour pipeline in the LDR (member 0) and HDR (member 1) formats.
 type ContourPipelines = viewport_lib::plugin_api::LazyPipelines<ContourRecipe, 2>;
 
 fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
-    let format = if i == 1 {
-        viewport_lib::resources::HDR_COLOR_FORMAT
+    let hdr = i == 1;
+    let colour = viewport_lib::gpu::ColorTargetState {
+        format: if hdr {
+            viewport_lib::resources::HDR_COLOR_FORMAT
+        } else {
+            r.ldr_format
+        },
+        blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
+        write_mask: viewport_lib::gpu::ColorWrites::ALL,
+    };
+    // The HDR member draws in the scene pass. The lines are unlit: fraction 0.
+    let targets = if hdr {
+        viewport_lib::plugin_api::SceneColourTargets::hdr(colour, true)
     } else {
-        r.ldr_format
+        viewport_lib::plugin_api::SceneColourTargets::single(colour)
     };
     // Buffer 0 is the shared mesh vertex, read for its position alone.
     let position_layout = viewport_lib::gpu::VertexBufferLayout {
@@ -127,9 +139,12 @@ fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
     };
     // Tested against the surface's own depth. The bias absorbs the rounding
     // between this draw and the colour draw of the same triangles.
-    let mut depth =
-        builders::scene_depth_stencil(false, viewport_lib::gpu::CompareFunction::LessEqual);
-    depth.bias.constant = -2;
+    let mut depth = builders::scene_depth_stencil(
+        r.depth_format,
+        false,
+        viewport_lib::plugin_api::depth::DEPTH_COMPARE,
+    );
+    depth.bias = viewport_lib::plugin_api::depth::scene_depth_bias(-2, 0.0);
     builders::render_pipeline(
         &r.device,
         builders::RenderPipelineDesc {
@@ -140,12 +155,8 @@ fn build_contour(r: &ContourRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
             vertex_buffers: &[position_layout, builders::scalar_attribute_layout(1)],
             fragment: Some(viewport_lib::gpu::FragmentState {
                 module: r.shader.get(),
-                entry_point: Some("fs_main"),
-                targets: &[Some(viewport_lib::gpu::ColorTargetState {
-                    format,
-                    blend: Some(viewport_lib::gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                })],
+                entry_point: Some(if hdr { "fs_scene" } else { "fs_main" }),
+                targets: targets.as_slice(),
                 compilation_options: Default::default(),
             }),
             // Both sides: a two-sided surface shows its lines from behind, and
@@ -207,6 +218,7 @@ impl ContourGpu {
                 shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build_contour,
         );
@@ -273,7 +285,11 @@ impl ItemTypePlugin for SurfaceContourPlugin {
             .of::<SurfaceContourItem>()
             .iter()
             .filter(|item| !item.settings.hidden && !item.scalar_attribute.is_empty())
-            .filter_map(|item| Some((item, ContourUniform::new(item, viewport_width)?)))
+            .filter_map(|item| {
+                let mut block = ContourUniform::new(item, viewport_width)?;
+                block.model = crate::item_types::origin::rel_model(item.model, ctx.world_origin());
+                Some((item, block))
+            })
             .collect();
         if visible.is_empty() {
             return Vec::new();
@@ -344,7 +360,7 @@ impl ItemTypePlugin for SurfaceContourPlugin {
         if self.draws.is_empty() {
             return;
         }
-        let hdr = ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT;
+        let hdr = ctx.is_hdr_pass();
         // Still compiling: the lines draw from the frame it is ready.
         let Some(pipeline) = gpu.pipelines.get(hdr as usize) else {
             return;

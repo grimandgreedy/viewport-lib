@@ -5,11 +5,11 @@
 //! `tests/snapshots/<backend>-compatibility/`, under the scene's name, and are
 //! blessed the same way:
 //!
-//!     BLESS=1 cargo test --test compatibility_item_types
+//!     BLESS=1 cargo test --release --test compatibility_item_types
 
 use std::path::Path;
 use viewport_lib::Tier;
-use viewport_lib_testkit::golden::{self, Outcome, RgbaImage, Tolerance};
+use viewport_lib_testkit::golden::{self, GoldenMode, Outcome, RgbaImage, Tolerance};
 use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
 
 const W: u32 = 256;
@@ -58,20 +58,28 @@ const SCENES: &[(&str, &str)] = &[
     ("polyline", "vpl.polyline"),
 ];
 
-/// Compare against `<backend>-compatibility/<name>.png`, writing it when missing or
-/// under `BLESS`.
+/// Check against `<adapter>-compatibility/<name>.png` in the mode the
+/// environment names (see `golden::GoldenMode::from_env`).
 fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/snapshots")
-        .join(format!("{}-compatibility", harness.backend_dir_name()));
-    std::fs::create_dir_all(&dir).expect("create snapshot dir");
+    let snapshots = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+    let dir = snapshots.join(format!("{}-compatibility", harness.backend_dir_name()));
+    let mode = GoldenMode::from_env();
+    if mode != GoldenMode::Bless {
+        // The driver stamp lives with the adapter's main reference set.
+        let stamp_dir = snapshots.join(harness.backend_dir_name());
+        if let Err(e) = golden::check_driver_stamp(&stamp_dir, harness.driver_info().unwrap_or(""))
+        {
+            panic!("{e}");
+        }
+    }
     let tolerances = golden::load_tolerances(&dir.join("tolerances.txt"));
     let tolerance = tolerances.get(name).copied().unwrap_or(Tolerance::EXACT);
     let actual = RgbaImage::from_raw(W, H, pixels).expect("frame -> image");
-    let bless = std::env::var_os("BLESS").is_some();
-    match golden::check(&dir, name, &actual, tolerance, bless) {
-        Outcome::Blessed => eprintln!("generated {name} in {}", dir.display()),
+    match golden::check(&dir, name, &actual, tolerance, mode) {
+        Outcome::Blessed => eprintln!("blessed {name} in {}", dir.display()),
+        Outcome::Rendered { path } => eprintln!("render only: {} (not compared)", path.display()),
         Outcome::Match => {}
+        Outcome::Missing { .. } => panic!("{}", golden::missing_message(name, &dir)),
         Outcome::Mismatch { comparison, .. } => panic!(
             "{name}: max_channel_delta={} pixels_over={}/{}",
             comparison.max_channel_delta, comparison.pixels_over, comparison.total_pixels
@@ -478,11 +486,12 @@ fn compatibility_splats_sort_for_the_eye_and_follow_writes() {
 
     // The centre pixel's colour from an eye on one side of the origin or the
     // other, along the camera's own axis.
-    let view = |yaw: f32| viewport_lib::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 4.0,
-        orientation: glam::Quat::from_rotation_z(yaw) * glam::Quat::from_rotation_x(1.5708),
-        ..viewport_lib::Camera::default()
+    let view = |yaw: f32| {
+        viewport_lib::Camera::orbit(
+            glam::DVec3::ZERO,
+            4.0,
+            glam::Quat::from_rotation_z(yaw) * glam::Quat::from_rotation_x(1.5708),
+        )
     };
     let centre = |harness: &mut Harness, item: &GaussianSplatItem, yaw: f32| {
         let built = viewport_lib_testkit::BuiltScene {

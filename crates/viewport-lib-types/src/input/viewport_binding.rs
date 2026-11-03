@@ -90,8 +90,31 @@ pub enum ViewportGesture {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
+    /// A key press matched by the character the key types rather than by its
+    /// position, for mnemonic shortcuts: G for grab is the key labelled G on any
+    /// layout. Fires once on the initial press, not on repeat.
+    ///
+    /// The key's [`logical`](crate::input::ViewportEvent::Key) character is used
+    /// when it is an ASCII graphic character, and the key's US-layout character
+    /// otherwise, so a Cyrillic or Greek layout keeps the shortcuts where a US
+    /// keyboard has them. Case is folded: `ch` matches either case, and Shift is
+    /// part of `modifiers`. `ch` is an ASCII graphic character.
+    CharPress {
+        /// The character the key must type.
+        ch: char,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
+    /// As [`CharPress`](Self::CharPress), firing every frame while the key is
+    /// held.
+    CharHold {
+        /// The character the key must type.
+        ch: char,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
     /// Modifier keys held down : fires every frame while the modifier state
-    /// matches and the viewport is focused, whatever else is held. For a modifier
+    /// matches and the viewport owns the keyboard, whatever else is held. For a modifier
     /// that changes what another action does, such as Shift for a faster fly
     /// speed. It reads [`ViewportEvent::ModifiersChanged`](crate::input::ViewportEvent::ModifiersChanged),
     /// which hosts send even where Shift never arrives as a key of its own.

@@ -253,7 +253,9 @@ macro_rules! emit_overlay_2d {
 
 mod hdr_path;
 mod ldr_path;
+mod transmission;
 mod paint_direct;
+pub(crate) mod pass_table;
 
 impl ViewportRenderer {
     /// Render the scene into an intermediate dyn-res texture for the LDR callback
@@ -320,7 +322,7 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                         store: crate::gpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
@@ -499,6 +501,9 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        if self.device_lost_now() {
+            return crate::renderer::empty_command_buffer(device);
+        }
         let vp_idx = id.0;
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
@@ -537,6 +542,9 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -570,6 +578,9 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -603,6 +614,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        if self.skip_frame_device_lost() {
+            return Vec::new();
+        }
         if self.renders_hdr(frame) {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
@@ -632,6 +646,9 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        if self.device_lost_now() {
+            return;
+        }
         let vp_idx = frame.camera.viewport_index;
         if self.renders_hdr(frame) {
             if self
@@ -678,6 +695,9 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        if self.device_lost_now() {
+            return crate::renderer::empty_command_buffer(device);
+        }
         self.render_frame_internal(device, queue, output_view, id.0, frame)
     }
 
@@ -695,6 +715,9 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        if self.skip_frame_device_lost() {
+            return crate::renderer::empty_command_buffer(device);
+        }
         // Always run prepare() to upload uniforms and run the shadow pass.
         self.direct_paint = false;
         self.prepare(device, queue, frame);
@@ -718,6 +741,9 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        if self.skip_frame_device_lost() {
+            return Vec::new();
+        }
         self.direct_paint = false;
         let (_stats, mut buffers) = self.prepare_deferred(device, queue, frame);
         buffers.push(self.render_frame_internal(
@@ -742,6 +768,8 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "render", vp = vp_idx).entered();
         self.check_output_format(output_view);
         // Draw the LOD-resolved surfaces from prepare (level mesh chosen,
         // culled items hidden), extended with the boundary draws contributed
@@ -752,13 +780,18 @@ impl ViewportRenderer {
         // cloned, then trimmed back and returned.
         let mut items = std::mem::take(&mut self.prepared_surfaces);
         let prepared = items.len();
+        let origin = self.origin;
         items.extend(
             frame
                 .scene
                 .volume_meshes
                 .iter()
                 .filter(|item| item.transparency.is_none())
-                .map(|item| item.to_render_item()),
+                .map(|item| {
+                    let mut item = item.to_render_item();
+                    item.model.translation -= origin.origin();
+                    item
+                }),
         );
         self.prepared_surface_count = prepared;
         let cmd = self.render_frame_body(device, queue, output_view, vp_idx, frame, &items);
@@ -797,23 +830,20 @@ impl ViewportRenderer {
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
         // Ensure the per-viewport targets this frame draws into. The LDR path
-        // needs its depth buffer and nothing else; the HDR path needs the scene
-        // colour and depth plus the targets of each effect that is on. A group
-        // an earlier frame promoted stays live.
+        // needs its depth buffer and nothing else; the HDR path needs the
+        // targets its planned passes read and write. A group
+        // an earlier frame promoted stays live until it has gone unused for
+        // `target_release_frames` frames.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
-        let needed = {
-            use crate::resources::TargetGroups as G;
-            if self.renders_hdr(frame) {
-                let pp = &frame.effects.post_process;
-                G::SCENE
-                    | G::when(G::BLOOM, pp.bloom.enabled)
-                    | G::when(G::SSAO, pp.ssao)
-                    | G::when(G::DOF, pp.dof.enabled)
-                    | G::when(G::CONTACT_SHADOW, pp.contact_shadows.enabled)
-                    | G::when(G::FXAA, pp.fxaa)
-            } else {
-                G::LDR_DEPTH
+        let needed = if self.renders_hdr(frame) {
+            self.ensure_viewport_slot(device, vp_idx);
+            if self.has_transmissive_batches() {
+                self.resources.ensure_transmission(device);
             }
+            self.plan_hdr_passes(frame, scene_items, vp_idx, w.max(1), h.max(1), ssaa_factor);
+            self.viewport_slots[vp_idx].pass_table.groups()
+        } else {
+            crate::resources::TargetGroups::LDR_DEPTH
         };
         if self.resources.scene_tier.is_built() {
             self.ensure_viewport_hdr(
@@ -826,6 +856,10 @@ impl ViewportRenderer {
                 self.current_render_scale,
                 needed,
             );
+            if self.foreground_active(frame) {
+                self.viewport_slots[vp_idx].target_idle.use_foreground();
+            }
+            self.release_idle_viewport_targets(device, queue, vp_idx);
         } else {
             self.ensure_overlay_depth(device, vp_idx, w.max(1), h.max(1));
         }
@@ -1031,7 +1065,8 @@ impl ViewportRenderer {
     /// `width`/`height`).
     ///
     /// Returns `width * height * 4` bytes in RGBA8 layout. The caller encodes to
-    /// PNG/EXR independently : no image codec dependency in this crate.
+    /// PNG/EXR independently : no image codec dependency in this crate. Returns
+    /// an empty vec once the device is lost.
     ///
     /// This is a *presented* render: it advances per-frame state (it pumps the
     /// upload pipeline, bumps the frame counter, stores HiZ prev-depth, and
@@ -1040,6 +1075,10 @@ impl ViewportRenderer {
     /// preview / thumbnail *alongside* a main presented frame and do not want it
     /// to touch that frame's state, use
     /// [`render_offscreen_snapshot`](Self::render_offscreen_snapshot).
+    ///
+    /// A frame that leaves `FrameData::time` at `None` renders at
+    /// `FrameTime::fixed(0.0)` here, not the renderer's clock, so two captures
+    /// of one frame match.
     pub fn render_offscreen(
         &mut self,
         device: &crate::gpu::Device,
@@ -1048,6 +1087,9 @@ impl ViewportRenderer {
         width: u32,
         height: u32,
     ) -> Vec<u8> {
+        if self.skip_frame_device_lost() {
+            return Vec::new();
+        }
         // Hands the result back, so nothing may be skipped while it compiles.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         // 1. Create offscreen texture with RENDER_ATTACHMENT | COPY_SRC usage.
@@ -1077,9 +1119,13 @@ impl ViewportRenderer {
 
         // 4. Render the scene into the offscreen texture.
         //    The caller must set `frame.camera.viewport_size` to `[width as f32, height as f32]`
-        //    and `frame.camera.render_camera.aspect` to `width as f32 / height as f32`
+        //    and build `frame.camera.render_camera.projection` with aspect `width / height`
         //    for correct HDR target allocation and scissor rects.
+        //    A frame without its own time renders at `FrameTime::fixed(0.0)`
+        //    so captures are reproducible.
+        let prev_fixed = self.frame_clock.set_fixed_fallback(true);
         let cmd_buf = self.render(device, queue, &output_view, frame);
+        self.frame_clock.set_fixed_fallback(prev_fixed);
         queue.submit(std::iter::once(cmd_buf));
 
         // 5. Copy texture -> staging buffer (wgpu requires row alignment to 256 bytes).

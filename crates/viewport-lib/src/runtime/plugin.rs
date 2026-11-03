@@ -16,7 +16,9 @@ pub mod phase {
     pub const PICK: i32 = 200;
     /// Selection state updates driven by pick results.
     pub const SELECT: i32 = 300;
-    /// Transform manipulation from gizmo drag or keyboard input.
+    /// Transform edits from a host's tool, such as a transform gizmo from
+    /// `viewport-lib-gizmo` wrapped in the host's own plugin. The runtime
+    /// registers nothing here.
     pub const MANIPULATE: i32 = 400;
     /// Procedural or keyframe animation.
     pub const ANIMATE: i32 = 500;
@@ -43,7 +45,9 @@ pub enum RuntimePhase {
     Pick,
     /// Selection state updates driven by pick results.
     Select,
-    /// Transform manipulation from gizmo drag or keyboard input.
+    /// Transform edits from a host's tool, such as a transform gizmo from
+    /// `viewport-lib-gizmo` wrapped in the host's own plugin. The runtime
+    /// registers nothing here.
     Manipulate,
     /// Procedural or keyframe animation.
     Animate,

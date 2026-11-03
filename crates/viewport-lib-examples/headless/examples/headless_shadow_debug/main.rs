@@ -97,44 +97,38 @@ fn main() {
         let mut items = Vec::new();
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = m_ground;
-        ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         ground.material = ground_mat;
         items.push(ground);
 
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = m_sphere;
-        sphere.model =
-            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
+        sphere.model = glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).into();
         sphere.material = sphere_mat;
         items.push(sphere);
 
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = m_cube;
-        cube.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
+        cube.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
         cube.material = cube_mat;
         items.push(cube);
 
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = m_torus;
-        torus.model =
-            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
+        torus.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).into();
         torus.material = torus_mat;
         items.push(torus);
         items
     };
 
     // Camera: orbit distance 18 looking down at the scene by default; optional
-    // args 5..=10 override center xyz, distance, and rz/rx orientation angles.
+    // args 5..=10 override centre xyz, distance, and rz/rx orientation angles.
     let f = |i: usize, d: f32| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
-    let mut camera = Camera {
-        distance: f(8, 18.0),
-        ..Camera::default()
-    };
-    camera.center = glam::Vec3::new(f(5, 0.0), f(6, 0.0), f(7, 0.0));
-    camera.orientation =
-        glam::Quat::from_rotation_z(f(9, 0.6)) * glam::Quat::from_rotation_x(f(10, 1.0));
+    let mut camera = Camera::orbit(
+        glam::Vec3::new(f(5, 0.0), f(6, 0.0), f(7, 0.0)).as_dvec3(),
+        f(8, 18.0),
+        glam::Quat::from_rotation_z(f(9, 0.6)) * glam::Quat::from_rotation_x(f(10, 1.0)),
+    );
     camera.set_aspect_ratio(W as f32, H as f32);
 
     let build_lighting = |shadows_on: bool, hemi: f32| {
@@ -183,7 +177,7 @@ fn main() {
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth24PlusStencil8,
+        format: renderer.scene_depth_format(),
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
@@ -300,7 +294,7 @@ fn main() {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: wgpu::LoadOp::Clear(viewport_lib::plugin_api::depth::DEPTH_CLEAR),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: Some(wgpu::Operations {

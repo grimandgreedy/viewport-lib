@@ -38,7 +38,7 @@ const LOOSE_FACTOR: f32 = 2.0;
 // ---------------------------------------------------------------------------
 
 struct OctCell {
-    center: glam::Vec3,
+    centre: glam::Vec3,
     /// Strict half-size of this cell (loose half = half * LOOSE_FACTOR).
     half: f32,
     /// Nodes whose AABBs are assigned to this cell level.
@@ -48,9 +48,9 @@ struct OctCell {
 }
 
 impl OctCell {
-    fn new(center: glam::Vec3, half: f32) -> Self {
+    fn new(centre: glam::Vec3, half: f32) -> Self {
         Self {
-            center,
+            centre,
             half,
             entries: Vec::new(),
             children: Default::default(),
@@ -60,21 +60,21 @@ impl OctCell {
     fn loose_aabb(&self) -> Aabb {
         let ext = self.half * LOOSE_FACTOR;
         Aabb {
-            min: self.center - glam::Vec3::splat(ext),
-            max: self.center + glam::Vec3::splat(ext),
+            min: self.centre - glam::Vec3::splat(ext),
+            max: self.centre + glam::Vec3::splat(ext),
         }
     }
 
     /// Child index (0..7) for the octant containing `point`.
     fn child_idx(&self, point: glam::Vec3) -> usize {
-        usize::from(point.x >= self.center.x)
-            | (usize::from(point.y >= self.center.y) << 1)
-            | (usize::from(point.z >= self.center.z) << 2)
+        usize::from(point.x >= self.centre.x)
+            | (usize::from(point.y >= self.centre.y) << 1)
+            | (usize::from(point.z >= self.centre.z) << 2)
     }
 
-    fn child_center(&self, idx: usize) -> glam::Vec3 {
+    fn child_centre(&self, idx: usize) -> glam::Vec3 {
         let q = self.half * 0.5;
-        self.center
+        self.centre
             + glam::Vec3::new(
                 if idx & 1 != 0 { q } else { -q },
                 if idx & 2 != 0 { q } else { -q },
@@ -94,8 +94,8 @@ fn insert_recursive(cell: &mut OctCell, id: NodeId, aabb: &Aabb, depth: u32, pat
 
     if depth < MAX_DEPTH && node_half <= child_loose_half {
         // Descend: node fits within the child's loose bounds.
-        let ci = cell.child_idx(aabb.center());
-        let cc = cell.child_center(ci);
+        let ci = cell.child_idx(aabb.centre());
+        let cc = cell.child_centre(ci);
         if cell.children[ci].is_none() {
             cell.children[ci] = Some(Box::new(OctCell::new(cc, child_strict_half)));
         }

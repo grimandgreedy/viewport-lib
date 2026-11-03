@@ -152,12 +152,6 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         gpu.pipelines.get(pipeline::COLOUR_HDR);
     }
 
-    fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {
-        self.bgl = Some(store::build_bgl(device));
-        self.gpu = None;
-        self.frame.clear();
-    }
-
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -181,7 +175,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
             let Some(set) = self.sets.get(item.set_id) else {
                 continue;
             };
-            if let Some(data) = store::build_draw_data(device, bgl, set, item) {
+            if let Some(data) = store::build_draw_data(device, bgl, set, item, ctx.world_origin()) {
                 self.frame.push(data);
             }
         }
@@ -198,7 +192,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         if self.frame.is_empty() {
             return;
         }
-        let member = if ctx.target_format == viewport_lib::resources::HDR_COLOR_FORMAT {
+        let member = if ctx.is_hdr_pass() {
             pipeline::COLOUR_HDR
         } else {
             pipeline::COLOUR_LDR

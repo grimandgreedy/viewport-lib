@@ -369,7 +369,7 @@ pub(crate) fn vcol_scene_items(app: &App) -> Vec<SceneRenderItem> {
 
     let make = |mesh_id: MeshId, origin: glam::Vec3| {
         let mut item = SceneRenderItem::new(mesh_id, s.material);
-        item.model = glam::Mat4::from_translation(origin).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(origin).into();
         item
     };
 
@@ -422,12 +422,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     build_vertex_colour_scene(app, renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 16.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.15),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        16.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.15),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -527,8 +526,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

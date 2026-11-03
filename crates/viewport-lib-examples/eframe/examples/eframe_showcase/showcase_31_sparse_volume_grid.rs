@@ -466,7 +466,7 @@ impl App {
         .map(|(mesh_id, model)| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = model;
+            item.model = model.into();
             item.active_attribute = active_attribute.clone();
             item.colourmap_id = colourmap_id;
             item
@@ -477,7 +477,7 @@ impl App {
         // attribute selector above.
         let mut paint = SceneRenderItem::default();
         paint.mesh_id = self.svg_state.paint_mesh_id;
-        paint.model = translate(PAINT_OFFSET[0], PAINT_OFFSET[1], PAINT_OFFSET[2]);
+        paint.model = translate(PAINT_OFFSET[0], PAINT_OFFSET[1], PAINT_OFFSET[2]).into();
         paint.active_attribute = Some(AttributeRef {
             name: "paint".to_string(),
             kind: AttributeKind::FaceColour,
@@ -640,12 +640,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_svg_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 28.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(0.8),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        28.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(0.8),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -728,8 +727,6 @@ pub(crate) fn flush_gpu(app: &mut crate::App, cx: &crate::ViewportCtx) {
         }
     }
 }
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

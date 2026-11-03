@@ -149,9 +149,6 @@ impl VertexBufferLayoutExt for Vertex {
     }
 }
 
-/// Default shadow atlas resolution (width = height). The atlas is a 2x2 grid of tiles.
-pub(crate) const SHADOW_ATLAS_SIZE: u32 = 4096;
-
 /// Per-frame camera uniform: view-projection and eye position.
 ///
 /// GPU uniform struct : must remain 16-byte aligned (`#[repr(C)]`).
@@ -162,30 +159,56 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     /// Camera eye position in world space (used for specular lighting).
     pub eye_pos: [f32; 3],
-    /// Upper bound applied to the lit (pre-emissive) mesh colour.
+    /// Upper bound applied to the lit (pre-emissive) mesh colour, which is
+    /// exposed radiance.
     ///
-    /// 1.0 on the LDR path, so lit output stays normalised as before. On the
-    /// HDR path this is F16_MAX, letting bright direct light and ambient stay
-    /// above 1.0 into the Rgba16Float target so the tone mapper receives real
-    /// HDR (emissive was already unclamped on both paths). Occupies what was
-    /// alignment padding, so the struct layout is unchanged.
+    /// 1.0 on the LDR path, where the target cannot hold more. On the HDR path
+    /// this is F16_MAX, so bright direct light and ambient stay above 1.0 in
+    /// the Rgba16Float target and the tone mapper receives real HDR.
     pub lit_clamp: f32,
     /// Camera forward direction in world space (used for view-depth tests).
     pub forward: [f32; 3],
-    /// Padding to align `forward` to 16 bytes.
-    pub _pad1: f32,
+    /// The camera's exposure: the linear multiplier the shaders apply to every
+    /// radiance source where they read it (lights, environment, hemisphere
+    /// fill, probes, lightmaps, emissive). 1.0 under
+    /// `ExposureMode::Passthrough`; under `ExposureMode::Automatic` the HDR
+    /// path copies the adapted value in on the GPU before the scene draws.
+    pub exposure: f32,
     /// Inverse view-projection matrix (for reconstructing world-space rays, e.g. skybox).
     pub inv_view_proj: [[f32; 4]; 4],
     /// View matrix (world -> camera space, column-major).
     ///
     /// Used by the matcap shader to transform world-space normals to view space.
     pub view: [[f32; 4]; 4],
+    /// Projection matrix (view -> clip, column-major).
+    pub proj: [[f32; 4]; 4],
+    /// Inverse projection matrix.
+    pub inv_proj: [[f32; 4]; 4],
+    /// Viewport size in physical pixels: width, height, 1 / width, 1 / height.
+    pub viewport: [f32; 4],
+    /// Near plane, far plane, 1 for an orthographic projection (0 for
+    /// perspective), and a reserved zero.
+    pub clip: [f32; 4],
+    /// Frame time: seconds as f32, the remainder f32 drops from the f64
+    /// seconds, delta seconds, and the frame index modulo 2^24.
+    pub time: [f32; 4],
+    /// The world origin every position above is relative to, rounded to f32.
+    /// Too coarse far from zero to rebuild a position with; for procedural
+    /// effects that want world coordinates.
+    pub world_origin: [f32; 3],
+    /// Bumped each time `world_origin` moves.
+    pub origin_epoch: u32,
 }
+
+/// Byte offset of [`CameraUniform::exposure`], where the HDR path copies an
+/// automatic exposure in.
+pub(crate) const CAMERA_EXPOSURE_OFFSET: u64 = std::mem::offset_of!(CameraUniform, exposure) as u64;
+const _: () = assert!(CAMERA_EXPOSURE_OFFSET == 92);
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).
 ///
 /// Layout (144 bytes, 16-byte aligned):
-/// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; only used for `lights[0]`)
+/// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; a spot light's, when it has a layer)
 /// - pos_or_dir:        `[f32; 3]`     = 12 bytes  (direction for directional, position for point/spot)
 /// - light_type:        u32            =  4 bytes  (0=directional, 1=point, 2=spot)
 /// - colour:             `[f32; 3]`     = 12 bytes
@@ -193,18 +216,22 @@ pub struct CameraUniform {
 /// - range:             f32        =  4 bytes
 /// - inner_angle:       f32        =  4 bytes
 /// - outer_angle:       f32        =  4 bytes
-/// - _pad_align:        u32        =  4 bytes  (bridge to 16-byte boundary for spot_direction)
+/// - shadow_kind:       u32        =  4 bytes  (0 none, 1 cascades, 2 point layers, 3 spot layer)
 /// - spot_direction:    `[f32; 3]` = 12 bytes  (spot only; at offset 112 to match WGSL vec3 align)
+/// - shadow_layer:      i32        =  4 bytes  (base punctual shadow layer, -1 none)
+/// - point_shadow_near: f32        =  4 bytes
+/// - radius:            f32        =  4 bytes
 /// - channel_mask:      u32        =  4 bytes  (layer mask; AND-tested per object)
 /// - _reserved:         u32        =  4 bytes  (reserved tail to 144; see the field)
 /// Total: 64+12+4+12+4+4+4+4+4+12+20 = 144 bytes
 ///
 /// Note: WGSL `vec3<f32>` has AlignOf=16, so `spot_direction` must start at offset 112.
-/// The `_pad_align` field bridges the 4-byte gap between offset 108 and 112.
+/// `shadow_kind` fills the 4 bytes between offset 108 and 112.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SingleLightUniform {
-    /// Light-space view-projection matrix for shadow map rendering.
+    /// Light-space view-projection matrix of a spot light's shadow layer.
+    /// Identity for every other light.
     pub light_view_proj: [[f32; 4]; 4], // 64 bytes, offset   0
     /// World-space position (point/spot) or direction (directional) of the light.
     pub pos_or_dir: [f32; 3], // 12 bytes, offset  64
@@ -220,17 +247,17 @@ pub struct SingleLightUniform {
     pub inner_angle: f32, //  4 bytes, offset 100
     /// Cosine of the outer cone half-angle (spot lights; smooth falloff edge).
     pub outer_angle: f32, //  4 bytes, offset 104
-    /// Alignment padding : bridges 4-byte gap to align `spot_direction` to offset 112.
-    pub _pad_align: u32, //  4 bytes, offset 108 (aligns spot_direction to 112)
+    /// Which shadow this light samples: 0 none, 1 the cascade atlas, 2 a point
+    /// light's six layers of the punctual shadow array, 3 a spot light's one
+    /// layer. Also keeps `spot_direction` at offset 112.
+    pub shadow_kind: u32, //  4 bytes, offset 108
     /// World-space unit direction the spot cone points toward.
     pub spot_direction: [f32; 3], // 12 bytes, offset 112
-    /// Cubemap slot index for point-shadow sampling, or -1 if this light
-    /// does not have a slot allocated this frame. Only meaningful when
-    /// `light_type == 1` (point).
-    pub point_shadow_slot: i32, //  4 bytes, offset 124
-    /// Near plane for the point-shadow perspective projection (world units).
-    /// Used by the lit pass to map fragment distance back into the
-    /// normalised [0, 1] depth that was written into the cubemap.
+    /// Base layer of this light in the punctual shadow array, or -1 when it
+    /// has none this frame: a point light's six cube faces start here, a spot
+    /// light's map is this layer.
+    pub shadow_layer: i32, //  4 bytes, offset 124
+    /// Near plane of the punctual shadow projection (world units).
     pub point_shadow_near: f32, //  4 bytes, offset 128
     /// Source radius (world units) for point/spot lights: clamps the
     /// inverse-square falloff near the light and sizes a finite emitter.
@@ -248,6 +275,13 @@ pub struct SingleLightUniform {
     pub _reserved: u32, //  4 bytes, offset 140 : total 144
 }
 
+const _: () = {
+    assert!(std::mem::size_of::<SingleLightUniform>() == 144);
+    assert!(std::mem::offset_of!(SingleLightUniform, shadow_kind) == 108);
+    assert!(std::mem::offset_of!(SingleLightUniform, spot_direction) == 112);
+    assert!(std::mem::offset_of!(SingleLightUniform, shadow_layer) == 124);
+};
+
 /// GPU-side lights header uniform (binding 3 of group 0).
 ///
 /// Per-light data lives in a separate storage buffer at binding 13
@@ -255,6 +289,10 @@ pub struct SingleLightUniform {
 /// and the active light count. Sized so the structure cost stays well
 /// inside the uniform-buffer budget regardless of how many lights are
 /// active in a given frame.
+///
+/// One header serves every viewport of a scene, so its intensities are
+/// absolute (unexposed); a shader multiplies each by the viewport's
+/// `CameraUniform::exposure` where it reads it.
 ///
 /// Layout:
 /// - count:                u32            =  4 bytes
@@ -273,7 +311,9 @@ pub struct SingleLightUniform {
 /// - env_zone_count:       u32            =  4 bytes
 /// - ibl_specular_scale:   f32            =  4 bytes
 /// - custom_data_base:     u32            =  4 bytes
-/// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
+/// - ao_flags:             u32            =  4 bytes
+/// - _pad_ao:              `[u32; 3]`     = 12 bytes
+/// Total: 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightsUniform {
@@ -311,6 +351,11 @@ pub struct LightsUniform {
     /// Start of the custom-data region of the binding-18 buffer, in `vec4`
     /// elements.
     pub custom_data_base: u32, // 4 bytes
+    /// Material AO options: bit 0 multi-bounce, bit 1 micro-shadowing of
+    /// directional lights.
+    pub ao_flags: u32, // 4 bytes
+    /// Padding to a 16-byte multiple.
+    pub _pad_ao: [u32; 3], // 12 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.
@@ -424,8 +469,8 @@ pub const CLIP_VOLUME_MAX: usize = 4;
 ///
 /// `volume_type` selects the active shape:
 /// - 0 = None (slot unused)
-/// - 2 = Box (oriented AABB : center, half-extents, three orientation columns)
-/// - 3 = Sphere (center + radius packed into `center` and `radius`)
+/// - 2 = Box (oriented AABB : centre, half-extents, three orientation columns)
+/// - 3 = Sphere (centre + radius packed into `centre` and `radius`)
 ///
 /// Layout mirrors the WGSL `ClipVolumeEntry` struct in each geometry shader.
 #[repr(C)]
@@ -435,8 +480,8 @@ pub struct ClipVolumeEntry {
     pub volume_type: u32,
     #[doc(hidden)]
     pub _pad: [u32; 3],
-    /// Box center (world space) or sphere center. Occupies the xyz components.
-    pub center: [f32; 3],
+    /// Box centre (world space) or sphere centre. Occupies the xyz components.
+    pub centre: [f32; 3],
     /// Sphere radius. Unused for boxes.
     pub radius: f32,
     /// Box half-extents. Unused for spheres.
@@ -459,12 +504,12 @@ pub struct ClipVolumeEntry {
 // 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
 
 impl ClipVolumeEntry {
-    /// Build a box entry from center, half-extents, and orientation columns.
-    pub fn from_box(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
+    /// Build a box entry from centre, half-extents, and orientation columns.
+    pub fn from_box(centre: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
         Self {
             volume_type: 2,
             _pad: [0; 3],
-            center,
+            centre,
             radius: 0.0,
             half_extents,
             _pad1: 0.0,
@@ -477,26 +522,26 @@ impl ClipVolumeEntry {
         }
     }
 
-    /// Build a sphere entry from center and radius.
-    pub fn from_sphere(center: [f32; 3], radius: f32) -> Self {
+    /// Build a sphere entry from centre and radius.
+    pub fn from_sphere(centre: [f32; 3], radius: f32) -> Self {
         Self {
             volume_type: 3,
             _pad: [0; 3],
-            center,
+            centre,
             radius,
             ..bytemuck::Zeroable::zeroed()
         }
     }
 
-    /// Build a cylinder entry from center, unit axis, radius, and half-length.
+    /// Build a cylinder entry from centre, unit axis, radius, and half-length.
     ///
     /// The cylinder extends `half_length` units in each direction along `axis`
-    /// from `center`. `axis` must be a unit vector.
-    pub fn from_cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
+    /// from `centre`. `axis` must be a unit vector.
+    pub fn from_cylinder(centre: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
         Self {
             volume_type: 4,
             _pad: [0; 3],
-            center,
+            centre,
             radius,
             half_extents: [half_length, 0.0, 0.0],
             _pad1: 0.0,

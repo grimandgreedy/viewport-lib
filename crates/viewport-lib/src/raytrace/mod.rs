@@ -13,6 +13,12 @@
 //! either an equirect HDR environment ([`RtScene::set_environment`], for
 //! image-based lighting that matches the rasteriser's IBL) or a hemisphere sky.
 //!
+//! Radiance is in nits, as on the rasteriser. A camera trace multiplies every
+//! radiance source by the exposure set with [`RtScene::set_exposure`] (default
+//! 1.0), with emissive scaled by its material's exposure weight, so a trace at
+//! a camera's exposure multiplier lines up with that camera's HDR target before
+//! the tone map. Bakes always run at 1.0.
+//!
 //! The same integrator also bakes lightmaps: [`bake_lightmap`] / [`Tracer::bake`]
 //! shoot the GI hemisphere from per-texel surface points (a [`TexelSurfaces`]
 //! G-buffer) instead of from a camera, and store incident irradiance into an
@@ -36,6 +42,7 @@
 //! [`RtImage`]: crate::raytrace::RtImage
 //! [`RtSettings::denoise`]: crate::raytrace::RtSettings::denoise
 //! [`RtScene::set_environment`]: crate::raytrace::RtScene::set_environment
+//! [`RtScene::set_exposure`]: crate::raytrace::RtScene::set_exposure
 //! [`bake_lightmap`]: crate::raytrace::bake_lightmap
 //! [`Tracer::bake`]: crate::raytrace::Tracer::bake
 //! [`TexelSurfaces`]: crate::raytrace::TexelSurfaces
@@ -250,14 +257,59 @@ pub struct RtMaterial {
     pub metallic: f32,
     /// Perceptual roughness in [0, 1].
     pub roughness: f32,
-    /// Emitted radiance (may exceed 1.0). Linear; build with `Colour::linear`.
+    /// Emitted radiance in nits (may exceed 1.0). Linear; build with
+    /// `Colour::linear`.
     pub emissive: crate::Colour,
+    /// How far the scene's exposure ([`RtScene::set_exposure`]) scales
+    /// [`emissive`](Self::emissive), as `Material::emissive_exposure_weight`:
+    /// the emissive is multiplied by `w * exposure + (1 - w)`, so 1 exposes it
+    /// with the scene and 0 keeps it display-relative. Clamped to `[0, 1]`.
+    /// Default 1. An emitter at any weight is still sampled as an area light,
+    /// at the radiance it shows.
+    pub emissive_exposure_weight: f32,
     /// Dielectric transmission weight in [0, 1]. 0 is opaque; 1 is clear glass.
     /// Metals (`metallic > 0`) do not transmit; keep it 0 for them.
     pub transmission: f32,
     /// Index of refraction for the transmission lobe (1.0 bends nothing, ~1.5
-    /// for glass). Only read when `transmission > 0`.
+    /// for glass). Only read when `transmission > 0`; the reflection lobes take
+    /// F0 from `reflectance`.
     pub ior: f32,
+    /// Dielectric reflectance, as `Material::reflectance`: F0 =
+    /// `0.16 * reflectance^2`. Default 0.5 (F0 = 0.04).
+    pub reflectance: f32,
+    /// Scales the dielectric specular at normal and grazing incidence, as
+    /// `Material::specular_factor`. Default 1.0.
+    pub specular_factor: f32,
+    /// Tints the dielectric F0, as `Material::specular_colour`. Default linear
+    /// white.
+    pub specular_colour: crate::Colour,
+    /// Clear coat strength 0..1, as `Material::clearcoat`. Default 0.
+    pub clearcoat: f32,
+    /// Clear coat perceptual roughness, as `Material::clearcoat_roughness`.
+    /// Default 0.
+    pub clearcoat_roughness: f32,
+    /// Sheen colour, as `Material::sheen_colour`. Default black (no sheen).
+    pub sheen_colour: crate::Colour,
+    /// Sheen perceptual roughness, as `Material::sheen_roughness`. Default 0.
+    pub sheen_roughness: f32,
+    /// Anisotropy of the base specular lobe, -1..1, as
+    /// `Material::anisotropy`. Default 0. The tracer has no mesh tangents: the
+    /// direction is the frame the rasteriser builds from the normal for a
+    /// mesh without tangents.
+    pub anisotropy: f32,
+    /// Rotation of the anisotropy direction in radians, as
+    /// `Material::anisotropy_rotation`. Default 0.
+    pub anisotropy_rotation: f32,
+    /// Colour white light becomes after travelling
+    /// [`attenuation_distance`](Self::attenuation_distance) inside a
+    /// transmissive surface, as `Material::attenuation_colour`. Default
+    /// linear white (no absorption). The tracer measures the path through
+    /// the mesh itself, so it has no thickness field.
+    pub attenuation_colour: crate::Colour,
+    /// Distance over which light is absorbed to
+    /// [`attenuation_colour`](Self::attenuation_colour), as
+    /// `Material::attenuation_distance`. Default `f32::MAX` (none).
+    pub attenuation_distance: f32,
 }
 
 impl Default for RtMaterial {
@@ -267,14 +319,30 @@ impl Default for RtMaterial {
             metallic: 0.0,
             roughness: 0.5,
             emissive: crate::Colour::BLACK,
+            emissive_exposure_weight: 1.0,
             transmission: 0.0,
             ior: 1.5,
+            reflectance: 0.5,
+            specular_factor: 1.0,
+            specular_colour: crate::Colour::linear_rgb(1.0, 1.0, 1.0),
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
+            sheen_colour: crate::Colour::linear_rgb(0.0, 0.0, 0.0),
+            sheen_roughness: 0.0,
+            anisotropy: 0.0,
+            anisotropy_rotation: 0.0,
+            attenuation_colour: crate::Colour::linear_rgb(1.0, 1.0, 1.0),
+            attenuation_distance: f32::MAX,
         }
     }
 }
 
 /// An analytic light. Directional lights are delta lights sampled via next-event
 /// estimation; the tracer does not importance-sample them via the BSDF.
+///
+/// A light's colour carries its magnitude in the rasteriser's units: a
+/// `LightSource`'s colour times its intensity, lux for a directional light and
+/// candela for a point light. The scene's exposure scales it.
 #[derive(Clone, Copy, Debug)]
 pub enum RtLight {
     /// `direction` points from the surface toward the light (i.e. the negated
@@ -383,6 +451,8 @@ impl Default for RtSettings {
 }
 
 /// The traced image: linear HDR, row-major RGBA f32, `width * height * 4` long.
+/// A camera trace holds radiance in nits times the scene's exposure
+/// ([`RtScene::set_exposure`]); a bake holds unexposed values.
 pub struct RtImage {
     /// Image width in pixels.
     pub width: u32,
@@ -403,6 +473,15 @@ struct EnvMap {
 /// A scene to trace: triangles with per-vertex normals and a material index,
 /// analytic lights, and either an equirect HDR environment or a hemisphere sky
 /// used on ray miss.
+///
+/// Light values are the rasteriser's: light colours, the environment, the sky
+/// and emissive are radiance in nits. The exposure set with
+/// [`set_exposure`](Self::set_exposure) multiplies each of them where the
+/// integrator reads it, as the rasteriser applies the camera's exposure, so a
+/// trace at a camera's multiplier matches that camera's HDR target before the
+/// tone map. Emissive is scaled by its material's
+/// [`emissive_exposure_weight`](RtMaterial::emissive_exposure_weight). The
+/// default exposure is 1.0: the trace returns unexposed radiance.
 #[derive(Default)]
 pub struct RtScene {
     // World-space triangle soup: every instance expanded. The hardware backend
@@ -421,6 +500,8 @@ pub struct RtScene {
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
     env: Option<EnvMap>,
+    // `None` is the default multiplier of 1.0.
+    exposure: Option<f32>,
 }
 
 /// A registered mesh: object-space triangles and their bounds. Instanced by one
@@ -590,11 +671,28 @@ impl RtScene {
         });
     }
 
-    /// Set the hemisphere sky colours (linear). `top` is straight up (+Z),
-    /// `bottom` straight down.
+    /// Set the hemisphere sky colours (linear radiance in nits). `top` is
+    /// straight up (+Z), `bottom` straight down.
     pub fn set_sky(&mut self, top: [f32; 3], bottom: [f32; 3]) {
         self.sky_top = top;
         self.sky_bottom = bottom;
+    }
+
+    /// Set the exposure multiplier a camera trace applies at the radiance
+    /// sources: the lights, the environment or sky, and emissive (by its
+    /// material's weight). Pass the linear multiplier a camera's exposure
+    /// resolves to, such as `ExposureState::exposure`, to match its HDR
+    /// target. Default 1.0. Lightmap and shadowmask bakes ignore it and
+    /// always store unexposed values. A [`Tracer`] takes this value when it
+    /// is built; change it there with [`Tracer::set_exposure`].
+    pub fn set_exposure(&mut self, exposure: f32) {
+        self.exposure = Some(exposure);
+    }
+
+    /// The exposure multiplier set with [`set_exposure`](Self::set_exposure),
+    /// 1.0 by default.
+    pub fn exposure(&self) -> f32 {
+        self.exposure.unwrap_or(1.0)
     }
 
     /// Total triangles in the scene, counting every instance.
@@ -648,6 +746,16 @@ struct GpuMaterial {
     ior: f32,
     _pad0: f32,
     _pad1: f32,
+    /// `(dielectric_f0.rgb, dielectric_f90)`.
+    dielectric: [f32; 4],
+    /// `(clearcoat, clearcoat_roughness, anisotropy, anisotropy_rotation)`;
+    /// zero lanes for a layer that is off.
+    layers0: [f32; 4],
+    /// `(sheen_colour.rgb, sheen_roughness)`; zero without a sheen.
+    layers1: [f32; 4],
+    /// `(absorption.rgb, 0)`: the Beer-Lambert coefficient per world unit
+    /// inside a transmissive mesh.
+    volume: [f32; 4],
 }
 
 #[repr(C)]
@@ -680,6 +788,8 @@ struct FrameUniform {
     // instance table in the env_tables buffer, 0, 0). Count 0 means a
     // single-level world-space walk (hardware backend or empty scene).
     inst: [u32; 4],
+    // (exposure multiplier at the radiance sources, 0, 0, 0). 1 for bakes.
+    exposure: [f32; 4],
 }
 
 #[repr(C)]
@@ -723,6 +833,10 @@ pub fn trace(
 /// [`Tracer::trace`] only rewrites the per-frame uniform, re-dispatches, and
 /// reads back. Size-dependent buffers are (re)allocated when the output
 /// resolution changes.
+///
+/// Camera traces apply the exposure the tracer was built with
+/// ([`RtScene::set_exposure`]) or set since ([`Tracer::set_exposure`]) at the
+/// radiance sources. The bakes ignore it.
 pub struct Tracer {
     pipeline: crate::gpu::ComputePipeline,
     bgl: crate::gpu::BindGroupLayout,
@@ -748,6 +862,11 @@ pub struct Tracer {
     env_view: crate::gpu::TextureView,
     env_sampler: crate::gpu::Sampler,
     has_env: bool,
+    // The split-sum BRDF LUT (bindings 15/16), read for the specular energy
+    // compensation the raster path applies.
+    _brdf_lut_texture: crate::gpu::Texture,
+    brdf_lut_view: crate::gpu::TextureView,
+    brdf_lut_sampler: crate::gpu::Sampler,
     // Environment importance-sampling tables (binding 14) and their metadata
     // (width, height, integral, enabled). The three tables (func, conditional
     // CDFs, marginal CDF) are concatenated into one storage buffer to stay under
@@ -766,6 +885,7 @@ pub struct Tracer {
     num_lights: u32,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
+    exposure: f32,
     has_geometry: bool,
     sized: Option<TracerSized>,
     // Samples already blended into the accumulation buffer. `trace` resets it to
@@ -1055,15 +1175,39 @@ impl Tracer {
         let mut gpu_mats: Vec<GpuMaterial> = scene
             .materials
             .iter()
-            .map(|m| GpuMaterial {
-                base: m.base_colour.to_linear_rgb(),
-                metallic: m.metallic,
-                emissive: m.emissive.to_linear_rgb(),
-                roughness: m.roughness,
-                transmission: m.transmission.clamp(0.0, 1.0),
-                ior: m.ior.max(1.0),
-                _pad0: 0.0,
-                _pad1: 0.0,
+            .map(|m| {
+                let (layers0, layers1, _) = crate::resources::material_gpu::layer_lanes(
+                    m.clearcoat,
+                    m.clearcoat_roughness,
+                    m.sheen_colour.to_linear_rgb(),
+                    m.sheen_roughness,
+                    m.anisotropy,
+                    m.anisotropy_rotation,
+                );
+                GpuMaterial {
+                    base: m.base_colour.to_linear_rgb(),
+                    metallic: m.metallic,
+                    emissive: m.emissive.to_linear_rgb(),
+                    roughness: m.roughness,
+                    transmission: m.transmission.clamp(0.0, 1.0),
+                    ior: m.ior.max(1.0),
+                    _pad0: 0.0,
+                    _pad1: 0.0,
+                    dielectric: crate::resources::material_gpu::dielectric_specular(
+                        m.reflectance,
+                        m.specular_colour.to_linear_rgb(),
+                        m.specular_factor,
+                    ),
+                    layers0,
+                    layers1,
+                    volume: {
+                        let s = crate::resources::material_gpu::absorption(
+                            m.attenuation_colour.to_linear_rgb(),
+                            m.attenuation_distance,
+                        );
+                        [s[0], s[1], s[2], m.emissive_exposure_weight.clamp(0.0, 1.0)]
+                    },
+                }
             })
             .collect();
         if gpu_mats.is_empty() {
@@ -1076,6 +1220,10 @@ impl Tracer {
                 ior: 1.5,
                 _pad0: 0.0,
                 _pad1: 0.0,
+                dielectric: [0.04, 0.04, 0.04, 1.0],
+                layers0: [0.0; 4],
+                layers1: [0.0; 4],
+                volume: [0.0, 0.0, 0.0, 1.0],
             });
         }
 
@@ -1197,6 +1345,15 @@ impl Tracer {
             mipmap_filter: crate::resources::builders::dmipmap(crate::gpu::FilterMode::Nearest),
             ..Default::default()
         });
+        let (brdf_lut_texture, brdf_lut_view) =
+            crate::resources::material::environment::create_brdf_lut(device);
+        crate::resources::material::environment::write_brdf_lut_texels(queue, &brdf_lut_texture);
+        let brdf_lut_sampler = device.create_sampler(&crate::gpu::SamplerDescriptor {
+            label: Some("rt_brdf_lut_sampler"),
+            mag_filter: crate::gpu::FilterMode::Linear,
+            min_filter: crate::gpu::FilterMode::Linear,
+            ..Default::default()
+        });
 
         // Environment importance-sampling tables. Built from the equirect image so
         // the integrator can next-event-estimate toward bright regions; a
@@ -1273,6 +1430,8 @@ impl Tracer {
             bgl_entry(9, sampler_ty_filtering()),
             // Environment importance-sampling tables (packed into one buffer).
             bgl_entry(14, buffer_ty_storage(true)),
+            bgl_entry(15, texture_ty_float()),
+            bgl_entry(16, sampler_ty_filtering()),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if use_hw {
@@ -1330,6 +1489,8 @@ impl Tracer {
             bgl_entry(10, buffer_ty_storage(true)),
             bgl_entry(12, buffer_ty_storage(false)),
             bgl_entry(14, buffer_ty_storage(true)),
+            bgl_entry(15, texture_ty_float()),
+            bgl_entry(16, sampler_ty_filtering()),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if use_hw {
@@ -1406,6 +1567,9 @@ impl Tracer {
             env_view,
             env_sampler,
             has_env,
+            _brdf_lut_texture: brdf_lut_texture,
+            brdf_lut_view,
+            brdf_lut_sampler,
             env_tables_buf,
             env_dist,
             emit,
@@ -1413,6 +1577,7 @@ impl Tracer {
             num_lights,
             sky_top: scene.sky_top,
             sky_bottom: scene.sky_bottom,
+            exposure: scene.exposure(),
             has_geometry,
             sized: None,
             accumulated: 0,
@@ -1430,6 +1595,22 @@ impl Tracer {
             return RtBackend::Hardware;
         }
         RtBackend::Software
+    }
+
+    /// The exposure multiplier camera traces apply at the radiance sources;
+    /// see [`RtScene::set_exposure`].
+    pub fn exposure(&self) -> f32 {
+        self.exposure
+    }
+
+    /// Change the exposure multiplier for later camera traces without
+    /// rebuilding the tracer. A different value discards the running
+    /// accumulation, which holds samples at the old exposure. Bakes ignore it.
+    pub fn set_exposure(&mut self, exposure: f32) {
+        if exposure != self.exposure {
+            self.exposure = exposure;
+            self.reset_accumulation();
+        }
     }
 
     /// Ensure the size-dependent buffers and bind group match `width`/`height`,
@@ -1480,6 +1661,14 @@ impl Tracer {
                 resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
             },
             bg_entry(14, &self.env_tables_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: crate::gpu::BindingResource::TextureView(&self.brdf_lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 16,
+                resource: crate::gpu::BindingResource::Sampler(&self.brdf_lut_sampler),
+            },
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1561,6 +1750,7 @@ impl Tracer {
             env_dist: self.env_dist,
             emit: self.emit,
             inst: self.inst,
+            exposure: [self.exposure, 0.0, 0.0, 0.0],
         };
 
         // Dispatch `settings.samples` more samples in batches, so no single
@@ -1673,6 +1863,10 @@ impl Tracer {
     /// sized to the atlas: linear HDR incident irradiance in `rgb`, with `a`
     /// carrying texel coverage (1 on a baked texel, 0 on an empty one). Empty
     /// texels (`world_pos.w <= 0`) are left black.
+    ///
+    /// The irradiance is unexposed, whatever the tracer's exposure: the
+    /// rasteriser multiplies lightmap texels by the camera's exposure when it
+    /// reads them, so baking at an exposure would apply it twice.
     ///
     /// This is a one-shot solve, not progressive: it allocates the atlas-sized
     /// buffers, accumulates `settings.samples` samples per texel, and reads back.
@@ -1797,6 +1991,14 @@ impl Tracer {
             bg_entry(10, &surf_buf),
             bg_entry(12, &accum_dir_buf),
             bg_entry(14, &self.env_tables_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: crate::gpu::BindingResource::TextureView(&self.brdf_lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 16,
+                resource: crate::gpu::BindingResource::Sampler(&self.brdf_lut_sampler),
+            },
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1829,6 +2031,9 @@ impl Tracer {
             env_dist: [0.0; 4],
             emit: self.emit,
             inst: self.inst,
+            // Lightmap texels are unexposed radiance: the rasteriser exposes
+            // them when it reads them.
+            exposure: [1.0, 0.0, 0.0, 0.0],
         };
 
         job.gpu = Some(BakeJobGpu {
@@ -1934,6 +2139,14 @@ impl Tracer {
             bg_entry(10, &surf_buf),
             bg_entry(12, &accum_dir_buf),
             bg_entry(14, &self.env_tables_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 15,
+                resource: crate::gpu::BindingResource::TextureView(&self.brdf_lut_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 16,
+                resource: crate::gpu::BindingResource::Sampler(&self.brdf_lut_sampler),
+            },
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1958,6 +2171,7 @@ impl Tracer {
             env_dist: [0.0; 4],
             emit: [0, 0, 0, 0],
             inst: self.inst,
+            exposure: [1.0, 0.0, 0.0, 0.0],
         };
 
         const BATCH: u32 = 16;
@@ -2192,7 +2406,7 @@ fn readback_f32(
 /// Builds a tracer for `scene` and runs [`Tracer::bake`]. Like [`trace`], this
 /// rebuilds the BVH and uploads the scene each call; a bake is a one-shot solve,
 /// so that setup cost is not worth caching. See [`Tracer::bake`] for the output
-/// layout.
+/// layout. The scene's exposure is ignored: the irradiance is unexposed.
 pub fn bake_lightmap(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,

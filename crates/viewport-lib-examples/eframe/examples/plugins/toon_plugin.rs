@@ -8,7 +8,7 @@
 //!   (`shade_ambient`), tinted and banded through its declared parameters,
 //!   with one texture slot modulating the albedo (1x1 white fallback when a
 //!   material names none).
-//! - [`RimPlugin`]: a `recolor` hook that adds a view-dependent rim on top of
+//! - [`RimPlugin`]: a `recolour` hook that adds a view-dependent rim on top of
 //!   the untouched built-in lighting.
 //!
 //! This is example code shared across showcases. Treat it as a reference
@@ -39,7 +39,7 @@ pub fn toon_material(
 pub struct ToonPlugin;
 
 impl vpl::MaterialPlugin for ToonPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_toon"
     }
     fn texture_count(&self) -> u32 {
@@ -83,14 +83,14 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 pub struct RimPlugin;
 
 impl vpl::MaterialPlugin for RimPlugin {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "example_rim"
     }
     fn wgsl_body(&self) -> String {
-        // Recolor-only: the built-in PBR direct + ambient terms arrive
+        // Recolour-only: the built-in PBR direct + ambient terms arrive
         // untouched and the rim adds on top.
         r#"
-fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     let facing = max(dot(surf.normal, surf.view_dir), 0.0);
     let rim = pow(1.0 - facing, max(params.power, 0.5));
     return direct + ambient + params.colour * rim;

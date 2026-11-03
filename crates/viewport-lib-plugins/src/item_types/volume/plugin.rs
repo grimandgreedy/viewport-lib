@@ -9,7 +9,6 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, SubObjectRef};
-use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -53,16 +52,6 @@ pub struct VolumePlugin {
 impl ItemTypePlugin for VolumePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
-    }
-
-    fn on_device_recreated(
-        &mut self,
-        _device: &viewport_lib::gpu::Device,
-        _queue: &viewport_lib::gpu::Queue,
-    ) {
-        self.gpu = None;
-        self.default_lut = None;
-        self.frame.clear();
     }
 
     fn warm(
@@ -116,6 +105,7 @@ impl ItemTypePlugin for VolumePlugin {
                 ctx.clip_objects,
                 step_multiplier,
                 wireframe,
+                ctx.world_origin(),
             ));
         }
         Vec::new()
@@ -138,7 +128,7 @@ impl ItemTypePlugin for VolumePlugin {
             }
             if !bound {
                 // Still compiling: the volumes draw next frame.
-                let colour = if ctx.target_format == HDR_COLOR_FORMAT {
+                let colour = if ctx.is_hdr_pass() {
                     pipeline::COLOUR_HDR
                 } else {
                     pipeline::COLOUR_LDR
@@ -215,7 +205,7 @@ impl ItemTypePlugin for VolumePlugin {
             ) else {
                 continue;
             };
-            let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
             if !wants_voxel {
                 hit.sub_object = None;
             }

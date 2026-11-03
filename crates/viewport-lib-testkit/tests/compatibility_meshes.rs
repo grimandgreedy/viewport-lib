@@ -5,14 +5,14 @@
 //! PBR), so these references live in `tests/snapshots/<backend>-compatibility/` and
 //! are blessed the same way as the catalogue's:
 //!
-//!     BLESS=1 cargo test --test compatibility_meshes
+//!     BLESS=1 cargo test --release --test compatibility_meshes
 
 use std::path::Path;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, Camera, Colour, FrameData,
     Material, MaterialId, RenderCamera, SceneRenderItem, SurfaceSubmission, Tier,
 };
-use viewport_lib_testkit::golden::{self, Outcome, RgbaImage, Tolerance};
+use viewport_lib_testkit::golden::{self, GoldenMode, Outcome, RgbaImage, Tolerance};
 use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
 
 const W: u32 = 256;
@@ -26,10 +26,8 @@ fn forward_harness(label: &'static str) -> Option<Harness> {
 }
 
 fn scene_camera() -> Camera {
-    let mut camera = Camera::default();
-    camera.set_center(glam::Vec3::ZERO);
-    camera.set_distance(6.0);
-    camera.set_orientation(glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1));
+    let orientation = glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1);
+    let mut camera = Camera::orbit(glam::DVec3::ZERO, 6.0, orientation.normalize());
     camera.set_aspect_ratio(W as f32, H as f32);
     camera
 }
@@ -50,7 +48,7 @@ fn item(mesh_id: viewport_lib::MeshId, material: MaterialId, at: [f32; 3]) -> Sc
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.material = material;
-    item.model = glam::Mat4::from_translation(glam::Vec3::from(at)).to_cols_array_2d();
+    item.model = glam::Mat4::from_translation(glam::Vec3::from(at)).into();
     item
 }
 
@@ -72,20 +70,28 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
-/// Compare against `<backend>-compatibility/<name>.png`, writing it when missing or
-/// under `BLESS`.
+/// Check against `<adapter>-compatibility/<name>.png` in the mode the
+/// environment names (see `golden::GoldenMode::from_env`).
 fn check_golden(harness: &Harness, name: &str, pixels: Vec<u8>) {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/snapshots")
-        .join(format!("{}-compatibility", harness.backend_dir_name()));
-    std::fs::create_dir_all(&dir).expect("create snapshot dir");
+    let snapshots = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+    let dir = snapshots.join(format!("{}-compatibility", harness.backend_dir_name()));
+    let mode = GoldenMode::from_env();
+    if mode != GoldenMode::Bless {
+        // The driver stamp lives with the adapter's main reference set.
+        let stamp_dir = snapshots.join(harness.backend_dir_name());
+        if let Err(e) = golden::check_driver_stamp(&stamp_dir, harness.driver_info().unwrap_or(""))
+        {
+            panic!("{e}");
+        }
+    }
     let tolerances = golden::load_tolerances(&dir.join("tolerances.txt"));
     let tolerance = tolerances.get(name).copied().unwrap_or(Tolerance::EXACT);
     let actual = RgbaImage::from_raw(W, H, pixels).expect("frame -> image");
-    let bless = std::env::var_os("BLESS").is_some();
-    match golden::check(&dir, name, &actual, tolerance, bless) {
-        Outcome::Blessed => eprintln!("generated {name} in {}", dir.display()),
+    match golden::check(&dir, name, &actual, tolerance, mode) {
+        Outcome::Blessed => eprintln!("blessed {name} in {}", dir.display()),
+        Outcome::Rendered { path } => eprintln!("render only: {} (not compared)", path.display()),
         Outcome::Match => {}
+        Outcome::Missing { .. } => panic!("{}", golden::missing_message(name, &dir)),
         Outcome::Mismatch { comparison, .. } => panic!(
             "{name}: max_channel_delta={} pixels_over={}/{}",
             comparison.max_channel_delta, comparison.pixels_over, comparison.total_pixels
@@ -117,11 +123,9 @@ fn compatibility_tier_draws_lit_meshes() {
         Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
     );
     let opaque_at = glam::Vec3::new(1.4, 0.0, 0.0);
-    let towards_eye = (scene_camera().eye_position() - opaque_at).normalize();
+    let towards_eye = (scene_camera().eye().as_vec3() - opaque_at).normalize();
     let mut glass = item(cube, grey, (opaque_at + towards_eye * 1.3).to_array());
-    glass.model = (glam::Mat4::from_cols_array_2d(&glass.model)
-        * glam::Mat4::from_scale(glam::Vec3::splat(0.6)))
-    .to_cols_array_2d();
+    glass.model = (glass.model.to_mat4() * glam::Mat4::from_scale(glam::Vec3::splat(0.6))).into();
     glass.settings.opacity = 0.4;
     glass.settings.colour = Some(Colour::linear_rgb(0.2, 0.4, 0.9));
     let frame = frame(vec![
@@ -232,10 +236,8 @@ fn compatibility_tier_draws_a_colourmapped_mesh() {
     it.settings.unlit = true;
     let mut frame = frame(vec![it]);
     // Look from the side so the top and bottom are both in view.
-    let mut camera = Camera::default();
-    camera.set_center(glam::Vec3::ZERO);
-    camera.set_distance(6.0);
-    camera.set_orientation(glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+    let orientation = glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let mut camera = Camera::orbit(glam::DVec3::ZERO, 6.0, orientation.normalize());
     camera.set_aspect_ratio(W as f32, H as f32);
     frame.camera.render_camera = RenderCamera::from_camera(&camera);
     let pixels = render(&mut harness, &frame);

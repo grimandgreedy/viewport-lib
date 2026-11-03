@@ -5,7 +5,9 @@
 //! (with `dt = 0`, i.e. snap) drives both to a comparable tone-mapped output,
 //! while a fixed `Manual` exposure leaves them far apart. This exercises the
 //! full GPU path: histogram compute over `Rgba16Float` -> resolve/adapt compute
-//! -> exposure buffer -> tone map, all in one submission.
+//! -> exposure buffer -> the next frame's camera uniform. A frame shades with
+//! the exposure the frame before it metered, so each automatic case renders
+//! twice and reads the second.
 
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
@@ -17,6 +19,19 @@ use viewport_lib::{
     AutoExposure, EnvironmentIntensity, EnvironmentLighting, EnvironmentMapId, ExposureMode,
     ExposureSettings,
 };
+
+/// Render `frame` twice and return the second, which shades with the
+/// exposure the first metered.
+fn render_settled(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &FrameData,
+    size: u32,
+) -> Vec<u8> {
+    let _ = renderer.render_offscreen(device, queue, frame, size, size);
+    renderer.render_offscreen(device, queue, frame, size, size)
+}
 
 /// A camera-facing quad (normal +Z) scaled to fill the frame, so metering sees
 /// the lit surface rather than the background.
@@ -55,11 +70,7 @@ fn lit_frame(
 ) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -79,7 +90,7 @@ fn lit_frame(
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     // Scale the unit quad up so it covers the whole 1:1 frame.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();
     item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
@@ -152,7 +163,8 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             adaptation: 1.0,
             ..AutoExposure::default()
         };
-        renderer.render_offscreen(
+        render_settled(
+            &mut renderer,
             &device,
             &queue,
             &lit_frame(
@@ -162,7 +174,6 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
-            size,
             size,
         )
     };
@@ -188,7 +199,8 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             adaptation: 0.5,
             ..AutoExposure::default()
         };
-        renderer.render_offscreen(
+        render_settled(
+            &mut renderer,
             &device,
             &queue,
             &lit_frame(
@@ -198,7 +210,6 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
-            size,
             size,
         )
     };
@@ -229,11 +240,7 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
 fn sky_frame(size: u32, env: EnvironmentMapId, nits: f32) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -272,11 +279,23 @@ fn auto_exposure_meters_the_skybox() {
 
     let size = 64u32;
     let dim = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &sky_frame(size, env, 5.0), size, size),
+        &render_settled(
+            &mut renderer,
+            &device,
+            &queue,
+            &sky_frame(size, env, 5.0),
+            size,
+        ),
         size,
     );
     let bright = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &sky_frame(size, env, 5000.0), size, size),
+        &render_settled(
+            &mut renderer,
+            &device,
+            &queue,
+            &sky_frame(size, env, 5000.0),
+            size,
+        ),
         size,
     );
     for (label, l) in [("dim", dim), ("bright", bright)] {

@@ -335,9 +335,35 @@ pub struct ItemFrameContext<'a> {
     /// three. Read them by type with [`items_of`](Self::items_of) rather than
     /// by index; the order they were submitted in is not meaningful.
     pub collections: &'a [Box<dyn PluginItemCollection>],
+    /// See [`world_origin`](Self::world_origin).
+    pub(crate) world_origin: glam::DVec3,
 }
 
 impl<'a> ItemFrameContext<'a> {
+    /// The origin this frame draws relative to, in world coordinates.
+    ///
+    /// The group-0 camera's matrices and eye, the light positions and the
+    /// clip planes are all relative to it, while [`camera`](Self::camera)
+    /// and the submitted items stay in world coordinates. An item type that
+    /// writes world-space positions or model matrices into its own buffers
+    /// subtracts this in f64 before the cast to f32
+    /// (`(DVec3::from(p) - ctx.world_origin()).as_vec3()`), and rewrites them
+    /// when it moves. It is zero under
+    /// [`WorldOrigin::Zero`](crate::WorldOrigin::Zero); under the default
+    /// [`snapped`](crate::WorldOrigin::snapped) origin it follows the camera.
+    ///
+    /// A model matrix written each frame takes the relative translation
+    /// directly. Data uploaded once can stay as it is: draw it with a per-item
+    /// offset, `(upload_origin - ctx.world_origin()).as_vec3()` where
+    /// `upload_origin` is the origin at the upload, or rewrite it only when
+    /// this value changes. CPU work that must agree with group 0 (a scissor
+    /// from a projected box, a reprojection matrix) builds the camera's view
+    /// relative to this origin rather than using [`camera`](Self::camera)
+    /// as it is.
+    pub fn world_origin(&self) -> glam::DVec3 {
+        self.world_origin
+    }
+
     /// This frame's items of type `T`, or an empty slice if the frame carried
     /// none. A type with several item forms calls this once per form.
     pub fn items_of<T: 'static>(&self) -> &'a [T] {
@@ -353,6 +379,35 @@ impl<'a> ItemFrameContext<'a> {
     pub fn refs_of<T: 'static>(&self) -> &'a [T] {
         self.items_of::<T>()
     }
+
+    /// Report a condition the host should hear about, such as items this type
+    /// skipped. It reaches the host through `ViewportRenderer::take_notices` as a
+    /// [`NoticeDetail::Plugin`](crate::NoticeDetail::Plugin) in the
+    /// [`Item`](crate::NoticeCategory::Item) category.
+    ///
+    /// Reports with the same `key` coalesce into one notice with a count, so
+    /// reporting every frame is fine. `message` is called only for the first
+    /// report of `key` since the host last took the notices, and not at all when
+    /// `severity` is below the renderer's notice level.
+    pub fn report_notice(
+        &self,
+        severity: crate::Severity,
+        key: &'static str,
+        message: impl FnOnce() -> String,
+    ) {
+        self.resources.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::Item,
+                "plugin",
+                [crate::notice::name_id(key), 0],
+            ),
+            severity,
+            || crate::NoticeDetail::Plugin {
+                key,
+                message: message(),
+            },
+        );
+    }
 }
 
 /// Information forwarded to a plugin's `paint`.
@@ -364,7 +419,7 @@ impl<'a> ItemFrameContext<'a> {
 /// into the LDR pass via [`ItemTypePlugin::draws_ldr`] keeps a second
 /// pipeline built against
 /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc)
-/// and selects between the two by [`target_format`](Self::target_format).
+/// and selects between the two by [`is_hdr_pass`](Self::is_hdr_pass).
 #[non_exhaustive]
 pub struct PaintContext<'a> {
     /// Active render-camera snapshot for this viewport.
@@ -378,14 +433,34 @@ pub struct PaintContext<'a> {
     /// Colour format of the pass's first colour target: the HDR scene format
     /// (`Rgba16Float`) in `paint` on the HDR path and in `paint_transparent`
     /// (the OIT accumulation target) and `paint_foreground`; the renderer's
-    /// configured output format in `paint` on the LDR path. Use it to select
-    /// the matching pipeline variant.
+    /// configured output format in `paint` on the LDR path. In `paint` and
+    /// `paint_foreground` on the HDR path the pass has a second target, the
+    /// indirect fraction (see
+    /// [`OpaqueTargetDesc`](crate::plugin_api::OpaqueTargetDesc)). Choose the
+    /// pipeline variant with [`is_hdr_pass`](Self::is_hdr_pass): the LDR
+    /// output format can be `Rgba16Float` too.
     pub target_format: crate::gpu::TextureFormat,
     /// Draw handle for meshes the consumer uploaded through
     /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).
     /// An item type whose geometry is a `MeshId` binds and draws it through
     /// this; one that owns its buffers ignores it.
     pub meshes: crate::resources::MeshDraw<'a>,
+    /// Whether the pass is one of the HDR path's passes.
+    pub(crate) hdr_pass: bool,
+}
+
+impl PaintContext<'_> {
+    /// `true` when the pass belongs to the HDR path: `paint` on the HDR path,
+    /// `paint_transparent` and `paint_foreground`. `false` for `paint` on the
+    /// LDR path, whose single colour target is the renderer's output format.
+    ///
+    /// Select the HDR or LDR pipeline variant with this rather than by
+    /// comparing [`target_format`](Self::target_format) with
+    /// [`HDR_COLOR_FORMAT`](crate::resources::HDR_COLOR_FORMAT): a renderer
+    /// whose output is `Rgba16Float` draws its LDR pass in that format too.
+    pub fn is_hdr_pass(&self) -> bool {
+        self.hdr_pass
+    }
 }
 
 /// Information forwarded to a plugin's `paint_depth_read`.
@@ -789,6 +864,14 @@ impl<T: Any> AsAnyItemTypePlugin for T {
     }
 }
 
+/// Handle returned by
+/// [`with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin);
+/// pass it to
+/// [`remove_item_type_plugin`](crate::renderer::ViewportRenderer::remove_item_type_plugin)
+/// to unregister. Ids are never reused within a renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemTypeId(pub(crate) u64);
+
 /// A scene item category owned by a plugin: its GPU data, its pipelines, and
 /// the draws that put it on screen.
 ///
@@ -812,15 +895,19 @@ impl<T: Any> AsAnyItemTypePlugin for T {
 ///
 /// Registration model: item-type plugins are singleton-by-type. The
 /// `type_name` is the identity scene items reference to route themselves to a
-/// renderer, so two plugins under the same name would be ambiguous and the
-/// second registration replaces the first. This behaviour is frozen. Runtime
+/// renderer, so two plugins under the same name would be ambiguous: a second
+/// registration under a taken name is refused with
+/// [`ViewportError::ItemTypeNameTaken`](crate::ViewportError::ItemTypeNameTaken).
+/// To replace a plugin, unregister it first with
+/// [`remove_item_type_plugin`](crate::ViewportRenderer::remove_item_type_plugin). Runtime
 /// and GPU plugins differ deliberately: they carry no external identity and
 /// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
 /// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a
-    /// second plugin with the same name replaces the first.
+    /// second plugin with the same name is refused with
+    /// [`ViewportError::ItemTypeNameTaken`](crate::ViewportError::ItemTypeNameTaken).
     fn type_name(&self) -> &'static str;
 
     /// What the plugin needs from the device. Checked at registration: a
@@ -917,19 +1004,6 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         0
     }
 
-    /// Called when the wgpu device is recreated, e.g. after device loss or a
-    /// host-driven reset. Every pipeline, buffer, texture, or bind group the
-    /// plugin built against the old device is now invalid and must be rebuilt.
-    ///
-    /// The host invokes this via
-    /// [`ViewportRenderer::notify_device_recreated`](crate::renderer::ViewportRenderer::notify_device_recreated);
-    /// the renderer does not detect device loss on its own. After this call
-    /// returns, [`init_gpu`](Self::init_gpu) is re-invoked on the plugin before
-    /// it is next used, so a typical implementation drops its cached resources
-    /// here and lets `init_gpu` rebuild them. Matches
-    /// [`GpuPlugin::on_device_recreated`](crate::runtime::GpuPlugin::on_device_recreated).
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
-
     /// Encode per-frame prepare work for this plugin's items.
     ///
     /// Returns a `Vec<wgpu::CommandBuffer>` that the renderer concatenates
@@ -963,8 +1037,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// On the LDR path (`PipelineMode::Direct`, `paint`, `paint_to`,
     /// `paint_viewport`), called after the built-in scene content, but only
     /// for plugins that opt in via [`draws_ldr`](Self::draws_ldr); the two
-    /// paths use different colour formats, and
-    /// [`PaintContext::target_format`] names the active one. The pass has
+    /// paths use different colour formats:
+    /// [`PaintContext::is_hdr_pass`] says which path the pass is on and
+    /// [`PaintContext::target_format`] names its format. The pass has
     /// the shared group-0 bind group bound on entry; plugins must restore it
     /// if they rebind group 0 themselves.
     ///
@@ -985,8 +1060,8 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// rather than the HDR scene format, so a plugin that returns `true`
     /// must keep a pipeline for that format (built against
     /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc))
-    /// and pick it when [`PaintContext::target_format`] is not the HDR
-    /// format. Plugins that leave this `false` are skipped on the LDR path
+    /// and pick it when [`PaintContext::is_hdr_pass`] is `false`. A plugin
+    /// that returns `false` here is skipped on the LDR path
     /// (and the renderer warns once), never handed a pass their pipeline
     /// cannot draw into.
     ///

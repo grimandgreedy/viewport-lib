@@ -33,6 +33,7 @@ pub(super) struct PointCloudRecipe {
     mask_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The colour pipeline in both formats, the pick pipeline and the two masks,
@@ -54,9 +55,11 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                 topology: gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == COLOUR_HDR,
         ),
@@ -121,8 +124,9 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
                         ..Default::default()
                     },
                     depth_stencil: Some(builders::scene_depth_stencil(
+                        r.depth_format,
                         false,
-                        gpu::CompareFunction::Less,
+                        viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                     )),
                     multisample: gpu::MultisampleState {
                         count: 1,
@@ -139,6 +143,7 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
             "point_cloud_surface_mask_pipeline",
             &r.layout,
             r.shader.get(),
+            r.depth_format,
             &[position_layout()],
             None,
         ),
@@ -205,6 +210,7 @@ pub(super) struct PointCloudStreamRecipe {
     layout: gpu::PipelineLayout,
     shader: viewport_lib::plugin_api::LazyModule,
     ldr_format: gpu::TextureFormat,
+    depth_format: gpu::TextureFormat,
 }
 
 /// The LDR colour pipeline per channel set, each built the first time a cloud
@@ -270,9 +276,12 @@ fn build_stream(r: &PointCloudStreamRecipe, key: usize) -> gpu::RenderPipeline {
             topology: gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             depth_write: true,
-            depth_compare: gpu::CompareFunction::Less,
+            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: 1,
             ldr_format: r.ldr_format,
+            depth_format: r.depth_format,
+            // LDR only.
+            indirect_fraction_entry: None,
         },
         false,
     )
@@ -362,6 +371,7 @@ impl PointCloudGpu {
                         &scene_shader(&[], &stream_shader_body()),
                     ),
                     ldr_format: resources.target_format(),
+                    depth_format: resources.scene_depth_format(),
                 },
                 build_stream,
             )
@@ -417,6 +427,7 @@ impl PointCloudGpu {
                 mask_shader,
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );

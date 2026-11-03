@@ -449,9 +449,9 @@ impl App {
             }
         }
         if s.fire_enabled {
-            let center = [-4.0_f32, 0.0, 1.2];
+            let centre = [-4.0_f32, 0.0, 1.2];
             let mut v = ScatterVolume::sphere_uniform(
-                center,
+                centre,
                 s.fire_radius,
                 s.fire_density,
                 Colour::from_linear_rgb_array(s.fire_colour),
@@ -464,7 +464,7 @@ impl App {
                 curve: EmissionCurve::Power(2.0),
             };
             v.density_remap = DensityRemap::ExpFalloff {
-                center,
+                centre,
                 falloff: s.fire_falloff,
             };
             if s.fire_animate {
@@ -708,12 +708,18 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     if ui.button("Camera inside global volume").clicked() {
-        app.camera.center = glam::Vec3::new(0.0, 0.0, 2.5);
-        app.camera.distance = 0.5;
+        app.camera.set_orbit(
+            glam::DVec3::new(0.0, 0.0, 2.5),
+            0.5,
+            app.camera.orientation(),
+        );
     }
     if ui.button("Camera back to platform").clicked() {
-        app.camera.center = glam::Vec3::new(0.0, 0.0, 1.5);
-        app.camera.distance = 14.0;
+        app.camera.set_orbit(
+            glam::DVec3::new(0.0, 0.0, 1.5),
+            14.0,
+            app.camera.orientation(),
+        );
     }
 }
 
@@ -816,8 +822,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

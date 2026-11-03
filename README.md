@@ -24,7 +24,7 @@
     - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
 - **Lighting**: photometric light units (lux, candela, lumens) with physical-camera and automatic exposure; cascaded, point-light, and contact shadows; image-based lighting; baked lightmaps.
 - **Materials & effects**: PBR metallic-roughness shading; bloom, SSAO, and depth of field.
-- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
+- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection, snapping helpers and constraint guides for transform tools (the transform gizmo itself is the separate `viewport-lib-gizmo` crate)
 - **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices
 - **Integration**: drop a viewport into any wgpu app (eframe/egui, winit, iced, Slint, bevy) through event adapters.
 - **Performance**: GPU-driven frustum culling and mesh instancing; async streaming uploads with VRAM budgeting; mipmapped and block-compressed textures.
@@ -102,8 +102,8 @@ When your app already owns the window, wgpu device/queue, and event loop, drive 
 
 ```rust
 use viewport_lib::{
-    Colour, Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
-    forward_to_viewport, primitives,
+    Colour, InputOwnership, Material, OrbitCameraController, ViewportContext, ViewportInstance,
+    primitives,
 };
 
 // Your app creates the window, wgpu device/queue, and event loop.
@@ -118,14 +118,15 @@ let red = viewport.resources_mut().upload_material(Material::from_colour(Colour:
 viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
 
 // Then, each frame inside your app's render loop:
-// `ownership` is your routing decision: Owned when the viewport won the input this
-// frame, Inside when your own chrome over it holds the pointer, Elsewhere otherwise.
-viewport.begin_frame(ViewportContext::with_ownership(ownership, [width, height]));
+// `ownership` is your routing decision: an InputOwnership with the pointer Owned
+// when the viewport won it this frame, Inside when your own chrome over it holds
+// it, Elsewhere otherwise, and the keyboard Owned unless a text field of yours has
+// it. A viewport alone in its window uses InputOwnership::full_window().
+viewport.begin_frame(ViewportContext::new(ownership, [width, height]));
 for ev in native_events {
-    // translate to ViewportEvent (from_winit / from_egui adapters, or by hand)
-    if forward_to_viewport(&ev, ownership) {
-        viewport.handle_event(ev);
-    }
+    // translate to ViewportEvent (the winit / egui adapters, or by hand); the
+    // viewport drops what the ownership says is not its own
+    viewport.handle_event(ev);
 }
 viewport.update_orbit(&mut orbit, dt);               // resolve input, orbit the camera, assemble
 let cmd = viewport.render(&device, &queue, &view);   // submit cmd to your queue

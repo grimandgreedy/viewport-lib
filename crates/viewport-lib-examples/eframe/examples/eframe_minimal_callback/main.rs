@@ -10,17 +10,16 @@
 //!   Scroll                    : zoom
 
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 mod viewport_callback;
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MaterialId, MeshId,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -35,7 +34,12 @@ fn main() -> eframe::Result {
             let device = &rs.device;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // The paint callback draws into eframe's own pass, so the scene
+            // depth format is pinned to the attachment `native_options` set up.
+            let mut renderer = ViewportRenderer::with_config(
+                device,
+                &viewport_lib_examples_eframe::pass_renderer_config(format),
+            );
             let res = renderer.resources_mut();
 
             let m_sphere = res
@@ -65,49 +69,27 @@ struct App {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    manip: ManipulationController,
     scene_items: Vec<SceneRenderItem>,
-    selected: Option<usize>,
-    transforms_snapshot: Vec<[[f32; 4]; 4]>,
-    // Per-frame drag/click state for ManipulationContext
-    cursor_viewport: Option<glam::Vec2>,
-    cursor_prev: Option<glam::Vec2>,
-    left_held: bool,
-    drag_started: bool,
-    clicked: bool,
-    press_origin: Option<glam::Vec2>,
 }
 
 impl App {
     fn new(material: MaterialId, m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
         let make = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
             let mut item = SceneRenderItem::new(mesh_id, material);
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item
         };
 
         Self {
-            camera: Camera {
-                distance: 10.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation()),
             controller: OrbitCameraController::new_stateless(),
             input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
-            manip: ManipulationController::new(),
             scene_items: vec![
                 make(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2]),
                 make(m_cube, [0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
                 make(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
             ],
-            selected: None,
-            transforms_snapshot: Vec::new(),
-            cursor_viewport: None,
-            cursor_prev: None,
-            left_held: false,
-            drag_started: false,
-            clicked: false,
-            press_origin: None,
         }
     }
 }
@@ -139,154 +121,33 @@ impl App {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-        // Reset per-frame flags.
-        self.drag_started = false;
-        self.clicked = false;
-
-        self.input.begin_frame(ViewportContext {
-            hovered: response.hovered(),
-            focused: response.has_focus(),
-            viewport_size: [rect.width(), rect.height()],
-        });
+        let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+        self.input.begin_frame(ViewportContext::new(
+            ownership,
+            [rect.width(), rect.height()],
+        ));
         // Pan reads the viewport height off the controller.
         self.controller
             .set_viewport_size([rect.width(), rect.height()]);
 
+        let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+        let mut events = Vec::new();
         ui.input(|i| {
-            self.input
-                .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                    &i.modifiers,
-                )));
-
-            // Cursor position in viewport-local space.
-            let local_pos = i
-                .pointer
-                .interact_pos()
-                .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-            self.cursor_prev = self.cursor_viewport;
-            self.cursor_viewport = local_pos;
-            if let Some(pos) = local_pos {
-                self.input
-                    .push_event(ViewportEvent::PointerMoved { position: pos });
-            }
-
+            vpl_egui::begin_frame(i, &actx, &mut events);
             for event in &i.events {
-                match event {
-                    egui::Event::PointerButton {
-                        button, pressed, ..
-                    } => {
-                        let vp_button = match button {
-                            egui::PointerButton::Primary => vpl::MouseButton::Left,
-                            egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                            egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                            _ => continue,
-                        };
-                        self.input.push_event(ViewportEvent::MouseButton {
-                            button: vp_button,
-                            state: if *pressed {
-                                ButtonState::Pressed
-                            } else {
-                                ButtonState::Released
-                            },
-                        });
-
-                        if *button == egui::PointerButton::Primary {
-                            if *pressed {
-                                self.left_held = true;
-                                self.press_origin = self.cursor_viewport;
-                                self.drag_started = true;
-                            } else {
-                                let is_click = self
-                                    .press_origin
-                                    .zip(self.cursor_viewport)
-                                    .map(|(o, c)| (c - o).length() < 5.0)
-                                    .unwrap_or(false);
-                                if is_click {
-                                    self.clicked = true;
-                                }
-                                self.left_held = false;
-                                self.press_origin = None;
-                            }
-                        }
-                    }
-                    egui::Event::MouseWheel { unit, delta, .. } => {
-                        let units = match unit {
-                            egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                            egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                            egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                        };
-                        self.input.push_event(ViewportEvent::Wheel {
-                            delta: glam::Vec2::new(delta.x, delta.y),
-                            units,
-                        });
-                    }
-                    _ => {}
-                }
+                vpl_egui::translate(event, &actx, &mut events);
             }
         });
+        for ev in events {
+            self.input.push_event(ev);
+        }
 
         let w = rect.width();
         let h = rect.height();
-
-        let pointer_delta = self
-            .cursor_viewport
-            .zip(self.cursor_prev)
-            .map(|(c, p)| c - p)
-            .unwrap_or(glam::Vec2::ZERO);
-
-        let selection_center = self.selected.map(|i| {
-            let col = self.scene_items[i].model[3];
-            glam::Vec3::new(col[0], col[1], col[2])
-        });
-
-        let manip_ctx = ManipulationContext {
-            camera: self.camera.clone(),
-            viewport_size: glam::Vec2::new(w, h),
-            cursor_viewport: self.cursor_viewport,
-            pointer_delta,
-            selection_center,
-            gizmo: None,
-            drag_started: self.drag_started,
-            dragging: self.left_held,
-            clicked: self.clicked,
-        };
-
-        // One resolve per frame; the camera only moves when no manipulation
-        // session is holding the pointer.
         let action_frame = self.input.resolve();
-        if !self.manip.is_active() {
-            let dt = ui.input(|i| i.stable_dt);
-            self.controller.apply(&mut self.camera, &action_frame, dt);
-        }
+        let dt = ui.input(|i| i.stable_dt);
+        self.controller.apply(&mut self.camera, &action_frame, dt);
         self.camera.set_aspect_ratio(w, h);
-
-        match self.manip.update(&action_frame, manip_ctx) {
-            ManipResult::Update(delta) => {
-                if let Some(idx) = self.selected {
-                    let current = glam::Mat4::from_cols_array_2d(&self.scene_items[idx].model);
-                    let delta_mat = glam::Mat4::from_scale_rotation_translation(
-                        delta.scale,
-                        delta.rotation,
-                        delta.translation,
-                    );
-                    self.scene_items[idx].model = (delta_mat * current).to_cols_array_2d();
-                }
-            }
-            ManipResult::Commit => {}
-            ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                for (item, snap) in self
-                    .scene_items
-                    .iter_mut()
-                    .zip(self.transforms_snapshot.iter())
-                {
-                    item.model = *snap;
-                }
-            }
-            ManipResult::None => {
-                self.transforms_snapshot = self.scene_items.iter().map(|i| i.model).collect();
-            }
-            _ => {}
-        }
 
         let mut frame_data = FrameData::new(
             CameraFrame::from_camera(&self.camera, [w, h])

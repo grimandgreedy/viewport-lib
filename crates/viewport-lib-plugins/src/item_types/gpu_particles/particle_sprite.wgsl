@@ -80,15 +80,15 @@ fn vs_main(
                       + cam_up    * (corner.y * half);
         out.clip_pos  = camera.view_proj * vec4<f32>(ws_pos, 1.0);
     } else {
-        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px = p.size * 0.5;
         let ndc_off = corner * half_px
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         out.clip_pos = vec4<f32>(
-            center.x + ndc_off.x * center.w,
-            center.y + ndc_off.y * center.w,
-            center.z,
-            center.w,
+            centre.x + ndc_off.x * centre.w,
+            centre.y + ndc_off.y * centre.w,
+            centre.z,
+            centre.w,
         );
     }
 
@@ -98,8 +98,7 @@ fn vs_main(
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
             discard;
@@ -113,4 +112,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     if colour.a <= 0.001 { discard; }
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

@@ -66,7 +66,9 @@ impl ViewportRenderer {
         let packed: Vec<crate::resources::SingleLightUniform> = ranked
             .lights
             .iter()
-            .map(|l| lighting::build_single_light_uniform(l, glam::Vec3::ZERO, 0.0, false))
+            .map(|(_, l)| {
+                lighting::build_single_light_uniform(&lighting::rel_light_source(l, &self.origin))
+            })
             .collect();
 
         let header = lighting::lights_header(
@@ -100,7 +102,7 @@ impl ViewportRenderer {
             return;
         };
         let (clip_uniform, clip_vols_uniform) =
-            viewport_interaction::clip_uniforms(frame, viewport_fx);
+            viewport_interaction::clip_uniforms(frame, viewport_fx, &self.origin);
         queue.write_buffer(
             &slot.clip_planes_buf,
             0,
@@ -112,8 +114,11 @@ impl ViewportRenderer {
             bytemuck::cast_slice(&[clip_vols_uniform]),
         );
         // The compatibility tier draws through the LDR path, which keeps the lit
-        // term in [0, 1].
-        let camera_uniform = frame.camera.render_camera.camera_uniform();
+        // term in [0, 1] and has no meter for an automatic exposure.
+        let mut camera_uniform = frame
+            .camera
+            .camera_uniform(&self.frame_clock.current(), &self.origin);
+        camera_uniform.exposure = viewport_interaction::frame_exposure(frame);
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
 
@@ -158,7 +163,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let uniform = crate::resources::overlay::highlight::OutlineUniform {
-                    model: item.model,
+                    model: self.origin.rel_transform(&item.model),
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     has_position_override: 0,
@@ -226,7 +231,7 @@ impl ViewportRenderer {
             return;
         };
         let resources = &self.resources;
-        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+        let eye = frame.camera.render_camera.eye_position();
 
         let mut records: Vec<BasicInstance> = Vec::new();
         let mut opaque: Vec<BasicMeshDraw> = Vec::new();
@@ -293,8 +298,9 @@ impl ViewportRenderer {
             let lut = item
                 .colourmap_id
                 .filter(|id| id.0 < resources.content.colourmap_views.len());
-            let world_centre =
-                glam::Mat4::from_cols_array_2d(&item.model).transform_point3(mesh.aabb.center());
+            // Eye-relative in f64, so the sort holds far from the world origin.
+            let centre =
+                (item.model.transform_point3(mesh.aabb.centre().as_dvec3()) - eye).as_vec3();
 
             for (indices, material_id) in ranges {
                 let m = resources.material_or_default(material_id);
@@ -344,11 +350,16 @@ impl ViewportRenderer {
                 let e = m.emissive_nits();
                 let instance = records.len() as u32;
                 records.push(BasicInstance {
-                    model: item.model,
+                    model: self.origin.rel_transform(&item.model),
                     base_colour: [bc[0], bc[1], bc[2], item.settings.opacity],
                     emissive: [e[0], e[1], e[2], mask_cutoff.unwrap_or(0.5)],
                     material: [m.metallic, m.roughness, scalar_min, scalar_max],
-                    params: [flags, nan_colour, 0, 0],
+                    params: [
+                        flags,
+                        nan_colour,
+                        m.emissive_exposure_weight.clamp(0.0, 1.0).to_bits(),
+                        0,
+                    ],
                 });
                 // Edge lines draw opaque whatever the item's opacity, as on the
                 // full tier: a translucent wireframe item draws its lines.
@@ -368,7 +379,7 @@ impl ViewportRenderer {
                     edges,
                 };
                 if blend {
-                    blended.push((world_centre.distance_squared(eye), draw));
+                    blended.push((centre.length_squared(), draw));
                 } else {
                     opaque.push(draw);
                 }

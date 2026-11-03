@@ -6,3 +6,5 @@ pub(crate) mod dyn_res;
 pub mod exposure;
 /// Hierarchical-Z max-depth pyramid for GPU occlusion culling.
 pub(crate) mod hiz;
+/// Depth reset for a render pass the host owns.
+pub(crate) mod host_depth_reset;

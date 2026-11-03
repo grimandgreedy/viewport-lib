@@ -36,7 +36,7 @@ fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
 /// A deformer that moves a vertex, so a pass that runs it and a pass that does not disagree.
 fn bulge() -> DeformerDesc {
     DeformerDesc {
-        name: "test_bulge",
+        name: "test_bulge".into(),
         stage: DeformStage::ObjectSpace,
         priority: 0,
         wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    \
@@ -98,7 +98,7 @@ fn both_shadow_pipelines_follow_a_registered_deformer() {
 
     // A second registration rebuilds both, since both now exist.
     let mut second = bulge();
-    second.name = "test_bulge_two";
+    second.name = "test_bulge_two".into();
     renderer
         .resources_mut()
         .register_deformer(&device, second)

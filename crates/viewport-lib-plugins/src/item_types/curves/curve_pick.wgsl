@@ -6,8 +6,8 @@
 // position, apply the item's model matrix, write the item's object id. The
 // vertex stride is the lib's 64-byte `Vertex`; only position is declared.
 //
-// Group 0: the shared scene bind group (Camera at binding 0, ClipVolume at
-//          binding 6).
+// Group 0: the shared scene bind group (Camera at binding 0, clip planes at
+//          binding 4, clip volumes at binding 6).
 // Group 1: per-draw model matrix + object id (one item = one draw).
 //
 // On a device with the primitive-index feature the pipeline builder rewrites
@@ -55,7 +55,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
-    if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if !viewport_clip_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id = pick.object_id;
     out.primitive_id = 0u;

@@ -85,7 +85,7 @@ fn shadow_layer(i: i32) -> ShadowLayer {
 // parent_index, invert). A vertex's `clip_index` selects an entry; `parent_index`
 // (or -1) chains to an enclosing mask so nested clips intersect.
 struct ClipShape {
-    center:    vec2<f32>,
+    centre:    vec2<f32>,
     half_size: vec2<f32>,
     radii:     vec4<f32>,
     params:    vec4<f32>,
@@ -517,7 +517,7 @@ fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
         let c = clip_shapes[idx];
         let rc = cos(-c.params.y);
         let rs = sin(-c.params.y);
-        let pd = (fp - c.center) - c.pivot;
+        let pd = (fp - c.centre) - c.pivot;
         let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
         if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
             return true;

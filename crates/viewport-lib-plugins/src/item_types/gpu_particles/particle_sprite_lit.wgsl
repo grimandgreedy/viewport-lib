@@ -10,7 +10,8 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
 };
@@ -106,15 +107,15 @@ fn vs_main(
                        + cam_up    * (corner.y * half);
         out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
-        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let half_px = p.size * 0.5;
         let ndc_off = corner * half_px
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         out.clip_pos = vec4<f32>(
-            center.x + ndc_off.x * center.w,
-            center.y + ndc_off.y * center.w,
-            center.z,
-            center.w,
+            centre.x + ndc_off.x * centre.w,
+            centre.y + ndc_off.y * centre.w,
+            centre.z,
+            centre.w,
         );
         quad_world_pos = world_pos + cam_right * corner.x + cam_up * corner.y;
     }
@@ -150,8 +151,7 @@ fn build_normal(local_offset: vec2<f32>,
     return normalize(n);
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // `clip_planes` and the clip tests come from SHARED_CLIP_WGSL.
     if !viewport_pass_clip_planes(in.world_pos) {
         discard;
@@ -172,14 +172,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var lights_for_shader = lights_uniform;
     lights_for_shader.hemisphere_intensity =
         lights_uniform.hemisphere_intensity * sprite_ub.ambient_scale;
-    let lit_rgb = apply_scene_lighting(
-        n,
-        colour.rgb,
-        false,
-        in.world_pos,
-        lights_for_shader,
-    );
+    let lit_rgb_terms = scene_lighting_terms(n, false, in.world_pos, lights_for_shader);
+    let lit_rgb = colour.rgb * (lit_rgb_terms.indirect + lit_rgb_terms.direct);
+    scene_light_split(colour.rgb * lit_rgb_terms.indirect, colour.rgb * lit_rgb_terms.direct, vec3<f32>(0.0));
 
     if colour.a <= 0.001 { discard; }
     return vec4<f32>(lit_rgb, colour.a);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

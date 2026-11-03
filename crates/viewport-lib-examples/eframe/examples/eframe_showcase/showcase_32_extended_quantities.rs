@@ -329,8 +329,8 @@ impl App {
                 for i in 0..3 {
                     let mut item = SceneRenderItem::default();
                     item.mesh_id = self.eq_state.edge_mesh_ids[i];
-                    item.model = glam::Mat4::from_translation(glam::vec3(offsets[i], 0.0, 0.0))
-                        .to_cols_array_2d();
+                    item.model =
+                        glam::Mat4::from_translation(glam::vec3(offsets[i], 0.0, 0.0)).into();
                     item.active_attribute = Some(AttributeRef {
                         name: names[i].into(),
                         kind: kinds[i],
@@ -424,12 +424,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_eq_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 18.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(0.8),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        18.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(0.8),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -489,8 +488,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

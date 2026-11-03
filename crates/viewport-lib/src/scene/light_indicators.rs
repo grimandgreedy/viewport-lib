@@ -5,8 +5,9 @@
 //! indicator per light, without deciding what it is drawn as. The caller turns
 //! that into whatever it likes;
 //! [`LightIndicators::to_mesh_instances`] covers the usual case of a small
-//! arrow or sphere per light. Everything carries `settings.pick_id = node_id`
-//! so the standard pick and selection-outline machinery applies.
+//! arrow or sphere per light. Everything carries `settings.pick_id = node_id`,
+//! so the standard pick API returns the light. Mesh-instance batches are
+//! picked but not drawn with a selection outline.
 
 use crate::Colour;
 use std::collections::HashMap;
@@ -67,7 +68,11 @@ impl LightIndicators {
     /// `primitives::icosphere` are what these were drawn with before.
     ///
     /// Returns up to two items, one batch per mesh, and skips a batch with no
-    /// instances.
+    /// instances. Each batch carries its first marker's `pick_id`; a GPU pick
+    /// on a batch reports [`SubObjectRef::Instance(i)`](crate::SubObjectRef)
+    /// under `PickMask::INSTANCE`, the batch's `i`-th marker in `markers`
+    /// order. `selected` is set when any marker in the batch is selected, but
+    /// mesh instances draw no selection outline.
     pub fn to_mesh_instances(
         &self,
         directional: crate::resources::mesh::mesh_store::MeshId,
@@ -108,8 +113,7 @@ impl LightIndicators {
             item.settings.unlit = true;
             item.settings.cast_shadows = false;
             item.settings.receive_shadows = false;
-            // One batch, one id. A caller wanting to pick an individual light
-            // submits one item per marker instead.
+            // One batch, one id. A pick's instance index names the marker.
             if let Some(first) = batch.first() {
                 item.settings.pick_id = first.pick_id;
                 item.settings.selected = batch.iter().any(|m| m.selected);
@@ -147,7 +151,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
         }
 
         let id = node.id();
-        let world = node.world_transform();
+        let world = node.world_transform().to_mat4();
         let translation = world.col(3).truncate();
         let is_selected = selection.contains(id);
 
@@ -201,7 +205,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
                     position, range, ..
                 } => {
                     let mut pl = sphere_wireframe_polyline(
-                        position,
+                        position.as_vec3().to_array(),
                         range,
                         48,
                         Colour::from_linear_array(outline_colour),
@@ -220,7 +224,7 @@ pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndi
                     ..
                 } => {
                     let mut pl = spot_cone_polyline(
-                        position,
+                        position.as_vec3().to_array(),
                         direction,
                         range,
                         outer_angle,
@@ -322,21 +326,21 @@ fn spot_cone_polyline(
     let up = right.cross(dir).normalize_or_zero();
 
     let rim_radius = range * outer_angle.sin();
-    let rim_center = apex_v + dir * range * outer_angle.cos();
+    let rim_centre = apex_v + dir * range * outer_angle.cos();
 
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n + 1 + 4 * 2);
     let mut strips: Vec<u32> = Vec::with_capacity(5);
 
     for i in 0..=n {
         let t = i as f32 / n as f32 * std::f32::consts::TAU;
-        let p = rim_center + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
+        let p = rim_centre + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
         positions.push(p.into());
     }
     strips.push((n + 1) as u32);
 
     for k in 0..4 {
         let t = k as f32 / 4.0 * std::f32::consts::TAU;
-        let rim = rim_center + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
+        let rim = rim_centre + right * (rim_radius * t.cos()) + up * (rim_radius * t.sin());
         positions.push(apex);
         positions.push(rim.into());
         strips.push(2);

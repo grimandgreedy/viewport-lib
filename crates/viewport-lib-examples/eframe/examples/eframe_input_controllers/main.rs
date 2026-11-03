@@ -4,7 +4,8 @@
 //!   Left/Middle drag -> Orbit  |  Right drag -> Pan  |  Scroll -> Zoom
 //!   Ctrl+Scroll -> Orbit (two-axis)  |  Shift+Scroll -> Pan (two-axis)
 //!
-//! Cmd+] : Full controls (`ViewportAll`) + `ManipulationController`:
+//! Cmd+] : Full controls (`BindingPreset::Default`) plus the `viewport-lib-gizmo`
+//! transform gizmo and its keys (`viewport_lib_gizmo::manipulation_bindings()`):
 //!   Ctrl+Scroll -> Orbit  |  Right drag -> Pan  |  Scroll -> Zoom
 //!   Click -> select  |  Shift+Click -> multi-select
 //!   G move  R rotate  S scale  |  X/Y/Z constrain  |  Shift+X/Y/Z exclude
@@ -21,18 +22,20 @@
 use std::sync::{Arc, Mutex};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use viewport_lib::input::adapters::modifiers_from_egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 
 use crate::eframe::{egui, wgpu};
+use viewport_lib_gizmo::actions;
+use viewport_lib_gizmo::{
+    FrameInput as GizmoInput, GizmoDriver, GizmoStyle, ManipResult, PivotMode, Selection,
+    TransformDelta, build_numeric_label, gizmo_centre_for_pivot,
+};
 use vpl::{
-    Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
-    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings,
-    ManipResult, ManipulationContext, ManipulationController, ManipulationKind, MeshId,
-    OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_default_bindings,
-    wish_xy_from_actions,
+    BindingPreset, Camera, CameraFrame, FirstPersonCameraController, FrameData, KeyCode,
+    LightingSettings, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, SceneFrame,
+    SceneRenderItem, ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, primitives, viewport_default_bindings, wish_xy_from_actions,
 };
 
 /// Body movement speed in world units per second for the character cameras.
@@ -188,11 +191,10 @@ struct App {
 
     objects: Vec<Object>,
     selection: Selection,
-    gizmo: Gizmo,
-    gizmo_center: Option<glam::Vec3>,
-    gizmo_scale: f32,
-    manip: ManipulationController,
-    active_manip_kind: ManipulationKind,
+    /// The transform gizmo: hover, mode, pivot, and the G/R/S session.
+    gizmo: GizmoDriver,
+    gizmo_style: GizmoStyle,
+    gizmo_centre: Option<glam::Vec3>,
 
     /// Increments whenever any `obj.model` changes. Passed as `SceneFrame::generation`
     /// so the renderer knows to re-upload instance transforms.
@@ -204,11 +206,7 @@ struct App {
     // Per-frame pointer state
     cursor_viewport: Option<glam::Vec2>,
     cursor_prev: Option<glam::Vec2>,
-    left_held: bool,
-    drag_started: bool,
-    clicked: bool,
     shift_held: bool,
-    press_origin: Option<glam::Vec2>,
 
     // GPU picking
     /// Cursor passed to `pick_scene_gpu` in the current frame's prepare callback.
@@ -223,14 +221,13 @@ impl App {
             renderer,
             target: None,
             mode: Mode::Primitives,
-            camera: Camera {
-                distance: 12.0,
-                ..Camera::default()
-            },
+            camera: Camera::orbit(glam::DVec3::ZERO, 12.0, Camera::default().orientation()),
             ctrl_primitives: OrbitCameraController::new_stateless(),
             input_primitives: ViewportInput::from_preset(BindingPreset::Viewer),
             ctrl_all: OrbitCameraController::new_stateless(),
-            input_all: ViewportInput::from_preset(BindingPreset::Default),
+            // The gizmo reads this resolver, so it carries the gizmo's keys.
+            input_all: ViewportInput::from_preset(BindingPreset::Default)
+                .with_bindings(viewport_lib_gizmo::manipulation_bindings()),
             // Resolver for the play modes: viewport_all provides the WASD/Fly
             // movement actions. Look is driven from raw pointer motion in the
             // update loop, so it follows the mouse without holding a button.
@@ -249,20 +246,14 @@ impl App {
                 Object::new(glam::Vec3::new(3.0, 0.0, 0.0), m_box, [0.3, 0.8, 0.4]),
             ],
             selection: Selection::new(),
-            gizmo: Gizmo::new(),
-            gizmo_center: None,
-            gizmo_scale: 1.0,
-            manip: ManipulationController::new(),
-            active_manip_kind: ManipulationKind::Move,
+            gizmo: GizmoDriver::new(),
+            gizmo_style: GizmoStyle::default(),
+            gizmo_centre: None,
             scene_generation: 1,
             selection_generation: 1,
             cursor_viewport: None,
             cursor_prev: None,
-            left_held: false,
-            drag_started: false,
-            clicked: false,
             shift_held: false,
-            press_origin: None,
             pick_cursor: None,
             pick_result: Arc::new(Mutex::new(None)),
         }
@@ -270,62 +261,45 @@ impl App {
 
     /// Apply a `TransformDelta` to all selected objects.
     ///
-    /// Rotation and scale pivot depends on the current `PivotMode`:
-    /// - `IndividualOrigins` : each object transforms around its own centre.
-    /// - Everything else : all objects transform around the shared `gizmo_center`.
-    /// Apply a `TransformDelta` to all selected objects.
-    ///
-    /// When `position_override` or `scale_override` is set (numeric input mode),
-    /// the snapshot is restored first so the override is an absolute offset from
-    /// the pre-session state rather than accumulated on top of previous deltas.
-    fn apply_delta(&mut self, delta: vpl::TransformDelta) {
-        let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
-        let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
-
-        if has_pos_override || has_scale_override {
-            self.restore_snapshots();
-        }
-
-        let translation = if has_pos_override {
+    /// The delta is the whole change since the session began, so each object
+    /// starts again from its snapshot. Rotation and scale pivot about the
+    /// session's centre, or about each object's own origin under
+    /// `IndividualOrigins`. Typed values replace the dragged ones per axis, read
+    /// relative to the start pose; rotation is typed in degrees.
+    fn apply_delta(&mut self, delta: TransformDelta, centre: glam::Vec3) {
+        let pick = |typed: [Option<f32>; 3], dragged: glam::Vec3| {
             glam::Vec3::new(
-                delta.position_override[0].unwrap_or(0.0),
-                delta.position_override[1].unwrap_or(0.0),
-                delta.position_override[2].unwrap_or(0.0),
+                typed[0].unwrap_or(dragged.x),
+                typed[1].unwrap_or(dragged.y),
+                typed[2].unwrap_or(dragged.z),
             )
+        };
+        let translation = pick(delta.position_override, delta.translation);
+        let scale = pick(delta.scale_override, delta.scale);
+        let rotation = if delta.rotation_override.iter().any(Option::is_some) {
+            let [x, y, z] = delta
+                .rotation_override
+                .map(|v| v.unwrap_or(0.0).to_radians());
+            glam::Quat::from_euler(glam::EulerRot::XYZ, x, y, z)
         } else {
-            delta.translation
+            delta.rotation
         };
 
-        let scale = if has_scale_override {
-            glam::Vec3::new(
-                delta.scale_override[0].unwrap_or(1.0),
-                delta.scale_override[1].unwrap_or(1.0),
-                delta.scale_override[2].unwrap_or(1.0),
-            )
-        } else {
-            delta.scale
-        };
-
-        let pivot_mode = self.gizmo.pivot_mode;
-        let gizmo_center = self.gizmo_center.unwrap_or(glam::Vec3::ZERO);
-
-        let rot_mat = glam::Mat4::from_quat(delta.rotation);
+        let individual = self.gizmo.pivot_mode() == PivotMode::IndividualOrigins;
+        let rot_mat = glam::Mat4::from_quat(rotation);
         let scale_mat = glam::Mat4::from_scale(scale);
         let translate_mat = glam::Mat4::from_translation(translation);
 
         for id in self.selection.iter().copied().collect::<Vec<_>>() {
             let obj = &mut self.objects[id as usize];
-
-            let pivot = match pivot_mode {
-                PivotMode::IndividualOrigins => obj.position(),
-                _ => gizmo_center,
+            let pivot = if individual {
+                obj.snapshot.w_axis.truncate()
+            } else {
+                centre
             };
-
             let to_pivot = glam::Mat4::from_translation(-pivot);
             let from_pivot = glam::Mat4::from_translation(pivot);
-
-            // translate * (from_pivot * rot * scale * to_pivot) * old_model
-            obj.model = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * obj.model;
+            obj.model = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * obj.snapshot;
         }
         self.scene_generation += 1;
     }
@@ -343,38 +317,23 @@ impl App {
         }
     }
 
-    fn recompute_gizmo_center(&mut self) {
-        self.gizmo_center = gizmo_center_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
-            Some(self.objects[id as usize].position())
-        });
+    fn recompute_gizmo_centre(&mut self) {
+        self.gizmo_centre =
+            gizmo_centre_for_pivot(&self.gizmo.pivot_mode(), &self.selection, |id| {
+                Some(self.objects[id as usize].position())
+            });
     }
-}
 
-fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
-    match key {
-        egui::Key::A => Some(KeyCode::A),
-        egui::Key::D => Some(KeyCode::D),
-        egui::Key::E => Some(KeyCode::E),
-        egui::Key::F => Some(KeyCode::F),
-        egui::Key::G => Some(KeyCode::G),
-        egui::Key::Q => Some(KeyCode::Q),
-        egui::Key::R => Some(KeyCode::R),
-        egui::Key::S => Some(KeyCode::S),
-        egui::Key::W => Some(KeyCode::W),
-        egui::Key::X => Some(KeyCode::X),
-        egui::Key::Y => Some(KeyCode::Y),
-        egui::Key::Z => Some(KeyCode::Z),
-        egui::Key::Tab => Some(KeyCode::Tab),
-        egui::Key::Enter => Some(KeyCode::Enter),
-        egui::Key::Escape => Some(KeyCode::Escape),
-        egui::Key::Backspace => Some(KeyCode::Backspace),
-        egui::Key::Backtick => Some(KeyCode::Backtick),
-        egui::Key::Comma => Some(KeyCode::Comma),
-        egui::Key::Period => Some(KeyCode::Period),
-        egui::Key::OpenBracket => Some(KeyCode::LeftBracket),
-        egui::Key::CloseBracket => Some(KeyCode::RightBracket),
-        egui::Key::Slash => Some(KeyCode::Slash),
-        _ => None,
+    /// Drop a session in progress when the mode changes, putting the selection
+    /// back where it started. The gizmo keeps its mode and pivot.
+    fn end_gizmo_session(&mut self) {
+        if self.gizmo.is_active() {
+            self.restore_snapshots();
+        }
+        let (mode, pivot) = (self.gizmo.mode(), self.gizmo.pivot_mode());
+        self.gizmo = GizmoDriver::new();
+        self.gizmo.set_mode(mode);
+        self.gizmo.set_pivot_mode(pivot);
     }
 }
 
@@ -386,7 +345,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         // Drain GPU pick result from the previous frame's prepare callback.
         // Extract while holding the lock, then drop the guard before calling
-        // &mut self methods (recompute_gizmo_center requires exclusive access).
+        // &mut self methods (recompute_gizmo_centre requires exclusive access).
         let pick_raw: Option<u64> = self
             .pick_result
             .lock()
@@ -397,7 +356,7 @@ impl eframe::App for App {
             if raw_id == 0 {
                 if !self.shift_held {
                     self.selection.clear();
-                    self.recompute_gizmo_center();
+                    self.recompute_gizmo_centre();
                     self.selection_generation += 1;
                 }
             } else {
@@ -413,7 +372,7 @@ impl eframe::App for App {
                         self.selection.clear();
                         self.selection.select_one(idx as u64);
                     }
-                    self.recompute_gizmo_center();
+                    self.recompute_gizmo_centre();
                     self.selection_generation += 1;
                 }
             }
@@ -438,11 +397,11 @@ impl eframe::App for App {
                         egui::Key::Tab => tab_pressed = true,
                         egui::Key::OpenBracket if cmd => {
                             self.mode = self.mode.prev();
-                            self.manip.reset();
+                            self.end_gizmo_session();
                         }
                         egui::Key::CloseBracket if cmd => {
                             self.mode = self.mode.next();
-                            self.manip.reset();
+                            self.end_gizmo_session();
                         }
                         _ => {}
                     }
@@ -471,7 +430,7 @@ impl eframe::App for App {
                         );
                         if !self.selection.is_empty() {
                             ui.separator();
-                            ui.small(format!("Pivot: {}", self.gizmo.pivot_mode.label()));
+                            ui.small(format!("Pivot: {}", self.gizmo.pivot_mode().label()));
                         }
                     }
                     Mode::FirstPerson => {
@@ -491,16 +450,9 @@ impl eframe::App for App {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-                self.drag_started = false;
-                self.clicked = false;
-
-                let vp_ctx = ViewportContext {
-                    hovered: response.hovered(),
-                    // Treat any hover as focus so keyboard shortcuts work without
-                    // requiring a separate egui-focus click on the canvas widget.
-                    focused: response.hovered() || response.has_focus(),
-                    viewport_size: [rect.width(), rect.height()],
-                };
+                let ownership =
+                    vpl_egui::ownership(&response, ui.ctx(), rect, self.gizmo.is_active());
+                let vp_ctx = ViewportContext::new(ownership, [rect.width(), rect.height()]);
                 match self.mode {
                     Mode::Primitives => self.input_primitives.begin_frame(vp_ctx),
                     Mode::All => self.input_all.begin_frame(vp_ctx),
@@ -510,15 +462,12 @@ impl eframe::App for App {
                 self.ctrl_primitives.set_viewport_size(vp_ctx.viewport_size);
                 self.ctrl_all.set_viewport_size(vp_ctx.viewport_size);
 
-                let mut vp_events: Vec<ViewportEvent> = Vec::new();
-                let manip_active = self.manip.is_active();
-
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut translated = Vec::new();
+                let mut cmd = false;
                 ui.input(|i| {
                     self.shift_held = i.modifiers.shift;
-
-                    vp_events.push(ViewportEvent::ModifiersChanged(modifiers_from_egui(
-                        &i.modifiers,
-                    )));
+                    cmd = i.modifiers.command;
 
                     let local_pos = i
                         .pointer
@@ -526,99 +475,26 @@ impl eframe::App for App {
                         .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                     self.cursor_prev = self.cursor_viewport;
                     self.cursor_viewport = local_pos;
-                    if let Some(pos) = local_pos {
-                        vp_events.push(ViewportEvent::PointerMoved { position: pos });
-                    }
 
-                    let cmd = i.modifiers.command;
-
+                    vpl_egui::begin_frame(i, &actx, &mut translated);
                     for event in &i.events {
-                        match event {
-                            egui::Event::Key {
-                                key,
-                                pressed,
-                                repeat,
-                                ..
-                            } => {
-                                // Cmd+[/] are consumed for mode switching above; don't
-                                // also forward them as pivot-cycle keys to the controller.
-                                if cmd
-                                    && matches!(
-                                        key,
-                                        egui::Key::OpenBracket | egui::Key::CloseBracket
-                                    )
-                                {
-                                    continue;
-                                }
-                                if let Some(kc) = egui_key_to_keycode(*key) {
-                                    vp_events.push(ViewportEvent::Key {
-                                        key: kc,
-                                        state: if *pressed {
-                                            ButtonState::Pressed
-                                        } else {
-                                            ButtonState::Released
-                                        },
-                                        repeat: *repeat,
-                                        logical: None,
-                                    });
-                                }
-                            }
-                            egui::Event::PointerButton {
-                                button, pressed, ..
-                            } => {
-                                let vp_button = match button {
-                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
-                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
-                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
-                                    _ => continue,
-                                };
-                                vp_events.push(ViewportEvent::MouseButton {
-                                    button: vp_button,
-                                    state: if *pressed {
-                                        ButtonState::Pressed
-                                    } else {
-                                        ButtonState::Released
-                                    },
-                                });
-                                if *button == egui::PointerButton::Primary {
-                                    if *pressed {
-                                        self.left_held = true;
-                                        self.press_origin = self.cursor_viewport;
-                                        self.drag_started = true;
-                                    } else {
-                                        let is_click = self
-                                            .press_origin
-                                            .zip(self.cursor_viewport)
-                                            .map(|(o, c)| (c - o).length() < 5.0)
-                                            .unwrap_or(false);
-                                        if is_click {
-                                            self.clicked = true;
-                                        }
-                                        self.left_held = false;
-                                        self.press_origin = None;
-                                    }
-                                }
-                            }
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let units = match unit {
-                                    egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                    egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                    egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                };
-                                vp_events.push(ViewportEvent::Wheel {
-                                    delta: glam::Vec2::new(delta.x, delta.y),
-                                    units,
-                                });
-                            }
-                            egui::Event::Text(text) if manip_active => {
-                                for c in text.chars() {
-                                    vp_events.push(ViewportEvent::Character(c));
-                                }
-                            }
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut translated);
                     }
                 });
+
+                let mut vp_events: Vec<ViewportEvent> = Vec::new();
+                for ev in translated {
+                    match ev {
+                        // Cmd+[/] are consumed for mode switching above; don't also
+                        // forward them as pivot-cycle keys to the controller.
+                        ViewportEvent::Key {
+                            key: KeyCode::LeftBracket | KeyCode::RightBracket,
+                            ..
+                        } if cmd => continue,
+                        _ => {}
+                    }
+                    vp_events.push(ev);
+                }
 
                 match self.mode {
                     Mode::Primitives => {
@@ -674,7 +550,7 @@ impl eframe::App for App {
                             .map(|obj| {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
-                                item.model = obj.model.to_cols_array_2d();
+                                item.model = obj.model.into();
                                 // The default material, coloured per item.
                                 item.settings.colour =
                                     Some(Colour::from_linear_rgb_array(obj.colour));
@@ -724,7 +600,7 @@ impl eframe::App for App {
                             .map(|obj| {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
-                                item.model = obj.model.to_cols_array_2d();
+                                item.model = obj.model.into();
                                 item.settings.colour =
                                     Some(Colour::from_linear_rgb_array(obj.colour));
                                 item
@@ -737,7 +613,7 @@ impl eframe::App for App {
                             let mut marker = SceneRenderItem::default();
                             marker.mesh_id = self.body_mesh;
                             let stand = self.body_pos + glam::Vec3::Z * (CAPSULE_HEIGHT * 0.5);
-                            marker.model = glam::Mat4::from_translation(stand).to_cols_array_2d();
+                            marker.model = glam::Mat4::from_translation(stand).into();
                             marker.settings.colour = Some(Colour::linear_rgb(0.85, 0.2, 0.3));
                             items.push(marker);
                         }
@@ -748,132 +624,60 @@ impl eframe::App for App {
                     // Mode 2: full controls : three selectable objects
                     // ---------------------------------------------------------------
                     Mode::All => {
-                        let camera_view = self.camera.view_matrix();
-                        let camera_proj = self.camera.proj_matrix();
-                        let view_proj = camera_proj * camera_view;
-
                         // One resolve for the whole frame; the camera holds still
-                        // while a manipulation session owns the pointer.
+                        // while a gizmo session owns the pointer.
                         let action_frame = self.input_all.resolve();
-                        if !self.manip.is_active() {
+                        if !self.gizmo.is_active() {
                             let dt = ctx.input(|i| i.stable_dt);
                             self.ctrl_all.apply(&mut self.camera, &action_frame, dt);
                         }
 
-                        // Tab cycles the gizmo mode when no manipulation is active.
-                        if !self.manip.is_active() && action_frame.is_active(Action::CycleGizmoMode)
-                        {
-                            self.gizmo.mode = match self.gizmo.mode {
-                                GizmoMode::Translate => GizmoMode::Rotate,
-                                GizmoMode::Rotate => GizmoMode::Scale,
-                                GizmoMode::Scale => GizmoMode::Translate,
-                                _ => GizmoMode::Translate,
-                            };
+                        // Tab cycles the gizmo mode, [ and ] the pivot. The driver
+                        // ignores both while a session runs, so Tab then steps
+                        // the numeric field instead.
+                        if action_frame.is_active(actions::CYCLE_GIZMO_MODE) {
+                            self.gizmo.cycle_mode();
                         }
-
-                        // Pivot mode cycling : check the action frame we already have.
-                        let cycle_fwd = action_frame.is_active(Action::CyclePivotModeForward);
-                        let cycle_bwd = action_frame.is_active(Action::CyclePivotModeBackward);
-                        if cycle_fwd || cycle_bwd {
-                            if cycle_fwd {
-                                self.gizmo.cycle_pivot_forward();
-                            } else {
-                                self.gizmo.cycle_pivot_backward();
-                            }
-                            self.recompute_gizmo_center();
-                            if self.manip.is_active() {
-                                self.manip.reset();
-                                self.restore_snapshots();
-                                if let Some(center) = self.gizmo_center {
-                                    self.manip.begin(self.active_manip_kind, center);
-                                }
-                            }
+                        if action_frame.is_active(actions::CYCLE_PIVOT_FORWARD) {
+                            self.gizmo.cycle_pivot_forward();
+                        } else if action_frame.is_active(actions::CYCLE_PIVOT_BACKWARD) {
+                            self.gizmo.cycle_pivot_backward();
                         }
+                        self.recompute_gizmo_centre();
 
-                        // Update gizmo hover from the current cursor position.
-                        if let (Some(cursor), Some(center)) =
-                            (self.cursor_viewport, self.gizmo_center)
-                        {
-                            if !self.manip.is_active() {
-                                let ray_origin = self.camera.eye_position();
-                                let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
-                                let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
-                                let inv_vp = view_proj.inverse();
-                                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                                let ray_dir = (far - ray_origin).normalize_or(glam::Vec3::NEG_Z);
-                                self.gizmo.hovered_axis = self.gizmo.hit_test(
-                                    ray_origin,
-                                    ray_dir,
-                                    center,
-                                    self.gizmo_scale,
-                                );
-                            }
-                        }
-
-                        // Build ManipulationContext.
-                        let gizmo_info = self.gizmo_center.map(|center| GizmoInfo {
-                            center,
-                            scale: self.gizmo_scale,
-                            orientation: glam::Quat::IDENTITY,
-                            mode: self.gizmo.mode,
-                        });
-
-                        let manip_ctx = ManipulationContext {
-                            camera: self.camera.clone(),
+                        let input = GizmoInput::from_action(
+                            &action_frame,
+                            &self.camera,
                             viewport_size,
-                            cursor_viewport: self.cursor_viewport,
-                            pointer_delta,
-                            selection_center: self.gizmo_center,
-                            gizmo: gizmo_info,
-                            drag_started: self.drag_started,
-                            dragging: self.left_held,
-                            clicked: self.clicked,
-                        };
-
-                        match self.manip.update(&action_frame, manip_ctx) {
+                            self.gizmo_centre,
+                        );
+                        let mut clicked = action_frame.pointer.clicked;
+                        match self.gizmo.update(input) {
                             ManipResult::Update(delta) => {
-                                // Delta is incremental : accumulate, do NOT restore snapshot.
-                                self.apply_delta(delta);
-                                self.recompute_gizmo_center();
+                                if let Some(state) = self.gizmo.state() {
+                                    self.apply_delta(delta, state.centre);
+                                }
+                                self.recompute_gizmo_centre();
                             }
                             ManipResult::Cancel | ManipResult::ConstraintChanged => {
                                 self.restore_snapshots();
-                                self.recompute_gizmo_center();
+                                self.recompute_gizmo_centre();
                             }
                             ManipResult::Commit => {
                                 self.save_snapshots();
-                                self.recompute_gizmo_center();
-                                // If a click confirmed the session, consume it so
-                                // click-to-select doesn't fire on the same frame.
-                                self.clicked = false;
+                                self.recompute_gizmo_centre();
+                                // A click that confirmed the session is not a
+                                // selection click.
+                                clicked = false;
                             }
-                            ManipResult::None => {
-                                if self.manip.is_active() {
-                                    // Session just started this frame : record its kind.
-                                    if let Some(state) = self.manip.state() {
-                                        self.active_manip_kind = state.kind;
-                                    }
-                                } else {
-                                    // Idle : keep snapshot current so G/R/S starts clean.
-                                    self.save_snapshots();
-                                }
-                            }
+                            // Idle: keep the snapshots current so G/R/S starts clean.
+                            ManipResult::None if !self.gizmo.is_active() => self.save_snapshots(),
                             _ => {}
                         }
 
                         // Click-to-select: schedule a GPU pick; result arrives next frame.
-                        if self.clicked && !self.manip.is_active() {
+                        if clicked && !self.gizmo.is_active() {
                             self.pick_cursor = self.cursor_viewport;
-                        }
-
-                        // Recompute gizmo scale each frame so it stays screen-size-stable.
-                        if let Some(center) = self.gizmo_center {
-                            self.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
-                                center,
-                                self.camera.eye_position(),
-                                self.camera.fov_y,
-                                h,
-                            );
                         }
 
                         // Build scene render items.
@@ -883,7 +687,7 @@ impl eframe::App for App {
                             .map(|(i, obj)| {
                                 let mut item = SceneRenderItem::default();
                                 item.mesh_id = obj.mesh;
-                                item.model = obj.model.to_cols_array_2d();
+                                item.model = obj.model.into();
                                 item.settings.colour =
                                     Some(Colour::from_linear_rgb_array(obj.colour));
                                 item.settings.selected = self.selection.contains(i as u64);
@@ -909,25 +713,26 @@ impl eframe::App for App {
                 frame_data.viewport.show_grid = true;
                 frame_data.viewport.show_axes_indicator = true;
 
-                // Gizmo rendering (Mode 2 only).
+                // Gizmo and readout (Mode 2 only), drawn as overlays.
                 if self.mode == Mode::All {
-                    if let Some(center) = self.gizmo_center {
-                        let gizmo_model = glam::Mat4::from_scale_rotation_translation(
-                            glam::Vec3::splat(self.gizmo_scale),
-                            glam::Quat::IDENTITY,
-                            center,
-                        );
-                        let mut interaction = InteractionFrame::default();
-                        interaction.gizmo_model = Some(gizmo_model);
-                        interaction.gizmo_mode = self.gizmo.mode;
-                        interaction.gizmo_hovered = self.gizmo.hovered_axis;
-                        interaction.gizmo_space_orientation = glam::Quat::IDENTITY;
-                        interaction.outline_selected = true;
-                        interaction.selection_generation = self.selection_generation;
-                        frame_data.interaction = interaction;
-                    } else {
-                        frame_data.interaction.outline_selected = true;
-                        frame_data.interaction.selection_generation = self.selection_generation;
+                    frame_data.interaction.outline_selected = true;
+                    frame_data.interaction.selection_generation = self.selection_generation;
+                    let overlays = &mut frame_data.overlays;
+                    self.gizmo.build_view_overlays(
+                        &self.gizmo_style,
+                        &self.camera,
+                        viewport_size,
+                        true,
+                        &mut overlays.shapes,
+                        &mut overlays.polylines,
+                    );
+                    if let (Some(text), Some(centre)) =
+                        (self.gizmo.readout(), self.gizmo.gizmo_centre())
+                    {
+                        overlays
+                            .labels
+                            .push(build_numeric_label(&self.gizmo_style, &text, centre));
+                        ctx.request_repaint();
                     }
                 }
 
@@ -983,61 +788,6 @@ impl eframe::App for App {
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
-
-                // Manipulation status label: shown at the bottom-centre of the
-                // viewport while a G/R/S session is active.
-                if self.mode == Mode::All {
-                    if let Some(ms) = self.manip.state() {
-                        let kind_label = match ms.kind {
-                            ManipulationKind::Move => "Move",
-                            ManipulationKind::Rotate => "Rotate",
-                            ManipulationKind::Scale => "Scale",
-                        };
-                        let axis_label = match ms.axis {
-                            Some(GizmoAxis::X) => {
-                                if ms.exclude_axis {
-                                    " (YZ)"
-                                } else {
-                                    " (X)"
-                                }
-                            }
-                            Some(GizmoAxis::Y) => {
-                                if ms.exclude_axis {
-                                    " (XZ)"
-                                } else {
-                                    " (Y)"
-                                }
-                            }
-                            Some(GizmoAxis::Z) => {
-                                if ms.exclude_axis {
-                                    " (XY)"
-                                } else {
-                                    " (Z)"
-                                }
-                            }
-                            _ => "",
-                        };
-                        let text = if let Some(ref numeric) = ms.numeric_display {
-                            format!("{kind_label}{axis_label}: {numeric}")
-                        } else {
-                            format!("{kind_label}{axis_label}")
-                        };
-                        let font = egui::FontId::proportional(14.0);
-                        let galley = ui
-                            .painter()
-                            .layout_no_wrap(text, font, egui::Color32::WHITE);
-                        let pos =
-                            egui::pos2(rect.center().x - galley.size().x / 2.0, rect.max.y - 30.0);
-                        let bg = egui::Rect::from_min_size(
-                            pos - egui::vec2(6.0, 3.0),
-                            galley.size() + egui::vec2(12.0, 6.0),
-                        );
-                        ui.painter()
-                            .rect_filled(bg, 3.0, egui::Color32::from_black_alpha(180));
-                        ui.painter().galley(pos, galley, egui::Color32::WHITE);
-                        ctx.request_repaint();
-                    }
-                }
 
                 if response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

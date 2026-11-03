@@ -18,23 +18,24 @@ struct Camera {
     eye_pos:       vec3<f32>,
     _pad:          f32,
     forward:       vec3<f32>,
-    _pad1:         f32,
+    // The camera's exposure; the shared light loop multiplies by it.
+    exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
+    proj:          mat4x4<f32>,
+    inv_proj:      mat4x4<f32>,
+    viewport:      vec4<f32>,
+    clip:          vec4<f32>,
+    time:          vec4<f32>,
+    // The world origin the positions here are relative to, rounded to f32.
+    world_origin:  vec3<f32>,
+    origin_epoch:  u32,
 };
 
 // `SingleLight`, `Lights` and the `lights_storage` binding at group 0 binding
 // 13 come from the shared scene lighting section spliced in front of this.
 
-struct ShadowAtlas {
-    cascade_vp:        array<mat4x4<f32>, 4>,
-    cascade_splits:    vec4<f32>,
-    cascade_count:     u32,
-    atlas_size:        f32,
-    shadow_filter:     u32,
-    pcss_light_radius: f32,
-    atlas_rects:       array<vec4<f32>, 8>,
-};
+// `ShadowAtlas` comes from the shared shadow atlas section.
 
 struct GpuScatterVolume {
     shape_pack:     vec4<u32>,
@@ -309,7 +310,7 @@ fn ray_sphere(c: vec3<f32>, r: f32, o: vec3<f32>, d: vec3<f32>) -> vec2<f32> {
 }
 
 fn opaque_distance(ndc_xy: vec2<f32>, depth: f32, ray_dir: vec3<f32>) -> f32 {
-    if depth >= 1.0 {
+    if viewport_depth_is_background(depth) {
         return 1e30;
     }
     let ndc = vec4<f32>(ndc_xy, depth, 1.0);
@@ -329,6 +330,19 @@ fn sample_sun_shadow(world_pos: vec3<f32>) -> f32 {
         return 1.0;
     }
     let dist = dot(world_pos - camera.eye_pos, camera.forward);
+    // Distance fade at the far end of the cascades, as `csm_distance_fade`
+    // in the mesh shaders: unshadowed past `range.x`.
+    var fade = 1.0;
+    if shadow_atlas.range.x > 0.0 && shadow_atlas.range.y > 0.0 {
+        fade = clamp(
+            (shadow_atlas.range.x - dist) / (shadow_atlas.range.y * shadow_atlas.range.x),
+            0.0,
+            1.0,
+        );
+    }
+    if fade <= 0.0 {
+        return 1.0;
+    }
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
         if dist > shadow_atlas.cascade_splits[i] {
@@ -349,7 +363,8 @@ fn sample_sun_shadow(world_pos: vec3<f32>) -> f32 {
         mix(rect.y, rect.w, tile_uv.y),
     );
     let depth = ndc.z - lights_uniform.shadow_bias;
-    return textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, depth);
+    let lit = textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, depth);
+    return mix(1.0, lit, fade);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,11 +374,7 @@ fn sample_sun_shadow(world_pos: vec3<f32>) -> f32 {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ndc_xy = in.ndc_xy;
-    let near_h = camera.inv_view_proj * vec4<f32>(ndc_xy, 0.0, 1.0);
-    let far_h  = camera.inv_view_proj * vec4<f32>(ndc_xy, 1.0, 1.0);
-    let near_p = near_h.xyz / near_h.w;
-    let far_p  = far_h.xyz  / far_h.w;
-    let ray_dir = normalize(far_p - near_p);
+    let ray_dir = viewport_ndc_ray(camera.inv_view_proj, ndc_xy).dir;
     let eye = camera.eye_pos;
 
     let dims = textureDimensions(opaque_depth, 0);
@@ -409,19 +420,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let thickness = t_exit - t_enter;
     let dt = thickness / f32(steps);
 
-    // Lighting setup.
+    // Lighting setup. Every radiance term is exposed by the camera's exposure.
     var sun_dir = vec3<f32>(0.0, 0.0, 1.0);
     var sun_colour = vec3<f32>(0.0);
     if lights_uniform.count > 0u && lights_storage[0u].light_type == 0u {
         sun_dir = normalize(lights_storage[0u].pos_or_dir);
-        sun_colour = lights_storage[0u].colour * lights_storage[0u].intensity;
+        sun_colour = lights_storage[0u].colour * (lights_storage[0u].intensity * camera.exposure);
     }
     let cos_theta = dot(ray_dir, sun_dir);
     let phase = phase_hg(cos_theta, aniso);
     let ambient_top = lights_uniform.sky_colour * lights_uniform.hemisphere_intensity;
     let ambient_bot = lights_uniform.ground_colour * lights_uniform.hemisphere_intensity;
     let zenith = clamp(sun_dir.z * 0.5 + 0.5, 0.0, 1.0);
-    let ambient = mix(ambient_bot, ambient_top, zenith);
+    let ambient = mix(ambient_bot, ambient_top, zenith) * camera.exposure;
 
     let time = frame.time_pack.x;
     var jitter = 0.5;
@@ -453,7 +464,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         if use_density_tex {
             modulator = sample_density_texture(aabb_min, aabb_max, p);
         } else {
-            modulator = apply_noise(flags, vol.noise_pack, vol.noise_vel.xyz, p, time);
+            // The noise is keyed on the absolute position, so it stays put
+            // when the origin moves.
+            let p_abs = p + camera.world_origin;
+            modulator = apply_noise(flags, vol.noise_pack, vol.noise_vel.xyz, p_abs, time);
         }
         let local_density = vol.colour_density.a * remap * modulator;
         let step_extinction = local_density * dt;
@@ -480,7 +494,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         var emission = vec3<f32>(0.0);
         if emission_kind != EMISSION_NONE {
             let f = emission_factor(emission_kind, emission_param, local_density);
-            emission = local_colour * (emission_strength * f);
+            emission = local_colour * (emission_strength * f * camera.exposure);
         }
 
         let one_minus_acc = 1.0 - acc_a;
@@ -489,5 +503,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         if acc_a > 0.995 { break; }
     }
 
-    return vec4<f32>(acc_rgb, acc_a);
+    // The largest finite half float: the emission strength is unbounded.
+    return vec4<f32>(min(acc_rgb, vec3<f32>(65504.0)), acc_a);
 }

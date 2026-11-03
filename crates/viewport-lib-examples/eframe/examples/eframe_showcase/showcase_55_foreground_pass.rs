@@ -100,7 +100,7 @@ impl Default for ForegroundState {
 /// A looping orbit around the scene, six keyframes closing back on the first.
 fn build_orbit_track() -> CameraTrack {
     let mut track = CameraTrack::new();
-    let center = glam::Vec3::new(0.0, 0.0, 1.1);
+    let centre = glam::Vec3::new(0.0, 0.0, 1.1);
     let tilt = 1.02;
     let steps = 6;
     for i in 0..=steps {
@@ -112,7 +112,7 @@ fn build_orbit_track() -> CameraTrack {
         track.push(
             (i as f64) * 2.5,
             CameraTarget {
-                center,
+                centre: centre.as_dvec3(),
                 distance,
                 orientation,
             },
@@ -208,9 +208,9 @@ impl App {
 
         // Start the camera on the track.
         let target = interpolate_camera(&self.fg_state.track, 0.0);
-        self.camera.center = target.center;
-        self.camera.set_distance(target.distance);
-        self.camera.set_orientation(target.orientation);
+        self.camera.set_orbit_centre(target.centre);
+        self.camera.set_orbit_distance(target.distance);
+        self.camera.set_orbit_orientation(target.orientation);
 
         self.fg_state.built = true;
     }
@@ -253,9 +253,9 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
                 app.fg_state.track_t -= dur;
             }
             let target = interpolate_camera(&app.fg_state.track, app.fg_state.track_t);
-            app.camera.center = target.center;
-            app.camera.set_distance(target.distance);
-            app.camera.set_orientation(target.orientation);
+            app.camera.set_orbit_centre(target.centre);
+            app.camera.set_orbit_distance(target.distance);
+            app.camera.set_orbit_orientation(target.orientation);
         }
     }
 
@@ -269,10 +269,10 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
 /// Set the camera, post-process (DoF), and foreground pass + items for the frame.
 pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
     // Cap the far plane so cascades and the depth range stay useful.
-    let mut rc = RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(60.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.focus_distance() * 3.0).max(60.0);
+    fd.camera.render_camera =
+        RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
 
     // The foreground pass runs in the HDR path, so keep the HDR pipeline active
     // (also required for DoF). DoF itself is toggled separately.
@@ -308,7 +308,7 @@ pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
             * glam::Mat4::from_rotation_x(t * 0.6 + i as f32);
         let model = c2w * glam::Mat4::from_translation(glam::Vec3::from_array(*off)) * spin;
         let mut item = SceneRenderItem::new(app.fg_state.cube_mesh, app.fg_state.cube_materials[i]);
-        item.model = model.to_cols_array_2d();
+        item.model = model.into();
         item.settings.unlit = app.fg_state.unlit;
         cubes.push(item);
     }
@@ -469,8 +469,6 @@ pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

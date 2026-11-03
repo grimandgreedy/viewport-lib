@@ -1,6 +1,5 @@
 use super::*;
 use crate::Colour;
-use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::query::snap::ConstraintOverlay;
 use crate::renderer::SubSelectionRef;
 use crate::resources::CameraUniform;
@@ -9,50 +8,377 @@ use crate::resources::CameraUniform;
 // 0.2.0 grouped frame API types
 // ---------------------------------------------------------------------------
 
-/// Canonical renderer-facing camera state.
+/// Renderer-facing camera: a view matrix and a projection matrix.
 ///
-/// Replaces the flat camera fields that were previously scattered across
-/// `FrameData`. Application-side orbit cameras resolve into this type
-/// before frame submission.
+/// Build one with [`from_camera`](Self::from_camera) from an app-side
+/// [`Camera`](crate::camera::Camera), or with
+/// [`from_matrices`](Self::from_matrices) when the host computes its own
+/// matrices. Read the matrices with [`view`](Self::view) and
+/// [`projection`](Self::projection) and replace them with
+/// [`set_view`](Self::set_view) and [`set_projection`](Self::set_projection).
+/// The eye position, basis, depth range, field of view and aspect are derived
+/// from the matrices whenever one is set, so they cannot fall out of step.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RenderCamera {
-    /// World-to-view transform matrix.
-    pub view: glam::Mat4,
-    /// View-to-clip (projection) matrix.
-    pub projection: glam::Mat4,
-    /// Camera eye position in world space.
-    pub eye_position: [f32; 3],
-    /// Camera forward direction in world space.
-    pub forward: [f32; 3],
-    /// Camera orientation quaternion.
-    pub orientation: glam::Quat,
-    /// Near clip plane distance. Default: 0.1.
-    pub near: f32,
-    /// Far clip plane distance. Default: 1000.0.
-    pub far: f32,
-    /// Orbit distance from camera to scene center (world units). Default: 10.0.
-    /// Used internally to derive shadow cascade range so shadow quality tracks zoom level.
-    pub distance: f32,
-    /// Vertical field of view in radians. Default: PI/4.
-    pub fov: f32,
-    /// Aspect ratio (width / height). Default: 1.333.
-    pub aspect: f32,
+    view: glam::Mat4,
+    projection: glam::Mat4,
+    culling_projection: glam::Mat4,
+    pose: CameraPose,
+    lens: CameraLens,
+    /// Near and far read from `culling_projection`.
+    culling_range: (f32, f32),
+    depth_override: Option<(f32, f32)>,
+    /// World-to-view rotation built in f64 from an app-side camera's pose.
+    /// `view`'s rotation is built from f32 world positions and loses
+    /// precision far from the world origin; a relative camera uses this one.
+    exact_rotation: Option<glam::Mat3>,
+}
+
+/// Camera placement derived from the view matrix.
+#[derive(Debug, Clone, Copy)]
+struct CameraPose {
+    eye: glam::DVec3,
+    orientation: glam::Quat,
+    right: glam::Vec3,
+    up: glam::Vec3,
+    forward: glam::Vec3,
+}
+
+impl CameraPose {
+    fn from_view(view: glam::Mat4) -> Self {
+        let m = view.inverse();
+        Self {
+            eye: m.w_axis.truncate().as_dvec3(),
+            orientation: glam::Quat::from_mat4(&m).normalize(),
+            right: m.x_axis.truncate(),
+            up: m.y_axis.truncate(),
+            forward: -m.z_axis.truncate(),
+        }
+    }
+}
+
+/// Projection parameters derived from the projection matrix.
+#[derive(Debug, Clone, Copy)]
+struct CameraLens {
+    orthographic: bool,
+    /// Depth runs from 1 at the near plane to 0 at the far plane.
+    reversed: bool,
+    near: f32,
+    /// `f32::INFINITY` for a perspective projection with no far plane.
+    far: f32,
+    aspect: f32,
+    vertical_fov: Option<f32>,
+    /// Angle for the renderer's size and frustum maths. See `fov_y`.
+    fov_y: f32,
+}
+
+impl CameraLens {
+    fn from_projection(p: glam::Mat4) -> Self {
+        let orthographic = p.w_axis.w != 0.0;
+        let (a, b) = (p.z_axis.z, p.w_axis.z);
+        // Standard depth has a negative z scale, reversed depth a positive
+        // one (zero for an infinite reversed perspective).
+        let reversed = a >= 0.0;
+        let (near, far) = match (orthographic, reversed) {
+            // a = 1 / (near - far), b = near / (near - far)
+            (true, false) => {
+                let near = b / a;
+                (near, near - 1.0 / a)
+            }
+            // a = 1 / (far - near), b = far / (far - near)
+            (true, true) => ((b - 1.0) / a, b / a),
+            // a = far / (near - far), b = near * far / (near - far)
+            (false, false) => (b / a, b / (a + 1.0)),
+            // a = near / (far - near), b = near * far / (far - near); a = 0
+            // and b = near with no far plane.
+            (false, true) => {
+                let far = if a == 0.0 { f32::INFINITY } else { b / a };
+                (b / (a + 1.0), far)
+            }
+        };
+        let vertical_fov = (!orthographic).then(|| 2.0 * (1.0 / p.y_axis.y).atan());
+        Self {
+            orthographic,
+            reversed,
+            near,
+            far,
+            aspect: p.y_axis.y / p.x_axis.x,
+            vertical_fov,
+            fov_y: vertical_fov.unwrap_or(std::f32::consts::FRAC_PI_4),
+        }
+    }
+}
+
+/// Far distance assumed for a projection with no far plane when the host
+/// gives no range: this many times the near distance.
+const INFINITE_FAR_RATIO: f32 = 10_000.0;
+
+/// `projection` with its depth row replaced by standard 0..1 depth between
+/// `near` and `far`, keeping the x, y and w rows.
+fn standard_depth_projection(projection: glam::Mat4, near: f32, far: f32) -> glam::Mat4 {
+    let orthographic = projection.w_axis.w != 0.0;
+    let (a, b) = if orthographic {
+        (1.0 / (near - far), near / (near - far))
+    } else {
+        (far / (near - far), near * far / (near - far))
+    };
+    let mut p = projection;
+    p.x_axis.z = 0.0;
+    p.y_axis.z = 0.0;
+    p.z_axis.z = a;
+    p.w_axis.z = b;
+    p
 }
 
 impl RenderCamera {
+    /// Build a camera from a world-to-view matrix and a view-to-clip
+    /// projection matrix.
+    ///
+    /// The projection must be right-handed with reversed 0..1 depth: 1 at the
+    /// near plane and 0 at the far plane, which the renderer's depth test and
+    /// clear assume. glam builds one with `perspective_infinite_reverse_rh`,
+    /// with `perspective_rh` or `orthographic_rh` given the far distance
+    /// before the near one, or from a standard projection with
+    /// [`with_projection_reversed`](Self::with_projection_reversed). Its near
+    /// and far planes are read back for [`depth_range`](Self::depth_range);
+    /// for a projection with no far plane or an oblique near plane, follow
+    /// with [`with_depth_range`](Self::with_depth_range).
+    pub fn from_matrices(view: glam::Mat4, projection: glam::Mat4) -> Self {
+        let mut cam = Self {
+            view,
+            projection,
+            culling_projection: projection,
+            pose: CameraPose::from_view(view),
+            lens: CameraLens::from_projection(projection),
+            culling_range: (0.0, 0.0),
+            depth_override: None,
+            exact_rotation: None,
+        };
+        cam.derive_culling();
+        cam
+    }
+
+    /// Rebuild the culling projection from the projection and the depth
+    /// range. A finite standard-depth projection with no range set is its
+    /// own culling projection.
+    fn derive_culling(&mut self) {
+        let lens = self.lens;
+        let finite = lens.far.is_finite();
+        self.culling_projection = match self.depth_override {
+            None if !lens.reversed && finite => self.projection,
+            Some((near, far)) => standard_depth_projection(self.projection, near, far),
+            None => {
+                let far = if finite {
+                    lens.far
+                } else {
+                    lens.near * INFINITE_FAR_RATIO
+                };
+                standard_depth_projection(self.projection, lens.near, far)
+            }
+        };
+        let culling = CameraLens::from_projection(self.culling_projection);
+        self.culling_range = (culling.near, culling.far);
+    }
+
+    /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera):
+    /// [`from_matrices`](Self::from_matrices) over the camera's view and
+    /// projection matrices, with the camera's culling range.
+    ///
+    /// The camera's own eye, view direction, f64 rotation and framing angle
+    /// replace the values read back from the matrices, which differ in the
+    /// last bits (an orthographic matrix carries no angle at all), and the
+    /// culling projection is the camera's own. Resolve the camera to a
+    /// `RenderCamera` once per frame and pass it through `CameraFrame`.
+    pub fn from_camera(cam: &crate::camera::Camera) -> Self {
+        let rc = Self::from_matrices(cam.view_matrix(), cam.proj_matrix());
+        let mut rc = match cam.projection {
+            crate::camera::Projection::Matrix {
+                culling_range: (near, far),
+                ..
+            } => rc.with_depth_range(near, far),
+            _ => {
+                let mut rc = rc;
+                rc.culling_projection = cam.culling_proj_matrix();
+                let culling = CameraLens::from_projection(rc.culling_projection);
+                rc.culling_range = (culling.near, culling.far);
+                rc.lens.fov_y = cam.fov_y();
+                rc
+            }
+        };
+        let eye = cam.eye();
+        let target = cam.target();
+        rc.pose.eye = eye;
+        if target == eye {
+            // No focus distance to look along: take the axes from the pose.
+            rc.pose.forward = cam.forward();
+            let rotation = glam::DMat3::from_quat(cam.pose.orientation).transpose();
+            rc.exact_rotation = Some(rotation.as_mat3());
+            return rc;
+        }
+        rc.pose.forward = (target.as_vec3() - eye.as_vec3()).normalize_or_zero();
+        let up = (cam.orientation() * glam::Vec3::Y).as_dvec3();
+        let exact = glam::DMat4::look_at_rh(eye, target, up);
+        rc.exact_rotation = Some(glam::DMat3::from_mat4(exact).as_mat3());
+        rc
+    }
+
+    /// Report `near` and `far` from [`depth_range`](Self::depth_range) instead
+    /// of the values read from the projection.
+    ///
+    /// For a projection the read-back cannot handle, such as an oblique near
+    /// plane, or to give a projection with no far plane a far distance. The
+    /// projection itself is not changed; the range sets the
+    /// [`culling_projection`](Self::culling_projection) and feeds shadow
+    /// cascade fitting, clustered light slicing and depth picking. A later
+    /// [`set_projection`](Self::set_projection) clears it.
+    pub fn with_depth_range(mut self, near: f32, far: f32) -> Self {
+        self.depth_override = Some((near, far));
+        self.derive_culling();
+        self
+    }
+
+    /// World-to-view transform matrix.
+    pub fn view(&self) -> glam::Mat4 {
+        self.view
+    }
+
+    /// View-to-clip (projection) matrix.
+    pub fn projection(&self) -> glam::Mat4 {
+        self.projection
+    }
+
+    /// Replace the world-to-view matrix.
+    pub fn set_view(&mut self, view: glam::Mat4) {
+        self.view = view;
+        self.pose = CameraPose::from_view(view);
+        self.exact_rotation = None;
+    }
+
+    /// Replace the projection matrix, which must use reversed depth as
+    /// [`from_matrices`](Self::from_matrices) describes. Clears any range set
+    /// with [`with_depth_range`](Self::with_depth_range).
+    pub fn set_projection(&mut self, projection: glam::Mat4) {
+        self.projection = projection;
+        self.lens = CameraLens::from_projection(projection);
+        self.depth_override = None;
+        self.derive_culling();
+    }
+
+    /// Replace the projection with `standard`, a right-handed projection with
+    /// standard 0..1 depth (near at 0), converted to the reversed depth the
+    /// renderer draws with. For a host that builds its projection with glam's
+    /// `perspective_rh` or `orthographic_rh`, or takes one from another
+    /// engine. Clears any range set with
+    /// [`with_depth_range`](Self::with_depth_range).
+    pub fn with_projection_reversed(mut self, standard: glam::Mat4) -> Self {
+        // z' = w - z: depth d becomes 1 - d.
+        let mut p = standard;
+        p.x_axis.z = standard.x_axis.w - standard.x_axis.z;
+        p.y_axis.z = standard.y_axis.w - standard.y_axis.z;
+        p.z_axis.z = standard.z_axis.w - standard.z_axis.z;
+        p.w_axis.z = standard.w_axis.w - standard.w_axis.z;
+        self.set_projection(p);
+        self
+    }
+
+    /// A finite projection with standard 0..1 depth over the same view as
+    /// [`projection`](Self::projection), between the near and far of
+    /// [`depth_range`](Self::depth_range).
+    ///
+    /// For CPU work that needs both a near and a far plane: frustum planes,
+    /// culling and cascade fitting. Do not draw with it.
+    pub fn culling_projection(&self) -> glam::Mat4 {
+        self.culling_projection
+    }
+
+    /// [`culling_projection`](Self::culling_projection) times the view
+    /// matrix. Build CPU frustums from this rather than
+    /// [`view_proj`](Self::view_proj).
+    pub fn culling_view_proj(&self) -> glam::Mat4 {
+        self.culling_projection * self.view
+    }
+
+    /// The frustum of [`culling_view_proj`](Self::culling_view_proj) in world
+    /// space, extracted relative to the eye so it holds far from the world
+    /// origin; see
+    /// [`Frustum::from_eye_relative`](crate::camera::frustum::Frustum::from_eye_relative).
+    pub fn culling_frustum(&self) -> crate::camera::frustum::Frustum {
+        let eye = self.pose.eye;
+        crate::camera::frustum::Frustum::from_eye_relative(
+            &self.relative_to(eye).culling_view_proj(),
+            eye,
+        )
+    }
+
+    /// The world-space ray through a point on screen, as `(origin, direction)`
+    /// with a unit direction.
+    ///
+    /// `ndc` is the point in normalised device coordinates: -1..1 left to
+    /// right and bottom to top. A perspective ray starts at the eye; an
+    /// orthographic ray starts on the near plane and runs along the view
+    /// direction. Works for any projection, including one with no far plane.
+    pub fn screen_ray(&self, ndc: glam::Vec2) -> (glam::Vec3, glam::Vec3) {
+        let near_ndc = if self.lens.reversed { 1.0 } else { 0.0 };
+        let on_near = self
+            .projection
+            .inverse()
+            .project_point3(glam::Vec3::new(ndc.x, ndc.y, near_ndc));
+        let inv_view = self.view.inverse();
+        if self.is_orthographic() {
+            let dir = (-inv_view.z_axis.truncate()).normalize();
+            (inv_view.transform_point3(on_near), dir)
+        } else {
+            let dir = inv_view.transform_vector3(on_near).normalize();
+            (self.pose.eye.as_vec3(), dir)
+        }
+    }
+
+    /// This camera for points relative to `origin`: the view translation is
+    /// rebuilt in f64 from the eye and the eye moved by `-origin`; the
+    /// orientation and projection are unchanged. A zero origin returns an
+    /// identical copy.
+    pub(crate) fn relative_to(&self, origin: glam::DVec3) -> RenderCamera {
+        let mut cam = self.clone();
+        if origin != glam::DVec3::ZERO {
+            let view = match self.exact_rotation {
+                Some(r) => {
+                    cam.pose.forward = -r.row(2);
+                    glam::Mat4::from_mat3(r)
+                }
+                None => self.view,
+            };
+            cam.view = crate::renderer::origin::rel_view(view, self.pose.eye, origin);
+            cam.pose.eye = self.pose.eye - origin;
+        }
+        cam
+    }
+
     /// Build the GPU-facing camera uniform from this camera's state.
     pub(crate) fn camera_uniform(&self) -> CameraUniform {
         let vp = self.view_proj();
         CameraUniform {
             view_proj: vp.to_cols_array_2d(),
-            eye_pos: self.eye_position,
+            eye_pos: self.pose.eye.as_vec3().to_array(),
             // LDR default; the per-viewport upload raises this on the HDR path.
             lit_clamp: 1.0,
-            forward: self.forward,
-            _pad1: 0.0,
+            forward: self.pose.forward.to_array(),
+            // No exposure; the per-viewport upload writes the frame's.
+            exposure: 1.0,
             inv_view_proj: vp.inverse().to_cols_array_2d(),
             view: self.view.to_cols_array_2d(),
+            proj: self.projection.to_cols_array_2d(),
+            inv_proj: self.projection.inverse().to_cols_array_2d(),
+            // Filled per frame by `CameraFrame::camera_uniform`.
+            viewport: [0.0; 4],
+            clip: {
+                let (near, far) = self.depth_range();
+                crate::plugin_api::depth::clip_lane(self.projection, near, far)
+            },
+            time: [0.0; 4],
+            // Filled per frame by `CameraFrame::camera_uniform`.
+            world_origin: [0.0; 3],
+            origin_epoch: 0,
         }
     }
 
@@ -61,57 +387,137 @@ impl RenderCamera {
         self.projection * self.view
     }
 
+    /// Camera eye position in world space, in f64: the translation of
+    /// `view.inverse()`, or the camera's own eye for a camera built with
+    /// [`from_camera`](Self::from_camera).
+    pub fn eye_position(&self) -> glam::DVec3 {
+        self.pose.eye
+    }
+
+    /// Camera orientation: the rotation of `view.inverse()` as a quaternion.
+    ///
+    /// The camera looks down its local `-Z` with `+Y` up.
+    pub fn orientation(&self) -> glam::Quat {
+        self.pose.orientation
+    }
+
+    /// Camera forward direction in world space (the local `-Z` axis).
+    pub fn forward(&self) -> glam::Vec3 {
+        self.pose.forward
+    }
+
+    /// Camera right direction in world space (the local `+X` axis).
+    pub fn right(&self) -> glam::Vec3 {
+        self.pose.right
+    }
+
+    /// Camera up direction in world space (the local `+Y` axis).
+    pub fn up(&self) -> glam::Vec3 {
+        self.pose.up
+    }
+
+    /// Whether the projection is orthographic (`w_axis.w == 1`) rather than
+    /// perspective (`w_axis.w == 0`).
+    pub fn is_orthographic(&self) -> bool {
+        self.lens.orthographic
+    }
+
+    /// Near and far clip distances: the range set with
+    /// [`with_depth_range`](Self::with_depth_range), or else the planes read
+    /// from the projection.
+    ///
+    /// The read-back takes a right-handed projection with standard or
+    /// reversed 0..1 depth. For a projection with no far plane, far is
+    /// 10,000 times near unless a range is set. A camera built with
+    /// [`from_camera`](Self::from_camera) reports the camera's own near and
+    /// far. A perspective far plane read from a matrix keeps only about
+    /// `f32::EPSILON * far / near` of relative precision.
+    pub fn depth_range(&self) -> (f32, f32) {
+        if let Some(range) = self.depth_override {
+            return range;
+        }
+        let (near, far) = self.culling_range;
+        debug_assert!(
+            self.lens.orthographic || (near > 0.0 && near < far),
+            "perspective depth range is not 0 < near < far: ({near}, {far}); \
+             set it with RenderCamera::with_depth_range"
+        );
+        (near, far)
+    }
+
+    /// Vertical field of view in radians, or `None` for an orthographic
+    /// projection.
+    pub fn vertical_fov(&self) -> Option<f32> {
+        self.lens.vertical_fov
+    }
+
+    /// World-space height the viewport spans at view depth `depth`.
+    ///
+    /// For an orthographic projection the height is the same at every depth.
+    pub fn view_height_at(&self, depth: f32) -> f32 {
+        let h = self.projection.y_axis.y;
+        if self.is_orthographic() {
+            2.0 / h
+        } else {
+            2.0 * depth / h
+        }
+    }
+
+    /// Aspect ratio (width / height) read from the projection.
+    pub fn aspect(&self) -> f32 {
+        self.lens.aspect
+    }
+
+    /// Vertical field of view for the renderer's size and frustum maths
+    /// (grid spacing, LOD screen size, cascade fitting), for both projections.
+    ///
+    /// [`from_camera`](Self::from_camera) carries the camera's own `fov_y`,
+    /// which the angle read back from a perspective matrix differs from in
+    /// the last bits (enough to move the shadow cascade fit) and which an
+    /// orthographic matrix does not carry at all. A camera built from matrices
+    /// uses the angle read from a perspective projection, and `PI / 4` for an
+    /// orthographic one.
+    pub(crate) fn fov_y(&self) -> f32 {
+        self.lens.fov_y
+    }
+
     /// The camera the foreground pass renders with: this camera's view
     /// transform, with the projection replaced by the pass override when one
     /// is set. With no override (or no pass config) the scene camera is used
     /// unchanged.
+    ///
+    /// The override is always a perspective projection, including over an
+    /// orthographic scene camera.
     pub(crate) fn foreground_camera(&self, pass: Option<&ForegroundPass>) -> RenderCamera {
         let mut cam = self.clone();
         if let Some(p) = pass.and_then(|p| p.projection.as_ref()) {
-            cam.fov = p.fov_y;
-            cam.near = p.near.max(1e-4);
-            cam.far = p.far.unwrap_or(self.far).max(cam.near * 2.0);
-            cam.projection = glam::Mat4::perspective_rh(cam.fov, self.aspect, cam.near, cam.far);
+            let near = p.near.max(1e-4);
+            let far = p.far.unwrap_or(self.depth_range().1).max(near * 2.0);
+            // Reversed depth: far before near.
+            cam.set_projection(glam::Mat4::perspective_rh(
+                p.fov_y,
+                self.aspect(),
+                far,
+                near,
+            ));
+            cam.lens.fov_y = p.fov_y;
         }
         cam
-    }
-
-    /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera).
-    ///
-    /// This is the intended conversion path: resolve the orbit camera to a
-    /// `RenderCamera` once per frame and pass it through `CameraFrame`.
-    pub fn from_camera(cam: &crate::camera::Camera) -> Self {
-        let eye = cam.eye_position();
-        let forward = (cam.center - eye).normalize_or_zero();
-        Self {
-            view: cam.view_matrix(),
-            projection: cam.proj_matrix(),
-            eye_position: eye.to_array(),
-            forward: forward.to_array(),
-            orientation: cam.orientation,
-            near: cam.effective_znear(),
-            far: cam.effective_zfar(),
-            fov: cam.fov_y,
-            aspect: cam.aspect,
-            distance: cam.distance,
-        }
     }
 }
 
 impl Default for RenderCamera {
+    /// A perspective camera at `(0, 0, 5)` looking down `-Z` with `+Y` up:
+    /// 45 degree vertical field of view, aspect 1.333, depth range 0.1..1000.
     fn default() -> Self {
-        Self {
-            view: glam::Mat4::IDENTITY,
-            projection: glam::Mat4::IDENTITY,
-            eye_position: [0.0, 0.0, 5.0],
-            forward: [0.0, 0.0, -1.0],
-            orientation: glam::Quat::IDENTITY,
-            near: 0.1,
-            far: 1000.0,
-            fov: std::f32::consts::FRAC_PI_4,
-            aspect: 1.333,
-            distance: 10.0,
-        }
+        Self::from_matrices(
+            glam::Mat4::look_at_rh(
+                glam::Vec3::new(0.0, 0.0, 5.0),
+                glam::Vec3::ZERO,
+                glam::Vec3::Y,
+            ),
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 1000.0, 0.1),
+        )
     }
 }
 
@@ -141,11 +547,9 @@ pub struct CameraFrame {
     /// layer). An item is culled on this camera when its
     /// `ItemSettings::visibility_mask` shares no bit with this mask
     /// (`visibility_mask & cull_mask == 0`). This is a CPU-side cull applied at
-    /// scene collect, so it costs nothing at the default and needs no GPU
-    /// carrier; it is the per-viewport layer filter for quad-view and editor
-    /// layouts. Note the GPU-driven instanced cull path does not yet honour the
-    /// mask, so an instanced batch culled only by layer still runs its GPU cull
-    /// (it is skipped CPU-side before reaching that path).
+    /// scene collect, before batching, so it costs nothing at the default,
+    /// needs no GPU carrier, and an item it drops never reaches the GPU cull;
+    /// it is the per-viewport layer filter for quad-view and editor layouts.
     pub cull_mask: u32,
 }
 
@@ -162,6 +566,25 @@ impl Default for CameraFrame {
 }
 
 impl CameraFrame {
+    /// The GPU camera uniform for this frame rendered at `time`: the render
+    /// camera's matrices relative to `origin`, plus the physical viewport size
+    /// and the frame time.
+    pub(crate) fn camera_uniform(
+        &self,
+        time: &FrameTime,
+        origin: &crate::renderer::origin::OriginState,
+    ) -> CameraUniform {
+        let mut u = origin.camera(&self.render_camera).camera_uniform();
+        u.world_origin = origin.origin().as_vec3().to_array();
+        u.origin_epoch = origin.epoch();
+        let ppp = self.pixels_per_point;
+        let w = (self.viewport_size[0] * ppp).round().max(1.0);
+        let h = (self.viewport_size[1] * ppp).round().max(1.0);
+        u.viewport = [w, h, 1.0 / w, 1.0 / h];
+        u.time = crate::renderer::frame_clock::pack_time(time);
+        u
+    }
+
     /// Build a camera frame from a render camera and viewport size.
     pub fn new(render_camera: RenderCamera, viewport_size: [f32; 2]) -> Self {
         Self {
@@ -291,6 +714,9 @@ pub struct SceneFrame {
         &'static str,
         Vec<Box<dyn crate::plugin_api::PluginItemCollection>>,
     >,
+    /// Replaces [`RendererConfig::world_origin`](crate::RendererConfig::world_origin)
+    /// for this frame. Default `None`.
+    pub world_origin: Option<crate::renderer::WorldOrigin>,
 }
 
 impl Default for SceneFrame {
@@ -304,6 +730,7 @@ impl Default for SceneFrame {
             foreground_items: Vec::new(),
             lightmap_placements: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
+            world_origin: None,
         }
     }
 }
@@ -353,6 +780,13 @@ impl SceneFrame {
     /// the natural choice when items are derived from scene writeback.
     pub fn with_generation(mut self, generation: u64) -> Self {
         self.generation = generation;
+        self
+    }
+
+    /// Draw this frame relative to `origin` instead of the renderer's
+    /// [`RendererConfig::world_origin`](crate::RendererConfig::world_origin).
+    pub fn with_world_origin(mut self, origin: crate::renderer::WorldOrigin) -> Self {
+        self.world_origin = Some(origin);
         self
     }
 
@@ -544,9 +978,10 @@ impl Default for ViewportFrame {
 
 /// Interaction and selection visualization state for one frame.
 ///
-/// Groups the gizmo, selection overlays, constraint guides, outline, and
-/// x-ray state : everything that communicates selection and interaction
-/// feedback to the user.
+/// Groups the selection overlays, constraint guides, outline, and x-ray
+/// state: everything that communicates selection and interaction feedback to
+/// the user. A transform gizmo draws through the overlay frame instead (see
+/// `viewport-lib-gizmo`).
 #[non_exhaustive]
 pub struct InteractionFrame {
     /// Selection version counter from `Selection::version()`. Default: 0.
@@ -554,14 +989,6 @@ pub struct InteractionFrame {
     /// The renderer uses this to skip batch rebuild and GPU upload when selection
     /// state has not changed since the previous frame.
     pub selection_generation: u64,
-    /// Gizmo model matrix. Some = selected object exists and gizmo should render.
-    pub gizmo_model: Option<glam::Mat4>,
-    /// Current gizmo interaction mode.
-    pub gizmo_mode: GizmoMode,
-    /// Current hovered gizmo axis.
-    pub gizmo_hovered: GizmoAxis,
-    /// Orientation for gizmo space (identity for world, object orientation for local).
-    pub gizmo_space_orientation: glam::Quat,
     /// Constraint guide lines to render this frame.
     pub constraint_overlays: Vec<ConstraintOverlay>,
     /// Draw a stencil-outline ring around selected objects. Default: false.
@@ -599,10 +1026,6 @@ impl Default for InteractionFrame {
     fn default() -> Self {
         Self {
             selection_generation: 0,
-            gizmo_model: None,
-            gizmo_mode: GizmoMode::Translate,
-            gizmo_hovered: GizmoAxis::None,
-            gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
             outline_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
@@ -672,6 +1095,11 @@ pub struct ForegroundPass {
     /// projection while keeping the scene view transform: a first-person
     /// item gets its own field of view and a near plane small enough for
     /// close-held geometry without changing world depth precision.
+    ///
+    /// The override is always a perspective projection built from
+    /// [`ForegroundProjection::fov_y`] and the scene camera's aspect, so over
+    /// an orthographic scene camera the foreground items render in
+    /// perspective.
     pub projection: Option<ForegroundProjection>,
 }
 
@@ -902,3 +1330,7 @@ impl EffectsFrame {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "render_camera_tests.rs"]
+mod render_camera_tests;

@@ -26,15 +26,16 @@ use std::time::Instant;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 
+use vpl::PostProcessSettings;
+use vpl::input::adapters::{AdapterCtx, winit as vpl_winit};
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController,
-    Projection, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
+    BindingPreset, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
     ViewportInput, ViewportRenderer, primitives,
 };
-use vpl::{ButtonState, MouseButton, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -62,6 +63,14 @@ enum Quad {
     BottomLeft = 2,
     BottomRight = 3,
 }
+
+/// The quadrants in resolver order.
+const QUADS: [Quad; 4] = [
+    Quad::TopLeft,
+    Quad::TopRight,
+    Quad::BottomLeft,
+    Quad::BottomRight,
+];
 
 fn quad_from_pos(x: f32, y: f32, w: f32, h: f32) -> Quad {
     let half_w = w / 2.0;
@@ -123,9 +132,30 @@ struct AppState {
     /// Which quadrant the mouse is currently over.
     hovered_quad: Quad,
     cursor_pos: glam::Vec2,
+    /// Whether the window has keyboard focus.
+    focused: bool,
 }
 
 impl AppState {
+    /// Who owns the input in `quad`: the quadrant under the cursor has what the
+    /// window has, and the others have nothing, since events go to that one alone.
+    fn quad_ownership(&self, quad: Quad) -> InputOwnership {
+        if quad == self.hovered_quad {
+            vpl_winit::ownership(self.focused, true, false, false, false)
+        } else {
+            InputOwnership::NONE
+        }
+    }
+
+    /// Update every quadrant's ownership between frames, when the hovered
+    /// quadrant or the window focus changes.
+    fn set_ownership(&mut self) {
+        for (i, quad) in QUADS.into_iter().enumerate() {
+            let ownership = self.quad_ownership(quad);
+            self.inputs[i].set_ownership(ownership);
+        }
+    }
+
     /// Build the scene items (a small grid of coloured cubes). Shared across all viewports.
     fn build_scene(&self) -> SceneFrame {
         let positions_colours: &[([f32; 3], [f32; 4])] = &[
@@ -140,7 +170,7 @@ impl AppState {
             .map(|&(pos, colour)| {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.mesh_id;
-                item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
                 item.settings.colour = Some(Colour::linear_rgb(colour[0], colour[1], colour[2]));
                 item
             })
@@ -248,40 +278,31 @@ impl ApplicationHandler for App {
         let vp3 = renderer.create_viewport(&device); // BottomRight: right (ortho)
 
         // Perspective camera : standard orbit view.
-        let cam_persp = Camera {
-            center: glam::Vec3::ZERO,
-            distance: 12.0,
-            orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
-            ..Camera::default()
-        };
+        let cam_persp = Camera::orbit(
+            glam::DVec3::ZERO,
+            12.0,
+            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+        );
 
         // Top view: looking straight down (-Z direction).
-        let cam_top = Camera {
-            projection: Projection::Orthographic,
-            center: glam::Vec3::ZERO,
-            distance: 10.0,
-            // from_rotation_x(-PI/2) puts the camera directly above looking down.
-            orientation: glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-            ..Camera::default()
-        };
+        // from_rotation_x(-PI/2) puts the camera directly above looking down.
+        let cam_top = Camera::orbit(
+            glam::DVec3::ZERO,
+            10.0,
+            glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+        )
+        .orthographic();
 
         // Front view: looking along -Y.
-        let cam_front = Camera {
-            projection: Projection::Orthographic,
-            center: glam::Vec3::ZERO,
-            distance: 10.0,
-            orientation: glam::Quat::IDENTITY,
-            ..Camera::default()
-        };
+        let cam_front = Camera::orbit(glam::DVec3::ZERO, 10.0, glam::Quat::IDENTITY).orthographic();
 
         // Right view: looking along -X (rotate 90 degrees around Z then front).
-        let cam_right = Camera {
-            projection: Projection::Orthographic,
-            center: glam::Vec3::ZERO,
-            distance: 10.0,
-            orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
-            ..Camera::default()
-        };
+        let cam_right = Camera::orbit(
+            glam::DVec3::ZERO,
+            10.0,
+            glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
+        )
+        .orthographic();
 
         let make_controller = || {
             let mut c = OrbitCameraController::new_stateless();
@@ -289,13 +310,15 @@ impl ApplicationHandler for App {
             c.set_viewport_size([config.width as f32 / 2.0, config.height as f32 / 2.0]);
             c
         };
+        // The window opens focused with the top-left quadrant hovered.
         let make_input = |hovered: bool, size: [f32; 2]| {
             let mut i = ViewportInput::from_preset(BindingPreset::Viewer);
-            i.begin_frame(ViewportContext {
-                hovered,
-                focused: hovered,
-                viewport_size: size,
-            });
+            let ownership = if hovered {
+                vpl_winit::ownership(true, true, false, false, false)
+            } else {
+                InputOwnership::NONE
+            };
+            i.begin_frame(ViewportContext::new(ownership, size));
             i
         };
 
@@ -326,6 +349,7 @@ impl ApplicationHandler for App {
             viewports: [vp0, vp1, vp2, vp3],
             hovered_quad: Quad::TopLeft,
             cursor_pos: glam::Vec2::ZERO,
+            focused: true,
         });
     }
 
@@ -351,92 +375,6 @@ impl ApplicationHandler for App {
                         .configure(&state.device, &state.surface_config);
                     state.window.request_redraw();
                 }
-            }
-
-            WindowEvent::ModifiersChanged(mods) => {
-                let m = vpl::input::adapters::modifiers_from_winit(mods.state());
-                // Send to active quadrant only.
-                state.inputs[state.hovered_quad as usize]
-                    .push_event(ViewportEvent::ModifiersChanged(m));
-            }
-
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => {
-                let vp_btn = match button {
-                    WinitButton::Left => MouseButton::Left,
-                    WinitButton::Middle => MouseButton::Middle,
-                    WinitButton::Right => MouseButton::Right,
-                    _ => return,
-                };
-                let vp_state = if btn_state == ElementState::Pressed {
-                    ButtonState::Pressed
-                } else {
-                    ButtonState::Released
-                };
-                state.inputs[state.hovered_quad as usize].push_event(ViewportEvent::MouseButton {
-                    button: vp_btn,
-                    state: vp_state,
-                });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let x = position.x as f32;
-                let y = position.y as f32;
-                let w = state.surface_config.width as f32;
-                let h = state.surface_config.height as f32;
-
-                let new_quad = quad_from_pos(x, y, w, h);
-                if new_quad != state.hovered_quad {
-                    // Leave old quadrant.
-                    state.inputs[state.hovered_quad as usize]
-                        .push_event(ViewportEvent::PointerLeft);
-                    state.hovered_quad = new_quad;
-                }
-
-                // Translate cursor into quadrant-local coordinates.
-                let (ox, oy, qw, qh) = quad_rect(
-                    new_quad,
-                    state.surface_config.width,
-                    state.surface_config.height,
-                );
-                let local_x = x - ox as f32;
-                let local_y = y - oy as f32;
-                state.cursor_pos = glam::Vec2::new(local_x, local_y);
-
-                state.inputs[new_quad as usize].push_event(ViewportEvent::PointerMoved {
-                    position: state.cursor_pos,
-                });
-                let _ = (qw, qh);
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorLeft { .. } => {
-                state.inputs[state.hovered_quad as usize].push_event(ViewportEvent::PointerLeft);
-            }
-
-            WindowEvent::Focused(false) => {
-                for input in &mut state.inputs {
-                    input.push_event(ViewportEvent::FocusLost);
-                }
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state.inputs[state.hovered_quad as usize]
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
             }
 
             WindowEvent::RedrawRequested => {
@@ -487,12 +425,7 @@ impl ApplicationHandler for App {
                 }
 
                 // Build per-viewport FrameData.
-                let quads = [
-                    Quad::TopLeft,
-                    Quad::TopRight,
-                    Quad::BottomLeft,
-                    Quad::BottomRight,
-                ];
+                let quads = QUADS;
                 let frames: [FrameData; 4] =
                     std::array::from_fn(|i| state.build_frame(quads[i], state.viewports[i], w, h));
 
@@ -567,21 +500,62 @@ impl ApplicationHandler for App {
                 surf_frame.present();
 
                 // Begin next frame's event accumulation for each quadrant resolver.
-                let hovered_quad = state.hovered_quad;
                 for i in 0..4 {
                     let quad = quads[i];
                     let (_, _, qw, qh) = quad_rect(quad, w, h);
-                    state.inputs[i].begin_frame(ViewportContext {
-                        hovered: quad == hovered_quad,
-                        focused: quad == hovered_quad,
-                        viewport_size: [qw as f32, qh as f32],
-                    });
+                    let ownership = state.quad_ownership(quad);
+                    state.inputs[i]
+                        .begin_frame(ViewportContext::new(ownership, [qw as f32, qh as f32]));
                     // Pan reads the viewport height off the controller.
                     state.controllers[i].set_viewport_size([qw as f32, qh as f32]);
                 }
             }
 
-            _ => {}
+            // Everything else goes through the adapter in window pixels and is
+            // routed to the quadrant under the cursor, in that quadrant's local
+            // coordinates. Focus loss reaches every quadrant.
+            other => {
+                if let WindowEvent::Focused(focused) = other {
+                    state.focused = focused;
+                    state.set_ownership();
+                }
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &AdapterCtx::default(), &mut events);
+                if events.is_empty() {
+                    return;
+                }
+                let (w, h) = (state.surface_config.width, state.surface_config.height);
+                for ev in events {
+                    match ev {
+                        ViewportEvent::FocusLost => {
+                            for input in &mut state.inputs {
+                                input.push_event(ViewportEvent::FocusLost);
+                            }
+                            continue;
+                        }
+                        ViewportEvent::PointerMoved { position } => {
+                            let new_quad =
+                                quad_from_pos(position.x, position.y, w as f32, h as f32);
+                            if new_quad != state.hovered_quad {
+                                // Leave old quadrant, and hand the pointer to the new
+                                // one before this move reaches it.
+                                state.inputs[state.hovered_quad as usize]
+                                    .push_event(ViewportEvent::PointerLeft);
+                                state.hovered_quad = new_quad;
+                                state.set_ownership();
+                            }
+                        }
+                        _ => {}
+                    }
+                    let (ox, oy, _, _) = quad_rect(state.hovered_quad, w, h);
+                    let local = ev.offset_by(glam::Vec2::new(ox as f32, oy as f32));
+                    if let ViewportEvent::PointerMoved { position } = local {
+                        state.cursor_pos = position;
+                    }
+                    state.inputs[state.hovered_quad as usize].push_event(local);
+                }
+                state.window.request_redraw();
+            }
         }
     }
 }

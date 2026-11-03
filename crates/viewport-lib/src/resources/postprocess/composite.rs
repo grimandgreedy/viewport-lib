@@ -2,7 +2,8 @@
 //!
 //! `tone_map.wgsl` is a single fullscreen composite: it reads the HDR scene
 //! colour plus a fixed set of effect-produced inputs (bloom, ambient
-//! occlusion, contact shadows), the scene depth, the foreground
+//! occlusion, contact shadows), the scene pass's indirect fraction, the scene
+//! depth, the foreground
 //! coverage mask, and the exposure state buffer. This module names that
 //! binding set once, so the bind group layout, the initial and per-frame bind
 //! groups, and the per-frame enable flags are all driven from the same table
@@ -24,10 +25,17 @@ pub(crate) mod slot {
     pub(crate) const DEPTH_SAMPLER: u32 = 7;
     pub(crate) const FOREGROUND_DEPTH: u32 = 8;
     pub(crate) const EXPOSURE: u32 = 9;
-    /// Colour-grading strip LUT, sampled after tone mapping. A neutral
-    /// placeholder is bound when grading is off (the shader gates on the
-    /// uniform's `grade_enabled`).
+    /// Colour-grading strip LUT, sampled before or after tone mapping by the
+    /// uniform's `grade_mode`. A neutral placeholder is bound when grading is
+    /// off.
     pub(crate) const GRADE_LUT: u32 = 10;
+    /// View-transform strip LUT, sampled in place of the operator when the
+    /// uniform's `mode` selects it. A neutral placeholder otherwise.
+    pub(crate) const VIEW_LUT: u32 = 11;
+    /// The scene pass's indirect fraction: the indirect share, which scales
+    /// the AO term, and the direct share, which scales contact shadows. The
+    /// white placeholder when neither is on.
+    pub(crate) const INDIRECT_FRACTION: u32 = 12;
 }
 
 /// GPU-side shape of one composite binding.
@@ -60,6 +68,8 @@ const BINDINGS: &[(u32, BindingKind)] = &[
     (slot::FOREGROUND_DEPTH, BindingKind::DepthTexture),
     (slot::EXPOSURE, BindingKind::StorageReadOnly),
     (slot::GRADE_LUT, BindingKind::FilterableTexture),
+    (slot::VIEW_LUT, BindingKind::FilterableTexture),
+    (slot::INDIRECT_FRACTION, BindingKind::FilterableTexture),
 ];
 
 /// Build the tone-map bind group layout from the binding table.
@@ -127,4 +137,40 @@ pub(crate) struct CompositeInputs {
     /// Colour-grading LUT to bind at `slot::GRADE_LUT`, already validated
     /// against the texture store (`None` binds the neutral placeholder).
     pub(crate) grade_lut: Option<crate::resources::TextureId>,
+    /// View-transform LUT to bind at `slot::VIEW_LUT`, validated the same
+    /// way.
+    pub(crate) view_lut: Option<crate::resources::TextureId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use viewport_lib_types::effects::tone_curve::VIEW_LUT_SHAPER;
+
+    /// The composite's shaper constants are the types crate's.
+    #[test]
+    fn shader_shaper_matches_view_lut_shaper() {
+        let wgsl = include_str!("../../shaders/tone_map.wgsl");
+        let constant = |name: &str| -> f32 {
+            let prefix = format!("const {name}: f32 = ");
+            let line = wgsl
+                .lines()
+                .find_map(|l| l.trim().strip_prefix(prefix.as_str()))
+                .unwrap_or_else(|| panic!("{name} not in tone_map.wgsl"));
+            line.trim_end_matches(';').parse().unwrap()
+        };
+        assert_eq!(constant("GRADE_LOG2_MIN"), VIEW_LUT_SHAPER.log2_min);
+        assert_eq!(constant("GRADE_LOG2_RANGE"), VIEW_LUT_SHAPER.log2_range);
+    }
+
+    /// Every binding the composite declares is in the layout table.
+    #[test]
+    fn shader_bindings_match_the_table() {
+        let wgsl = include_str!("../../shaders/tone_map.wgsl");
+        let declared = wgsl
+            .lines()
+            .filter(|l| l.trim_start().starts_with("@group(0) @binding("))
+            .count();
+        assert_eq!(declared, super::BINDINGS.len());
+        assert!(wgsl.contains(&format!("@binding({}) var view_lut", super::slot::VIEW_LUT)));
+    }
 }

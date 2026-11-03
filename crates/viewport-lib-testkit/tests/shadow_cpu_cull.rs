@@ -74,7 +74,7 @@ fn render(indirect: bool) -> Option<Vec<u8>> {
             r * ang.sin(),
             12.0 + (i % 3) as f32 * 6.0,
         ))
-        .to_cols_array_2d();
+        .into();
         ball.material = ball_material;
         items.push(ball);
     }

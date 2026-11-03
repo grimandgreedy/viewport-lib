@@ -23,8 +23,9 @@ pub enum BindingPreset {
     /// - Ctrl + Scroll -> Orbit
     /// - Shift + Scroll -> Pan
     ///
-    /// Plus the viewport keyboard shortcuts (manipulation, axis constraints, fly
-    /// movement, focus, reset view, wireframe, gizmo mode and space).
+    /// Plus the viewport keyboard shortcuts: focus, reset view, fly mode and its
+    /// movement, confirm and cancel. Add a tool's own bindings with
+    /// `ViewportInput::with_bindings`.
     ///
     /// **Left drag and right drag are deliberately unbound** and belong to the
     /// application: selection, gizmo dragging, tools, context menus.
@@ -140,13 +141,13 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
 /// Returns the full binding set for [`BindingPreset::Default`]: the camera scheme
 /// from [`viewport_camera_bindings`] plus the viewport's keyboard shortcuts.
 ///
-/// Covers normal-mode actions, fly-mode movement, and manipulation constraints.
-/// Undo and redo are deliberately **not** bound: they belong to the application's
-/// document, not to the viewport, so binding them here would make every consumer
-/// notice and unbind them.
+/// Covers normal-mode actions, fly-mode movement, and confirm and cancel.
+/// Application and tool shortcuts (undo, delete, a gizmo's G, R and S) are not
+/// bound here: they belong to the application or the tool crate, which binds
+/// them to [`Action::Custom`] values of its own.
 ///
 /// Consumers are responsible for applying mode awareness : key bindings for
-/// fly mode and manipulation mode are always present in the resolved
+/// fly mode and confirm / cancel are always present in the resolved
 /// [`ActionFrame`](crate::input::action_frame::ActionFrame), so callers should
 /// gate on the current [`InputMode`](crate::input::mode::InputMode).
 pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
@@ -155,44 +156,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
 
     let mut bindings = viewport_camera_bindings();
 
-    // -- Normal mode: object manipulation shortcuts --
-    bindings.push(ViewportBinding::new(
-        Action::BeginMove,
-        ViewportGesture::KeyPress {
-            key: KeyCode::G,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::BeginRotate,
-        ViewportGesture::KeyPress {
-            key: KeyCode::R,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::BeginScale,
-        ViewportGesture::KeyPress {
-            key: KeyCode::S,
-            modifiers: none,
-        },
-    ));
-
-    // -- Normal mode: object shortcuts --
-    bindings.push(ViewportBinding::new(
-        Action::OpenAddMenu,
-        ViewportGesture::KeyPress {
-            key: KeyCode::A,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::DeleteSelected,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: none,
-        },
-    ));
     bindings.push(ViewportBinding::new(
         Action::FocusObject,
         ViewportGesture::KeyPress {
@@ -204,27 +167,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         Action::ResetView,
         ViewportGesture::KeyPress {
             key: KeyCode::R,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ToggleWireframe,
-        ViewportGesture::KeyPress {
-            key: KeyCode::W,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::CycleGizmoMode,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Tab,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ToggleGizmoSpace,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Backtick,
             modifiers: none,
         },
     ));
@@ -288,67 +230,7 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
         },
     ));
 
-    // -- Manipulation mode: axis constraints --
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainX,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainY,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainZ,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeX,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeY,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeZ,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-
-    // -- Manipulation mode: numeric input --
-    bindings.push(ViewportBinding::new(
-        Action::NumericBackspace,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Backspace,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::NumericNextAxis,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Tab,
-            modifiers: none,
-        },
-    ));
-
-    // -- Confirm / Cancel (fly mode + manipulation mode; callers must gate on mode) --
+    // -- Confirm / Cancel (fly mode and modal tools; callers must gate on mode) --
     bindings.push(ViewportBinding::new(
         Action::Confirm,
         ViewportGesture::KeyPress {
@@ -363,23 +245,6 @@ pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
             modifiers: none,
         },
     ));
-
-    // -- Pivot mode cycling (normal + manipulation mode) --
-    bindings.push(ViewportBinding::new(
-        Action::CyclePivotModeForward,
-        ViewportGesture::KeyPress {
-            key: KeyCode::LeftBracket,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::CyclePivotModeBackward,
-        ViewportGesture::KeyPress {
-            key: KeyCode::RightBracket,
-            modifiers: none,
-        },
-    ));
-
     bindings
 }
 

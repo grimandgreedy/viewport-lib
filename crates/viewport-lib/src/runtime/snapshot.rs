@@ -6,7 +6,9 @@
 //! node, then lerp between them using [`FixedTimestep::alpha`](super::timestep::FixedTimestep::alpha).
 //!
 //! The runtime populates this table automatically when applying
-//! [`NodeTransformOp`](super::output::NodeTransformOp)s during `Writeback`.
+//! [`NodeTransformOp`](super::output::NodeTransformOp)s during `Writeback`,
+//! recording each written node's world transform after the scene's transforms
+//! are propagated, so a child's entry includes its parents.
 //! Read it via [`ViewportRuntime::snapshots`](super::ViewportRuntime::snapshots).
 
 use std::collections::HashMap;

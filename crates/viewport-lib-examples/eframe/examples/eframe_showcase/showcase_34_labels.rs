@@ -207,7 +207,7 @@ impl App {
         let mut out = Vec::new();
         let cx = vp_w * 0.5; // viewport centre X
 
-        // -- Title (centered at top) --
+        // -- Title (centred at top) --
         if self.lbl_state.show_hud_labels {
             out.push(
                 LabelItem::new("Gearbox Assembly: Exploded View")
@@ -223,7 +223,7 @@ impl App {
                     .with_z_order(200),
             );
 
-            // Legend (centered at bottom).
+            // Legend (centred at bottom).
             out.push(
                 LabelItem::new("Grey=Casing  Gold=Gears  Blue=Bearings  Yellow=Shafts")
                     .with_screen_anchor([cx, vp_h - 24.0])
@@ -462,12 +462,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_labels_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 0.0),
-        distance: 20.0,
-        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 0.0),
+        20.0,
+        glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -548,8 +547,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

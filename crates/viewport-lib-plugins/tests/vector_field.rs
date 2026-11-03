@@ -108,7 +108,15 @@ fn cpu_pick_vector_field_resolves_sample() {
     let shape = arrow_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let mut item = three_samples_facing(shape, frame.camera.render_camera.eye_position);
+    let mut item = three_samples_facing(
+        shape,
+        frame
+            .camera
+            .render_camera
+            .eye_position()
+            .as_vec3()
+            .to_array(),
+    );
     item.settings.pick_id = PickId(801);
     frame.scene.items_mut::<VectorFieldItem>().push(item);
 
@@ -144,7 +152,15 @@ fn an_object_query_drops_the_sample_sub_object() {
     let shape = arrow_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let mut item = three_samples_facing(shape, frame.camera.render_camera.eye_position);
+    let mut item = three_samples_facing(
+        shape,
+        frame
+            .camera
+            .render_camera
+            .eye_position()
+            .as_vec3()
+            .to_array(),
+    );
     item.settings.pick_id = PickId(802);
     frame.scene.items_mut::<VectorFieldItem>().push(item);
 
@@ -458,7 +474,9 @@ fn a_selected_field_outlines_every_sample() {
 
     let mut outlined_pixels = |count: usize| {
         let mut frame = sub_object_pick_frame();
-        frame.camera.render_camera.aspect = 4.0;
+        frame.camera.render_camera = viewport_lib::RenderCamera::from_camera(
+            &viewport_lib::Camera::default().with_aspect(4.0),
+        );
         frame.camera.viewport_size = [512.0, 128.0];
         frame.camera.pixels_per_point = 1.0;
         frame.interaction.outline_selected = true;

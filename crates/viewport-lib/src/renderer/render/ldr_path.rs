@@ -22,37 +22,48 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) -> crate::gpu::CommandBuffer {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "ldr_scene_pass", vp = vp_idx)
+                .entered();
         // The LDR pipeline has no post chain: the OIT pass (needed for
         // transparent volume meshes) only exists on the HDR path, and
         // item-type plugins draw here only when they opt in via `draws_ldr`.
-        // Report each dropped feature once instead of silently omitting it.
-        use std::sync::atomic::Ordering::Relaxed;
-        let ldr_skipped_plugin = self.item_type_plugins.iter().any(|(name, plugin)| {
-            !plugin.draws_ldr()
+        // Report each dropped feature instead of silently omitting it.
+        for (name, plugin) in self.item_type_plugins.iter() {
+            let skipped = !plugin.draws_ldr()
                 && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                    .is_some_and(|items| !items.is_empty())
-        });
-        if ldr_skipped_plugin && !self.ldr_plugin_items_warned.swap(true, Relaxed) {
-            tracing::warn!(
-                "some item-type plugin items are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): their plugins do not opt into it via \
-                 ItemTypePlugin::draws_ldr. Opt in (with an LDR-format pipeline) or set \
-                 effects.display.mode = PipelineMode::Hdr to render them."
-            );
+                    .is_some_and(|items| !items.is_empty());
+            if skipped {
+                self.resources.notices.report(
+                    crate::notice::NoticeKey::new(
+                        crate::NoticeCategory::Item,
+                        "items_skipped_on_ldr",
+                        [crate::notice::name_id(name), 0],
+                    ),
+                    crate::Severity::Warning,
+                    || crate::NoticeDetail::ItemsSkippedOnLdr {
+                        plugin: name.to_string(),
+                    },
+                );
+            }
         }
         if frame
             .scene
             .volume_meshes
             .iter()
             .any(|m| !m.settings.hidden && m.transparency.is_some())
-            && !self.ldr_volume_transparency_warned.swap(true, Relaxed)
         {
-            tracing::warn!(
-                "transparent volume meshes are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): they require the OIT pass, which only exists in \
-                 the HDR pipeline. Set effects.display.mode = PipelineMode::Hdr."
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Item,
+                    "volume_transparency_on_ldr",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::VolumeTransparencyOnLdr,
             );
         }
+
+        self.report_auto_exposure_on_ldr(frame);
 
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
@@ -133,7 +144,7 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                         store: if store_scene_depth {
                             crate::gpu::StoreOp::Store
                         } else {
@@ -252,10 +263,9 @@ impl ViewportRenderer {
                     .camera
                     .render_camera
                     .foreground_camera(frame.effects.foreground.as_ref());
-                let eye = glam::Vec3::from(fg_camera.eye_position);
+                let eye = fg_camera.eye_position();
                 let dist_from_eye = |item: &SceneRenderItem| -> f32 {
-                    let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
-                    (pos - eye).length()
+                    (item.model.translation - glam::DVec3::from(eye)).length() as f32
                 };
                 let items = &frame.scene.foreground_items;
                 let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
@@ -279,14 +289,21 @@ impl ViewportRenderer {
                     }
                 }
                 opaque.sort_by(|a, b| {
-                    dist_from_eye(a.1)
-                        .partial_cmp(&dist_from_eye(b.1))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                    a.1.settings
+                        .draw_priority
+                        .cmp(&b.1.settings.draw_priority)
+                        .then_with(|| {
+                            dist_from_eye(a.1)
+                                .partial_cmp(&dist_from_eye(b.1))
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
                 });
-                transparent.sort_by(|a, b| {
-                    dist_from_eye(b.1)
-                        .partial_cmp(&dist_from_eye(a.1))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                transparent.sort_by_key(|(_, item)| {
+                    crate::renderer::types::draw_order::blend_key(
+                        item.settings.draw_priority,
+                        item.settings.blend_order,
+                        dist_from_eye(item),
+                    )
                 });
 
                 let mut render_pass =
@@ -307,7 +324,9 @@ impl ViewportRenderer {
                             crate::gpu::RenderPassDepthStencilAttachment {
                                 view: fg_depth_view,
                                 depth_ops: Some(crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    load: crate::gpu::LoadOp::Clear(
+                                        crate::plugin_api::depth::DEPTH_CLEAR,
+                                    ),
                                     store: crate::gpu::StoreOp::Discard,
                                 }),
                                 stencil_ops: Some(crate::gpu::Operations {
@@ -356,7 +375,12 @@ impl ViewportRenderer {
         // `dyn_res` while the pyramid is written into `cull`, disjoint fields of
         // the slot.
         if store_scene_depth {
-            let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
+            let view_proj = self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .to_cols_array_2d();
+            let origin = self.origin.origin();
             let hiz = self.resources.hiz_pipelines(device);
             let slot = &mut self.viewport_slots[vp_idx];
             let (depth_only_view, dw, dh) = if use_dyn_res {
@@ -375,6 +399,7 @@ impl ViewportRenderer {
                 dw,
                 dh,
                 view_proj,
+                origin,
             );
         }
 

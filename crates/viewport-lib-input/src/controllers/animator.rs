@@ -75,12 +75,12 @@ impl Default for CameraDamping {
 /// An in-progress fly-to animation.
 #[derive(Clone, Debug)]
 struct CameraFlight {
-    start_center: glam::Vec3,
+    start_centre: glam::DVec3,
     start_distance: f32,
     start_orientation: glam::Quat,
     #[allow(dead_code)]
     start_projection: Projection,
-    target_center: glam::Vec3,
+    target_centre: glam::DVec3,
     target_distance: f32,
     target_orientation: glam::Quat,
     target_projection: Option<Projection>,
@@ -90,6 +90,10 @@ struct CameraFlight {
 }
 
 /// Smooth camera controller with exponential damping and animated transitions.
+///
+/// It orbits, pans and zooms about the camera's focus point
+/// ([`Camera::target`]) at its focus distance, and writes the result back with
+/// [`Camera::set_orbit`].
 ///
 /// Feed raw input deltas via [`apply_orbit`](Self::apply_orbit),
 /// [`apply_pan`](Self::apply_pan), [`apply_zoom`](Self::apply_zoom). Then call
@@ -170,7 +174,7 @@ impl CameraAnimator {
         self.pan_velocity += glam::Vec2::new(right_delta, up_delta);
     }
 
-    /// Feed a raw zoom delta (distance change).
+    /// Feed a raw zoom delta (change in orbit distance).
     pub fn apply_zoom(&mut self, delta: f32) {
         if self.flight.is_some() {
             self.flight = None;
@@ -182,14 +186,14 @@ impl CameraAnimator {
     pub fn fly_to(
         &mut self,
         camera: &Camera,
-        target_center: glam::Vec3,
+        target_centre: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         duration: f32,
     ) {
         self.fly_to_full(
             camera,
-            target_center,
+            target_centre,
             target_distance,
             target_orientation,
             None,
@@ -202,7 +206,7 @@ impl CameraAnimator {
     pub fn fly_to_with_easing(
         &mut self,
         camera: &Camera,
-        target_center: glam::Vec3,
+        target_centre: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         duration: f32,
@@ -210,7 +214,7 @@ impl CameraAnimator {
     ) {
         self.fly_to_full(
             camera,
-            target_center,
+            target_centre,
             target_distance,
             target_orientation,
             None,
@@ -224,7 +228,7 @@ impl CameraAnimator {
     pub fn fly_to_full(
         &mut self,
         camera: &Camera,
-        target_center: glam::Vec3,
+        target_centre: impl Into<glam::DVec3>,
         target_distance: f32,
         target_orientation: glam::Quat,
         target_projection: Option<Projection>,
@@ -237,11 +241,11 @@ impl CameraAnimator {
         self.zoom_velocity = 0.0;
 
         self.flight = Some(CameraFlight {
-            start_center: camera.center(),
-            start_distance: camera.distance(),
+            start_centre: camera.target(),
+            start_distance: camera.focus_distance(),
             start_orientation: camera.orientation(),
             start_projection: camera.projection,
-            target_center,
+            target_centre: target_centre.into(),
             target_distance,
             target_orientation,
             target_projection,
@@ -268,9 +272,13 @@ impl CameraAnimator {
     pub fn destination(&self, camera: &Camera) -> Camera {
         let mut out = camera.clone();
         if let Some(flight) = &self.flight {
-            out.set_center(flight.target_center);
-            out.set_distance(flight.target_distance);
-            out.set_orientation(flight.target_orientation);
+            out.set_orbit(
+                flight.target_centre,
+                flight
+                    .target_distance
+                    .clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE),
+                flight.target_orientation.normalize(),
+            );
             if let Some(proj) = flight.target_projection {
                 out.projection = proj;
             }
@@ -299,11 +307,16 @@ impl CameraAnimator {
             let raw_t = (flight.elapsed / flight.duration).min(1.0);
             let t = flight.easing.eval(raw_t);
 
-            camera.set_center(flight.start_center.lerp(flight.target_center, t));
-            camera.set_distance(
-                flight.start_distance + (flight.target_distance - flight.start_distance) * t,
+            let distance =
+                flight.start_distance + (flight.target_distance - flight.start_distance) * t;
+            camera.set_orbit(
+                flight.start_centre.lerp(flight.target_centre, f64::from(t)),
+                distance.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE),
+                flight
+                    .start_orientation
+                    .slerp(flight.target_orientation, t)
+                    .normalize(),
             );
-            camera.set_orientation(flight.start_orientation.slerp(flight.target_orientation, t));
 
             // Switch projection at the end of the animation.
             if raw_t >= 1.0 {
@@ -317,12 +330,13 @@ impl CameraAnimator {
 
         let eps = self.damping.epsilon;
         let mut changed = false;
+        let mut target = camera.orbit_target();
 
         // Apply orbit velocity.
         if self.orbit_velocity.length() > eps {
             let (step, decay) = coast_step(self.damping.orbit, dt);
             let turn = self.orbit_velocity * step;
-            orbit_in_mode(camera, self.navigation_mode, turn.x, turn.y);
+            orbit_in_mode(&mut target, self.navigation_mode, turn.x, turn.y);
             self.orbit_velocity *= decay;
             if self.orbit_velocity.length() <= eps {
                 self.orbit_velocity = glam::Vec2::ZERO;
@@ -335,7 +349,7 @@ impl CameraAnimator {
         // pan_world's up_delta (animator subtracts up, pan_world adds up), so negate y.
         if self.pan_velocity.length() > eps {
             let (step, decay) = coast_step(self.damping.pan, dt);
-            camera.pan_world(self.pan_velocity.x * step, -self.pan_velocity.y * step);
+            target.pan_world(self.pan_velocity.x * step, -self.pan_velocity.y * step);
             self.pan_velocity *= decay;
             if self.pan_velocity.length() <= eps {
                 self.pan_velocity = glam::Vec2::ZERO;
@@ -346,7 +360,7 @@ impl CameraAnimator {
         // Apply zoom velocity.
         if self.zoom_velocity.abs() > eps {
             let (step, decay) = coast_step(self.damping.zoom, dt);
-            camera.zoom_by_delta(self.zoom_velocity * step);
+            target.zoom_by_delta(self.zoom_velocity * step);
             self.zoom_velocity *= decay;
             if self.zoom_velocity.abs() <= eps {
                 self.zoom_velocity = 0.0;
@@ -354,6 +368,9 @@ impl CameraAnimator {
             changed = true;
         }
 
+        if changed {
+            camera.set_orbit_target(target);
+        }
         changed
     }
 }
@@ -406,7 +423,7 @@ mod tests {
         };
         let mut anim = CameraAnimator::new(damping);
         let mut cam = default_camera();
-        let orig_orientation = cam.orientation;
+        let orig_orientation = cam.orientation();
         anim.apply_orbit(0.1, 0.0);
         anim.update(1.0 / 60.0, &mut cam);
         // With zero damping, velocity decays instantly (0^anything=0).
@@ -416,8 +433,8 @@ mod tests {
         );
         // Camera should have moved.
         assert!(
-            (cam.orientation.x - orig_orientation.x).abs() > 1e-6
-                || (cam.orientation.y - orig_orientation.y).abs() > 1e-6,
+            (cam.orientation().x - orig_orientation.x).abs() > 1e-6
+                || (cam.orientation().y - orig_orientation.y).abs() > 1e-6,
             "camera orientation should have changed"
         );
     }
@@ -426,24 +443,24 @@ mod tests {
     fn test_fly_to_reaches_target() {
         let mut anim = CameraAnimator::with_default_damping();
         let mut cam = default_camera();
-        let target_center = glam::Vec3::new(10.0, 20.0, 30.0);
+        let target_centre = glam::Vec3::new(10.0, 20.0, 30.0);
         let target_dist = 15.0;
         let target_orient = glam::Quat::from_rotation_y(std::f32::consts::PI);
-        anim.fly_to(&cam, target_center, target_dist, target_orient, 0.5);
+        anim.fly_to(&cam, target_centre, target_dist, target_orient, 0.5);
 
         // Advance well past the duration.
         for _ in 0..120 {
             anim.update(1.0 / 60.0, &mut cam);
         }
         assert!(
-            (cam.center - target_center).length() < 1e-4,
-            "center should match target: {:?}",
-            cam.center
+            (cam.target() - target_centre.as_dvec3()).length() < 1e-4,
+            "centre should match target: {:?}",
+            cam.target()
         );
         assert!(
-            (cam.distance - target_dist).abs() < 1e-4,
+            (cam.focus_distance() - target_dist).abs() < 1e-4,
             "distance should match target: {}",
-            cam.distance
+            cam.focus_distance()
         );
     }
 
@@ -452,9 +469,7 @@ mod tests {
         let anim = CameraAnimator::with_default_damping();
         let cam = default_camera();
         let dest = anim.destination(&cam);
-        assert_eq!(dest.center, cam.center);
-        assert_eq!(dest.distance, cam.distance);
-        assert_eq!(dest.orientation, cam.orientation);
+        assert_eq!(dest, cam);
     }
 
     #[test]
@@ -462,12 +477,13 @@ mod tests {
         let mut anim = CameraAnimator::with_default_damping();
         let mut cam = default_camera();
         let target_orient = glam::Quat::from_rotation_z(1.2) * glam::Quat::from_rotation_x(0.4);
+        let ortho = cam.projection.to_orthographic(12.0);
         anim.fly_to_full(
             &cam,
             glam::Vec3::new(3.0, -2.0, 5.0),
             12.0,
             target_orient,
-            Some(Projection::Orthographic),
+            Some(ortho),
             0.5,
             Easing::EaseInOutCubic,
         );
@@ -477,7 +493,7 @@ mod tests {
         assert!(anim.is_animating(), "flight should still be under way");
         let dest = anim.destination(&cam);
         assert!(
-            cam.orientation.angle_between(target_orient) > 0.1,
+            cam.orientation().angle_between(target_orient) > 0.1,
             "the camera should be part-way, not at the target"
         );
 
@@ -485,11 +501,11 @@ mod tests {
             anim.update(1.0 / 60.0, &mut cam);
         }
         assert!(!anim.is_animating());
-        assert!((dest.center - cam.center).length() < 1e-4);
-        assert!((dest.distance - cam.distance).abs() < 1e-4);
-        assert!(dest.orientation.angle_between(cam.orientation) < 1e-3);
+        assert!((dest.target() - cam.target()).length() < 1e-4);
+        assert!((dest.focus_distance() - cam.focus_distance()).abs() < 1e-4);
+        assert!(dest.orientation().angle_between(cam.orientation()) < 1e-3);
         assert_eq!(dest.projection, cam.projection);
-        assert_eq!(dest.projection, Projection::Orthographic);
+        assert_eq!(dest.projection, ortho);
     }
 
     #[test]
@@ -509,7 +525,7 @@ mod tests {
         anim.update(1.0 / 60.0, &mut cam);
         // Camera should NOT have reached the target.
         assert!(
-            (cam.center - target).length() > 1.0,
+            (cam.target() - target.as_dvec3()).length() > 1.0,
             "flight should have been cancelled"
         );
     }
@@ -547,12 +563,12 @@ mod tests {
     fn pan_coast(hz: f32) -> f32 {
         let mut anim = CameraAnimator::with_default_damping();
         let mut cam = default_camera();
-        let start = cam.center;
+        let start = cam.target();
         anim.apply_pan(0.1, 0.0);
         for _ in 0..(hz as usize * 10) {
             anim.update(1.0 / hz, &mut cam);
         }
-        (cam.center - start).length()
+        (cam.target() - start).length() as f32
     }
 
     #[test]
@@ -574,31 +590,33 @@ mod tests {
 
     #[test]
     fn fly_coast_turns_about_the_eye() {
-        let mut cam = default_camera();
-        cam.orientation = crate::LookAngles::new(0.3, -0.4).orientation();
-        let eye = cam.eye_position();
+        let look = crate::LookAngles::new(0.3, -0.4).orientation();
+        let mut cam = Camera::orbit(glam::DVec3::ZERO, 5.0, look);
+        let eye = cam.eye();
         let mut anim =
             CameraAnimator::with_default_damping().with_navigation_mode(NavigationMode::Fly);
         anim.apply_orbit(0.2, 0.15);
         for _ in 0..600 {
             anim.update(1.0 / 60.0, &mut cam);
         }
-        assert!((cam.eye_position() - eye).length() < 1e-3, "the eye moved");
+        assert!((cam.eye() - eye).length() < 1e-3, "the eye moved");
         // The same flick coasted as an arcball swings the eye round the centre.
-        let mut arcball_cam = default_camera();
-        arcball_cam.orientation = crate::LookAngles::new(0.3, -0.4).orientation();
+        let mut arcball_cam = Camera::orbit(glam::DVec3::ZERO, 5.0, look);
         let mut arcball = CameraAnimator::with_default_damping();
         arcball.apply_orbit(0.2, 0.15);
         for _ in 0..600 {
             arcball.update(1.0 / 60.0, &mut arcball_cam);
         }
-        assert!((arcball_cam.eye_position() - eye).length() > 0.1);
+        assert!((arcball_cam.eye() - eye).length() > 0.1);
     }
 
     #[test]
     fn turntable_coast_stops_at_the_pole_limit() {
-        let mut cam = default_camera();
-        cam.orientation = crate::LookAngles::new(0.0, -1.3).orientation();
+        let mut cam = Camera::orbit(
+            glam::DVec3::ZERO,
+            5.0,
+            crate::LookAngles::new(0.0, -1.3).orientation(),
+        );
         let mut anim =
             CameraAnimator::with_default_damping().with_navigation_mode(NavigationMode::Turntable);
         // A flick hard over the top.
@@ -606,7 +624,7 @@ mod tests {
         for _ in 0..600 {
             anim.update(1.0 / 60.0, &mut cam);
         }
-        let eye_elevation = (cam.orientation * glam::Vec3::Z).z.asin();
+        let eye_elevation = (cam.orientation() * glam::Vec3::Z).z.asin();
         assert!(
             eye_elevation < 89.0_f32.to_radians() + 1e-3,
             "elevation={eye_elevation}"

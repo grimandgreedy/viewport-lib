@@ -154,7 +154,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     } else {
         // Screen-space sizing: project the world axes to NDC so the screen
         // extent uses the chosen orientation rather than the camera basis.
-        let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
         let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
         let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
         let half_px    = inst.size * 0.5;
@@ -167,13 +167,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
             // so the size matches the prior behaviour exactly.
             let ndc_off = rotated * half_px * inv_vp;
             out.clip_pos = vec4<f32>(
-                center.x + ndc_off.x * center.w,
-                center.y + ndc_off.y * center.w,
-                center.z,
-                center.w,
+                centre.x + ndc_off.x * centre.w,
+                centre.y + ndc_off.y * centre.w,
+                centre.z,
+                centre.w,
             );
         } else {
-            out.clip_pos = center + offset_clip * center.w;
+            out.clip_pos = centre + offset_clip * centre.w;
         }
     }
 
@@ -189,8 +189,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // Section-view clip planes.
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
@@ -234,7 +233,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let ndc = vec4<f32>(
             screen_uv.x * 2.0 - 1.0,
             1.0 - screen_uv.y * 2.0,
-            scene_ndc_z,
+            viewport_depth_finite(scene_ndc_z),
             1.0,
         );
         let world_h     = camera.inv_view_proj * ndc;
@@ -248,4 +247,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Discard fully transparent fragments.
     if colour.a <= 0.001 { discard; }
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

@@ -350,7 +350,9 @@ impl App {
         // 30 degrees per second around the world up axis.
         let rate_rad_per_s: f32 = 30.0_f32.to_radians();
         let yaw = rate_rad_per_s * dt.as_secs_f32();
-        self.camera.orbit(yaw, 0.0);
+        let mut orbit = self.camera.orbit_target();
+        orbit.orbit(yaw, 0.0);
+        self.camera.set_orbit_target(orbit);
         // Rolling window of recent frame times, capped at ~2 seconds at
         // 60 fps so the stats reflect what the user can actually see.
         self.async_uploads_state.frame_times.push_back(dt);
@@ -1110,30 +1112,27 @@ impl App {
 
         if let Some(id) = state.base_mesh_id {
             let mut item = SceneRenderItem::new(id, state.flat_material);
-            item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            item.model = glam::Mat4::IDENTITY.into();
             item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
             items.push(item);
         }
 
         if let Some(id) = state.loaded_mesh_id {
             let mut item = SceneRenderItem::new(id, state.flat_material);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
             item.settings.colour = Some(Colour::linear_rgb(0.4, 0.8, 0.4));
             items.push(item);
         }
 
         if let (Some(mesh_id), Some(_)) = (state.base_mesh_id, state.loaded_texture_id) {
             let mut item = SceneRenderItem::new(mesh_id, state.textured_material);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
             items.push(item);
         }
 
         if let Some(id) = state.skin_target_mesh_id {
             let mut item = SceneRenderItem::new(id, state.flat_material);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).into();
             let colour = if state.skin_installed {
                 [0.9, 0.4, 0.9]
             } else {
@@ -2557,12 +2556,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_async_uploads_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::ZERO,
-        distance: 9.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::ZERO,
+        9.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2639,8 +2637,6 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

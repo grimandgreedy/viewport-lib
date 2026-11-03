@@ -180,14 +180,12 @@ impl App {
             }
         }
 
-        self.camera = Camera {
-            center: glam::Vec3::new(0.0, 0.5, 0.0),
-            distance: 9.0,
-            orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
-            znear: Some(0.2),
-            zfar: 40.0,
-            ..Camera::default()
-        };
+        self.camera = Camera::orbit(
+            glam::DVec3::new(0.0, 0.5, 0.0),
+            9.0,
+            glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
+        );
+        self.camera.set_clip_planes(0.2, 40.0);
 
         self.is_state.built = true;
     }
@@ -248,16 +246,14 @@ impl App {
         // Near (blue): in front of the blob cloud.
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, near_mat);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).into();
             items.push(item);
         }
 
         // Far (orange): behind the blob cloud.
         {
             let mut item = SceneRenderItem::new(self.is_state.mesh_id, far_mat);
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).into();
             items.push(item);
         }
 
@@ -265,7 +261,7 @@ impl App {
         if self.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
             if let Some(mc_id) = self.is_state.mc_mesh_id {
                 let mut item = SceneRenderItem::new(mc_id, mc_mat);
-                item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+                item.model = glam::Mat4::IDENTITY.into();
                 items.push(item);
             }
         }
@@ -283,8 +279,8 @@ impl App {
             return;
         }
 
-        // Centers and radius matching blob_sdf.
-        const CENTERS: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
+        // Centres and radius matching blob_sdf.
+        const CENTRES: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
         const COLOURS: [[f32; 4]; 3] = [
             [0.75, 0.28, 0.05, 1.0], // red-orange
             [0.10, 0.26, 0.68, 1.0], // blue
@@ -297,9 +293,9 @@ impl App {
             prim.kind = 1; // sphere
             prim.blend = 0.9;
             // params[0..4] = (cx, cy, cz, radius)
-            prim.params[0] = CENTERS[i][0];
-            prim.params[1] = CENTERS[i][1];
-            prim.params[2] = CENTERS[i][2];
+            prim.params[0] = CENTRES[i][0];
+            prim.params[1] = CENTRES[i][1];
+            prim.params[2] = CENTRES[i][2];
             prim.params[3] = 1.3;
             prim.colour = Colour::from_linear_array(COLOURS[i]);
             primitives.push(prim);
@@ -312,7 +308,7 @@ impl App {
             max_steps: 128,
             step_scale: 0.85,
             hit_threshold: 5e-4,
-            max_distance: self.camera.zfar,
+            max_distance: self.camera.depth_range().1,
         };
         fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }
@@ -464,8 +460,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

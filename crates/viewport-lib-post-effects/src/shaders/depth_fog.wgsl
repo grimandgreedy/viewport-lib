@@ -1,4 +1,4 @@
-// Ported from the viewport-lib-vfx kit (src/shaders/depth_fog.wgsl), unchanged.
+// Ported from the viewport-lib-vfx kit (src/shaders/depth_fog.wgsl).
 
 struct VfxUniform {
     viewport_size: vec2<f32>,
@@ -42,6 +42,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let color = textureSample(input_color, input_sampler, in.uv);
     let pixel = vec2<i32>(in.uv * u.viewport_size);
     let depth = depth_texel(input_depth, depth_sampler, pixel);
-    let fog_t = smoothstep(near_depth, far_depth, depth) * amount;
+    // The fog band is set in depth that grows away from the camera.
+    let fog_t = smoothstep(near_depth, far_depth, viewport_depth_from_near(depth)) * amount;
     return vec4<f32>(mix(color.rgb, fog_color, fog_t), color.a);
 }

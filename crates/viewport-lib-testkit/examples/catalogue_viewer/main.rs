@@ -14,9 +14,10 @@ use viewport_lib::Colour;
 mod viewport_callback;
 
 use eframe::egui;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, Modifiers, MouseButton, OrbitCameraController,
-    SceneFrame, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    Camera, CameraFrame, FrameData, OrbitCameraController, SceneFrame, ViewportContext,
+    ViewportInput, ViewportRenderer,
 };
 use viewport_lib_testkit::{BuildCtx, BuiltScene, NamedCamera, catalogue};
 
@@ -38,7 +39,13 @@ fn main() -> eframe::Result {
             let queue = &rs.queue;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // The paint callback draws into eframe's own pass, whose depth
+            // attachment is 24-bit.
+            let mut renderer = ViewportRenderer::with_config(
+                device,
+                &viewport_lib::RendererConfig::new(format)
+                    .with_scene_depth_format(eframe::wgpu::TextureFormat::Depth24PlusStencil8),
+            );
 
             // Build every catalogue scene once, uploading all assets up front.
             let mut builts: Vec<BuiltScene> = Vec::new();
@@ -114,67 +121,32 @@ impl eframe::App for App {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-                self.input.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.has_focus(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+                self.input.begin_frame(ViewportContext::new(
+                    ownership,
+                    [rect.width(), rect.height()],
+                ));
                 // Pan reads the viewport height off the controller.
                 self.controller
                     .set_viewport_size([rect.width(), rect.height()]);
 
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.input.push_event(ViewportEvent::ModifiersChanged(
-                        Modifiers::NONE
-                            .with_alt(i.modifiers.alt)
-                            .with_shift(i.modifiers.shift)
-                            .with_ctrl(i.modifiers.command),
-                    ));
                     let local = i
                         .pointer
                         .interact_pos()
                         .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                     self.cursor_prev = self.cursor;
                     self.cursor = local;
-                    if let Some(pos) = local {
-                        self.input
-                            .push_event(ViewportEvent::PointerMoved { position: pos });
-                    }
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        match event {
-                            egui::Event::PointerButton {
-                                button, pressed, ..
-                            } => {
-                                let vp = match button {
-                                    egui::PointerButton::Primary => MouseButton::Left,
-                                    egui::PointerButton::Secondary => MouseButton::Right,
-                                    egui::PointerButton::Middle => MouseButton::Middle,
-                                    _ => continue,
-                                };
-                                self.input.push_event(ViewportEvent::MouseButton {
-                                    button: vp,
-                                    state: if *pressed {
-                                        ButtonState::Pressed
-                                    } else {
-                                        ButtonState::Released
-                                    },
-                                });
-                            }
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let units = match unit {
-                                    egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                    egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                    egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                };
-                                self.input.push_event(ViewportEvent::Wheel {
-                                    delta: glam::Vec2::new(delta.x, delta.y),
-                                    units,
-                                });
-                            }
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.input.push_event(ev);
+                }
 
                 let (w, h) = (rect.width(), rect.height());
                 let action_frame = self.input.resolve();

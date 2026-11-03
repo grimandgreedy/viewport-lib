@@ -125,8 +125,8 @@ pub use crate::gpu as wgpu;
 
 /// winit, re-exported so a consumer of the built-in runners uses the exact winit
 /// version they do (via `viewport_lib::winit`) rather than adding a second,
-/// possibly-mismatched winit dependency. Available whenever the `from_winit` adapter
-/// or a winit runner is compiled in.
+/// possibly-mismatched winit dependency. Available whenever the winit adapter or a
+/// winit runner is compiled in.
 #[cfg(feature = "winit-adapter")]
 pub use ::winit;
 
@@ -158,8 +158,10 @@ mod util;
 pub mod camera;
 /// BVH picking, marching cubes, isolines, and cap geometry.
 pub mod geometry;
-/// Gizmo, snap, selection, picking, and input.
+/// Snap, selection, picking, widgets, and input.
 pub mod interaction;
+/// Notices the renderer reports while it keeps drawing.
+pub mod notice;
 /// Plugin substrate: target descriptors, shared bind layouts, WGSL helpers,
 /// pipeline builders. See [`plugin_api`] for the published extension surface.
 pub mod plugin_api;
@@ -198,9 +200,6 @@ pub use geometry::bvh;
 pub use geometry::primitives;
 pub use interaction::clip_plane;
 pub use interaction::input;
-pub use interaction::manipulation;
-pub use interaction::manipulation::gizmo;
-pub use interaction::manipulation::gizmo_overlay;
 pub use interaction::query::picking;
 pub use interaction::query::snap;
 pub use interaction::select::selection;
@@ -223,15 +222,16 @@ pub use scene::traits;
 
 pub use capabilities::{Capabilities, Requirements, Tier};
 pub use error::{ViewportError, ViewportResult};
+pub use notice::{Notice, NoticeCategory, NoticeCounts, NoticeDetail, Severity};
 
 pub use plugin_api::{
     Handles, PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer,
     PostEffectProducerId, PostEffectResizeContext, PostEffectSlot, PostEffectStage,
-    PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin,
+    PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin, uninstall_plugin,
 };
 
 pub use camera::LookAngles;
-pub use camera::camera::{Camera, CameraTarget, Projection};
+pub use camera::camera::{Camera, CameraTarget, PhysicalExposure, Pose, Projection};
 pub use camera::controllers::TurntableController;
 pub use camera::controllers::{CameraAnimator, CameraDamping, Easing};
 pub use camera::frustum::{CullStats, Frustum};
@@ -255,6 +255,7 @@ pub use vplt::data::texture::{
     AstcBlock, CompressedFormat, TextureData, TexturePayload, TextureRejection, TextureRequirement,
     TextureRole, UploadSlot,
 };
+pub use vplt::scene::{IntoWorldPosition, Transform};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::mesh::isoline::{Isoline, extract_isolines, isoline_strips};
@@ -266,27 +267,17 @@ pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton, NavigationMode,
 };
-pub use interaction::manipulation::gizmo::{
-    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot,
-};
 // New input pipeline : re-exported at crate root for convenience.
 pub use camera::controllers::{
     FirstPersonCameraController, OrbitCameraController, ThirdPersonCameraController,
     wish_xy_from_actions,
 };
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, CursorShape, ImeEvent, ModifiersMatch,
-    NavigationActions, PointerFrame, PointerOwnership, ResolvedActionState, ScrollUnits, Theme,
-    TouchId, TouchPhase, TouchSettings, ViewportBinding, ViewportContext, ViewportEvent,
-    ViewportGesture, ViewportInput, forward_to_viewport, viewer_bindings, viewport_camera_bindings,
-    viewport_default_bindings,
-};
-pub use interaction::manipulation::solvers::{
-    angular_rotation_from_cursor, constrained_scale, constrained_translation,
-};
-pub use interaction::manipulation::{
-    GizmoInfo, ManipResult, ManipulationContext, ManipulationController, ManipulationKind,
-    ManipulationState, TransformDelta,
+    ActionFrame, BindingPreset, ButtonState, CursorShape, ImeEvent, InputOwnership,
+    KeyboardOwnership, ModifiersMatch, NavigationActions, PointerFrame, PointerOwnership,
+    ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase, TouchSettings, ViewportBinding,
+    ViewportContext, ViewportEvent, ViewportGesture, ViewportInput, forward_to_viewport,
+    viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
 };
 
 pub use interaction::widgets::{
@@ -313,39 +304,43 @@ pub use interaction::widgets::axes_indicator::AxisView;
 pub use renderer::PipelineSet;
 pub use renderer::RendererConfig;
 pub use renderer::ShadowDebugStats;
+pub use renderer::WorldOrigin;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
-    Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BackgroundSource, BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject,
-    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
-    DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity,
-    EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings, FillRule,
-    ForegroundPass, ForegroundProjection, FrameData, GlyphRunItem, GpuContext, GpuPickHit,
-    GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor,
-    LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture, LightingSettings,
-    LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PASSTHROUGH_EV100,
-    PassPath, PassView, PathSegment, PickBackend, PickHit, PickId, PickMask, PickPoll,
-    PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
+    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
+    BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, CellSelectionInfo,
+    ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
+    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
+    EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings,
+    FillRule, ForegroundPass, ForegroundProjection, FrameData, FrameTime, GlyphRunItem, GpuContext,
+    GpuPickHit, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame,
+    LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture,
+    LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem, NineSlice,
+    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode,
+    OverlayAnchoring,
+    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
+    OwnedPath, PASSTHROUGH_EV100, PassPath, PassView, PathSegment, PickBackend, PickHit, PickId,
+    PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
     PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
     RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
     ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
     SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
-    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
+    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem,
+    VolumeSelectionInfo, VolumeTransparency, WorkingSpace, aabb_wireframe_polyline,
+    bake_view_transform_lut, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 pub use resources::PipelineCompilation;
 
-pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
+pub use runners::{ExtraId, OffscreenViewportTarget, StaleHandles, ViewportInstance};
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{
@@ -388,9 +383,9 @@ pub use resources::{
 
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, GpuFrameContext,
-    GpuPlugin, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp, PostPaintTargets,
+    GpuPlugin, GpuPluginId, JobPoll, JobSender, JobSlot, NodeTransformOp, PostPaintTargets,
     RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase, RuntimePlugin,
-    RuntimeResources, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp,
+    RuntimePluginId, RuntimeResources, RuntimeStats, RuntimeStepContext, SelectionOp,
     SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
     TransformWriteback, ViewportRuntime,
 };

@@ -43,7 +43,7 @@ fn flat(
 ) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item.material = upload_material(
         renderer,
         Material::from_colour(Colour::linear_rgb(colour[0], colour[1], colour[2])),
@@ -137,7 +137,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
     let id = match renderer.resources_mut().register_deformer(
         &device,
         DeformerDesc {
-            name: "test_keep_from_slot",
+            name: "test_keep_from_slot".into(),
             stage: DeformStage::WorldSpace,
             priority: 0,
             wgsl_body: KEEP_FROM_SLOT.to_string(),
@@ -176,9 +176,7 @@ fn a_deferred_frame_copies_the_source_written_before_its_submit() {
     );
     let kept = flat(&mut renderer, quad, glam::Mat4::IDENTITY, [1.0, 1.0, 1.0]);
     let mut cam = Camera::default();
-    cam.orientation = glam::Quat::IDENTITY;
-    cam.center = glam::Vec3::ZERO;
-    cam.distance = 5.0;
+    cam.set_orbit(glam::DVec3::ZERO, 5.0, glam::Quat::IDENTITY);
     cam.aspect = W as f32 / H as f32;
     let mut frame = FrameData::new(
         CameraFrame::new(RenderCamera::from_camera(&cam), [W as f32, H as f32]),

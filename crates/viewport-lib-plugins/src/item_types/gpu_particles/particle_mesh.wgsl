@@ -12,6 +12,8 @@ struct MeshDrawUniform {
     has_texture: u32,
     _pad0:       u32,
     _pad1:       u32,
+    // The simulation anchor relative to the world origin.
+    offset:      vec4<f32>,
 };
 
 struct Particle {
@@ -150,7 +152,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
     }
 
     let local = rot * (in.position * p.size);
-    let world_pos = p.position + local;
+    let world_pos = p.position + draw_ub.offset.xyz + local;
 
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.colour    = p.colour;
@@ -159,8 +161,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
             discard;
@@ -173,4 +174,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if colour.a <= 0.001 { discard; }
     return colour;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
 }

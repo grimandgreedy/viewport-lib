@@ -30,7 +30,7 @@ fn batch_draws_are_counted() {
             let mut item = SceneRenderItem::default();
             item.mesh_id = id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 5.0, 0.0, 0.0))
-                .to_cols_array_2d();
+                .into();
             item.material = material;
             item
         })

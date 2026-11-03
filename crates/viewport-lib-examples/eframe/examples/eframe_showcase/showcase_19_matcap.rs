@@ -67,7 +67,7 @@ impl App {
     /// Layout:
     ///   Top row    (z = +1.5): Clay | Wax | Candy | Flat           : blendable
     ///   Bottom row (z = -1.5): Ceramic | Jade | Mud | Normal       : static
-    ///   Center-front (y = -3.5): Custom procedural matcap upload demo
+    ///   Centre-front (y = -3.5): Custom procedural matcap upload demo
     pub(crate) fn build_matcap_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.matcap_state.scene = Scene::new();
 
@@ -324,12 +324,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_matcap_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, -0.5),
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.9),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, -0.5),
+        14.0,
+        glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.9),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -398,8 +397,6 @@ pub(crate) fn scene(
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

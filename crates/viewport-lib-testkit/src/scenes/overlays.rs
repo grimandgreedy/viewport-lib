@@ -512,7 +512,7 @@ fn build_group_anchor(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             .with_position([-8.0, -8.0])
             .with_tint([0.6, 1.0, 0.7, 1.0]),
         RetainedOverlay::new(id)
-            .with_anchor(OverlayOrigin::World([0.0, 0.0, -1.9]))
+            .with_anchor(OverlayOrigin::World([0.0, 0.0, -1.9].into()))
             .with_align(Alignment::new(AnchorX::Middle, AnchorY::Top))
             .with_scale(0.7),
     ];

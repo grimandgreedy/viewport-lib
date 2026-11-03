@@ -1,24 +1,20 @@
 
-// @viewport-wgsl-version: 2
+// @viewport-wgsl-version: 4
 // Shared PBR / lit-shading helpers. Requires SHARED_BINDINGS_WGSL to be
 // included first.
 //
 // Internal binding: the CSM uniform at @group(0) @binding(5) is declared
-// here for `viewport_sample_csm`'s use. Its struct layout is an internal
-// detail of this catalog; plugin shaders must not reference
-// `_viewport_csm` directly or assume the field set is stable.
+// here for `viewport_sample_csm`'s use. Plugin shaders must not reference
+// `_viewport_csm` directly.
 
-struct _ViewportCsm {
-    cascade_vp:        array<mat4x4<f32>, 4>,
-    cascade_splits:    vec4<f32>,
-    cascade_count:     u32,
-    atlas_size:        f32,
-    shadow_filter:     u32,
-    pcss_light_radius: f32,
-    atlas_rects:       array<vec4<f32>, 8>,
-};
+// The direct BRDF the lit mesh shaders evaluate (the viewport_brdf_*
+// functions).
+// #include "brdf.wgsl"
 
-@group(0) @binding(5) var<uniform> _viewport_csm: _ViewportCsm;
+// The cascade shadow uniform's layout.
+// #include "shadow_atlas.wgsl"
+
+@group(0) @binding(5) var<uniform> _viewport_csm: ShadowAtlas;
 
 const _VIEWPORT_POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
@@ -50,51 +46,69 @@ struct PbrInputs {
     emissive:   vec3<f32>,
 };
 
-// Forward declaration: defined below; referenced by the lighting helpers.
-// The full definition appears after the lighting helpers for readability.
-// (WGSL allows module-scope identifiers to be used anywhere in the module
-// regardless of source order.)
+// One light's direction and unshadowed, exposed radiance at a point.
+struct _ViewportLightEval {
+    l:        vec3<f32>,
+    radiance: vec3<f32>,
+};
 
-fn viewport_apply_scene_lighting(
+// The attenuation the lit mesh shaders use: inverse-square falloff clamped by
+// the source radius, faded to zero at `range` by a quartic window, and the
+// spot cone on top. Zero radiance at or beyond `range`.
+fn _viewport_eval_light(light: SingleLight, world_pos: vec3<f32>) -> _ViewportLightEval {
+    var ev: _ViewportLightEval;
+    let intensity = light.intensity * camera.exposure;
+    if light.light_type == 0u {
+        ev.l = normalize(light.pos_or_dir);
+        ev.radiance = light.colour * intensity;
+        return ev;
+    }
+    let to_light = light.pos_or_dir - world_pos;
+    let dist = length(to_light);
+    ev.l = to_light / max(dist, 0.0001);
+    let r2 = max(light.radius * light.radius, 1.0e-4);
+    let inv_sq = 1.0 / max(dist * dist, r2);
+    let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
+    let atten = inv_sq * win * win;
+    if light.light_type == 1u {
+        ev.radiance = light.colour * intensity * atten;
+    } else {
+        let spot_dir = normalize(light.spot_direction);
+        let cos_angle = dot(-ev.l, spot_dir);
+        let cos_outer = cos(light.outer_angle);
+        let cos_inner = cos(light.inner_angle);
+        let cone_att = clamp(
+            (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
+            0.0, 1.0,
+        );
+        ev.radiance = light.colour * intensity * atten * cone_att;
+    }
+    return ev;
+}
+
+// The two terms `viewport_apply_scene_lighting` sums, before the base
+// colour: the hemisphere fill (indirect) and the light loop's sum (direct),
+// both exposed.
+struct ViewportLightingTerms {
+    indirect: vec3<f32>,
+    direct:   vec3<f32>,
+};
+
+fn viewport_scene_lighting_terms(
     normal: vec3<f32>,
-    base_colour: vec3<f32>,
     two_sided: bool,
     world_pos: vec3<f32>,
-) -> vec3<f32> {
+) -> ViewportLightingTerms {
     let up_weight = clamp(normal.z * 0.5 + 0.5, 0.0, 1.0);
     let ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity;
+                  * (lights.hemisphere_intensity * camera.exposure);
 
     var direct = vec3<f32>(0.0);
     let n_lights = lights.count;
     for (var i: u32 = 0u; i < n_lights; i = i + 1u) {
-        let l = lights_storage[i];
-        var L: vec3<f32>;
-        var radiance: vec3<f32>;
-        if l.light_type == 0u {
-            L = normalize(l.pos_or_dir);
-            radiance = l.colour * l.intensity;
-        } else if l.light_type == 1u {
-            let to_light = l.pos_or_dir - world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            radiance = l.colour * l.intensity * falloff * falloff;
-        } else {
-            let to_light = l.pos_or_dir - world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            let spot_dir = normalize(l.spot_direction);
-            let cos_angle = dot(-L, spot_dir);
-            let cos_outer = cos(l.outer_angle);
-            let cos_inner = cos(l.inner_angle);
-            let cone_att = clamp(
-                (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
-                0.0, 1.0,
-            );
-            radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
-        }
+        let ev = _viewport_eval_light(lights_storage[i], world_pos);
+        let L = ev.l;
+        let radiance = ev.radiance;
         let raw = dot(normal, L);
         let n_dot_l = select(max(raw, 0.0), abs(raw), two_sided);
         var shadow_factor = 1.0;
@@ -103,7 +117,17 @@ fn viewport_apply_scene_lighting(
         }
         direct = direct + radiance * n_dot_l * shadow_factor;
     }
-    return base_colour * (ambient + direct);
+    return ViewportLightingTerms(ambient, direct);
+}
+
+fn viewport_apply_scene_lighting(
+    normal: vec3<f32>,
+    base_colour: vec3<f32>,
+    two_sided: bool,
+    world_pos: vec3<f32>,
+) -> vec3<f32> {
+    let terms = viewport_scene_lighting_terms(normal, two_sided, world_pos);
+    return base_colour * (terms.indirect + terms.direct);
 }
 
 // Cascade selection + atlas tap. Mirrors the bias scheme and filter
@@ -190,7 +214,12 @@ fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
     let cos_r = cos(rot);
 
     if _viewport_csm.shadow_filter == 1u {
-        let search_radius = _viewport_csm.pcss_light_radius * 16.0 * texel_size;
+        // Radii in world units, as the mesh shaders size them.
+        let tan_sun = _viewport_csm.tan_sun;
+        let r_max = _viewport_csm.range.w;
+        let depth_scale = 1.0 / max(length(vp_row2), 1e-8);
+        let search_world = min(tan_sun * max(ndc.z, 0.0) * depth_scale, r_max);
+        let search_radius = max(search_world / texel_world, 1.0) * texel_size;
         var blocker_sum = 0.0;
         var blocker_count = 0.0;
         for (var i = 0u; i < 16u; i = i + 1u) {
@@ -209,8 +238,8 @@ fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
             return 1.0;
         }
         let avg_blocker = blocker_sum / blocker_count;
-        let penumbra_width = _viewport_csm.pcss_light_radius * (biased_depth - avg_blocker) / max(avg_blocker, 0.001);
-        let filter_radius = max(penumbra_width * 16.0 * texel_size, texel_size);
+        let penumbra_world = min(tan_sun * max(biased_depth - avg_blocker, 0.0) * depth_scale, r_max);
+        let filter_radius = max(penumbra_world / texel_world, 1.0) * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i = i + 1u) {
             let d = _VIEWPORT_POISSON_DISK[i];
@@ -255,16 +284,11 @@ fn viewport_dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
 // screen-space variance of the shading normal so detailed normal maps do
 // not alias into per-pixel glints. Matches the built-in mesh pipelines.
 fn viewport_specular_aa_roughness(n: vec3<f32>, roughness: f32) -> f32 {
-    let du = dpdx(n);
-    let dv = dpdy(n);
-    let kernel = min(0.5 * (dot(du, du) + dot(dv, dv)), 0.18);
-    let alpha = roughness * roughness;
-    return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
+    return viewport_brdf_specular_aa_roughness(n, roughness);
 }
 
 fn viewport_fresnel_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
-    let fr = max(vec3<f32>(1.0 - roughness), f0);
-    return f0 + (fr - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+    return viewport_brdf_f_schlick_roughness(cos_theta, f0, roughness);
 }
 
 // Image-based ambient: diffuse irradiance plus prefiltered specular
@@ -300,21 +324,29 @@ fn viewport_ibl_ambient(
         max(roughness * 4.0, footprint_mip),
     ).rgb;
     let brdf = textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
-    let diffuse = kd * irradiance * albedo * ao * lights.ibl_diffuse_scale;
-    let specular = prefiltered * (f * brdf.x + brdf.y) * ao * lights.ibl_specular_scale;
-    return (diffuse + specular) * lights.ibl_intensity;
+    // AO as the lit mesh shaders take it: the visibility on the diffuse, the
+    // specular occlusion on the reflection, each through the multi-bounce fit
+    // when the lighting enables it.
+    let so = viewport_brdf_spec_occlusion(n_dot_v, ao, roughness * roughness);
+    var diffuse_occ = vec3<f32>(ao);
+    var spec_occ = vec3<f32>(so);
+    if (lights.ao_flags & 1u) != 0u {
+        diffuse_occ = viewport_brdf_multi_bounce_ao(ao, albedo * (1.0 - metallic));
+        spec_occ = viewport_brdf_multi_bounce_ao(so, f0);
+    }
+    let diffuse = kd * irradiance * albedo * diffuse_occ * lights.ibl_diffuse_scale;
+    let specular = prefiltered * (f * brdf.x + brdf.y) * spec_occ * lights.ibl_specular_scale;
+    return (diffuse + specular) * (lights.ibl_intensity * camera.exposure);
 }
 
-// PBR shading. Cook-Torrance specular with GGX NDF + Smith G + Schlick
-// Fresnel, Lambert diffuse weighted by (1 - metallic). Integrates against
-// every active scene light; IBL contribution is added when
-// `lights.ibl_enabled != 0`.
+// PBR shading with the lit mesh shaders' direct BRDF: Cook-Torrance specular
+// (GGX, separable Smith, Schlick) and Lambert diffuse weighted by
+// (1 - metallic). Integrates against every active scene light; IBL
+// contribution is added when `lights.ibl_enabled != 0`.
 fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
     let N = normalize(inp.world_n);
     let V = normalize(inp.view_dir);
     let roughness = viewport_specular_aa_roughness(N, max(inp.roughness, 0.04));
-    let alpha = roughness * roughness;
-    let alpha2 = alpha * alpha;
     let f0 = mix(vec3<f32>(0.04), inp.albedo, inp.metallic);
 
     // Environment reflection when an IBL probe is active, otherwise a
@@ -325,64 +357,28 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
         ambient = viewport_ibl_ambient(N, V, inp.albedo, inp.metallic, roughness, f0, inp.ao);
     } else {
         let up_weight = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
+        var occ = vec3<f32>(inp.ao);
+        if (lights.ao_flags & 1u) != 0u {
+            occ = viewport_brdf_multi_bounce_ao(inp.ao, inp.albedo * (1.0 - inp.metallic));
+        }
         ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
-                  * lights.hemisphere_intensity * inp.albedo * inp.ao;
+                  * (lights.hemisphere_intensity * camera.exposure) * inp.albedo * occ;
     }
 
     var lo = vec3<f32>(0.0);
     let n_lights = lights.count;
     for (var i: u32 = 0u; i < n_lights; i = i + 1u) {
-        let l = lights_storage[i];
-        var L: vec3<f32>;
-        var radiance: vec3<f32>;
-        if l.light_type == 0u {
-            L = normalize(l.pos_or_dir);
-            radiance = l.colour * l.intensity;
-        } else if l.light_type == 1u {
-            let to_light = l.pos_or_dir - inp.world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            radiance = l.colour * l.intensity * falloff * falloff;
-        } else {
-            let to_light = l.pos_or_dir - inp.world_pos;
-            let dist = length(to_light);
-            L = to_light / max(dist, 0.0001);
-            let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-            let spot_dir = normalize(l.spot_direction);
-            let cos_angle = dot(-L, spot_dir);
-            let cos_outer = cos(l.outer_angle);
-            let cos_inner = cos(l.inner_angle);
-            let cone_att = clamp(
-                (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
-                0.0, 1.0,
-            );
-            radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
-        }
+        let ev = _viewport_eval_light(lights_storage[i], inp.world_pos);
+        let L = ev.l;
+        let radiance = ev.radiance;
 
-        let H = normalize(V + L);
-        let n_dot_l = max(dot(N, L), 0.0);
-        let n_dot_v = max(dot(N, V), 0.0001);
-        let n_dot_h = max(dot(N, H), 0.0);
-        let v_dot_h = max(dot(V, H), 0.0);
-
-        let denom = n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0;
-        let D = alpha2 / max(3.14159265 * denom * denom, 1e-6);
-        let k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
-        let G1v = n_dot_v / (n_dot_v * (1.0 - k) + k);
-        let G1l = n_dot_l / max(n_dot_l * (1.0 - k) + k, 1e-6);
-        let G = G1v * G1l;
-        let F = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
-        let spec = (D * G) * F / max(4.0 * n_dot_v * n_dot_l, 1e-6);
-
-        let kd = (vec3<f32>(1.0) - F) * (1.0 - inp.metallic);
-        let diff = kd * inp.albedo / 3.14159265;
         var shadow_factor = 1.0;
         if i == 0u {
             shadow_factor = viewport_sample_csm(inp.world_pos, N);
         }
-        lo = lo + (diff + spec) * radiance * n_dot_l * shadow_factor;
+        lo = lo + viewport_brdf_light_contrib(N, V, L, radiance * shadow_factor, inp.albedo,
+                                              inp.metallic, roughness, f0);
     }
 
-    return ambient + lo + inp.emissive;
+    return ambient + lo + inp.emissive * camera.exposure;
 }

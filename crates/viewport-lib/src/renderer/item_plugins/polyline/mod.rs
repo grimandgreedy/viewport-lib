@@ -22,7 +22,6 @@ use crate::plugin_api::{
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PolylineItem, PolylineRefItem, SubObjectRef,
 };
-use crate::resources::HDR_COLOR_FORMAT;
 use lines::{PolylineGpuData, PolylineKey};
 
 pub(crate) const TYPE_NAME: &str = "vpl.polyline";
@@ -72,11 +71,6 @@ impl ItemTypePlugin for PolylinePlugin {
 
     fn resident_bytes(&self) -> u64 {
         self.stored.allocated_bytes()
-    }
-
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
-        self.gpu = None;
-        self.frame.clear();
     }
 
     /// Asks for the four line pipelines in both formats, the pick and the
@@ -141,7 +135,7 @@ impl ItemTypePlugin for PolylinePlugin {
             queue.write_buffer(
                 &gpu_data._uniform_buf,
                 0,
-                bytemuck::bytes_of(&ref_item.model),
+                bytemuck::bytes_of(&ctx.resources.world_origin.rel_model(ref_item.model)),
             );
             queue.write_buffer(&gpu_data._uniform_buf, 96, bytemuck::bytes_of(&vp));
             gpu_data.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
@@ -167,7 +161,7 @@ impl ItemTypePlugin for PolylinePlugin {
         items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
+        let is_hdr = ctx.is_hdr_pass();
         // Painted for the overlays alone when the frame submitted no polyline
         // items, and then `frame` still holds the last prepared frame's.
         let own: &[pipeline::PolylineFrame] = if items.is_empty() { &[] } else { &self.frame };
@@ -264,7 +258,7 @@ impl ItemTypePlugin for PolylinePlugin {
                 ) else {
                     continue;
                 };
-                let toi = (hit.world_pos - ray.origin).dot(ray.direction).max(0.0);
+                let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
                 if wants_node {
                     // `pick_gaussian_splat_cpu` already reports the node index.
                 } else if wants_strip {
@@ -320,7 +314,7 @@ impl ItemTypePlugin for PolylinePlugin {
                     PickHit {
                         id: item.settings.pick_id.0,
                         sub_object,
-                        world_pos,
+                        world_pos: world_pos.as_dvec3(),
                         normal: glam::Vec3::Z,
                         scalar_value: None,
                         sub_object_world_pos: None,

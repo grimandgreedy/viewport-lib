@@ -16,18 +16,18 @@ use std::sync::Arc;
 use std::time::Instant;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::{AdapterCtx, winit as vpl_winit};
 
 use vpl::wgpu;
 use vpl::{
-    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings,
-    Material, MeshId, OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem,
-    PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, InputOwnership,
+    LightingSettings, Material, MeshId, OrbitCameraController, OverlayFill, OverlayShape,
+    OverlayShapeItem, PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext,
+    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 #[derive(Default)]
@@ -139,7 +139,7 @@ impl ApplicationHandler for App {
             material.emissive =
                 Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
             let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             item
         };
 
@@ -149,18 +149,14 @@ impl ApplicationHandler for App {
             make_item(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
         ];
 
-        let camera = Camera {
-            distance: 10.0,
-            ..Camera::default()
-        };
+        let camera = Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation());
 
         let controller = OrbitCameraController::new_stateless();
         let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
-        input.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [config.width as f32, config.height as f32],
-        });
+        input.begin_frame(ViewportContext::new(
+            InputOwnership::full_window(),
+            [config.width as f32, config.height as f32],
+        ));
 
         self.state = Some(AppState {
             window,
@@ -201,94 +197,6 @@ impl ApplicationHandler for App {
                     state
                         .surface
                         .configure(&state.device, &state.surface_config);
-                    state.window.request_redraw();
-                }
-            }
-
-            WindowEvent::ModifiersChanged(mods) => {
-                let mut m = vpl::Modifiers::default();
-                m.shift = mods.state().shift_key();
-                m.ctrl = mods.state().control_key();
-                m.alt = mods.state().alt_key();
-                state.input.push_event(ViewportEvent::ModifiersChanged(m));
-            }
-
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => {
-                let vp_button = match button {
-                    MouseButton::Left => vpl::MouseButton::Left,
-                    MouseButton::Middle => vpl::MouseButton::Middle,
-                    MouseButton::Right => vpl::MouseButton::Right,
-                    _ => return,
-                };
-                let vp_state = if btn_state == ElementState::Pressed {
-                    ButtonState::Pressed
-                } else {
-                    ButtonState::Released
-                };
-                state.input.push_event(ViewportEvent::MouseButton {
-                    button: vp_button,
-                    state: vp_state,
-                });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                state
-                    .input
-                    .push_event(ViewportEvent::PointerMoved { position: pos });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorLeft { .. } => {
-                state.input.push_event(ViewportEvent::PointerLeft);
-            }
-
-            WindowEvent::Focused(false) => {
-                state.input.push_event(ViewportEvent::FocusLost);
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state
-                    .input
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::KeyB) => {
-                            state.bloom = !state.bloom;
-                            eprintln!("bloom: {}", state.bloom);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyF) => {
-                            state.fxaa = !state.fxaa;
-                            eprintln!("fxaa: {}", state.fxaa);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyS) => {
-                            state.ssao = !state.ssao;
-                            eprintln!("ssao: {}", state.ssao);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyD) => {
-                            state.diag = !state.diag;
-                            eprintln!("diagnostics: {}", state.diag);
-                        }
-                        _ => {}
-                    }
                     state.window.request_redraw();
                 }
             }
@@ -377,16 +285,54 @@ impl ApplicationHandler for App {
                     );
                 }
 
-                state.input.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                state
+                    .input
+                    .begin_frame(ViewportContext::new(InputOwnership::full_window(), [w, h]));
                 // Pan reads the viewport height off the controller.
                 state.controller.set_viewport_size([w, h]);
             }
 
-            _ => {}
+            // Pointer, wheel, keys, modifiers and focus. The viewport fills the
+            // window, so it owns everything; positions stay in physical pixels,
+            // the units the surface size is given in.
+            other => {
+                let mut events = Vec::new();
+                vpl_winit::translate(&other, &AdapterCtx::default(), &mut events);
+                if !events.is_empty() {
+                    state.window.request_redraw();
+                }
+                for ev in events {
+                    // The toggles match the character the key types, so they
+                    // follow the keyboard layout.
+                    if let ViewportEvent::Key {
+                        state: ButtonState::Pressed,
+                        logical: Some(ch),
+                        ..
+                    } = ev
+                    {
+                        match ch {
+                            'b' => {
+                                state.bloom = !state.bloom;
+                                eprintln!("bloom: {}", state.bloom);
+                            }
+                            'f' => {
+                                state.fxaa = !state.fxaa;
+                                eprintln!("fxaa: {}", state.fxaa);
+                            }
+                            's' => {
+                                state.ssao = !state.ssao;
+                                eprintln!("ssao: {}", state.ssao);
+                            }
+                            'd' => {
+                                state.diag = !state.diag;
+                                eprintln!("diagnostics: {}", state.diag);
+                            }
+                            _ => {}
+                        }
+                    }
+                    state.input.push_event(ev);
+                }
+            }
         }
     }
 }

@@ -24,6 +24,7 @@ pub(super) struct VolumeRecipe {
     pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
 }
 
 /// The ray-march in both formats, the outline mask and the pick pipeline.
@@ -55,9 +56,11 @@ fn build(r: &VolumeRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: viewport_lib::gpu::CompareFunction::Less,
+                depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                 sample_count: r.sample_count,
                 ldr_format: r.ldr_format,
+                depth_format: r.depth_format,
+                indirect_fraction_entry: Some("fs_scene"),
             },
             i == COLOUR_HDR,
         ),
@@ -281,6 +284,7 @@ impl VolumeGpu {
                 pick_id_bgl: pick_id_bgl.clone(),
                 sample_count: resources.sample_count(),
                 ldr_format: resources.target_format(),
+                depth_format: resources.scene_depth_format(),
             },
             build,
         );
@@ -312,6 +316,7 @@ impl VolumeGpu {
         clip_objects: &[ClipObject],
         step_scale_multiplier: f32,
         wireframe: bool,
+        origin: glam::DVec3,
     ) -> Option<VolumeFrame> {
         let dims = resources.volume_dims(item.volume_id)?;
 
@@ -320,7 +325,8 @@ impl VolumeGpu {
         let bbox_max = glam::Vec3::from(item.bbox_max);
         let extent = bbox_max - bbox_min;
         let bbox_model = glam::Mat4::from_translation(bbox_min) * glam::Mat4::from_scale(extent);
-        let model = item_model * bbox_model;
+        // Relative to the world origin, the frame group 0 draws in.
+        let model = crate::item_types::origin::rel_product(item_model, bbox_model, origin);
         let inv_model = model.inverse();
 
         let max_dim = dims[0].max(dims[1]).max(dims[2]) as f32;
@@ -336,6 +342,7 @@ impl VolumeGpu {
                 normal, distance, ..
             } = obj.shape
             {
+                let distance = crate::item_types::origin::rel_plane_d(normal, distance, origin);
                 clip_plane_data[num_clip as usize] = [normal[0], normal[1], normal[2], distance];
                 num_clip += 1;
             }

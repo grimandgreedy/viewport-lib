@@ -455,7 +455,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     }
     app.perf_state.scene = vpl::Scene::new();
     app.perf_state.selection.clear();
-    app.camera.distance = 80.0;
+    app.camera.set_orbit_distance(80.0);
 
     // Upload the random texture pool on the main thread (GPU access),
     // then hand the ids to the background build so each box can pick
@@ -597,8 +597,6 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.

@@ -163,7 +163,7 @@ fn run_variant(
     ground.model =
         (glam::Mat4::from_scale(glam::Vec3::new(grid as f32 * 1.6, grid as f32 * 1.6, 0.1))
             * glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.5)))
-        .to_cols_array_2d();
+        .into();
     ground.material = renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)))
@@ -188,23 +188,20 @@ fn run_variant(
             );
             item.model = (glam::Mat4::from_translation(pos)
                 * glam::Mat4::from_scale(glam::Vec3::splat(0.8)))
-            .to_cols_array_2d();
+            .into();
             let i = (x * grid + y) as usize;
             item.material = if i % 8 == 0 { glowing } else { plain };
             items.push(item);
         }
     }
 
-    let cam = Camera {
-        distance: grid as f32 * 1.8,
-        ..Camera::default()
-    };
+    let cam = Camera::orbit(
+        glam::DVec3::ZERO,
+        grid as f32 * 1.8,
+        Camera::default().orientation(),
+    );
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = width as f32 / height as f32;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [width as f32, height as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;

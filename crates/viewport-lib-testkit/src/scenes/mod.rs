@@ -15,22 +15,31 @@ use viewport_lib::Colour;
 // with this module.
 pub mod exposure;
 pub mod fallbacks;
+pub mod far_origin;
+pub mod grading;
 pub mod item_types;
+pub mod light_transport;
 pub mod materials;
+pub mod materials_ibl;
 pub mod meshes;
+pub mod normal_maps;
+pub mod occlusion;
 pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
+pub mod section_caps;
 pub mod shadows;
+pub mod skinning;
 pub mod textures;
+pub mod tone_mapping;
 
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId,
-    MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem,
-    ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, FrameData, FrameTime, LightingSettings, Material,
+    MaterialId, MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame,
+    SceneRenderItem, ViewportRenderer, primitives,
 };
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::gpu_marching_cubes::GpuMarchingCubesItem;
@@ -123,6 +132,9 @@ pub struct BuiltScene {
         Vec<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>,
     /// Mesh-instance batch items.
     pub mesh_instances: Vec<MeshInstanceItem>,
+    /// External instance set items.
+    pub external_instances:
+        Vec<viewport_lib_plugins::item_types::external_instances::ExternalInstancesItem>,
     /// Volume mesh items.
     pub volume_meshes: Vec<viewport_lib::VolumeMeshItem>,
     /// Scatter pass settings override. Scenes with scatter volumes pin these
@@ -138,6 +150,9 @@ pub struct BuiltScene {
     /// Pipeline mode override, for a scene that exercises the direct (LDR)
     /// path. `None` leaves the default HDR pipeline.
     pub pipeline_mode: Option<viewport_lib::PipelineMode>,
+    /// Tone-map operator override, for a scene that exercises an operator.
+    /// `None` leaves the default operator.
+    pub operator: Option<viewport_lib::ToneMapping>,
     /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
     /// retained groups compiled during `build`.
     pub overlays: viewport_lib::OverlayFrame,
@@ -152,12 +167,18 @@ pub struct BuiltScene {
     pub generation: u64,
     /// Lighting rig for this scene.
     pub lighting: LightingSettings,
+    /// Environment lighting for this scene. The background stays the flat
+    /// clear colour.
+    pub environment: Option<viewport_lib::EnvironmentLighting>,
     /// Optional background clear colour (linear RGBA).
     pub background: Option<[f32; 4]>,
     /// Clip objects applied to the frame, for scenes that open a solid to
     /// show its interior, with the cap-fill flag. `None` leaves the frame's
     /// defaults alone.
     pub clip: Option<(Vec<viewport_lib::ClipObject>, bool)>,
+    /// World origin override, for a scene that draws far from zero. `None`
+    /// leaves the renderer's own setting.
+    pub world_origin: Option<viewport_lib::WorldOrigin>,
 }
 
 /// A catalogue entry: a name, the cameras to view it from, and a function that
@@ -174,13 +195,11 @@ pub struct NamedScene {
 /// Build an orbit camera looking at `centre` from `distance`, using the same
 /// yaw/pitch convention as `Camera::default` (identity = top-down in Z-up).
 pub fn orbit_camera(centre: Vec3, distance: f32, yaw: f32, pitch: f32) -> Camera {
-    Camera {
-        // `center` is viewport-lib's field name (external API keeps its spelling).
-        center: centre,
+    Camera::orbit(
+        centre.as_dvec3(),
         distance,
-        orientation: Quat::from_rotation_z(yaw) * Quat::from_rotation_x(pitch),
-        ..Camera::default()
-    }
+        Quat::from_rotation_z(yaw) * Quat::from_rotation_x(pitch),
+    )
 }
 
 /// A standard set of viewpoints (iso, front, top, low grazing) around a target.
@@ -252,8 +271,13 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.surface_lics.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::surface_contour::SurfaceContourItem>() =
         scene.surface_contours.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::external_instances::ExternalInstancesItem>(
+    ) = scene.external_instances.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
+    if let Some(origin) = scene.world_origin {
+        sf = sf.with_world_origin(origin);
+    }
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
     if let Some(scatter) = scene.scatter_settings.clone() {
@@ -268,9 +292,16 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     if let Some(mode) = scene.pipeline_mode {
         fd.effects.display.mode = mode;
     }
+    if let Some(operator) = scene.operator {
+        fd.effects.display.operator = operator;
+    }
     if let Some((objects, cap_fill)) = scene.clip.clone() {
         fd.effects.clip.objects = objects;
         fd.effects.clip.cap_fill_enabled = cap_fill;
+    }
+    if let Some(environment) = scene.environment.clone() {
+        fd.effects.environment = Some(environment);
+        fd.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     }
     fd.overlays = scene.overlays.clone();
     fd.viewport.background_colour = Some(Colour::from_linear_array(
@@ -281,6 +312,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     // reference image; without this the flag is off and the outline pass never
     // runs, so those marks render nothing.
     fd.interaction.outline_selected = true;
+    // A fixed frame time, so time-driven shading renders the same every run.
+    fd.time = Some(FrameTime::fixed(0.0));
     fd
 }
 
@@ -311,7 +344,7 @@ fn item_model(
     material: Material,
 ) -> SceneRenderItem {
     let mut it = SceneRenderItem::new(mesh, self::material(ctx, material));
-    it.model = model.to_cols_array_2d();
+    it.model = model.into();
     it
 }
 
@@ -1058,9 +1091,20 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(item_types::scenes());
     scenes.extend(overlays::scenes());
     scenes.extend(shadows::scenes());
+    scenes.extend(section_caps::scenes());
     scenes.extend(materials::scenes());
+    scenes.extend(normal_maps::scenes());
     scenes.extend(fallbacks::scenes());
     scenes.extend(exposure::scenes());
+    scenes.extend(materials_ibl::scenes());
+    scenes.push(far_origin::scene());
+    scenes.extend(light_transport::scenes());
+    scenes.extend(grading::scenes());
+    scenes.extend(tone_mapping::scenes());
+    scenes.extend(occlusion::scenes());
+    // Registers the skinning deformer, which recomposes the mesh shaders for
+    // every scene built after it on the same renderer: keep it last.
+    scenes.extend(skinning::scenes());
     scenes
 }
 

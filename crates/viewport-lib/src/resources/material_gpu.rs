@@ -53,9 +53,9 @@ impl TexTransformGpu {
 }
 
 /// A material's per-slot UV transforms plus its scalar shading parameters, as the
-/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 368
-/// bytes. The scalars are the per-material fields that used to be duplicated into
-/// every `InstanceData` record; moving them here shrinks the per-instance record
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct,
+/// [`MATERIAL_GPU_BYTES`] bytes. The scalars are the per-material fields that
+/// used to be duplicated into every `InstanceData` record; moving them here shrinks the per-instance record
 /// to O(instances) transform-free and keeps a single copy per distinct material.
 ///
 /// Field packing (after the 160-byte transform array):
@@ -68,6 +68,15 @@ impl TexTransformGpu {
 /// - `mr_range`  = (metallic_min, metallic_max, roughness_min, roughness_max)
 /// - `tex_index0` = bindless array indices (albedo, normal, ao, metallic-roughness)
 /// - `tex_index1` = (emissive bindless index, sampler code, unused, unused)
+/// - `specular` = (dielectric F0 rgb, dielectric F90), see [`dielectric_specular`]
+/// - `layers0` = (clearcoat, clearcoat roughness, anisotropy, anisotropy rotation)
+/// - `layers1` = (sheen colour rgb, sheen roughness)
+/// - `volume0` = (transmission, thickness, ior, emissive exposure weight)
+/// - `volume1` = (absorption coefficient rgb, 0), see [`volume_lanes`]
+///
+/// A layer the material does not use has its lanes zeroed and its
+/// `item_flags` bit clear, so a material without layers interns to the same
+/// block whatever its unused layer roughness.
 ///
 /// `tex_index0` / `tex_index1` hold each material texture's index into the
 /// bindless texture array, or `NO_TEXTURE` (`u32::MAX`) when the material has no
@@ -127,11 +136,47 @@ pub(crate) struct MaterialGpu {
     /// The material plugin's declared parameters, one word each in
     /// declaration order, defaults filled in. Zero without a plugin.
     pub(crate) params: [[f32; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
+    /// `(dielectric_f0.rgb, dielectric_f90)`; see [`dielectric_specular`].
+    pub(crate) specular: [f32; 4],
+    /// `(clearcoat, clearcoat_roughness, anisotropy, anisotropy_rotation)`.
+    pub(crate) layers0: [f32; 4],
+    /// `(sheen_colour.rgb, sheen_roughness)`.
+    pub(crate) layers1: [f32; 4],
+    /// `(transmission, thickness, ior, emissive_exposure_weight)`. The weight
+    /// is written whether or not the material transmits.
+    pub(crate) volume0: [f32; 4],
+    /// `(absorption.rgb, 0)`: Beer-Lambert coefficient per world unit.
+    pub(crate) volume1: [f32; 4],
 }
 
 /// Size in bytes of one [`MaterialGpu`] block.
-pub(crate) const MATERIAL_GPU_BYTES: usize = 608;
+pub(crate) const MATERIAL_GPU_BYTES: usize = 688;
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == MATERIAL_GPU_BYTES);
+
+/// A dielectric's specular reflectance at normal and grazing incidence,
+/// `(f0.r, f0.g, f0.b, f90)`, from the material's reflectance and
+/// `KHR_materials_specular` terms:
+/// `f0 = min(0.16 * reflectance^2 * specular_colour, 1) * specular_factor`,
+/// `f90 = specular_factor`. The shader mixes these toward the base colour and
+/// 1 by metallic.
+///
+/// Computed in f64 and rounded once, so the defaults land on exactly
+/// `0.04f32` and `1.0` (`0.16f32 * 0.25f32` is not `0.04f32`).
+pub(crate) fn dielectric_specular(
+    reflectance: f32,
+    specular_colour: [f32; 3],
+    specular_factor: f32,
+) -> [f32; 4] {
+    let r = reflectance as f64;
+    let factor = (specular_factor as f64).clamp(0.0, 1.0);
+    let f0 = |c: f32| (((0.16 * r * r) * (c as f64).max(0.0)).min(1.0) * factor) as f32;
+    [
+        f0(specular_colour[0]),
+        f0(specular_colour[1]),
+        f0(specular_colour[2]),
+        factor as f32,
+    ]
+}
 
 /// Bit lanes of `MaterialGpu::item_flags[0]`. The WGSL `MAT_*` constants in the
 /// mesh shaders mirror these.
@@ -148,6 +193,98 @@ pub(crate) mod item_flags {
     pub(crate) const USES_UV1: u32 = 1 << 6;
     /// Some texture slot has an offset, scale or rotation.
     pub(crate) const UV_TRANSFORM: u32 = 1 << 7;
+    /// A clear coat is layered over the base (`layers0.xy`).
+    pub(crate) const HAS_CLEARCOAT: u32 = 1 << 8;
+    /// A sheen is layered over the base (`layers1`).
+    pub(crate) const HAS_SHEEN: u32 = 1 << 9;
+    /// The base specular lobe is anisotropic (`layers0.zw`).
+    pub(crate) const HAS_ANISOTROPY: u32 = 1 << 10;
+    /// Light passes through the surface (`volume0`, `volume1`).
+    pub(crate) const HAS_TRANSMISSION: u32 = 1 << 11;
+}
+
+/// Whether `m` draws as a transmissive surface: PBR built-in shading with a
+/// non-zero transmission, in the opaque or mask alpha mode. A material
+/// plugin's shading and a blended material do not transmit.
+pub(crate) fn transmits(m: &Material) -> bool {
+    m.transmission > 0.0 && m.is_pbr() && m.shading_plugin.is_none() && !m.is_blend()
+}
+
+/// The Beer-Lambert absorption coefficient per world unit that turns white
+/// into `colour` over `distance`: `-ln(colour) / distance` per channel. None
+/// for a distance of `f32::MAX`, infinity or zero. Shared with the path
+/// tracer's material table.
+pub(crate) fn absorption(colour: [f32; 3], distance: f32) -> [f32; 3] {
+    colour.map(|c| {
+        if distance.is_finite() && distance > 0.0 && distance < f32::MAX {
+            (-(c.clamp(1.0e-4, 1.0)).ln() / distance).max(0.0)
+        } else {
+            0.0
+        }
+    })
+}
+
+/// A material's volume lanes and their `item_flags` bit:
+/// `(volume0, volume1, flags)`. Zeros when the material does not transmit.
+/// The absorption coefficient is `-ln(attenuation_colour) /
+/// attenuation_distance` per channel, so white or a `f32::MAX` distance is
+/// none. `volume0.w` is left 0; the caller packs the emissive exposure weight
+/// into it.
+pub(crate) fn volume_lanes(m: &Material) -> ([f32; 4], [f32; 4], u32) {
+    if !transmits(m) {
+        return ([0.0; 4], [0.0; 4], 0);
+    }
+    let sigma = absorption(m.attenuation_colour.to_linear_rgb(), m.attenuation_distance);
+    (
+        [
+            m.transmission.clamp(0.0, 1.0),
+            m.thickness.max(0.0),
+            m.ior.max(1.0),
+            0.0,
+        ],
+        [sigma[0], sigma[1], sigma[2], 0.0],
+        item_flags::HAS_TRANSMISSION,
+    )
+}
+
+/// A material's layer lanes and their `item_flags` bits:
+/// `(layers0, layers1, flags)`. A layer that is off contributes zeros, so its
+/// unused roughness does not split blocks. Shared with the path tracer's
+/// material table.
+pub(crate) fn layer_lanes(
+    clearcoat: f32,
+    clearcoat_roughness: f32,
+    sheen_colour: [f32; 3],
+    sheen_roughness: f32,
+    anisotropy: f32,
+    anisotropy_rotation: f32,
+) -> ([f32; 4], [f32; 4], u32) {
+    let mut layers0 = [0.0; 4];
+    let mut layers1 = [0.0; 4];
+    let mut flags = 0;
+    let coat = clearcoat.clamp(0.0, 1.0);
+    if coat > 0.0 {
+        layers0[0] = coat;
+        layers0[1] = clearcoat_roughness.clamp(0.0, 1.0);
+        flags |= item_flags::HAS_CLEARCOAT;
+    }
+    let aniso = anisotropy.clamp(-1.0, 1.0);
+    if aniso != 0.0 {
+        layers0[2] = aniso;
+        layers0[3] = anisotropy_rotation;
+        flags |= item_flags::HAS_ANISOTROPY;
+    }
+    let sheen = sheen_colour.map(|c| c.max(0.0));
+    if sheen.iter().any(|&c| c > 0.0) {
+        layers1 = [
+            sheen[0],
+            sheen[1],
+            sheen[2],
+            sheen_roughness.clamp(0.0, 1.0),
+        ];
+        flags |= item_flags::HAS_SHEEN;
+    }
+    (layers0, layers1, flags)
 }
 
 /// The item-level and mesh-level shading facts that ride the material block
@@ -364,6 +501,16 @@ impl MaterialGpu {
             // Forward-compat: an unknown future mode renders as Opaque (the default).
             _ => 0,
         };
+        let (layers0, layers1, layer_flags) = layer_lanes(
+            m.clearcoat,
+            m.clearcoat_roughness,
+            m.sheen_colour.to_linear_rgb(),
+            m.sheen_roughness,
+            m.anisotropy,
+            m.anisotropy_rotation,
+        );
+        let (mut volume0, volume1, volume_flags) = volume_lanes(m);
+        volume0[3] = m.emissive_exposure_weight.clamp(0.0, 1.0);
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
         // Styled back-face policy and colour (the per-item Pattern world scale
@@ -449,13 +596,24 @@ impl MaterialGpu {
                         | on(shadowmask, f::HAS_SHADOWMASK)
                         | on(resolved.live(Emissive), f::HAS_EMISSIVE_TEX)
                         | on(xf.iter().any(|x| x.rot_tc[1] > 0.5), f::USES_UV1)
-                        | on(xf.iter().any(|x| !x.is_identity()), f::UV_TRANSFORM),
+                        | on(xf.iter().any(|x| !x.is_identity()), f::UV_TRANSFORM)
+                        | layer_flags
+                        | volume_flags,
                     mode,
                     0,
                     0,
                 ]
             },
             params: [[0.0; 4]; MATERIAL_PLUGIN_MAX_PARAMS],
+            specular: dielectric_specular(
+                m.reflectance,
+                m.specular_colour.to_linear_rgb(),
+                m.specular_factor,
+            ),
+            layers0,
+            layers1,
+            volume0,
+            volume1,
         }
     }
 }
@@ -678,6 +836,125 @@ mod tests {
             all_live(m),
             &ItemShading::default(),
         ))
+    }
+
+    #[test]
+    fn default_material_packs_exact_dielectric_specular() {
+        let block = MaterialGpu::from_material(
+            &Material::default(),
+            false,
+            MaterialSlots::default(),
+            &ItemShading::default(),
+        );
+        assert_eq!(block.specular, [0.04f32, 0.04, 0.04, 1.0]);
+        assert_eq!(block.specular[0].to_bits(), 0.04f32.to_bits());
+        // An IOR of 1.5 lands on the same F0.
+        assert_eq!(
+            dielectric_specular(Material::default().with_ior(1.5).reflectance, [1.0; 3], 1.0),
+            [0.04f32, 0.04, 0.04, 1.0]
+        );
+    }
+
+    #[test]
+    fn dielectric_specular_follows_the_specular_extension() {
+        let [r, g, b, f90] = dielectric_specular(1.0, [1.0, 0.5, 0.0], 1.0);
+        assert_eq!([r, g, b, f90], [0.16, 0.08, 0.0, 1.0]);
+        // The tinted F0 clamps to 1 before the factor scales it.
+        assert_eq!(
+            dielectric_specular(5.0, [1.0; 3], 0.5),
+            [0.5, 0.5, 0.5, 0.5]
+        );
+        // A factor with no colour change does not zero F0.
+        let half = dielectric_specular(0.5, [1.0; 3], 0.5);
+        assert_eq!(half, [0.02, 0.02, 0.02, 0.5]);
+        assert_eq!(dielectric_specular(0.5, [1.0; 3], 0.0), [0.0; 4]);
+    }
+
+    #[test]
+    fn layers_pack_only_when_on() {
+        let block = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
+        };
+        let plain = block(&Material::default());
+        assert_eq!(plain.layers0, [0.0; 4]);
+        assert_eq!(plain.layers1, [0.0; 4]);
+        assert_eq!(plain.item_flags[0] & 0x700, 0);
+        // A layer roughness without its layer changes nothing.
+        let mut idle = Material::default();
+        idle.clearcoat_roughness = 0.3;
+        idle.sheen_roughness = 0.6;
+        idle.anisotropy_rotation = 1.0;
+        assert_eq!(bytes(&idle, false), bytes(&Material::default(), false));
+
+        let m = Material::default()
+            .with_clearcoat(0.8, 0.2)
+            .with_sheen(crate::Colour::linear_rgb(0.5, 0.25, 0.0), 0.7)
+            .with_anisotropy(-0.5, 0.25);
+        let b = block(&m);
+        assert_eq!(b.layers0, [0.8, 0.2, -0.5, 0.25]);
+        assert_eq!(b.layers1, [0.5, 0.25, 0.0, 0.7]);
+        let f = b.item_flags[0];
+        assert_ne!(f & item_flags::HAS_CLEARCOAT, 0);
+        assert_ne!(f & item_flags::HAS_SHEEN, 0);
+        assert_ne!(f & item_flags::HAS_ANISOTROPY, 0);
+    }
+
+    #[test]
+    fn volume_packs_only_when_transmitting() {
+        let block = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
+        };
+        let plain = block(&Material::default());
+        assert_eq!(plain.volume0, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(plain.volume1, [0.0; 4]);
+        assert_eq!(plain.item_flags[0] & item_flags::HAS_TRANSMISSION, 0);
+        // Volume fields without transmission change nothing.
+        let idle = Material::default()
+            .with_attenuation(crate::Colour::linear_rgb(0.5, 0.5, 0.5), 1.0)
+            .with_transmission(0.0, 2.0);
+        assert_eq!(bytes(&idle, false), bytes(&Material::default(), false));
+        // Phong shading does not transmit.
+        let phong = Material::default().with_transmission(1.0, 1.0);
+        assert_eq!(
+            block(&phong).item_flags[0] & item_flags::HAS_TRANSMISSION,
+            0
+        );
+
+        let mut glass = Material::default()
+            .with_transmission(0.75, 2.0)
+            .with_ior(1.33)
+            .with_attenuation(crate::Colour::linear_rgb(0.5, 1.0, 0.25), 2.0);
+        glass.shading_model = crate::scene::material::ShadingModel::Pbr;
+        let b = block(&glass);
+        assert_eq!(b.volume0, [0.75, 2.0, 1.33, 1.0]);
+        let ln2 = std::f32::consts::LN_2;
+        assert!((b.volume1[0] - ln2 / 2.0).abs() < 1e-6);
+        assert_eq!(b.volume1[1], 0.0);
+        assert!((b.volume1[2] - ln2).abs() < 1e-6);
+        assert_ne!(b.item_flags[0] & item_flags::HAS_TRANSMISSION, 0);
+        // The default distance absorbs nothing.
+        glass.attenuation_distance = f32::MAX;
+        assert_eq!(block(&glass).volume1, [0.0; 4]);
+    }
+
+    #[test]
+    fn emissive_exposure_weight_packs_into_volume_w() {
+        let block = |m: &Material| {
+            MaterialGpu::from_material(m, false, all_live(m), &ItemShading::default())
+        };
+        assert_eq!(block(&Material::default()).volume0[3], 1.0);
+        let m = Material::default().with_emissive_exposure_weight(0.5);
+        assert_eq!(block(&m).volume0, [0.0, 0.0, 0.0, 0.5]);
+        let m = Material::default().with_emissive_exposure_weight(-2.0);
+        assert_eq!(block(&m).volume0[3], 0.0);
+        // A different weight is a different block.
+        assert_ne!(
+            bytes(&Material::default(), false),
+            bytes(
+                &Material::default().with_emissive_exposure_weight(0.0),
+                false
+            )
+        );
     }
 
     #[test]

@@ -72,7 +72,7 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    // Top hemisphere (tip at i=0, equator at i=hemi_stacks, offset center +half_body)
+    // Top hemisphere (tip at i=0, equator at i=hemi_stacks, offset centre +half_body)
     for i in 0..=hemi_stacks {
         let phi = std::f32::consts::FRAC_PI_2 * (1.0 - i as f32 / hemi_stacks as f32);
         let sin_phi = phi.sin();
@@ -86,7 +86,7 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         }
     }
 
-    // Bottom hemisphere (equator at i=0, tip at i=hemi_stacks, offset center -half_body)
+    // Bottom hemisphere (equator at i=0, tip at i=hemi_stacks, offset centre -half_body)
     let bottom_off = (hemi_stacks + 1) as u32;
     for i in 0..=hemi_stacks {
         let phi = -std::f32::consts::FRAC_PI_2 * i as f32 / hemi_stacks as f32;
@@ -323,7 +323,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     }
 
     // Equator disk cap (faces -Z)
-    let center = positions.len() as u32;
+    let centre = positions.len() as u32;
     positions.push([0.0, 0.0, 0.0]);
     normals.push([0.0, 0.0, -1.0]);
     let rim_start = positions.len() as u32;
@@ -334,7 +334,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[center, rim_start + next, rim_start + j]);
+        indices.extend_from_slice(&[centre, rim_start + next, rim_start + j]);
     }
 
     let mut uvs: Vec<[f32; 2]> = Vec::new();
@@ -343,7 +343,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
             uvs.push([j as f32 / sectors as f32, i as f32 / stacks as f32]);
         }
     }
-    uvs.push([0.5, 0.5]); // cap center
+    uvs.push([0.5, 0.5]); // cap centre
     for j in 0..sectors {
         let a = j as f32 * std::f32::consts::TAU / sectors as f32;
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);

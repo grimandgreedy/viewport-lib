@@ -18,6 +18,10 @@
 //!   declarations and shading helpers (`viewport_pbr_shade`,
 //!   `viewport_oit_pack`, `viewport_sample_csm`, etc.) so plugin shaders stay
 //!   in lockstep with the lib's lighting and transparency contracts.
+//! - [`depth`](crate::plugin_api::depth) holds the scene depth convention (reversed: near at 1, far
+//!   at 0): the compare functions, clear value and bias a pipeline that
+//!   touches scene depth uses. Its shader side is
+//!   [`SHARED_DEPTH_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_WGSL).
 //! - Pipeline builders (`build_opaque_pipeline`, `build_oit_pipeline`, ...)
 //!   construct the common variants in one call. Plugins ship one shader and
 //!   call a builder per variant.
@@ -147,6 +151,7 @@
 
 pub mod builders;
 pub mod cull;
+pub mod depth;
 pub mod install;
 pub mod item_type;
 pub mod pick_helpers;
@@ -161,12 +166,12 @@ pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;
 pub use crate::resources::pipeline_slot::LazyModule;
 pub use crate::resources::{PipelineBuilder, PluginPipelineOpts, ShadowCaster};
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
-pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
+pub use install::{PluginInstallCtx, PluginInstaller, install_plugin, uninstall_plugin};
 pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
-    ItemFrameContext, ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext,
-    PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
-    SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+    ItemFrameContext, ItemTypeHost, ItemTypeId, ItemTypePlugin, LightContext, OutlineMaskContext,
+    PaintContext, PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection,
+    RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
 };
 pub use plugin_resources::PluginResources;
 pub use post_effect::{
@@ -175,7 +180,8 @@ pub use post_effect::{
 };
 pub use target_desc::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,
-    OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
+    OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, SceneColourTargets, ShadowTargetDesc,
+    indirect_fraction_target,
 };
 pub use uploads::{Handles, Uploads};
 pub use writes::{Channel, Extent, Sourced, Span, Writes};

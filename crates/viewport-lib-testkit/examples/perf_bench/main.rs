@@ -504,7 +504,7 @@ fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<SceneRenderItem> {
 fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = model.to_cols_array_2d();
+    item.model = model.into();
     item.material = if run.textured {
         m.textured[(idx as usize) % m.textured.len()]
     } else {
@@ -720,7 +720,8 @@ fn run_one(
     let far = (meshes.extent * 8.0).max(500.0);
     let fov = 60f32.to_radians();
     let aspect = w as f32 / h as f32;
-    let proj = glam::Mat4::perspective_rh(fov, aspect, near, far);
+    // Reversed depth, the convention the renderer draws with: far before near.
+    let proj = glam::Mat4::perspective_rh(fov, aspect, far, near);
 
     let mut frame = FrameData::default();
     frame.camera.viewport_size = [w as f32, h as f32];
@@ -753,20 +754,7 @@ fn run_one(
     for f in 0..params.frames {
         let (eye, target) = camera_for(f, params.frames, meshes.extent);
         let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
-        let forward = (target - eye).normalize_or_zero();
-        let orientation = glam::Quat::from_mat3(&glam::Mat3::from_mat4(view.inverse())).normalize();
-        let mut rc = RenderCamera::default();
-        rc.view = view;
-        rc.projection = proj;
-        rc.eye_position = eye.to_array();
-        rc.forward = forward.to_array();
-        rc.orientation = orientation;
-        rc.near = near;
-        rc.far = far;
-        rc.distance = (target - eye).length().max(0.001);
-        rc.fov = fov;
-        rc.aspect = aspect;
-        frame.camera.render_camera = rc;
+        frame.camera.render_camera = RenderCamera::from_matrices(view, proj);
 
         renderer.render_to_texture(device, queue, target_view, &frame);
         // Non-blocking poll lets the renderer's async timestamp/stats readback

@@ -73,16 +73,12 @@ fn material_sampler_wrap_mode_changes_tiling() {
             frame.viewport.show_axes_indicator = false;
             frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
             let cam = Camera::default();
-            frame.camera.render_camera = {
-                let mut rc = RenderCamera::from_camera(&cam);
-                rc.aspect = 1.0;
-                rc
-            };
+            frame.camera.render_camera = RenderCamera::from_camera(&cam);
             frame.camera.viewport_size = [96.0, 96.0];
 
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh;
-            item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            item.model = glam::Mat4::IDENTITY.into();
             let mut m = Material::default();
             m.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             m.texture_id = Some(tex);

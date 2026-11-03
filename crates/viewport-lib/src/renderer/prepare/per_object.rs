@@ -96,7 +96,7 @@ pub(crate) fn build_instance_record(
             let world_extent = mesh
                 .map(|m| {
                     m.aabb
-                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
+                        .transformed(&item.model.to_mat4())
                         .longest_side()
                 })
                 .unwrap_or(1.0)
@@ -109,6 +109,10 @@ pub(crate) fn build_instance_record(
         | f::when(wireframe_mode || item.settings.wireframe, f::WIREFRAME)
         | f::when(cm.has_texture != 0, f::HAS_TEXTURE)
         | f::when(cm.has_normal_map != 0, f::HAS_NORMAL_MAP)
+        | f::when(
+            cm.has_normal_map != 0 && normal_map_is_signed(resources, m),
+            f::NORMAL_MAP_SIGNED,
+        )
         | f::when(cm.has_ao_map != 0, f::HAS_AO_MAP)
         | f::when(cm.unlit != 0, f::UNLIT)
         | f::when(cm.receive_shadows != 0, f::RECEIVE_SHADOWS)
@@ -186,6 +190,7 @@ pub(super) fn prepare_light_probe_sh(
     resources: &DeviceResources,
     scene_items: &[SceneRenderItem],
     queue: &crate::gpu::Queue,
+    origin: &crate::renderer::origin::OriginState,
 ) -> Vec<Option<u32>> {
     use crate::renderer::IndirectLightSource;
     let mut indices = vec![None; scene_items.len()];
@@ -204,8 +209,12 @@ pub(super) fn prepare_light_probe_sh(
                 // pack a block; the block index rides light_probe_index.
                 if let Some(probes) = probes {
                     if (count as usize) < crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
-                        let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
-                        sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
+                        // Items arrive relative to the origin; probes are in
+                        // world space.
+                        let centre = (item.model.translation + origin.origin())
+                            .as_vec3()
+                            .to_array();
+                        sh_gpu.extend_from_slice(&probes.blend_sh_at(centre).to_gpu());
                         indices[idx] = Some(count);
                         count += 1;
                     }
@@ -266,9 +275,19 @@ impl ViewportRenderer {
                 });
             }
             if resources.mesh_store.get(item.mesh_id).is_none() {
-                tracing::warn!(
-                    mesh_index = item.mesh_id.index(),
-                    "foreground item mesh_index invalid, skipping"
+                let index = item.mesh_id.index() as u32;
+                resources.notices.report(
+                    crate::notice::NoticeKey::new(
+                        crate::NoticeCategory::Item,
+                        "stale_handle",
+                        [u64::from(index), crate::notice::name_id("foreground item")],
+                    ),
+                    crate::Severity::Warning,
+                    || crate::NoticeDetail::StaleHandle {
+                        kind: "mesh",
+                        index,
+                        context: "foreground item",
+                    },
                 );
                 entries[idx].bind_group = None;
                 continue;
@@ -294,8 +313,11 @@ impl ViewportRenderer {
             );
             let material_id = resources.material_block(item.material, &shading);
             let mesh = resources.mesh_store.get(item.mesh_id);
-            let obj_uniform =
+            let mut obj_uniform =
                 build_instance_record(resources, item, mesh, false, None, material_id);
+            // Foreground items arrive with absolute placements: rebase in f64
+            // before the cast, as the scene list is.
+            obj_uniform.model = resources.world_origin.rel_transform(&item.model);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)
@@ -381,6 +403,7 @@ impl ViewportRenderer {
                 .iter()
                 .filter(|b| {
                     !b.is_transparent
+                        && !b.is_transmissive
                         && (!direct_only || !b.draws_culled())
                         && !matches!(b.draw, crate::renderer::types::DrawKind::NormalLines)
                 })
@@ -505,22 +528,28 @@ impl ViewportRenderer {
             BatchBound, BatchPass, DrawKind, MeshDrawEncoder, draw_batch,
         };
         let resources = &self.resources;
-        // The HDR scene pass renders Rgba16Float at sample count 1 with a
-        // writable stencil aspect; the LDR passes render the surface format
-        // at the configured sample count with the stencil attached read-only
-        // (`stencil_ops: None`). A read-only stencil declaration is valid in
-        // both (the mesh pipelines never touch stencil).
-        let (colour_format, sample_count) = if hdr {
-            (crate::gpu::TextureFormat::Rgba16Float, 1)
+        // The HDR scene pass renders Rgba16Float plus the indirect fraction
+        // at sample count 1 with a writable stencil aspect; the LDR passes
+        // render the surface format at the configured sample count with the
+        // stencil attached read-only (`stencil_ops: None`). A read-only
+        // stencil declaration is valid in both (the mesh pipelines never
+        // touch stencil).
+        let hdr_formats = [
+            Some(crate::gpu::TextureFormat::Rgba16Float),
+            Some(crate::resources::INDIRECT_FRACTION_FORMAT),
+        ];
+        let ldr_formats = [Some(resources.target_format)];
+        let (colour_formats, sample_count): (&[Option<crate::gpu::TextureFormat>], u32) = if hdr {
+            (&hdr_formats, 1)
         } else {
-            (resources.target_format, resources.sample_count)
+            (&ldr_formats, resources.sample_count)
         };
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,
             "per_object_bundle",
-            &[Some(colour_format)],
+            colour_formats,
             Some(crate::gpu::RenderBundleDepthStencil {
-                format: crate::resources::SCENE_DEPTH_FORMAT,
+                format: resources.scene_depth_format(),
                 depth_read_only: false,
                 stencil_read_only: true,
             }),
@@ -550,6 +579,7 @@ impl ViewportRenderer {
         let mut bound = BatchBound::default();
         for batch in &self.instancing.batches {
             if batch.is_transparent
+                || batch.is_transmissive
                 || matches!(batch.draw, DrawKind::NormalLines)
                 || (direct_only && batch.draws_culled())
             {

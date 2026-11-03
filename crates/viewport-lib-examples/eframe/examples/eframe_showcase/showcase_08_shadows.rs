@@ -1,4 +1,21 @@
-//! Showcase 8: Shadow Demo : build and controls.
+//! Showcase 8: Shadows.
+//!
+//! Directional cascaded shadows and a shadowed spot light on one scene of
+//! spheres, boxes and a tall pillar.
+//!
+//! - The cascade stepper sets `ShadowSettings::cascade_count`; the cascade
+//!   colour view (`DebugVis` with `DebugQuantity::CascadeIndex`) tints each
+//!   cascade so its reach reads directly.
+//! - Shadows filter with PCSS, which sizes the directional penumbra from
+//!   `ShadowSettings::sun_angular_radius`: 0 is a hard edge, the real sun
+//!   (about 0.0047 rad) is close to it at shadow-map resolution, and wider
+//!   discs soften the pillar's shadow with distance from its base.
+//! - The cascade fit: `shadow_distance` (fit to the casters, or end at a set
+//!   distance), `cascade_split` (`CascadeSplit::Practical` with its `lambda`)
+//!   and `fade_fraction`.
+//! - A spot light with its own shadow aims at the pillar; a radio picks
+//!   which light casts, so the two shadows of the same pillar compare. A spot
+//!   penumbra comes from the light's `radius`.
 
 use crate::App;
 use crate::eframe::egui;
@@ -6,7 +23,14 @@ use crate::geometry::{make_box_with_uvs, make_uv_sphere};
 use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{Material, ViewportRenderer, scene::Scene};
+use vpl::{CascadeSplit, Material, ViewportRenderer, scene::Scene};
+
+/// Which light casts the shadows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Caster {
+    Sun,
+    Spot,
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -16,7 +40,14 @@ pub(crate) struct ShadowsState {
     pub built: bool,
     pub scene: Scene,
     pub cascade_count: u32,
-    pub pcss_on: bool,
+    pub sun_angular_radius: f32,
+    pub fit_to_casters: bool,
+    pub shadow_distance: f32,
+    pub split_lambda: f32,
+    pub fade_fraction: f32,
+    pub show_cascades: bool,
+    pub caster: Caster,
+    pub spot_radius: f32,
     pub contact_on: bool,
 }
 
@@ -26,7 +57,14 @@ impl Default for ShadowsState {
             built: false,
             scene: Scene::new(),
             cascade_count: 4,
-            pcss_on: false,
+            sun_angular_radius: 0.01,
+            fit_to_casters: true,
+            shadow_distance: 20.0,
+            split_lambda: 0.75,
+            fade_fraction: 0.1,
+            show_cascades: false,
+            caster: Caster::Sun,
+            spot_radius: 0.1,
             contact_on: false,
         }
     }
@@ -51,7 +89,7 @@ impl App {
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
             upload_material(
                 renderer,
-                Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.9),
+                Material::pbr(Colour::linear_rgb(0.7, 0.7, 0.7), 0.0, 0.9),
             ),
         );
 
@@ -156,19 +194,55 @@ pub(crate) fn controls_shadows(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
+    let st = &mut app.shd_state;
+    ui.checkbox(&mut st.show_cascades, "Colour the cascades");
+
     ui.separator();
-    ui.label("Filter:");
+    ui.label("Casting light:");
     ui.horizontal(|ui| {
-        if ui.radio(!app.shd_state.pcss_on, "PCF").clicked() {
-            app.shd_state.pcss_on = false;
-        }
-        if ui.radio(app.shd_state.pcss_on, "PCSS").clicked() {
-            app.shd_state.pcss_on = true;
-        }
+        ui.radio_value(&mut st.caster, Caster::Sun, "Sun");
+        ui.radio_value(&mut st.caster, Caster::Spot, "Spot");
     });
 
     ui.separator();
-    ui.checkbox(&mut app.shd_state.contact_on, "Contact Shadows");
+    match st.caster {
+        Caster::Sun => {
+            ui.label("Sun angular radius (PCSS penumbra):");
+            ui.add(
+                egui::Slider::new(&mut st.sun_angular_radius, 0.0..=0.06)
+                    .fixed_decimals(4)
+                    .text("rad"),
+            );
+            ui.horizontal(|ui| {
+                for (label, r) in [("Hard", 0.0), ("Sun", 0.0047), ("Wide", 0.02)] {
+                    if ui.small_button(label).clicked() {
+                        st.sun_angular_radius = r;
+                    }
+                }
+            });
+            ui.weak(
+                "A blocker h above a receiver casts a penumbra about 2 h tan(radius) wide, \
+                 so the pillar's shadow hardens at its base and softens along its length.",
+            );
+        }
+        Caster::Spot => {
+            ui.add(egui::Slider::new(&mut st.spot_radius, 0.0..=0.5).text("Spot radius"));
+            ui.weak("A spot or point penumbra is sized by the light's radius.");
+        }
+    }
+
+    ui.separator();
+    ui.label("Cascade fit:");
+    ui.checkbox(&mut st.fit_to_casters, "Fit range to the casters");
+    ui.add_enabled(
+        !st.fit_to_casters,
+        egui::Slider::new(&mut st.shadow_distance, 2.0..=60.0).text("Shadow distance"),
+    );
+    ui.add(egui::Slider::new(&mut st.split_lambda, 0.0..=1.0).text("Split lambda (log vs even)"));
+    ui.add(egui::Slider::new(&mut st.fade_fraction, 0.0..=0.5).text("Fade fraction"));
+
+    ui.separator();
+    ui.checkbox(&mut st.contact_on, "Contact shadows");
 }
 
 // ---------------------------------------------------------------------------
@@ -184,12 +258,11 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_shadow_scene(renderer);
-    app.camera = vpl::Camera {
-        center: glam::Vec3::new(0.0, 0.0, 1.0),
-        distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-        ..vpl::Camera::default()
-    };
+    app.camera = vpl::Camera::orbit(
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        14.0,
+        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -208,23 +281,41 @@ pub(crate) fn scene(
             .shd_state
             .scene
             .collect_render_items(&vpl::Selection::new());
+        let st = &app.shd_state;
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
-            _t.lights = vec![{
-                let mut _t = vpl::LightSource::default();
-                _t.kind = vpl::LightKind::Directional {
-                    direction: [0.5, 0.2, 1.2],
-                };
-                _t.intensity = 2.0;
-                _t
-            }];
-            _t.shadows.enabled = true;
-            _t.shadows.cascade_count = app.shd_state.cascade_count;
-            _t.shadows.filter = if app.shd_state.pcss_on {
-                vpl::ShadowFilter::Pcss
-            } else {
-                vpl::ShadowFilter::Pcf
+            let mut sun = vpl::LightSource::default();
+            sun.kind = vpl::LightKind::Directional {
+                direction: [0.5, 0.2, 1.2],
             };
+            // With the spot casting, the sun drops to a dim fill so the
+            // spot's pool and its shadow of the pillar read.
+            sun.intensity = if st.caster == Caster::Sun { 2.0 } else { 0.3 };
+            sun.cast_shadows = st.caster == Caster::Sun;
+            // A spot behind the pillar, aimed at its middle, so its shadow
+            // falls across the scene towards the spheres.
+            let mut spot = vpl::LightSource::default();
+            spot.kind = vpl::LightKind::Spot {
+                position: glam::DVec3::new(1.5, -10.0, 4.0),
+                direction: [-1.5, 4.0, -2.5],
+                range: 25.0,
+                inner_angle: 0.35,
+                outer_angle: 0.55,
+                radius: st.spot_radius,
+            };
+            spot.colour = Colour::linear_rgb(1.0, 0.85, 0.65);
+            spot.intensity = 25.0;
+            spot.cast_shadows = st.caster == Caster::Spot;
+            _t.lights = vec![sun, spot];
+            _t.shadows.enabled = true;
+            _t.shadows.cascade_count = st.cascade_count;
+            _t.shadows.filter = vpl::ShadowFilter::Pcss;
+            _t.shadows.sun_angular_radius = st.sun_angular_radius;
+            _t.shadows.shadow_distance = (!st.fit_to_casters).then_some(st.shadow_distance);
+            _t.shadows.cascade_split = CascadeSplit::Practical {
+                lambda: st.split_lambda,
+            };
+            _t.shadows.fade_fraction = st.fade_fraction;
             _t.hemisphere_intensity = 0.5;
             _t.sky_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
             _t.ground_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
@@ -261,10 +352,19 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     };
     // Cap far plane for better cascade distribution, but track orbit
     // distance so the scene doesn't disappear when zooming out.
-    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
-    rc.far = (app.camera.distance * 3.0).max(60.0);
-    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-    fd.camera.render_camera = rc;
+    let cam = &app.camera;
+    let far = (cam.focus_distance() * 3.0).max(60.0);
+    fd.camera.render_camera =
+        vpl::RenderCamera::from_camera(cam).with_depth_range(cam.depth_range().0, far);
+    if app.shd_state.show_cascades {
+        fd.effects.debug.debug_vis = vpl::DebugVis::new(
+            vpl::DebugOutputMode::TintOverlay,
+            vpl::DebugQuantity::CascadeIndex,
+            vpl::DebugQuantity::Zero,
+            vpl::DebugQuantity::One,
+            1.0,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -288,8 +388,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Update this showcase's interactive widgets for the frame.
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
-/// Cache gizmo placement for next frame's hit-testing.
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -362,5 +460,19 @@ impl crate::Showcase for ScShadows {
         _frame: &crate::eframe::Frame,
     ) {
         controls_shadows(app, ui)
+    }
+    fn tour(&self, app: &mut crate::App, step: u32) -> bool {
+        let st = &mut app.shd_state;
+        match step {
+            0 => {}
+            1 => st.show_cascades = true,
+            2 => {
+                st.show_cascades = false;
+                st.sun_angular_radius = 0.04;
+            }
+            3 => st.caster = Caster::Spot,
+            _ => return false,
+        }
+        true
     }
 }

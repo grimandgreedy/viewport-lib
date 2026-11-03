@@ -6,8 +6,8 @@
 // CPU decal pick. The box silhouette can therefore extend past the shaded
 // footprint into empty space, which is deliberate.
 //
-// Group 0: the shared scene bindings. Only clip volumes are tested, matching
-//          the lib's own object-id pass, which does not apply clip planes.
+// Group 0: the shared scene bindings. Clip planes and clip volumes are
+//          tested, as in the colour pass.
 // Group 1: per-decal proxy uniform (model matrix + pick id).
 
 /// The decal's unit-cube-to-world transform plus the id it answers picks with.
@@ -43,7 +43,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragOut {
-    if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if !viewport_clip_test(in.world_pos) { discard; }
 
     var out: FragOut;
     out.object_id    = proxy.object_id;
