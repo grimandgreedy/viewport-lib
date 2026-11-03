@@ -3,16 +3,17 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 
 /// End-to-end proof of the material-plugin path: a registered plugin with a
 /// toon `shade_light` + `shade_ambient` body, selected per material via
-/// `Material::shading_plugin`, must change the rendered output on the LDR
-/// path, respond to live params writes, and run the HDR and OIT paths
+/// `Material::with_plugin`, must change the rendered output on the LDR
+/// path, respond to parameter edits, and run the HDR and OIT paths
 /// without validation errors (wgpu's uncaptured-error handler panics the
 /// thread on any validation failure, so completing the renders is itself the
 /// assertion).
@@ -20,27 +21,28 @@ use common::*;
 fn material_plugin_changes_rendered_output() {
     struct ToonPlugin;
     impl viewport_lib::MaterialPlugin for ToonPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "toon_test"
         }
         fn wgsl_body(&self) -> String {
             "\
 fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
-    let bands = max(material_params[0].x, 1.0);
+    let bands = max(params.bands, 1.0);
     let ndl = max(dot(surf.normal, light.l), 0.0);
     let stepped = ceil(ndl * bands) / bands;
     return surf.base_colour * stepped * light.radiance * light.shadow;
 }
 fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
-    return surf.base_colour * material_params[0].y * surf.ao;
+    return surf.base_colour * params.ambient * surf.ao;
 }
 "
             .to_string()
         }
-        fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-            let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
-            p[0] = [2.0, 0.25, 0.0, 0.0];
-            p
+        fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+            vec![
+                viewport_lib::ParamDesc::f32("bands", 2.0),
+                viewport_lib::ParamDesc::f32("ambient", 0.25),
+            ]
         }
     }
 
@@ -49,6 +51,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -70,7 +73,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let stats = renderer.resources().material_plugin_stats();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].name, "toon_test");
-    assert_eq!(stats[0].variants, 1);
+    assert_eq!(stats[0].params, 2);
     assert_eq!(stats[0].texture_count, 0);
     assert_eq!(stats[0].pipelines_built, 0);
 
@@ -82,12 +85,16 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    let mat = upload_material(&mut renderer, m);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
+    item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    item.material.shading_plugin = Some(plugin_id);
+    m.shading_plugin = Some(plugin_id);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
@@ -95,64 +102,62 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         "selecting the plugin must change the LDR output"
     );
 
-    // Drawing through the plugin lazily built its full pipeline set: 4 LDR +
-    // 4 HDR opaque (discarding + discard-free, each facedness) + 1 HDR
-    // transparent + 2 OIT accumulate.
+    // Drawing through the plugin built the one pipeline that draw selected,
+    // the back-face-culled LDR solid, and none of the other nine in the set.
     let stats = renderer.resources().material_plugin_stats();
-    assert_eq!(stats[0].pipelines_built, 11);
+    assert_eq!(stats[0].pipelines_built, 1);
 
-    // Live params: raising the band count and ambient changes the image.
-    let params = renderer
-        .resources_mut()
-        .material_plugin_params_handle(plugin_id)
-        .expect("params handle");
-    params.write(&queue, &[[16.0, 0.9, 0.0, 0.0]]);
+    // Parameter edits: raising the band count and ambient changes the image,
+    // through the material's own block with no new pipeline.
+    m.set_param("bands", 16.0);
+    m.set_param("ambient", 0.9);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let toon_reparam = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
         toon, toon_reparam,
-        "params writes must be live in the next render"
+        "a parameter edit must be live in the next render"
     );
 
-    // Per-material params: a second variant with different params renders
-    // differently from the default variant in the same frame's plugin.
-    let variant_b = renderer
-        .resources_mut()
-        .create_material_plugin_variant(&device, plugin_id, &[[2.0, 0.05, 0.0, 0.0]], &[])
-        .expect("variant");
-    assert_eq!(variant_b.plugin_index(), plugin_id.plugin_index());
-    assert_ne!(variant_b.variant_index(), plugin_id.variant_index());
-    // Variants share the plugin's pipeline set; only the variant count grows.
-    let stats = renderer.resources().material_plugin_stats();
-    assert_eq!(stats[0].variants, 2);
-    assert_eq!(stats[0].pipelines_built, 11);
-    item.material.shading_plugin = Some(variant_b);
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
-    let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    assert_ne!(
-        toon_reparam, toon_variant_b,
-        "a second variant must carry its own params window"
+    // Per-material values: a second material on the plugin with its own
+    // parameters renders differently, on the same pipeline set.
+    let mat_b = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin_id)
+            .with_param("bands", 2.0)
+            .with_param("ambient", 0.05),
     );
-    item.material.shading_plugin = Some(plugin_id);
+    let mut item_b = item.clone();
+    item_b.material = mat_b;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item_b].into());
+    frame.scene.generation += 1;
+    let toon_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        toon_reparam, toon_b,
+        "a second material must carry its own parameters"
+    );
+    let stats = renderer.resources().material_plugin_stats();
+    assert_eq!(stats[0].pipelines_built, 1);
 
     // HDR path (and, with a transparent second item, the OIT path).
     let mut transparent = item.clone();
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, transparent].into());
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(hdr.len(), 64 * 64 * 4);
 }
 
-/// A plugin declaring a texture slot samples the per-variant texture: a
-/// variant bound to a red texture must render differently from the default
-/// variant's 1x1 white fallback.
+/// A plugin declaring a texture slot samples the material's texture: a
+/// material naming a red texture must render differently from one leaving the
+/// slot on the 1x1 white fallback.
 #[test]
-fn material_plugin_texture_variant_renders() {
+fn material_plugin_texture_renders() {
     struct StripePlugin;
     impl viewport_lib::MaterialPlugin for StripePlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "stripe_test"
         }
         fn texture_count(&self) -> u32 {
@@ -179,6 +184,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -191,12 +197,12 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let red = vec![[255u8, 0, 0, 255]; 16].concat();
     let red_tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &red)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(4, 4, red.to_vec()),
+        )
         .expect("upload texture");
-    let red_variant = renderer
-        .resources_mut()
-        .create_material_plugin_variant(&device, plugin_id, &[], &[red_tex])
-        .expect("variant");
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
@@ -206,18 +212,22 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin_id);
+    let mat = upload_material(&mut renderer, m);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.material.shading_plugin = Some(plugin_id);
+    item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let white_fallback = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    item.material.shading_plugin = Some(red_variant);
+    m.plugin_textures[0] = Some(red_tex);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     let red_textured = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(
         white_fallback, red_textured,
-        "a variant's texture must reach the hook"
+        "a material's plugin texture must reach the hook"
     );
 }
 
@@ -227,7 +237,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 fn material_plugin_reads_vertex_attribute() {
     struct AttrPlugin;
     impl viewport_lib::MaterialPlugin for AttrPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "attr_test"
         }
         fn reads_vertex_attribute(&self) -> bool {
@@ -235,7 +245,7 @@ fn material_plugin_reads_vertex_attribute() {
         }
         fn wgsl_body(&self) -> String {
             "\
-fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
     return direct + ambient + surf.attr.rgb;
 }
 "
@@ -248,6 +258,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let plain_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -271,9 +282,11 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin_id);
     let mut item = SceneRenderItem::default();
     item.mesh_id = plain_id;
-    item.material.shading_plugin = Some(plugin_id);
+    item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let no_channel = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
@@ -305,11 +318,10 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
 fn material_plugin_surface_hook_authors_surface_and_gated_alpha() {
     struct PaintPlugin;
     impl viewport_lib::MaterialPlugin for PaintPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "paint_test"
         }
         fn wgsl_body(&self) -> String {
-            // params[0] = (alpha, emissive_green, 0, 0)
             "\
 fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     var ov: SurfaceOverride;
@@ -317,17 +329,18 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     ov.normal = surf.normal;
     ov.metallic = surf.metallic;
     ov.roughness = surf.roughness;
-    ov.emissive = vec3<f32>(0.0, material_params[0].y, 0.0);
-    ov.alpha = material_params[0].x;
+    ov.emissive = vec3<f32>(0.0, params.glow, 0.0);
+    ov.alpha = params.alpha;
     return ov;
 }
 "
             .to_string()
         }
-        fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-            let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
-            p[0] = [1.0, 0.0, 0.0, 0.0];
-            p
+        fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+            vec![
+                viewport_lib::ParamDesc::f32("alpha", 1.0),
+                viewport_lib::ParamDesc::f32("glow", 0.0),
+            ]
         }
     }
 
@@ -336,6 +349,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
@@ -344,11 +358,6 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         .resources_mut()
         .register_material_plugin(&device, &PaintPlugin)
         .expect("register");
-    let params = renderer
-        .resources_mut()
-        .material_plugin_params_handle(plugin_id)
-        .expect("params handle");
-
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
@@ -357,13 +366,17 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
+    let mut m = Material::default();
+    let mat = upload_material(&mut renderer, m);
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
+    item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     // Authored base colour under stock lighting.
-    item.material.shading_plugin = Some(plugin_id);
+    m.shading_plugin = Some(plugin_id);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let painted = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(builtin, painted, "surface hook must change the image");
@@ -378,7 +391,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 
     // Hook emissive reaches the image.
-    params.write(&queue, &[[1.0, 0.8, 0.0, 0.0]]);
+    m.set_param("alpha", 1.0);
+    m.set_param("glow", 0.8);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let emissive = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     let green = |img: &[u8]| -> i64 { img.chunks(4).map(|p| p[1] as i64).sum::<i64>() };
     assert!(
@@ -387,7 +402,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 
     // Opaque materials ignore the hook's alpha entirely.
-    params.write(&queue, &[[0.05, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.05);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let opaque_low_alpha = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(
         painted, opaque_low_alpha,
@@ -395,19 +412,27 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 
     // Blend materials take it as output alpha.
-    item.material.alpha_mode = viewport_lib::material::AlphaMode::Blend;
+    m.alpha_mode = viewport_lib::material::AlphaMode::Blend;
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
-    params.write(&queue, &[[0.9, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.9);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let blend_high = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
-    params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.1);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let blend_low = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_ne!(blend_high, blend_low, "blend draws must honour hook alpha");
 
     // Mask materials re-test the cutoff against the hook's alpha: below it,
     // every fragment discards and the image matches an empty scene.
-    item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+    m.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
-    params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
+    m.set_param("alpha", 0.1);
+    m.set_param("glow", 0.0);
+    renderer.resources_mut().replace_material(mat, m).unwrap();
     let mask_discarded = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
     let empty = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -417,13 +442,18 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 }
 
-// The reference plugins shipped under examples/plugins/ must stay
-// registrable: their WGSL runs through the full composer + wgpu validation
-// at registration, so this catches contract or prefixer regressions (e.g.
-// a body local named like a ShadingSurface field).
-#[path = "../examples/plugins/surface_detail_plugin.rs"]
+// The reference plugins the examples ship must stay registrable: their WGSL runs
+// through the full composer + wgpu validation at registration, so this catches
+// contract or prefixer regressions (e.g. a body local named like a
+// ShadingSurface field). The sources live with the examples that demonstrate
+// them, so this test reaches across to them rather than keeping a second copy
+// that could drift.
+// A shared example module: the showcase uses every plugin in it, this test
+// registers only the two it exercises.
+#[allow(dead_code)]
+#[path = "../../viewport-lib-examples/eframe/examples/plugins/surface_detail_plugin.rs"]
 mod surface_detail_plugin;
-#[path = "../examples/plugins/toon_plugin.rs"]
+#[path = "../../viewport-lib-examples/eframe/examples/plugins/toon_plugin.rs"]
 mod toon_plugin;
 
 #[test]
@@ -433,6 +463,7 @@ fn example_reference_plugins_register() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let resources = renderer.resources_mut();
     resources
         .register_material_plugin(&device, &toon_plugin::ToonPlugin)
@@ -446,4 +477,1024 @@ fn example_reference_plugins_register() {
     resources
         .register_material_plugin(&device, &surface_detail_plugin::ParallaxPlugin)
         .expect("parallax plugin registers");
+}
+
+/// A plugin material on several instances of one mesh draws as a batch on the
+/// LDR (`Direct`) frame: the batch stats show at least one batch, the render
+/// completes without a validation error (wgpu's uncaptured-error handler
+/// panics on failure), and the plugin shading changes the output.
+#[test]
+fn material_plugin_instances_on_ldr_path() {
+    struct ToonPlugin;
+    impl viewport_lib::MaterialPlugin for ToonPlugin {
+        fn name(&self) -> &str {
+            "toon_ldr_instanced"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    let stepped = ceil(ndl * 3.0) / 3.0;
+    return surf.base_colour * stepped * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour * 0.2 * surf.ao;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // The low-power test device never enables bindless, so plugin items take
+    // the per-batch instanced path (bindless would route them per-object).
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &ToonPlugin)
+        .expect("register material plugin");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+
+    // Four instances of the one mesh at the origin: they overlap into one
+    // visible box but still form a four-instance batch, which is all the
+    // routing assertion needs. Matches the single-item test's visible framing.
+    let mut toon = Material::default();
+    toon.shading_plugin = Some(plugin_id);
+    let toon_mat = upload_material(&mut renderer, toon);
+    let make = |material: MaterialId| {
+        let mut it = SceneRenderItem::default();
+        it.mesh_id = mesh_id;
+        it.material = material;
+        it
+    };
+
+    // Built-in shading reference.
+    let builtin_items: Vec<_> = (0..4).map(|_| make(MaterialId::DEFAULT)).collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(builtin_items.into());
+    let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // Same four instances, now selecting the plugin. Bump the scene generation
+    // so the instanced batch cache rebuilds (a material change is a scene
+    // change; the cache keys on the generation for exactly this).
+    let plugin_items: Vec<_> = (0..4).map(|_| make(toon_mat)).collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(plugin_items.into());
+    frame.scene.generation += 1;
+    let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let stats = renderer.last_frame_stats();
+    assert!(
+        stats.instanced_batches >= 1,
+        "the four plugin instances must form at least one instanced batch"
+    );
+    assert_ne!(
+        builtin, toon,
+        "the plugin shading must change the instanced LDR output"
+    );
+}
+
+/// A plugin batch rides GPU culling: with culling on, plugin instances draw
+/// through the plugin's `vs_main_cull` pipeline from the cull-written indirect
+/// args, and for an all-visible scene that renders pixel-identically to the same
+/// plugin drawn unculled. Completing both renders is also the validation
+/// assertion (the culled draw binds the cull group-1 layout and the indirect
+/// args, so a layout or offset mistake panics the uncaptured-error handler).
+/// Exercises the per-batch (non-bindless) cull plugin path on the HDR scene pass.
+#[test]
+fn material_plugin_batch_rides_gpu_culling() {
+    struct ToonPlugin;
+    impl viewport_lib::MaterialPlugin for ToonPlugin {
+        fn name(&self) -> &str {
+            "toon_cull_instanced"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    return surf.base_colour * ndl * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour * 0.2 * surf.ao;
+}
+"
+            .to_string()
+        }
+    }
+
+    // Needs INDIRECT_FIRST_INSTANCE for the GPU-culled indirect draw; skip where
+    // the adapter lacks it. Per-batch textures (not bindless), so this covers the
+    // per-batch cull plugin pipeline + `instance_cull_bind_groups` bind path.
+    let Some((device, queue)) = headless_device_with_indirect() else {
+        eprintln!("skipping: no adapter with INDIRECT_FIRST_INSTANCE");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &ToonPlugin)
+        .expect("register material plugin");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    // The cull plugin path is on the HDR scene pass.
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+
+    let mut toon = Material::default();
+    toon.shading_plugin = Some(plugin_id);
+    let toon = upload_material(&mut renderer, toon);
+    let items: Vec<_> = (0..4)
+        .map(|_| {
+            let mut it = SceneRenderItem::default();
+            it.mesh_id = mesh_id;
+            it.material = toon;
+            it
+        })
+        .collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+    // Culled: plugin batches draw from the cull-written indirect args.
+    renderer.enable_gpu_driven_culling();
+    let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // Unculled reference: same instances drawn directly.
+    renderer.disable_gpu_driven_culling();
+    let unculled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // Guard against a false pass where nothing drew (two blank frames also
+    // compare equal): the box must actually be visible.
+    let bg = &culled[0..4];
+    assert!(
+        culled.chunks_exact(4).any(|p| p != bg),
+        "the plugin box must be visible, not an empty frame"
+    );
+    // The whole box is in frustum, so culling removes nothing: the culled plugin
+    // path must render the same image as the direct one.
+    assert_eq!(
+        culled, unculled,
+        "the GPU-culled plugin draw must match the unculled draw for an all-visible scene"
+    );
+}
+
+/// A plugin batch of one sphere and a batch of two spheres at the same
+/// transform (the second fails the depth test behind the first) draw the
+/// same pixels.
+#[test]
+fn material_plugin_draws_the_same_at_one_or_two_items() {
+    struct ToonPlugin;
+    impl viewport_lib::MaterialPlugin for ToonPlugin {
+        fn name(&self) -> &str {
+            "toon_parity"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    let stepped = ceil(ndl * 4.0) / 4.0;
+    return surf.base_colour * stepped * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour * 0.2 * surf.ao;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &viewport_lib::primitives::sphere(1.0, 32, 16))
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &ToonPlugin)
+        .expect("register material plugin");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+
+    let mut m = Material::pbr(Colour::linear_rgb(0.75, 0.3, 0.3), 0.1, 0.55);
+    m.shading_plugin = Some(plugin_id);
+    let mat = upload_material(&mut renderer, m);
+    let sphere = || {
+        let mut it = SceneRenderItem::default();
+        it.mesh_id = mesh_id;
+        it.material = mat;
+        it
+    };
+
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![sphere()].into());
+    let one = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // Bump the generation so the batch list rebuilds for the new scene.
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![sphere(), sphere()].into());
+    frame.scene.generation += 1;
+    let two = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // The sphere must be visible, not an empty frame.
+    let bg = &one[0..4];
+    assert!(
+        one.chunks_exact(4).any(|p| p != bg),
+        "the plugin sphere must be visible"
+    );
+    assert_eq!(
+        one, two,
+        "the plugin must shade the same at one or two items"
+    );
+}
+
+/// A plugin that reads the per-vertex extension attribute (`surf.attr`) sees
+/// it whatever the item count: one item and a batch of two overlapping items
+/// render the same, tinted by the attribute.
+#[test]
+fn material_plugin_reading_vertex_attribute_sees_it_in_a_batch() {
+    struct AttrPlugin;
+    impl viewport_lib::MaterialPlugin for AttrPlugin {
+        fn name(&self) -> &str {
+            "attr_per_object"
+        }
+        fn reads_vertex_attribute(&self) -> bool {
+            true
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+    return direct + ambient + surf.attr.rgb;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    // A uniform green per-vertex attribute: the plugin adds it to the lit colour,
+    // so a green bias in the image proves `surf.attr` reached the hook.
+    let mut data = box_mesh();
+    data.extension_attributes = Some(vec![[0.0, 0.6, 0.0, 0.0]; data.positions.len()]);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &data)
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &AttrPlugin)
+        .expect("register material plugin");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin_id);
+    let mat = upload_material(&mut renderer, m);
+    let item = || {
+        let mut it = SceneRenderItem::default();
+        it.mesh_id = mesh_id;
+        it.material = mat;
+        it
+    };
+
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item()].into());
+    let one = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item(), item()].into());
+    frame.scene.generation += 1;
+    let two = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // The attribute reached the hook: the box is tinted green (G > R on the box).
+    let bias = |img: &[u8]| -> i64 { img.chunks_exact(4).map(|p| p[1] as i64 - p[0] as i64).sum() };
+    assert!(
+        bias(&two) > 0,
+        "the per-vertex attribute should tint the box green via surf.attr"
+    );
+    assert_eq!(
+        one, two,
+        "a vertex-attribute plugin must render the same at one or two items"
+    );
+}
+
+/// A plugin's pipelines are built by the first draw that selects each one.
+/// Every route a plugin material can take has to find its pipeline that way,
+/// so each is drawn on a fresh renderer and compared with the same frame on a
+/// renderer whose whole set was built up front.
+#[test]
+fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
+    struct Banded;
+    impl viewport_lib::MaterialPlugin for Banded {
+        fn name(&self) -> &str {
+            "banded_on_demand"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+             \x20   let ndl = max(dot(surf.normal, light.l), 0.0);\n\
+             \x20   return surf.base_colour * ceil(ndl * 2.0) / 2.0 * light.radiance * light.shadow;\n\
+             }\n"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    type Case = (
+        &'static str,
+        usize,
+        fn(&mut FrameData, &mut SceneRenderItem, &mut Material),
+    );
+    let cases: [Case; 7] = [
+        ("direct, one item", 1, |frame, _, _| {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }),
+        ("direct, a batch", 3, |frame, _, _| {
+            frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+        }),
+        ("hdr, one item", 1, |_, _, _| {}),
+        ("hdr, a batch", 3, |_, _, _| {}),
+        ("hdr, a transparent batch", 3, |_, item, _| {
+            item.settings.opacity = 0.5;
+        }),
+        ("hdr, one transparent item", 1, |_, item, _| {
+            item.settings.opacity = 0.5;
+        }),
+        ("hdr, a two-sided cutout batch", 3, |frame, _, material| {
+            material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+            material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+            // The test box is wound inside out, so two-sided every visible
+            // face is a back face of a closed solid and sits in its own
+            // shadow; the hook's light term then has nothing to change.
+            frame.effects.lighting.shadows.enabled = false;
+        }),
+    ];
+
+    for (name, count, configure) in cases {
+        let render = |warm: bool, with_plugin: bool| {
+            let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+            renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &box_mesh())
+                .unwrap();
+            let plugin = renderer
+                .resources_mut()
+                .register_material_plugin(&device, &Banded)
+                .expect("register material plugin");
+            if warm {
+                renderer
+                    .resources_mut()
+                    .warm_material_plugin_pipelines(&device, &[plugin]);
+            }
+            let mut frame = FrameData::default();
+            frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+            frame.camera.viewport_size = [64.0, 64.0];
+            frame.viewport.show_grid = false;
+            frame.viewport.show_axes_indicator = false;
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            let mut material = Material::default();
+            configure(&mut frame, &mut item, &mut material);
+            if with_plugin {
+                material.shading_plugin = Some(plugin);
+            }
+            item.material = upload_material(&mut renderer, material);
+            let items: Vec<SceneRenderItem> = (0..count)
+                .map(|i| {
+                    let mut item = item.clone();
+                    item.model = glam::Mat4::from_translation(glam::Vec3::new(
+                        (i as f32 - (count - 1) as f32 * 0.5) * 1.5,
+                        0.0,
+                        0.0,
+                    ))
+                    .into();
+                    item
+                })
+                .collect();
+            frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+            // Two frames: an item joins a batch once its plugin's instanced
+            // set exists, which the first frame's prepare sees to.
+            let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            renderer.render_offscreen(&device, &queue, &frame, 64, 64)
+        };
+        let on_demand = render(false, true);
+        let up_front = render(true, true);
+        let builtin = render(false, false);
+        assert!(
+            on_demand == up_front,
+            "{name}: the plugin drew differently when its pipelines were built on demand"
+        );
+        // A transparent batch draws the built-in shading whether or not the
+        // set was built up front, so it has nothing to tell apart here.
+        if !name.contains("transparent batch") {
+            assert!(
+                on_demand != builtin,
+                "{name}: the plugin drew the built-in shading"
+            );
+        }
+    }
+}
+
+/// Under `Background`, the frame that first draws a plugin material skips
+/// the item instead of compiling, and draws it once the worker is done.
+#[test]
+fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
+    struct Flat;
+    impl viewport_lib::MaterialPlugin for Flat {
+        fn name(&self) -> &str {
+            "flat_background"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+             \x20   return vec3<f32>(1.0, 0.2, 0.2) * light.shadow;\n\
+             }\n"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let setup = |policy: viewport_lib::PipelineCompilation, with_item: bool| {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        renderer.set_pipeline_compilation(policy);
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &box_mesh())
+            .unwrap();
+        let plugin = renderer
+            .resources_mut()
+            .register_material_plugin(&device, &Flat)
+            .expect("register material plugin");
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        if with_item {
+            let mut m = Material::default();
+            m.shading_plugin = Some(plugin);
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            item.material = upload_material(&mut renderer, m);
+            frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        }
+        (renderer, frame, plugin)
+    };
+
+    let (mut blocking, frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, true);
+    let expected = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
+    let (mut empty, empty_frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, false);
+    let nothing = render_presented(&mut empty, &device, &queue, &empty_frame, 64, 64);
+    assert!(expected != nothing, "the plugin item has to be visible");
+
+    let (mut renderer, frame, plugin) = setup(viewport_lib::PipelineCompilation::Background, true);
+    let first = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+    assert_eq!(
+        renderer.resources().material_plugin_stats()[0].pipelines_built,
+        0,
+        "the first frame compiled on the calling thread"
+    );
+    assert!(
+        first == nothing,
+        "the item was drawn before its pipeline was ready"
+    );
+    assert!(renderer.resources().material_plugin_pipelines_ready(plugin));
+
+    let start = std::time::Instant::now();
+    loop {
+        let out = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+        if out == expected {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background compile never produced the plugin's shading"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        renderer.resources().material_plugin_stats()[0].pipelines_built,
+        1
+    );
+}
+
+/// A warm-up under `Background` is counted in `pipelines_pending`, and
+/// after `wait_for_pipelines` the first frame has nothing left to build.
+#[test]
+fn a_background_warm_up_is_counted_then_waited_for() {
+    struct Tint;
+    impl viewport_lib::MaterialPlugin for Tint {
+        fn name(&self) -> &str {
+            "tint_pending"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+             \x20   return surf.base_colour * vec3<f32>(0.2, 0.9, 0.3) * light.shadow;\n\
+             }\n"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Background);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &Tint)
+        .expect("register material plugin");
+    assert_eq!(renderer.pipelines_pending(), 0);
+
+    renderer
+        .resources_mut()
+        .warm_material_plugin_pipelines(&device, &[plugin]);
+    let pending = renderer.pipelines_pending();
+    assert!(pending > 0, "the warm-up handed nothing to the workers");
+
+    renderer.wait_for_pipelines(&device);
+    assert_eq!(renderer.pipelines_pending(), 0);
+
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let mut m = Material::default();
+    m.shading_plugin = Some(plugin);
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = upload_material(&mut renderer, m);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // The built-in pipelines this frame binds still compile on this thread;
+    // the plugin's own must not.
+    viewport_lib::resources::build_log::enable();
+    let _ = viewport_lib::resources::build_log::drain();
+    let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let plugin_builds: Vec<String> = viewport_lib::resources::build_log::drain()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|label| label.contains("tint_pending"))
+        .collect();
+    assert!(
+        plugin_builds.is_empty(),
+        "the frame built plugin pipelines after the warm-up: {plugin_builds:?}"
+    );
+    assert_eq!(renderer.last_frame_stats().pipelines_pending, 0);
+    assert!(renderer.resources().material_plugin_stats()[0].pipelines_built >= 1);
+}
+
+/// Shades to the material's `colour` parameter through the ambient hook, with
+/// lights adding nothing, so each material reads as one known colour.
+struct FlatParamPlugin;
+impl viewport_lib::MaterialPlugin for FlatParamPlugin {
+    fn name(&self) -> &str {
+        "flat_param"
+    }
+    fn wgsl_body(&self) -> String {
+        "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return params.colour;
+}
+"
+        .to_string()
+    }
+    fn param_layout(&self) -> Vec<viewport_lib::ParamDesc> {
+        vec![viewport_lib::ParamDesc::colour("colour", Colour::WHITE)]
+    }
+}
+
+/// Shades to the material's first plugin texture through the ambient hook.
+struct FlatTexturePlugin;
+impl viewport_lib::MaterialPlugin for FlatTexturePlugin {
+    fn name(&self) -> &str {
+        "flat_texture"
+    }
+    fn texture_count(&self) -> u32 {
+        1
+    }
+    fn wgsl_body(&self) -> String {
+        "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;
+}
+"
+        .to_string()
+    }
+}
+
+fn two_box_frame(mesh_id: MeshId, materials: &[MaterialId]) -> FrameData {
+    let mut frame = sub_object_pick_frame();
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let n = materials.len() as f32;
+    let items: Vec<_> = materials
+        .iter()
+        .enumerate()
+        .map(|(i, &material)| {
+            let mut it = SceneRenderItem::default();
+            it.mesh_id = mesh_id;
+            it.material = material;
+            let x = (i as f32 - (n - 1.0) * 0.5) * 0.9;
+            it.model = glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::splat(0.4),
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(x, x, 0.0),
+            )
+            .into();
+            it
+        })
+        .collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    frame.scene.generation = 1;
+    frame
+}
+
+/// Pixels whose channel `c` clearly dominates the other two.
+fn dominant(img: &[u8], c: usize) -> usize {
+    img.chunks(4)
+        .filter(|p| {
+            let v = p[c] as i32;
+            (0..3).filter(|&o| o != c).all(|o| v > p[o] as i32 + 60)
+        })
+        .count()
+}
+
+/// Two materials on one plugin with different parameters share one batch and
+/// each draws its own values, on both colour paths.
+#[test]
+fn materials_on_one_plugin_draw_their_own_params_in_one_batch() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .expect("register");
+    let red = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::linear_rgb(0.9, 0.0, 0.0)),
+    );
+    let blue = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::linear_rgb(0.0, 0.0, 0.9)),
+    );
+
+    let mut frame = two_box_frame(mesh_id, &[red, blue]);
+    // The first frame sets up the plugin's sets; the second draws through them.
+    let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let instanced = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let stats = renderer.last_frame_stats();
+    assert_eq!(
+        stats.instanced_batches, 1,
+        "materials differing only in parameters must share a batch"
+    );
+    assert!(dominant(&instanced, 0) > 20, "the red material's box");
+    assert!(dominant(&instanced, 2) > 20, "the blue material's box");
+
+    // HDR, for the scene pass's own plugin draws.
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+    let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(dominant(&hdr, 0) > 20 && dominant(&hdr, 2) > 20);
+}
+
+/// A parameter a material leaves unset draws with the declared default, and
+/// a material uploaded before its plugin was registered picks the defaults up
+/// at registration.
+#[test]
+fn unset_parameters_draw_the_declared_default() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    // The plugin's id is the next hook index, so a material can name it first.
+    let early = upload_material(
+        &mut renderer,
+        Material::default().with_plugin(viewport_lib::MaterialPluginId::from_index(0)),
+    );
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .expect("register");
+    assert_eq!(plugin.plugin_index(), 0);
+    let explicit = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::WHITE),
+    );
+    let black = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::BLACK),
+    );
+    let frame_of = |m, generation| {
+        let mut f = two_box_frame(mesh_id, &[m]);
+        f.scene.generation = generation;
+        f
+    };
+    let _ = renderer.render_offscreen(&device, &queue, &frame_of(explicit, 1), 64, 64);
+    let white = renderer.render_offscreen(&device, &queue, &frame_of(explicit, 1), 64, 64);
+    let dark = renderer.render_offscreen(&device, &queue, &frame_of(black, 2), 64, 64);
+    let defaulted = renderer.render_offscreen(&device, &queue, &frame_of(early, 3), 64, 64);
+    assert!(white != dark, "the parameter reaches the shader");
+    assert!(white == defaulted, "the default is white");
+}
+
+/// Materials naming the same plugin textures share a batch, different sets
+/// split, each samples its own, and freeing a texture drops it to the white
+/// fallback. On both texture bindings.
+#[test]
+fn plugin_texture_sets_split_and_share_batches() {
+    let Some((device, queue)) = headless_device_with(
+        &DeviceProfile::low_power("plugin-textures").with_recommended_features(),
+    ) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for per_batch in [false, true] {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        if per_batch {
+            renderer.use_per_batch_material_textures();
+        } else if renderer.material_texture_binding() != "bindless" {
+            continue;
+        }
+        let binding = renderer.material_texture_binding();
+        renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &box_mesh())
+            .unwrap();
+        let plugin = renderer
+            .resources_mut()
+            .register_material_plugin(&device, &FlatTexturePlugin)
+            .expect("register");
+        let solid = |r: &mut ViewportRenderer, rgba: [u8; 4]| {
+            r.resources_mut()
+                .upload_texture(
+                    &device,
+                    &queue,
+                    viewport_lib::TextureData::srgb(2, 2, rgba.repeat(4)),
+                )
+                .unwrap()
+        };
+        let red_tex = solid(&mut renderer, [230, 0, 0, 255]);
+        let green_tex = solid(&mut renderer, [0, 230, 0, 255]);
+        let textured = |r: &mut ViewportRenderer, t| {
+            upload_material(
+                r,
+                Material::default()
+                    .with_plugin(plugin)
+                    .with_plugin_texture(0, t),
+            )
+        };
+        let red_a = textured(&mut renderer, red_tex);
+        let red_b = textured(&mut renderer, red_tex);
+        let green = textured(&mut renderer, green_tex);
+
+        let mut frame = two_box_frame(mesh_id, &[red_a, red_b, green]);
+        let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let stats = renderer.last_frame_stats();
+        assert_eq!(
+            stats.instanced_batches, 2,
+            "{binding}: one batch for the shared red set, one for green"
+        );
+        assert!(dominant(&img, 0) > 20, "{binding}: red boxes");
+        assert!(dominant(&img, 1) > 10, "{binding}: green box");
+        assert_eq!(
+            renderer.resources().material_plugin_stats()[0].texture_sets,
+            2,
+            "{binding}"
+        );
+
+        // A freed texture samples the white fallback from the next frame.
+        assert!(renderer.resources_mut().free_texture(green_tex));
+        frame.scene.generation += 1;
+        let freed = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        assert_eq!(
+            dominant(&freed, 1),
+            0,
+            "{binding}: the green texture is gone"
+        );
+        assert!(dominant(&freed, 0) > 20, "{binding}: red is untouched");
+    }
+}
+
+/// Plugin values that do not match the declaration are refused at upload and
+/// replace.
+#[test]
+fn mismatched_plugin_values_are_refused() {
+    let Some((device, _queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let res = renderer.resources_mut();
+    let plugin = res
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .unwrap();
+    let base = Material::default().with_plugin(plugin);
+    let refused = |r: viewport_lib::error::ViewportResult<MaterialId>| {
+        matches!(r, Err(ViewportError::InvalidMaterialParams { .. }))
+    };
+    assert!(refused(
+        res.upload_material(base.with_param("colour_typo", Colour::WHITE))
+    ));
+    assert!(refused(res.upload_material(base.with_param("colour", 1.0))));
+    assert!(
+        refused(
+            res.upload_material(base.with_plugin_texture(0, viewport_lib::TextureId::from_raw(1)))
+        ),
+        "the plugin declares no textures"
+    );
+    let orphan = Material::default()
+        .with_plugin(viewport_lib::MaterialPluginId::from_index(77))
+        .with_param("x", 1.0);
+    assert!(
+        refused(res.upload_material(orphan)),
+        "an unregistered plugin"
+    );
+    // Values fit their kinds; a colour fills a vec3.
+    assert!(
+        res.upload_material(base.with_param("colour", [0.1, 0.2, 0.3]))
+            .is_ok()
+    );
+    let id = res.upload_material(base).unwrap();
+    assert!(matches!(
+        res.replace_material(id, base.with_param("nope", 1.0)),
+        Err(ViewportError::InvalidMaterialParams { .. })
+    ));
+    // Without a plugin the values are ignored.
+    assert!(
+        res.upload_material(Material::default().with_param("x", 1.0))
+            .is_ok()
+    );
+}
+
+/// A plugin declaring more textures than the device can bind alongside the
+/// renderer's own is refused at registration, not at draw time.
+#[test]
+fn an_over_budget_texture_layout_is_refused_at_registration() {
+    struct Many(u32);
+    impl viewport_lib::MaterialPlugin for Many {
+        fn name(&self) -> &str {
+            if self.0 > 8 {
+                "many_over_cap"
+            } else {
+                "many_over_budget"
+            }
+        }
+        fn texture_count(&self) -> u32 {
+            self.0
+        }
+        fn wgsl_body(&self) -> String {
+            "fn shade_ambient(surf: ShadingSurface) -> vec3<f32> { return vec3<f32>(1.0); }"
+                .to_string()
+        }
+    }
+    // wgpu's default limits give the fragment stage 16 sampled textures, most
+    // of which the mesh layouts already bind.
+    let Some((device, _queue)) = headless_device_with(&DeviceProfile::harness()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(device.limits().max_sampled_textures_per_shader_stage, 16);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let res = renderer.resources_mut();
+    match res.register_material_plugin(&device, &Many(4)) {
+        Err(ViewportError::MaterialPluginTextureBudget {
+            requested,
+            available,
+            ..
+        }) => {
+            assert_eq!(requested, 4);
+            // The per-object mesh layouts bind 15 of the 16.
+            assert_eq!(available, 1);
+        }
+        other => panic!("expected a budget refusal, got {other:?}"),
+    }
+    assert!(matches!(
+        res.register_material_plugin(&device, &Many(9)),
+        Err(ViewportError::ShadeShaderInvalid { .. })
+    ));
+}
+
+/// On a device with wgpu's default limits deformers are off, and a plugin
+/// draw still binds every group its layout carries: LDR and HDR, drawn
+/// directly and from the GPU cull.
+#[test]
+fn a_plugin_draws_on_a_default_limits_device() {
+    let Some((device, queue)) = headless_device_with(&DeviceProfile::harness()) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatParamPlugin)
+        .expect("register");
+    let red = upload_material(
+        &mut renderer,
+        Material::default()
+            .with_plugin(plugin)
+            .with_param("colour", Colour::linear_rgb(0.9, 0.0, 0.0)),
+    );
+    let mut frame = two_box_frame(mesh_id, &[red, red]);
+    for mode in [
+        viewport_lib::PipelineMode::Direct,
+        viewport_lib::PipelineMode::Hdr,
+    ] {
+        for culled in [false, true] {
+            frame.effects.display.mode = mode;
+            if culled {
+                renderer.enable_gpu_driven_culling();
+            } else {
+                renderer.disable_gpu_driven_culling();
+            }
+            frame.scene.generation += 1;
+            let _ = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let img = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            assert!(dominant(&img, 0) > 20, "{mode:?}, culled {culled}");
+        }
+    }
 }

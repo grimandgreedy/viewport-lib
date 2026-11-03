@@ -15,21 +15,21 @@
 //!
 //! Two knobs handle this:
 //!
-//! 1. **Padded AABBs.** Use [`build_from_scene_skin_aware`](PickAccelerator::build_from_scene_skin_aware)
+//! 1. **Padded AABBs.** Use [`build_from_scene_skin_aware`](crate::PickAccelerator::build_from_scene_skin_aware)
 //!    (or pass an already-expanded AABB through the closure to
-//!    [`build_from_scene`](PickAccelerator::build_from_scene)) so the BVH leaf
+//!    [`build_from_scene`](crate::PickAccelerator::build_from_scene)) so the BVH leaf
 //!    covers the deformation envelope, not just the bind pose. Without the
 //!    padding the BVH can reject rays that would actually hit the deformed
 //!    mesh.
 //! 2. **Optional refresh-on-pose-change.** For accurate clicks on the
 //!    deformed silhouette (paying CPU cost every frame), call
-//!    [`invalidate_skinned_meshes`](PickAccelerator::invalidate_skinned_meshes)
-//!    after applying a [`crate::SkinnedMeshUpdate`] and pass the deformed
-//!    positions in the `mesh_lookup` argument of [`pick`](PickAccelerator::pick).
+//!    [`invalidate_skinned_meshes`](crate::PickAccelerator::invalidate_skinned_meshes)
+//!    after applying a [`SkinnedMeshUpdate`](crate::plugins::skinning::SkinnedMeshUpdate) and pass the deformed
+//!    positions in the `mesh_lookup` argument of [`pick`](crate::PickAccelerator::pick).
 //!    The next pick rebuilds the cached `TriMesh` against the current pose.
 //!    On the GPU skinning path the CPU does not receive deformed positions,
 //!    so this refresh path is only available when the plugin runs on
-//!    [`crate::SkinningPath::Cpu`].
+//!    [`SkinningPath::Cpu`](crate::plugins::skeleton::SkinningPath::Cpu).
 //!
 //! GPU picking (`renderer::picking`) reads the rasterised object-ID
 //! framebuffer and therefore needs no skinning awareness here: skinned meshes
@@ -84,12 +84,12 @@ impl PickAccelerator {
                 continue;
             };
             if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
-                let world_aabb = local_aabb.transformed(&node.world_transform());
+                let world_aabb = local_aabb.transformed(&node.world_transform().to_mat4());
                 entries.push(BvhEntry {
                     aabb: world_aabb,
                     node_id: node.id(),
                     mesh_index: mesh_id.index(),
-                    world_transform: node.world_transform(),
+                    world_transform: node.world_transform().to_mat4(),
                 });
             }
         }
@@ -180,10 +180,10 @@ impl PickAccelerator {
             };
             if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
                 new_entries.push(BvhEntry {
-                    aabb: local_aabb.transformed(&node.world_transform()),
+                    aabb: local_aabb.transformed(&node.world_transform().to_mat4()),
                     node_id: node.id(),
                     mesh_index: mesh_id.index(),
-                    world_transform: node.world_transform(),
+                    world_transform: node.world_transform().to_mat4(),
                 });
             }
         }
@@ -236,7 +236,7 @@ impl PickAccelerator {
         Some(crate::renderer::PickHit {
             id: entry.node_id,
             sub_object: cast.sub_object,
-            world_pos: cast.world_pos,
+            world_pos: cast.world_pos.as_dvec3(),
             normal: cast.normal,
             scalar_value: None,
             sub_object_world_pos: None,
@@ -250,7 +250,7 @@ impl PickAccelerator {
 
     /// Drop cached `TriMesh` instances for every mesh in `skinned_mesh_ids`.
     ///
-    /// Call this after applying [`crate::SkinnedMeshUpdate`]s when you want
+    /// Call this after applying [`SkinnedMeshUpdate`](crate::plugins::skinning::SkinnedMeshUpdate)s when you want
     /// CPU picking to test the deformed silhouette rather than the bind pose.
     /// The next `pick` call will rebuild the `TriMesh` from whatever positions
     /// are passed in `mesh_lookup` (typically the just-updated, deformed
@@ -448,8 +448,8 @@ pub fn pick_scene_accelerated_cpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::MaterialId;
     use crate::resources::mesh::mesh_store::MeshId;
-    use crate::scene::material::Material;
 
     fn unit_cube_mesh() -> (Vec<[f32; 3]>, Vec<u32>) {
         let positions = vec![
@@ -482,7 +482,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -497,7 +497,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -521,7 +521,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -545,12 +545,12 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -576,7 +576,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -609,12 +609,12 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -652,7 +652,7 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.update_transforms();
 
@@ -696,7 +696,7 @@ mod tests {
                 ids.push(scene.add(
                     Some(MeshId::from_index(0)),
                     glam::Mat4::from_translation(t),
-                    Material::default(),
+                    MaterialId::DEFAULT,
                 ));
             }
         }
@@ -708,7 +708,7 @@ mod tests {
                 glam::Quat::from_rotation_z(ang) * glam::Quat::from_rotation_x(ang * 0.5),
                 t,
             );
-            ids.push(scene.add(Some(MeshId::from_index(0)), m, Material::default()));
+            ids.push(scene.add(Some(MeshId::from_index(0)), m, MaterialId::DEFAULT));
         }
         // Hide two nodes; both pickers must skip them.
         scene.set_visible(ids[3], false);
@@ -819,7 +819,7 @@ mod tests {
                 ids.push(scene.add(
                     Some(MeshId::from_index(0)),
                     glam::Mat4::from_translation(t),
-                    Material::default(),
+                    MaterialId::DEFAULT,
                 ));
             }
         }

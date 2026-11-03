@@ -17,6 +17,20 @@ pub struct GpuMesh {
     pub(crate) index_span: SlabSpan,
     /// Number of indices in the triangle index buffer.
     pub index_count: u32,
+    /// Whether the triangle mesh is a closed, consistently wound surface:
+    /// every edge is shared by exactly two triangles that traverse it in
+    /// opposite directions, with vertices welded by position so a UV or
+    /// normal seam does not split an edge. Computed at upload. A closed mesh
+    /// casts shadows through the cull-front pipeline whatever its
+    /// `BackfacePolicy`, and its back faces (the inside, seen through a clip
+    /// plane) shade as inside the solid's own shadow. The cull-none caster
+    /// path is for surfaces that are genuinely open. The check runs on a
+    /// worker thread and nothing waits for it, except a capture or an
+    /// offscreen render; until it lands a new mesh reads `false` and a
+    /// replaced one its previous value.
+    pub closed: bool,
+    /// The closed check still running for this mesh, if any.
+    pub(crate) closed_check: Option<crate::resources::mesh::meshes::ClosedCheck>,
     /// Material ranges partitioning the index buffer, from
     /// `MeshData::submeshes`. Empty for single-material meshes, which draw
     /// the full `0..index_count` range.
@@ -33,38 +47,34 @@ pub struct GpuMesh {
     pub normal_line_buffer: Option<crate::gpu::Buffer>,
     /// Number of vertices in the normal line buffer (2 per normal line).
     pub normal_line_count: u32,
-    /// Per-object uniform buffer (model matrix, material, selection state).
+    /// Single-record instance buffer (model matrix, flags, material id)
+    /// backing the mesh's fallback bind group.
     pub object_uniform_buf: crate::gpu::Buffer,
     /// Bind group (group 1) combining `object_uniform_buf` with texture views.
     /// Texture views are the fallback 1x1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: crate::gpu::BindGroup,
-    /// Last texture/attribute key used to build `object_bind_group`. `u64::MAX` = fallback / none.
-    /// Fields: `(albedo, normal_map, ao_map, lut, attr_hash, matcap, warp_hash, metallic_roughness, emissive, position_override_gen, normal_override_gen, extension_attr)`.
+    /// Last texture key used to build `object_bind_group`. `u64::MAX` = fallback / none.
+    /// Fields: `(albedo, normal_map, ao_map, lut, unused, matcap, unused, metallic_roughness, emissive, position_override_gen, normal_override_gen, lightmap_gen)`.
     /// The override-gen slots are bumped by `set_position_override_buffer`,
     /// `set_normal_override_buffer`, and their `clear_*` counterparts, so the
     /// next `update_mesh_texture_bind_group` call rebuilds with the real
-    /// override buffer (or the fallback) at bindings 13/14. The final slot
-    /// packs the extension-attribute presence bit with `lightmap_gen` (bumped by
-    /// `set_lightmap` / `clear_lightmap`), so a lightmap change forces the
-    /// rebuild that swaps the UV1 (binding 16) and lightmap texture (binding 17)
-    /// for the registered ones (or the fallbacks). Kept at 12 elements because
-    /// `PartialEq` is only derived for tuples up to that arity.
+    /// override buffer (or the fallback) at bindings 13/14. The last slot is
+    /// `lightmap_gen` (bumped by `set_lightmap` / `clear_lightmap`), so a
+    /// lightmap change swaps the lightmap textures at bindings 17/18. Kept at
+    /// 12 elements because `PartialEq` is only derived for tuples up to that
+    /// arity.
     pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64),
-    /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
-    pub attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
     pub attribute_ranges: std::collections::HashMap<String, (f32, f32)>,
     /// Non-indexed vertex buffer containing 3xN expanded vertices for face-attribute rendering.
     /// `None` if no `Face` or `FaceColour` attributes exist for this mesh.
     pub face_vertex_buffer: Option<crate::gpu::Buffer>,
-    /// Named face scalar buffers: 3N `f32` entries (value replicated for all 3 vertices of each tri).
-    pub face_attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
-    /// Named face colour buffers: 3N `[f32; 4]` entries (colour replicated for all 3 vertices of each tri).
-    pub face_colour_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
-    /// Per-vertex vector attribute buffers: flat `array<f32>` with 3 values per vertex.
-    /// Uploaded from `AttributeData::VertexVector`; used by the Surface LIC surface pass.
-    pub vector_attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
+    /// The mesh's sidecar record in the shared pool: its scalar and face
+    /// attributes, face colours, vector attributes, extension attribute and
+    /// lightmap UV1, plus the per-mesh draw words. `None` for a mesh with none
+    /// of these, which binds the pool's empty header.
+    pub(crate) sidecar: Option<crate::resources::mesh::sidecar_pool::SidecarRecord>,
     /// Optional per-vertex position override buffer.
     ///
     /// When `Some`, the standard mesh pipeline reads positions from this buffer
@@ -84,21 +94,20 @@ pub struct GpuMesh {
     pub normal_override_buffer: Option<crate::gpu::Buffer>,
     /// Same idea as `position_override_slice` for the normal override.
     pub(crate) normal_override_slice: Option<super::OverrideBufferSlice>,
-    /// Optional per-vertex `vec4<f32>` extension-attribute buffer, uploaded
-    /// from `MeshData::extension_attributes` and bound at group 1 binding 15
-    /// (the 16-byte zero fallback when `None`). Read by material-plugin
-    /// modules whose hook sets `reads_vertex_attribute`; base shaders never
-    /// touch it.
-    pub extension_attr_buffer: Option<crate::gpu::Buffer>,
-    /// Baked lightmap registration: the per-vertex UV1 storage buffer (group 1
-    /// binding 16), the lightmap texture (binding 17), and the blend mode. Set
-    /// via `DeviceResources::set_lightmap`; `None` for meshes without one, which
-    /// bind the shared fallbacks and skip the shader branch.
+    /// Baked lightmap registration: the lightmap textures (bindings 17 and 18),
+    /// the blend mode and the placement. The per-vertex UV1 is a stream of the
+    /// sidecar record. Set via `DeviceResources::set_lightmap`; `None` for
+    /// meshes without one, which bind the shared fallbacks and skip the shader
+    /// branch.
     pub(crate) lightmap: Option<crate::resources::lightmap::MeshLightmap>,
+    /// Whether this mesh carries a second UV set (`MeshData::uvs1`). When true its
+    /// object bind group binds the parallel uv1 chunk buffer at binding 19 and its
+    /// sidecar record carries the mesh `base_vertex`; when false it binds the
+    /// zero fallback and any `uv_set = 1` texture sample reads `vec2(0.0)`.
+    pub(crate) has_uv1: bool,
     /// Monotonic counter bumped by `set_lightmap` / `clear_lightmap`. Folded
     /// into `last_tex_key` so the object bind group rebuilds and rebinds the
-    /// real UV1 buffer and lightmap texture (or the fallbacks) on the next
-    /// `prepare()`.
+    /// lightmap textures (or the fallbacks) on the next `prepare()`.
     pub(crate) lightmap_gen: u64,
     /// Monotonic counter bumped each time `set_position_override_buffer` or
     /// `clear_position_override` is called. Folded into `last_tex_key` so the
@@ -192,7 +201,7 @@ impl GpuMesh {
 
     /// Total GPU buffer bytes held by this mesh.
     ///
-    /// Sums the geometry, attribute, override, and per-object uniform buffers.
+    /// Sums the geometry, sidecar, override, and per-object uniform buffers.
     /// Used for the resident-bytes accounting so freeing the mesh decrements the
     /// running total by the same amount it added at upload.
     pub(crate) fn gpu_byte_size(&self) -> u64 {
@@ -208,22 +217,54 @@ impl GpuMesh {
             self.face_vertex_buffer.as_ref(),
             self.position_override_buffer.as_ref(),
             self.normal_override_buffer.as_ref(),
-            self.extension_attr_buffer.as_ref(),
-            self.lightmap.as_ref().map(|lm| &lm.uv1_buffer),
         ]
         .into_iter()
         .flatten()
         {
             bytes += buf.size();
         }
-        for map in [
-            &self.attribute_buffers,
-            &self.face_attribute_buffers,
-            &self.face_colour_buffers,
-            &self.vector_attribute_buffers,
-        ] {
-            bytes += map.values().map(|b| b.size()).sum::<u64>();
-        }
+        // The sidecar record lives in a shared pool chunk; charge its span.
+        bytes += self.sidecar.as_ref().map_or(0, |r| r.span.len);
         bytes
+    }
+
+    /// Host memory bytes held by the retained CPU geometry copies
+    /// (`cpu_positions`, `cpu_normals`, `cpu_indices`).
+    ///
+    /// These are host allocations, not GPU buffers, so they are not part of
+    /// [`gpu_byte_size`](Self::gpu_byte_size). On a discrete GPU they draw from
+    /// a different pool; on unified memory they draw from the same one, which is
+    /// why they are reported separately rather than ignored.
+    ///
+    /// The `parry3d` triangle mesh cached by
+    /// [`cached_pick_trimesh`](Self::cached_pick_trimesh) is built lazily on the
+    /// first CPU pick and is not counted here. It is released alongside these
+    /// copies by [`release_cpu_geometry`](Self::release_cpu_geometry).
+    pub(crate) fn cpu_byte_size(&self) -> u64 {
+        let positions = self.cpu_positions.as_ref().map_or(0, |v| v.len() * 12);
+        let normals = self.cpu_normals.as_ref().map_or(0, |v| v.len() * 12);
+        let indices = self.cpu_indices.as_ref().map_or(0, |v| v.len() * 4);
+        (positions + normals + indices) as u64
+    }
+
+    /// Drop the retained CPU geometry copies and the cached pick triangle mesh,
+    /// returning the host bytes released as counted by
+    /// [`cpu_byte_size`](Self::cpu_byte_size).
+    ///
+    /// The mesh keeps rendering unchanged. What stops working is every feature
+    /// that reads back the geometry on the CPU: CPU picking
+    /// (`ViewportRenderer::pick`) resolves no hit against this mesh, clip-plane
+    /// cap geometry has nothing to build a cross-section fill from, and the
+    /// normal-line visualisation cannot build its buffer if it has not already.
+    /// GPU picking is unaffected.
+    pub(crate) fn release_cpu_geometry(&mut self) -> u64 {
+        let released = self.cpu_byte_size();
+        self.cpu_positions = None;
+        self.cpu_normals = None;
+        self.cpu_indices = None;
+        if let Ok(mut cache) = self.pick_trimesh_cache.lock() {
+            *cache = None;
+        }
+        released
     }
 }

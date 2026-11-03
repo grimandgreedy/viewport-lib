@@ -11,8 +11,9 @@
 //! `attach_palette` (or the `begin_upload_weights` / event forms) ->
 //! `detach_weights` / `detach_palette` for individual meshes, or `uninstall`
 //! to reclaim every attached buffer at once. The deformer body stays
-//! registered for the session (its slot is an append-only registry entry), so
-//! re-installing after `uninstall` returns the same `DeformerId` at no cost.
+//! registered for the session (it holds a reserved slot that cannot be
+//! removed), so re-installing after `uninstall` returns the same `DeformerId`
+//! at no cost.
 //!
 //! Hosts that do not need GPU skinning never call `install` and pay nothing.
 //! Static meshes pay nothing either way: the per-object `deform_flags`
@@ -157,7 +158,13 @@ fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {
           + deform_read_instance_mat4(slot, j3) * w3;
     out.position = (m * vec4<f32>(v.position, 1.0)).xyz;
     let m3 = mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz);
-    out.normal = m3 * v.normal;
+    // Normals take the cofactor of the blended matrix (the inverse transpose
+    // up to scale), signed so a mirroring joint keeps the normal's side; the
+    // tangent is a surface direction and takes the matrix itself.
+    let c = mat3x3<f32>(cross(m3[1], m3[2]), cross(m3[2], m3[0]), cross(m3[0], m3[1]));
+    let det_sign = select(1.0, -1.0, dot(m3[0], c[0]) < 0.0);
+    out.normal = (c * v.normal) * det_sign;
+    out.tangent = vec4<f32>(m3 * v.tangent.xyz, v.tangent.w);
     return out;
 }
 "#;
@@ -198,7 +205,7 @@ impl SkinningPlugin {
             Some(id) => id,
             None => {
                 let desc = DeformerDesc {
-                    name: SKINNING_DEFORMER_NAME,
+                    name: SKINNING_DEFORMER_NAME.into(),
                     stage: DeformStage::ObjectSpace,
                     priority: DEFORM_PRIORITY_SKINNING,
                     wgsl_body: SKINNING_DEFORMER_BODY.to_string(),
@@ -232,11 +239,11 @@ impl SkinningPlugin {
     ) {
         let packed = pack(weights);
         let tight = pack_skin_weights_tight(&packed);
-        resources.deform.attach_slot(
+        resources.attach_deform_slot(
             device,
             mesh_id,
             self.deformer_id.slot(),
-            SKIN_WEIGHT_STRIDE_BYTES / 4,
+            SKIN_WEIGHT_STRIDE_BYTES,
             &tight,
         );
         self.skinned_meshes
@@ -268,11 +275,11 @@ impl SkinningPlugin {
             progress.set(0.9);
             Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                 Box::new(move |resources: &mut DeviceResources| {
-                    resources.deform.attach_slot(
+                    resources.attach_deform_slot(
                         &device_for_apply,
                         mesh_id,
                         slot,
-                        SKIN_WEIGHT_STRIDE_BYTES / 4,
+                        SKIN_WEIGHT_STRIDE_BYTES,
                         &tight,
                     );
                     marker
@@ -291,10 +298,13 @@ impl SkinningPlugin {
     /// [`Self::attach_weights`] has not been called for `mesh_id`.
     ///
     /// `palette[i]` is the object-space skinning matrix for joint `i`
-    /// produced by [`crate::JointMatrices::compute`]: the joint's
+    /// produced by [`JointMatrices::compute`](crate::plugins::skeleton::JointMatrices::compute): the joint's
     /// skeleton-local transform multiplied by its inverse bind. The mesh's
     /// `object.model` is applied separately at draw time, so the palette
     /// composes with the scene node transform rather than replacing it.
+    #[must_use = "returns false when the mesh has no weights attached, which skins \
+                  the mesh against no palette: the geometry collapses and drags its \
+                  UVs with it, which reads as ruined textures rather than a broken pose"]
     pub fn attach_palette(
         &self,
         resources: &mut DeviceResources,
@@ -313,13 +323,13 @@ impl SkinningPlugin {
             return false;
         }
         let bytes: Vec<[[f32; 4]; 4]> = palette.iter().map(|m| m.to_cols_array_2d()).collect();
-        resources.deform.attach_slot_instance(
+        resources.attach_deform_slot_instance(
             device,
             queue,
             mesh_id,
             instance_id,
             self.deformer_id.slot(),
-            SKIN_PALETTE_STRIDE_BYTES / 4,
+            SKIN_PALETTE_STRIDE_BYTES,
             bytemuck::cast_slice(&bytes),
         );
         true
@@ -386,9 +396,9 @@ impl SkinningPlugin {
     /// lifecycle is `install` -> `attach_weights` / `attach_palette` (or the
     /// `begin_upload_weights` / event forms) -> `uninstall`.
     ///
-    /// The deformer body itself stays registered for the session: `DeformerId`
-    /// is an append-only registry slot, so a later [`install`](Self::install)
-    /// returns the same id at no cost. Per-instance palettes are keyed by
+    /// The deformer body itself stays registered for the session: skinning
+    /// holds a reserved slot that `remove_deformer` refuses, so a later
+    /// [`install`](Self::install) returns the same id at no cost. Per-instance palettes are keyed by
     /// `(mesh, instance)` and are not tracked here; reclaim them with
     /// [`detach_palette`](Self::detach_palette) or by freeing the meshes before
     /// uninstalling if their buffers must go immediately.
@@ -453,7 +463,7 @@ mod async_skin_tests {
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

@@ -8,8 +8,8 @@
 //! For a texture that is never freed the generation is 0, so its id equals its
 //! slot index and behaves exactly like the old dense index. Once a slot is freed
 //! and reused, a handle to the old texture carries a stale generation and
-//! resolves to `None`, falling back to the fallback texture instead of aliasing
-//! whatever now occupies the slot.
+//! resolves to `None`, so the slot it names reads as unset rather than aliasing
+//! whatever now occupies it.
 
 use crate::resources::GpuTexture;
 
@@ -72,6 +72,20 @@ impl TextureStore {
     /// Number of live (occupied) texture slots.
     pub fn len(&self) -> usize {
         self.store.len()
+    }
+
+    /// Total slot count including freed slots: the dense index space the bindless
+    /// texture array spans. A texture's array index is its slot index, which is
+    /// always less than this.
+    pub fn slot_count(&self) -> usize {
+        self.store.slot_count()
+    }
+
+    /// Raw dense-slot lookup with no generation check, for building the bindless
+    /// texture array (which is indexed by slot, not by a live handle). Returns
+    /// `None` for a freed or out-of-range slot.
+    pub fn get_by_index(&self, index: usize) -> Option<&GpuTexture> {
+        self.store.get_by_index(index)
     }
 
     /// Total bytes charged for the textures currently resident in the store.

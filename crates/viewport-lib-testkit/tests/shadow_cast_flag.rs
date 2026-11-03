@@ -5,6 +5,7 @@
 //! them), which both showed shadows that were switched off and cost a
 //! second rasterisation of the whole scene.
 
+use viewport_lib::Colour;
 use viewport_lib::{
     CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
     SceneRenderItem,
@@ -28,12 +29,20 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
         .expect("upload ball");
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = ground_id;
-    ground.material = Material::from_colour([0.7, 0.7, 0.7]);
+    ground.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
+        .expect("material upload");
     let mut floater = SceneRenderItem::default();
     floater.mesh_id = ball_id;
-    floater.material = Material::from_colour([0.8, 0.3, 0.3]);
+    floater.material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.8, 0.3, 0.3)))
+        .expect("material upload");
     floater.model =
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 25.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 25.0)).into();
     vec![ground, floater]
 }
 

@@ -3,7 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -55,18 +55,14 @@ fn position_override_takes_effect_through_render_path() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -78,14 +74,19 @@ fn position_override_takes_effect_through_render_path() {
     // side so it doesn't overdraw the red region we measure.
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
-    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    red_item.model = glam::Mat4::IDENTITY.into();
+    red_item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
+    );
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
-    blue_item.model =
-        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
-    blue_item.material = Material::from_colour([0.0, 0.0, 1.0]);
+    blue_item.model = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).into();
+    blue_item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(0.0, 0.0, 1.0)),
+    );
 
     frame.scene.surfaces =
         SurfaceSubmission::Flat(vec![red_item.clone(), blue_item.clone()].into());
@@ -140,217 +141,6 @@ fn position_override_takes_effect_through_render_path() {
     );
 }
 
-/// An external scalar source must drive GPU marching cubes per frame: the
-/// slab scalar buffers are refreshed from the consumer's buffer before every
-/// dispatch. The uploaded CPU volume has no surface at the isovalue; writing
-/// a sphere field into the external buffer makes one appear, and writing the
-/// empty field again makes it vanish, proving both the copy and its
-/// per-frame cadence.
-#[test]
-fn mc_external_scalar_drives_isosurface() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let dims = [16u32, 16, 16];
-    let spacing = [0.3f32; 3];
-    let origin = [-(15.0 * 0.3) / 2.0; 3];
-    let node_count = (dims[0] * dims[1] * dims[2]) as usize;
-
-    // Uploaded field: uniformly far above the isovalue, no surface anywhere.
-    let vol = viewport_lib::VolumeData {
-        data: vec![10.0; node_count],
-        dims,
-        origin,
-        spacing,
-    };
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume_for_mc(&device, &queue, &vol)
-        .expect("mc volume upload");
-
-    // Sphere field: distance from the origin; isovalue 1.5 is a sphere well
-    // inside the grid.
-    let mut sphere = vec![0.0f32; node_count];
-    for z in 0..dims[2] {
-        for y in 0..dims[1] {
-            for x in 0..dims[0] {
-                let wx = origin[0] + x as f32 * spacing[0];
-                let wy = origin[1] + y as f32 * spacing[1];
-                let wz = origin[2] + z as f32 * spacing[2];
-                let idx = (x + y * dims[0] + z * dims[0] * dims[1]) as usize;
-                sphere[idx] = (wx * wx + wy * wy + wz * wz).sqrt();
-            }
-        }
-    }
-
-    let scalar_src = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("test_mc_scalar_src"),
-        size: (node_count * 4) as u64,
-        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let make_frame = || -> FrameData {
-        let cam = Camera::default();
-        let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
-        frame.camera.viewport_size = [64.0, 64.0];
-        frame.viewport.show_grid = false;
-        frame.viewport.show_axes_indicator = false;
-        frame
-            .scene
-            .gpu_mc_items
-            .push(viewport_lib::GpuMarchingCubesItem {
-                volume_id,
-                isovalue: 1.5,
-                material: Material::default(),
-                settings: ItemSettings::default(),
-                cpu_data: None,
-            });
-        frame
-    };
-    let empty_frame = || -> FrameData {
-        let mut frame = make_frame();
-        frame.scene.gpu_mc_items.clear();
-        frame
-    };
-    let diff_count = |a: &[u8], b: &[u8]| -> usize {
-        a.chunks_exact(4)
-            .zip(b.chunks_exact(4))
-            .filter(|(pa, pb)| pa.iter().zip(pb.iter()).any(|(&x, &y)| x.abs_diff(y) > 8))
-            .count()
-    };
-
-    let empty = renderer.render_offscreen(&device, &queue, &empty_frame(), 64, 64);
-
-    // Baseline: uploaded field has no surface.
-    let flat = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
-    assert_eq!(
-        diff_count(&flat, &empty),
-        0,
-        "the uploaded all-above-iso field must extract no surface"
-    );
-
-    // Attach the external source and write the sphere field into it.
-    queue.write_buffer(&scalar_src, 0, bytemuck::cast_slice(&sphere));
-    renderer
-        .resources_mut()
-        .set_mc_scalar_source_buffer(volume_id, scalar_src.clone(), 0)
-        .unwrap();
-    let with_sphere = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
-    assert!(
-        diff_count(&with_sphere, &empty) > 0,
-        "after the external sphere field is copied in, the isosurface must \
-         render"
-    );
-
-    // Rewrite the buffer with the empty field: the surface must vanish on
-    // the next frame, proving the copy happens every dispatch.
-    queue.write_buffer(
-        &scalar_src,
-        0,
-        bytemuck::cast_slice(&vec![10.0f32; node_count]),
-    );
-    let flat_again = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
-    assert_eq!(
-        diff_count(&flat_again, &empty),
-        0,
-        "rewriting the external buffer with an all-above-iso field must \
-         remove the surface on the next frame"
-    );
-}
-
-/// An external instance set must draw exactly the window of the consumer's
-/// positions buffer selected by the item's instance range. The buffer holds
-/// four positions: elements 0..2 far behind the camera, elements 2..4 in
-/// front of it. Drawing `first_instance = 2, instance_count = 2` must show
-/// geometry; re-pointing the range at 0..2 must show none.
-#[test]
-fn external_instances_render_with_instance_range_slice() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mesh_id = renderer
-        .resources_mut()
-        .upload_mesh_data(&device, &box_mesh())
-        .unwrap();
-
-    // Elements 0 and 1 behind the camera, 2 and 3 visible near the origin.
-    let positions: Vec<f32> = vec![
-        0.0, 0.0, -1000.0, // 0
-        0.0, 0.0, -1000.0, // 1
-        -0.6, 0.0, 0.0, // 2
-        0.6, 0.0, 0.0, // 3
-    ];
-    let pos_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("test_external_positions"),
-        size: (positions.len() * std::mem::size_of::<f32>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&pos_buf, 0, bytemuck::cast_slice(&positions));
-
-    let set_id = renderer
-        .resources_mut()
-        .create_external_instance_set(
-            &device,
-            &viewport_lib::ExternalInstanceSetConfig::new(mesh_id, pos_buf),
-        )
-        .unwrap();
-
-    let make_frame = |first: u32, count: u32| -> FrameData {
-        let cam = Camera::default();
-        let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
-        frame.camera.viewport_size = [64.0, 64.0];
-        frame.viewport.show_grid = false;
-        frame.viewport.show_axes_indicator = false;
-        let mut item = viewport_lib::ExternalInstancesItem::new(set_id, count);
-        item.first_instance = first;
-        item.scale = 0.4;
-        item.colour = [1.0, 0.2, 0.2, 1.0].into();
-        frame.scene.external_instances = vec![item];
-        frame
-    };
-
-    let empty = renderer.render_offscreen(&device, &queue, &make_frame(0, 0), 64, 64);
-    let visible = renderer.render_offscreen(&device, &queue, &make_frame(2, 2), 64, 64);
-    let hidden = renderer.render_offscreen(&device, &queue, &make_frame(0, 2), 64, 64);
-
-    let diff_count = |a: &[u8], b: &[u8]| -> usize {
-        a.chunks_exact(4)
-            .zip(b.chunks_exact(4))
-            .filter(|(pa, pb)| pa.iter().zip(pb.iter()).any(|(&x, &y)| x.abs_diff(y) > 8))
-            .count()
-    };
-
-    assert!(
-        diff_count(&visible, &empty) > 0,
-        "instance range 2..4 selects the visible elements; the boxes must \
-         render. If nothing shows, instance_index is not honouring the draw \
-         call's first_instance or the storage window is wrong.",
-    );
-    assert_eq!(
-        diff_count(&hidden, &empty),
-        0,
-        "instance range 0..2 selects only the behind-camera elements; the \
-         image must match an empty scene.",
-    );
-}
-
 /// The selection outline mask must rasterise override-driven geometry, not
 /// the bind pose. A selected plane's override pushes every vertex far behind
 /// the camera: the mesh vanishes, and the halo must vanish with it. If the
@@ -381,11 +171,7 @@ fn outline_mask_follows_position_override() {
     let make_frame = |items: Vec<SceneRenderItem>| -> FrameData {
         let cam = Camera::default();
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [64.0, 64.0];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
@@ -396,8 +182,11 @@ fn outline_mask_follows_position_override() {
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    item.model = glam::Mat4::IDENTITY.into();
+    item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
+    );
     item.settings.selected = true;
     let frame = make_frame(vec![item]);
 
@@ -491,18 +280,14 @@ fn position_override_slice_reads_correct_pool_window() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -512,8 +297,11 @@ fn position_override_slice_reads_correct_pool_window() {
 
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
-    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+    red_item.model = glam::Mat4::IDENTITY.into();
+    red_item.material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
+    );
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![red_item].into());
 
     // Pool: body A (elements 0..5) far behind the camera, body B (elements
@@ -597,11 +385,7 @@ fn occlusion_culling_render_path_runs() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -618,7 +402,7 @@ fn occlusion_culling_render_path_runs() {
         let s = if i == 0 { 4.0 } else { 1.0 };
         item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
             * glam::Mat4::from_scale(glam::Vec3::splat(s)))
-        .to_cols_array_2d();
+        .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -628,11 +412,11 @@ fn occlusion_culling_render_path_runs() {
     // view-projection path, not just a static-camera no-op). Frame 0 stores the
     // first depth, later frames reproject it and cull; the stats readback lags a
     // couple of frames before it lands.
-    let base_view = frame.camera.render_camera.view;
+    let base_view = frame.camera.render_camera.view();
     let mut last_pixels = Vec::new();
     for i in 0..4 {
         let nudge = glam::Mat4::from_translation(glam::Vec3::new(0.05 * i as f32, 0.0, 0.0));
-        frame.camera.render_camera.view = base_view * nudge;
+        frame.camera.render_camera.set_view(base_view * nudge);
         last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     }
     assert_eq!(last_pixels.len(), 64 * 64 * 4);
@@ -679,11 +463,7 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     let dim = 2048u32;
     frame.camera.viewport_size = [dim as f32, dim as f32];
     frame.viewport.show_grid = false;
@@ -694,8 +474,8 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
     for i in 0..4 {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_idx;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5))
-            .to_cols_array_2d();
+        item.model =
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5)).into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
@@ -729,11 +509,7 @@ fn occlusion_culling_ldr_path_runs() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -748,16 +524,16 @@ fn occlusion_culling_ldr_path_runs() {
         let s = if i == 0 { 4.0 } else { 1.0 };
         item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
             * glam::Mat4::from_scale(glam::Vec3::splat(s)))
-        .to_cols_array_2d();
+        .into();
         items.push(item);
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
 
-    let base_view = frame.camera.render_camera.view;
+    let base_view = frame.camera.render_camera.view();
     let mut last_pixels = Vec::new();
     for i in 0..4 {
         let nudge = glam::Mat4::from_translation(glam::Vec3::new(0.05 * i as f32, 0.0, 0.0));
-        frame.camera.render_camera.view = base_view * nudge;
+        frame.camera.render_camera.set_view(base_view * nudge);
         last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     }
     assert_eq!(last_pixels.len(), 64 * 64 * 4);
@@ -796,11 +572,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -809,10 +581,12 @@ fn lod_culled_per_object_item_is_not_drawn() {
     // A single non-instanced (per-object) LOD item filling the view centre. The
     // DifferentColour back-face policy is what forces it onto the per-object path.
     let mut item = SceneRenderItem::default();
+    let mut mat = Material::default();
     item.mesh_id = full;
     item.lod_group = Some(group);
-    item.material.backface_policy = BackfacePolicy::DifferentColour([1.0, 0.2, 0.2].into());
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    mat.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(1.0, 0.2, 0.2));
+    item.material = upload_material(&mut renderer, mat);
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
 
     // Empty scene baseline.
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
@@ -880,6 +654,14 @@ fn multi_draw_collapse_is_pixel_identical() {
         [0.2, 0.2, 0.9],
         [0.9, 0.9, 0.2],
     ];
+    let mut colour = |i: usize| {
+        upload_material(
+            &mut renderer,
+            Material::from_colour(Colour::from_linear_rgb_array(colours[i])),
+        )
+    };
+    let shared = colour(0);
+    let materials = [shared, shared, colour(2), colour(3), colour(4)];
     let mut surfaces = Vec::new();
     for (i, &mesh_id) in mesh_ids.iter().enumerate() {
         // Two instances per mesh, offset along X and Y, so instancing engages
@@ -889,9 +671,8 @@ fn multi_draw_collapse_is_pixel_identical() {
             item.mesh_id = mesh_id;
             let x = (i as f32 - 2.0) * 1.3;
             let y = inst as f32 * 1.1;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour(colours[i]);
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
+            item.material = materials[i];
             if i == 2 {
                 item.settings.opacity = 0.5;
             }
@@ -904,14 +685,11 @@ fn multi_draw_collapse_is_pixel_identical() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     let cam = Camera::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        let eye = glam::Vec3::new(0.0, -8.0, 5.0);
-        rc.eye_position = eye.into();
-        rc.forward = (-eye).normalize().into();
-        rc.aspect = 1.0;
-        rc
-    };
+    let eye = glam::Vec3::new(0.0, -8.0, 5.0);
+    frame.camera.render_camera = RenderCamera::from_matrices(
+        glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z),
+        cam.proj_matrix(),
+    );
     frame.camera.viewport_size = [96.0, 96.0];
 
     // Directional light with shadows on (the defaults) so the shadow cascade
@@ -1011,5 +789,253 @@ fn multi_draw_collapse_is_pixel_identical() {
          {} batch-draws",
         stats.shadow_buffer_binds,
         stats.shadow_draw_calls,
+    );
+}
+
+/// An opaque and a translucent copy of one mesh draw as each does alone,
+/// whichever is submitted first. They used to share a batch whose
+/// transparency came from its first item, so one of the two was drawn wrong.
+#[test]
+fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    const W: u32 = 128;
+    const H: u32 = 64;
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let at = |x: f32, opacity: f32| {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
+        item.settings.opacity = opacity;
+        item
+    };
+    let opaque = at(-1.2, 1.0);
+    let translucent = at(1.2, 0.5);
+    let mut generation = 0;
+    let mut draw = |items: Vec<SceneRenderItem>| {
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
+            glam::DVec3::ZERO,
+            6.0,
+            Camera::default().orientation(),
+        ));
+        frame.camera.viewport_size = [W as f32, H as f32];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.shadows.enabled = false;
+        generation += 1;
+        frame.scene.generation = generation;
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+        renderer.render_offscreen(&device, &queue, &frame, W, H)
+    };
+    // Rows of the left (x < W/2) or right half of an RGBA image.
+    let half = |img: &[u8], left: bool| -> Vec<u8> {
+        img.chunks_exact((W * 4) as usize)
+            .flat_map(|row| {
+                let (l, r) = row.split_at((W / 2 * 4) as usize);
+                if left { l } else { r }.to_vec()
+            })
+            .collect()
+    };
+
+    // Each item alone, with a second copy far off-screen so the frame takes
+    // the instanced path the mixed frames take.
+    let opaque_alone = draw(vec![opaque.clone(), at(100.0, 1.0)]);
+    let translucent_alone = draw(vec![translucent.clone(), at(100.0, 0.5)]);
+    for (name, items) in [
+        ("opaque first", vec![opaque.clone(), translucent.clone()]),
+        (
+            "translucent first",
+            vec![translucent.clone(), opaque.clone()],
+        ),
+    ] {
+        let mixed = draw(items);
+        assert!(
+            half(&mixed, true) == half(&opaque_alone, true),
+            "{name}: the opaque copy did not draw as it does alone"
+        );
+        assert!(
+            half(&mixed, false) == half(&translucent_alone, false),
+            "{name}: the translucent copy did not draw as it does alone"
+        );
+    }
+}
+
+/// An opaque caster without a cutout reads no material binding, so per-material
+/// textures must not split the shadow cascades' multi-draw runs: a scene whose
+/// every material carries its own albedo texture issues as many shadow draw
+/// commands as the same scene untextured.
+#[test]
+fn textured_casters_share_shadow_draw_runs() {
+    let Some((device, queue)) = headless_device_with_indirect() else {
+        eprintln!("skipping: no GPU adapter with INDIRECT_FIRST_INSTANCE");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_force_multi_draw(true);
+
+    const MESHES: usize = 8;
+    let mesh_ids: Vec<_> = (0..MESHES)
+        .map(|_| {
+            renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &box_mesh())
+                .unwrap()
+        })
+        .collect();
+    let mut plain = Vec::new();
+    let mut textured = Vec::new();
+    for i in 0..MESHES {
+        let tint = i as f32 / MESHES as f32;
+        let material = Material::from_colour(Colour::from_linear_rgb_array([tint, 0.5, 0.5]));
+        plain.push(upload_material(&mut renderer, material.clone()));
+        let texture = renderer
+            .resources_mut()
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::srgb(2, 2, [(i * 30) as u8, 128, 64, 255].repeat(4)),
+            )
+            .unwrap();
+        let mut material = material;
+        material.texture_id = Some(texture);
+        textured.push(upload_material(&mut renderer, material));
+    }
+
+    let frame_with = |materials: &[MaterialId], generation: u64| {
+        let mut surfaces = Vec::new();
+        for (i, &mesh_id) in mesh_ids.iter().enumerate() {
+            for inst in 0..2 {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = mesh_id;
+                let x = (i as f32 - MESHES as f32 / 2.0) * 1.3;
+                let y = inst as f32 * 1.1;
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
+                item.material = materials[i];
+                surfaces.push(item);
+            }
+        }
+        let mut frame = FrameData::default();
+        frame.scene.surfaces = SurfaceSubmission::Flat(surfaces.into());
+        frame.scene.generation = generation;
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        let cam = Camera::default();
+        let eye = glam::Vec3::new(0.0, -12.0, 8.0);
+        frame.camera.render_camera = RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z),
+            cam.proj_matrix(),
+        );
+        frame.camera.viewport_size = [96.0, 96.0];
+        let mut light = LightSource::default();
+        light.kind = LightKind::Directional {
+            direction: [0.3, 0.4, -1.0],
+        };
+        light.intensity = 4.0;
+        frame.effects.lighting.lights = vec![light];
+        frame
+    };
+
+    renderer.render_offscreen(&device, &queue, &frame_with(&plain, 1), 96, 96);
+    let plain_stats = renderer.last_frame_stats();
+    renderer.render_offscreen(&device, &queue, &frame_with(&textured, 2), 96, 96);
+    let textured_stats = renderer.last_frame_stats();
+
+    assert!(
+        plain_stats.shadow_draw_commands < plain_stats.shadow_draw_calls,
+        "expected the untextured casters to collapse: {} commands for {} batch-draws",
+        plain_stats.shadow_draw_commands,
+        plain_stats.shadow_draw_calls,
+    );
+    assert_eq!(
+        textured_stats.shadow_draw_calls, plain_stats.shadow_draw_calls,
+        "both scenes draw the same casters",
+    );
+    assert_eq!(
+        textured_stats.shadow_draw_commands, plain_stats.shadow_draw_commands,
+        "per-material textures split the shadow runs: {} commands against {} untextured",
+        textured_stats.shadow_draw_commands, plain_stats.shadow_draw_commands,
+    );
+}
+
+/// The direct (LDR) path draws an unclipped opaque batch through the
+/// discard-free pipeline, so a clip plane must switch it back to the
+/// discarding one: the clipped side renders nothing.
+#[test]
+fn direct_path_clip_plane_still_discards() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let material = upload_material(
+        &mut renderer,
+        Material::from_colour(Colour::from_linear_rgb_array([0.9, 0.9, 0.9])),
+    );
+    let mut surfaces = Vec::new();
+    for i in 0..6 {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material = material;
+        let x = (i as f32 - 2.5) * 1.2;
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
+        surfaces.push(item);
+    }
+    let mut frame = FrameData::default();
+    frame.scene.surfaces = SurfaceSubmission::Flat(surfaces.into());
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let cam = Camera::default();
+    let eye = glam::Vec3::new(0.0, -10.0, 0.0);
+    frame.camera.render_camera = RenderCamera::from_matrices(
+        glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Z),
+        cam.proj_matrix(),
+    );
+    frame.camera.viewport_size = [64.0, 64.0];
+
+    // Lit pixels in the left and right halves of the frame.
+    let halves = |px: &[u8]| {
+        let (mut left, mut right) = (0, 0);
+        for (i, p) in px.chunks_exact(4).enumerate() {
+            if p[0] > 40 || p[1] > 40 || p[2] > 40 {
+                if i % 64 < 32 { left += 1 } else { right += 1 }
+            }
+        }
+        (left, right)
+    };
+    let (open_left, open_right) =
+        halves(&renderer.render_offscreen(&device, &queue, &frame, 64, 64));
+    assert!(
+        open_left > 100 && open_right > 100,
+        "both halves should draw unclipped: {open_left} / {open_right}",
+    );
+
+    // Keep x >= 0 only.
+    let mut plane = viewport_lib::ClipObject::default();
+    plane.shape = viewport_lib::ClipShape::Plane {
+        normal: [1.0, 0.0, 0.0],
+        distance: 0.0,
+        cap_colour: None,
+    };
+    frame.effects.clip.objects.push(plane);
+    frame.scene.generation += 1;
+    let (left, right) = halves(&renderer.render_offscreen(&device, &queue, &frame, 64, 64));
+    assert!(right > 100, "the kept half should still draw: {right}");
+    assert!(
+        left < open_left / 10,
+        "the clipped half should be empty: {left} lit pixels against {open_left} unclipped",
     );
 }

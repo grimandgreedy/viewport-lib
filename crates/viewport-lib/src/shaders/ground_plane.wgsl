@@ -26,20 +26,11 @@ struct GroundPlaneUniform {
     shadow_bias:    f32,          // offset 236,  4 bytes
     mode:           u32,          // offset 240,  4 bytes
     shadow_opacity: f32,          // offset 244,  4 bytes
-    _pad:           vec2<f32>,    // offset 248,  8 bytes
+    tile_origin:    vec2<f32>,    // offset 248,  8 bytes : tile phase at the world origin
     colour2:        vec4<f32>,    // offset 256, 16 bytes : second tile colour
 } // total 272 bytes
 
-// Shadow atlas uniform : matches the mesh shader's ShadowAtlas struct exactly.
-struct ShadowAtlas {
-    cascade_vp:       array<mat4x4<f32>, 4>,  // 256 bytes
-    cascade_splits:   vec4<f32>,               //  16 bytes
-    cascade_count:    u32,                     //   4 bytes
-    atlas_size:       f32,                     //   4 bytes
-    shadow_filter:    u32,                     //   4 bytes
-    pcss_light_radius: f32,                    //   4 bytes
-    atlas_rects:      array<vec4<f32>, 8>,     // 128 bytes
-} // total 416 bytes
+// #include "helpers/shadow_atlas.wgsl"
 
 @group(0) @binding(0) var<uniform> gp: GroundPlaneUniform;
 @group(0) @binding(1) var shadow_tex: texture_depth_2d;
@@ -127,8 +118,9 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let coarse_tile = fine_tile * 2.0;
 
         // Integer parity checker at each LOD level.
-        let uv_f = hit.xy / fine_tile;
-        let uv_c = hit.xy / coarse_tile;
+        let tile_hit = hit.xy + gp.tile_origin;
+        let uv_f = tile_hit / fine_tile;
+        let uv_c = tile_hit / coarse_tile;
         let p_f = (i32(floor(uv_f.x)) + i32(floor(uv_f.y))) & 1;
         let p_c = (i32(floor(uv_c.x)) + i32(floor(uv_c.y))) & 1;
 
@@ -161,6 +153,18 @@ fn fs_main(in: VertexOutput) -> FragOut {
         // Camera-forward distance to the hit point (same metric the mesh shader uses).
         let cam_forward = -gp.cam_back.xyz;
         let dist = dot(hit - gp.eye_pos, cam_forward);
+
+        // Distance fade at the far end of the cascades, as `csm_distance_fade`
+        // in the mesh shaders: nothing past `range.x`.
+        var shadow_fade = 1.0;
+        if shadow_atlas.range.x > 0.0 && shadow_atlas.range.y > 0.0 {
+            shadow_fade = clamp(
+                (shadow_atlas.range.x - dist) / (shadow_atlas.range.y * shadow_atlas.range.x),
+                0.0,
+                1.0,
+            );
+        }
+        if shadow_fade <= 0.0 { discard; }
 
         var cascade_idx = 0u;
         for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
@@ -208,7 +212,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         }
         let shadow_factor = shadow_sum / 9.0;
         // shadow_factor == 1.0 -> lit, 0.0 -> fully in shadow.
-        let shadow_alpha = (1.0 - shadow_factor) * gp.shadow_opacity * fade;
+        let shadow_alpha = (1.0 - shadow_factor) * gp.shadow_opacity * fade * shadow_fade;
         if shadow_alpha < 0.005 { discard; }
         out_colour = vec4<f32>(gp.shadow_colour.rgb, shadow_alpha);
 

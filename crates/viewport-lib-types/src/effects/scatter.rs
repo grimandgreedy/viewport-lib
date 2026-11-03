@@ -58,6 +58,22 @@ pub struct ScatterSettings {
     /// Exponential-moving-average weight used when `temporal` is enabled.
     /// Larger values keep more history (smoother but laggier). Default `0.85`.
     pub temporal_blend: f32,
+    /// Animation clock for the scatter pass, in seconds. Drives
+    /// `NoiseDriver::scroll_velocity` and `time_scale`, and the shimmer of a
+    /// volume with `refraction` set. Nothing else reads it, and a volume with
+    /// neither is unaffected by its value.
+    ///
+    /// Supply your own elapsed seconds, the same clock you drive
+    /// `GpuParticleSystemItem::time_step` and `ExposureSettings::dt` from. The
+    /// default `0.0` leaves the noise field and the shimmer still, so a
+    /// consumer that never sets it gets a static volume rather than an
+    /// animation on a clock it does not own.
+    ///
+    /// Holding it fixed makes the frame reproducible: the same `FrameData`
+    /// renders the same pixels whenever it is submitted, which is what lets a
+    /// scatter scene be held to a golden image and what keeps an offscreen
+    /// capture matching the frame it was captured from.
+    pub time_seconds: f32,
 }
 
 impl Default for ScatterSettings {
@@ -72,6 +88,7 @@ impl Default for ScatterSettings {
             downsample: true,
             temporal: true,
             temporal_blend: 0.85,
+            time_seconds: 0.0,
         }
     }
 }

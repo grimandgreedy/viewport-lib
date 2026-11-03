@@ -16,7 +16,7 @@
 //! drawing the wrong thing. `missing_variant` is a *runtime* signal on
 //! families still using named `Option<Pipeline>` fields; it stays load-bearing
 //! until every family migrates to `PipelineVariantSet` below, at which point
-//! it becomes unreachable and can be deleted (phase 4 of the plan).
+//! it becomes unreachable and can be deleted.
 //!
 //! A family that *has* migrated to `PipelineVariantSet` gets a stronger,
 //! compile-time form of the same guarantee: `PipelineVariantSet::build` takes
@@ -31,9 +31,9 @@
 
 /// The axes that vary a mesh-family render pipeline. Computed once per item
 /// (or per instanced batch) and passed to a `select_*` function to pick the
-/// concrete pipeline. Building pipelines from this key eagerly, for every
-/// reachable combination, is phase 2 of the pipeline-variant-specialization
-/// plan; this type only unifies selection.
+/// concrete pipeline. This type only unifies selection; building a pipeline
+/// eagerly for every reachable combination is what `PipelineVariantSet` does
+/// with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub(crate) struct PipelineKey {
     /// `BackfacePolicy::Cull` (false) vs any two-sided policy (true; the
@@ -66,10 +66,9 @@ impl PipelineKey {
         }
     }
 
-    /// Every axis combination, for eager cross-product construction
-    /// (`PipelineVariantSet::build`). A pass that does not vary on every axis
-    /// still sees all 8 during construction; its build closure just returns
-    /// the same pipeline for the axis it ignores.
+    /// Every axis combination, for a test that wants to resolve each key a
+    /// family offers.
+    #[cfg(test)]
     pub fn all() -> impl Iterator<Item = PipelineKey> {
         (0u8..8).map(|bits| PipelineKey {
             two_sided: bits & 1 != 0,
@@ -77,113 +76,192 @@ impl PipelineKey {
             no_discard_eligible: bits & 4 != 0,
         })
     }
-
-    /// Dense index in `0..8`, stable across calls, for the hash-free array
-    /// lookup `PipelineVariantSet` uses.
-    fn slot(self) -> usize {
-        (self.two_sided as usize)
-            | (self.cutout as usize) << 1
-            | (self.no_discard_eligible as usize) << 2
-    }
 }
 
-/// A pipeline built for every reachable [`PipelineKey`], indexed for a
-/// hash-free draw-time lookup (`get`). Construction is eager: `build` runs
-/// once per key up front (typically from the same lazy first-HDR-use or
-/// deform-registration-changed trigger a family already rebuilds from), not
-/// per draw call.
+/// Which optional shader features a mesh pipeline compiles in. Each bit is a
+/// WGSL `override` constant in `mesh.wgsl` and `mesh_oit.wgsl`; a block under
+/// a false constant is compiled out. Every block also tests its per-draw flag,
+/// so the universal set (every bit on) draws any item, and a set with a bit
+/// off draws the same image for every item that does not use the feature.
 ///
-/// `RenderPipeline` is a cheap reference-counted GPU handle, so a `build`
-/// closure that ignores an axis (e.g. OIT ignoring cutout, or shadow ignoring
-/// no-discard) can just return a clone of the same pipeline for both of that
-/// axis's values -- `PipelineVariantSet` does not force compiling 8 distinct
-/// GPU pipelines when a pass only has 2 or 4 real variants.
-pub(crate) struct PipelineVariantSet {
-    variants: [crate::gpu::RenderPipeline; 8],
-}
+/// The set is a lazily built axis beside [`PipelineKey`]: the eager members of
+/// a family are built universal, and a draw whose set is not built yet draws
+/// the universal member while it compiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub(crate) struct FeatureSet(u16);
 
-impl PipelineVariantSet {
-    pub fn build(mut build: impl FnMut(PipelineKey) -> crate::gpu::RenderPipeline) -> Self {
-        let mut variants: Vec<crate::gpu::RenderPipeline> = Vec::with_capacity(8);
-        for key in PipelineKey::all() {
-            variants.push(build(key));
+impl FeatureSet {
+    /// The mesh's sidecar record: the override windows and every stream read.
+    pub const RECORD: u16 = 1;
+    /// The scalar or face-colour stream, the LUT and NaN colour, face colours.
+    pub const COLOUR_STREAM: u16 = 2;
+    /// The warp stream.
+    pub const WARP: u16 = 4;
+    /// The position and normal override buffers.
+    pub const OVERRIDES: u16 = 8;
+    /// Lightmap UVs and sampling, the shadowmask, the subtractive mode.
+    pub const LIGHTMAP: u16 = 16;
+    /// Matcap shading.
+    pub const MATCAP: u16 = 32;
+    /// The deformer hooks.
+    pub const DEFORM: u16 = 64;
+    /// The emissive map: its slot lookup and sample. A material without one
+    /// adds its emissive colour and custom data only.
+    pub const EMISSIVE_MAP: u16 = 128;
+    /// The second UV set: the uv1 stream read and the per-slot choice between
+    /// the two sets. Off, every slot samples uv0.
+    pub const UV1: u16 = 1 << 8;
+    /// The per-slot UV offset, scale and rotation. Off, every slot samples
+    /// the mesh UV as it is.
+    pub const UV_TRANSFORM: u16 = 1 << 9;
+    /// Light-probe indirect diffuse. Off, the environment's specular is not
+    /// held past the ambient block for a probe to keep.
+    pub const LIGHT_PROBE: u16 = 1 << 10;
+    /// The clear coat layer.
+    pub const CLEARCOAT: u16 = 1 << 11;
+    /// The sheen layer.
+    pub const SHEEN: u16 = 1 << 12;
+    /// The anisotropic base specular lobe.
+    pub const ANISOTROPY: u16 = 1 << 13;
+    /// Transmission: the diffuse lobe gives way to light refracted through
+    /// the surface. Bit 15 is the one left in the set.
+    pub const TRANSMISSION: u16 = 1 << 14;
+
+    /// Every feature compiled out.
+    pub const NONE: Self = Self(0);
+    /// Every feature compiled in: the eager pipelines.
+    pub const UNIVERSAL: Self = {
+        let mut all = 0;
+        let mut i = 0;
+        while i < Self::CONSTANTS.len() {
+            all |= Self::CONSTANTS[i].0;
+            i += 1;
         }
-        Self {
-            variants: variants
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("PipelineKey::all() yields exactly 8 keys")),
-        }
+        Self(all)
+    };
+
+    /// The WGSL constant each bit sets.
+    const CONSTANTS: &'static [(u16, &'static str)] = &[
+        (Self::RECORD, "FEAT_RECORD"),
+        (Self::COLOUR_STREAM, "FEAT_COLOUR_STREAM"),
+        (Self::WARP, "FEAT_WARP"),
+        (Self::OVERRIDES, "FEAT_OVERRIDES"),
+        (Self::LIGHTMAP, "FEAT_LIGHTMAP"),
+        (Self::MATCAP, "FEAT_MATCAP"),
+        (Self::DEFORM, "FEAT_DEFORM"),
+        (Self::EMISSIVE_MAP, "FEAT_EMISSIVE_MAP"),
+        (Self::UV1, "FEAT_UV1"),
+        (Self::UV_TRANSFORM, "FEAT_UV_TRANSFORM"),
+        (Self::LIGHT_PROBE, "FEAT_LIGHT_PROBE"),
+        (Self::CLEARCOAT, "FEAT_CLEARCOAT"),
+        (Self::SHEEN, "FEAT_SHEEN"),
+        (Self::ANISOTROPY, "FEAT_ANISOTROPY"),
+        (Self::TRANSMISSION, "FEAT_TRANSMISSION"),
+    ];
+
+    pub fn bits(self) -> u16 {
+        self.0
     }
 
-    pub fn get(&self, key: PipelineKey) -> &crate::gpu::RenderPipeline {
-        &self.variants[key.slot()]
+    pub fn has(self, bit: u16) -> bool {
+        self.0 & bit != 0
+    }
+
+    pub fn with(self, bit: u16, on: bool) -> Self {
+        if on { Self(self.0 | bit) } else { self }
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// The features an instance record and its material block use. A batch's
+    /// set is the union over its records.
+    pub fn of_record(
+        inst: &crate::resources::mesh::instancing::InstanceData,
+        material_flags: [u32; 4],
+    ) -> Self {
+        use crate::resources::material_gpu::item_flags as m;
+        use crate::resources::mesh::instancing::instance_flags as f;
+        let flag = |bit: u32| inst.flags & bit != 0;
+        Self::NONE
+            .with(Self::RECORD, flag(f::HAS_SIDECAR))
+            .with(
+                Self::COLOUR_STREAM,
+                flag(f::HAS_ATTRIBUTE) || flag(f::USE_FACE_COLOUR),
+            )
+            .with(Self::WARP, flag(f::HAS_WARP))
+            .with(
+                Self::OVERRIDES,
+                flag(f::HAS_POSITION_OVERRIDE) || flag(f::HAS_NORMAL_OVERRIDE),
+            )
+            .with(
+                Self::LIGHTMAP,
+                inst.lightmap_stream != 0
+                    || material_flags[1] != 0
+                    || material_flags[0] & (m::LIGHTMAP_DIRECTIONAL | m::HAS_SHADOWMASK) != 0,
+            )
+            .with(Self::MATCAP, material_flags[0] & m::USE_MATCAP != 0)
+            .with(Self::DEFORM, inst.deform_flags != 0)
+            .with(
+                Self::EMISSIVE_MAP,
+                material_flags[0] & m::HAS_EMISSIVE_TEX != 0,
+            )
+            .with(Self::UV1, material_flags[0] & m::USES_UV1 != 0)
+            .with(Self::UV_TRANSFORM, material_flags[0] & m::UV_TRANSFORM != 0)
+            .with(Self::LIGHT_PROBE, flag(f::HAS_LIGHT_PROBE))
+            .with(Self::CLEARCOAT, material_flags[0] & m::HAS_CLEARCOAT != 0)
+            .with(Self::SHEEN, material_flags[0] & m::HAS_SHEEN != 0)
+            .with(Self::ANISOTROPY, material_flags[0] & m::HAS_ANISOTROPY != 0)
+            .with(
+                Self::TRANSMISSION,
+                material_flags[0] & m::HAS_TRANSMISSION != 0,
+            )
+    }
+
+    /// The pipeline constants for this set: the features it leaves out set
+    /// false, the rest left at their `true` default.
+    pub fn constants(self) -> Vec<(&'static str, f64)> {
+        Self::CONSTANTS
+            .iter()
+            .filter(|(bit, _)| !self.has(*bit))
+            .map(|(_, name)| (*name, 0.0))
+            .collect()
+    }
+
+    /// A label suffix naming the set, for the build log.
+    pub fn label(self, base: &str) -> String {
+        format!("{base}_feat{:02x}", self.0)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod feature_set_tests {
+    use super::FeatureSet;
+    use crate::resources::mesh::instancing::{InstanceData, instance_flags};
 
-    /// `PipelineVariantSet::build`'s closure returns a concrete
-    /// `RenderPipeline`, not an `Option`, so a migrated family cannot skip a
-    /// key -- completeness is a compile-time property, not something a
-    /// startup check needs to verify. What *can* still silently break is the
-    /// enumeration itself: if a future phase adds a fourth axis to
-    /// `PipelineKey` without widening `all()`/`slot()` past 3 bits, two
-    /// distinct keys would collide on the same array slot and `build` would
-    /// silently drop one of them. This test pins `all()` and `slot()` in
-    /// sync so that class of bug fails immediately instead of showing up as
-    /// a wrong pipeline at draw time.
     #[test]
-    fn all_keys_are_distinct_and_densely_slotted() {
-        let keys: Vec<PipelineKey> = PipelineKey::all().collect();
-        assert_eq!(keys.len(), 8, "PipelineKey has 3 bool axes: 2^3 = 8 keys");
+    fn only_a_record_with_a_light_probe_needs_the_probe_feature() {
+        let mut inst: InstanceData = bytemuck::Zeroable::zeroed();
+        assert!(!FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
+        inst.flags |= instance_flags::HAS_LIGHT_PROBE;
+        assert!(FeatureSet::of_record(&inst, [0; 4]).has(FeatureSet::LIGHT_PROBE));
+        assert!(FeatureSet::UNIVERSAL.has(FeatureSet::LIGHT_PROBE));
+    }
 
-        let mut seen_keys = std::collections::HashSet::new();
-        let mut seen_slots = std::collections::HashSet::new();
-        for key in keys {
-            assert!(
-                seen_keys.insert(key),
-                "all() yielded {key:?} more than once"
-            );
-            let slot = key.slot();
-            assert!(slot < 8, "{key:?} slotted out of range: {slot}");
-            assert!(
-                seen_slots.insert(slot),
-                "{key:?} collided with another key at slot {slot}"
-            );
+    #[test]
+    fn each_layer_bit_names_its_feature() {
+        use crate::resources::material_gpu::item_flags as m;
+        let inst: InstanceData = bytemuck::Zeroable::zeroed();
+        assert_eq!(FeatureSet::of_record(&inst, [0; 4]), FeatureSet::NONE);
+        for (bit, feat) in [
+            (m::HAS_CLEARCOAT, FeatureSet::CLEARCOAT),
+            (m::HAS_SHEEN, FeatureSet::SHEEN),
+            (m::HAS_ANISOTROPY, FeatureSet::ANISOTROPY),
+            (m::HAS_TRANSMISSION, FeatureSet::TRANSMISSION),
+        ] {
+            assert_eq!(FeatureSet::of_record(&inst, [bit, 0, 0, 0]).bits(), feat);
+            assert!(FeatureSet::UNIVERSAL.has(feat));
         }
     }
-}
-
-/// Two-way facedness select, shared by every family whose only axis is
-/// `Cull` vs a two-sided policy: OIT, the LDR opaque and inline-transparent
-/// draws, per-submesh material ranges, and shadow casting once cutout is not
-/// in play.
-pub(crate) fn select_two_sided<'p>(
-    key: PipelineKey,
-    one_sided: &'p crate::gpu::RenderPipeline,
-    two_sided: &'p crate::gpu::RenderPipeline,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.two_sided { two_sided } else { one_sided }
-}
-
-/// The opaque scene pass's four-way select: facedness x the discard-free
-/// early-Z twin. `nodiscard` / `nodiscard_two_sided` are `None` when the twin
-/// was not built for this pass (a legitimate capability fallback -- some
-/// backends skip it under storage-buffer pressure -- not a variant gap, so
-/// this never touches `missing_variant`).
-pub(crate) fn select_opaque_solid<'p>(
-    key: PipelineKey,
-    solid: &'p crate::gpu::RenderPipeline,
-    solid_two_sided: &'p crate::gpu::RenderPipeline,
-    nodiscard: Option<&'p crate::gpu::RenderPipeline>,
-    nodiscard_two_sided: Option<&'p crate::gpu::RenderPipeline>,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.no_discard_eligible {
-        if let (Some(nd), Some(nd_two_sided)) = (nodiscard, nodiscard_two_sided) {
-            return if key.two_sided { nd_two_sided } else { nd };
-        }
-    }
-    select_two_sided(key, solid, solid_two_sided)
 }

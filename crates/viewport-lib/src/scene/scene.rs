@@ -5,11 +5,14 @@
 //! into `SceneFrame::surfaces` (usually via `SceneFrame::from_surface_items(...)`).
 //! The renderer itself remains stateless.
 
+use crate::Colour;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::select::selection::{NodeId, Selection};
 use crate::renderer::{PickId, SceneRenderItem};
+use crate::resources::MaterialId;
+use crate::resources::TextureId;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 use crate::scene::material::Material;
@@ -69,21 +72,36 @@ pub struct Group {
 // SceneNode
 // ---------------------------------------------------------------------------
 
+/// Whether any of `material`'s texture slots names `texture_id`.
+///
+/// Kept next to [`Scene::texture_ref_count`] so the slot list is written once:
+/// a new texture slot on `Material` needs adding here and nowhere else.
+fn material_references_texture(material: &Material, texture_id: TextureId) -> bool {
+    [
+        material.texture_id,
+        material.normal_map_id,
+        material.ao_map_id,
+        material.metallic_roughness_texture_id,
+        material.emissive_texture_id,
+    ]
+    .contains(&Some(texture_id))
+}
+
 /// A node in the scene graph.
 pub struct SceneNode {
     id: NodeId,
     name: String,
     mesh_id: Option<MeshId>,
-    material: Material,
+    material: MaterialId,
     /// One material per submesh range of the node's mesh, or `None` to draw
     /// the whole mesh with `material`. See
     /// [`SceneRenderItem::submesh_materials`](crate::renderer::SceneRenderItem::submesh_materials).
-    submesh_materials: Option<Vec<Material>>,
+    submesh_materials: Option<Vec<MaterialId>>,
     appearance: crate::scene::material::ItemSettings,
     visible: bool,
     show_normals: bool,
-    local_transform: glam::Mat4,
-    world_transform: glam::Mat4,
+    local_transform: crate::Transform,
+    world_transform: crate::Transform,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
     layer: LayerId,
@@ -91,8 +109,6 @@ pub struct SceneNode {
     /// Per-node deformer instance ID. See
     /// [`SceneRenderItem::deform_instance`](crate::renderer::SceneRenderItem::deform_instance).
     deform_instance: Option<u32>,
-    /// Whether projected decals land on this surface. Default: `true`.
-    receives_decals: bool,
     /// LOD group this node draws through, if any. When set, the renderer
     /// picks a level each frame from the node's on-screen size and overwrites
     /// the drawn mesh; `mesh_id` should hold the full-detail (level 0) mesh so
@@ -103,9 +119,10 @@ pub struct SceneNode {
     /// as the local-space template.
     pub light: Option<LightSource>,
     /// Where this node's indirect diffuse light comes from. Default:
-    /// [`IndirectLightSource::GlobalIbl`]. Set to
-    /// [`IndirectLightSource::LightProbe`] to sample the uploaded probe field at
-    /// the node's position instead of the global environment.
+    /// [`IndirectLightSource::GlobalIbl`](crate::IndirectLightSource::GlobalIbl).
+    /// Set to [`IndirectLightSource::LightProbe`](crate::IndirectLightSource::LightProbe)
+    /// to sample the uploaded probe field at the node's position instead of the
+    /// global environment.
     pub indirect_light: crate::renderer::IndirectLightSource,
 }
 
@@ -130,15 +147,15 @@ impl SceneNode {
         self.lod_group
     }
 
-    /// Material parameters (colour, shading, texture) for this node.
-    pub fn material(&self) -> &Material {
-        &self.material
+    /// The material this node draws with.
+    pub fn material(&self) -> MaterialId {
+        self.material
     }
 
     /// Per-submesh-range materials, or `None` when the node draws its whole
     /// mesh with [`material`](Self::material). Set via
     /// [`Scene::set_submesh_materials`].
-    pub fn submesh_materials(&self) -> Option<&[Material]> {
+    pub fn submesh_materials(&self) -> Option<&[MaterialId]> {
         self.submesh_materials.as_deref()
     }
 
@@ -167,12 +184,13 @@ impl SceneNode {
     }
 
     /// Local transform relative to this node's parent (or world if no parent).
-    pub fn local_transform(&self) -> glam::Mat4 {
+    pub fn local_transform(&self) -> crate::Transform {
         self.local_transform
     }
 
-    /// World-space transform. Updated by `Scene::update_transforms()`.
-    pub fn world_transform(&self) -> glam::Mat4 {
+    /// World-space transform, composed in f64. Updated by
+    /// `Scene::update_transforms()`.
+    pub fn world_transform(&self) -> crate::Transform {
         self.world_transform
     }
 
@@ -190,16 +208,6 @@ impl SceneNode {
     pub fn layer(&self) -> LayerId {
         self.layer
     }
-
-    /// Whether projected decals land on this surface.
-    pub fn receives_decals(&self) -> bool {
-        self.receives_decals
-    }
-
-    /// Set whether projected decals land on this surface.
-    pub fn set_receives_decals(&mut self, v: bool) {
-        self.receives_decals = v;
-    }
 }
 
 impl ViewportObject for SceneNode {
@@ -212,11 +220,11 @@ impl ViewportObject for SceneNode {
     }
 
     fn model_matrix(&self) -> glam::Mat4 {
-        self.world_transform
+        self.world_transform.to_mat4()
     }
 
     fn position(&self) -> glam::Vec3 {
-        self.world_transform.col(3).truncate()
+        self.world_transform.translation.as_vec3()
     }
 
     fn rotation(&self) -> glam::Quat {
@@ -233,16 +241,16 @@ impl ViewportObject for SceneNode {
         self.visible
     }
 
+    /// The node's `ItemSettings::colour`, or white. The material's own colour
+    /// lives in the material store, which a node does not reach.
     fn colour(&self) -> glam::Vec3 {
-        glam::Vec3::from(self.material.base_colour.to_linear_rgb())
+        self.appearance
+            .colour
+            .map_or(glam::Vec3::ONE, |c| glam::Vec3::from(c.to_linear_rgb()))
     }
 
     fn show_normals(&self) -> bool {
         self.show_normals
-    }
-
-    fn material(&self) -> Material {
-        self.material
     }
 }
 
@@ -269,19 +277,17 @@ pub struct SceneStats {
 /// - Directional: the stored direction is rotated by the node's world rotation.
 /// - Point: position comes from the world translation; stored position is ignored.
 /// - Spot: position from world translation, direction rotated by world rotation.
-fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
-    let translation = world.col(3).truncate();
+fn resolve_light_to_world(src: &LightSource, world: &crate::Transform) -> LightSource {
+    let translation = world.translation;
     let kind = match &src.kind {
         LightKind::Directional { direction } => {
-            let rotated = world
-                .transform_vector3(glam::Vec3::from(*direction))
-                .normalize();
+            let rotated = (world.rotation_scale * glam::Vec3::from(*direction)).normalize();
             LightKind::Directional {
                 direction: rotated.into(),
             }
         }
         LightKind::Point { range, radius, .. } => LightKind::Point {
-            position: translation.into(),
+            position: translation,
             range: *range,
             radius: *radius,
         },
@@ -293,11 +299,9 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
             radius,
             ..
         } => {
-            let rotated = world
-                .transform_vector3(glam::Vec3::from(*direction))
-                .normalize();
+            let rotated = (world.rotation_scale * glam::Vec3::from(*direction)).normalize();
             LightKind::Spot {
-                position: translation.into(),
+                position: translation,
                 direction: rotated.into(),
                 range: *range,
                 inner_angle: *inner_angle,
@@ -313,6 +317,7 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
     out.intensity = src.intensity;
     out.importance = src.importance;
     out.cast_shadows = src.cast_shadows;
+    out.channel_mask = src.channel_mask;
     out
 }
 
@@ -335,9 +340,6 @@ pub struct Scene {
     /// True after the first full octree build. Incremental updates apply from here.
     spatial_built: bool,
     last_scene_stats: SceneStats,
-    // D4: live decals with lifetime / animation.
-    live_decals: Vec<LiveDecal>,
-    next_decal_id: u64,
 }
 
 /// Global monotonic clock for scene versions.
@@ -362,7 +364,7 @@ impl Scene {
                 name: "Default".to_string(),
                 visible: true,
                 locked: false,
-                colour: [1.0, 1.0, 1.0, 1.0].into(),
+                colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
                 order: 0,
             }],
             next_id: 1,
@@ -373,8 +375,6 @@ impl Scene {
             spatial: SpatialIndex::new(),
             spatial_built: false,
             last_scene_stats: SceneStats::default(),
-            live_decals: Vec::new(),
-            next_decal_id: 0,
         }
     }
 
@@ -392,8 +392,8 @@ impl Scene {
     pub fn add(
         &mut self,
         mesh_id: Option<MeshId>,
-        transform: glam::Mat4,
-        material: Material,
+        transform: impl Into<crate::Transform>,
+        material: MaterialId,
     ) -> NodeId {
         self.add_named("", mesh_id, transform, material)
     }
@@ -403,9 +403,10 @@ impl Scene {
         &mut self,
         name: &str,
         mesh_id: Option<MeshId>,
-        transform: glam::Mat4,
-        material: Material,
+        transform: impl Into<crate::Transform>,
+        material: MaterialId,
     ) -> NodeId {
+        let transform = transform.into();
         let id = self.next_id;
         self.next_id += 1;
         let node = SceneNode {
@@ -424,7 +425,6 @@ impl Scene {
             layer: DEFAULT_LAYER,
             dirty: true,
             deform_instance: None,
-            receives_decals: true,
             lod_group: None,
             light: None,
             indirect_light: crate::renderer::IndirectLightSource::default(),
@@ -621,9 +621,9 @@ impl Scene {
     // -- Properties --
 
     /// Set the local transform of a node, marking it and its descendants dirty.
-    pub fn set_local_transform(&mut self, id: NodeId, transform: glam::Mat4) {
+    pub fn set_local_transform(&mut self, id: NodeId, transform: impl Into<crate::Transform>) {
         if let Some(node) = self.nodes.get_mut(&id) {
-            node.local_transform = transform;
+            node.local_transform = transform.into();
             node.dirty = true;
         }
         self.mark_descendants_dirty(id);
@@ -645,7 +645,7 @@ impl Scene {
     }
 
     /// Set node material.
-    pub fn set_material(&mut self, id: NodeId, material: Material) {
+    pub fn set_material(&mut self, id: NodeId, material: MaterialId) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.material = material;
         }
@@ -656,7 +656,7 @@ impl Scene {
     /// mesh's `MeshData::submeshes`. `None` (the default) draws the whole
     /// mesh with the node's single material, as does a count mismatch
     /// against the mesh's ranges.
-    pub fn set_submesh_materials(&mut self, id: NodeId, materials: Option<Vec<Material>>) {
+    pub fn set_submesh_materials(&mut self, id: NodeId, materials: Option<Vec<MaterialId>>) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.submesh_materials = materials;
         }
@@ -667,6 +667,22 @@ impl Scene {
     pub fn set_appearance(&mut self, id: NodeId, appearance: crate::scene::material::ItemSettings) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.appearance = appearance;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set a node's `draw_priority` (see `ItemSettings::draw_priority`).
+    pub fn set_draw_priority(&mut self, id: NodeId, priority: i8) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.appearance.draw_priority = priority;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set a node's `blend_order` (see `ItemSettings::blend_order`).
+    pub fn set_blend_order(&mut self, id: NodeId, order: Option<u16>) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.appearance.blend_order = order;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -724,14 +740,6 @@ impl Scene {
         self.version = self.version.wrapping_add(1);
     }
 
-    /// Set whether projected decals land on this node's surface.
-    pub fn set_receives_decals(&mut self, id: NodeId, v: bool) {
-        if let Some(node) = self.nodes.get_mut(&id) {
-            node.receives_decals = v;
-        }
-        self.version = self.version.wrapping_add(1);
-    }
-
     /// Set whether to show normals.
     pub fn set_show_normals(&mut self, id: NodeId, show: bool) {
         if let Some(node) = self.nodes.get_mut(&id) {
@@ -775,7 +783,7 @@ impl Scene {
             name: name.to_string(),
             visible: true,
             locked: false,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             order,
         });
         self.version = self.version.wrapping_add(1);
@@ -911,11 +919,11 @@ impl Scene {
         // self mutably while iterating, collect the root list first.
         let roots: Vec<NodeId> = self.roots.clone();
         for &root_id in &roots {
-            self.propagate_transform(root_id, glam::Mat4::IDENTITY);
+            self.propagate_transform(root_id, crate::Transform::IDENTITY);
         }
     }
 
-    fn propagate_transform(&mut self, id: NodeId, parent_world: glam::Mat4) {
+    fn propagate_transform(&mut self, id: NodeId, parent_world: crate::Transform) {
         let (dirty, local, children) = {
             let Some(node) = self.nodes.get(&id) else {
                 return;
@@ -924,7 +932,7 @@ impl Scene {
         };
 
         if dirty {
-            let world = parent_world * local;
+            let world = parent_world.mul_transform(&local);
             let node = self.nodes.get_mut(&id).unwrap();
             node.world_transform = world;
             node.dirty = false;
@@ -981,7 +989,7 @@ impl Scene {
             .filter(|n| n.visible && n.mesh_id.is_some())
             .filter_map(|n| {
                 let local_aabb = mesh_aabb_fn(n.mesh_id.unwrap())?;
-                let world_aabb = local_aabb.transformed(&n.world_transform);
+                let world_aabb = local_aabb.transformed(&n.world_transform.to_mat4());
                 Some((n.id, world_aabb))
             })
             .collect();
@@ -1001,7 +1009,7 @@ impl Scene {
                 }
                 let mesh_id = node.mesh_id?;
                 let local_aabb = mesh_aabb_fn(mesh_id)?;
-                Some(local_aabb.transformed(&node.world_transform))
+                Some(local_aabb.transformed(&node.world_transform.to_mat4()))
             });
             if let Some(aabb) = new_aabb {
                 self.spatial.insert_entry(id, aabb);
@@ -1062,7 +1070,7 @@ impl Scene {
             };
             items.push(SceneRenderItem {
                 mesh_id,
-                model: node.world_transform.to_cols_array_2d(),
+                model: node.world_transform,
                 settings: item_settings,
                 show_normals: node.show_normals,
                 material: node.material,
@@ -1074,10 +1082,9 @@ impl Scene {
                 warp_attribute: None,
                 warp_scale: 1.0,
                 deform_instance: node.deform_instance,
-                receives_decals: node.receives_decals,
-                lic: None,
                 lod_group: node.lod_group,
                 indirect_light: node.indirect_light,
+                lightmap_placement: None,
             });
         }
         // Nodes live in a `HashMap`, whose iteration order is randomised per
@@ -1152,7 +1159,7 @@ impl Scene {
                 };
                 items.push(SceneRenderItem {
                     mesh_id,
-                    model: node.world_transform.to_cols_array_2d(),
+                    model: node.world_transform,
                     settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
@@ -1164,10 +1171,9 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     deform_instance: node.deform_instance,
-                    receives_decals: node.receives_decals,
-                    lic: None,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
+                    lightmap_placement: None,
                 });
             }
 
@@ -1194,7 +1200,7 @@ impl Scene {
 
                 // Frustum cull using world-space AABB.
                 if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
-                    let world_aabb = local_aabb.transformed(&node.world_transform);
+                    let world_aabb = local_aabb.transformed(&node.world_transform.to_mat4());
                     if frustum.cull_aabb(&world_aabb) {
                         stats.culled += 1;
                         continue;
@@ -1212,7 +1218,7 @@ impl Scene {
                 };
                 items.push(SceneRenderItem {
                     mesh_id,
-                    model: node.world_transform.to_cols_array_2d(),
+                    model: node.world_transform,
                     settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
@@ -1224,10 +1230,9 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     deform_instance: node.deform_instance,
-                    receives_decals: node.receives_decals,
-                    lic: None,
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
+                    lightmap_placement: None,
                 });
             }
 
@@ -1262,19 +1267,18 @@ impl Scene {
             id,
             name: String::new(),
             mesh_id: None,
-            material: crate::scene::material::Material::default(),
+            material: MaterialId::DEFAULT,
             submesh_materials: None,
             appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
             show_normals: false,
-            local_transform: glam::Mat4::IDENTITY,
-            world_transform: glam::Mat4::IDENTITY,
+            local_transform: crate::Transform::IDENTITY,
+            world_transform: crate::Transform::IDENTITY,
             parent: None,
             children: Vec::new(),
             layer: DEFAULT_LAYER,
             dirty: true,
             deform_instance: None,
-            receives_decals: false,
             lod_group: None,
             light: Some(light),
             indirect_light: crate::renderer::IndirectLightSource::default(),
@@ -1311,7 +1315,7 @@ impl Scene {
             let Some(src) = &node.light else {
                 continue;
             };
-            out.push(resolve_light_to_world(src, node.world_transform));
+            out.push(resolve_light_to_world(src, &node.world_transform));
         }
         out
     }
@@ -1335,6 +1339,38 @@ impl Scene {
         self.nodes
             .values()
             .filter(|n| n.mesh_id == Some(mesh_id))
+            .count()
+    }
+
+    /// Count how many scene nodes reference the given texture through any
+    /// material slot.
+    ///
+    /// A node counts once however many of its slots name the texture. Every
+    /// slot on [`Material`] is checked: `texture_id`, `normal_map_id`,
+    /// `ao_map_id`, `metallic_roughness_texture_id`, and
+    /// `emissive_texture_id`, on the node's own material and on each of its
+    /// submesh materials.
+    ///
+    /// O(n) over all nodes, the texture counterpart of
+    /// [`mesh_ref_count`](Self::mesh_ref_count). Use it to decide whether a
+    /// texture is still needed before calling
+    /// [`free_texture`](crate::resources::DeviceResources::free_texture). It
+    /// sees the scene only: a texture referenced solely by a decal, an overlay,
+    /// or a render item built outside the scene graph counts zero here. The
+    /// materials are read from `resources`, where they are stored.
+    pub fn texture_ref_count(
+        &self,
+        resources: &crate::resources::DeviceResources,
+        texture_id: TextureId,
+    ) -> usize {
+        self.nodes
+            .values()
+            .filter(|n| {
+                std::iter::once(&n.material)
+                    .chain(n.submesh_materials.iter().flatten())
+                    .filter_map(|id| resources.material(*id))
+                    .any(|m| material_references_texture(m, texture_id))
+            })
             .count()
     }
 
@@ -1365,153 +1401,6 @@ impl Default for Scene {
     }
 }
 
-// ---------------------------------------------------------------------------
-// D4: Live decals with lifetime and animation.
-// ---------------------------------------------------------------------------
-
-/// Opaque handle returned by [`Scene::add_decal`].
-///
-/// Pass to [`Scene::remove_decal`] to delete the decal before it expires.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DecalHandle(u64);
-
-/// A persistent decal managed by the scene, with optional lifetime and animation.
-///
-/// Created via [`Scene::add_decal`] or [`Scene::add_decal_with_lifetime`].
-/// Call [`Scene::update_decals`] once per frame with the frame delta-time to
-/// advance ages and expire finished decals. Call [`Scene::collect_decal_items`]
-/// to get the current [`DecalItem`] list ready to push into `fd.scene.decals`.
-pub struct LiveDecal {
-    id: u64,
-    /// The base decal parameters. `uv_offset` and `uv_scale` are recomputed
-    /// from `animation` each frame; all other fields are used as-is.
-    pub item: crate::renderer::DecalItem,
-    /// Optional UV animation. See [`DecalAnimation`].
-    pub animation: Option<crate::renderer::DecalAnimation>,
-    /// Total lifetime in seconds. `None` = permanent.
-    pub lifetime: Option<f32>,
-    /// How many seconds the fade-out lasts at the end of the lifetime.
-    /// Must be <= `lifetime`. Default: 20% of lifetime when 0.0.
-    pub fade_duration: f32,
-    /// Elapsed time in seconds since the decal was added.
-    pub age: f32,
-}
-
-impl Scene {
-    /// Add a permanent decal to the scene. Returns a handle for later removal.
-    pub fn add_decal(&mut self, item: crate::renderer::DecalItem) -> DecalHandle {
-        self.add_live_decal(item, None, None, 0.0)
-    }
-
-    /// Add a decal that fades and is automatically removed after `lifetime` seconds.
-    ///
-    /// `fade_duration` controls how many seconds the alpha ramps to zero before
-    /// expiry. Pass `0.0` to use the default (20% of lifetime).
-    pub fn add_decal_with_lifetime(
-        &mut self,
-        item: crate::renderer::DecalItem,
-        lifetime: f32,
-        fade_duration: f32,
-    ) {
-        self.add_live_decal(item, Some(lifetime), None, fade_duration);
-    }
-
-    /// Add a decal with an optional animation and optional lifetime.
-    pub fn add_decal_animated(
-        &mut self,
-        item: crate::renderer::DecalItem,
-        animation: crate::renderer::DecalAnimation,
-        lifetime: Option<f32>,
-    ) -> DecalHandle {
-        self.add_live_decal(item, lifetime, Some(animation), 0.0)
-    }
-
-    /// Remove a decal by handle. No-op if the handle is no longer valid.
-    pub fn remove_decal(&mut self, handle: DecalHandle) {
-        self.live_decals.retain(|d| d.id != handle.0);
-    }
-
-    /// Advance all live decals by `dt` seconds and drop expired ones.
-    ///
-    /// Call once per frame before [`Scene::collect_decal_items`].
-    pub fn update_decals(&mut self, dt: f32) {
-        for ld in &mut self.live_decals {
-            ld.age += dt;
-        }
-        self.live_decals
-            .retain(|ld| ld.lifetime.map_or(true, |lt| ld.age < lt));
-    }
-
-    /// Build the [`DecalItem`] list for this frame's `fd.scene.decals`.
-    ///
-    /// Applies lifetime fading (alpha ramps to 0 in the last 20% of life) and
-    /// computes UV offset/scale for animated decals.
-    pub fn collect_decal_items(&self) -> Vec<crate::renderer::DecalItem> {
-        self.live_decals
-            .iter()
-            .map(|ld| {
-                let mut item = ld.item.clone();
-
-                // Fade out at the end of lifetime.
-                if let Some(lt) = ld.lifetime {
-                    let fade = if ld.fade_duration > 0.0 {
-                        ld.fade_duration.min(lt)
-                    } else {
-                        lt * 0.2
-                    };
-                    let time_left = lt - ld.age;
-                    if time_left < fade {
-                        item.alpha *= (time_left / fade).clamp(0.0, 1.0);
-                    }
-                }
-
-                // Apply animation.
-                if let Some(anim) = &ld.animation {
-                    match anim {
-                        crate::renderer::DecalAnimation::UvScroll { vx, vy } => {
-                            // Accumulate offset from base, wrapping in [0, 1].
-                            item.uv_offset[0] =
-                                (ld.item.uv_offset[0] + vx * ld.age).rem_euclid(1.0);
-                            item.uv_offset[1] =
-                                (ld.item.uv_offset[1] + vy * ld.age).rem_euclid(1.0);
-                        }
-                        crate::renderer::DecalAnimation::SpriteSheet { cols, rows, fps } => {
-                            let total = cols * rows;
-                            let frame = ((ld.age * fps) as u32).rem_euclid(total.max(1));
-                            let col = frame % cols;
-                            let row = frame / cols;
-                            item.uv_scale = [1.0 / *cols as f32, 1.0 / *rows as f32];
-                            item.uv_offset = [col as f32 / *cols as f32, row as f32 / *rows as f32];
-                        }
-                    }
-                }
-
-                item
-            })
-            .collect()
-    }
-
-    fn add_live_decal(
-        &mut self,
-        item: crate::renderer::DecalItem,
-        lifetime: Option<f32>,
-        animation: Option<crate::renderer::DecalAnimation>,
-        fade_duration: f32,
-    ) -> DecalHandle {
-        let id = self.next_decal_id;
-        self.next_decal_id += 1;
-        self.live_decals.push(LiveDecal {
-            id,
-            item,
-            animation,
-            lifetime,
-            fade_duration,
-            age: 0.0,
-        });
-        DecalHandle(id)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1523,7 +1412,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         assert_eq!(scene.node(id).unwrap().lod_group(), None);
 
@@ -1547,7 +1436,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         // Nodes default to the global environment.
         let items = scene.collect_render_items(&Selection::new());
@@ -1567,7 +1456,7 @@ mod tests {
     #[test]
     fn test_add_and_remove() {
         let mut scene = Scene::new();
-        let id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         assert!(scene.node(id).is_some());
         assert_eq!(scene.node_count(), 1);
 
@@ -1580,9 +1469,9 @@ mod tests {
     #[test]
     fn test_remove_cascades_to_children() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child1 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child2 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child1 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child2 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child1, Some(parent));
         scene.set_parent(child2, Some(parent));
 
@@ -1597,12 +1486,12 @@ mod tests {
     #[test]
     fn test_remove_many_clears_roots_and_descendants() {
         let mut scene = Scene::new();
-        let a = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let b = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let b_child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let a = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let b = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let b_child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(b_child, Some(b));
         // A node left out of the batch survives.
-        let keep = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let keep = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let removed = scene.remove_many(&[a, b]);
         assert_eq!(removed.len(), 3);
@@ -1618,8 +1507,8 @@ mod tests {
     #[test]
     fn test_remove_many_dedups_overlapping_and_missing() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child, Some(parent));
 
         // child is nested under parent, parent is listed twice, and 9999 is not
@@ -1634,9 +1523,9 @@ mod tests {
     #[test]
     fn test_remove_many_detaches_surviving_parent() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child1 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child2 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child1 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child2 = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child1, Some(parent));
         scene.set_parent(child2, Some(parent));
 
@@ -1646,9 +1535,24 @@ mod tests {
     }
 
     #[test]
+    fn test_draw_order_setters_bump_version() {
+        let mut scene = Scene::new();
+        let id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let before = scene.version();
+        scene.set_draw_priority(id, -3);
+        assert!(scene.version() > before);
+        let mid = scene.version();
+        scene.set_blend_order(id, Some(4));
+        assert!(scene.version() > mid);
+        let settings = scene.node(id).unwrap().appearance();
+        assert_eq!(settings.draw_priority, -3);
+        assert_eq!(settings.blend_order, Some(4));
+    }
+
+    #[test]
     fn test_remove_many_empty_is_noop() {
         let mut scene = Scene::new();
-        scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         let before = scene.version();
         let removed = scene.remove_many(&[]);
         assert!(removed.is_empty());
@@ -1662,18 +1566,18 @@ mod tests {
         let parent = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         let child = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(1.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_parent(child, Some(parent));
         scene.update_transforms();
 
         let world = scene.node(child).unwrap().world_transform();
-        let pos = world.col(3).truncate();
+        let pos = world.translation.as_vec3();
         assert!((pos.x - 6.0).abs() < 1e-5, "expected x=6.0, got {}", pos.x);
     }
 
@@ -1683,12 +1587,12 @@ mod tests {
         let parent = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(1.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         let child = scene.add(
             None,
             glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_parent(child, Some(parent));
         scene.update_transforms();
@@ -1704,8 +1608,8 @@ mod tests {
             .node(child)
             .unwrap()
             .world_transform()
-            .col(3)
-            .truncate();
+            .translation
+            .as_vec3();
         assert!(
             (child_pos.x - 12.0).abs() < 1e-5,
             "expected x=12.0, got {}",
@@ -1720,7 +1624,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_layer(id, layer);
         scene.set_layer_visible(layer, false);
@@ -1735,7 +1639,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_visible(id, false);
 
@@ -1746,7 +1650,7 @@ mod tests {
     #[test]
     fn test_collect_skips_meshless_nodes() {
         let mut scene = Scene::new();
-        scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let items = scene.collect_render_items(&Selection::new());
         assert!(items.is_empty());
@@ -1758,7 +1662,7 @@ mod tests {
         let id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
 
         let mut sel = Selection::new();
@@ -1772,8 +1676,8 @@ mod tests {
     #[test]
     fn test_unparent_makes_root() {
         let mut scene = Scene::new();
-        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        let child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let parent = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child, Some(parent));
         assert!(!scene.roots().contains(&child));
 
@@ -1789,13 +1693,13 @@ mod tests {
         let visible_id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         // Object far behind camera : should be culled.
         let _behind = scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 100.0)),
-            Material::default(),
+            MaterialId::DEFAULT,
         );
 
         let sel = Selection::new();
@@ -1861,7 +1765,7 @@ mod tests {
     fn test_set_layer_colour() {
         let mut scene = Scene::new();
         let layer_id = scene.add_layer("Coloured");
-        scene.set_layer_colour(layer_id, [1.0, 0.0, 0.0, 1.0]);
+        scene.set_layer_colour(layer_id, Colour::linear(1.0, 0.0, 0.0, 1.0));
         let layers = scene.layers();
         let layer = layers.iter().find(|l| l.id == layer_id).unwrap();
         assert_eq!(layer.colour.to_linear_rgba(), [1.0, 0.0, 0.0, 1.0]);
@@ -1884,7 +1788,7 @@ mod tests {
         let node_id = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.set_layer(node_id, layer_id);
         scene.set_layer_locked(layer_id, true);
@@ -1933,7 +1837,7 @@ mod tests {
     fn test_add_to_group_and_remove_from_group() {
         let mut scene = Scene::new();
         let gid = scene.create_group("G");
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.add_to_group(node_id, gid);
         assert!(scene.get_group(gid).unwrap().members.contains(&node_id));
         scene.remove_from_group(node_id, gid);
@@ -1953,7 +1857,7 @@ mod tests {
         let mut scene = Scene::new();
         let g1 = scene.create_group("G1");
         let g2 = scene.create_group("G2");
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.add_to_group(node_id, g1);
         scene.add_to_group(node_id, g2);
         let groups = scene.node_groups(node_id);
@@ -1966,7 +1870,7 @@ mod tests {
     fn test_remove_node_cleans_up_group_membership() {
         let mut scene = Scene::new();
         let gid = scene.create_group("G");
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.add_to_group(node_id, gid);
         scene.remove(node_id);
         assert!(!scene.get_group(gid).unwrap().members.contains(&node_id));
@@ -1986,17 +1890,17 @@ mod tests {
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(1)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         assert_eq!(scene.mesh_ref_count(MeshId::from_index(0)), 2);
         assert_eq!(scene.mesh_ref_count(MeshId::from_index(1)), 1);
@@ -2008,12 +1912,12 @@ mod tests {
         let node_a = scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         scene.add(
             Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
-            Material::default(),
+            MaterialId::DEFAULT,
         );
         assert_eq!(scene.mesh_ref_count(MeshId::from_index(0)), 2);
         scene.remove(node_a);
@@ -2032,10 +1936,10 @@ mod tests {
     #[test]
     fn test_walk_depth_first_order() {
         let mut scene = Scene::new();
-        let root = scene.add_named("root", None, glam::Mat4::IDENTITY, Material::default());
-        let child_a = scene.add_named("a", None, glam::Mat4::IDENTITY, Material::default());
-        let child_b = scene.add_named("b", None, glam::Mat4::IDENTITY, Material::default());
-        let grandchild = scene.add_named("a1", None, glam::Mat4::IDENTITY, Material::default());
+        let root = scene.add_named("root", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child_a = scene.add_named("a", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let child_b = scene.add_named("b", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        let grandchild = scene.add_named("a1", None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         scene.set_parent(child_a, Some(root));
         scene.set_parent(child_b, Some(root));
         scene.set_parent(grandchild, Some(child_a));
@@ -2081,13 +1985,13 @@ mod tests {
             scene.add(
                 Some(MeshId::from_index(0)),
                 glam::Mat4::IDENTITY,
-                Material::default(),
+                MaterialId::DEFAULT,
             );
         }
         // 500 culled nodes behind camera (z >> 300 far plane).
         for _ in 0..500 {
             let mat = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 9000.0));
-            scene.add(Some(MeshId::from_index(0)), mat, Material::default());
+            scene.add(Some(MeshId::from_index(0)), mat, MaterialId::DEFAULT);
         }
 
         assert!(scene.node_count() >= SPATIAL_THRESHOLD);
@@ -2123,7 +2027,7 @@ mod tests {
             let id = scene.add(
                 Some(MeshId::from_index(0)),
                 glam::Mat4::IDENTITY,
-                Material::default(),
+                MaterialId::DEFAULT,
             );
             ids.push(id);
         }
@@ -2157,7 +2061,7 @@ mod tests {
             let id = scene.add(
                 Some(MeshId::from_index(0)),
                 glam::Mat4::IDENTITY,
-                Material::default(),
+                MaterialId::DEFAULT,
             );
             ids.push(id);
         }
@@ -2173,5 +2077,90 @@ mod tests {
 
         let (items2, _) = scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
         assert_eq!(items2.len(), 450, "should have 450 after removing 150");
+    }
+
+    /// Resources on a headless device, for the tests that store materials.
+    fn resources() -> Option<crate::resources::DeviceResources> {
+        let instance = crate::gpu::instance_from_env();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
+            },
+        ))
+        .ok()?;
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default()))
+                .ok()?;
+        Some(crate::resources::DeviceResources::new(
+            &device,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            1,
+        ))
+    }
+
+    #[test]
+    fn texture_ref_count_sees_every_material_slot() {
+        let Some(mut res) = resources() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let tex = TextureId::from_raw(7);
+        let other = TextureId::from_raw(8);
+
+        // One node per slot: every one must be found, or a policy that frees on
+        // a zero count drops a texture still being sampled.
+        let slots: [fn(&mut Material, TextureId); 5] = [
+            |m, t| m.texture_id = Some(t),
+            |m, t| m.normal_map_id = Some(t),
+            |m, t| m.ao_map_id = Some(t),
+            |m, t| m.metallic_roughness_texture_id = Some(t),
+            |m, t| m.emissive_texture_id = Some(t),
+        ];
+
+        for (i, set_slot) in slots.iter().enumerate() {
+            let mut scene = Scene::new();
+            let mut material = Material::default();
+            set_slot(&mut material, tex);
+            let material = res.upload_material(material).unwrap();
+            scene.add(Some(MeshId::from_index(0)), glam::Mat4::IDENTITY, material);
+            assert_eq!(
+                scene.texture_ref_count(&res, tex),
+                1,
+                "material slot {i} must be counted"
+            );
+            assert_eq!(scene.texture_ref_count(&res, other), 0);
+        }
+    }
+
+    #[test]
+    fn texture_ref_count_covers_submesh_materials_and_counts_nodes_once() {
+        let Some(mut res) = resources() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let tex = TextureId::from_raw(7);
+        let mut scene = Scene::new();
+
+        // A node whose own material is untextured but whose submesh material
+        // samples the texture still references it.
+        let submeshed = scene.add(
+            Some(MeshId::from_index(0)),
+            glam::Mat4::IDENTITY,
+            MaterialId::DEFAULT,
+        );
+        let textured = res.upload_material(Material::textured(tex)).unwrap();
+        scene.set_submesh_materials(submeshed, Some(vec![textured]));
+        assert_eq!(scene.texture_ref_count(&res, tex), 1);
+
+        // A node naming the texture in two slots counts once, not twice.
+        let mut both = Material::textured(tex);
+        both.emissive_texture_id = Some(tex);
+        let both = res.upload_material(both).unwrap();
+        scene.add(Some(MeshId::from_index(0)), glam::Mat4::IDENTITY, both);
+        assert_eq!(scene.texture_ref_count(&res, tex), 2);
     }
 }

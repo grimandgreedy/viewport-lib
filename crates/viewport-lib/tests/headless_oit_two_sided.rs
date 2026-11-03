@@ -7,7 +7,7 @@
 //! `Identical` (two-sided) must render it, and at opacity 0.75 that has to hold
 //! through the OIT pass, not just when opaque.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -54,31 +54,27 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
     // back face. Small pitch is the top-down view (see the testkit's cameras).
     let cam = {
         let mut c = Camera::default();
-        c.center = glam::Vec3::ZERO;
-        c.distance = 6.0;
-        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::from_rotation_x(0.15));
         c
     };
     let render = |renderer: &mut ViewportRenderer, two_sided: bool, opacity: f32| {
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         let mut item = SceneRenderItem::default();
+        let mut mat = Material::default();
         item.mesh_id = mesh_id;
-        item.material.base_colour = [1.0, 0.0, 0.0].into();
+        mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
         item.settings.unlit = true;
         item.settings.opacity = opacity;
         if two_sided {
-            item.material.backface_policy = BackfacePolicy::Identical;
+            mat.backface_policy = BackfacePolicy::Identical;
         }
+        item.material = upload_material(renderer, mat);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         coverage(&renderer.render_offscreen(&device, &queue, &frame, size, size))
     };
@@ -115,7 +111,7 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
 fn two_sided_transparent_material_plugin_draws_back_faces_on_hdr_oit() {
     struct FlatPlugin;
     impl viewport_lib::MaterialPlugin for FlatPlugin {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "flat_oit_test"
         }
         fn wgsl_body(&self) -> String {
@@ -148,29 +144,25 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     let cam = {
         let mut c = Camera::default();
-        c.center = glam::Vec3::ZERO;
-        c.distance = 6.0;
-        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c.set_orbit(glam::DVec3::ZERO, 6.0, glam::Quat::from_rotation_x(0.15));
         c
     };
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     let mut item = SceneRenderItem::default();
+    let mut mat = Material::default();
     item.mesh_id = mesh_id;
-    item.material.base_colour = [1.0, 0.0, 0.0].into();
-    item.material.shading_plugin = Some(plugin_id);
-    item.material.backface_policy = BackfacePolicy::Identical;
+    mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
+    mat.shading_plugin = Some(plugin_id);
+    mat.backface_policy = BackfacePolicy::Identical;
     item.settings.opacity = 0.75;
+    item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

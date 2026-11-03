@@ -3,6 +3,7 @@
 //! Applications implement [`ViewportObject`](crate::scene::traits::ViewportObject) on their scene object types
 //! so the renderer and picking system can work with them generically.
 
+use crate::Colour;
 use crate::scene::material::Material;
 
 /// Render mode for a viewport object.
@@ -55,6 +56,6 @@ pub trait ViewportObject {
     /// `self.colour()` in a [`Material::from_colour`] call so existing
     /// implementations continue to work without any changes.
     fn material(&self) -> Material {
-        Material::from_colour(self.colour().to_array())
+        Material::from_colour(Colour::from_linear_rgb_array(self.colour().to_array()))
     }
 }

@@ -95,8 +95,8 @@ impl Skeleton {
 /// Per-frame local-space transforms for each joint.
 ///
 /// One `Affine3A` per joint, indexed in the same order as the parent
-/// [`Skeleton`]. Store this in [`super::resources::RuntimeResources`] so
-/// animation plugins can write it and [`super::plugins::SkeletonPlugin`] can
+/// [`Skeleton`]. Store this in [`RuntimeResources`](crate::RuntimeResources) so
+/// animation plugins can write it and [`SkeletonPlugin`](crate::plugins::skeleton::SkeletonPlugin) can
 /// read it in the same frame.
 #[derive(Clone)]
 pub struct Pose {
@@ -170,45 +170,101 @@ impl JointMatrices {
 /// Apply CPU linear blend skinning to a mesh.
 ///
 /// Returns `(skinned_positions, skinned_normals)`. Each vertex is transformed
-/// by the weighted sum of up to four joint matrices. Zero-weight influences
-/// are skipped. Output normals are re-normalized.
+/// by the weighted sum of up to four joint matrices, the same blend the GPU
+/// skinning deformer takes. Zero-weight influences are skipped. Normals go
+/// through the cofactor of the blended matrix, so they stay perpendicular to
+/// the surface under non-uniform joint scale, and are re-normalised.
 ///
 /// `positions`, `normals`, and the per-vertex arrays in `weights` must all
-/// have the same length.
+/// have the same length. [`apply_skin_with_tangents`] also skins tangents.
 pub fn apply_skin(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
     weights: &SkinWeights,
     joint_matrices: &JointMatrices,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
+    let (p, n, _) = skin_vertices(positions, normals, None, weights, joint_matrices);
+    (p, n)
+}
+
+/// [`apply_skin`] that also skins per-vertex tangents.
+///
+/// `tangents` holds xyz plus the bitangent sign in w, as in
+/// [`MeshData::tangents`](crate::MeshData::tangents), one per position.
+/// Returns `(positions, normals, tangents)`: each tangent is transformed by
+/// the blended joint matrix and re-normalised, and its w is carried through.
+/// The skinned tangent is not re-orthogonalised against the skinned normal;
+/// the shading does that.
+pub fn apply_skin_with_tangents(
+    positions: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    tangents: &[[f32; 4]],
+    weights: &SkinWeights,
+    joint_matrices: &JointMatrices,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>) {
+    skin_vertices(positions, normals, Some(tangents), weights, joint_matrices)
+}
+
+fn skin_vertices(
+    positions: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    tangents: Option<&[[f32; 4]]>,
+    weights: &SkinWeights,
+    joint_matrices: &JointMatrices,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>) {
     let n = positions.len();
-    let mut out_pos = vec![[0.0f32; 3]; n];
-    let mut out_nrm = vec![[0.0f32; 3]; n];
-
+    let mut out_pos = Vec::with_capacity(n);
+    let mut out_nrm = Vec::with_capacity(n);
+    let mut out_tan = Vec::with_capacity(tangents.map_or(0, |_| n));
     for i in 0..n {
-        let p = glam::Vec3::from(positions[i]);
-        let nm = glam::Vec3::from(normals[i]);
-        let indices = weights.joint_indices[i];
-        let ws = weights.joint_weights[i];
-
-        let mut blended_p = glam::Vec3::ZERO;
-        let mut blended_n = glam::Vec3::ZERO;
-
-        for k in 0..4 {
-            let w = ws[k];
-            if w < 1e-6 {
-                continue;
-            }
-            let m = joint_matrices.matrices[indices[k] as usize];
-            blended_p += w * m.transform_point3(p);
-            blended_n += w * m.transform_vector3(nm);
+        let m = blended_matrix(weights, joint_matrices, i);
+        out_pos.push(
+            m.transform_point3(glam::Vec3::from(positions[i]))
+                .to_array(),
+        );
+        out_nrm.push(skin_normal(&m, glam::Vec3::from(normals[i])).to_array());
+        if let Some(tangents) = tangents {
+            let t = tangents[i];
+            let v = m
+                .transform_vector3(glam::Vec3::new(t[0], t[1], t[2]))
+                .normalize_or_zero();
+            out_tan.push([v.x, v.y, v.z, t[3]]);
         }
-
-        out_pos[i] = blended_p.to_array();
-        out_nrm[i] = blended_n.normalize_or_zero().to_array();
     }
+    (out_pos, out_nrm, out_tan)
+}
 
-    (out_pos, out_nrm)
+/// The weighted sum of vertex `i`'s joint matrices.
+fn blended_matrix(
+    weights: &SkinWeights,
+    joint_matrices: &JointMatrices,
+    i: usize,
+) -> glam::Affine3A {
+    let indices = weights.joint_indices[i];
+    let ws = weights.joint_weights[i];
+    let mut m3 = glam::Mat3A::ZERO;
+    let mut t = glam::Vec3A::ZERO;
+    for k in 0..4 {
+        let w = ws[k];
+        if w < 1e-6 {
+            continue;
+        }
+        let m = joint_matrices.matrices[indices[k] as usize];
+        m3 += m.matrix3 * w;
+        t += m.translation * w;
+    }
+    glam::Affine3A::from_mat3_translation(m3.into(), t.into())
+}
+
+/// A normal through the cofactor of `m`'s linear part, signed so a mirroring
+/// matrix keeps the normal's side, then normalised.
+fn skin_normal(m: &glam::Affine3A, n: glam::Vec3) -> glam::Vec3 {
+    let c0 = glam::Vec3::from(m.matrix3.x_axis);
+    let c1 = glam::Vec3::from(m.matrix3.y_axis);
+    let c2 = glam::Vec3::from(m.matrix3.z_axis);
+    let cof = glam::Mat3::from_cols(c1.cross(c2), c2.cross(c0), c0.cross(c1));
+    let sign = if c0.dot(cof.x_axis) < 0.0 { -1.0 } else { 1.0 };
+    (cof * n * sign).normalize_or_zero()
 }
 
 #[cfg(test)]
@@ -338,5 +394,79 @@ mod tests {
         };
         let (out_p, _) = apply_skin(&positions, &normals, &weights, &jm);
         assert!(approx_eq(out_p[0], [0.0, 0.0, 0.0], 1e-5));
+    }
+
+    #[test]
+    fn non_uniform_joint_scale_keeps_normals_perpendicular() {
+        // One joint scaled (2, 1, 1). A surface through the origin with normal
+        // (1, 1, 0) and tangent (1, -1, 0): the skinned tangent is (2, -1, 0),
+        // and the normal must stay perpendicular to it, at (1, 2, 0), which the
+        // upper 3x3 alone would not give.
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: Affine3A::IDENTITY,
+        }]);
+        let mut pose = Pose::identity(1);
+        pose.local_transforms[0] = Affine3A::from_scale(Vec3::new(2.0, 1.0, 1.0));
+        let jm = JointMatrices::compute(&sk, &pose);
+
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        let positions = vec![[0.5, -0.5, 1.0]];
+        let normals = vec![[s, s, 0.0]];
+        let tangents = vec![[s, -s, 0.0, -1.0]];
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 0, 0, 0]],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0]],
+        };
+        let (out_p, out_n, out_t) =
+            apply_skin_with_tangents(&positions, &normals, &tangents, &weights, &jm);
+        assert!(
+            approx_eq(out_p[0], [1.0, -0.5, 1.0], 1e-5),
+            "got {:?}",
+            out_p[0]
+        );
+        let r5 = 1.0 / 5.0f32.sqrt();
+        assert!(
+            approx_eq(out_n[0], [r5, 2.0 * r5, 0.0], 1e-5),
+            "got {:?}",
+            out_n[0]
+        );
+        assert!(
+            approx_eq(
+                [out_t[0][0], out_t[0][1], out_t[0][2]],
+                [2.0 * r5, -r5, 0.0],
+                1e-5
+            ),
+            "got {:?}",
+            out_t[0]
+        );
+        assert_eq!(out_t[0][3], -1.0);
+        let n = Vec3::from(out_n[0]);
+        let t = Vec3::new(out_t[0][0], out_t[0][1], out_t[0][2]);
+        assert!(n.dot(t).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mirroring_joint_keeps_the_normal_on_its_side() {
+        // Mirroring in X leaves a +Z normal pointing +Z, as the upper 3x3 does.
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: Affine3A::IDENTITY,
+        }]);
+        let mut pose = Pose::identity(1);
+        pose.local_transforms[0] = Affine3A::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+        let jm = JointMatrices::compute(&sk, &pose);
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 0, 0, 0]],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0]],
+        };
+        let (_, out_n) = apply_skin(&[[0.0; 3]], &[[0.0, 0.0, 1.0]], &weights, &jm);
+        assert!(
+            approx_eq(out_n[0], [0.0, 0.0, 1.0], 1e-6),
+            "got {:?}",
+            out_n[0]
+        );
     }
 }

@@ -16,14 +16,18 @@ pub mod colour;
 pub mod colourmap;
 pub mod data;
 pub mod effects;
+pub mod encoding;
 pub mod error;
+pub mod frame_time;
 pub mod ids;
 pub mod input;
 pub mod material;
+pub mod notice;
 pub mod overlay;
 pub mod plugin;
 pub mod render_item;
 pub mod scene;
+pub mod tier;
 
 pub mod prelude {
     //! The types most code reaches for, in one glob import:
@@ -34,9 +38,9 @@ pub mod prelude {
     pub use crate::camera::Camera;
     pub use crate::colour::{Colour, ColourSpace};
     pub use crate::colourmap::BuiltinColourmap;
-    pub use crate::data::{attribute::AttributeData, mesh::MeshData};
+    pub use crate::data::{attribute::AttributeData, mesh::MeshData, texture::TextureData};
     pub use crate::error::{ViewportError, ViewportResult};
-    pub use crate::ids::{MeshId, TextureId};
+    pub use crate::ids::{MaterialId, MeshId, TextureId};
     pub use crate::input::{Action, ActionFrame, ViewportEvent};
     pub use crate::material::Material;
     pub use crate::overlay::{LabelItem, OverlayShape, OverlayShapeItem};

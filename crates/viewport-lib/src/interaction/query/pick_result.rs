@@ -1,5 +1,9 @@
 //! Result types shared by the CPU and GPU pick backends: [`PickHit`],
 //! [`GpuPickHit`], and [`PickRectResult`].
+//!
+//! [`PickHit`]: crate::PickHit
+//! [`GpuPickHit`]: crate::GpuPickHit
+//! [`PickRectResult`]: crate::PickRectResult
 
 use crate::interaction::select::sub_object::SubObjectRef;
 
@@ -21,8 +25,10 @@ pub struct PickHit {
     /// `Some(SubObjectRef::Face(i))` for mesh picks; `Some(SubObjectRef::Point(i))` for
     /// point cloud picks; `None` when no specific sub-object could be identified.
     pub sub_object: Option<SubObjectRef>,
-    /// World-space position of the hit point (`ray_origin + ray_dir * toi`).
-    pub world_pos: glam::Vec3,
+    /// World-space position of the hit point (`ray_origin + ray_dir * toi`),
+    /// in f64. A GPU pick reconstructs it relative to the renderer's world
+    /// origin and adds the origin back in f64.
+    pub world_pos: glam::DVec3,
     /// Surface normal at the hit point, in world space.
     pub normal: glam::Vec3,
     /// Interpolated scalar attribute value at the hit point.
@@ -43,7 +49,7 @@ pub struct PickHit {
     /// async poll path. Distinct from `world_pos`, which is always the raw hit
     /// point under the cursor: for a vertex pick, `world_pos` is where the ray met
     /// the triangle, while `sub_object_world_pos` is the corner itself.
-    pub sub_object_world_pos: Option<glam::Vec3>,
+    pub sub_object_world_pos: Option<glam::DVec3>,
 }
 
 impl PickHit {
@@ -64,15 +70,33 @@ impl PickHit {
     /// assert!(hit.sub_object.is_none());
     /// ```
     #[allow(deprecated)]
-    pub fn object_hit(id: u64, world_pos: glam::Vec3, normal: glam::Vec3) -> Self {
+    pub fn object_hit(id: u64, world_pos: impl Into<glam::DVec3>, normal: glam::Vec3) -> Self {
         Self {
             id,
             sub_object: None,
-            world_pos,
+            world_pos: world_pos.into(),
             normal,
             scalar_value: None,
             sub_object_world_pos: None,
         }
+    }
+
+    /// Name the sub-object this hit landed on.
+    ///
+    /// Chains off [`object_hit`](Self::object_hit) for an item type that picks
+    /// finer than whole objects, which out-of-crate code cannot express with a
+    /// struct literal.
+    ///
+    /// ```
+    /// use viewport_lib::{PickHit, SubObjectRef};
+    /// use glam::Vec3;
+    ///
+    /// let hit = PickHit::object_hit(7, Vec3::ZERO, Vec3::Z).with_sub_object(SubObjectRef::Segment(2));
+    /// assert_eq!(hit.sub_object, Some(SubObjectRef::Segment(2)));
+    /// ```
+    pub fn with_sub_object(mut self, sub_object: crate::renderer::SubObjectRef) -> Self {
+        self.sub_object = Some(sub_object);
+        self
     }
 }
 
@@ -92,8 +116,9 @@ impl PickHit {
 pub struct SnapHit {
     /// World-space position to snap to: the exact feature coordinate (vertex
     /// corner, edge closest-point, curve / cloud node) when it is known,
-    /// otherwise the reconstructed world position of the covered pixel.
-    pub world_pos: glam::Vec3,
+    /// otherwise the reconstructed world position of the covered pixel. f64,
+    /// like [`PickHit::world_pos`].
+    pub world_pos: glam::DVec3,
     /// The `pick_id` of the object the snap feature belongs to.
     pub object_id: u64,
     /// The resolved sub-object, or `None` for an object-level snap.
@@ -121,8 +146,10 @@ pub struct GpuPickHit {
     /// maintains. [`crate::renderer::PickId::NONE`] is never returned
     /// (non-pickable surfaces are excluded from the pick pass).
     pub object_id: crate::renderer::PickId,
-    /// Clip-space depth value in `[0, 1]` at the picked pixel.
-    /// `0.0` = near plane, `1.0` = far plane.
+    /// Clip-space depth value in `[0, 1]` at the picked pixel, in the scene
+    /// depth convention: [`DEPTH_NEAR`](crate::plugin_api::depth::DEPTH_NEAR)
+    /// (1.0) at the near plane, falling toward
+    /// [`DEPTH_FAR`](crate::plugin_api::depth::DEPTH_FAR) (0.0) at infinity.
     ///
     /// Reconstruct world position:
     /// ```ignore

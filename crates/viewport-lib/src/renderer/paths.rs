@@ -62,7 +62,7 @@ impl<'r> OwnedPath<'r> {
     /// Multi-viewport: upload scene-level GPU data shared across all viewports.
     ///
     /// Call once per frame before any `prepare_viewport` or `render_viewport` calls.
-    /// Returns a [`ScenePreparedToken`] that must be passed to each `prepare_viewport`
+    /// Returns a `ScenePreparedToken` that must be passed to each `prepare_viewport`
     /// call in the same frame. The token may be borrowed multiple times for multi-viewport scenes.
     pub fn prepare_scene(
         &mut self,
@@ -71,6 +71,7 @@ impl<'r> OwnedPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
+        self.renderer.direct_paint = false;
         self.renderer
             .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
@@ -79,7 +80,7 @@ impl<'r> OwnedPath<'r> {
     /// Multi-viewport: upload per-viewport GPU data for `id`.
     ///
     /// Call after `prepare_scene` and before `render_viewport`. The `_token` parameter
-    /// is a borrow of the [`ScenePreparedToken`] returned by `prepare_scene`; it enforces
+    /// is a borrow of the `ScenePreparedToken` returned by `prepare_scene`; it enforces
     /// that `prepare_scene` has been called earlier in the same frame.
     pub fn prepare_viewport(
         &mut self,
@@ -89,6 +90,7 @@ impl<'r> OwnedPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) {
+        self.renderer.direct_paint = false;
         self.renderer.prepare_viewport(device, queue, id, frame);
     }
 
@@ -125,7 +127,8 @@ impl<'r> PassPath<'r> {
     ///
     /// Call after `prepare` for the same frame. Dispatches to the HDR blit,
     /// dynamic-resolution blit, or direct draw based on which path `prepare`
-    /// activated. The render pass is expected to have a depth-stencil attachment,
+    /// activated. The render pass is expected to have a depth-stencil attachment
+    /// of [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format),
     /// as provided by eframe and most GUI frameworks.
     pub fn paint<'rp>(&self, render_pass: &mut crate::gpu::RenderPass<'rp>, frame: &FrameData) {
         self.renderer.paint_callback(render_pass, frame);
@@ -134,7 +137,7 @@ impl<'r> PassPath<'r> {
     /// Multi-viewport: upload scene-level GPU data shared across all viewports.
     ///
     /// Call once per frame before any `prepare_viewport` calls. Returns a
-    /// [`ScenePreparedToken`] that must be passed to each `prepare_viewport` call
+    /// `ScenePreparedToken` that must be passed to each `prepare_viewport` call
     /// in the same frame. The token may be borrowed multiple times for multi-viewport scenes.
     pub fn prepare_scene(
         &mut self,
@@ -143,6 +146,7 @@ impl<'r> PassPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
+        self.renderer.direct_paint = true;
         self.renderer
             .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
@@ -151,7 +155,7 @@ impl<'r> PassPath<'r> {
     /// Multi-viewport: upload per-viewport GPU data for `id`.
     ///
     /// Call after `prepare_scene` and before `paint_viewport` or `prepare_hdr_viewport`.
-    /// The `_token` parameter is a borrow of the [`ScenePreparedToken`] returned by
+    /// The `_token` parameter is a borrow of the `ScenePreparedToken` returned by
     /// `prepare_scene`; it enforces that `prepare_scene` has been called earlier in the same frame.
     pub fn prepare_viewport(
         &mut self,
@@ -161,6 +165,7 @@ impl<'r> PassPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) {
+        self.renderer.direct_paint = true;
         self.renderer.prepare_viewport(device, queue, id, frame);
     }
 
@@ -217,8 +222,9 @@ impl<'r> PassView<'r> {
     /// Call after [`PassPath::prepare_hdr_viewport`] for the same viewport. Set the render
     /// pass viewport and scissor rect to the correct region before calling.
     ///
-    /// The render pass must have a `Depth24PlusStencil8` depth-stencil attachment (as eframe
-    /// callbacks always do). For render passes without a depth attachment (e.g. a plain winit
+    /// The render pass must have a depth-stencil attachment of
+    /// [`ViewportRenderer::scene_depth_format`](crate::ViewportRenderer::scene_depth_format)
+    /// (as eframe callbacks do). For render passes without a depth attachment (e.g. a plain winit
     /// blit pass), use [`paint_hdr_blit_no_ds`](Self::paint_hdr_blit_no_ds) instead.
     pub fn paint_hdr_blit<'rp>(
         &self,
@@ -228,7 +234,7 @@ impl<'r> PassView<'r> {
         self.renderer.paint_hdr_blit(render_pass, frame);
     }
 
-    /// Like [`paint_hdr_blit`] but for render passes without a depth-stencil attachment.
+    /// Like [`paint_hdr_blit`](Self::paint_hdr_blit) but for render passes without a depth-stencil attachment.
     ///
     /// Use this when you create the blit render pass yourself (e.g. winit) and the pass
     /// has no depth attachment. The resulting blit is identical; only the pipeline variant

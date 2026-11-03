@@ -30,11 +30,12 @@
 
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
+use viewport_lib::Colour;
 
 use viewport_lib::wgpu;
 use viewport_lib::{
-    FrameData, ItemSettings, LightSource, LightingSettings, Material, MeshId, RenderCamera,
-    SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
+    FrameData, ItemSettings, LightSource, LightingSettings, Material, MaterialId, MeshId,
+    RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
 };
 // The game-like mesh corpus from the test/bench kit (concave, higher-poly).
 use viewport_lib_testkit::meshes as tk;
@@ -310,7 +311,9 @@ struct Meshes {
     /// a single unit cube in `--simple` mode).
     prop_ids: Vec<MeshId>,
     slab_id: MeshId,
-    textures: Vec<viewport_lib::TextureId>,
+    /// A flat grey material, and one per pool texture for textured runs.
+    plain: MaterialId,
+    textured: Vec<MaterialId>,
     /// Grid half-extent in world units.
     extent: f32,
     /// Average triangle count across the prop set (for the startup banner).
@@ -394,15 +397,36 @@ fn build_meshes(
         let rgba = solid_texture(i);
         let id = renderer
             .resources_mut()
-            .upload_texture(device, queue, 8, 8, &rgba)
+            .upload_texture(
+                device,
+                queue,
+                viewport_lib::TextureData::srgb(8, 8, rgba.to_vec()),
+            )
             .expect("texture upload");
         textures.push(id);
     }
+    let plain_material = Material::flat(Colour::linear_rgb(0.8, 0.8, 0.8));
+    let mut upload = |m: Material| {
+        renderer
+            .resources_mut()
+            .upload_material(m)
+            .expect("material upload")
+    };
+    let plain = upload(plain_material.clone());
+    let textured = textures
+        .iter()
+        .map(|&t| {
+            let mut m = plain_material.clone();
+            m.texture_id = Some(t);
+            upload(m)
+        })
+        .collect();
 
     Meshes {
         prop_ids,
         slab_id,
-        textures,
+        plain,
+        textured,
         extent,
         avg_tris,
         count,
@@ -480,11 +504,12 @@ fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<SceneRenderItem> {
 fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -> SceneRenderItem {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
-    item.model = model.to_cols_array_2d();
-    item.material = Material::flat([0.8, 0.8, 0.8]);
-    if run.textured {
-        item.material.texture_id = Some(m.textures[(idx as usize) % m.textures.len()]);
-    }
+    item.model = model.into();
+    item.material = if run.textured {
+        m.textured[(idx as usize) % m.textured.len()]
+    } else {
+        m.plain
+    };
     let mut settings = ItemSettings::default();
     settings.unlit = !run.lit;
     item.settings = settings;
@@ -513,6 +538,7 @@ struct Samples {
     prep_geometry_ms: Vec<f32>,
     prep_shadow_ms: Vec<f32>,
     prep_viewport_ms: Vec<f32>,
+    prep_overlay_ms: Vec<f32>,
     prep_other_ms: Vec<f32>,
     visible: Vec<f32>,
     frustum_vis: Vec<f32>,
@@ -556,6 +582,9 @@ fn main() {
     }
 
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Build on this thread, so no timed frame skips a draw whose pipeline is
+    // still compiling.
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
     let meshes = build_meshes(
         &mut renderer,
         &device,
@@ -691,7 +720,8 @@ fn run_one(
     let far = (meshes.extent * 8.0).max(500.0);
     let fov = 60f32.to_radians();
     let aspect = w as f32 / h as f32;
-    let proj = glam::Mat4::perspective_rh(fov, aspect, near, far);
+    // Reversed depth, the convention the renderer draws with: far before near.
+    let proj = glam::Mat4::perspective_rh(fov, aspect, far, near);
 
     let mut frame = FrameData::default();
     frame.camera.viewport_size = [w as f32, h as f32];
@@ -724,20 +754,7 @@ fn run_one(
     for f in 0..params.frames {
         let (eye, target) = camera_for(f, params.frames, meshes.extent);
         let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
-        let forward = (target - eye).normalize_or_zero();
-        let orientation = glam::Quat::from_mat3(&glam::Mat3::from_mat4(view.inverse())).normalize();
-        let mut rc = RenderCamera::default();
-        rc.view = view;
-        rc.projection = proj;
-        rc.eye_position = eye.to_array();
-        rc.forward = forward.to_array();
-        rc.orientation = orientation;
-        rc.near = near;
-        rc.far = far;
-        rc.distance = (target - eye).length().max(0.001);
-        rc.fov = fov;
-        rc.aspect = aspect;
-        frame.camera.render_camera = rc;
+        frame.camera.render_camera = RenderCamera::from_matrices(view, proj);
 
         renderer.render_to_texture(device, queue, target_view, &frame);
         // Non-blocking poll lets the renderer's async timestamp/stats readback
@@ -775,6 +792,7 @@ fn run_one(
         b.prep_geometry_ms.push(pb.geometry_ms);
         b.prep_shadow_ms.push(pb.shadow_ms);
         b.prep_viewport_ms.push(pb.viewport_ms);
+        b.prep_overlay_ms.push(pb.overlay_ms);
         b.prep_other_ms.push(pb.other_ms);
         b.batches_reuploaded.push(st.batches_reuploaded as f32);
         b.batches_skipped.push(st.batches_skipped as f32);
@@ -856,6 +874,7 @@ fn write_header(f: &mut std::fs::File) {
         "prep_geometry_ms_p50",
         "prep_shadow_ms_p50",
         "prep_viewport_ms_p50",
+        "prep_overlay_ms_p50",
         "prep_other_ms_p50",
         "paint_ms_p50",
         "total_ms_p50",
@@ -876,7 +895,7 @@ fn write_header(f: &mut std::fs::File) {
 fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
     let n = s.total_ms.len();
     let row = format!(
-        "{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}",
+        "{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}",
         scene_name(run.scene),
         cull_name(run.cull),
         run.textured,
@@ -900,6 +919,7 @@ fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
         pct(&mut s.prep_geometry_ms, 0.50),
         pct(&mut s.prep_shadow_ms, 0.50),
         pct(&mut s.prep_viewport_ms, 0.50),
+        pct(&mut s.prep_overlay_ms, 0.50),
         pct(&mut s.prep_other_ms, 0.50),
         pct(&mut s.paint_ms, 0.50),
         pct(&mut s.total_ms, 0.50),

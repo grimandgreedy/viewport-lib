@@ -13,12 +13,9 @@ struct VertexOutput {
 // Fullscreen triangle (no vertex buffer).
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-    let positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>( 3.0, -1.0),
-        vec2<f32>(-1.0,  3.0),
-    );
-    let p = positions[vi];
+    // (-1, -1), (3, -1), (-1, 3) from the vertex index, not a local array:
+    // Adreno's GLES compiler miscompiles a local array indexed at run time.
+    let p = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u)) * 2.0 - 1.0;
     let uv = vec2<f32>((p.x + 1.0) * 0.5, (1.0 - p.y) * 0.5);
     return VertexOutput(vec4<f32>(p, 0.0, 1.0), uv);
 }

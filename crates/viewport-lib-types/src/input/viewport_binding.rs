@@ -16,10 +16,15 @@ pub enum ModifiersMatch {
 
 impl ModifiersMatch {
     /// Test whether the given modifier state satisfies this policy.
+    ///
+    /// Ctrl and Super count as one key on both sides (see
+    /// [`Modifiers::for_bindings`]).
     pub fn matches(&self, mods: Modifiers) -> bool {
+        let mods = mods.for_bindings();
         match self {
-            ModifiersMatch::Exact(required) => mods == *required,
+            ModifiersMatch::Exact(required) => mods == required.for_bindings(),
             ModifiersMatch::Contains(required) => {
+                let required = required.for_bindings();
                 // every set bit in `required` must also be set in `mods`
                 (!required.alt || mods.alt)
                     && (!required.shift || mods.shift)
@@ -31,6 +36,7 @@ impl ModifiersMatch {
 }
 
 /// A viewport gesture : the richer gesture vocabulary used by the new pipeline.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViewportGesture {
     /// A mouse drag with a specific button and modifier policy.
@@ -54,6 +60,22 @@ pub enum ViewportGesture {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
+    /// Touch contacts dragging together: the motion of their centroid.
+    ///
+    /// Matches only while exactly `contacts` fingers are down, so one-finger and
+    /// two-finger drags bind to different actions without fighting. The delta is in
+    /// logical pixels, like a mouse drag, so a controller reading the resolved
+    /// `ActionFrame` cannot tell which pointer produced it.
+    TouchDrag {
+        /// How many contacts must be down.
+        contacts: u8,
+    },
+    /// Two contacts moving apart or together.
+    ///
+    /// Produces a scalar on the same log scale as
+    /// [`TrackpadPinch`](super::event::ViewportEvent::TrackpadPinch): positive is
+    /// spreading the fingers, and `0.0` is no change.
+    TouchPinch,
     /// A single key press : fires once on the initial press, not on repeat.
     KeyPress {
         /// The key that must be pressed.
@@ -65,6 +87,41 @@ pub enum ViewportGesture {
     KeyHold {
         /// The key that must be held.
         key: KeyCode,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
+    /// A key press matched by the character the key types rather than by its
+    /// position, for mnemonic shortcuts: G for grab is the key labelled G on any
+    /// layout. Fires once on the initial press, not on repeat.
+    ///
+    /// The key's [`logical`](crate::input::ViewportEvent::Key) character is used
+    /// when it is an ASCII graphic character, and the key's US-layout character
+    /// otherwise, so a Cyrillic or Greek layout keeps the shortcuts where a US
+    /// keyboard has them. Case is folded: `ch` matches either case, and Shift is
+    /// part of `modifiers`. `ch` is an ASCII graphic character.
+    CharPress {
+        /// The character the key must type.
+        ch: char,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
+    /// As [`CharPress`](Self::CharPress), firing every frame while the key is
+    /// held.
+    CharHold {
+        /// The character the key must type.
+        ch: char,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
+    /// Modifier keys held down : fires every frame while the modifier state
+    /// matches and the viewport owns the keyboard, whatever else is held. For a modifier
+    /// that changes what another action does, such as Shift for a faster fly
+    /// speed. It reads [`ViewportEvent::ModifiersChanged`](crate::input::ViewportEvent::ModifiersChanged),
+    /// which hosts send even where Shift never arrives as a key of its own.
+    ///
+    /// Use [`ModifiersMatch::Contains`]; `Any` and `Exact(Modifiers::NONE)` match
+    /// with nothing held, so they fire every frame.
+    ModifiersHeld {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
@@ -127,5 +184,17 @@ mod tests {
         assert!(ModifiersMatch::Any.matches(Modifiers::NONE));
         assert!(ModifiersMatch::Any.matches(Modifiers::ALT));
         assert!(ModifiersMatch::Any.matches(Modifiers::CTRL_SHIFT));
+    }
+
+    // Cmd on macOS (Super) fires bindings written for Ctrl, as it did when the
+    // adapters folded it into `ctrl`.
+    #[test]
+    fn super_counts_as_ctrl_for_bindings() {
+        let cmd = Modifiers::NONE.with_super(true);
+        assert!(ModifiersMatch::Contains(Modifiers::CTRL).matches(cmd));
+        assert!(ModifiersMatch::Exact(Modifiers::CTRL).matches(cmd));
+        assert!(ModifiersMatch::Exact(Modifiers::CTRL).matches(cmd.with_ctrl(true)));
+        assert!(!ModifiersMatch::Exact(Modifiers::NONE).matches(cmd));
+        assert!(!ModifiersMatch::Exact(Modifiers::CTRL).matches(cmd.with_shift(true)));
     }
 }

@@ -124,7 +124,7 @@ impl LodGroup {
     ///
     /// This is [`level_for_size`](Self::level_for_size) plus hysteresis: a
     /// switch only happens once the size has moved past the current level's
-    /// boundary by [`LOD_HYSTERESIS`]. An object oscillating inside that margin
+    /// boundary by `LOD_HYSTERESIS`. An object oscillating inside that margin
     /// stays put.
     pub fn select(&self, screen_size: f32, current_level: usize) -> usize {
         let n = self.levels.len();
@@ -166,14 +166,14 @@ impl LodGroup {
 /// or behind the near plane are clamped to the near distance.
 pub fn projected_screen_size(local_aabb: &Aabb, model: &glam::Mat4, camera: &RenderCamera) -> f32 {
     let world = local_aabb.transformed(model);
-    let center = world.center();
+    let centre = world.centre();
     let radius = (world.max - world.min).length() * 0.5;
     if radius <= 0.0 {
         return 0.0;
     }
-    let eye = glam::Vec3::from(camera.eye_position);
-    let distance = (center - eye).length().max(camera.near);
-    let half_fov_tan = (camera.fov * 0.5).tan().max(1e-4);
+    let eye = camera.eye_position().as_vec3();
+    let distance = (centre - eye).length().max(camera.depth_range().0);
+    let half_fov_tan = (camera.fov_y() * 0.5).tan().max(1e-4);
     radius / (distance * half_fov_tan)
 }
 
@@ -219,6 +219,15 @@ impl LodGroupStore {
             .iter()
             .flat_map(|(_, g)| g.levels.iter().map(|l| l.mesh))
     }
+
+    /// The first live group holding `mesh` as one of its levels, or `None` when
+    /// no group references it.
+    pub fn group_of_mesh(&self, mesh: MeshId) -> Option<LodGroupId> {
+        self.store
+            .iter()
+            .find(|(_, g)| g.levels.iter().any(|l| l.mesh == mesh))
+            .map(|(id, _)| id)
+    }
 }
 
 impl crate::resources::DeviceResources {
@@ -250,6 +259,7 @@ impl crate::resources::DeviceResources {
         levels: &[MeshId],
         min_screen_sizes: &[f32],
     ) -> ViewportResult<LodGroupId> {
+        self.require_scene_tier()?;
         if levels.is_empty() {
             return Err(ViewportError::LodGroupEmpty);
         }
@@ -291,6 +301,18 @@ impl crate::resources::DeviceResources {
     #[allow(dead_code)]
     pub(crate) fn lod_group(&self, id: LodGroupId) -> Option<&LodGroup> {
         self.lod_groups.get(id)
+    }
+
+    /// The LOD group holding `mesh` as one of its levels, or `None` when no
+    /// live group references it.
+    ///
+    /// A mesh owned by a group must be freed through
+    /// [`free_lod_group`](Self::free_lod_group) rather than
+    /// [`free_mesh`](Self::free_mesh), which refuses a group member. Use this to
+    /// route a handle to the right call when the owner is not known, and to
+    /// answer "what else still needs this mesh" before evicting it.
+    pub fn lod_group_of_mesh(&self, mesh: MeshId) -> Option<LodGroupId> {
+        self.lod_groups.group_of_mesh(mesh)
     }
 
     /// Free a LOD group and, composition-aware, its member meshes.
@@ -335,6 +357,7 @@ impl crate::resources::DeviceResources {
         id: LodGroupId,
         cull_below: Option<f32>,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         match self.lod_groups.get_mut(id) {
             Some(group) => {
                 group.cull_below = cull_below;
@@ -349,7 +372,7 @@ impl crate::resources::DeviceResources {
     fn validate_lod_compatibility(&self, levels: &[MeshId]) -> ViewportResult<()> {
         let base = levels[0];
         let base_attrs = self.mesh_attribute_names(base);
-        let base_deformed = self.deform.meshes.contains_key(&base);
+        let base_deformed = self.scene_tier.deform.meshes.contains_key(&base);
         let base_submeshes = self.mesh_store.get(base).map_or(0, |m| m.submeshes.len());
 
         for (i, &mesh) in levels.iter().enumerate().skip(1) {
@@ -366,7 +389,7 @@ impl crate::resources::DeviceResources {
                     reason: format!("has attribute '{extra}' absent from level 0"),
                 });
             }
-            if self.deform.meshes.contains_key(&mesh) != base_deformed {
+            if self.scene_tier.deform.meshes.contains_key(&mesh) != base_deformed {
                 let reason = if base_deformed {
                     "level 0 has deformer data attached but this level does not"
                 } else {
@@ -399,10 +422,17 @@ impl crate::resources::DeviceResources {
     fn mesh_attribute_names(&self, mesh: MeshId) -> std::collections::BTreeSet<String> {
         let mut names = std::collections::BTreeSet::new();
         if let Some(m) = self.mesh_store.get(mesh) {
-            names.extend(m.attribute_buffers.keys().cloned());
-            names.extend(m.face_attribute_buffers.keys().cloned());
-            names.extend(m.face_colour_buffers.keys().cloned());
-            names.extend(m.vector_attribute_buffers.keys().cloned());
+            if let Some(record) = m.sidecar.as_ref() {
+                use crate::resources::mesh::sidecar_pool::StreamKind;
+                for kind in [
+                    StreamKind::Scalar,
+                    StreamKind::FaceScalar,
+                    StreamKind::FaceColour,
+                    StreamKind::Vector,
+                ] {
+                    names.extend(record.names(kind).map(str::to_string));
+                }
+            }
         }
         names
     }
@@ -411,6 +441,14 @@ impl crate::resources::DeviceResources {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A perspective camera at the origin looking down `-Z`.
+    fn camera_at_origin(fov_y: f32) -> RenderCamera {
+        RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            glam::Mat4::perspective_rh(fov_y, 1.333, 0.1, 1000.0),
+        )
+    }
 
     fn group(levels: Vec<LodLevel>, cull_below: Option<f32>) -> LodGroup {
         LodGroup {
@@ -431,9 +469,7 @@ mod tests {
             min: glam::Vec3::splat(-0.5),
             max: glam::Vec3::splat(0.5),
         };
-        let mut camera = RenderCamera::default();
-        camera.eye_position = [0.0, 0.0, 0.0];
-        camera.fov = std::f32::consts::FRAC_PI_4;
+        let camera = camera_at_origin(std::f32::consts::FRAC_PI_4);
 
         let near = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0));
         let far = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -50.0));
@@ -452,11 +488,8 @@ mod tests {
             max: glam::Vec3::splat(0.5),
         };
         let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -10.0));
-        let mut narrow = RenderCamera::default();
-        narrow.eye_position = [0.0, 0.0, 0.0];
-        narrow.fov = std::f32::consts::FRAC_PI_4;
-        let mut wide = narrow.clone();
-        wide.fov = std::f32::consts::FRAC_PI_2;
+        let narrow = camera_at_origin(std::f32::consts::FRAC_PI_4);
+        let wide = camera_at_origin(std::f32::consts::FRAC_PI_2);
 
         assert!(
             projected_screen_size(&aabb, &model, &narrow)
@@ -512,7 +545,7 @@ mod registration_tests {
     use crate::resources::{AttributeData, MeshData};
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

@@ -21,7 +21,7 @@ pub enum InputMode {
 pub enum NavigationMode {
     /// Unconstrained arcball rotation (default).
     ///
-    /// Drag rotates the camera freely around the orbit center in any direction.
+    /// Drag rotates the camera freely around the orbit centre in any direction.
     #[default]
     Arcball,
     /// Yaw around the world Z axis; pitch clamped to +/-89 deg.
@@ -30,9 +30,9 @@ pub enum NavigationMode {
     /// upside-down. Preferred by users who expect a fixed-up-axis orbit
     /// (common in scientific / CAD applications).
     Turntable,
-    /// Pan only : no rotation, no center-aimed zoom.
+    /// Pan only : no rotation, no centre-aimed zoom.
     ///
-    /// Drag translates the orbit center in the camera plane. Scroll still
+    /// Drag translates the orbit centre in the camera plane. Scroll still
     /// adjusts the zoom level. Intended for 2D data inspection where orbit
     /// would be disorienting.
     Planar,
@@ -40,7 +40,7 @@ pub enum NavigationMode {
     ///
     /// Mouse drag acts as mouselook (yaw + pitch with the eye held fixed).
     /// WASD / Q / E translate the camera position at the `OrbitCameraController` fly speed
-    /// units per frame. The `ViewportAll` binding preset must be active for
+    /// units per frame. The `Default` binding preset must be active for
     /// the movement keys to be resolved.
     ///
     /// This flies the camera itself; it is distinct from the body-attached

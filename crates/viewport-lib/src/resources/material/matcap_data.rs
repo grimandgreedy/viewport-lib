@@ -54,7 +54,7 @@ fn generate<F: Fn(f32, f32, f32) -> [u8; 4]>(f: F) -> Vec<u8> {
     let mut data = Vec::with_capacity(SIZE * SIZE * 4);
     for y in 0..SIZE {
         for x in 0..SIZE {
-            // Map pixel center to UV, then to view-space normal.
+            // Map pixel centre to UV, then to view-space normal.
             // Convention: y=0 -> ny=+1 (up-facing normals, top of image = bright).
             let u = (x as f32 + 0.5) / SIZE as f32; // [0, 1]
             let v = (y as f32 + 0.5) / SIZE as f32; // [0, 1], v=0 -> top
@@ -308,8 +308,9 @@ pub fn normal() -> Vec<u8> {
 pub use viewport_lib_types::ids::MatcapId;
 /// Built-in matcap presets bundled with viewport-lib.
 ///
-/// Pass to [`DeviceResources::builtin_matcap_id`] after the renderer
-/// has been prepared for at least one frame.
+/// Pass to
+/// [`DeviceResources::builtin_matcap_id`](crate::DeviceResources::builtin_matcap_id)
+/// after the renderer has been prepared for at least one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMatcap {
     /// Warm orange-brown with soft top-left lighting.  Blendable.

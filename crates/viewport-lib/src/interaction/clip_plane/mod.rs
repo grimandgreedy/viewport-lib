@@ -33,7 +33,7 @@
 //!
 //! // Draw the plane indicator: build the outline from `visual` and submit it as an
 //! // ordinary scene polyline, tagged `ignore_clip` so it stays visible through the cut:
-//! frame.scene.polylines.push(visual::outline(&clip.shape, extent, colour));
+//! frame.scene.items_mut::<crate::PolylineItem>().push(visual::outline(&clip.shape, extent, colour));
 //! ```
 
 use crate::camera::camera::Camera;
@@ -51,10 +51,8 @@ pub mod visual;
 /// Project a screen-space pointer drag onto a world-space plane normal,
 /// returning the signed distance delta along the normal.
 ///
-/// This is the clip-plane equivalent of `project_drag_onto_axis` in `gizmo.rs`,
-/// generalised to an arbitrary axis (the plane normal). The pointer delta is
-/// projected onto the screen-space direction of the normal and converted back
-/// to world units.
+/// The pointer delta is projected onto the screen-space direction of the
+/// normal and converted back to world units.
 pub fn project_drag_onto_normal(
     pointer_delta: glam::Vec2,
     plane_normal: glam::Vec3,
@@ -110,7 +108,7 @@ pub enum ClipAxis {
 /// Construct a [`ClipObject`] from an axis preset and a distance from the origin.
 ///
 /// Convenience for the common case of axis-aligned section planes.
-pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
+pub fn plane_from_axis_preset(axis: ClipAxis, distance: impl Into<f64>) -> ClipObject {
     let normal = match axis {
         ClipAxis::X => [1.0, 0.0, 0.0],
         ClipAxis::Y => [0.0, 1.0, 0.0],
@@ -119,14 +117,14 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
     ClipObject {
         shape: ClipShape::Plane {
             normal,
-            distance,
+            distance: distance.into(),
             cap_colour: None,
         },
         ..ClipObject::default()
     }
 }
 
-pub use crate::geometry::intersect::ray_plane_intersection;
+pub use crate::geometry::maths::intersect::ray_plane_intersection;
 
 // ---------------------------------------------------------------------------
 // Hit testing
@@ -155,7 +153,7 @@ pub enum ClipPlaneHit {
 pub fn hit_test_plane_quad(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
-    plane_center: glam::Vec3,
+    plane_centre: glam::Vec3,
     plane_normal: glam::Vec3,
     extent: f32,
 ) -> ClipPlaneHit {
@@ -163,12 +161,12 @@ pub fn hit_test_plane_quad(
     if denom.abs() < 1e-6 {
         return ClipPlaneHit::None;
     }
-    let t = plane_normal.dot(plane_center - ray_origin) / denom;
+    let t = plane_normal.dot(plane_centre - ray_origin) / denom;
     if t < 0.0 {
         return ClipPlaneHit::None;
     }
     let hit_point = ray_origin + ray_dir * t;
-    let local = hit_point - plane_center;
+    let local = hit_point - plane_centre;
     let (t1, t2) = plane_tangents(plane_normal);
     let u = local.dot(t1);
     let v = local.dot(t2);
@@ -181,19 +179,19 @@ pub fn hit_test_plane_quad(
 
 /// Test whether a ray hits the normal-axis indicator handle (a thin cylinder).
 ///
-/// The cylinder runs from `plane_center` to `plane_center + plane_normal * handle_length`
+/// The cylinder runs from `plane_centre` to `plane_centre + plane_normal * handle_length`
 /// with the given radius.
 pub fn hit_test_normal_handle(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
-    plane_center: glam::Vec3,
+    plane_centre: glam::Vec3,
     plane_normal: glam::Vec3,
     handle_length: f32,
     handle_radius: f32,
 ) -> ClipPlaneHit {
     // Decompose the ray into components parallel and perpendicular to the cylinder axis.
     let d = ray_dir - plane_normal * ray_dir.dot(plane_normal);
-    let offset = ray_origin - plane_center;
+    let offset = ray_origin - plane_centre;
     let e = offset - plane_normal * offset.dot(plane_normal);
 
     let a = d.dot(d);
@@ -223,7 +221,7 @@ pub fn hit_test_normal_handle(
 
     // Verify the hit point lies within the finite cylinder length.
     let hit_point = ray_origin + ray_dir * t;
-    let h = (hit_point - plane_center).dot(plane_normal);
+    let h = (hit_point - plane_centre).dot(plane_normal);
     if h >= 0.0 && h <= handle_length {
         ClipPlaneHit::NormalHandle { t }
     } else {
@@ -261,7 +259,7 @@ pub enum ClipPlaneResult {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClipPlaneDelta {
     /// Change in signed distance along the normal. Add to the plane's `distance` field.
-    pub distance_delta: f32,
+    pub distance_delta: f64,
     /// New normal orientation. Only set during Orient sessions; `None` during Distance.
     pub normal_override: Option<[f32; 3]>,
 }
@@ -279,7 +277,11 @@ pub struct ClipPlaneContext {
     pub cursor_viewport: Option<glam::Vec2>,
     /// Mouse movement in pixels since last frame.
     pub pointer_delta: glam::Vec2,
-    /// `true` on the frame a primary drag begins.
+    /// `true` on the frame to try grabbing what is under the cursor: the
+    /// primary press ([`PointerFrame::pressed`], which the runners pass), or a
+    /// toolkit's own drag start if the host prefers one.
+    ///
+    /// [`PointerFrame::pressed`]: crate::PointerFrame::pressed
     pub drag_started: bool,
     /// `true` while a primary drag is ongoing.
     pub dragging: bool,
@@ -297,7 +299,7 @@ struct ClipPlaneSession {
     /// Normal at session start, used to restore on Cancel.
     original_normal: [f32; 3],
     /// Distance at session start, used to restore on Cancel.
-    original_distance: f32,
+    original_distance: f64,
     /// Cursor position when the drag began.
     cursor_anchor: Option<glam::Vec2>,
     /// Cumulative cursor displacement used on the previous frame (for stable deltas).
@@ -365,7 +367,7 @@ impl ClipPlaneController {
             let delta = match session.kind {
                 ClipPlaneSessionKind::Distance => {
                     let normal = glam::Vec3::from(session.original_normal);
-                    let plane_point = normal * session.original_distance;
+                    let plane_point = (normal.as_dvec3() * session.original_distance).as_vec3();
                     let distance_delta = project_drag_onto_normal(
                         pointer_delta,
                         normal,
@@ -374,7 +376,7 @@ impl ClipPlaneController {
                         ctx.viewport_size,
                     );
                     ClipPlaneDelta {
-                        distance_delta,
+                        distance_delta: f64::from(distance_delta),
                         normal_override: None,
                     }
                 }
@@ -394,10 +396,8 @@ impl ClipPlaneController {
         self.hovered = false;
 
         if let Some(cursor) = ctx.cursor_viewport {
-            let view_proj = ctx.camera.proj_matrix() * ctx.camera.view_matrix();
-            let ray_origin = ctx.camera.eye_position();
-            let ray_dir =
-                unproject_cursor_to_ray(cursor, &ctx.camera, view_proj, ctx.viewport_size);
+            let (ray_origin, ray_dir) =
+                unproject_cursor_to_ray(cursor, &ctx.camera, ctx.viewport_size);
 
             let (plane_normal_arr, plane_dist) = if let ClipShape::Plane {
                 normal, distance, ..
@@ -408,7 +408,7 @@ impl ClipPlaneController {
                 return ClipPlaneResult::None;
             };
             let plane_normal = glam::Vec3::from(plane_normal_arr);
-            let plane_center = plane_normal * plane_dist;
+            let plane_centre = (plane_normal.as_dvec3() * plane_dist).as_vec3();
             let handle_length = ctx.plane_extent * 0.4;
             let handle_radius = ctx.plane_extent * 0.04;
 
@@ -417,7 +417,7 @@ impl ClipPlaneController {
                 let nh = hit_test_normal_handle(
                     ray_origin,
                     ray_dir,
-                    plane_center,
+                    plane_centre,
                     plane_normal,
                     handle_length,
                     handle_radius,
@@ -428,7 +428,7 @@ impl ClipPlaneController {
                     hit_test_plane_quad(
                         ray_origin,
                         ray_dir,
-                        plane_center,
+                        plane_centre,
                         plane_normal,
                         ctx.plane_extent,
                     )
@@ -517,19 +517,15 @@ pub(crate) fn plane_tangents(normal: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
     (t1, t2)
 }
 
-/// Unproject a viewport-pixel cursor position to a world-space ray direction.
+/// The world-space ray `(origin, direction)` under a viewport-pixel cursor position.
 fn unproject_cursor_to_ray(
     cursor_viewport: glam::Vec2,
     camera: &Camera,
-    view_proj: glam::Mat4,
     viewport_size: glam::Vec2,
-) -> glam::Vec3 {
+) -> (glam::Vec3, glam::Vec3) {
     let ndc_x = (cursor_viewport.x / viewport_size.x.max(1.0)) * 2.0 - 1.0;
     let ndc_y = 1.0 - (cursor_viewport.y / viewport_size.y.max(1.0)) * 2.0;
-    let inv_vp = view_proj.inverse();
-    let far_world = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-    let eye = camera.eye_position();
-    (far_world - eye).normalize_or(glam::Vec3::NEG_Z)
+    camera.screen_ray(glam::Vec2::new(ndc_x, ndc_y))
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +623,7 @@ mod tests {
     // --- Hit-test tests ---
 
     #[test]
-    fn hit_test_quad_center_hit() {
+    fn hit_test_quad_centre_hit() {
         let result = hit_test_plane_quad(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),

@@ -69,11 +69,84 @@ impl DeviceResources {
         self.post.dyn_res_linear_sampler = Some(sampler);
     }
 
+    /// Ensure the compositing blit pipelines exist, creating them on first call.
+    /// Idempotent. [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline)
+    /// must be called first: these share its bind-group layout, sampler and
+    /// shader, and differ from it only in the blend state.
+    ///
+    /// `PREMULTIPLIED_BLEND` (`One` / `OneMinusSrcAlpha` on both components) is
+    /// what a premultiplied source wants: `src + dst * (1 - src.a)`. The plain
+    /// blit has no blend state and replaces its destination, which is right for
+    /// upscaling a frame into the surface and wrong for drawing one viewport
+    /// over another.
+    pub(crate) fn ensure_blit_composite_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.post.blit_composite_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+
+        let bgl = self
+            .post
+            .dyn_res_upscale_bgl
+            .as_ref()
+            .expect("ensure_dyn_res_pipeline must be called first");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "blit_composite_shader",
+            crate::resources::builders::wgsl_source!("dyn_res_upscale"),
+        );
+        let layout =
+            crate::resources::builders::pipeline_layout(device, "blit_composite_layout", &[bgl]);
+
+        let plain = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "blit_composite_pipeline",
+            &layout,
+            &shader,
+            self.target_format,
+            Some(crate::resources::builders::PREMULTIPLIED_BLEND),
+        );
+        let with_depth = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "blit_composite_ds_pipeline",
+                layout: &layout,
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: self.target_format,
+                        blend: Some(crate::resources::builders::PREMULTIPLIED_BLEND),
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
+                    false,
+                    crate::gpu::CompareFunction::Always,
+                )),
+                multisample: crate::gpu::MultisampleState::default(),
+                cache: None,
+            },
+        );
+
+        self.post.blit_composite_pipeline = Some(plain);
+        self.post.blit_composite_ds_pipeline = Some(with_depth);
+    }
+
     /// Ensure the depth-stencil compatible upscale pipeline exists for use inside
-    /// eframe's paint render pass, which always has a `Depth24PlusStencil8` attachment.
+    /// eframe's paint render pass, which has a scene depth-stencil attachment.
     ///
     /// Identical to [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) except
-    /// `depth_stencil` is set to read-only `Depth24PlusStencil8` so the pipeline is
+    /// `depth_stencil` is set to the read-only scene depth format so the pipeline is
     /// compatible with any render pass that carries that depth attachment.
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) must be called first.
     pub(crate) fn ensure_dyn_res_ds_pipeline(&mut self, device: &crate::gpu::Device) {
@@ -120,6 +193,7 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
@@ -168,7 +242,7 @@ impl DeviceResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            format: self.scene_depth_format(),
             // TEXTURE_BINDING so the HiZ occlusion prev-depth copy can sample it.
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
                 | crate::gpu::TextureUsages::TEXTURE_BINDING,

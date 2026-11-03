@@ -2,8 +2,8 @@
 // mask texture. The edge detection pass reads this mask to produce a smooth
 // anti-aliased outline.
 //
-// Group 0: Camera bind group (only view_proj is used).
-// Group 1: OutlineUniform (only model is used).
+// Group 0: Camera bind group (view_proj and the deform header).
+// Group 1: OutlineUniform, the position override and the sidecar chunk.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -19,7 +19,9 @@ struct OutlineUniform {
     position_override_base: u32,
     position_override_len: u32,
     deform_flags: u32,
-    _deform_pad0: u32,
+    // The deform table the item's colour draw reads, a word of the sidecar
+    // chunk at binding 2; 0 for none.
+    deform_table: u32,
     _deform_pad1: u32,
     _deform_pad2: u32,
 };
@@ -31,15 +33,23 @@ struct OutlineUniform {
 // from geometry driven through `set_position_override_buffer`. Bound to a
 // small fallback buffer when the outlined item has no override.
 @group(1) @binding(1) var<storage, read> position_override_buffer: array<f32>;
+// The sidecar chunk holding the outlined mesh's record, for its deform data.
+@group(1) @binding(2) var<storage, read> sidecar_pool: array<u32>;
 
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
+
+struct OutlineVsOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    // Kept-surface value from deformers that define `keep`; see deform.wgsl.
+    // <viewport-deform-keep> @location(0) deform_keep: f32,
+};
 
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
     @builtin(vertex_index) vertex_index: u32,
-) -> @builtin(position) vec4<f32> {
+) -> OutlineVsOut {
     // Override replaces the vertex-buffer position outright, matching
     // mesh.wgsl; deformers layer on top.
     var local_pos = position;
@@ -54,16 +64,22 @@ fn vs_main(
             );
         }
     }
-    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
+    deform_table = outline.deform_table;
+    var dv = DeformVertex(local_pos, vec3<f32>(0.0, 0.0, 1.0), vertex_index, vec4<f32>(1.0, 0.0, 0.0, 1.0));
     let dctx = DeformContext(outline.model, outline.model[3].xyz, 0.0, outline.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = outline.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
     dv = viewport_deform_world_space(dv, dctx);
-    return camera.view_proj * vec4<f32>(dv.position, 1.0);
+    var out: OutlineVsOut;
+    // <viewport-deform-keep> out.deform_keep = viewport_deform_keep(dv, dctx);
+    out.clip_pos = camera.view_proj * vec4<f32>(dv.position, 1.0);
+    return out;
 }
 
 @fragment
-fn fs_main() -> @location(0) vec4<f32> {
+fn fs_main(in: OutlineVsOut) -> @location(0) vec4<f32> {
+    // A cut-away part is not selected surface, so it gets no outline.
+    // <viewport-deform-keep> if in.deform_keep < 0.0 { discard; }
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }

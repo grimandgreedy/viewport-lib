@@ -1,64 +1,68 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
-use crate::gpu::util::DeviceExt;
-use crate::resources::CurveMeshOutlineItem;
 
+mod cascade_bounds;
+pub(crate) use cascade_bounds::CascadeBounds;
+mod cascade_fit;
+pub(crate) mod compatibility;
 mod instanced;
+pub(crate) use instanced::feature_set_violations as instanced_feature_set_violations;
 mod lighting;
 mod math;
 mod mesh_material;
 mod overlay_compile;
 mod overlay_geometry;
+mod overlay_style_check;
 mod overlay_vector;
 mod per_object;
 mod projection;
 mod scene_uploads;
+mod shadow_casters;
 mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
 mod viewport_overlays;
-mod wireframe;
 
 use math::*;
 use mesh_material::*;
-pub(crate) use mesh_material::{
-    active_submesh_materials, backface_needs_per_object, has_opaque_draws, has_transparent_draws,
-    is_instanceable,
-};
+pub(crate) use mesh_material::{active_submesh_materials, has_transparent_draws};
 use overlay_geometry::*;
 use projection::*;
-use wireframe::*;
 
-/// One cube-map face of a point-light shadow: which atlas slot and face it
-/// occupies, the light-space view-projection used to render it, and the light
-/// position and range for depth reconstruction.
-pub(super) struct PointShadowFace {
-    pub(super) slot: u32,
-    pub(super) face: u32,
+/// One layer of the punctual shadow array to render this frame: a point
+/// light's cube face or a spot light's map.
+pub(super) struct PunctualShadowFace {
+    /// Layer in the punctual shadow array.
+    pub(super) layer: u32,
+    /// First layer of the light: a cube's base layer, or the spot's own. The
+    /// content cache is kept per light at this layer.
+    pub(super) base: u32,
+    /// Hash of the light's own inputs (kind, position, range, and a spot's
+    /// direction and cone), seeding the layer's content hash.
+    pub(super) light_hash: u64,
+    /// The light-space view-projection used to render it.
     pub(super) view_proj: glam::Mat4,
     pub(super) light_pos: glam::Vec3,
     pub(super) range: f32,
 }
 
-/// Byte stride between consecutive point-light cube-map face entries in the
-/// per-face dynamic-offset uniform buffer.
-pub(super) const POINT_FACE_STRIDE: u64 = 256;
-
-/// How many cold material-plugin pipeline sets one `prepare()` will build.
-/// Each set is roughly nine render pipelines plus two shader-module
-/// compilations, so an uncapped frame that references many cold plugins
-/// stalls for their combined compile time. Plugins past the cap draw
-/// built-in shading until a later frame (or an explicit
-/// `warm_material_plugin_pipelines` call) builds them.
-const MATERIAL_PLUGIN_BUILDS_PER_PREPARE: usize = 4;
-
 /// Transient per-frame lighting results produced by the lighting phase and
 /// consumed by the shadow depth pass: the directional cascade matrices and the
-/// point-light cube-map faces to render this frame.
+/// punctual shadow layers to render this frame.
 pub(super) struct LightingFrame {
-    pub(super) point_shadow_faces: Vec<PointShadowFace>,
+    pub(super) punctual_faces: Vec<PunctualShadowFace>,
+    /// Layers placed this frame (rendered or served from cache).
+    pub(super) punctual_layers_in_use: u32,
     pub(super) tile_size: u32,
+    /// Side of the shadow atlas texture, two cascade tiles wide.
+    pub(super) atlas_size: u32,
+    /// Cascades the settings ask for, clamped to 1..=4.
+    pub(super) cascade_count: usize,
+    /// Direction of the directional light that takes the cascades, if any.
+    pub(super) csm_direction: Option<glam::Vec3>,
+    /// Filled in by `fit_cascades`.
     pub(super) cascade_view_projs: [glam::Mat4; 4],
+    /// Filled in by `fit_cascades`.
     pub(super) effective_cascade_count: usize,
 }
 
@@ -98,7 +102,7 @@ impl ViewportRenderer {
                 continue;
             };
 
-            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let model = item.model.to_mat4();
             let size = crate::resources::projected_screen_size(&mesh.aabb, &model, camera);
 
             // Too small to bother drawing: hide it for this frame. Hidden items
@@ -142,12 +146,12 @@ impl ViewportRenderer {
         (resolved, switches, culled, reduced)
     }
 
-    /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
+    /// Scene-global prepare stage: lighting, shadow pass, batching, scivis.
     ///
     /// Call once per frame before any `prepare_viewport_internal` calls.
     ///
-    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for compute filter
-    /// items, and `frame.camera` for shadow cascade computation.
+    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for the items, and
+    /// `frame.camera` for shadow cascade computation.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &crate::gpu::Device,
@@ -156,6 +160,10 @@ impl ViewportRenderer {
         scene_fx: &SceneEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
     ) {
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare_scene").entered();
+        if self.direct_paint {
+            self.resources.ensure_host_depth_reset_pipeline(device);
+        }
         // Start of frame: rotate the double-buffered timestamp query sets.
         // Passes write this frame's timestamps into `ts_query_set`, setting
         // their slot bit as they encode (shadow here in prepare, scene/oit/post
@@ -169,6 +177,29 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
+        self.resolve_world_origin(frame);
+
+        let scene_tier = self.resources.scene_tier.is_built();
+        if scene_tier {
+            self.ensure_frame_pipelines(device, frame);
+        }
+
+        // The time this frame renders at, for the camera uniform and the
+        // deform header.
+        let time = self.frame_clock.resolve(
+            frame.time,
+            self.render_advances_state(),
+            self.frame_counter,
+        );
+        self.resources.feed_deform_time(queue, time.seconds as f32);
+
+        // A glyph atlas that filled up last frame is cleared here, before any
+        // text this frame is laid out against it. A derivative render leaves it
+        // alone: the presented frame it runs beside may still draw the old cells.
+        if self.render_advances_state() {
+            self.resources.content.glyph_atlas.evict_if_full();
+        }
+
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.
@@ -178,6 +209,8 @@ impl ViewportRenderer {
         // advance promotions: doing so drains the one-cycle promotion window a
         // consumer polls to fire a deferred bind, which strands the bind
         // permanently (the runner clears its `finished` table every call).
+        // A derivative render skips the drain but still reads `GpuMesh::closed`.
+        self.resources.resolve_closed_checks();
         if self.render_advances_state() {
             match self.upload_budget {
                 Some(d) => self.resources.process_uploads_with_budget(
@@ -188,17 +221,31 @@ impl ViewportRenderer {
                 None => self.resources.process_uploads(device, queue),
             }
         }
+        // The rest is the scene's full-tier work. The compatibility tier draws the
+        // surfaces through its basic mesh path and lights them and its item
+        // types from its own group 0.
+        if !scene_tier {
+            if let Some(compat) = self.resources.compatibility_tier.as_deref_mut() {
+                compat.write_fallbacks(queue);
+                self.resources.ensure_colourmaps_initialized(device, queue);
+                self.prepare_compatibility_lights(queue, frame, scene_fx);
+                self.prepare_basic_meshes(device, queue, frame);
+            }
+            // Item types' wireframe overlays, as on the full tier below.
+            self.dispatch_plugin_wireframes(device, queue, frame);
+            return;
+        }
 
-        // GPU compute filtering.
-        // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
-        if !frame.scene.compute_filter_items.is_empty() {
-            self.compute_filter_results = self.resources.run_compute_filters(
-                device,
-                queue,
-                &frame.scene.compute_filter_items,
-            );
-        } else {
-            self.compute_filter_results.clear();
+        // A closed answer that landed since last frame changes the records of
+        // the batches drawing that mesh; repack only if a cached batch does.
+        let flipped = std::mem::take(&mut self.resources.closed_flipped);
+        if self
+            .instancing
+            .cached_batches
+            .iter()
+            .any(|b| flipped.contains(&b.mesh_id))
+        {
+            self.resources.mesh_sidecar_epoch = self.resources.mesh_sidecar_epoch.wrapping_add(1);
         }
 
         // Run the mesh-family pipeline rebuild that deformer registration
@@ -207,14 +254,22 @@ impl ViewportRenderer {
         // here instead of one per call.
         self.resources.flush_mesh_pipeline_rebuild(device);
 
-        // Ensure built-in colourmaps and matcaps are uploaded on first frame.
+        // Write the built-in colourmap texels on the first frame, and upload
+        // the built-in matcaps on the first frame whose scene uses a matcap.
         self.resources.ensure_colourmaps_initialized(device, queue);
-        self.resources.ensure_matcaps_initialized(device, queue);
+        if !self.resources.content.matcaps_initialized && self.uses_matcap(frame) {
+            self.resources.ensure_matcaps_initialized(device, queue);
+        }
 
         let plugin_frame_index = self.plugin_frame_index;
 
+        let hdr_family = self.draws_hdr(frame);
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
+        resources.frame_lightmap_placements.clear();
+        resources
+            .frame_lightmap_placements
+            .extend_from_slice(&frame.scene.lightmap_placements);
 
         // Read scene items from the surface submission, then extend with the
         // boundary draws contributed by opaque volume meshes (items in
@@ -233,6 +288,18 @@ impl ViewportRenderer {
             surfaces.iter().cloned().chain(extra).collect()
         };
 
+        // Per-camera layer cull. Drop any mesh-family item whose
+        // `visibility_mask` shares no bit with this camera's `cull_mask`
+        // (the AND is zero). Runs before LOD, instancing, shadow, and picking
+        // read the list, so a layer-culled item is absent from every pass.
+        // This is the CPU half of the shared layer mask: it costs one AND per
+        // item, is inert at the default (`!0 & anything != 0`), and needs no
+        // GPU carrier. The GPU-driven instanced cull does not yet honour the
+        // mask; items dropped here never reach it, but a batch visible to the
+        // camera still runs its full GPU cull regardless of per-light channels.
+        let cull_mask = frame.camera.cull_mask;
+        scene_items_owned.retain(|item| (item.settings.visibility_mask & cull_mask) != 0);
+
         // Resolve LOD groups to concrete meshes before anything reads the draw
         // list. Items with a `lod_group` get their `mesh_id` overwritten with the
         // level for their on-screen size; items without one are untouched. Both
@@ -246,145 +313,156 @@ impl ViewportRenderer {
                 &mut scene_items_owned,
             );
 
+        // Everything from here draws relative to the frame's origin. LOD above
+        // measured the items where they are.
+        if !self.origin.is_zero() {
+            for item in &mut scene_items_owned {
+                item.model.translation -= self.origin.origin();
+            }
+        }
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let lighting_start = web_time::Instant::now();
-        let lighting_frame = Self::prepare_lighting(
+        let lighting_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "lighting").entered();
+        let mut lighting_frame = Self::prepare_lighting(
             resources,
             &mut self.shadow,
             &mut self.last_cluster_stats,
             &mut self.last_frustum_culled_lights,
-            &self.viewport_slots,
+            &mut self.last_lights_dropped,
+            &self.item_type_plugins,
+            plugin_frame_index,
             scene_fx,
             device,
             queue,
             frame,
+            &self.origin,
             sink,
             self.ts_query_set.as_ref(),
             &self.ts_written_mask,
         );
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
+        drop(lighting_span);
 
-        // -- Instancing preparation --
-        // Determine instancing mode BEFORE per-object uniforms so we can skip them.
-        let visible_count = scene_items.iter().filter(|i| !i.settings.hidden).count();
-        let prev_use_instancing = self.instancing.use_instancing;
-        self.instancing.use_instancing = visible_count > INSTANCING_THRESHOLD;
-
-        // If instancing mode changed (e.g. objects added/removed crossing the threshold),
-        // clear batches so the generation check below forces a rebuild.
-        if self.instancing.use_instancing != prev_use_instancing {
-            self.instancing.batches.clear();
-            self.instancing.last_scene_generation = u64::MAX;
-            self.instancing.last_scene_items_count = usize::MAX;
-        }
-        if self.instancing.use_instancing != prev_use_instancing {
-            tracing::debug!(
-                visible_objects = visible_count,
-                threshold = INSTANCING_THRESHOLD,
-                instanced = self.instancing.use_instancing,
-                "instancing mode changed"
-            );
-        }
+        // Every mesh draw is an instanced draw; a one-item scene is one batch.
+        self.instancing.use_instancing = true;
 
         let per_object_start = web_time::Instant::now();
-        // Build material-plugin pipeline sets the frame references before
-        // draw time (paint has no mutable access), capped per frame so a
-        // scene that suddenly references many cold plugins pays a bounded
-        // cost instead of one long stall. Items whose plugin is still cold
-        // draw with built-in shading until its set is built on a later
-        // frame; `warm_material_plugin_pipelines` builds ahead of time for
-        // consumers that want to avoid the pop-in entirely. Unknown ids are
+        let uniforms_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "uniforms").entered();
+        // Set up the pipeline sets of the material plugins the frame references,
+        // and the group-2 bind groups of the texture sets it draws, before draw
+        // time (paint has no mutable access). This compiles nothing: each
+        // pipeline is built by the first draw that selects it. Unknown ids are
         // ignored and those items fall back to built-in shading.
-        let mut plugin_builds = 0usize;
-        let mut plugin_builds_deferred = 0usize;
-        let mut cold_seen: Vec<u32> = Vec::new();
+        let mut seen: Vec<crate::scene::material::MaterialPluginId> = Vec::new();
+        let mut texture_sets: Vec<(
+            crate::scene::material::MaterialPluginId,
+            crate::resources::mesh_sidecar::shade::PluginTextures,
+        )> = Vec::new();
         for item in scene_items.iter() {
-            let Some(pid) = item.material.shading_plugin else {
-                continue;
-            };
-            if !resources.material_plugin_needs_build(pid)
-                || cold_seen.contains(&pid.plugin_index())
-            {
-                continue;
+            let submeshes = item.submesh_materials.as_deref().unwrap_or(&[]);
+            for &id in std::iter::once(&item.material).chain(submeshes) {
+                let material = resources.material_or_default(id);
+                let Some(pid) = material.shading_plugin else {
+                    continue;
+                };
+                let set = (pid, material.plugin_textures);
+                if set.1.iter().any(Option::is_some) && !texture_sets.contains(&set) {
+                    texture_sets.push(set);
+                }
+                if seen.contains(&pid) {
+                    continue;
+                }
+                seen.push(pid);
+                if resources.material_plugin_needs_build(pid) {
+                    resources.ensure_material_plugin_pipelines(device, pid);
+                }
             }
-            cold_seen.push(pid.plugin_index());
-            if plugin_builds >= MATERIAL_PLUGIN_BUILDS_PER_PREPARE {
-                plugin_builds_deferred += 1;
-                continue;
-            }
-            resources.ensure_material_plugin_pipelines(device, pid);
-            plugin_builds += 1;
         }
-        if plugin_builds_deferred > 0 {
-            tracing::debug!(
-                built = plugin_builds,
-                deferred = plugin_builds_deferred,
-                "material plugin pipeline builds hit the per-frame cap; deferred plugins draw built-in shading this frame"
-            );
+        for (pid, textures) in &texture_sets {
+            resources.ensure_plugin_texture_group(device, *pid, textures);
         }
-        // Evaluate instanceability once per frame and share the result. Each
-        // `is_instanceable` call does several mesh-store and deform lookups plus
-        // a linear scan over the compute-filter results, so computing it once
-        // here instead of separately in the per-object skip test and the
-        // instanced batch filter keeps this O(items) rather than running the
-        // same per-item work three times over. At city scale (tens of thousands
-        // of resident meshes) that is the difference between a few milliseconds
-        // and a few hundred.
-        let instanceable: Vec<bool> = scene_items
-            .iter()
-            .map(|item| is_instanceable(item, resources, &self.compute_filter_results))
-            .collect();
         // Blend each light-probe-lit item's SH into the shared buffer once, so
         // the per-object and instanced paths that draw those items index the
         // same block. No probes uploaded -> all None and nothing written.
-        let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
-        let per_object_bind_groups_built = Self::prepare_per_object(
+        let probe_indices =
+            per_object::prepare_light_probe_sh(resources, scene_items, queue, &self.origin);
+
+        // Material blocks persist for their material's lifetime. The shading
+        // variants and the custom-data table hold while the instanced batch
+        // cache does: cached records keep their ids, and the foreground items
+        // that intern every frame dedup to the existing entries. A miss
+        // re-packs every record, so they reset there, before any packer runs.
+        let instanced_cache_valid = Self::instanced_cache_valid(
             resources,
-            &mut self.mesh_uniforms,
-            self.instancing.use_instancing,
+            &self.instancing,
             scene_items,
-            &instanceable,
-            &probe_indices,
-            self.frame_counter,
-            device,
-            queue,
             frame,
+            hdr_family,
+            self.origin.epoch(),
         );
+        if !instanced_cache_valid {
+            resources.material_table.clear_variants();
+            resources.custom_data_builder.reset();
+        }
         let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
+        drop(uniforms_span);
 
         let instanced_start = web_time::Instant::now();
-        let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
+        let instancing_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "instancing").entered();
+        let (batches_reuploaded, batches_skipped, per_object_bind_groups_built) =
             Self::prepare_instanced(
                 resources,
                 &mut self.instancing,
-                &instanceable,
+                &mut self.mesh_uniforms,
+                instanced_cache_valid,
                 scene_items,
                 &probe_indices,
                 device,
                 queue,
                 frame,
-            )
-        } else {
-            (0, 0)
-        };
-        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
-
-        let geometry_start = web_time::Instant::now();
-        Self::upload_geometry_glyphs(
+                hdr_family,
+                self.frame_counter,
+            );
+        self.instancing.last_origin_epoch = self.origin.epoch();
+        settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
+        // The cascades are fit after the instanced batches are built: only the
+        // shadow pass reads them.
+        Self::fit_cascades(
             resources,
-            &mut self.point_cloud_gpu_data,
-            &mut self.glyph_gpu_data,
-            &mut self.sprite_gpu_data,
-            &mut self.particle_gpu_data,
-            &mut self.tensor_glyph_gpu_data,
-            device,
+            &mut self.shadow,
+            &self.instancing,
+            &self.item_type_plugins,
+            &self.viewport_slots,
+            scene_fx,
             queue,
             frame,
-            sink,
+            &self.origin,
+            &mut lighting_frame,
+            &mut self.last_stats,
         );
-        self.external_instances_gpu_data =
-            resources.upload_external_instances(device, queue, &frame.scene.external_instances);
+        #[cfg(debug_assertions)]
+        {
+            let wrong = instanced::feature_set_violations(resources, &self.instancing);
+            debug_assert!(
+                wrong.is_empty(),
+                "mesh batches drawn without features their records use:\n  {}",
+                wrong.join("\n  ")
+            );
+        }
+        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
+        drop(instancing_span);
+
+        let geometry_start = web_time::Instant::now();
+        let geometry_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "geometry").entered();
+        // The particle systems' draw bind groups bake a texture view in at
+        // creation, so a free or replace since the last frame has to be picked
+        // up before the item type draws from them. The store stays here, so
+        // this does too.
         let (inst_resolved, inst_switches, inst_culled, inst_reduced) = Self::upload_mesh_instances(
             resources,
             &mut self.mesh_instance_gpu_data,
@@ -392,197 +470,23 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            hdr_family,
         );
         lod_items_resolved += inst_resolved;
         lod_switches += inst_switches;
         lod_culled += inst_culled;
         lod_items_reduced += inst_reduced;
-        Self::upload_polylines(
-            resources,
-            &mut self.polyline_gpu_data,
-            &mut self.polyline_selected_gpu_indices,
-            &mut self.glyph_gpu_data,
-            device,
-            queue,
-            frame,
-        );
-        let decal_cache_stats = Self::upload_implicit_decals_mc(
-            resources,
-            &mut self.implicit_gpu_data,
-            &mut self.pick_implicit_items,
-            &mut self.decal_gpu_data,
-            &mut self.decal_cache,
-            &mut self.decal_exclude_items,
-            &mut self.mc_gpu_data,
-            &mut self.pick_mc_items,
-            device,
-            queue,
-            frame,
-        );
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
-        resources.run_deform_slot_copies(device, queue);
-        Self::upload_images(
-            resources,
-            &mut self.screen_image_gpu_data,
-            device,
-            queue,
-            frame,
-        );
-        Self::upload_tubes_ribbons(
-            resources,
-            &mut self.streamtube_gpu_data,
-            &mut self.streamtube_selected_gpu_indices,
-            &mut self.tube_gpu_data,
-            &mut self.tube_selected_gpu_indices,
-            &mut self.ribbon_gpu_data,
-            &mut self.ribbon_selected_gpu_indices,
-            device,
-            queue,
-            frame,
-        );
-        Self::upload_slices(
-            resources,
-            &mut self.image_slice_gpu_data,
-            &mut self.volume_surface_slice_gpu_data,
-            device,
-            queue,
-            frame,
-        );
-        let vp_size = frame.camera.viewport_size;
-        // Surface LIC GPU data upload.
-        // ------------------------------------------------------------------
-        self.lic_gpu_data.clear();
-        {
-            let lic_scene_items: Vec<(&SceneRenderItem, &LicOverlay)> = scene_items
-                .iter()
-                .filter(|i| !i.settings.hidden)
-                .filter_map(|i| i.lic.as_ref().map(|l| (i, l)))
-                .collect();
-            if !lic_scene_items.is_empty() {
-                // The LIC surface pipeline is created inside ensure_hdr_shared (already called
-                // before prepare_scene_internal runs), so no separate ensure call is needed here.
-                for (item, lic) in &lic_scene_items {
-                    if lic.vector_attribute.is_empty() {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        // Verify the vector attribute buffer exists before committing to this item.
-                        if mesh
-                            .vector_attribute_buffers
-                            .contains_key(&lic.vector_attribute)
-                        {
-                            if let Some(bgl) = &resources.lic.surface_bgl {
-                                use crate::resources::LicObjectUniform;
-                                let model = item.model;
-                                let obj_data = LicObjectUniform { model };
-                                let obj_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                                    label: Some("lic_object_uniform"),
-                                    size: std::mem::size_of::<LicObjectUniform>() as u64,
-                                    usage: crate::gpu::BufferUsages::UNIFORM
-                                        | crate::gpu::BufferUsages::COPY_DST,
-                                    mapped_at_creation: false,
-                                });
-                                queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
-                                // Bind group (group 1): object uniform only.
-                                // Flow vectors are bound as vertex buffer 1 in the render pass.
-                                let bg =
-                                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                        label: Some("lic_surface_item_bg"),
-                                        layout: bgl,
-                                        entries: &[crate::gpu::BindGroupEntry {
-                                            binding: 0,
-                                            resource: obj_buf.as_entire_binding(),
-                                        }],
-                                    });
-                                self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
-                                    bind_group: bg,
-                                    _object_uniform_buf: obj_buf,
-                                    mesh_id: item.mesh_id,
-                                    vector_attribute: lic.vector_attribute.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // Write LicAdvectUniform to the per-viewport buffer.
-                if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index]
-                    .hdr
-                    .as_ref()
-                {
-                    if let Some((_, first_lic)) = lic_scene_items.first() {
-                        let [vw, vh] = hdr.scene_size;
-                        let u = crate::resources::LicAdvectUniform {
-                            steps: first_lic.config.steps,
-                            step_size: first_lic.config.step_size,
-                            vp_width: vw as f32,
-                            vp_height: vh as f32,
-                        };
-                        queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
-                    }
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // Volume GPU data upload.
-        // Note: clip_planes are per-viewport but passed here for culling.
-        // ------------------------------------------------------------------
-        self.volume_gpu_data.clear();
-        if !frame.scene.volumes.is_empty() {
-            resources.ensure_volume_pipeline(device);
-            let clip_objects_for_vol = &frame.effects.clip.objects;
-            // Under budget pressure with allow_volume_quality_reduction, double the
-            // step size (half the sample count) to reduce GPU raymarch cost.
-            let vol_step_multiplier = if self.degradation_volume_quality_reduced {
-                2.0_f32
-            } else {
-                1.0_f32
-            };
-            for item in &frame.scene.volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                let mut gpu = resources.upload_volume_frame(
-                    device,
-                    queue,
-                    item,
-                    clip_objects_for_vol,
-                    vol_step_multiplier,
-                );
-                gpu.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                self.volume_gpu_data.push(gpu);
-            }
-        }
-
+        resources.run_deform_slot_copies(device, sink);
         // Volume wireframe overlay: OBB from bbox + model matrix.
-        let need_vol_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .volumes
-                .iter()
-                .any(|v| !v.settings.hidden && v.settings.wireframe);
-        if need_vol_wf {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                let polyline = volume_obb_polyline(item);
-                let gpu = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                self.polyline_gpu_data.push(gpu);
-            }
-        }
-
         // Transparent volume meshes wireframe: boundary mesh edge overlay.
         // Items rendering as opaque already participate in the standard
         // wireframe pass via the surface submission; here we only need to
         // gather boundary edges for items rendering through the projected-tet
         // path so they still get a wireframe overlay.
         self.mesh_uniforms.tvm_wireframe_draws.clear();
+        let mut tvm_wireframe_records: Vec<crate::resources::InstanceData> = Vec::new();
         for item in &frame.scene.volume_meshes {
             if item.settings.hidden || item.transparency.is_none() {
                 continue;
@@ -598,23 +502,29 @@ impl ViewportRenderer {
             self.mesh_uniforms
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);
+            let mut record: crate::resources::InstanceData = bytemuck::Zeroable::zeroed();
+            record.model = self.origin.rel_model(item.model);
+            record.colour = [0.75, 0.75, 0.75, 1.0];
+            record.flags = crate::resources::mesh::instancing::instance_flags::WIREFRAME;
+            tvm_wireframe_records.push(record);
         }
-        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty()
-            && self.mesh_uniforms.tvm_wireframe_bg.is_none()
-        {
-            use crate::gpu::util::DeviceExt;
-            let mut tvm_wf_uniform: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
-            tvm_wf_uniform.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-            tvm_wf_uniform.colour = [0.75, 0.75, 0.75, 1.0];
-            tvm_wf_uniform.wireframe = 1;
-            let buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        // One record per draw, selected by instance index. The buffer and its
+        // bind group are rebuilt only when a frame needs more records than
+        // the buffer holds.
+        if tvm_wireframe_records.len() > self.mesh_uniforms.tvm_wireframe_capacity {
+            let capacity = tvm_wireframe_records.len().next_power_of_two();
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("tvm_wireframe_uniform"),
-                contents: bytemuck::cast_slice(&[tvm_wf_uniform]),
-                usage: crate::gpu::BufferUsages::STORAGE,
+                size: (capacity * std::mem::size_of::<crate::resources::InstanceData>()) as u64,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::VERTEX
+                    | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
+            self.mesh_uniforms.tvm_wireframe_capacity = capacity;
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("tvm_wireframe_bg"),
-                layout: &resources.binds.object_bgl,
+                layout: &resources.scene_tier.binds.object_bgl,
                 entries: &[
                     crate::gpu::BindGroupEntry {
                         binding: 0,
@@ -623,23 +533,25 @@ impl ViewportRenderer {
                     crate::gpu::BindGroupEntry {
                         binding: 1,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.texture.view,
+                            &resources.scene_tier.material.texture.view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&resources.material.sampler),
+                        resource: crate::gpu::BindingResource::Sampler(
+                            &resources.scene_tier.material.mesh_sampler,
+                        ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.normal_map_view,
+                            &resources.scene_tier.material.normal_map_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 4,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.ao_map_view,
+                            &resources.scene_tier.material.ao_map_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
@@ -650,7 +562,7 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 6,
-                        resource: resources.content.fallback_scalar_buf.as_entire_binding(),
+                        resource: resources.sidecar.fallback().as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 7,
@@ -659,36 +571,25 @@ impl ViewportRenderer {
                                 .content
                                 .fallback_matcap_view
                                 .as_ref()
-                                .unwrap_or(&resources.material.texture.view),
+                                .unwrap_or(&resources.scene_tier.material.texture.view),
                         ),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 8,
-                        resource: resources
-                            .content
-                            .fallback_face_colour_buf
-                            .as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 9,
-                        resource: resources.content.fallback_warp_buf.as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 10,
                         resource: crate::gpu::BindingResource::Sampler(
-                            &resources.material.lut_sampler,
+                            &resources.scene_tier.material.lut_sampler,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 11,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.metallic_roughness_view,
+                            &resources.scene_tier.material.metallic_roughness_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 12,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.emissive_view,
+                            &resources.scene_tier.material.emissive_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
@@ -706,31 +607,39 @@ impl ViewportRenderer {
                             .as_entire_binding(),
                     },
                     crate::gpu::BindGroupEntry {
-                        binding: 15,
-                        resource: resources
-                            .content
-                            .fallback_extension_attr_buf
-                            .as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
                         binding: 17,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.texture_array_view,
+                            &resources.scene_tier.material.texture_array_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 18,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.material.texture_array_view,
+                            &resources.scene_tier.material.texture_array_view,
                         ),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 19,
+                        resource: resources.content.fallback_uv1_buf.as_entire_binding(),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 15,
+                        resource: resources.content.fallback_uv1_buf.as_entire_binding(),
                     },
                 ],
             });
             self.mesh_uniforms.tvm_wireframe_buf = Some(buf);
             self.mesh_uniforms.tvm_wireframe_bg = Some(bg);
         }
+        if let (Some(buf), false) = (
+            &self.mesh_uniforms.tvm_wireframe_buf,
+            tvm_wireframe_records.is_empty(),
+        ) {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&tvm_wireframe_records));
+        }
 
         let geometry_ms = geometry_start.elapsed().as_secs_f32() * 1000.0;
+        drop(geometry_span);
 
         // -- Frame stats --
         {
@@ -738,66 +647,46 @@ impl ViewportRenderer {
             let visible = scene_items.iter().filter(|i| !i.settings.hidden).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
-            let instanced_batch_count = if self.instancing.use_instancing {
-                self.instancing.batches.len() as u32
-            } else {
-                0
-            };
-
-            if self.instancing.use_instancing {
-                for batch in &self.instancing.batches {
-                    if let Some(mesh) = resources.mesh_store.get(batch.mesh_id) {
-                        draw_calls += 1;
-                        triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
-                    }
-                }
-                // Items outside the batches still issue one draw each through
-                // the per-object path (one per range for per-submesh-material
-                // items); count them so `draw_calls` and `triangles_submitted`
-                // cover both paths.
-                for (item, inst) in scene_items.iter().zip(instanceable.iter()) {
-                    if item.settings.hidden || *inst {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += active_submesh_materials(item, mesh)
-                            .map_or(1, |mats| mats.len() as u32);
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
-            } else {
-                for item in scene_items {
-                    if item.settings.hidden {
-                        continue;
-                    }
-                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += active_submesh_materials(item, mesh)
-                            .map_or(1, |mats| mats.len() as u32);
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
+            // Every batch is one draw of what its `DrawKind` names. A wireframe draw submits its
+            // mesh's triangles as edge lines, so it counts them; normal lines
+            // submit no triangles.
+            let instanced_batch_count = self.instancing.batches.len() as u32;
+            for batch in &self.instancing.batches {
+                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                    continue;
+                };
+                draw_calls += 1;
+                let indices = match batch.draw {
+                    crate::renderer::types::DrawKind::Range(_, count) => count,
+                    crate::renderer::types::DrawKind::NormalLines => 0,
+                    _ => mesh.index_count,
+                };
+                triangles += (indices / 3) as u64 * batch.instance_count as u64;
             }
 
-            // Visible items that miss the instanced fast path. Reuses the
-            // instanceable bitset computed above, so this is just a count.
-            let per_object_items = scene_items
-                .iter()
-                .zip(instanceable.iter())
-                .filter(|(item, inst)| !item.settings.hidden && !**inst)
-                .count() as u32;
-
+            let deform = resources.scene_tier.deform.take_counters();
+            let plugin_draw_calls = self
+                .item_type_plugins
+                .values()
+                .map(|p| p.draw_calls())
+                .sum();
+            let plugin_upload_bytes = self
+                .item_type_plugins
+                .values()
+                .map(|p| p.upload_bytes())
+                .sum();
             self.last_stats = crate::renderer::stats::FrameStats {
                 total_objects: total,
                 visible_objects: visible,
                 culled_objects: total.saturating_sub(visible),
                 draw_calls,
                 instanced_batches: instanced_batch_count,
-                per_object_items,
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
-                decal_uploads: decal_cache_stats.uploads,
-                decal_reused: decal_cache_stats.reused,
+                plugin_draw_calls,
+                plugin_upload_bytes,
+                deform_buffer_reallocations: deform.buffer_reallocations,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0,    // Updated below in shadow pass.
                 shadow_draw_commands: 0, // Updated below in shadow pass.
@@ -831,17 +720,17 @@ impl ViewportRenderer {
 
         // ------------------------------------------------------------------
         let shadow_start = web_time::Instant::now();
+        let shadow_span = tracing::debug_span!(target: "viewport_lib::frame", "shadow").entered();
+        let colour_hdr = frame.effects.display.is_hdr() && !self.direct_paint;
         Self::prepare_shadow_pass(
             resources,
             &mut self.instancing,
             &mut self.shadow,
-            &self.compute_filter_results,
             &self.item_type_plugins,
             plugin_frame_index,
             lighting,
             scene_items,
-            &self.ribbon_gpu_data,
-            &self.mc_gpu_data,
+            &self.mesh_uniforms,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,
@@ -850,9 +739,11 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            colour_hdr,
             sink,
         );
         let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
+        drop(shadow_span);
 
         // Hand the LOD-resolved items to the paint pass. `scene_items_owned`
         // carries the surface submission with each item's level mesh selected
@@ -875,6 +766,158 @@ impl ViewportRenderer {
         self.prepare_breakdown.instancing_ms = instancing_ms;
         self.prepare_breakdown.geometry_ms = geometry_ms;
         self.prepare_breakdown.shadow_ms = shadow_ms;
+
+        // All scene items have interned their material transforms; upload the
+        // block buffer so the scene pass can index it. Foreground objects
+        // re-upload after they intern in `prepare_viewport_internal`.
+        self.resources.upload_material_gpu(device, queue);
+        self.resources.upload_custom_data(device, queue);
+
+        // Item-type wireframes fill the shared line substrate, cleared above.
+        // Placed at the end of scene prepare because the plugin context borrows
+        // `resources` shared while the upload above holds it mutably.
+        self.dispatch_plugin_wireframes(device, queue, frame);
+
+        self.flush_camera_bind_group_rebuild(device);
+    }
+
+    /// Choose the origin every position this frame is drawn relative to, from
+    /// the frame's camera. Runs before plugin prepare and again at scene
+    /// prepare; a second call with the same frame changes nothing. A derivative
+    /// render (a capture or bake from another camera) keeps the presented
+    /// frame's snapped origin rather than moving it.
+    pub(crate) fn resolve_world_origin(&mut self, frame: &FrameData) {
+        let mode = frame.scene.world_origin.unwrap_or(self.world_origin_mode);
+        if !self.render_advances_state()
+            && matches!(mode, crate::renderer::WorldOrigin::Snapped { .. })
+        {
+            return;
+        }
+        if self.origin.resolve(mode, &frame.camera.render_camera)
+            && self.resources.scene_tier.is_built()
+        {
+            // World-space volumes in the shared indirect buffer are rewritten
+            // relative to the new origin. Below the full tier there are none.
+            self.resources.scene_tier.ibl.zones_dirty = true;
+        }
+        self.resources.world_origin = self.origin;
+    }
+
+    /// Rebuild the camera bind groups if something they name was replaced this
+    /// prepare: a shadow texture promoted out of its placeholder, or the
+    /// custom-data buffer grown. Run at the end of each prepare phase, before
+    /// any render pass, so the frame that made the change already draws with
+    /// the new resource and not one frame late.
+    fn flush_camera_bind_group_rebuild(&mut self, device: &crate::gpu::Device) {
+        if self.resources.camera_bind_groups_dirty {
+            self.resources.camera_bind_groups_dirty = false;
+            self.rebuild_camera_bind_groups(device);
+            // The per-object bundle recorded the old camera bind group. Drop it
+            // so this frame draws item by item; the next prepare records again.
+            self.per_object_bundle = None;
+        }
+    }
+
+    /// Whether `frame` carries anything the mesh pipeline families draw.
+    pub(crate) fn has_mesh_content(frame: &FrameData) -> bool {
+        (match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
+        }) || !frame.scene.volume_meshes.is_empty()
+            || !frame.scene.mesh_instances.is_empty()
+            || !frame.scene.foreground_items.is_empty()
+    }
+
+    /// The surfaces `frame` submits, which the compatibility tier draws.
+    fn surface_count(frame: &FrameData) -> u32 {
+        match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => items.len() as u32,
+        }
+    }
+
+    /// The plugin items in `frame` that a registered item type paints on the
+    /// LDR path, which is every plugin item the compatibility tier draws.
+    fn ldr_plugin_item_count(&self, frame: &FrameData) -> u32 {
+        self.item_type_plugins
+            .iter()
+            .filter(|(_, plugin)| plugin.draws_ldr())
+            .map(|(name, _)| {
+                crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                    .map(|c| c.len())
+                    .sum::<usize>()
+            })
+            .sum::<usize>() as u32
+    }
+
+    /// Every scene item `frame` submits, for the count an overlay-only
+    /// renderer reports as skipped.
+    fn scene_item_count(frame: &FrameData) -> u32 {
+        let surfaces = match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => items.len(),
+        };
+        let plugin_items: usize = frame
+            .scene
+            .plugin_items
+            .values()
+            .flatten()
+            .map(|c| c.len())
+            .sum();
+        (surfaces
+            + frame.scene.volume_meshes.len()
+            + frame.scene.mesh_instances.len()
+            + frame.scene.foreground_items.len()
+            + plugin_items) as u32
+    }
+
+    /// Whether `frame` is drawn through the HDR path. A frame that asks for
+    /// HDR is still drawn with the LDR pipelines when the caller paints it
+    /// straight into its own render pass.
+    /// Whether any surface item in `frame` draws with a matcap.
+    fn uses_matcap(&self, frame: &FrameData) -> bool {
+        match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items.iter().any(|i| {
+                self.resources
+                    .material_or_default(i.material)
+                    .matcap_id()
+                    .is_some()
+            }),
+        }
+    }
+
+    pub(crate) fn draws_hdr(&self, frame: &FrameData) -> bool {
+        frame.effects.display.is_hdr() && !self.direct_paint
+    }
+
+    /// Build the pipelines `frame`'s own passes draw with, if this is the first
+    /// frame to ask for them.
+    ///
+    /// The mesh pipelines, the ground plane and the skybox are not built at
+    /// construction. The draw sites test the frame they are handed, so this
+    /// runs for the scene frame and again for each viewport's frame: under the
+    /// split API those can differ, and a viewport may be the only one asking.
+    ///
+    /// Only the mesh family the frame is drawn with is built: the HDR one for a
+    /// frame on the HDR path, the LDR one otherwise. A renderer that stays on
+    /// one path never compiles the other.
+    fn ensure_frame_pipelines(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
+        if Self::has_mesh_content(frame) {
+            if self.draws_hdr(frame) {
+                self.resources.ensure_hdr_mesh_pipelines(device);
+            } else {
+                self.resources.ensure_ldr_mesh_pipelines(device);
+            }
+        }
+        if !matches!(
+            frame.effects.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame.viewport.show_grid {
+            self.resources.ensure_grid_pipeline(device);
+        }
+        if frame.effects.debug.show_shadow_atlas {
+            self.resources.ensure_shadow_atlas_viewer_pipeline(device);
+        }
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -890,11 +933,44 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) {
         // Ensure a per-viewport camera slot exists for this viewport index.
+        let _span = tracing::debug_span!(
+            target: "viewport_lib::frame",
+            "prepare_viewport",
+            vp = frame.camera.viewport_index
+        )
+        .entered();
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
+        if self.resources.scene_tier.is_built() {
+            self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
+        } else {
+            self.prepare_viewport_compatibility(queue, frame, viewport_fx);
+            self.prepare_compatibility_outlines(device, queue, frame, sink);
+            self.prepare_sub_highlight(device, queue, frame);
+        }
+        self.prepare_viewport_overlays(device, queue, frame);
+        self.prepare_debug_buffer(frame);
+        if self.resources.scene_tier.is_built() {
+            self.prepare_atlas_blit(queue, frame, viewport_fx);
+        }
+    }
+
+    /// The scene half of `prepare_viewport_internal`: culling, background,
+    /// clip and ground uniforms, interaction state, foreground objects,
+    /// outlines and sub-object highlight.
+    fn prepare_viewport_scene(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        viewport_fx: &ViewportEffects<'_>,
+        sink: &mut crate::renderer::SubmitSink,
+    ) {
+        self.ensure_frame_pipelines(device, frame);
 
         // Run the main-camera GPU cull for this viewport against its own camera,
         // writing this slot's visibility list and indirect args.
         let vp_idx = frame.camera.viewport_index;
+        let hdr_family = self.draws_hdr(frame);
         Self::run_viewport_cull(
             &mut self.resources,
             &mut self.viewport_slots[vp_idx].cull,
@@ -904,10 +980,42 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            &self.origin,
+            hdr_family,
             sink,
         );
 
+        let background = crate::resources::material::environment::resolve_background(
+            &self.resources.scene_tier.ibl,
+            &frame.viewport.environment_background,
+            frame.effects.environment.as_ref(),
+            frame.effects.lighting.environment_intensity,
+        );
+        let slot = &mut self.viewport_slots[vp_idx];
+        slot.draw_skybox = crate::resources::material::environment::prepare_background(
+            &mut self.resources,
+            device,
+            queue,
+            &mut slot.skybox,
+            background,
+        );
+
         self.prepare_clip_uniforms(queue, frame, viewport_fx);
+        if !matches!(
+            viewport_fx.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            let slot = &mut self.viewport_slots[vp_idx];
+            let key = (
+                self.resources.scene_tier.shadow.map_view.clone(),
+                slot.ground_uniform_buf.clone(),
+            );
+            let resources = &self.resources;
+            let uniform_buf = &slot.ground_uniform_buf;
+            slot.ground_bind_group.get(key, || {
+                resources.create_ground_bind_group(device, uniform_buf)
+            });
+        }
         self.prepare_interaction_state(device, queue, frame, viewport_fx);
         Self::prepare_foreground_objects(
             &mut self.resources,
@@ -916,8 +1024,25 @@ impl ViewportRenderer {
             device,
             queue,
         );
+        // Foreground objects just interned their materials; re-upload the block
+        // buffer so any new entries past the scene set are resident.
+        self.resources.upload_material_gpu(device, queue);
+        self.resources.upload_custom_data(device, queue);
+        // That upload can have grown the custom-data buffer.
+        self.flush_camera_bind_group_rebuild(device);
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
+    }
+
+    /// The overlay half of `prepare_viewport_internal`, which runs on every
+    /// tier.
+    fn prepare_viewport_overlays(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+    ) {
+        let vp_idx = frame.camera.viewport_index;
 
         // Overlay families each build a per-family vertex buffer. When any item
         // carries a non-zero `z_order`, they also record their draw segments into
@@ -927,20 +1052,39 @@ impl ViewportRenderer {
         // Retained groups always draw through the sorted segment list (they carry
         // their own z_order and are separate draws), so force the ordered path
         // whenever any are present, even if no immediate item sets a z_order.
-        self.overlay_uses_zorder =
+        let overlay_start = web_time::Instant::now();
+        let overlay_span = tracing::debug_span!(target: "viewport_lib::frame", "overlay").entered();
+        // Each viewport keeps its own overlay buffers: the split API prepares
+        // every viewport before rendering any, so a shared set would leave each
+        // viewport drawing the last one's overlays.
+        let mut ov = std::mem::replace(
+            &mut self.viewport_slots[vp_idx].overlay,
+            crate::renderer::ViewportOverlay::new(),
+        );
+        ov.overlay_uses_zorder =
             frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
-        self.overlay_draw_segments.clear();
-        self.overlay_retained_draws.clear();
-        self.overlay_retained_shape_draws.clear();
-        self.overlay_instances_ready = false;
-        self.prepare_overlay_labels(device, queue, frame);
-        self.prepare_overlay_shapes(device, queue, frame);
-        self.finalize_overlay_draw_order(frame);
-        self.prepare_splat_sort(device, queue, frame);
-        self.prepare_splat_wireframe(device, queue, frame);
-        self.prepare_sprite_wireframe(device, queue, frame);
-        self.prepare_debug_buffer(device, frame);
-        self.prepare_atlas_blit(queue, frame, viewport_fx);
+        ov.overlay_draw_segments.clear();
+        ov.overlay_retained_draws.clear();
+        ov.overlay_retained_shape_draws.clear();
+        ov.overlay_instances_ready = false;
+        self.overlay_retained_counters = Default::default();
+        self.prepare_overlay_labels(device, queue, frame, &mut ov);
+        self.prepare_overlay_shapes(device, queue, frame, &mut ov);
+        Self::finalize_overlay_draw_order(&mut ov);
+        self.viewport_slots[vp_idx].overlay = ov;
+        self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
+        drop(overlay_span);
+        // Publish the retained counters here rather than in the stats assembly:
+        // the split API reaches this phase through `prepare_viewport` without
+        // assembling a `FrameStats`, and `last_frame_stats()` should still show
+        // what the overlay drew. Per viewport, like `overlay_ms` above.
+        let overlay_counters = self.overlay_retained_counters;
+        self.last_stats.overlay_retained_submitted = overlay_counters.submitted;
+        self.last_stats.clip_masks_dropped = overlay_counters.clip_masks_dropped;
+        self.last_stats.overlay_retained_drawn = overlay_counters.drawn;
+        self.last_stats.overlay_retained_reemitted = overlay_counters.reemitted;
+        self.last_stats.overlay_retained_bytes =
+            self.resources.content.overlay_geometry.allocated_bytes();
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.
@@ -960,7 +1104,7 @@ impl ViewportRenderer {
         self.prepare_into(device, queue, frame, &mut sink)
     }
 
-    /// As [`prepare`](Self::prepare), but the prepare passes push their command
+    /// As `prepare`, but the prepare passes push their command
     /// buffers into a returned `Vec` rather than submitting them. The caller must
     /// submit the buffers, in order, on the device-driving thread. Intended for a
     /// render worker that encodes off-thread (see the `SubmitSink` docs for why
@@ -994,10 +1138,18 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = web_time::Instant::now();
+        let _span = tracing::debug_span!(target: "viewport_lib::frame", "prepare").entered();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
+        self.begin_notice_frame();
 
         let plugin_start = web_time::Instant::now();
+        let plugin_prepare_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "plugin_prepare").entered();
 
+        // The origin is chosen before plugins prepare, which read it. The
+        // split API resolves it in `prepare_scene` instead, once for every
+        // viewport.
+        self.resolve_world_origin(frame);
         // Dispatch item-type plugin prepare work first so any GPU outputs
         // the plugin produces are visible to the rest of `prepare`.
         let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
@@ -1005,18 +1157,21 @@ impl ViewportRenderer {
             sink.extend(plugin_bufs);
         }
 
+        self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
+        drop(plugin_prepare_span);
+
         // Run plugin culling for the current camera frustum so subsequent
-        // plugin paint/shadow calls can skip culled items.
-        if !self.item_type_plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
-            let vp = frame.camera.render_camera.view_proj();
-            let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
+        // plugin paint/shadow calls can skip culled items. Timed apart from
+        // prepare above: the two scale with different things.
+        let cull_start = web_time::Instant::now();
+        let plugin_cull_span =
+            tracing::debug_span!(target: "viewport_lib::frame", "plugin_cull").entered();
+        if !self.item_type_plugins.is_empty() {
+            let frustum = frame.camera.render_camera.culling_frustum();
             self.dispatch_plugin_cull(&frustum, frame);
         }
-        self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
-
-        // Rebuild or drop the cached per-object render bundle now that the
-        // prepared item list, LOD resolve, and per-item bind groups are final.
-        self.update_per_object_bundle(device, frame);
+        self.prepare_breakdown.plugin_cull_ms = cull_start.elapsed().as_secs_f32() * 1000.0;
+        drop(plugin_cull_span);
 
         // Read back GPU timestamps without blocking. The staging buffer is
         // mapped on one frame and read on a later one; a non-blocking poll
@@ -1058,11 +1213,15 @@ impl ViewportRenderer {
                             oit_ms: slot_ms(crate::renderer::GPU_TS_OIT),
                             post_ms: slot_ms(crate::renderer::GPU_TS_POST),
                             cull_ms: slot_ms(crate::renderer::GPU_TS_CULL),
+                            cull_plan_ms: slot_ms(crate::renderer::GPU_TS_CULL_PLAN),
+                            cull_count_ms: slot_ms(crate::renderer::GPU_TS_CULL_COUNT),
+                            cull_scatter_ms: slot_ms(crate::renderer::GPU_TS_CULL_SCATTER),
                             point_shadow_ms: slot_ms(crate::renderer::GPU_TS_POINT_SHADOW),
                             cluster_ms: slot_ms(crate::renderer::GPU_TS_CLUSTER),
                             ssao_ms: slot_ms(crate::renderer::GPU_TS_SSAO),
                             bloom_ms: slot_ms(crate::renderer::GPU_TS_BLOOM),
                             fxaa_ms: slot_ms(crate::renderer::GPU_TS_FXAA),
+                            overlay_ms: slot_ms(crate::renderer::GPU_TS_OVERLAY),
                         };
                         // GPU frame time: the span from the first to the last
                         // measured pass. All slots were written on the same
@@ -1182,8 +1341,10 @@ impl ViewportRenderer {
         // Snapshot geometry upload bytes accumulated since the last frame, then reset.
         let upload_bytes = self.resources.frame_upload_bytes;
         self.resources.frame_upload_bytes = 0;
-        let pipelines_built_this_frame = self.resources.frame_pipelines_built;
-        self.resources.frame_pipelines_built = 0;
+        let pipelines_built_this_frame = self
+            .resources
+            .frame_pipelines_built
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
 
         // Resolve effective scale bounds and degradation flags.
         // When a preset is set it overrides the individual fields; the individual
@@ -1267,82 +1428,29 @@ impl ViewportRenderer {
         self.degradation_effects_throttled =
             !in_capture && self.degradation_tier >= 3 && eff_allow_effects;
 
-        // Cache pickable items for the CPU pick path. Disabled by default: this copies
-        // all inline point/glyph/curve geometry each frame, so scenes that do not use
-        // renderer.pick()/pick_rect() leave it off (see set_cpu_pick_cache).
+        // Cache surfaces and volume meshes for the CPU pick path. Disabled by
+        // default, so scenes that do not use renderer.pick()/pick_rect() skip the
+        // copy (see set_cpu_pick_cache).
         if self.cpu_pick_cache_enabled {
             self.cache_pick_items(frame);
         }
 
-        // Prepare scatter volumes for rendering. Independent of picking: always runs.
-        {
-            self.prepared_scatter_volumes.clear();
-            self.prepared_refraction_volumes.clear();
-            let global_wireframe = frame.viewport.wireframe_mode;
-            let eye = frame.camera.render_camera.eye_position;
-            for item in &frame.scene.scatter_volumes {
-                if item.settings.hidden || item.settings.wireframe || global_wireframe {
-                    continue;
-                }
-                let mut flags: u32 = 0;
-                if item.settings.unlit {
-                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_UNLIT;
-                }
-                if item.settings.receive_shadows {
-                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_RECEIVE_SHADOWS;
-                }
-                self.prepared_scatter_volumes.push((
-                    item.volume.clone(),
-                    item.settings.opacity,
-                    flags,
-                ));
-                if item.volume.refraction.is_some() {
-                    self.prepared_refraction_volumes
-                        .push((item.volume.clone(), item.settings.opacity));
-                }
-            }
-            // Sort back-to-front for the per-volume scatter draws. The
-            // metric is the maximum corner distance of the volume's world
-            // AABB from the eye, descending. Centroid distance flips order
-            // when one volume contains another (huge fog containing a small
-            // fire) -- the fire centroid can land on either side of the fog
-            // centroid as the camera orbits, causing the alpha-over composite
-            // to swap visibly. Sorting by far-corner distance keeps
-            // containers (whose far corner is much further from the eye)
-            // strictly behind contained volumes regardless of camera angle.
-            self.prepared_scatter_volumes.sort_by(|a, b| {
-                let aabb_a = a.0.world_aabb();
-                let aabb_b = b.0.world_aabb();
-                let far_corner = |aabb: &crate::Aabb| -> f32 {
-                    let cx = if (aabb.min.x - eye[0]).abs() > (aabb.max.x - eye[0]).abs() {
-                        aabb.min.x
-                    } else {
-                        aabb.max.x
-                    };
-                    let cy = if (aabb.min.y - eye[1]).abs() > (aabb.max.y - eye[1]).abs() {
-                        aabb.min.y
-                    } else {
-                        aabb.max.y
-                    };
-                    let cz = if (aabb.min.z - eye[2]).abs() > (aabb.max.z - eye[2]).abs() {
-                        aabb.min.z
-                    } else {
-                        aabb.max.z
-                    };
-                    (cx - eye[0]).powi(2) + (cy - eye[1]).powi(2) + (cz - eye[2]).powi(2)
-                };
-                let da = far_corner(&aabb_a);
-                let db = far_corner(&aabb_b);
-                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
+        if self.resources.scene_tier.is_built() {
+            // Rebuild or drop the cached batch render bundle now that this
+            // frame's batch list and its bind groups are final.
+            self.update_per_object_bundle(device, frame);
+        }
 
         let viewport_start = web_time::Instant::now();
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, sink);
-        self.prepare_breakdown.viewport_ms = viewport_start.elapsed().as_secs_f32() * 1000.0;
+        // Overlays are timed inside the viewport phase and reported on their own,
+        // so take them back out of `viewport_ms`: the two fields are siblings, not
+        // a field and its subset, and every field here sums into `cpu_prepare_ms`.
+        let viewport_total = viewport_start.elapsed().as_secs_f32() * 1000.0;
+        self.prepare_breakdown.viewport_ms =
+            (viewport_total - self.prepare_breakdown.overlay_ms).max(0.0);
 
         let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;
         // Remainder: timestamp readback, scatter sort, degradation logic, stats
@@ -1355,7 +1463,8 @@ impl ViewportRenderer {
             - b.instancing_ms
             - b.geometry_ms
             - b.shadow_ms
-            - b.viewport_ms)
+            - b.viewport_ms
+            - b.overlay_ms)
             .max(0.0);
 
         let budget_ms = policy.target_fps.map(|fps| 1000.0 / fps);
@@ -1408,17 +1517,54 @@ impl ViewportRenderer {
             missed_budget,
             upload_bytes,
             pipelines_built_this_frame,
+            pipelines_pending: self.resources.pipeline_compiler.pending() as u32,
             shadows_skipped: self.degradation_shadows_skipped,
             volume_quality_reduced: self.degradation_volume_quality_reduced,
             // effects_throttled is set by the render path; carry forward here so
             // prepare()-only callers still see the previous frame's value until
             // paint_to()/render() updates it.
             effects_throttled: self.degradation_effects_throttled,
+            tier: self.resources.capabilities.tier(),
+            items_skipped_by_tier: if self.resources.scene_tier.is_built() {
+                0
+            } else if self.resources.compatibility_tier.is_some() {
+                Self::scene_item_count(frame)
+                    - Self::surface_count(frame)
+                    - self.ldr_plugin_item_count(frame)
+            } else {
+                Self::scene_item_count(frame)
+            },
+            hdr_drawn_as_ldr: false,
+            lights_dropped: self.last_lights_dropped,
+            notices: self.resources.notices.counts(),
             ..self.last_stats
         };
         self.last_stats = stats;
         stats
     }
+}
+
+/// Decide whether this frame runs the GPU cull. It needs the cull compute
+/// pipelines; the first frame that wants them with instances to cull asks
+/// for them under the compilation policy, and under `Background` the
+/// frames until they are built take the CPU path, which draws the same
+/// image.
+fn settle_gpu_culling(
+    inst: &mut InstancingState,
+    compiler: &crate::resources::pipeline_slot::PipelineCompiler,
+    device: &crate::gpu::Device,
+) {
+    let has_work =
+        inst.use_instancing && !inst.batches.is_empty() && inst.cached_instance_count > 0;
+    inst.gpu_culling_enabled = inst.gpu_culling_wanted
+        && (!has_work || {
+            let dev = device.clone();
+            inst.cull_resources
+                .get(compiler, move || {
+                    crate::renderer::indirect::CullResources::new(&dev)
+                })
+                .is_some()
+        });
 }
 
 #[cfg(test)]
@@ -1445,7 +1591,7 @@ mod lod_resolve_tests {
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -1460,15 +1606,15 @@ mod lod_resolve_tests {
     }
 
     fn looking_down_z() -> RenderCamera {
-        let mut camera = RenderCamera::default();
-        camera.eye_position = [0.0, 0.0, 0.0];
-        camera.forward = [0.0, 0.0, -1.0];
-        camera
+        RenderCamera::from_matrices(
+            glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
+        )
     }
 
     fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> SceneRenderItem {
         let mut item = SceneRenderItem::default();
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).to_cols_array_2d();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).into();
         item.lod_group = Some(group);
         item.settings.pick_id = crate::renderer::PickId(pick);
         item

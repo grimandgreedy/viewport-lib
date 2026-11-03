@@ -1,4 +1,3 @@
-use viewport_lib::wgpu;
 use viewport_lib::{FrameData, ViewportRenderer};
 
 pub struct ViewportCallback {

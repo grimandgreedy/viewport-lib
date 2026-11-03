@@ -5,7 +5,11 @@
 // different projection than the scene, so the stamp writes the nearest
 // possible depth rather than copying the value.
 
-@group(0) @binding(0) var foreground_depth: texture_depth_2d;
+@group(0) @binding(0) var foreground_depth: texture_2d<f32>;
+@group(0) @binding(1) var depth_sampler: sampler;
+
+// #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -30,8 +34,8 @@ fn fs_main(in: VertexOutput) -> @builtin(frag_depth) f32 {
         vec2<u32>(0u),
         dims - vec2<u32>(1u),
     );
-    if textureLoad(foreground_depth, coord, 0) >= 1.0 {
+    if viewport_depth_is_background(depth_texel(foreground_depth, depth_sampler, vec2<i32>(coord))) {
         discard;
     }
-    return 0.0;
+    return VIEWPORT_DEPTH_NEAR;
 }

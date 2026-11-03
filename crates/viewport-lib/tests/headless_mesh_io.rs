@@ -3,7 +3,6 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;
@@ -172,7 +171,7 @@ fn test_scene_collect_render_items_roundtrip() {
     let node_id = scene.add(
         Some(mesh_idx),
         glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
-        Material::default(),
+        MaterialId::DEFAULT,
     );
 
     let mut sel = Selection::new();
@@ -183,8 +182,8 @@ fn test_scene_collect_render_items_roundtrip() {
     assert_eq!(items[0].mesh_id, mesh_idx);
     assert!(items[0].settings.selected);
     // Verify position is in the model matrix.
-    let pos_x = items[0].model[3][0];
-    assert!((pos_x - 1.0).abs() < 1e-5, "model[3][0] = {pos_x}");
+    let pos_x = items[0].model.translation.x;
+    assert!((pos_x - 1.0).abs() < 1e-5, "translation.x = {pos_x}");
 }
 
 #[test]
@@ -203,18 +202,14 @@ fn render_offscreen_produces_rgba_pixels() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // Add the box as a scene item.
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = false;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 

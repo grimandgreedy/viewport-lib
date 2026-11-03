@@ -10,9 +10,10 @@
 //! Storage is split into a vertex slab and an index slab, each a growable list
 //! of chunk buffers with a first-fit free list. Spans are aligned to the storage
 //! offset alignment so a sub-range can also be bound as a STORAGE buffer (the
-//! compute-filter and GPU-picking paths read geometry that way).
+//! GPU-picking paths read geometry that way).
 
 use crate::gpu;
+use crate::resources::builders::LoggedAlloc;
 
 /// Fallback storage-offset alignment when the device reports 0 (never expected;
 /// the spec minimum is 256).
@@ -32,7 +33,7 @@ pub(crate) struct SlabSpan {
     pub len: u64,
 }
 
-fn align_up(value: u64, align: u64) -> u64 {
+pub(crate) fn align_up(value: u64, align: u64) -> u64 {
     debug_assert!(align.is_power_of_two());
     (value + align - 1) & !(align - 1)
 }
@@ -134,7 +135,7 @@ struct Chunk {
     alloc: RangeAllocator,
 }
 
-struct ByteSlab {
+pub(crate) struct ByteSlab {
     chunks: Vec<Chunk>,
     usage: gpu::BufferUsages,
     label: &'static str,
@@ -145,7 +146,7 @@ struct ByteSlab {
 }
 
 impl ByteSlab {
-    fn new(
+    pub(crate) fn new(
         usage: gpu::BufferUsages,
         label: &'static str,
         align: u64,
@@ -175,7 +176,7 @@ impl ByteSlab {
         scheduled.max(need).min(self.max_buffer.max(need))
     }
 
-    fn alloc(&mut self, device: &gpu::Device, bytes: u64) -> SlabSpan {
+    pub(crate) fn alloc(&mut self, device: &gpu::Device, bytes: u64) -> SlabSpan {
         for (ci, chunk) in self.chunks.iter_mut().enumerate() {
             if let Some(offset) = chunk.alloc.alloc(bytes) {
                 return SlabSpan {
@@ -186,8 +187,9 @@ impl ByteSlab {
             }
         }
         // No chunk fits; grow a new one.
-        let capacity = self.next_chunk_capacity(align_up(bytes, self.align));
-        let buffer = device.create_buffer(&gpu::BufferDescriptor {
+        let need = align_up(bytes, self.align);
+        let capacity = self.next_chunk_capacity(need);
+        let buffer = device.logged_buffer(&gpu::BufferDescriptor {
             label: Some(self.label),
             size: capacity,
             usage: self.usage,
@@ -205,17 +207,17 @@ impl ByteSlab {
         }
     }
 
-    fn free(&mut self, span: SlabSpan) {
+    pub(crate) fn free(&mut self, span: SlabSpan) {
         if let Some(chunk) = self.chunks.get_mut(span.chunk as usize) {
             chunk.alloc.free(span.offset, span.len);
         }
     }
 
-    fn buffer(&self, chunk: u32) -> &gpu::Buffer {
+    pub(crate) fn buffer(&self, chunk: u32) -> &gpu::Buffer {
         &self.chunks[chunk as usize].buffer
     }
 
-    fn resident_bytes(&self) -> u64 {
+    pub(crate) fn resident_bytes(&self) -> u64 {
         self.chunks.iter().map(|c| c.buffer.size()).sum()
     }
 }
@@ -234,6 +236,8 @@ impl ByteSlab {
 enum SlabKind {
     Vertex,
     Index,
+    /// A write into the parallel uv1 stream (`span` already scaled to uv1 bytes).
+    Uv1,
 }
 
 /// A geometry write recorded at upload time (device-only) and flushed to the GPU
@@ -245,9 +249,30 @@ struct PendingWrite {
     bytes: Vec<u8>,
 }
 
+/// Bytes per interleaved vertex (the [`Vertex`] stride).
+///
+/// [`crate::resources::types::Vertex`] is 64 bytes. The parallel uv1 stream
+/// stores one `vec2<f32>` (8 bytes) per vertex, so its chunk buffer is a fixed
+/// 1/8 the size of the vertex chunk, and a mesh's uv1 region sits at
+/// `vertex_offset / (VERTEX_STRIDE / UV1_STRIDE)`.
+const VERTEX_STRIDE: u64 = std::mem::size_of::<crate::resources::types::Vertex>() as u64;
+/// Bytes per uv1 entry (`vec2<f32>`).
+const UV1_STRIDE: u64 = 8;
+
 pub(crate) struct GeometrySlab {
     vertex: ByteSlab,
     index: ByteSlab,
+    /// Optional second-UV-set stream, parallel to the vertex slab: one buffer per
+    /// vertex chunk, each sized `vertex_chunk_bytes / (VERTEX_STRIDE / UV1_STRIDE)`
+    /// so entry `v` holds the uv1 of vertex `v` in the same chunk. Created lazily
+    /// on the first uv1 write into a chunk, so meshes (and whole scenes) without a
+    /// second UV set allocate nothing. Indexed by the same `@builtin(vertex_index)`
+    /// the vertex buffer uses, so it is correct whether the draw binds a mesh
+    /// sub-slice (per-object, local index plus the mesh `base_vertex`) or the whole
+    /// chunk (instanced / GPU-driven, global index). Unwritten regions stay zero
+    /// (wgpu zero-initialises the buffer), so a non-uv1 mesh sharing a uv1 chunk
+    /// reads `vec2(0.0)`.
+    uv1_chunks: Vec<Option<gpu::Buffer>>,
     /// Writes recorded before a queue was available, drained by `flush`.
     /// A `Mutex` so `flush` can run from `&self` (the strided colour-update path
     /// flushes before writing); uncontended in practice, resources are
@@ -256,15 +281,17 @@ pub(crate) struct GeometrySlab {
 }
 
 impl GeometrySlab {
-    pub(crate) fn new(device: &gpu::Device) -> Self {
+    /// `base_chunk` sizes the first chunk; `None` takes
+    /// `VIEWPORT_SLAB_CHUNK_BYTES` from the environment (with the `dev-knobs`
+    /// feature), else the default.
+    pub(crate) fn new(device: &gpu::Device, base_chunk: Option<u64>) -> Self {
         let limits = device.limits();
         let align = (limits.min_storage_buffer_offset_alignment as u64).max(DEFAULT_ALIGN);
         let max_buffer = limits.max_buffer_size;
-        // Diagnostic seam: shrink the first-chunk size so a test can force
-        // multi-chunk allocation with small meshes. Off in normal use.
-        let base_chunk = std::env::var("VIEWPORT_SLAB_CHUNK_BYTES")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
+        // The environment variable lets a test force multi-chunk allocation
+        // with small meshes without each test configuring the renderer.
+        let base_chunk = base_chunk
+            .or_else(|| dev_knob!("VIEWPORT_SLAB_CHUNK_BYTES").and_then(|s| s.parse::<u64>().ok()))
             .map(|b| align_up(b.max(align), align))
             .unwrap_or(INITIAL_CHUNK_BYTES)
             .min(max_buffer);
@@ -285,6 +312,7 @@ impl GeometrySlab {
                 max_buffer,
                 base_chunk,
             ),
+            uv1_chunks: Vec::new(),
             pending: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -316,11 +344,22 @@ impl GeometrySlab {
     pub(crate) fn flush(&self, queue: &gpu::Queue) {
         let drained: Vec<PendingWrite> = self.pending.lock().unwrap().drain(..).collect();
         for w in drained {
-            let slab = match w.kind {
-                SlabKind::Vertex => &self.vertex,
-                SlabKind::Index => &self.index,
+            let buffer = match w.kind {
+                SlabKind::Vertex => self.vertex.buffer(w.span.chunk),
+                SlabKind::Index => self.index.buffer(w.span.chunk),
+                SlabKind::Uv1 => match self
+                    .uv1_chunks
+                    .get(w.span.chunk as usize)
+                    .and_then(|c| c.as_ref())
+                {
+                    Some(buf) => buf,
+                    // The uv1 chunk is created before its write is enqueued; a
+                    // missing buffer means the chunk was never set up, so there
+                    // is nothing to flush into.
+                    None => continue,
+                },
             };
-            queue.write_buffer(slab.buffer(w.span.chunk), w.span.offset, &w.bytes);
+            queue.write_buffer(buffer, w.span.offset, &w.bytes);
         }
     }
 
@@ -355,6 +394,7 @@ impl GeometrySlab {
                 max_buffer,
                 base,
             ),
+            uv1_chunks: Vec::new(),
             pending: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -373,6 +413,61 @@ impl GeometrySlab {
 
     pub(crate) fn free_index(&mut self, span: SlabSpan) {
         self.index.free(span);
+    }
+
+    /// uv1 byte span parallel to a vertex span: same chunk, offset and length
+    /// scaled by `UV1_STRIDE / VERTEX_STRIDE` (1/8), so uv1 entry `base_vertex`
+    /// lines up with the mesh's first vertex.
+    fn uv1_span(vertex_span: SlabSpan) -> SlabSpan {
+        let ratio = VERTEX_STRIDE / UV1_STRIDE;
+        SlabSpan {
+            chunk: vertex_span.chunk,
+            offset: vertex_span.offset / ratio,
+            len: vertex_span.len / ratio,
+        }
+    }
+
+    /// Ensure the parallel uv1 buffer for `chunk` exists, creating it (sized to
+    /// 1/8 of the vertex chunk, zero-initialised by wgpu) on first use. Called
+    /// before [`enqueue_uv1`](Self::enqueue_uv1) / [`write_uv1`](Self::write_uv1)
+    /// for a mesh that carries a second UV set.
+    pub(crate) fn ensure_uv1_chunk(&mut self, device: &gpu::Device, chunk: u32) {
+        let ci = chunk as usize;
+        if self.uv1_chunks.len() <= ci {
+            self.uv1_chunks.resize_with(ci + 1, || None);
+        }
+        if self.uv1_chunks[ci].is_none() {
+            let vertex_bytes = self.vertex.buffer(chunk).size();
+            let size = vertex_bytes / (VERTEX_STRIDE / UV1_STRIDE);
+            let buffer = device.logged_buffer(&gpu::BufferDescriptor {
+                label: Some("mesh_uv1_slab"),
+                size,
+                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.uv1_chunks[ci] = Some(buffer);
+        }
+    }
+
+    /// Record a uv1 write (deferred to the next `process_uploads`) for the region
+    /// parallel to `vertex_span`. The uv1 chunk must already exist
+    /// ([`ensure_uv1_chunk`](Self::ensure_uv1_chunk)); `data.len()` must equal
+    /// `vertex_span.len / 8` (one `vec2<f32>` per vertex).
+    pub(crate) fn enqueue_uv1(&self, vertex_span: SlabSpan, data: Vec<u8>) {
+        let span = Self::uv1_span(vertex_span);
+        debug_assert_eq!(data.len() as u64, span.len);
+        self.pending.lock().unwrap().push(PendingWrite {
+            kind: SlabKind::Uv1,
+            span,
+            bytes: data,
+        });
+    }
+
+    /// The parallel uv1 chunk buffer, if one was created for this chunk. Bound
+    /// (whole) at the mesh bind group's uv1 slot for meshes with a second UV set;
+    /// meshes without one bind the shared zero fallback instead.
+    pub(crate) fn uv1_chunk_buffer(&self, chunk: u32) -> Option<&gpu::Buffer> {
+        self.uv1_chunks.get(chunk as usize).and_then(|c| c.as_ref())
     }
 
     /// Write vertex bytes into a span. The data length must equal `span.len`.
@@ -474,7 +569,8 @@ impl GeometrySlab {
 
     /// Total GPU bytes reserved by the slab chunks (for residency reporting).
     pub(crate) fn resident_bytes(&self) -> u64 {
-        self.vertex.resident_bytes() + self.index.resident_bytes()
+        let uv1: u64 = self.uv1_chunks.iter().flatten().map(|b| b.size()).sum();
+        self.vertex.resident_bytes() + self.index.resident_bytes() + uv1
     }
 
     /// Number of chunk buffers backing the slab (vertex chunks + index chunks).

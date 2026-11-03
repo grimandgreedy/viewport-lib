@@ -1,13 +1,12 @@
-//! `FrameStats::draw_calls` and `triangles_submitted` must cover the
-//! per-object render path, not just the instanced one. Items with a styled
-//! backface policy miss the instanced fast path and used to leave both
-//! counters at 0 even while issuing one draw per item.
+//! `FrameStats::draw_calls` and `triangles_submitted` cover every batch. Four
+//! items on one mesh share one batch: one draw of four instances.
 
-use viewport_lib::{BackfacePolicy, CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::Colour;
+use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 #[test]
-fn per_object_draws_are_counted() {
+fn batch_draws_are_counted() {
     let Some(mut h) = Harness::new() else {
         eprintln!("skipping: no GPU adapter");
         return;
@@ -20,17 +19,19 @@ fn per_object_draws_are_counted() {
         .upload_mesh_data(&h.device, &data)
         .expect("upload");
 
+    let material = h
+        .renderer
+        .resources_mut()
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7)))
+        .expect("material upload");
     let count = 4usize;
     let items: Vec<SceneRenderItem> = (0..count)
         .map(|i| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 5.0, 0.0, 0.0))
-                .to_cols_array_2d();
-            let mut m = Material::from_colour([0.6, 0.6, 0.7]);
-            // A styled backface policy keeps the item off the instanced path.
-            m.backface_policy = BackfacePolicy::Tint(0.4);
-            item.material = m;
+                .into();
+            item.material = material;
             item
         })
         .collect();
@@ -42,8 +43,7 @@ fn per_object_draws_are_counted() {
     );
     let stats = h.render_two_frames(&fd, 200, 150);
 
-    assert_eq!(stats.per_object_items, count as u32, "test premise");
-    assert_eq!(stats.instanced_batches, 0, "test premise");
-    assert_eq!(stats.draw_calls, count as u32);
+    assert_eq!(stats.instanced_batches, 1, "one batch of four instances");
+    assert_eq!(stats.draw_calls, 1);
     assert_eq!(stats.triangles_submitted, tris_per_item * count as u64);
 }

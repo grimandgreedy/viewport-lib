@@ -9,12 +9,11 @@
 //! ```rust,ignore
 //! use viewport_lib::runtime::{
 //!     FixedTimestep, RuntimeFrameContext, RuntimePhase, RuntimePlugin,
-//!     RuntimeStepContext, SceneRuntimeMode, ViewportRuntime,
+//!     RuntimeStepContext, ViewportRuntime,
 //! };
 //!
 //! // Build the runtime once at startup.
 //! let mut runtime = ViewportRuntime::new()
-//!     .with_mode(SceneRuntimeMode::Simulation)
 //!     .with_fixed_timestep(FixedTimestep::new(60.0))
 //!     .with_plugin(MyPhysicsPlugin::new());
 //!
@@ -50,13 +49,12 @@ pub mod gpu_plugin;
 pub mod guide;
 /// Async job handoff types for runtime plugins.
 pub mod jobs;
-pub mod mode;
 pub mod output;
 pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
 pub mod resources;
 pub mod snapshot;
-/// Built-in interaction systems: SelectionSystem and ManipulationSystem.
+/// Built-in interaction systems: SelectionSystem.
 pub mod systems;
 pub mod timestep;
 
@@ -64,9 +62,8 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
-pub use gpu_plugin::{GpuFrameContext, GpuPlugin, PostPaintTargets, gpu_phase};
+pub use gpu_plugin::{GpuFrameContext, GpuPlugin, GpuPluginId, PostPaintTargets, gpu_phase};
 pub use jobs::{JobPoll, JobSender, JobSlot};
-pub use mode::SceneRuntimeMode;
 pub use output::{
     CameraCommand, CameraFollowTarget, NodeTransformOp, RuntimeOutput, SelectionOp,
     TransformWriteback, apply_camera_commands,
@@ -74,8 +71,9 @@ pub use output::{
 pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
-pub use systems::{ManipulationSystem, SelectionSystem};
-pub use timestep::{FixedStepIter, FixedTimestep};
+pub use systems::SelectionSystem;
+pub use timestep::{DEFAULT_MAX_STEPS, FixedStepIter, FixedTimestep};
+pub use viewport_lib_types::plugin::RuntimePluginId;
 
 use crate::interaction::select::selection::Selection;
 use crate::scene::scene::Scene;
@@ -86,7 +84,7 @@ use crate::scene::scene::Scene;
 /// in the slice.
 #[allow(clippy::too_many_arguments)]
 fn run_range(
-    plugins: &mut Vec<Box<dyn RuntimePlugin>>,
+    plugins: &mut [(RuntimePluginId, Box<dyn RuntimePlugin>)],
     min: i32,
     max: i32,
     dt: f32,
@@ -97,7 +95,7 @@ fn run_range(
     resources: &mut RuntimeResources,
     timings: &mut std::collections::HashMap<&'static str, f32>,
 ) {
-    for plugin in plugins.iter_mut() {
+    for (_, plugin) in plugins.iter_mut() {
         let p = plugin.priority();
         if p >= min && p < max {
             let mut ctx = RuntimeStepContext {
@@ -136,6 +134,10 @@ pub struct RuntimeStats {
     /// CPU ms spent in each GPU plugin's `post_paint` during the last
     /// [`ViewportRuntime::post_paint`].
     pub post_paint_ms: std::collections::HashMap<&'static str, f32>,
+    /// Simulated time, in ms, the fixed timestep dropped during the last
+    /// [`ViewportRuntime::step`] because more than its `max_steps` steps were
+    /// pending. Zero without a fixed timestep or when nothing was dropped.
+    pub dropped_sim_ms: f32,
 }
 
 impl RuntimeStats {
@@ -163,7 +165,7 @@ mod tests {
     use crate::camera::camera::Camera;
     use crate::interaction::input::ActionFrame;
     use crate::interaction::select::selection::{NodeId, Selection};
-    use crate::scene::material::Material;
+    use crate::resources::MaterialId;
     use crate::scene::scene::Scene;
     use std::sync::{Arc, Mutex};
 
@@ -397,7 +399,7 @@ mod tests {
     fn test_writeback_flushes_to_scene() {
         let target = glam::Affine3A::from_translation(glam::Vec3::new(3.0, 4.0, 5.0));
         let mut scene = Scene::new();
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
             node_id,
@@ -414,7 +416,7 @@ mod tests {
         );
 
         let node = scene.node(node_id).expect("node not found");
-        let pos = node.world_transform().col(3).truncate();
+        let pos = node.world_transform().translation.as_vec3();
         assert!(
             (pos - glam::Vec3::new(3.0, 4.0, 5.0)).length() < 1e-5,
             "pos was {pos:?}"
@@ -425,7 +427,7 @@ mod tests {
     fn test_writeback_ops_in_output() {
         let target = glam::Affine3A::from_translation(glam::Vec3::new(1.0, 0.0, 0.0));
         let mut scene = Scene::new();
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
             node_id,
@@ -489,7 +491,7 @@ mod tests {
     fn test_snapshot_updated_after_writeback() {
         let target = glam::Affine3A::from_translation(glam::Vec3::new(7.0, 0.0, 0.0));
         let mut scene = Scene::new();
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
             node_id,
@@ -507,6 +509,83 @@ mod tests {
 
         let snap = runtime.snapshots().get(node_id).expect("snapshot missing");
         assert!((snap.curr.translation.x - 7.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_snapshot_records_world_transform_of_child() {
+        let mut scene = Scene::new();
+        let parent = scene.add(
+            None,
+            glam::Mat4::from_translation(glam::Vec3::new(10.0, 0.0, 0.0)),
+            MaterialId::DEFAULT,
+        );
+        let child = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+        scene.set_parent(child, Some(parent));
+        scene.update_transforms();
+
+        let local = glam::Affine3A::from_translation(glam::Vec3::new(0.0, 2.0, 3.0));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(WritebackPlugin {
+                node_id: child,
+                transform: local,
+            })
+            .with_camera_follow(CameraFollow::Node {
+                id: child,
+                offset: glam::Vec3::ZERO,
+                look_at: false,
+            });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut sel = Selection::new();
+        let output = runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
+
+        let world =
+            glam::Affine3A::from_mat4(scene.node(child).unwrap().world_transform().to_mat4());
+        let expected = glam::Vec3::new(10.0, 2.0, 3.0);
+        assert!((glam::Vec3::from(world.translation) - expected).length() < 1e-5);
+
+        let snap = runtime.snapshots().get(child).expect("snapshot missing");
+        assert_eq!(snap.curr, world);
+
+        let target = output
+            .events
+            .read::<CameraFollowTarget>()
+            .next()
+            .expect("no camera follow target");
+        assert!(
+            (target.0 - expected).length() < 1e-5,
+            "target was {:?}",
+            target.0
+        );
+    }
+
+    #[test]
+    fn test_dropped_sim_ms_reported_on_hitch() {
+        let mut runtime = ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(60.0));
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 2.0));
+        assert_eq!(runtime.step_index(), 8);
+        let dropped = runtime.last_stats().dropped_sim_ms;
+        assert!(
+            dropped > 1800.0 && dropped < 2000.0,
+            "dropped was {dropped}"
+        );
+
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
+        assert_eq!(runtime.last_stats().dropped_sim_ms, 0.0);
     }
 
     // ---- new tests ----------------------------------------------------------
@@ -619,7 +698,7 @@ mod tests {
         assert!(added.lock().unwrap().is_empty(), "no events on first step");
 
         // Add a node, then step.
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         runtime.step(
             &mut scene,
             &mut sel,
@@ -649,7 +728,7 @@ mod tests {
         let mut scene = Scene::new();
         let mut sel = Selection::new();
 
-        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         // First step with the node present.
         runtime.step(
@@ -1524,17 +1603,21 @@ mod tests {
 /// 4. `[SIMULATE, POST_SIM)` -- Simulate (600): once per fixed step or once at wall dt
 /// 5. `[POST_SIM, i32::MAX]` -- PostSim (700), Writeback (800): once at wall dt
 pub struct ViewportRuntime {
-    mode: SceneRuntimeMode,
-    plugins: Vec<Box<dyn RuntimePlugin>>,
-    gpu_plugins: Vec<Box<dyn GpuPlugin>>,
+    plugins: Vec<(RuntimePluginId, Box<dyn RuntimePlugin>)>,
+    gpu_plugins: Vec<(GpuPluginId, Box<dyn GpuPlugin>)>,
+    /// Last id handed out to a runtime or GPU plugin; one counter for both.
+    last_plugin_id: u64,
+    /// GPU plugins removed because the device did not meet their
+    /// requirements, as `ViewportError::PluginUnsupported`.
+    declined_gpu_plugins: Vec<crate::ViewportError>,
     /// False until every registered GPU plugin has had `init_gpu` called.
-    /// Cleared again when a new GPU plugin is registered.
+    /// Cleared again when a new GPU plugin is registered; removing one leaves
+    /// it as it is.
     gpu_initialized: bool,
     fixed_timestep: Option<FixedTimestep>,
     snapshots: TransformSnapshotTable,
     step_index: u64,
     selection_system: Option<SelectionSystem>,
-    manipulation_system: Option<ManipulationSystem>,
     camera_follow: Option<CameraFollow>,
     /// Typed resource registry shared across plugins each frame.
     resources: RuntimeResources,
@@ -1556,15 +1639,15 @@ impl ViewportRuntime {
     /// Create a runtime with default settings and no plugins.
     pub fn new() -> Self {
         Self {
-            mode: SceneRuntimeMode::default(),
             plugins: Vec::new(),
             gpu_plugins: Vec::new(),
+            last_plugin_id: 0,
+            declined_gpu_plugins: Vec::new(),
             gpu_initialized: false,
             fixed_timestep: None,
             snapshots: TransformSnapshotTable::new(),
             step_index: 0,
             selection_system: None,
-            manipulation_system: None,
             camera_follow: None,
             resources: RuntimeResources::new(),
             prev_node_ids: std::collections::HashSet::new(),
@@ -1591,50 +1674,55 @@ impl ViewportRuntime {
         self
     }
 
-    /// Enable the built-in manipulation system.
-    ///
-    /// The ManipulationSystem runs before the `Manipulate` phase each frame. It
-    /// drives G/R/S sessions and gizmo drag from RuntimeFrameContext inputs, writing
-    /// transform changes via TransformWriteback.
-    pub fn with_manipulation_system(mut self) -> Self {
-        self.manipulation_system = Some(ManipulationSystem::new());
-        self
-    }
-
-    /// True while the built-in manipulation system has an active G/R/S session or gizmo drag.
-    ///
-    /// Use this to suppress orbit camera movement while manipulating objects.
-    pub fn is_manipulating(&self) -> bool {
-        self.manipulation_system
-            .as_ref()
-            .map_or(false, |m| m.is_active())
-    }
-
-    /// Access the built-in manipulation system, if enabled.
-    pub fn manipulation_system(&self) -> Option<&ManipulationSystem> {
-        self.manipulation_system.as_ref()
-    }
-
-    /// Set the runtime mode.
-    pub fn with_mode(mut self, mode: SceneRuntimeMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
     /// Register a plugin. Plugins run in ascending priority order each frame.
     /// Plugins with equal priority run in registration order (stable sort).
+    ///
+    /// [`plugin_ids`](Self::plugin_ids) lists the id this plugin was given.
     pub fn with_plugin(mut self, plugin: impl RuntimePlugin) -> Self {
-        self.plugins.push(Box::new(plugin));
+        self.add_plugin(plugin);
         self
     }
 
-    /// Register a plugin on an existing runtime.
+    /// Register a plugin on an existing runtime and return its id.
     ///
     /// Same semantics as [`with_plugin`](Self::with_plugin) but takes
     /// `&mut self`, for hosts that need to add plugins after the runtime
-    /// has been constructed and possibly already run frames.
-    pub fn add_plugin(&mut self, plugin: impl RuntimePlugin) {
-        self.plugins.push(Box::new(plugin));
+    /// has been constructed and possibly already run frames. Pass the id to
+    /// [`remove_plugin`](Self::remove_plugin) to unregister it.
+    pub fn add_plugin(&mut self, plugin: impl RuntimePlugin) -> RuntimePluginId {
+        let id = RuntimePluginId::from_raw(self.next_plugin_id());
+        self.plugins.push((id, Box::new(plugin)));
+        id
+    }
+
+    /// Unregister a runtime plugin and hand it back, so a host can recover its
+    /// state. The plugins that remain keep their relative order. Returns
+    /// `None` for an id that is not registered (already removed, or from
+    /// another runtime).
+    pub fn remove_plugin(&mut self, id: RuntimePluginId) -> Option<Box<dyn RuntimePlugin>> {
+        let index = self.plugins.iter().position(|(i, _)| *i == id)?;
+        let (_, plugin) = self.plugins.remove(index);
+        let name = plugin.type_name();
+        if !self.plugins.iter().any(|(_, p)| p.type_name() == name) {
+            self.stats.step_ms.remove(name);
+        }
+        Some(plugin)
+    }
+
+    /// Ids of the registered runtime plugins, in the order they run (ascending
+    /// priority, registration order within a priority, as of the last step).
+    pub fn plugin_ids(&self) -> impl Iterator<Item = RuntimePluginId> + '_ {
+        self.plugins.iter().map(|(id, _)| *id)
+    }
+
+    /// Number of registered runtime plugins.
+    pub fn plugin_count(&self) -> usize {
+        self.plugins.len()
+    }
+
+    fn next_plugin_id(&mut self) -> u64 {
+        self.last_plugin_id += 1;
+        self.last_plugin_id
     }
 
     /// Register a GPU plugin. GPU plugins encode wgpu command buffers from
@@ -1645,26 +1733,84 @@ impl ViewportRuntime {
     /// Registering a plugin after the runtime has already run a frame re-runs
     /// every GPU plugin's `init_gpu` on the next `pre_prepare`. Implementations
     /// should be idempotent or guard their own one-time setup.
+    ///
+    /// [`gpu_plugin_ids`](Self::gpu_plugin_ids) lists the id this plugin was
+    /// given.
     pub fn with_gpu_plugin(mut self, plugin: impl GpuPlugin) -> Self {
-        self.gpu_plugins.push(Box::new(plugin));
-        self.gpu_initialized = false;
+        self.add_gpu_plugin(plugin);
         self
     }
 
-    /// Register a GPU plugin on an existing runtime.
+    /// Register a GPU plugin on an existing runtime and return its id.
     ///
     /// Same semantics as [`with_gpu_plugin`](Self::with_gpu_plugin) but
-    /// takes `&mut self`.
-    pub fn add_gpu_plugin(&mut self, plugin: impl GpuPlugin) {
-        self.gpu_plugins.push(Box::new(plugin));
+    /// takes `&mut self`. Pass the id to
+    /// [`remove_gpu_plugin`](Self::remove_gpu_plugin) to unregister it.
+    pub fn add_gpu_plugin(&mut self, plugin: impl GpuPlugin) -> GpuPluginId {
+        self.push_gpu_plugin(Box::new(plugin))
+    }
+
+    /// Register a GPU plugin scoped to a single viewport and return its id.
+    ///
+    /// Same semantics as
+    /// [`with_gpu_plugin_for_viewport`](Self::with_gpu_plugin_for_viewport)
+    /// but takes `&mut self`.
+    pub fn add_gpu_plugin_for_viewport(
+        &mut self,
+        viewport: crate::renderer::ViewportId,
+        plugin: impl GpuPlugin,
+    ) -> GpuPluginId {
+        self.push_gpu_plugin(Box::new(gpu_plugin::ViewportScopedPlugin {
+            viewport,
+            inner: plugin,
+        }))
+    }
+
+    fn push_gpu_plugin(&mut self, plugin: Box<dyn GpuPlugin>) -> GpuPluginId {
+        let id = GpuPluginId(self.next_plugin_id());
+        self.gpu_plugins.push((id, plugin));
         self.gpu_initialized = false;
+        id
+    }
+
+    /// Unregister a GPU plugin and hand it back. No hook runs: dropping the
+    /// box releases what the plugin built in `init_gpu`. The plugins that
+    /// remain keep their relative order and are not initialised again.
+    /// Returns `None` for an id that is not registered (already removed,
+    /// declined by the device, or from another runtime).
+    pub fn remove_gpu_plugin(&mut self, id: GpuPluginId) -> Option<Box<dyn GpuPlugin>> {
+        let index = self.gpu_plugins.iter().position(|(i, _)| *i == id)?;
+        let (_, plugin) = self.gpu_plugins.remove(index);
+        let name = plugin.type_name();
+        if !self.gpu_plugins.iter().any(|(_, p)| p.type_name() == name) {
+            self.stats.pre_prepare_ms.remove(name);
+            self.stats.post_paint_ms.remove(name);
+        }
+        Some(plugin)
+    }
+
+    /// Ids of the registered GPU plugins, in the order they run (ascending
+    /// priority, registration order within a priority, as of the last frame).
+    pub fn gpu_plugin_ids(&self) -> impl Iterator<Item = GpuPluginId> + '_ {
+        self.gpu_plugins.iter().map(|(id, _)| *id)
+    }
+
+    /// Number of registered GPU plugins.
+    pub fn gpu_plugin_count(&self) -> usize {
+        self.gpu_plugins.len()
+    }
+
+    /// True once every registered GPU plugin has had `init_gpu` called.
+    /// Registering a GPU plugin clears it until the next `pre_prepare`.
+    pub fn gpu_initialized(&self) -> bool {
+        self.gpu_initialized
     }
 
     /// Register a GPU plugin scoped to a single viewport.
     ///
     /// The plugin's `pre_prepare` and `post_paint` only execute when the
     /// host's [`GpuFrameContext::viewport_id`] equals `viewport`. `init_gpu`
-    /// and `on_device_recreated` still run unconditionally.
+    /// still runs unconditionally.
     ///
     /// Use this in multi-viewport hosts (CAD quad-view, split-screen) that
     /// call `pre_prepare` / `post_paint` once per viewport with a populated
@@ -1676,31 +1822,13 @@ impl ViewportRuntime {
         viewport: crate::renderer::ViewportId,
         plugin: impl GpuPlugin,
     ) -> Self {
-        let scoped = gpu_plugin::ViewportScopedPlugin {
-            viewport,
-            inner: plugin,
-        };
-        self.gpu_plugins.push(Box::new(scoped));
-        self.gpu_initialized = false;
+        self.add_gpu_plugin_for_viewport(viewport, plugin);
         self
     }
 
-    /// Notify every registered GPU plugin that the wgpu device has been
-    /// recreated (device loss, surface re-init, host-driven reset).
-    ///
-    /// Calls [`GpuPlugin::on_device_recreated`] on each plugin, then clears
-    /// the init flag so `init_gpu` runs again with the new device on the
-    /// next [`pre_prepare`](Self::pre_prepare). The runtime does not detect
-    /// device loss on its own; the host is responsible for invoking this
-    /// when it recreates the device.
-    pub fn notify_device_recreated(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        for p in self.gpu_plugins.iter_mut() {
-            p.on_device_recreated(device, queue);
-        }
+    /// Run every GPU plugin's `init_gpu` again before the next `pre_prepare`,
+    /// for an instance that moved to a new device.
+    pub(crate) fn reset_gpu_init(&mut self) {
         self.gpu_initialized = false;
     }
 
@@ -1729,25 +1857,50 @@ impl ViewportRuntime {
         ctx: &GpuFrameContext<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         if !self.gpu_initialized {
-            for p in self.gpu_plugins.iter_mut() {
+            let caps = crate::capabilities::Capabilities::from_device(device, None);
+            let declined = &mut self.declined_gpu_plugins;
+            self.gpu_plugins.retain(|(_, p)| {
+                let missing = caps.missing_requirements(&p.requires());
+                if missing.is_empty() {
+                    return true;
+                }
+                tracing::warn!(
+                    plugin = p.type_name(),
+                    missing = %missing.join(", "),
+                    "GPU plugin declined: the device does not meet its requirements"
+                );
+                declined.push(crate::ViewportError::PluginUnsupported {
+                    type_name: p.type_name().to_owned(),
+                    missing,
+                });
+                false
+            });
+            for (_, p) in self.gpu_plugins.iter_mut() {
                 p.init_gpu(device);
             }
             self.gpu_initialized = true;
         }
         // Stable sort: equal priorities preserve registration order. Same
         // contract as the CPU plugin list.
-        self.gpu_plugins.sort_by_key(|p| p.priority());
+        self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
         let mut timings: std::collections::HashMap<&'static str, f32> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        for p in self.gpu_plugins.iter_mut() {
+        for (_, p) in self.gpu_plugins.iter_mut() {
             let t = web_time::Instant::now();
             out.extend(p.pre_prepare(device, queue, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
         self.stats.pre_prepare_ms = timings;
         out
+    }
+
+    /// GPU plugins removed at their first `pre_prepare` because the device did
+    /// not meet their [`requires`](GpuPlugin::requires), one
+    /// `ViewportError::PluginUnsupported` each.
+    pub fn declined_gpu_plugins(&self) -> &[crate::ViewportError] {
+        &self.declined_gpu_plugins
     }
 
     /// Run every registered GPU plugin's `post_paint` in ascending priority
@@ -1772,12 +1925,12 @@ impl ViewportRuntime {
         // Stable sort: equal priorities preserve registration order. The list
         // is already sorted if `pre_prepare` ran first this frame; sorting
         // again is cheap and keeps `post_paint` safe to call standalone.
-        self.gpu_plugins.sort_by_key(|p| p.priority());
+        self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
         let mut timings: std::collections::HashMap<&'static str, f32> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        for p in self.gpu_plugins.iter_mut() {
+        for (_, p) in self.gpu_plugins.iter_mut() {
             let t = web_time::Instant::now();
             out.extend(p.post_paint(device, queue, targets, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
@@ -1807,11 +1960,6 @@ impl ViewportRuntime {
     /// Remove the fixed timestep, reverting to one simulate call per frame at wall dt.
     pub fn clear_fixed_timestep(&mut self) {
         self.fixed_timestep = None;
-    }
-
-    /// The current runtime mode.
-    pub fn mode(&self) -> SceneRuntimeMode {
-        self.mode
     }
 
     /// The transform snapshot table for interpolated rendering.
@@ -1856,7 +2004,7 @@ impl ViewportRuntime {
 
     /// Set a camera follow binding (builder style).
     ///
-    /// Each call to [`step`](Self::step) will compute a suggested camera center
+    /// Each call to [`step`](Self::step) will compute a suggested camera centre
     /// from the followed node and emit it as a [`CameraFollowTarget`] event on
     /// [`RuntimeOutput::events`].
     pub fn with_camera_follow(mut self, follow: CameraFollow) -> Self {
@@ -1918,7 +2066,7 @@ impl ViewportRuntime {
                 // Take plugins out to avoid aliasing self while dispatching.
                 let mut plugins = std::mem::take(&mut self.plugins);
                 for event in &events {
-                    for plugin in plugins.iter_mut() {
+                    for (_, plugin) in plugins.iter_mut() {
                         let mut ctx = RuntimeStepContext {
                             priority: plugin.priority(),
                             dt: frame.dt,
@@ -1939,7 +2087,7 @@ impl ViewportRuntime {
         self.prev_node_ids = current_ids;
 
         // --- Sort plugins by priority (stable: preserves registration order within a band).
-        self.plugins.sort_by_key(|p| p.priority());
+        self.plugins.sort_by_key(|(_, p)| p.priority());
 
         // Take plugins out so we can access self freely during the step loop.
         let mut plugins = std::mem::take(&mut self.plugins);
@@ -1950,7 +2098,7 @@ impl ViewportRuntime {
             std::collections::HashMap::new();
 
         // --- Submit pass: all plugins in priority order ----------------------
-        for plugin in plugins.iter_mut() {
+        for (_, plugin) in plugins.iter_mut() {
             let ctx = RuntimeStepContext {
                 priority: plugin.priority(),
                 dt: frame.dt,
@@ -2000,12 +2148,6 @@ impl ViewportRuntime {
             &mut step_timings,
         );
 
-        // Built-in manipulation system runs before the Manipulate range.
-        if self.manipulation_system.is_some() {
-            let mut manip_sys = self.manipulation_system.take().unwrap();
-            manip_sys.step(frame, scene, selection, &mut writeback, &mut output);
-            self.manipulation_system = Some(manip_sys);
-        }
         // Manipulate + Animate: [MANIPULATE, SIMULATE)
         run_range(
             &mut plugins,
@@ -2021,6 +2163,7 @@ impl ViewportRuntime {
         );
 
         // Simulate: [SIMULATE, POST_SIM) -- once per fixed step or once at wall dt.
+        self.stats.dropped_sim_ms = 0.0;
         if self.fixed_timestep.is_some() {
             let mut ts = self.fixed_timestep.take().unwrap();
             for step_dt in ts.advance(frame.dt) {
@@ -2038,6 +2181,7 @@ impl ViewportRuntime {
                 );
                 self.step_index = self.step_index.wrapping_add(1);
             }
+            self.stats.dropped_sim_ms = ts.dropped() * 1000.0;
             self.fixed_timestep = Some(ts);
         } else {
             run_range(
@@ -2070,7 +2214,7 @@ impl ViewportRuntime {
         );
 
         // --- Collect pass: all plugins in priority order ---------------------
-        for plugin in plugins.iter_mut() {
+        for (_, plugin) in plugins.iter_mut() {
             let mut ctx = RuntimeStepContext {
                 priority: plugin.priority(),
                 dt: frame.dt,
@@ -2109,10 +2253,17 @@ impl ViewportRuntime {
                 glam::Mat4::from(op.transform)
             };
             scene.set_local_transform(op.id, new_local);
-            self.snapshots.update(op.id, op.transform);
         }
         if !ops.is_empty() {
             scene.update_transforms();
+            // Snapshots hold world transforms, read after propagation so a
+            // parent's transform and a preserved scale are included.
+            for op in &ops {
+                if let Some(node) = scene.node(op.id) {
+                    self.snapshots
+                        .update(op.id, glam::Affine3A::from_mat4(node.world_transform().to_mat4()));
+                }
+            }
         }
         output.node_transform_ops = ops;
 
@@ -2133,7 +2284,7 @@ impl ViewportRuntime {
                 .or_else(|| {
                     scene
                         .node(id)
-                        .map(|n| n.world_transform().col(3).truncate())
+                        .map(|n| n.world_transform().translation.as_vec3())
                 });
             if let Some(pos) = pos {
                 output

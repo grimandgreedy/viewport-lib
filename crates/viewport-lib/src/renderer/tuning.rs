@@ -20,10 +20,9 @@ use crate::renderer::stats::{PerformancePolicy, RuntimeMode};
 ///   (`LightingSettings` shadows, `PostProcessSettings`, `ScatterSettings`); they
 ///   can differ per frame/viewport.
 /// - MSAA sample count and the GPU pipeline cache: construction-time, see
-///   [`crate::ViewportRenderer::with_sample_count`] /
-///   [`crate::ViewportRenderer::new_with_pipeline_cache`].
+///   [`crate::RendererConfig`].
 /// - LOD groups: a registration API keyed by mesh, see
-///   [`crate::ViewportRenderer::register_lod_group`].
+///   [`crate::DeviceResources::register_lod_group`].
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -75,7 +74,7 @@ impl Default for RenderTuning {
 }
 
 /// Benchmark-only overrides on [`RenderTuning`], separated so they read as
-/// diagnostics rather than tuning. Both default off and do not change output.
+/// diagnostics rather than tuning. All default off and do not change output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -86,4 +85,9 @@ pub struct RenderDiagnostics {
     /// Force the per-object opaque pass to keep its discarding pipeline instead
     /// of the discard-free early-Z twin (A/B the early-Z win). Default off.
     pub force_po_discard: bool,
+    /// Draw every mesh batch with every shader feature compiled in, instead
+    /// of the pipeline built for the features its items use (see
+    /// [`ViewportRenderer::set_mesh_universal`](crate::ViewportRenderer::set_mesh_universal)).
+    /// Default off.
+    pub mesh_universal: bool,
 }

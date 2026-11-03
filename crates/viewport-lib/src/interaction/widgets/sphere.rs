@@ -1,23 +1,26 @@
-//! Sphere widget: draggable center handle and radius handle.
+//! Sphere widget: draggable centre handle and radius handle.
 
-use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem};
+use crate::Colour;
+use crate::geometry::maths::intersect::ray_plane_intersection;
+use crate::renderer::{ClipObject, ClipShape, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
-use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius};
+use super::{
+    HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SphereHandle {
-    Center,
+    Centre,
     Radius,
 }
 
-/// An interactive sphere widget with a draggable center and radius handle.
+/// An interactive sphere widget with a draggable centre and radius handle.
 ///
 /// Use `clip_object()` to get the visual fill/outline (push into
-/// `fd.effects.clip.objects` with `clip_geometry: false`), and `handle_glyphs()`
-/// for the draggable handle spheres (push into `fd.scene.glyphs`).
+/// `fd.effects.clip.objects` with `clip_geometry: false`), and `handle_markers()`
+/// for the draggable handles (build the visual from the returned markers).
 ///
 /// # Usage
 ///
@@ -27,11 +30,12 @@ enum SphereHandle {
 /// // Each frame:
 /// sphere.update(&ctx);
 /// fd.effects.clip.objects.push(sphere.clip_object());
-/// fd.scene.glyphs.push(sphere.handle_glyphs(HANDLE_ID, &ctx));
+/// let markers = sphere.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct SphereWidget {
-    /// World-space center of the sphere.
-    pub center: glam::Vec3,
+    /// World-space centre of the sphere.
+    pub centre: glam::Vec3,
     /// Radius in world units.
     pub radius: f32,
     /// RGBA fill colour (alpha controls transparency of the fill).
@@ -49,12 +53,12 @@ pub struct SphereWidget {
 
 impl SphereWidget {
     /// Create a new sphere widget.
-    pub fn new(center: glam::Vec3, radius: f32) -> Self {
+    pub fn new(centre: glam::Vec3, radius: f32) -> Self {
         Self {
-            center,
+            centre,
             radius: radius.max(0.01),
-            colour: [0.3, 0.6, 1.0, 0.25].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.3, 0.6, 1.0, 0.25),
+            handle_colour: Colour::TRANSPARENT,
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -87,10 +91,10 @@ impl SphereWidget {
         if ctx.drag_started {
             if let Some(handle) = self.hovered_handle {
                 let anchor = match handle {
-                    SphereHandle::Center => self.center,
+                    SphereHandle::Centre => self.centre,
                     SphereHandle::Radius => self.radius_handle_pos(),
                 };
-                let fwd = glam::Vec3::from(ctx.camera.forward);
+                let fwd = ctx.camera.forward();
                 let n = -fwd;
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
@@ -108,17 +112,17 @@ impl SphereWidget {
                 ray_plane_intersection(ro, rd, self.drag_plane_normal, self.drag_plane_d)
             {
                 match handle {
-                    SphereHandle::Center => {
+                    SphereHandle::Centre => {
                         let delta = hit - self.drag_anchor_world;
-                        let new_center = self.center + delta;
-                        if (new_center - self.center).length_squared() > 1e-10 {
-                            self.center = new_center;
+                        let new_centre = self.centre + delta;
+                        if (new_centre - self.centre).length_squared() > 1e-10 {
+                            self.centre = new_centre;
                             self.drag_anchor_world = hit;
                             updated = true;
                         }
                     }
                     SphereHandle::Radius => {
-                        let new_r = (hit - self.center).length().max(0.01);
+                        let new_r = (hit - self.centre).length().max(0.01);
                         if (new_r - self.radius).abs() > 1e-5 {
                             self.radius = new_r;
                             updated = true;
@@ -142,7 +146,7 @@ impl SphereWidget {
     pub fn clip_object(&self) -> ClipObject {
         ClipObject {
             shape: ClipShape::Sphere {
-                center: self.center.to_array(),
+                centre: self.centre.as_dvec3(),
                 radius: self.radius,
             },
             clip_geometry: false,
@@ -153,13 +157,13 @@ impl SphereWidget {
 
     /// Build a `PolylineItem` of three great circle rings (XY, XZ, YZ planes).
     ///
-    /// Push into `fd.scene.polylines` for a scene-pass outline consistent with
+    /// Push into `fd.scene.items_mut::<crate::PolylineItem>()` for a scene-pass outline consistent with
     /// how `BoxWidget::wireframe_item` is used. `id` is the pick ID (0 = not pickable).
     pub fn wireframe_item(&self, id: u64) -> PolylineItem {
         const STEPS: usize = 64;
         let mut positions: Vec<[f32; 3]> = Vec::with_capacity(STEPS * 3 + 3);
         let mut strip_lengths: Vec<u32> = Vec::with_capacity(3);
-        let c = self.center;
+        let c = self.centre;
         let r = self.radius;
 
         // Three great circles, one in each coordinate plane.
@@ -169,7 +173,7 @@ impl SphereWidget {
             (glam::Vec3::Y, glam::Vec3::Z),
         ];
         for (u, v) in bases {
-            crate::geometry::polyline::push_circle_loop(&mut positions, c, u, v, r, STEPS);
+            crate::geometry::primitives::wire::push_circle_loop(&mut positions, c, u, v, r, STEPS);
             strip_lengths.push((STEPS + 1) as u32);
         }
 
@@ -178,7 +182,7 @@ impl SphereWidget {
         PolylineItem {
             positions,
             strip_lengths,
-            default_colour: line_colour.into(),
+            default_colour: Colour::from_linear_array(line_colour),
             line_width: 1.5,
 
             settings: {
@@ -190,44 +194,30 @@ impl SphereWidget {
         }
     }
 
-    /// Build a `GlyphItem` with sphere handles: one at the center, one at the
-    /// radius edge (along +X from center).
+    /// Handle markers for the centre and the radius grip.
     ///
-    /// `id_base` is the pick ID for the center handle; `id_base + 1` for the radius handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let rp = self.radius_handle_pos();
-        let r_center = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let r_rh = handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 8.0);
-
-        let sc = if self.hovered_handle == Some(SphereHandle::Center)
-            || self.active_handle == Some(SphereHandle::Center)
-        {
-            1.0_f32
-        } else {
-            0.2
+        let hot = |h: SphereHandle| {
+            if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
+                1.0_f32
+            } else {
+                0.2
+            }
         };
-        let sr = if self.hovered_handle == Some(SphereHandle::Radius)
-            || self.active_handle == Some(SphereHandle::Radius)
-        {
-            1.0_f32
-        } else {
-            0.2
-        };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.center.to_array(), rp.to_array()];
-        g.vectors = vec![[r_center, 0.0, 0.0], [r_rh, 0.0, 0.0]];
-        g.scalars = vec![sc, sr];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.centre, rp],
+            radii: vec![
+                handle_world_radius(self.centre, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 8.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(SphereHandle::Centre)),
+                handle_colour(self.handle_colour, hot(SphereHandle::Radius)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -235,7 +225,7 @@ impl SphereWidget {
     // -----------------------------------------------------------------------
 
     fn radius_handle_pos(&self) -> glam::Vec3 {
-        self.center + glam::Vec3::X * self.radius
+        self.centre + glam::Vec3::X * self.radius
     }
 
     fn hit_test(
@@ -251,14 +241,14 @@ impl SphereWidget {
 
         let rp = self.radius_handle_pos();
         let rh_r = handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 8.0);
-        let ch_r = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
+        let ch_r = handle_world_radius(self.centre, &ctx.camera, ctx.viewport_size.y, 10.0);
 
         let rh_ball = parry3d::shape::Ball::new(rh_r);
         let ch_ball = parry3d::shape::Ball::new(ch_r);
 
         let rh_pose = Pose::from_parts([rp.x, rp.y, rp.z].into(), glam::Quat::IDENTITY);
         let ch_pose = Pose::from_parts(
-            [self.center.x, self.center.y, self.center.z].into(),
+            [self.centre.x, self.centre.y, self.centre.z].into(),
             glam::Quat::IDENTITY,
         );
 
@@ -267,11 +257,11 @@ impl SphereWidget {
 
         match (t_ch, t_rh) {
             (Some(tc), Some(tr)) => Some(if tc <= tr {
-                SphereHandle::Center
+                SphereHandle::Centre
             } else {
                 SphereHandle::Radius
             }),
-            (Some(_), None) => Some(SphereHandle::Center),
+            (Some(_), None) => Some(SphereHandle::Centre),
             (None, Some(_)) => Some(SphereHandle::Radius),
             (None, None) => None,
         }
@@ -285,9 +275,9 @@ mod tests {
     use glam::{Vec2, Vec3};
 
     #[test]
-    fn new_sets_center_and_radius() {
+    fn new_sets_centre_and_radius() {
         let w = SphereWidget::new(Vec3::new(1.0, 2.0, 3.0), 2.5);
-        assert_eq!(w.center, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(w.centre, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(w.radius, 2.5);
         assert!(!w.is_active());
     }
@@ -297,14 +287,14 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = SphereWidget::new(Vec3::ZERO, 1.0);
         assert!(!w.wireframe_item(1).positions.is_empty());
-        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(2, &ctx).positions.is_empty());
     }
 
     #[test]
-    fn drag_center_moves_and_release_ends() {
+    fn drag_centre_moves_and_release_ends() {
         let ctx = ctx_at(CENTRE);
-        let center = point_on_cursor_ray(&ctx, 12.0);
-        let mut w = SphereWidget::new(center, 1.0);
+        let centre = point_on_cursor_ray(&ctx, 12.0);
+        let mut w = SphereWidget::new(centre, 1.0);
         w.update(&ctx);
         let mut begin = ctx.clone();
         begin.drag_started = true;
@@ -316,7 +306,7 @@ mod tests {
         let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
         drag.dragging = true;
         w.update(&drag);
-        assert_ne!(w.center, center, "centre should move while dragging");
+        assert_ne!(w.centre, centre, "centre should move while dragging");
         assert!(w.radius > 0.0, "radius stays positive");
         let mut rel = drag.clone();
         rel.released = true;

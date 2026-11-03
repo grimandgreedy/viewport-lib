@@ -34,6 +34,8 @@ struct SubHighlight {
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var<uniform> hl:     SubHighlight;
 
+// #include "helpers/depth.wgsl"
+
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
 }
@@ -86,7 +88,7 @@ fn vs_main(
 
     // Clip-space depth nudge : shifts edge just in front of the surface.
     // 0.001 in NDC gives reliable front-placement at all typical distances.
-    clip.z -= 0.001 / clip.w;
+    clip.z = viewport_depth_toward_near(clip.z, 0.001 / clip.w);
 
     return VsOut(clip);
 }

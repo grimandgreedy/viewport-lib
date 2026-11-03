@@ -99,7 +99,7 @@ pub(crate) fn modifiers_match(required: &Modifiers, current: &Modifiers, ignore:
     if ignore {
         return true;
     }
-    required == current
+    required.for_bindings() == current.for_bindings()
 }
 
 /// Evaluate a single trigger against the current frame input.

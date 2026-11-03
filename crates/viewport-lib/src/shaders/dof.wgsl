@@ -14,7 +14,8 @@ struct DofUniform {
     focal_range:    f32,
     // Maximum blur kernel radius in pixels.
     max_blur_radius: f32,
-    // Camera near/far planes, used to linearize the depth buffer.
+    // Camera near and far planes, used to linearize the depth buffer. Far is
+    // 0 for a projection with no far plane.
     near_plane:     f32,
     far_plane:      f32,
     // Viewport dimensions, used to convert pixel offsets to UV offsets.
@@ -22,16 +23,25 @@ struct DofUniform {
     viewport_height: f32,
     // Non-zero when the foreground pass ran this frame.
     foreground_enabled: f32,
+    // Non-zero for an orthographic projection.
+    orthographic: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 @group(0) @binding(0) var hdr_texture: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
-@group(0) @binding(2) var depth_tex:   texture_depth_2d;
+@group(0) @binding(2) var depth_tex:   texture_2d<f32>;
 @group(0) @binding(3) var<uniform> params: DofUniform;
-// Foreground pass coverage mask: depth < 1.0 where foreground geometry was
+// Foreground pass coverage mask: not background where foreground geometry was
 // drawn. Covered pixels pass through unblurred; their scene depth belongs to
 // whatever the foreground drew over, not to what the pixel shows.
-@group(0) @binding(4) var foreground_depth: texture_depth_2d;
+@group(0) @binding(4) var foreground_depth: texture_2d<f32>;
+@group(0) @binding(5) var depth_sampler: sampler;
+
+// #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -51,11 +61,9 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 }
 
 // Linearize the hardware depth buffer value to view-space eye distance.
-// Standard NDC depth: z_eye = near * far / (far - d * (far - near)).
 fn linearize_depth(d: f32) -> f32 {
-    let n = params.near_plane;
-    let f = params.far_plane;
-    return n * f / (f - d * (f - n));
+    let clip = vec4<f32>(params.near_plane, params.far_plane, params.orthographic, 0.0);
+    return viewport_depth_to_view_z(d, clip);
 }
 
 // Vogel disc sample: golden angle spiral, unit disc radius.
@@ -70,7 +78,7 @@ fn vogel_disc(index: u32, count: u32, rotation: f32) -> vec2<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
-    let depth = textureLoad(depth_tex, pixel, 0);
+    let depth = depth_texel(depth_tex, depth_sampler, pixel);
 
     // Foreground-covered pixels stay sharp: the scene depth under them does
     // not describe what is visible there.
@@ -81,13 +89,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             vec2<u32>(0u),
             fg_dims - vec2<u32>(1u),
         );
-        if textureLoad(foreground_depth, fg_coord, 0) < 1.0 {
+        if !viewport_depth_is_background(depth_texel(foreground_depth, depth_sampler, vec2<i32>(fg_coord))) {
             return textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0);
         }
     }
 
     // Background or sky: copy HDR directly without blurring.
-    if depth >= 0.9999 {
+    if viewport_depth_is_background(depth) {
         return textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0);
     }
 

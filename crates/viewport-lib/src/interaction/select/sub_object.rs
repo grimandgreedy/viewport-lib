@@ -9,6 +9,9 @@
 //! [`crate::interaction::select::selection::Selection`]. Typically an app holds both:
 //! `Selection` for which objects are selected, `SubSelection` for which faces
 //! or points within those objects are selected.
+//!
+//! [`SubObjectRef`]: crate::SubObjectRef
+//! [`SubSelection`]: crate::SubSelection
 
 use std::collections::HashSet;
 
@@ -35,8 +38,8 @@ use crate::interaction::select::selection::NodeId;
 /// - [`Voxel`](SubObjectRef::Voxel) : voxel in a structured scalar volume.
 /// - [`Cell`](SubObjectRef::Cell) : cell in an unstructured volume mesh (`VolumeMeshData`).
 /// - [`Splat`](SubObjectRef::Splat) : gaussian splat, by index in the splat buffer.
-/// - [`Instance`](SubObjectRef::Instance) : glyph, tensor glyph, or sprite instance,
-///   by instance index.
+/// - [`Instance`](SubObjectRef::Instance) : a vector or tensor field sample, a sprite instance,
+///   or a `MeshInstanceItem` transform, by instance index.
 /// - [`Segment`](SubObjectRef::Segment) : polyline, tube, or ribbon segment, by index.
 /// - [`Strip`](SubObjectRef::Strip) : connected curve strip within a multi-strip item,
 ///   by strip index.
@@ -58,7 +61,7 @@ pub enum SubObjectRef {
     ///
     /// The flat index encodes `(ix, iy, iz)` as `ix + iy * nx + iz * nx * ny`.
     /// Recover the 3-D indices using the grid dimensions from
-    /// [`VolumeData`](crate::geometry::marching_cubes::VolumeData).
+    /// [`VolumeData`](crate::geometry::volume::grid::VolumeData).
     Voxel(u32),
     /// A cell within an unstructured volume mesh, by its index in
     /// [`VolumeMeshData::cells`](crate::resources::volume::volume_mesh::VolumeMeshData::cells).
@@ -68,7 +71,8 @@ pub enum SubObjectRef {
     Cell(u32),
     /// A gaussian splat identified by its index in the splat buffer.
     Splat(u32),
-    /// A glyph, tensor glyph, or sprite instance identified by its instance index.
+    /// A field sample, sprite instance or mesh instance identified by its
+    /// instance index.
     Instance(u32),
     /// A polyline, tube, or ribbon segment identified by its segment index.
     Segment(u32),
@@ -335,13 +339,13 @@ impl SubSelection {
 ///
 /// Pass one entry per volume object via [`SubSelectionRef::with_voxels`].
 pub struct VolumeSelectionInfo {
-    /// Grid dimensions `[nx, ny, nz]`: same as [`VolumeData::dims`].
+    /// Grid dimensions `[nx, ny, nz]`: same as [`VolumeData::dims`](crate::VolumeData::dims).
     pub dims: [u32; 3],
-    /// Local-space bounding-box minimum corner (matches [`VolumeItem::bbox_min`]).
+    /// Local-space bounding-box minimum corner (matches `VolumeItem::bbox_min`).
     pub bbox_min: [f32; 3],
-    /// Local-space bounding-box maximum corner (matches [`VolumeItem::bbox_max`]).
+    /// Local-space bounding-box maximum corner (matches `VolumeItem::bbox_max`).
     pub bbox_max: [f32; 3],
-    /// World-space transform (matches [`VolumeItem::model`]).
+    /// World-space transform (matches `VolumeItem::model`).
     pub model: [[f32; 4]; 4],
 }
 
@@ -352,7 +356,7 @@ pub struct VolumeSelectionInfo {
 pub struct PolylineSelectionInfo {
     /// World-space vertex positions. Each entry is one polyline node.
     pub positions: Vec<[f32; 3]>,
-    /// Strip lengths. Same encoding as [`PolylineItem::strip_lengths`](crate::renderer::types::items::PolylineItem::strip_lengths):
+    /// Strip lengths. Same encoding as [`PolylineItem::strip_lengths`](crate::PolylineItem::strip_lengths):
     /// each entry is the number of nodes in that strip. If empty, all positions
     /// belong to a single strip.
     pub strip_lengths: Vec<u32>,
@@ -439,7 +443,7 @@ pub struct SubSelectionRef {
     pub(crate) curve_family_lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
     /// Instanced-item positions keyed by node id.
     ///
-    /// Covers [`SubObjectRef::Instance`] (glyphs, tensor glyphs, sprites) and
+    /// Covers [`SubObjectRef::Instance`] (field samples, sprites) and
     /// [`SubObjectRef::Splat`] (Gaussian splats). The index carried by
     /// `Instance(i)` / `Splat(i)` addresses `instance_lookup[node_id][i]`. The
     /// positions are transformed by the node's entry in `model_matrices` (so
@@ -455,6 +459,14 @@ pub struct SubSelectionRef {
 }
 
 impl SubSelectionRef {
+    /// The selected `(node_id, sub_object)` pairs.
+    ///
+    /// An item type reads this to work out which of its sub-objects are
+    /// selected, matching `node_id` against its items' pick ids.
+    pub fn items(&self) -> &[(NodeId, SubObjectRef)] {
+        &self.items
+    }
+
     /// Create a snapshot from a live [`SubSelection`].
     ///
     /// - `mesh_lookup` : CPU positions + indices per node id (same type as the
@@ -534,7 +546,7 @@ impl SubSelectionRef {
     /// Attach instanced-item positions for [`SubObjectRef::Instance`] and
     /// [`SubObjectRef::Splat`] highlight rendering.
     ///
-    /// `lookup` maps each instanced item's node id (glyphs, tensor glyphs,
+    /// `lookup` maps each instanced item's node id (field samples,
     /// sprites, Gaussian splats) to its per-instance positions. `Instance(i)` /
     /// `Splat(i)` addresses `lookup[node_id][i]`, transformed by the node's
     /// entry in `model_matrices` (pass object-space splat positions with the

@@ -6,17 +6,29 @@
 
 /// Full-screen ground-plane pipeline, uniform, and bind group.
 pub(crate) struct GroundPlaneResources {
-    /// Full-screen ground plane render pipeline (alpha blending, LessEqual depth).
-    pub(crate) pipeline: crate::gpu::RenderPipeline,
+    /// Full-screen ground plane render pipeline (alpha blending, LessEqual
+    /// depth). `None` until a frame asks for a ground plane; see
+    /// [`DeviceResources::ensure_ground_plane_pipeline`](crate::resources::DeviceResources::ensure_ground_plane_pipeline).
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the ground plane (binding 0: uniform, 1: shadow
-    /// depth, 2: comparison sampler). The bind group is rebuilt from the live
-    /// layout inside `create_*`; this stored copy is currently unused.
-    #[allow(dead_code)]
+    /// depth, 2: comparison sampler, 3: shadow info).
     pub(crate) bgl: crate::gpu::BindGroupLayout,
     /// Uniform buffer for GroundPlaneUniform (256 bytes, written each frame in prepare()).
     pub(crate) uniform_buf: crate::gpu::Buffer,
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
     pub(crate) bind_group: crate::gpu::BindGroup,
+}
+
+impl GroundPlaneResources {
+    /// The ground-plane pipeline, built by
+    /// [`DeviceResources::ensure_ground_plane_pipeline`](crate::resources::DeviceResources::ensure_ground_plane_pipeline)
+    /// by the prepare of any frame that asks for a ground plane, which is before
+    /// the pass that draws it.
+    pub(crate) fn pipeline(&self) -> &crate::gpu::RenderPipeline {
+        self.pipeline
+            .as_ref()
+            .expect("ground plane pipeline missing; the scene prepare builds it")
+    }
 }
 
 #[cfg(test)]
@@ -33,9 +45,9 @@ mod tests {
         // Field access is enough to prove the fields are present and typed; the
         // pipeline / bind group cannot be meaningfully introspected headlessly.
         let _ = (
-            &res.ground.pipeline,
-            &res.ground.uniform_buf,
-            &res.ground.bind_group,
+            &res.scene_tier.ground.pipeline,
+            &res.scene_tier.ground.uniform_buf,
+            &res.scene_tier.ground.bind_group,
         );
     }
 }

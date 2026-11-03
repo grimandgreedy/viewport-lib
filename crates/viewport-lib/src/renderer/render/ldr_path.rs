@@ -5,6 +5,11 @@
 use super::*;
 
 impl ViewportRenderer {
+    /// `bg_colour` is the background as premultiplied linear RGBA, so the clear
+    /// below is the whole of what the background means on this path: at alpha 1
+    /// an opaque colour, at alpha 0 nothing, and in between a translucent plate
+    /// the scene composites over. The scene pipelines blend straight source over
+    /// a premultiplied destination, which is what keeps that consistent.
     pub(crate) fn render_frame_ldr(
         &mut self,
         device: &crate::gpu::Device,
@@ -17,31 +22,48 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) -> crate::gpu::CommandBuffer {
-        // The LDR pipeline has no post chain: item-type plugins and the OIT pass
-        // (needed for transparent volume meshes) only exist on the HDR path.
-        // Report each dropped feature once instead of silently omitting it.
-        use std::sync::atomic::Ordering::Relaxed;
-        if !frame.scene.plugin_items.is_empty() && !self.ldr_plugin_items_warned.swap(true, Relaxed)
-        {
-            tracing::warn!(
-                "item-type plugin items are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): the plugin paint dispatch only runs in the HDR \
-                 pipeline. Set effects.display.mode = PipelineMode::Hdr to render them."
-            );
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "ldr_scene_pass", vp = vp_idx)
+                .entered();
+        // The LDR pipeline has no post chain: the OIT pass (needed for
+        // transparent volume meshes) only exists on the HDR path, and
+        // item-type plugins draw here only when they opt in via `draws_ldr`.
+        // Report each dropped feature instead of silently omitting it.
+        for (name, plugin) in self.item_type_plugins.iter() {
+            let skipped = !plugin.draws_ldr()
+                && crate::renderer::item_plugins::plugin_items_for(frame, name)
+                    .is_some_and(|items| !items.is_empty());
+            if skipped {
+                self.resources.notices.report(
+                    crate::notice::NoticeKey::new(
+                        crate::NoticeCategory::Item,
+                        "items_skipped_on_ldr",
+                        [crate::notice::name_id(name), 0],
+                    ),
+                    crate::Severity::Warning,
+                    || crate::NoticeDetail::ItemsSkippedOnLdr {
+                        plugin: name.to_string(),
+                    },
+                );
+            }
         }
         if frame
             .scene
             .volume_meshes
             .iter()
             .any(|m| !m.settings.hidden && m.transparency.is_some())
-            && !self.ldr_volume_transparency_warned.swap(true, Relaxed)
         {
-            tracing::warn!(
-                "transparent volume meshes are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): they require the OIT pass, which only exists in \
-                 the HDR pipeline. Set effects.display.mode = PipelineMode::Hdr."
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Item,
+                    "volume_transparency_on_ldr",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::VolumeTransparencyOnLdr,
             );
         }
+
+        self.report_auto_exposure_on_ldr(frame);
 
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
@@ -51,7 +73,7 @@ impl ViewportRenderer {
         });
 
         let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
-        let needs_blur = self.has_backdrop_blur_shapes();
+        let needs_blur = self.has_backdrop_blur_shapes(vp_idx);
 
         if use_dyn_res {
             let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
@@ -69,14 +91,12 @@ impl ViewportRenderer {
         // When occlusion culling is on, keep the scene depth (instead of
         // discarding it) so it can be copied into the HiZ prev-depth target for
         // next frame's reprojection. The copy happens after the scene pass below.
-        let store_scene_depth = self.resources.occlusion_culling_enabled();
+        let store_scene_depth =
+            self.resources.occlusion_culling_enabled() && self.resources.scene_tier.is_built();
 
         {
             let slot = &self.viewport_slots[vp_idx];
-            let slot_hdr = slot
-                .hdr
-                .as_ref()
-                .expect("HDR state missing in LDR path; ensure_viewport_hdr must have been called");
+            let ldr_depth_view = self.ldr_depth_view(vp_idx);
             let camera_bg = &slot.camera_bind_group;
             let grid_bg = &slot.grid_bind_group;
             // Choose render target: dyn_res intermediate, backdrop intermediate, or output_view.
@@ -88,9 +108,9 @@ impl ViewportRenderer {
                 (&dr.colour_view, &dr.depth_view)
             } else if needs_blur {
                 let bs = self.backdrop_blur_state.as_ref().unwrap();
-                (&bs.intermediate_view, &slot_hdr.outline_depth_view)
+                (&bs.intermediate_view, ldr_depth_view)
             } else {
-                (output_view, &slot_hdr.outline_depth_view)
+                (output_view, ldr_depth_view)
             };
             let ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
@@ -124,7 +144,7 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
+                        load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
                         store: if store_scene_depth {
                             crate::gpu::StoreOp::Store
                         } else {
@@ -136,139 +156,73 @@ impl ViewportRenderer {
                 timestamp_writes: ts_writes,
                 occlusion_query_set: None,
             });
-            emit_draw_calls!(
-                &self.resources,
-                &mut render_pass,
-                frame,
-                self.instancing.use_instancing,
-                &self.instancing.batches,
-                camera_bg,
-                grid_bg,
-                &self.compute_filter_results,
-                Some(slot),
-                &self.mesh_uniforms.wireframe_bind_groups,
-                &self.mesh_uniforms.bind_groups,
-                &self.mesh_uniforms.submesh_bind_groups,
-                &self.mesh_uniforms.object_indices,
-                &self.mesh_uniforms.submesh_indices,
-                scene_items,
-                // The cached bundle was recorded from `prepared_surfaces` (the
-                // surface submission, with the opaque volume-mesh boundaries
-                // truncated off). When those boundaries are appended to
-                // `scene_items` the bundle no longer covers the full list, so
-                // fall back to the per-item draw path that walks every item.
-                if scene_items.len() == self.prepared_surfaces.len() {
+            // Below the full tier only the compatibility tier's scene content draws.
+            if self.resources.scene_tier.is_built() {
+                emit_draw_calls!(
+                    &self.resources,
+                    &mut render_pass,
+                    frame,
+                    &self.instancing.batches,
+                    camera_bg,
+                    grid_bg,
+                    Some(slot),
+                    &self.mesh_uniforms.material_bind_groups,
+                    scene_items,
                     self.per_object_bundle.as_ref()
-                } else {
-                    None
-                }
-            );
-            emit_scivis_draw_calls!(
-                &self.resources,
-                &mut render_pass,
-                &self.point_cloud_gpu_data,
-                &self.glyph_gpu_data,
-                &self.polyline_gpu_data,
-                &self.volume_gpu_data,
-                &self.streamtube_gpu_data,
-                camera_bg,
-                &self.tube_gpu_data,
-                &self.image_slice_gpu_data,
-                &self.tensor_glyph_gpu_data,
-                &self.ribbon_gpu_data,
-                &self.volume_surface_slice_gpu_data,
-                &self.sprite_gpu_data,
-                &self.mesh_instance_gpu_data,
-                false
-            );
-            // Gaussian splats. Mirrors the block in `paint_to` and the HDR
-            // path so the offscreen LDR path draws splats too.
-            super::draw_gaussian_splats(
-                &mut render_pass,
-                &self.resources,
-                &self.gaussian_splat_draw_data,
-                camera_bg,
-                false,
-            );
-            // TransparentVolumeMesh boundary wireframe overlay.
-            if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
-                if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
-                        if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                            render_pass.set_pipeline(&self.resources.scene.wireframe);
-                            bind_deform_group!(
-                                render_pass,
-                                self.resources,
-                                &self.resources.deform.dummy_bind_group
-                            );
-                            render_pass.set_bind_group(1, tvm_bg, &[]);
-                            render_pass.set_vertex_buffer(
-                                0,
-                                self.resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                render_pass.set_index_buffer(
-                                    edge_buf.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
+                );
+                self.draw_mesh_instance_batches(&mut render_pass, camera_bg);
+                // TransparentVolumeMesh boundary wireframe overlay.
+                if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
+                    if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        for (slot, mesh_id) in
+                            self.mesh_uniforms.tvm_wireframe_draws.iter().enumerate()
+                        {
+                            if let (Some(mesh), Some(wf)) = (
+                                self.resources.mesh_store.get(*mesh_id),
+                                self.resources.scene.wireframe(),
+                            ) {
+                                render_pass.set_pipeline(wf);
+                                render_pass.set_bind_group(1, tvm_bg, &[]);
+                                if let Some(records) = &self.mesh_uniforms.tvm_wireframe_buf {
+                                    render_pass.set_vertex_buffer(1, records.slice(..));
+                                }
+                                render_pass.set_vertex_buffer(
+                                    0,
+                                    self.resources.geometry.vertex_slice(mesh.vertex_span),
                                 );
-                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                                if let Some(edge_buf) = &mesh.edge_index_buffer {
+                                    render_pass.set_index_buffer(
+                                        edge_buf.slice(..),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    let slot = slot as u32;
+                                    render_pass.draw_indexed(
+                                        0..mesh.edge_index_count,
+                                        0,
+                                        slot..slot + 1,
+                                    );
+                                }
                             }
                         }
                     }
                 }
+                // Item-type plugin paint (LDR opt-in only): after all built-in
+                // scene content, mirroring the HDR scene-pass position.
+                self.dispatch_plugin_paint(&mut render_pass, frame, false);
+                // Outline composite after all scene content.
+                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
+            } else {
+                self.paint_compatibility_scene(&mut render_pass, camera_bg, frame);
+                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
-            // GPU implicit surface.
-            if !self.implicit_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.implicit.pipeline {
-                    render_pass.set_pipeline(dual.for_format(false));
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for gpu in &self.implicit_gpu_data {
-                        render_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
-            // GPU marching cubes indirect draw.
-            if !self.mc_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.mc.surface_pipeline {
-                    render_pass.set_pipeline(dual.for_format(false));
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for mc in &self.mc_gpu_data {
-                        let vol = &self.resources.mc.volumes[mc.volume_idx];
-                        render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                        for slab in &vol.slabs {
-                            render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
-                            render_pass.draw_indirect(&slab.indirect_buf, 0);
-                        }
-                    }
-                }
-            }
-            // Outline composite after all scene content.
-            emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
-            // Screen-space image overlays.
-            // Regular items drawn with depth_compare: Always (always on top).
-            // Depth-composite items drawn with depth_compare: LessEqual (occluded by
-            // scene geometry whose depth was already written to the depth attachment).
-            if !self.screen_image_gpu_data.is_empty() {
-                if let Some(overlay_pipeline) = &self.resources.screen_image.pipeline {
-                    let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
-                    for gpu in &self.screen_image_gpu_data {
-                        if let (Some(dc_bg), Some(dc_pipe)) = (&gpu.depth_bind_group, dc_pipeline) {
-                            render_pass.set_pipeline(dc_pipe);
-                            render_pass.set_bind_group(0, dc_bg, &[]);
-                        } else {
-                            render_pass.set_pipeline(overlay_pipeline);
-                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                        }
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
+            // The sub-object highlight, over the scene and the outline.
+            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.
             if !needs_blur {
-                emit_overlay_2d!(self, render_pass);
+                let ov = &self.viewport_slots[vp_idx].overlay;
+                emit_overlay_2d!(self, ov, render_pass);
             }
         }
         // -- End of scene render pass (dropped above). ---
@@ -281,7 +235,7 @@ impl ViewportRenderer {
         // Item-type plugins are not dispatched on the LDR path (their
         // foreground pipelines target the HDR formats), so only the item
         // list gates this pass.
-        if !frame.scene.foreground_items.is_empty() {
+        if !frame.scene.foreground_items.is_empty() && self.resources.scene_tier.is_built() {
             let (fw, fh) = if use_dyn_res {
                 let dr = self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap();
                 (dr.scaled_size[0], dr.scaled_size[1])
@@ -309,10 +263,9 @@ impl ViewportRenderer {
                     .camera
                     .render_camera
                     .foreground_camera(frame.effects.foreground.as_ref());
-                let eye = glam::Vec3::from(fg_camera.eye_position);
+                let eye = fg_camera.eye_position();
                 let dist_from_eye = |item: &SceneRenderItem| -> f32 {
-                    let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
-                    (pos - eye).length()
+                    (item.model.translation - glam::DVec3::from(eye)).length() as f32
                 };
                 let items = &frame.scene.foreground_items;
                 let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
@@ -321,21 +274,36 @@ impl ViewportRenderer {
                     if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
                     }
-                    if item.settings.opacity < 1.0 || item.material.is_blend() {
+                    // Per-camera layer cull, as in the scene pass: drop a
+                    // foreground item whose visibility mask shares no bit with
+                    // this viewport's cull_mask. Default masks (`!0`) keep it.
+                    if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
+                        continue;
+                    }
+                    if item.settings.opacity < 1.0
+                        || self.resources.material_or_default(item.material).is_blend()
+                    {
                         transparent.push((idx, item));
                     } else {
                         opaque.push((idx, item));
                     }
                 }
                 opaque.sort_by(|a, b| {
-                    dist_from_eye(a.1)
-                        .partial_cmp(&dist_from_eye(b.1))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                    a.1.settings
+                        .draw_priority
+                        .cmp(&b.1.settings.draw_priority)
+                        .then_with(|| {
+                            dist_from_eye(a.1)
+                                .partial_cmp(&dist_from_eye(b.1))
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
                 });
-                transparent.sort_by(|a, b| {
-                    dist_from_eye(b.1)
-                        .partial_cmp(&dist_from_eye(a.1))
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                transparent.sort_by_key(|(_, item)| {
+                    crate::renderer::types::draw_order::blend_key(
+                        item.settings.draw_priority,
+                        item.settings.blend_order,
+                        dist_from_eye(item),
+                    )
                 });
 
                 let mut render_pass =
@@ -356,7 +324,9 @@ impl ViewportRenderer {
                             crate::gpu::RenderPassDepthStencilAttachment {
                                 view: fg_depth_view,
                                 depth_ops: Some(crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    load: crate::gpu::LoadOp::Clear(
+                                        crate::plugin_api::depth::DEPTH_CLEAR,
+                                    ),
                                     store: crate::gpu::StoreOp::Discard,
                                 }),
                                 stencil_ops: Some(crate::gpu::Operations {
@@ -370,19 +340,14 @@ impl ViewportRenderer {
                     });
                 render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
 
+                let family = resources.scene.ldr_family();
                 for (idx, item) in opaque.iter().chain(transparent.iter()) {
-                    let solid_pl = select_two_sided(
-                        PipelineKey::two_sided(item.material.is_two_sided()),
-                        &resources.scene.solid,
-                        &resources.scene.solid_two_sided,
-                    );
                     let obj_bg = slot
                         .foreground_objects
                         .get(*idx)
-                        .and_then(|e| e.bind_group.as_ref());
+                        .and_then(|e| e.bind_group.as_ref().map(|bg| (bg, &e.uniform_buf)));
                     super::hdr_path::draw_mesh_item(
                         resources,
-                        &self.compute_filter_results,
                         &mut render_pass,
                         item,
                         obj_bg,
@@ -390,10 +355,7 @@ impl ViewportRenderer {
                         0,
                         false,
                         false,
-                        solid_pl,
-                        &resources.scene.solid_two_sided,
-                        &resources.scene.transparent,
-                        &resources.scene.wireframe,
+                        &family,
                         // Foreground items draw through the positional
                         // foreground_objects cache, which has no per-range
                         // entries; they render with the single item material.
@@ -413,7 +375,13 @@ impl ViewportRenderer {
         // `dyn_res` while the pyramid is written into `cull`, disjoint fields of
         // the slot.
         if store_scene_depth {
-            let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
+            let view_proj = self
+                .origin
+                .camera(&frame.camera.render_camera)
+                .view_proj()
+                .to_cols_array_2d();
+            let origin = self.origin.origin();
+            let hiz = self.resources.hiz_pipelines(device);
             let slot = &mut self.viewport_slots[vp_idx];
             let (depth_only_view, dw, dh) = if use_dyn_res {
                 let dr = slot.dyn_res.as_ref().unwrap();
@@ -425,18 +393,21 @@ impl ViewportRenderer {
             };
             slot.cull.store_hiz_prev_depth(
                 device,
+                &hiz,
                 &mut encoder,
                 depth_only_view,
                 dw,
                 dh,
                 view_proj,
+                origin,
             );
         }
 
         // Backdrop blur: capture scene, run blur, then draw overlays in a
         // second render pass so blur shapes can sample the blurred result.
         if needs_blur {
-            let spread = self
+            let spread = self.viewport_slots[vp_idx]
+                .overlay
                 .overlay_shape_gpu_data
                 .as_ref()
                 .map(|d| d.max_blur_radius)
@@ -456,7 +427,6 @@ impl ViewportRenderer {
 
             // Second render pass for overlays (Load to preserve scene content).
             let slot = &self.viewport_slots[vp_idx];
-            let slot_hdr = slot.hdr.as_ref().unwrap();
             let overlay_colour_view: &crate::gpu::TextureView = if use_dyn_res {
                 &slot.dyn_res.as_ref().unwrap().colour_view
             } else {
@@ -465,9 +435,11 @@ impl ViewportRenderer {
             let overlay_depth_view: &crate::gpu::TextureView = if use_dyn_res {
                 &slot.dyn_res.as_ref().unwrap().depth_view
             } else {
-                &slot_hdr.outline_depth_view
+                self.ldr_depth_view(vp_idx)
             };
             {
+                let overlay_ts_writes =
+                    self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
                 let mut overlay_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                         #[cfg(any(wgpu29, wgpu30))]
@@ -492,13 +464,14 @@ impl ViewportRenderer {
                                 stencil_ops: None,
                             },
                         ),
-                        timestamp_writes: None,
+                        timestamp_writes: overlay_ts_writes,
                         occlusion_query_set: None,
                     });
                 // Draw blur backdrop shapes first.
-                self.draw_blur_shapes(&mut overlay_pass, &blur_bg);
+                self.draw_blur_shapes(&mut overlay_pass, &blur_bg, vp_idx);
                 // Then normal shapes.
-                emit_overlay_2d!(self, overlay_pass);
+                let ov = &self.viewport_slots[vp_idx].overlay;
+                emit_overlay_2d!(self, ov, overlay_pass);
             }
         }
 
@@ -580,20 +553,30 @@ impl ViewportRenderer {
             let bs = self.backdrop_blur_state.as_ref().unwrap();
             let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
             let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-            let blit_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("backdrop_blit_bg"),
-                layout: blit_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&bs.intermediate_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                    },
-                ],
-            });
+            let blit_bg = bs
+                .binds
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .blit
+                .get_or_insert_with(|| {
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("backdrop_blit_bg"),
+                        layout: blit_bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(
+                                    &bs.intermediate_view,
+                                ),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: crate::gpu::BindingResource::Sampler(blit_sampler),
+                            },
+                        ],
+                    })
+                })
+                .clone();
             let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,

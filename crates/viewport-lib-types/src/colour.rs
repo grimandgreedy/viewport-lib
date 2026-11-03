@@ -43,7 +43,7 @@ pub fn linear_to_srgb(c: f32) -> f32 {
 /// 8-bit texture is sRGB when it holds a base-colour image and linear when it
 /// holds data (roughness, metallic, a normal map). Direct [`Colour`] values do
 /// not need this, since the constructor already fixes the space.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ColourSpace {
     /// sRGB-encoded: decode to linear before use.
@@ -98,6 +98,18 @@ impl Colour {
         Colour([r, g, b, 1.0])
     }
 
+    /// A linear RGBA array, stored verbatim: for values already held as arrays,
+    /// such as a colourmap sample or a vertex colour read from a buffer.
+    pub const fn from_linear_array(rgba: [f32; 4]) -> Self {
+        Colour(rgba)
+    }
+
+    /// A linear RGB array with alpha 1.0. See
+    /// [`from_linear_array`](Self::from_linear_array).
+    pub const fn from_linear_rgb_array(rgb: [f32; 3]) -> Self {
+        Colour([rgb[0], rgb[1], rgb[2], 1.0])
+    }
+
     /// An sRGB RGBA colour with 0..=1 channels. The RGB channels are decoded to
     /// linear; alpha is a linear coverage value and is stored as given.
     pub fn srgb(r: f32, g: f32, b: f32, a: f32) -> Self {
@@ -107,6 +119,19 @@ impl Colour {
     /// An sRGB RGB colour with 0..=1 channels and alpha 1.0. See
     /// [`srgb`](Self::srgb).
     pub fn srgb_rgb(r: f32, g: f32, b: f32) -> Self {
+        Self::srgb(r, g, b, 1.0)
+    }
+
+    /// An sRGB RGBA array with 0..=1 channels: for values already held as
+    /// arrays, such as a theme table or a colour read from a saved document.
+    /// See [`srgb`](Self::srgb).
+    pub fn from_srgb_array([r, g, b, a]: [f32; 4]) -> Self {
+        Self::srgb(r, g, b, a)
+    }
+
+    /// An sRGB RGB array with alpha 1.0. See
+    /// [`from_srgb_array`](Self::from_srgb_array).
+    pub fn from_srgb_rgb_array([r, g, b]: [f32; 3]) -> Self {
         Self::srgb(r, g, b, 1.0)
     }
 
@@ -186,9 +211,56 @@ impl Colour {
         [self.0[0], self.0[1], self.0[2]]
     }
 
+    /// The sRGB RGBA array, the inverse of [`srgb`](Self::srgb): RGB is
+    /// encoded, alpha is returned as stored. For comparing against the colour a
+    /// theme or document asked for, or showing it in a colour picker.
+    pub fn to_srgb_rgba(self) -> [f32; 4] {
+        [
+            linear_to_srgb(self.0[0]),
+            linear_to_srgb(self.0[1]),
+            linear_to_srgb(self.0[2]),
+            self.0[3],
+        ]
+    }
+
+    /// The sRGB RGB array, dropping alpha. See
+    /// [`to_srgb_rgba`](Self::to_srgb_rgba).
+    pub fn to_srgb_rgb(self) -> [f32; 3] {
+        let [r, g, b, _] = self.to_srgb_rgba();
+        [r, g, b]
+    }
+
     /// The alpha channel (linear coverage, 0..=1).
     pub const fn alpha(self) -> f32 {
         self.0[3]
+    }
+
+    /// Relative luminance, from the Rec. 709 weights on the linear channels.
+    /// Alpha is ignored. `0.0` is black and `1.0` is white; HDR colours go
+    /// above one.
+    pub fn luminance(self) -> f32 {
+        0.2126 * self.0[0] + 0.7152 * self.0[1] + 0.0722 * self.0[2]
+    }
+
+    /// Interpolate towards `other` by `t`, per channel in linear space, alpha
+    /// included. `t` is not clamped, so values outside `0..=1` extrapolate.
+    pub fn lerp(self, other: Colour, t: f32) -> Colour {
+        let [a, b] = [self.0, other.0];
+        Colour(std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t))
+    }
+
+    /// This colour composited over `below`, the standard source-over blend for
+    /// straight (unpremultiplied) alpha, in linear space. Fully transparent
+    /// over fully transparent is [`TRANSPARENT`](Self::TRANSPARENT).
+    pub fn over(self, below: Colour) -> Colour {
+        let (src, dst) = (self.0, below.0);
+        let dst_weight = dst[3] * (1.0 - src[3]);
+        let alpha = src[3] + dst_weight;
+        if alpha <= 0.0 {
+            return Self::TRANSPARENT;
+        }
+        let mix = |i: usize| (src[i] * src[3] + dst[i] * dst_weight) / alpha;
+        Colour([mix(0), mix(1), mix(2), alpha])
     }
 
     /// Whether every channel (including alpha) is finite. A NaN or infinite
@@ -211,39 +283,6 @@ impl Colour {
             enc(self.0[2]),
             (self.0[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
         ]
-    }
-}
-
-/// A linear `[f32; 4]` is taken as-is. Bare arrays are treated as linear, so
-/// existing linear values keep working; reach for a constructor
-/// ([`Colour::rgb`], [`Colour::hex`], ...) when the value is sRGB.
-impl From<[f32; 4]> for Colour {
-    fn from(v: [f32; 4]) -> Self {
-        Colour(v)
-    }
-}
-
-/// A linear `[f32; 3]` is taken as-is, with alpha 1.0.
-impl From<[f32; 3]> for Colour {
-    fn from(v: [f32; 3]) -> Self {
-        Colour([v[0], v[1], v[2], 1.0])
-    }
-}
-
-/// A linear `[f64; 4]` is taken as-is (channels narrowed to `f32`). This mirrors
-/// [`From<[f32; 4]>`] so an untyped array literal, which infers as `f64`, still
-/// converts where a constructor takes `impl Into<Colour>`.
-impl From<[f64; 4]> for Colour {
-    fn from(v: [f64; 4]) -> Self {
-        Colour([v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32])
-    }
-}
-
-/// A linear `[f64; 3]` is taken as-is (channels narrowed to `f32`), alpha 1.0.
-/// See [`From<[f64; 4]>`].
-impl From<[f64; 3]> for Colour {
-    fn from(v: [f64; 3]) -> Self {
-        Colour([v[0] as f32, v[1] as f32, v[2] as f32, 1.0])
     }
 }
 
@@ -316,6 +355,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn luminance_runs_black_to_white() {
+        assert_eq!(Colour::BLACK.luminance(), 0.0);
+        assert!((Colour::WHITE.luminance() - 1.0).abs() < 1e-6);
+        // Green carries most of the weight.
+        let g = Colour::linear_rgb(0.0, 1.0, 0.0).luminance();
+        let r = Colour::linear_rgb(1.0, 0.0, 0.0).luminance();
+        assert!(g > r);
+    }
+
+    #[test]
+    fn lerp_hits_both_ends() {
+        let a = Colour::linear(0.0, 0.2, 0.4, 1.0);
+        let b = Colour::linear(1.0, 0.6, 0.0, 0.0);
+        assert_eq!(a.lerp(b, 0.0), a);
+        assert_eq!(a.lerp(b, 1.0), b);
+        let mid = a.lerp(b, 0.5).to_linear_rgba();
+        for (m, e) in mid.iter().zip([0.5, 0.4, 0.2, 0.5]) {
+            assert!((m - e).abs() < 1e-6, "{mid:?}");
+        }
+    }
+
+    #[test]
+    fn over_composites_straight_alpha() {
+        let red = Colour::linear(1.0, 0.0, 0.0, 1.0);
+        let blue = Colour::linear(0.0, 0.0, 1.0, 1.0);
+        assert_eq!(red.over(blue), red, "opaque source covers");
+        assert_eq!(
+            Colour::TRANSPARENT.over(blue),
+            blue,
+            "transparent source shows through"
+        );
+        assert_eq!(
+            Colour::TRANSPARENT.over(Colour::TRANSPARENT),
+            Colour::TRANSPARENT
+        );
+
+        // Half red over opaque blue: an even mix, fully opaque.
+        let c = red.with_alpha(0.5).over(blue).to_linear_rgba();
+        assert_eq!(c, [0.5, 0.0, 0.5, 1.0]);
+
+        // Over a transparent backdrop the source keeps its own colour.
+        let c = red
+            .with_alpha(0.5)
+            .over(Colour::TRANSPARENT)
+            .to_linear_rgba();
+        assert_eq!(c, [1.0, 0.0, 0.0, 0.5]);
+    }
+
+    #[test]
     fn linear_passthrough() {
         let c = Colour::linear(0.1, 0.2, 0.3, 0.4);
         assert_eq!(c.to_linear_rgba(), [0.1, 0.2, 0.3, 0.4]);
@@ -328,6 +416,25 @@ mod tests {
             let c = Colour::rgb(r, g, b);
             assert_eq!(c.to_srgb_u8(), [r, g, b, 255]);
         }
+    }
+
+    #[test]
+    fn srgb_arrays_match_the_channel_constructors_and_round_trip() {
+        let rgba = [0.2, 0.45, 0.9, 0.5];
+        let c = Colour::from_srgb_array(rgba);
+        assert_eq!(c, Colour::srgb(0.2, 0.45, 0.9, 0.5));
+        assert_eq!(
+            Colour::from_srgb_rgb_array([0.2, 0.45, 0.9]),
+            Colour::srgb_rgb(0.2, 0.45, 0.9)
+        );
+        for (got, want) in c.to_srgb_rgba().iter().zip(rgba) {
+            assert!((got - want).abs() < 1e-5, "{got} vs {want}");
+        }
+        assert_eq!(c.to_srgb_rgba()[3], 0.5);
+        assert_eq!(c.to_srgb_rgb(), {
+            let [r, g, b, _] = c.to_srgb_rgba();
+            [r, g, b]
+        });
     }
 
     #[test]

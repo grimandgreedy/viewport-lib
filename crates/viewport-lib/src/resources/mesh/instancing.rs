@@ -1,75 +1,28 @@
-use crate::resources::VertexBufferLayoutExt;
+use crate::resources::pipeline_slot::LazyFamily;
 use crate::resources::*;
 
-/// Instanced-draw pipelines, the shared per-instance storage buffer, and the
-/// per-material bind group cache. Created lazily by `ensure_instanced_pipelines`
-/// and `ensure_hdr_instanced_pipelines`.
+/// The shared per-instance record buffer every mesh batch draws from, and how
+/// its colour pipelines bind material textures.
 #[derive(Default)]
 pub(crate) struct InstancingResources {
-    /// Bind group layout for the instanced storage buffer + textures (group 1).
-    pub(crate) bind_group_layout: Option<crate::gpu::BindGroupLayout>,
+    /// How the colour pipelines bind material textures. `Bindless` swaps the
+    /// per-batch group-1 textures for one texture array indexed per material;
+    /// `PerBatch` (the default) keeps the per-batch binds. Which one a device
+    /// gets depends on its enabled features, not on its backend.
+    /// Fixed at renderer construction from the device's enabled features.
+    pub(crate) material_texture_binding:
+        crate::resources::mesh::instanced_bindless::MaterialTextureBinding,
     /// Storage buffer for per-instance data.
     pub(crate) storage_buf: Option<crate::gpu::Buffer>,
     /// Current capacity (in number of instances) of the storage buffer.
     pub(crate) storage_capacity: usize,
-    /// Per-texture-key bind groups for the instanced path.
-    ///
-    /// Each entry combines the shared instance storage buffer (binding 0) with
-    /// one specific texture combination (bindings 1-4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id) using u64::MAX for fallback slots.
-    /// Invalidated when the storage buffer is resized.
-    pub(crate) bind_groups: std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
-    /// Instanced solid render pipeline (TriangleList, opaque).
-    pub(crate) solid_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `solid_pipeline` for
-    /// `Identical` backface-policy meshes.
-    pub(crate) solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Discard-free twin of `solid_pipeline`, selected for opaque batches
-    /// when no clip planes, clip volumes, or alpha-mask instances are active
-    /// so hardware early depth rejection stays available.
-    pub(crate) solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `solid_nodiscard_pipeline`.
-    pub(crate) solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Instanced transparent render pipeline (TriangleList, alpha blending).
-    pub(crate) transparent_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Instanced shadow render pipeline (depth-only).
-    pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
-    /// `shadow_pipeline` for `Identical` backface-policy batches.
-    pub(crate) shadow_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Alpha-cutout (`AlphaMode::Mask`) shadow pipeline: adds a fragment stage
-    /// that samples the albedo alpha and discards below the cutoff, so leaf
-    /// gaps do not cast solid shadows. Direct-draw path.
-    pub(crate) shadow_cutout_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `shadow_cutout_pipeline`.
-    pub(crate) shadow_cutout_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Per-cascade uniform buffers for the shadow pipeline (64 bytes each, one mat4x4).
-    pub(crate) shadow_cascade_bufs: [Option<crate::gpu::Buffer>; 4],
-    /// Per-cascade bind groups for the shadow pipeline group 0.
-    pub(crate) shadow_cascade_bgs: [Option<crate::gpu::BindGroup>; 4],
-    /// HDR-pass instanced solid pipeline (direct draw path).
-    pub(crate) hdr_solid_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_pipeline`
-    /// for `Identical` backface-policy meshes (direct draw path).
-    pub(crate) hdr_solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Discard-free twin of `hdr_solid_pipeline` (early-Z fast path; see
-    /// `solid_nodiscard_pipeline`).
-    pub(crate) hdr_solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `hdr_solid_nodiscard_pipeline`.
-    pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) hdr_transparent_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Instanced HDR pipeline with additive blend, no depth write. Used by
-    /// `MeshInstanceItem` batches that opt into [`SpriteBlend::Additive`].
-    pub(crate) hdr_additive_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Instanced HDR pipeline with premultiplied-alpha blend, no depth write.
-    /// Used by `MeshInstanceItem` batches with [`SpriteBlend::Premultiplied`].
-    pub(crate) hdr_premultiplied_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 /// GPU-culling inputs and pipelines. The per-instance AABBs and per-batch meta
 /// are scene-global (camera-independent); the cull OUTPUTS (visibility indices,
 /// indirect args, counters) are per-viewport and live in `ViewportCullState`.
-/// Pipelines are created lazily by `ensure_cull_instance_pipelines`.
+/// Pipelines are created lazily by `ensure_hdr_cull_pipelines` and
+/// `ensure_oit_cull_pipelines`.
 #[derive(Default)]
 pub(crate) struct CullResources {
     /// Per-instance world-space AABB buffer. Rebuilt on batch cache miss.
@@ -78,448 +31,225 @@ pub(crate) struct CullResources {
     /// Per-batch metadata buffer. Rebuilt on batch cache miss.
     pub(crate) batch_meta_buf: Option<crate::gpu::Buffer>,
     pub(crate) batch_meta_capacity: usize,
-    /// Bind group layout for instanced cull pipelines (group 1).
-    /// Extends the instance BGL with binding 5: visibility_indices storage buffer.
-    pub(crate) bind_group_layout: Option<crate::gpu::BindGroupLayout>,
-    /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
-    pub(crate) hdr_solid_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_pipeline`
-    /// for `Identical` backface-policy meshes (indirect draw path).
-    pub(crate) hdr_solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Discard-free twin of `hdr_solid_pipeline` (early-Z fast path; see
-    /// `InstancingResources::solid_nodiscard_pipeline`).
-    pub(crate) hdr_solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `hdr_solid_nodiscard_pipeline`.
-    pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
-    pub(crate) oit_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `oit_pipeline` for a two-sided
-    /// transparent batch (indirect draw path).
-    pub(crate) oit_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
-    pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
-    /// `shadow_pipeline` for `Identical` backface-policy batches.
-    pub(crate) shadow_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Alpha-cutout shadow cull pipeline: like `shadow_pipeline` but with a
-    /// fragment stage that discards on albedo alpha. Uses the full cull BGL
-    /// (`bind_group_layout`) so the albedo texture is available in group 1.
-    pub(crate) shadow_cutout_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Two-sided variant of `shadow_cutout_pipeline`.
-    pub(crate) shadow_cutout_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
-    pub(crate) shadow_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// The GPU-culled HDR solids (`mesh.wgsl` through `vs_main_cull`, the
+    /// indirect draw path), keyed by facedness and discard-free eligibility,
+    /// and built in feature sets as draws ask. Composed by
+    /// `ensure_hdr_cull_pipelines`.
+    pub(crate) hdr: Option<LazyFamily<CullHdrContext, 4>>,
+    /// The same family on the bindless member of group 1.
+    pub(crate) hdr_bindless: Option<LazyFamily<CullHdrContext, 4>>,
+    /// The GPU-culled OIT accumulate pipelines (`mesh_oit.wgsl` through
+    /// `vs_main_cull`), keyed by facedness. Composed by
+    /// `ensure_oit_cull_pipelines`.
+    pub(crate) oit: Option<LazyFamily<crate::resources::postprocess::oit::OitContext, 2>>,
+    /// The same family on the bindless member of group 1.
+    pub(crate) oit_bindless: Option<LazyFamily<crate::resources::postprocess::oit::OitContext, 2>>,
+}
+
+/// What a GPU-culled HDR solid build reads.
+pub(crate) struct CullHdrContext {
+    device: crate::gpu::Device,
+    layout: crate::gpu::PipelineLayout,
+    shader: crate::resources::pipeline_slot::LazyModule,
+    shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
+    depth_format: crate::gpu::TextureFormat,
+}
+
+/// Solid slot index for `key`: bit 0 two-sided, bit 1 discard-free.
+fn solid_index(key: crate::renderer::pipeline_key::PipelineKey) -> usize {
+    key.two_sided as usize + 2 * key.no_discard_eligible as usize
+}
+
+fn solid_label(prefix: &str, i: usize) -> String {
+    format!(
+        "{prefix}{}{}_pipeline",
+        if i & 1 != 0 { "_two_sided" } else { "" },
+        if i & 2 != 0 { "_nodiscard" } else { "" },
+    )
+}
+
+fn build_cull_hdr(ctx: &CullHdrContext, i: usize) -> crate::gpu::RenderPipeline {
+    build_cull_hdr_features(ctx, i, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+}
+
+fn build_cull_hdr_features(
+    ctx: &CullHdrContext,
+    i: usize,
+    feats: crate::renderer::pipeline_key::FeatureSet,
+) -> crate::gpu::RenderPipeline {
+    let shader = if i & 2 != 0 {
+        ctx.shader_nodiscard.get()
+    } else {
+        ctx.shader.get()
+    };
+    let label = solid_label("hdr_solid_cull", i);
+    let label = if feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL {
+        label
+    } else {
+        feats.label(&label)
+    };
+    crate::resources::mesh::mesh_pipelines::hdr_mesh_pipeline_entry(
+        &ctx.device,
+        &ctx.layout,
+        shader,
+        ctx.depth_format,
+        &label,
+        (i & 1 == 0).then_some(crate::gpu::Face::Back),
+        None,
+        crate::gpu::PrimitiveTopology::TriangleList,
+        true,
+        &feats.constants(),
+        true,
+    )
+}
+
+fn build_cull_oit(
+    ctx: &crate::resources::postprocess::oit::OitContext,
+    i: usize,
+) -> crate::gpu::RenderPipeline {
+    build_cull_oit_features(ctx, i, crate::renderer::pipeline_key::FeatureSet::UNIVERSAL)
+}
+
+fn build_cull_oit_features(
+    ctx: &crate::resources::postprocess::oit::OitContext,
+    i: usize,
+    feats: crate::renderer::pipeline_key::FeatureSet,
+) -> crate::gpu::RenderPipeline {
+    let two_sided = i & 1 != 0;
+    let label = if two_sided {
+        "oit_cull_pipeline_two_sided"
+    } else {
+        "oit_cull_pipeline"
+    };
+    let label = if feats == crate::renderer::pipeline_key::FeatureSet::UNIVERSAL {
+        label.to_owned()
+    } else {
+        feats.label(label)
+    };
+    crate::resources::mesh::mesh_pipelines::build_oit_pipeline_entry(
+        &ctx.device,
+        &ctx.layout,
+        ctx.shader.get(),
+        ctx.depth_format,
+        two_sided,
+        &label,
+        &feats.constants(),
+        true,
+    )
+}
+
+impl InstancingResources {}
+
+impl CullResources {
+    /// The GPU-culled HDR solid for `key` built with `feats`, the universal
+    /// one standing in while it compiles. `bindless` selects the family on
+    /// the bindless member of group 1.
+    pub(crate) fn hdr_opaque_features(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+        bindless: bool,
+    ) -> crate::resources::pipeline_slot::FeatureGet<'_, crate::gpu::RenderPipeline> {
+        let family = if bindless {
+            self.hdr_bindless.as_ref()
+        } else {
+            self.hdr.as_ref()
+        };
+        match family {
+            Some(f) => f.get_features(solid_index(key), feats),
+            None => crate::resources::pipeline_slot::FeatureGet {
+                pipeline: None,
+                stand_in: false,
+                capped: false,
+            },
+        }
+    }
+
+    /// The GPU-culled OIT accumulate pipeline for `key`'s facedness built
+    /// with `feats`.
+    pub(crate) fn oit_features(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+        bindless: bool,
+    ) -> crate::resources::pipeline_slot::FeatureGet<'_, crate::gpu::RenderPipeline> {
+        let family = if bindless {
+            self.oit_bindless.as_ref()
+        } else {
+            self.oit.as_ref()
+        };
+        match family {
+            Some(f) => f.get_features(key.two_sided as usize, feats),
+            None => crate::resources::pipeline_slot::FeatureGet {
+                pipeline: None,
+                stand_in: false,
+                capped: false,
+            },
+        }
+    }
+
+    /// Feature-set pipelines asked of the culled families.
+    pub(crate) fn feature_sets(&self) -> usize {
+        [&self.hdr, &self.hdr_bindless]
+            .into_iter()
+            .flatten()
+            .map(|f| f.feature_sets())
+            .sum::<usize>()
+            + [&self.oit, &self.oit_bindless]
+                .into_iter()
+                .flatten()
+                .map(|f| f.feature_sets())
+                .sum::<usize>()
+    }
+
+    /// Ask for the plain feature set of every culled member. Asks for no
+    /// universal member: see [`request_members`](Self::request_members).
+    pub(crate) fn request_plain(&self) {
+        for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
+            for i in 0..4 {
+                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+            }
+        }
+        for f in [&self.oit, &self.oit_bindless].into_iter().flatten() {
+            for i in 0..2 {
+                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+            }
+        }
+    }
+
+    /// Ask for every member of the culled families, the universal pipelines
+    /// among them.
+    pub(crate) fn request_members(&self) {
+        for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
+            f.request_all();
+        }
+        for f in [&self.oit, &self.oit_bindless].into_iter().flatten() {
+            f.request_all();
+        }
+    }
+
+    /// Whether a culled opaque draw for `key` with `feats` has a pipeline to
+    /// bind, without starting one.
+    pub(crate) fn opaque_features_ready(
+        &self,
+        key: crate::renderer::pipeline_key::PipelineKey,
+        feats: crate::renderer::pipeline_key::FeatureSet,
+        bindless: bool,
+    ) -> bool {
+        let family = if bindless {
+            self.hdr_bindless.as_ref()
+        } else {
+            self.hdr.as_ref()
+        };
+        family.is_some_and(|f| f.features_ready(solid_index(key), feats))
+    }
 }
 
 impl DeviceResources {
-    /// Compose the lit instanced shader with the current deform registrations
-    /// and debug-vis state, returning the module plus its discard-free twin
-    /// (see `builders::strip_discards` for why the twin exists).
-    fn instanced_shader_modules(
-        &self,
-        device: &crate::gpu::Device,
-        label: &str,
-    ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
-        let base = if self.deform.enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_noop.wgsl"))
-        };
-        let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-            base,
-            &self.deform.registrations,
-        );
-        let source = crate::resources::builders::builtin_hook_env(
-            crate::resources::builders::strip_mesh_non_pbr(
-                crate::resources::builders::strip_mesh_discards(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            ),
-        );
-        let module = crate::resources::builders::wgsl_module(device, label, source.as_ref());
-        let nodiscard = crate::resources::builders::wgsl_module(
-            device,
-            &format!("{label}_nodiscard"),
-            crate::resources::builders::strip_discards(&source),
-        );
-        (module, nodiscard)
-    }
-
-    /// Ensure the instanced pipelines and bind group layout are created.
-    /// Called lazily when the instanced draw path is first needed.
-    pub(crate) fn ensure_instanced_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.instancing.bind_group_layout.is_some() {
-            return; // Already initialized.
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        // Instanced bind group layout (group 1 for instanced pipelines).
-        // binding 0: instance storage buffer
-        // binding 1-4: albedo texture, sampler, normal map, AO map
-        // Co-located in group 1 to stay within iced's max_bind_groups = 2.
-        let instance_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("instance_bgl"),
-                entries: &[
-                    // binding 0: instance storage buffer
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::VERTEX
-                            | crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 1: albedo texture
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 2: sampler
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Sampler(
-                            crate::gpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                    // binding 3: normal map texture
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 4: AO map texture
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        // Instanced mesh shader (plus its discard-free twin for the early-Z
-        // fast path).
-        let (instanced_shader, instanced_shader_nodiscard) =
-            self.instanced_shader_modules(device, "mesh_instanced_shader");
-
-        let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-            device,
-            "instanced_pipeline_layout",
-            &self.binds.camera_bgl,
-            &instance_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
-        );
-        let ldr_inst = crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
-            device,
-            &instanced_layout,
-            &instanced_shader,
-            self.target_format,
-            self.sample_count,
-        );
-        let solid_instanced = ldr_inst.solid;
-        let solid_two_sided_instanced = ldr_inst.solid_two_sided;
-        let transparent_instanced = ldr_inst.transparent;
-        let (solid_nodiscard, solid_two_sided_nodiscard) =
-            crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                device,
-                &instanced_layout,
-                &instanced_shader_nodiscard,
-                self.target_format,
-                self.sample_count,
-                "solid_instanced_nodiscard_pipeline",
-                "solid_two_sided_instanced_nodiscard_pipeline",
-            );
-
-        // Shadow instanced pipeline.
-        let shadow_instanced_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_instanced_shader",
-            crate::resources::builders::wgsl_source!("shadow_instanced"),
-        );
-
-        // Shadow instanced uses the shadow bind group layout (group 0) + instance_bgl (group 1).
-        // Re-derive the shadow BGL from the existing shadow_bind_group.
-        let shadow_bgl = crate::resources::builders::uniform_bgl(
-            device,
-            "shadow_bgl_for_instanced",
-            crate::gpu::ShaderStages::VERTEX,
-        );
-
-        let shadow_instanced_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_instanced_pipeline_layout",
-            &[&shadow_bgl, &instance_bgl],
-        );
-
-        // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
-        // two-sided (`Identical`) batches, so a single-winding foliage card still
-        // casts when its front face points away from the light. Mirrors the
-        // per-object `shadow_pipeline` / `shadow_pipeline_two_sided` split.
-        let make_shadow_instanced =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_instanced_layout,
-                        vertex_module: &shadow_instanced_shader,
-                        vertex_entry: "vs_main",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: None,
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        let shadow_instanced = make_shadow_instanced(
-            "shadow_instanced_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        );
-        let shadow_instanced_two_sided = make_shadow_instanced(
-            "shadow_instanced_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        );
-
-        // Alpha-cutout shadow pipelines: same depth-only setup but with a fragment
-        // stage (`fs_cutout`) that samples the albedo alpha and discards below the
-        // material cutoff. `vs_cutout` carries the UV. Group 1 is the full
-        // `instance_bgl`, so the batch's albedo texture (bindings 1-2) is available.
-        let make_shadow_cutout =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_instanced_layout,
-                        vertex_module: &shadow_instanced_shader,
-                        vertex_entry: "vs_cutout",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: Some(crate::gpu::FragmentState {
-                            module: &shadow_instanced_shader,
-                            entry_point: Some("fs_cutout"),
-                            targets: &[],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        }),
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        let shadow_cutout = make_shadow_cutout(
-            "shadow_instanced_cutout_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        );
-        let shadow_cutout_two_sided = make_shadow_cutout(
-            "shadow_instanced_cutout_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        );
-
-        // Allocate 4 per-cascade uniform buffers (64 bytes each = one mat4x4) and
-        // create bind groups for shadow_instanced_pipeline group 0.
-        // Each cascade has its own small buffer so we can write_buffer(buf, 0, ...) without
-        // dynamic offsets (shadow_instanced.wgsl group 0 binds a single uniform, not an array).
-        let cascade_bufs: [crate::gpu::Buffer; 4] = std::array::from_fn(|i| {
-            device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some(&format!("shadow_instanced_cascade_buf_{i}")),
-                size: 64, // sizeof(mat4x4<f32>)
-                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        });
-        let cascade_bgs: [crate::gpu::BindGroup; 4] = std::array::from_fn(|i| {
-            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some(&format!("shadow_instanced_cascade_bg_{i}")),
-                layout: &shadow_bgl,
-                entries: &[crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: cascade_bufs[i].as_entire_binding(),
-                }],
-            })
-        });
-        self.instancing.shadow_cascade_bufs = cascade_bufs.map(Some);
-        self.instancing.shadow_cascade_bgs = cascade_bgs.map(Some);
-
-        self.instancing.bind_group_layout = Some(instance_bgl);
-        self.instancing.solid_pipeline = Some(solid_instanced);
-        self.instancing.solid_two_sided_pipeline = Some(solid_two_sided_instanced);
-        self.instancing.solid_nodiscard_pipeline = Some(solid_nodiscard);
-        self.instancing.solid_two_sided_nodiscard_pipeline = Some(solid_two_sided_nodiscard);
-        self.instancing.transparent_pipeline = Some(transparent_instanced);
-        self.instancing.shadow_pipeline = Some(shadow_instanced);
-        self.instancing.shadow_two_sided_pipeline = Some(shadow_instanced_two_sided);
-        self.instancing.shadow_cutout_pipeline = Some(shadow_cutout);
-        self.instancing.shadow_cutout_two_sided_pipeline = Some(shadow_cutout_two_sided);
-    }
-
-    /// Ensure the HDR instanced pipelines exist. Called after
-    /// `ensure_instanced_pipelines` so that `instance_bind_group_layout` is
-    /// available. Idempotent: returns immediately if the pipelines already
-    /// exist or if the BGL hasn't been created yet.
-    pub(crate) fn ensure_hdr_instanced_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.instancing.hdr_solid_pipeline.is_some() {
-            return;
-        }
-        if self.instancing.bind_group_layout.is_none() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
-            return;
-        };
-
-        let (inst_shader, inst_shader_nodiscard) =
-            self.instanced_shader_modules(device, "mesh_instanced_shader_hdr");
-        let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-            device,
-            "hdr_instanced_pipeline_layout",
-            &self.binds.camera_bgl,
-            instance_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
-        );
-        let hdr_inst = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
-            device,
-            &inst_layout,
-            &inst_shader,
-        );
-        let (hdr_solid_nodiscard, hdr_solid_two_sided_nodiscard) =
-            crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                device,
-                &inst_layout,
-                &inst_shader_nodiscard,
-                crate::gpu::TextureFormat::Rgba16Float,
-                1,
-                "hdr_instanced_solid_nodiscard_pipeline",
-                "hdr_instanced_solid_two_sided_nodiscard_pipeline",
-            );
-        self.instancing.hdr_solid_pipeline = Some(hdr_inst.solid);
-        self.instancing.hdr_solid_two_sided_pipeline = Some(hdr_inst.solid_two_sided);
-        self.instancing.hdr_solid_nodiscard_pipeline = Some(hdr_solid_nodiscard);
-        self.instancing.hdr_solid_two_sided_nodiscard_pipeline =
-            Some(hdr_solid_two_sided_nodiscard);
-        self.instancing.hdr_transparent_pipeline = Some(hdr_inst.transparent);
-        self.instancing.hdr_additive_pipeline = Some(hdr_inst.additive);
-        self.instancing.hdr_premultiplied_pipeline = Some(hdr_inst.premultiplied);
-    }
-
-    /// Ensure the OIT instanced pipeline exists. Called after
-    /// `ensure_instanced_pipelines` so that `instance_bind_group_layout` is
-    /// available. Idempotent: returns immediately if the pipeline already
-    /// exists or if the BGL hasn't been created yet.
-    pub(crate) fn ensure_oit_instanced_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.oit.instanced_pipeline.is_some() {
-            return;
-        }
-        if self.instancing.bind_group_layout.is_none() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
-            return;
-        };
-
-        let instanced_oit_shader = {
-            let base = if self.deform.enabled {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"))
-            } else {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit_noop.wgsl"))
-            };
-            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            );
-            crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_oit_shader",
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-            )
-        };
-        let instanced_oit_layout =
-            crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                device,
-                "oit_instanced_pipeline_layout",
-                &self.binds.camera_bgl,
-                instance_bgl,
-                self.deform
-                    .enabled
-                    .then_some(&self.deform.bind_group_layout),
-            );
-        let pipeline = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-            device,
-            &instanced_oit_layout,
-            &instanced_oit_shader,
-            "oit_instanced_pipeline",
-            "vs_main",
-            false,
-        );
-        let pipeline_two_sided =
-            crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                device,
-                &instanced_oit_layout,
-                &instanced_oit_shader,
-                "oit_instanced_pipeline_two_sided",
-                "vs_main",
-                true,
-            );
-
-        self.oit.instanced_pipeline = Some(pipeline);
-        self.oit.instanced_pipeline_two_sided = Some(pipeline_two_sided);
+    /// Whether the instanced colour pipelines bind material textures bindlessly.
+    pub(crate) fn bindless_textures(&self) -> bool {
+        self.instancing.material_texture_binding
+            == crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless
     }
 
     /// Upload instance data to the storage buffer, resizing if needed.
@@ -533,12 +263,6 @@ impl DeviceResources {
         if data.is_empty() {
             return;
         }
-
-        let _bgl = self
-            .instancing
-            .bind_group_layout
-            .as_ref()
-            .expect("ensure_instanced_pipelines must be called first");
 
         // Clamp to the device's max_storage_buffer_binding_size so bind group
         // creation never panics regardless of scene size.
@@ -555,13 +279,12 @@ impl DeviceResources {
                 Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("instance_storage_buf"),
                     size: buf_size,
-                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::STORAGE
+                        | crate::gpu::BufferUsages::VERTEX
+                        | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }));
             self.instancing.storage_capacity = new_cap;
-
-            // Invalidate all per-texture-key bind groups; they reference the old buffer.
-            self.instancing.bind_groups.clear();
         }
 
         queue.write_buffer(
@@ -640,592 +363,134 @@ impl DeviceResources {
         }
     }
 
-    /// Ensure the GPU-driven cull variant pipelines and BGL are created.
-    ///
-    /// Must be called after `ensure_instanced_pipelines`.  Idempotent.
-    pub(crate) fn ensure_cull_instance_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.cull.bind_group_layout.is_some() {
+    /// The GPU-culled HDR solids, which read the visible list the cull pass
+    /// wrote: `mesh.wgsl` through `vs_main_cull`, on both group-1 members
+    /// when material textures bind bindlessly. Built on the first HDR frame
+    /// that culls on the GPU. The modules are the HDR scene family's.
+    pub(crate) fn ensure_hdr_cull_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.cull.hdr.is_some() {
             return;
         }
-
-        let Some(ref _instance_bgl) = self.instancing.bind_group_layout else {
-            return; // ensure_instanced_pipelines must be called first.
-        };
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        // Cull BGL = instance_bgl bindings 0-4 + binding 5: visibility_indices (read, VERTEX).
-        let cull_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("instance_cull_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 5: visibility_indices (written by compute cull pass, read in vertex shader)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
-        let (instanced_shader, instanced_shader_nodiscard) =
-            self.instanced_shader_modules(device, "mesh_instanced_shader_cull");
-        let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-            device,
-            "hdr_instanced_cull_pipeline_layout",
-            &self.binds.camera_bgl,
-            &cull_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
-        );
-        let hdr_solid_cull =
-            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline(
+        let source = self.hdr_mesh_source();
+        let ctx = |layout, source: &str, label: &str, this: &Self| CullHdrContext {
+            device: device.clone(),
+            layout,
+            shader: this.shared_module(device, label, source),
+            shader_nodiscard: this.shared_module(
                 device,
-                &inst_cull_layout,
-                &instanced_shader,
-            );
-        let hdr_solid_cull_two_sided =
-            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
-                device,
-                &inst_cull_layout,
-                &instanced_shader,
-            );
-        let hdr_solid_cull_nodiscard =
-            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                device,
-                &inst_cull_layout,
-                &instanced_shader_nodiscard,
-                "hdr_solid_instanced_cull_nodiscard_pipeline",
-                Some(crate::gpu::Face::Back),
-            );
-        let hdr_solid_cull_two_sided_nodiscard =
-            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                device,
-                &inst_cull_layout,
-                &instanced_shader_nodiscard,
-                "hdr_solid_instanced_cull_two_sided_nodiscard_pipeline",
-                None,
-            );
-
-        // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
-        let oit_shader = {
-            let base = if self.deform.enabled {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"))
-            } else {
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit_noop.wgsl"))
-            };
-            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            );
-            crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_oit_shader_cull",
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-            )
+                &format!("{label}_nodiscard"),
+                &crate::resources::builders::strip_discards(source),
+            ),
+            depth_format: this.scene_depth_format(),
         };
-        let oit_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
+        let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
-            "oit_instanced_cull_pipeline_layout",
-            &self.binds.camera_bgl,
-            &cull_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
+            "hdr_cull_pipeline_layout",
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
-        let oit_cull = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-            device,
-            &oit_cull_layout,
-            &oit_shader,
-            "oit_instanced_cull_pipeline",
-            "vs_main_cull",
-            false,
-        );
-        let oit_cull_two_sided =
-            crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                device,
-                &oit_cull_layout,
-                &oit_shader,
-                "oit_instanced_cull_pipeline_two_sided",
-                "vs_main_cull",
-                true,
-            );
-
-        self.cull.hdr_solid_pipeline = Some(hdr_solid_cull);
-        self.cull.hdr_solid_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
-        self.cull.hdr_solid_nodiscard_pipeline = Some(hdr_solid_cull_nodiscard);
-        self.cull.hdr_solid_two_sided_nodiscard_pipeline = Some(hdr_solid_cull_two_sided_nodiscard);
-        self.cull.oit_pipeline = Some(oit_cull);
-        self.cull.oit_two_sided_pipeline = Some(oit_cull_two_sided);
-
-        // Shadow instanced cull pipeline.
-        // Uses a minimal BGL for group 1: binding 0 (instances) + binding 5 (visibility_indices).
-        // Group 0 reuses the existing shadow cascade BGL (single mat4x4 uniform).
-        let shadow_cull_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("shadow_cull_instance_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        // Recreate the shadow cascade BGL (same definition as in ensure_instanced_pipelines).
-        let shadow_bgl_for_cull = crate::resources::builders::uniform_bgl(
-            device,
-            "shadow_bgl_for_cull",
-            crate::gpu::ShaderStages::VERTEX,
-        );
-        let shadow_cull_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_instanced_cull_pipeline_layout",
-            &[&shadow_bgl_for_cull, &shadow_cull_bgl],
-        );
-        let shadow_cull_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_instanced_cull_shader",
-            crate::resources::builders::wgsl_source!("shadow_instanced"),
-        );
-        // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
-        // two-sided (`Identical`) batches (see the direct-path shadow pipelines above).
-        let make_shadow_cull =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_cull_layout,
-                        vertex_module: &shadow_cull_shader,
-                        vertex_entry: "vs_shadow_cull",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: None,
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        let shadow_instanced_cull = make_shadow_cull(
-            "shadow_instanced_cull_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        );
-        let shadow_instanced_cull_two_sided = make_shadow_cull(
-            "shadow_instanced_cull_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        );
-        self.cull.shadow_pipeline = Some(shadow_instanced_cull);
-        self.cull.shadow_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
-        self.cull.shadow_bgl = Some(shadow_cull_bgl);
-
-        // Alpha-cutout shadow cull pipelines: `vs_cutout_cull` + `fs_cutout`. Group 1
-        // uses the full `cull_bgl` (storage + albedo/sampler + visibility), so the
-        // fragment can sample the batch albedo and discard leaf-gap fragments.
-        let shadow_cutout_cull_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_instanced_cutout_cull_pipeline_layout",
-            &[&shadow_bgl_for_cull, &cull_bgl],
-        );
-        let make_shadow_cutout_cull =
-            |label: &str, cull_mode: Option<crate::gpu::Face>, bias: crate::gpu::DepthBiasState| {
-                crate::resources::builders::render_pipeline(
-                    device,
-                    crate::resources::builders::RenderPipelineDesc {
-                        label,
-                        layout: &shadow_cutout_cull_layout,
-                        vertex_module: &shadow_cull_shader,
-                        vertex_entry: "vs_cutout_cull",
-                        vertex_buffers: &[Vertex::buffer_layout()],
-                        fragment: Some(crate::gpu::FragmentState {
-                            module: &shadow_cull_shader,
-                            entry_point: Some("fs_cutout"),
-                            targets: &[],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        }),
-                        primitive: crate::gpu::PrimitiveState {
-                            topology: crate::gpu::PrimitiveTopology::TriangleList,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(crate::gpu::DepthStencilState {
-                            format: crate::gpu::TextureFormat::Depth32Float,
-                            depth_write_enabled: crate::resources::builders::dwrite(true),
-                            depth_compare: crate::resources::builders::dcompare(
-                                crate::gpu::CompareFunction::Less,
-                            ),
-                            stencil: crate::gpu::StencilState::default(),
-                            bias,
-                        }),
-                        multisample: crate::gpu::MultisampleState::default(),
-                        cache: None,
-                    },
-                )
-            };
-        self.cull.shadow_cutout_pipeline = Some(make_shadow_cutout_cull(
-            "shadow_instanced_cutout_cull_pipeline",
-            Some(crate::gpu::Face::Front),
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
-        ));
-        self.cull.shadow_cutout_two_sided_pipeline = Some(make_shadow_cutout_cull(
-            "shadow_instanced_cutout_cull_two_sided_pipeline",
-            None,
-            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-        ));
-
-        self.cull.bind_group_layout = Some(cull_bgl);
+        let per_batch = ctx(layout, &source, "mesh_shader_hdr", self);
+        let bindless = if self.bindless_textures() {
+            let layout = self.object_bindless_layout(device, "hdr_cull_bindless_pipeline_layout");
+            let source = crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source);
+            Some(ctx(layout, &source, "mesh_bindless_shader_hdr", self))
+        } else {
+            None
+        };
+        let family = |ctx| {
+            LazyFamily::new(
+                ctx,
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                build_cull_hdr,
+            )
+            .with_features(build_cull_hdr_features)
+        };
+        let hdr = family(per_batch);
+        let hdr_bindless = bindless.map(family);
+        self.cull.hdr = Some(hdr);
+        self.cull.hdr_bindless = hdr_bindless;
     }
 
-    /// Get or create the shadow cull instance bind group for a given cascade index.
-    ///
-    /// Binds `instance_storage_buf` (binding 0) and `shadow_vis_bufs[cascade_idx]` (binding 5).
-    /// Returns `None` if the required buffers or BGL are not yet allocated.
-    pub(crate) fn get_shadow_cull_instance_bind_group<'a>(
-        &self,
-        shadow_cull: &'a mut crate::resources::ShadowCullState,
-        device: &crate::gpu::Device,
-        cascade_idx: usize,
-    ) -> Option<&'a crate::gpu::BindGroup> {
-        if shadow_cull.shadow_cull_instance_bgs[cascade_idx].is_none() {
-            let bgl = self.cull.shadow_bgl.as_ref()?;
-            let inst_buf = self.instancing.storage_buf.as_ref()?;
-            let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some(&format!("shadow_cull_instance_bg_{cascade_idx}")),
-                layout: bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: inst_buf.as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 5,
-                        resource: vis_buf.as_entire_binding(),
-                    },
-                ],
-            });
-            shadow_cull.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
+    /// The GPU-culled OIT accumulate pipelines: `mesh_oit.wgsl` through
+    /// `vs_main_cull`, on both group-1 members when material textures bind
+    /// bindlessly. Built on the first HDR frame with a transparent batch that
+    /// culls on the GPU.
+    pub(crate) fn ensure_oit_cull_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.cull.oit.is_some() {
+            return;
         }
-        shadow_cull.shadow_cull_instance_bgs[cascade_idx].as_ref()
-    }
-
-    /// Get or create the alpha-cutout shadow cull bind group for a cascade and
-    /// material texture key. Binds the instance storage (0), albedo/sampler/normal/AO
-    /// (1-4, from the full cull BGL) and this cascade's visibility buffer (5), so the
-    /// `fs_cutout` fragment can sample the albedo alpha and discard cut-out fragments.
-    pub(crate) fn get_shadow_cutout_cull_bind_group<'a>(
-        &self,
-        shadow_cull: &'a mut crate::resources::ShadowCullState,
-        device: &crate::gpu::Device,
-        cascade_idx: usize,
-        albedo_id: Option<crate::resources::TextureId>,
-        normal_map_id: Option<crate::resources::TextureId>,
-        ao_map_id: Option<crate::resources::TextureId>,
-    ) -> Option<&'a crate::gpu::BindGroup> {
-        let key = (
-            cascade_idx,
-            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let source = self.oit_mesh_source();
+        let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
+            device,
+            "oit_cull_pipeline_layout",
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
-        if !shadow_cull.shadow_cutout_cull_bgs.contains_key(&key) {
-            let bgl = self.cull.bind_group_layout.as_ref()?;
-            let inst_buf = self.instancing.storage_buf.as_ref()?;
-            let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
-
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
-
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("shadow_cutout_cull_bg"),
-                layout: bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: inst_buf.as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::TextureView(albedo_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 3,
-                        resource: crate::gpu::BindingResource::TextureView(normal_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 4,
-                        resource: crate::gpu::BindingResource::TextureView(ao_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 5,
-                        resource: vis_buf.as_entire_binding(),
-                    },
-                ],
-            });
-            shadow_cull.shadow_cutout_cull_bgs.insert(key, bg);
-        }
-        shadow_cull.shadow_cutout_cull_bgs.get(&key)
+        let per_batch = crate::resources::postprocess::oit::OitContext {
+            device: device.clone(),
+            layout,
+            shader: self.shared_module(device, "mesh_oit_shader", &source),
+            depth_format: self.scene_depth_format(),
+        };
+        let bindless = if self.bindless_textures() {
+            let layout = self.object_bindless_layout(device, "oit_cull_bindless_pipeline_layout");
+            Some(crate::resources::postprocess::oit::OitContext {
+                device: device.clone(),
+                layout,
+                shader: self.shared_module(
+                    device,
+                    "mesh_oit_bindless_shader",
+                    &crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source),
+                ),
+                depth_format: self.scene_depth_format(),
+            })
+        } else {
+            None
+        };
+        let family = |ctx| {
+            LazyFamily::new(
+                ctx,
+                std::sync::Arc::clone(&self.pipeline_compiler),
+                build_cull_oit,
+            )
+            .with_features(build_cull_oit_features)
+        };
+        let oit = family(per_batch);
+        let oit_bindless = bindless.map(family);
+        self.cull.oit = Some(oit);
+        self.cull.oit_bindless = oit_bindless;
     }
 
     /// Get or create a cull-path bind group for the instanced cull pipeline.
     ///
     /// Identical to `get_instance_bind_group` but uses `instance_cull_bind_group_layout`
     /// and includes the `visibility_index_buf` at binding 5.
-    pub(crate) fn get_instance_cull_bind_group<'a>(
-        &self,
-        cull_state: &'a mut crate::resources::ViewportCullState,
-        device: &crate::gpu::Device,
-        albedo_id: Option<crate::resources::TextureId>,
-        normal_map_id: Option<crate::resources::TextureId>,
-        ao_map_id: Option<crate::resources::TextureId>,
-    ) -> Option<&'a crate::gpu::BindGroup> {
-        let key = (
-            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-        );
-
-        if !cull_state.instance_cull_bind_groups.contains_key(&key) {
-            let bgl = self.cull.bind_group_layout.as_ref()?;
-            let inst_buf = self.instancing.storage_buf.as_ref()?;
-            let vis_buf = cull_state.visibility_index_buf.as_ref()?;
-
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
-
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("instance_cull_tex_bg"),
-                layout: bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: inst_buf.as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::TextureView(albedo_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 3,
-                        resource: crate::gpu::BindingResource::TextureView(normal_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 4,
-                        resource: crate::gpu::BindingResource::TextureView(ao_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 5,
-                        resource: vis_buf.as_entire_binding(),
-                    },
-                ],
-            });
-            cull_state.instance_cull_bind_groups.insert(key, bg);
+    /// uv1 cache discriminator for a vertex-slab chunk: the chunk index when the
+    /// chunk carries a uv1 stream, else `u32::MAX` so every no-uv1 chunk shares
+    /// one bind group (which binds the zero fallback).
+    pub(crate) fn uv1_chunk_key(&self, chunk: u32) -> u32 {
+        if self.geometry.uv1_chunk_buffer(chunk).is_some() {
+            chunk
+        } else {
+            u32::MAX
         }
-
-        cull_state.instance_cull_bind_groups.get(&key)
     }
 
-    /// Get or create a combined instance+texture bind group for the instanced pipeline.
-    ///
-    /// The bind group combines the shared instance storage buffer (binding 0) with the
-    /// texture views for the given material key (bindings 1-4). Results are cached by key.
-    ///
-    /// `u64::MAX` in any key component means "use fallback texture for that slot".
-    pub(crate) fn get_instance_bind_group(
-        &mut self,
-        device: &crate::gpu::Device,
-        albedo_id: Option<crate::resources::TextureId>,
-        normal_map_id: Option<crate::resources::TextureId>,
-        ao_map_id: Option<crate::resources::TextureId>,
-    ) -> Option<&crate::gpu::BindGroup> {
-        let key = (
-            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-        );
-
-        if !self.instancing.bind_groups.contains_key(&key) {
-            let bgl = self.instancing.bind_group_layout.as_ref()?;
-            let buf = self.instancing.storage_buf.as_ref()?;
-
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
-
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("instance_tex_bg"),
-                layout: bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::TextureView(albedo_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 3,
-                        resource: crate::gpu::BindingResource::TextureView(normal_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 4,
-                        resource: crate::gpu::BindingResource::TextureView(ao_view),
-                    },
-                ],
-            });
-            self.instancing.bind_groups.insert(key, bg);
-        }
-
-        self.instancing.bind_groups.get(&key)
+    /// The uv1 storage buffer to bind (whole) for a chunk: its parallel uv1
+    /// buffer, or the one-entry zero fallback when the chunk has no second UV set.
+    pub(crate) fn uv1_chunk_or_fallback(&self, chunk: u32) -> &crate::gpu::Buffer {
+        self.geometry
+            .uv1_chunk_buffer(chunk)
+            .unwrap_or(&self.content.fallback_uv1_buf)
     }
 
     /// Upload one [`MeshInstanceItem`] batch and return draw data.
     ///
     /// Builds a per-batch instance storage buffer in the layout expected by
-    /// `mesh_instanced.wgsl`'s `InstanceData` struct, allocates a one-shot
-    /// bind group against `instance_bind_group_layout`, and packages it into
+    /// `InstanceData` records, allocates a one-shot mesh group-1 bind group
+    /// around it, and packages it into
     /// a [`MeshInstanceGpuData`]. The host is expected to rebuild this once
     /// per frame for moving particle systems.
     ///
@@ -1262,93 +527,50 @@ impl DeviceResources {
             return None;
         }
 
-        // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`
-        // and `resources::types::InstanceData` (208 bytes).
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct GpuInstanceData {
-            model: [[f32; 4]; 4],
-            colour: [f32; 4],
-            selected: u32,
-            wireframe: u32,
-            ambient: f32,
-            diffuse: f32,
-            specular: f32,
-            shininess: f32,
-            has_texture: u32,
-            use_pbr: u32,
-            metallic: f32,
-            roughness: f32,
-            has_normal_map: u32,
-            has_ao_map: u32,
-            unlit: u32,
-            receive_shadows: u32,
-            use_flat: u32,
-            normal_strength: f32,
-            uv_transform: [f32; 4],
-            ao_range: [f32; 2],
-            alpha_cutoff: f32,
-            alpha_flag: u32,
-            emissive: [f32; 3],
-            _pad_emissive: f32,
-            has_light_probe: u32,
-            light_probe_index: u32,
-            ignore_clip: u32,
-            _pad_lp: u32,
-        }
-
-        // Layout matches the WGSL `InstanceData` (and the `InstanceData` Rust
-        // struct); both the explicit `MeshInstanceItem` batches built here and
-        // the auto-instanced items feed the same instanced shaders. Explicit
-        // instance batches do not opt into light probes, so the fields stay 0.
-        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 208);
-
-        let has_texture = if item
+        // These instances are `unlit`, so the material scalars in
+        // `material_gpu_buf` (indexed by `material_id`) are not read; pinning
+        // `material_id` to 0 (the default block) is safe. `HAS_TEXTURE` stays
+        // per-instance so the albedo still samples.
+        use crate::resources::mesh::instancing::instance_flags as f;
+        let has_texture = item
             .texture_id
-            .is_some_and(|id| self.content.textures.get(id).is_some())
-        {
-            1u32
-        } else {
-            0u32
-        };
+            .is_some_and(|id| self.content.textures.get(id).is_some());
 
-        let build = |i: usize| -> GpuInstanceData {
-            GpuInstanceData {
-                model: item.transforms[i],
+        // Drawn relative to the frame's world origin.
+        let origin = self.world_origin;
+        let build = |i: usize| -> InstanceData {
+            InstanceData {
+                model: origin.rel_model(item.transforms[i]),
                 colour: item
                     .colours
                     .get(i)
                     .map(|c| c.to_linear_rgba())
                     .unwrap_or([1.0, 1.0, 1.0, 1.0]),
-                selected: 0,
-                wireframe: 0,
-                ambient: 1.0,
-                diffuse: 0.0,
-                specular: 0.0,
-                shininess: 0.0,
-                has_texture,
-                use_pbr: 0,
-                metallic: 0.0,
-                roughness: 0.0,
-                has_normal_map: 0,
-                has_ao_map: 0,
-                unlit: 1,
-                receive_shadows: 0,
-                use_flat: 1,
-                normal_strength: 1.0,
-                uv_transform: [0.0, 0.0, 1.0, 1.0],
-                ao_range: [0.0, 1.0],
+                flags: f::UNLIT
+                    | f::when(has_texture, f::HAS_TEXTURE)
+                    | f::when(item.settings.ignore_clip, f::IGNORE_CLIP),
+                material_id: 0,
                 alpha_cutoff: 0.5,
-                alpha_flag: 0,
-                emissive: [0.0, 0.0, 0.0],
-                _pad_emissive: 0.0,
-                has_light_probe: 0,
                 light_probe_index: 0,
-                ignore_clip: item.settings.ignore_clip as u32,
-                _pad_lp: 0,
+                // The explicit particle path renders unlit, so the built-in
+                // custom-data emissive read is bypassed; pin to the zero block.
+                custom_data_id: 0,
+                // Particles use no styled back-face policy.
+                backface_pattern_scale: 0.0,
+                object_mask: item.settings.visibility_mask,
+                sidecar_record: 0,
+                deform_flags: 0,
+                colour_stream: 0,
+                warp_scale: 1.0,
+                lightmap_layer: 0,
+                lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+                warp_stream: 0,
+                lightmap_stream: 0,
+                vertex_base: 0,
+                deform_table: 0,
             }
         };
-        let instances: Vec<GpuInstanceData> = match indices {
+        let instances: Vec<InstanceData> = match indices {
             Some(idx) => idx.iter().map(|&i| build(i as usize)).collect(),
             None => (0..item.transforms.len()).map(build).collect(),
         };
@@ -1358,54 +580,40 @@ impl DeviceResources {
             label: Some("mesh_instance_buf"),
             size: instance_bytes
                 .len()
-                .max(std::mem::size_of::<GpuInstanceData>()) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                .max(std::mem::size_of::<InstanceData>()) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&instance_buf, 0, instance_bytes);
 
-        let bgl = self.instancing.bind_group_layout.as_ref()?;
-        let albedo_view = match item.texture_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.texture.view,
-        };
-        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("mesh_instance_bg"),
-            layout: bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(albedo_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        &self.material.normal_map_view,
-                    ),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: crate::gpu::BindingResource::TextureView(&self.material.ao_map_view),
-                },
-            ],
-        });
+        // The records carry base vertex 0, as the draw binds the mesh's own
+        // slice of the slab.
+        let (bind_group, _) = self.build_per_item_object_bind_group(
+            device,
+            mesh_id,
+            &instance_buf,
+            item.texture_id
+                .filter(|id| self.content.textures.get(*id).is_some()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+        )?;
 
         Some(crate::resources::types::MeshInstanceGpuData {
             mesh_id,
             instance_count,
             bind_group,
             blend: item.blend,
-            _instance_buf: instance_buf,
+            instance_buf,
         })
     }
 }
@@ -1515,10 +723,22 @@ pub(crate) struct ObjectUniform {
     pub(crate) alpha_cutoff: f32,    //   4 bytes, offset 244
     pub(crate) has_metallic_roughness_tex: u32, //   4 bytes, offset 248
     pub(crate) has_emissive_tex: u32, //   4 bytes, offset 252
-    /// Per-material UV transform applied to every texture sample.
-    /// `[offset_x, offset_y, scale_x, scale_y]`. Defaults to `(0, 0, 1, 1)`
-    /// (identity). Lets atlas-packed materials share one mesh instance.
-    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 256
+    /// Index into the scene-global per-material UV transform buffer
+    /// (`material_gpu_buf`, group 0 binding 21). 0 is the identity block. The
+    /// three trailing words keep the 16-byte slot the old `uv_transform` vec4
+    /// occupied, so every following offset and the struct size are unchanged.
+    pub(crate) material_id: u32, //   4 bytes, offset 256
+    /// First vertex of this mesh in its shared vertex-slab chunk
+    /// (`GeometrySlab::base_vertex`). The per-object draw binds a mesh sub-slice,
+    /// so `@builtin(vertex_index)` is mesh-local; adding this base recovers the
+    /// global index into the whole-chunk uv1 buffer (binding 19). 0 for meshes
+    /// without a second UV set (they bind the one-entry zero fallback).
+    pub(crate) uv1_base: u32, //   4 bytes, offset 260
+    /// 1 when the mesh is a closed surface (`GpuMesh::closed`). Its back
+    /// faces then shade as inside the solid's own shadow instead of sampling
+    /// the shadow map, and its receiver bias is the one-sided one.
+    pub(crate) mesh_closed: u32, //   4 bytes, offset 264
+    pub(crate) _pad_uv: u32,         //   4 bytes, offset 268
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32, //   4 bytes, offset 272
@@ -1576,75 +796,157 @@ pub(crate) struct ObjectUniform {
     /// clip-object indicator meshes and any annotation that must stay visible
     /// where the scene is clipped. Default 0. Offset 360.
     pub(crate) ignore_clip: u32, //   4 bytes, offset 360
-    /// Pads the struct to a 16-byte multiple (368) for the uniform layout.
-    pub(crate) _pad_ls: u32, //   4 bytes, offset 364
+    /// Shared per-object layer mask (a `u32`). The lit per-object shaders
+    /// AND-test it against each light's `channel_mask` to skip lights that do
+    /// not illuminate this object's layers. Wired from
+    /// `ItemSettings::visibility_mask`; `!0` takes every light. Occupies the
+    /// word that padded the struct to 368 bytes, so the layout is unchanged.
+    pub(crate) object_mask: u32, //   4 bytes, offset 364
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
-/// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
+/// One record per mesh draw instance. Matches the WGSL `InstanceData` struct in
+/// `shaders/helpers/instance_data.wgsl`.
 ///
-/// Layout: 192 bytes.
+/// Layout: 144 bytes. Only per-instance facts ride here; every material
+/// scalar lives in the per-material `material_gpu_buf`, read via
+/// `material_id`, so a shared material is stored once, and every per-mesh word
+/// (the uv1 base, the override windows) lives in the mesh's sidecar record.
+/// `colour` stays per instance (per-instance tinting). The boolean lanes pack
+/// into `flags` ([`instance_flags`]). The sidecar words are read by draws that
+/// bind a mesh sub-slice and its record chunk; the chunk-bound instanced draws
+/// ignore them.
+///
+/// - model:                  mat4     = 64 bytes  offset   0
+/// - colour:                 [f32;4]  = 16 bytes  offset  64
+/// - flags:                  u32      =  4 bytes  offset  80
+/// - material_id:            u32      =  4 bytes  offset  84
+/// - alpha_cutoff:           f32      =  4 bytes  offset  88
+/// - light_probe_index:      u32      =  4 bytes  offset  92
+/// - custom_data_id:         u32      =  4 bytes  offset  96
+/// - backface_pattern_scale: f32      =  4 bytes  offset 100
+/// - object_mask:            u32      =  4 bytes  offset 104
+/// - sidecar_record:         u32      =  4 bytes  offset 108
+/// - deform_flags:           u32      =  4 bytes  offset 112
+/// - colour_stream:          u32      =  4 bytes  offset 116
+/// - warp_scale:             f32      =  4 bytes  offset 120
+/// - lightmap_layer:         u32      =  4 bytes  offset 124
+/// - lightmap_scale_bias:    [f32;4]  = 16 bytes  offset 128
+/// - warp_stream:            u32      =  4 bytes  offset 144
+/// - lightmap_stream:        u32      =  4 bytes  offset 148
+/// - vertex_base:            u32      =  4 bytes  offset 152
+/// - deform_table:           u32      =  4 bytes  offset 156
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
-    pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
-    pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
-    pub(crate) selected: u32,        //   4 bytes, offset  80
-    pub(crate) wireframe: u32,       //   4 bytes, offset  84
-    pub(crate) ambient: f32,         //   4 bytes, offset  88
-    pub(crate) diffuse: f32,         //   4 bytes, offset  92
-    pub(crate) specular: f32,        //   4 bytes, offset  96
-    pub(crate) shininess: f32,       //   4 bytes, offset 100
-    pub(crate) has_texture: u32,     //   4 bytes, offset 104
-    pub(crate) use_pbr: u32,         //   4 bytes, offset 108
-    pub(crate) metallic: f32,        //   4 bytes, offset 112
-    pub(crate) roughness: f32,       //   4 bytes, offset 116
-    pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
-    pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
-    pub(crate) unlit: u32,           //   4 bytes, offset 128
-    /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
-    pub(crate) receive_shadows: u32, //   4 bytes, offset 132
-    /// 1 = recover the shading normal from screen-space derivatives of
-    /// `world_pos` (`ShadingModel::Flat`).
-    pub(crate) use_flat: u32, //   4 bytes, offset 136
-    /// Scales the tangent-space normal XY before the TBN transform. Mirrors
-    /// `Material::normal_strength`; 1.0 is neutral. Occupies the former padding word
-    /// that aligned `uv_transform` to 16, so the struct stride is unchanged.
-    pub(crate) normal_strength: f32, //   4 bytes, offset 140
-    /// Per-material UV transform; mirrors `ObjectUniform::uv_transform`.
-    /// `[offset_x, offset_y, scale_x, scale_y]`.
-    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 144
-    /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
-    /// Mirrors `Material::ao_range`. The instanced mesh shaders do not sample
-    /// the MR texture today, so `metallic_range` / `roughness_range` are
-    /// intentionally absent from `InstanceData`.
-    pub(crate) ao_range: [f32; 2], //   8 bytes, offset 160
-    /// `AlphaMode::Mask` cutoff. Fragments whose albedo alpha is below this are
-    /// discarded when `alpha_flag == 1`. Mirrors `ObjectUniform::alpha_cutoff`.
-    pub(crate) alpha_cutoff: f32, //   4 bytes, offset 168
-    /// 1 = alpha-test (`Mask`) enabled, 0 = no cutout.
-    pub(crate) alpha_flag: u32, //   4 bytes, offset 172
-    /// Self-illumination colour added after lighting; mirrors `Material::emissive`
-    /// (glTF `emissiveFactor`). The instanced path does not sample the emissive
-    /// texture, so emissive-textured materials stay on the per-object path.
-    pub(crate) emissive: [f32; 3], //  12 bytes, offset 176
-    pub(crate) _pad_emissive: f32,   //   4 bytes, offset 188
-    /// 1 = take indirect diffuse from `light_probe_sh` at `light_probe_index`,
-    /// 0 = use the hemisphere/IBL ambient. Mirrors `ObjectUniform::has_light_probe`.
-    pub(crate) has_light_probe: u32, //   4 bytes, offset 192
-    /// Base block index into the shared light-probe SH buffer (group 0 binding 18).
-    pub(crate) light_probe_index: u32, //   4 bytes, offset 196
-    /// 1 = exempt from the global clip planes/volumes. Mirrors
-    /// `ObjectUniform::ignore_clip` / `ItemSettings::ignore_clip`. Offset 200.
-    pub(crate) ignore_clip: u32, //   4 bytes, offset 200
-    pub(crate) _pad_lp: u32,         //   4 bytes, offset 204 (struct stride to 16B)
+    pub(crate) model: [[f32; 4]; 4],
+    /// Base colour with the item opacity in `.a`.
+    pub(crate) colour: [f32; 4],
+    /// [`instance_flags`] bits.
+    pub(crate) flags: u32,
+    /// Index into `material_gpu_buf` (group 0 binding 21). 0 is the default
+    /// material block.
+    pub(crate) material_id: u32,
+    /// `AlphaMode::Mask` cutoff. Stays per instance: the instanced shadow-cutout
+    /// pass reads it without the material buffer.
+    pub(crate) alpha_cutoff: f32,
+    /// Base block index into the shared light-probe SH buffer (group 0 binding
+    /// 18), read when [`instance_flags::HAS_LIGHT_PROBE`] is set.
+    pub(crate) light_probe_index: u32,
+    /// Custom-data block index, in the last region of group 0 binding 18. 0 is the zero
+    /// block.
+    pub(crate) custom_data_id: u32,
+    /// Styled back-face `Pattern` world scale (`cfg.scale / world_extent`), which
+    /// depends on this instance's transform. 0 for every non-Pattern policy.
+    pub(crate) backface_pattern_scale: f32,
+    /// Layer mask, AND-tested against each light's `channel_mask`. Wired from
+    /// `ItemSettings::visibility_mask`; `!0` takes every light. The per-camera
+    /// cull half of the mask is applied CPU-side before an instance is packed.
+    pub(crate) object_mask: u32,
+    /// Base word of the mesh's sidecar record in the chunk bound at group 1
+    /// binding 6. 0 for a mesh without one, which binds the empty header.
+    pub(crate) sidecar_record: u32,
+    /// Bit `i` set when deformer slot `i` is active for this draw.
+    pub(crate) deform_flags: u32,
+    /// First word, in the bound sidecar chunk, of the stream the item is
+    /// coloured by: its scalar (vertex or per-corner) or face-colour stream. 0
+    /// for none. Streams are padded to the elements a draw can index, so the
+    /// vertex stage reads them without a length.
+    pub(crate) colour_stream: u32,
+    /// Vertex warp scale, read when [`instance_flags::HAS_WARP`] is set.
+    pub(crate) warp_scale: f32,
+    /// Base lightmap atlas page of this draw, added to the per-vertex page.
+    pub(crate) lightmap_layer: u32,
+    /// This draw's lightmap sub-rect: `lm_uv = uv1 * .xy + .zw`.
+    pub(crate) lightmap_scale_bias: [f32; 4],
+    /// First word of the warp vector stream, 0 for none.
+    pub(crate) warp_stream: u32,
+    /// First word of the mesh's lightmap UV1 stream, 0 for none.
+    pub(crate) lightmap_stream: u32,
+    /// First vertex of the mesh in its slab chunk. Every mesh draw binds the
+    /// whole chunk with this as its base vertex, and the vertex stage
+    /// subtracts it to get the mesh-local index. 0 for a draw of a buffer of
+    /// its own (per-face vertices, normal lines).
+    pub(crate) vertex_base: u32,
+    /// The deform table this draw reads, as a word of the bound sidecar
+    /// chunk: the deform instance's table when it has data, the mesh's
+    /// otherwise. 0 for a mesh without deform data.
+    pub(crate) deform_table: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<InstanceData>() == 208);
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 160);
+
+/// Bit lanes of [`InstanceData::flags`]. The WGSL `INST_*` constants in
+/// `shaders/helpers/instance_data.wgsl` mirror these.
+pub(crate) mod instance_flags {
+    pub(crate) const SELECTED: u32 = 1 << 0;
+    pub(crate) const WIREFRAME: u32 = 1 << 1;
+    pub(crate) const HAS_TEXTURE: u32 = 1 << 2;
+    pub(crate) const HAS_NORMAL_MAP: u32 = 1 << 3;
+    pub(crate) const HAS_AO_MAP: u32 = 1 << 4;
+    pub(crate) const UNLIT: u32 = 1 << 5;
+    /// Sample the shadow atlas; without it the fragment is unshadowed. Wired
+    /// from `ItemSettings::receive_shadows`.
+    pub(crate) const RECEIVE_SHADOWS: u32 = 1 << 6;
+    /// The mesh is a closed surface (`GpuMesh::closed`): its back faces shade
+    /// as inside the solid's own shadow instead of sampling the shadow map.
+    pub(crate) const MESH_CLOSED: u32 = 1 << 7;
+    /// A two-sided receiver (styled back-face policy on an open mesh), which
+    /// takes the cull-none path's receiver bias.
+    pub(crate) const TWO_SIDED_RECEIVER: u32 = 1 << 8;
+    /// `AlphaMode::Mask`: discard below `alpha_cutoff`.
+    pub(crate) const ALPHA_MASK: u32 = 1 << 9;
+    pub(crate) const HAS_LIGHT_PROBE: u32 = 1 << 10;
+    /// Exempt from the global clip planes and volumes
+    /// (`ItemSettings::ignore_clip`).
+    pub(crate) const IGNORE_CLIP: u32 = 1 << 11;
+    pub(crate) const HAS_POSITION_OVERRIDE: u32 = 1 << 12;
+    pub(crate) const HAS_NORMAL_OVERRIDE: u32 = 1 << 13;
+    /// The item has an active scalar attribute (per-vertex scalar buffer).
+    pub(crate) const HAS_ATTRIBUTE: u32 = 1 << 14;
+    /// The attribute is a per-face colour buffer rather than a scalar.
+    pub(crate) const USE_FACE_COLOUR: u32 = 1 << 15;
+    /// The item has a GPU vertex warp (per-vertex warp buffer).
+    pub(crate) const HAS_WARP: u32 = 1 << 16;
+    /// The mesh has a sidecar record at `sidecar_record`; without it the
+    /// vertex stage reads no sidecar words.
+    pub(crate) const HAS_SIDECAR: u32 = 1 << 17;
+    /// The mesh has a second UV set in its chunk's uv1 stream.
+    pub(crate) const HAS_UV1: u32 = 1 << 18;
+    /// The normal map has a signed (snorm) format, so it samples in [-1, 1]
+    /// and the shader skips the [0, 1] remap.
+    pub(crate) const NORMAL_MAP_SIGNED: u32 = 1 << 19;
+
+    /// `bit` when `on`, else 0.
+    #[inline]
+    pub(crate) const fn when(on: bool, bit: u32) -> u32 {
+        if on { bit } else { 0 }
+    }
+}
 /// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material
-/// fields needed by the full [`InstanceData`] struct.
+/// fields needed by the full `InstanceData` struct.
 ///
 /// Layout (80 bytes):
 /// - model_c0..model_c3: vec4<f32> x 4 = 64 bytes (model matrix, column-major)
@@ -1653,13 +955,22 @@ const _: () = assert!(std::mem::size_of::<InstanceData>() == 208);
 /// Total: 80 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct PickInstance {
-    pub(crate) model_c0: [f32; 4],
-    pub(crate) model_c1: [f32; 4],
-    pub(crate) model_c2: [f32; 4],
-    pub(crate) model_c3: [f32; 4],
-    pub(crate) object_id: u32,
-    pub(crate) _pad: [u32; 3],
+pub struct PickInstance {
+    /// Column 0 of the instance model matrix.
+    pub model_c0: [f32; 4],
+    /// Column 1 of the instance model matrix.
+    pub model_c1: [f32; 4],
+    /// Column 2 of the instance model matrix.
+    pub model_c2: [f32; 4],
+    /// Column 3 of the instance model matrix.
+    pub model_c3: [f32; 4],
+    /// The pick id written to the pick target for this instance.
+    pub object_id: u32,
+    /// The deform table the instance's mesh draw reads, as a word of the
+    /// sidecar chunk bound beside the pick instances. 0 for none.
+    pub deform_table: u32,
+    /// Padding to the 80-byte stride the shader declares.
+    pub _pad: [u32; 2],
 }
 
 const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);
@@ -1729,8 +1040,10 @@ pub struct BatchMeta {
     /// `DrawIndexedIndirect` it emits so the bind-once draw path can bind the
     /// whole chunk and offset per mesh.
     pub base_vertex: i32,
-    /// Padding to keep the struct 16-byte aligned.
-    pub _pad: u32,
+    /// Reserved: a per-batch flag word for the GPU-driven cull phase (e.g. the
+    /// per-batch side of the shared visibility mask). Keeps the struct 16-byte
+    /// aligned; unread by any shader today and uploaded as 0.
+    pub _reserved_flags: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);

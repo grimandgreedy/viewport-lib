@@ -1,32 +1,5 @@
-use crate::scene::material::{ItemSettings, Material};
-
-/// LIC overlay data attached to a surface item.
-///
-/// Set `SceneRenderItem::lic` to `Some(LicOverlay { ... })` to render a
-/// Line Integral Convolution flow visualisation on that surface mesh.
-/// The mesh must have a `VertexVector` attribute matching `vector_attribute`
-/// uploaded via `DeviceResources::upload_mesh_data`.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct LicOverlay {
-    /// Name of the `AttributeData::VertexVector` attribute on the mesh.
-    pub vector_attribute: String,
-    /// LIC rendering configuration (step count, step size, strength).
-    pub config: crate::renderer::types::frame::SurfaceLICConfig,
-}
-
-impl LicOverlay {
-    /// Create a new `LicOverlay` with the given vector attribute name and LIC configuration.
-    pub fn new(
-        vector_attribute: impl Into<String>,
-        config: crate::renderer::types::frame::SurfaceLICConfig,
-    ) -> Self {
-        Self {
-            vector_attribute: vector_attribute.into(),
-            config,
-        }
-    }
-}
+use crate::resources::MaterialId;
+use crate::scene::material::ItemSettings;
 
 /// Per-object render data for one frame.
 #[derive(Clone)]
@@ -34,23 +7,25 @@ impl LicOverlay {
 pub struct SceneRenderItem {
     /// `MeshId` of the uploaded GPU mesh for this object.
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    /// World-space model matrix (Translation * Rotation * Scale).
-    pub model: [[f32; 4]; 4],
+    /// World-space placement: an f64 translation and an f32 rotation-scale.
+    /// Assign a `Mat4` with `.into()`.
+    pub model: crate::Transform,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
     /// Whether to render per-vertex normal visualization lines for this object.
     pub show_normals: bool,
-    /// Per-object material (colour, shading coefficients, texture).
-    pub material: Material,
+    /// The material this item draws with, from
+    /// [`upload_material`](crate::resources::DeviceResources::upload_material).
+    /// Default [`MaterialId::DEFAULT`].
+    pub material: MaterialId,
     /// One material per submesh range of the mesh, indexed to match
     /// `MeshData::submeshes` at upload time.
     ///
     /// `None` draws every range (or the whole mesh, if it has no ranges)
-    /// with `material`. When set, the renderer issues one draw per range
-    /// with the matching material; a length mismatch against the mesh's
-    /// range count falls back to `material` for the whole mesh. Items with
-    /// this set are drawn per-object (no instancing).
-    pub submesh_materials: Option<Vec<Material>>,
+    /// with `material`. When set, the renderer draws each range with the
+    /// matching material; a length mismatch against the mesh's range count
+    /// falls back to `material` for the whole mesh.
+    pub submesh_materials: Option<Vec<MaterialId>>,
     /// Named scalar attribute to colour by. `None` = use material base colour.
     pub active_attribute: Option<crate::resources::AttributeRef>,
     /// Explicit scalar range `(min, max)`. `None` = use auto-range computed at upload time.
@@ -90,13 +65,6 @@ pub struct SceneRenderItem {
     /// undeformed with no error. The single-instance convention is
     /// `deform_instance = Some(0)` alongside `attach_deform_slot_instance(.., 0, ..)`.
     pub deform_instance: Option<u32>,
-    /// Whether this surface receives projected decals. Default: `true`.
-    pub receives_decals: bool,
-    /// LIC flow overlay for this surface. `None` disables LIC for this item.
-    ///
-    /// The mesh must have a `VertexVector` attribute matching
-    /// `LicOverlay::vector_attribute`.
-    pub lic: Option<LicOverlay>,
     /// LOD group to draw this object from. `None` means draw `mesh_id` directly.
     ///
     /// When set, the renderer measures how large the object appears each frame
@@ -110,6 +78,12 @@ pub struct SceneRenderItem {
     /// behaviour). Set to [`IndirectLightSource::LightProbe`] to sample the
     /// uploaded SH light-probe field at the object's position instead.
     pub indirect_light: IndirectLightSource,
+    /// Where this draw sits in its mesh's lightmap atlas: an index into
+    /// [`SceneFrame::lightmap_placements`](crate::SceneFrame::lightmap_placements).
+    /// `None`, or an index past the end of that list, uses the placement the
+    /// mesh's lightmap was registered with. Lets copies of one lightmapped
+    /// mesh sample their own rects of a shared atlas.
+    pub lightmap_placement: Option<crate::resources::LightmapPlacementId>,
 }
 
 /// Source of an object's indirect diffuse light.
@@ -129,14 +103,26 @@ pub enum IndirectLightSource {
     ProbeVolume,
 }
 
+impl SceneRenderItem {
+    /// An item drawing `mesh_id` with `material`, at the identity transform,
+    /// with default settings.
+    pub fn new(mesh_id: crate::resources::mesh::mesh_store::MeshId, material: MaterialId) -> Self {
+        Self {
+            mesh_id,
+            material,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for SceneRenderItem {
     fn default() -> Self {
         Self {
             mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            model: crate::Transform::IDENTITY,
             settings: ItemSettings::default(),
             show_normals: false,
-            material: Material::default(),
+            material: MaterialId::DEFAULT,
             submesh_materials: None,
             active_attribute: None,
             scalar_range: None,
@@ -145,10 +131,9 @@ impl Default for SceneRenderItem {
             warp_attribute: None,
             warp_scale: 1.0,
             deform_instance: None,
-            receives_decals: true,
-            lic: None,
             lod_group: None,
             indirect_light: IndirectLightSource::default(),
+            lightmap_placement: None,
         }
     }
 }

@@ -38,8 +38,216 @@ fn level_dims(w: u32, h: u32, level: u32) -> (u32, u32) {
     ((w >> level).max(1), (h >> level).max(1))
 }
 
-/// GPU resources for one pyramid size. Recreated when the depth target the
-/// pyramid samples changes dimensions.
+/// The pyramid's layouts and compute pipelines. None of them depends on the
+/// pyramid's size, so they are composed once per renderer and shared by every
+/// viewport and every size; each pipeline is built under the compilation
+/// policy the first time a pass asks for it.
+pub(crate) struct HizPipelines {
+    copy_bgl: crate::gpu::BindGroupLayout,
+    /// The nearest sampler the copy reads the scene depth through.
+    depth_sampler: crate::gpu::Sampler,
+    reproj_bgl: crate::gpu::BindGroupLayout,
+    to_texture_bgl: crate::gpu::BindGroupLayout,
+    reduce_bgl: crate::gpu::BindGroupLayout,
+    family: crate::resources::pipeline_slot::LazyFamily<HizRecipe, 5, crate::gpu::ComputePipeline>,
+}
+
+/// What a HiZ compute build reads: a label, layout, module and entry point per
+/// pipeline.
+pub(crate) struct HizRecipe {
+    device: crate::gpu::Device,
+    stages: [(
+        &'static str,
+        crate::gpu::PipelineLayout,
+        crate::resources::pipeline_slot::LazyModule,
+        &'static str,
+    ); 5],
+}
+
+/// depth -> prev_depth copy.
+const HIZ_COPY: usize = 0;
+/// Reprojection: clear, scatter, then buffer -> mip 0.
+const HIZ_INIT: usize = 1;
+const HIZ_SCATTER: usize = 2;
+const HIZ_TO_TEXTURE: usize = 3;
+/// mip N -> mip N+1 (max of 2x2).
+const HIZ_REDUCE: usize = 4;
+
+fn build_hiz(r: &HizRecipe, i: usize) -> crate::gpu::ComputePipeline {
+    let (label, layout, shader, entry) = &r.stages[i];
+    crate::resources::builders::compute_pipeline(&r.device, label, layout, shader.get(), entry)
+}
+
+impl HizPipelines {
+    /// Ask for every pipeline, for a warm-up.
+    pub(crate) fn request_all(&self) {
+        self.family.request_all();
+    }
+
+    pub(crate) fn new(
+        device: &crate::gpu::Device,
+        compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    ) -> Self {
+        let compute = crate::gpu::ShaderStages::COMPUTE;
+        let storage_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::StorageTexture {
+                access: crate::gpu::StorageTextureAccess::WriteOnly,
+                format: crate::gpu::TextureFormat::R32Float,
+                view_dimension: crate::gpu::TextureViewDimension::D2,
+            },
+            count: None,
+        };
+        let sampled_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::Texture {
+                sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                view_dimension: crate::gpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let buffer_entry = |binding: u32, read_only: bool| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let uniform_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+
+        let wgsl = |label: &str, src: &'static str| {
+            crate::resources::pipeline_slot::LazyModule::new(device, label, src, Default::default())
+        };
+        let copy_shader = wgsl(
+            "hiz_copy_shader",
+            include_str!(concat!(env!("OUT_DIR"), "/hiz_copy.wgsl")),
+        );
+        let reproject_shader = wgsl(
+            "hiz_reproject_shader",
+            include_str!(concat!(env!("OUT_DIR"), "/hiz_reproject.wgsl")),
+        );
+        let to_texture_shader = wgsl(
+            "hiz_to_texture_shader",
+            include_str!(concat!(env!("OUT_DIR"), "/hiz_to_texture.wgsl")),
+        );
+        let reduce_shader = wgsl(
+            "hiz_reduce_shader",
+            include_str!(concat!(env!("OUT_DIR"), "/hiz_reduce.wgsl")),
+        );
+
+        // depth -> prev_depth (depth read as unfilterable float, R32Float
+        // storage out).
+        let copy_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("hiz_copy_bgl"),
+            entries: &[
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: compute,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                storage_tex_entry(1),
+                crate::resources::builders::nearest_sampler_entry(2, compute),
+            ],
+        });
+        // Reprojection (init + scatter share this layout; init ignores the
+        // texture binding, which is allowed).
+        let reproj_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("hiz_reproj_bgl"),
+            entries: &[
+                uniform_entry(0),
+                sampled_tex_entry(1),
+                buffer_entry(2, false),
+            ],
+        });
+        let to_texture_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("hiz_to_texture_bgl"),
+                entries: &[buffer_entry(0, true), storage_tex_entry(1)],
+            });
+        let reduce_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("hiz_reduce_bgl"),
+            entries: &[sampled_tex_entry(0), storage_tex_entry(1)],
+        });
+
+        let layout = |label: &str, bgl: &crate::gpu::BindGroupLayout| {
+            crate::resources::builders::pipeline_layout(device, label, &[bgl])
+        };
+        let recipe = HizRecipe {
+            device: device.clone(),
+            stages: [
+                (
+                    "hiz_copy_pipeline",
+                    layout("hiz_copy_pipeline", &copy_bgl),
+                    copy_shader,
+                    "copy_depth",
+                ),
+                (
+                    "hiz_init_pipeline",
+                    layout("hiz_init_pipeline", &reproj_bgl),
+                    reproject_shader.clone(),
+                    "init",
+                ),
+                (
+                    "hiz_scatter_pipeline",
+                    layout("hiz_scatter_pipeline", &reproj_bgl),
+                    reproject_shader,
+                    "scatter",
+                ),
+                (
+                    "hiz_to_texture_pipeline",
+                    layout("hiz_to_texture_pipeline", &to_texture_bgl),
+                    to_texture_shader,
+                    "to_texture",
+                ),
+                (
+                    "hiz_reduce_pipeline",
+                    layout("hiz_reduce_pipeline", &reduce_bgl),
+                    reduce_shader,
+                    "reduce",
+                ),
+            ],
+        };
+        Self {
+            copy_bgl,
+            depth_sampler: crate::resources::builders::clamp_nearest_sampler(
+                device,
+                "hiz_depth_sampler",
+            ),
+            reproj_bgl,
+            to_texture_bgl,
+            reduce_bgl,
+            family: crate::resources::pipeline_slot::LazyFamily::new(
+                recipe,
+                std::sync::Arc::clone(compiler),
+                build_hiz,
+            ),
+        }
+    }
+}
+
+/// GPU resources for one pyramid size: textures, buffers and bind groups.
+/// Recreated when the depth target the pyramid samples changes dimensions; the
+/// pipelines are shared and survive that.
 pub(crate) struct HizState {
     /// mip-0 dimensions in pixels (matches the depth target).
     pub(crate) dims: [u32; 2],
@@ -49,8 +257,11 @@ pub(crate) struct HizState {
     /// Set once the first depth has been stored. Until then there is nothing to
     /// reproject and the pyramid is not built.
     has_prev_depth: bool,
-    /// View-projection of the camera that drew `prev_depth`.
+    /// View-projection of the camera that drew `prev_depth`, relative to
+    /// `prev_origin`.
     prev_view_proj: [[f32; 4]; 4],
+    /// World origin `prev_view_proj` is relative to.
+    prev_origin: glam::DVec3,
 
     /// Reprojection uniform (inverse-prev and current view-projection). The
     /// scatter buffer is owned by the bind groups that reference it.
@@ -61,15 +272,8 @@ pub(crate) struct HizState {
     /// One single-mip storage view per level (reduction write targets).
     storage_views: Vec<crate::gpu::TextureView>,
 
-    /// depth -> prev_depth copy (reuses the mip-0 copy shader).
-    copy_pipeline: crate::gpu::ComputePipeline,
-    copy_bgl: crate::gpu::BindGroupLayout,
-    /// Reprojection: clear, scatter, then buffer -> mip 0.
-    init_pipeline: crate::gpu::ComputePipeline,
-    scatter_pipeline: crate::gpu::ComputePipeline,
-    to_texture_pipeline: crate::gpu::ComputePipeline,
-    /// mip N -> mip N+1 (max of 2x2).
-    reduce_pipeline: crate::gpu::ComputePipeline,
+    /// The layouts and pipelines, shared by every pyramid size.
+    pipelines: std::sync::Arc<HizPipelines>,
 
     /// Cached bind groups for the per-frame passes (the depth-copy group is
     /// rebuilt each call because the depth view changes).
@@ -79,7 +283,12 @@ pub(crate) struct HizState {
 }
 
 impl HizState {
-    pub(crate) fn new(device: &crate::gpu::Device, w: u32, h: u32) -> Self {
+    pub(crate) fn new(
+        device: &crate::gpu::Device,
+        w: u32,
+        h: u32,
+        pipelines: std::sync::Arc<HizPipelines>,
+    ) -> Self {
         let w = w.max(1);
         let h = h.max(1);
         let mips = mip_count(w, h);
@@ -142,132 +351,10 @@ impl HizState {
             mapped_at_creation: false,
         });
 
-        let compute = crate::gpu::ShaderStages::COMPUTE;
-        let storage_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
-            binding,
-            visibility: compute,
-            ty: crate::gpu::BindingType::StorageTexture {
-                access: crate::gpu::StorageTextureAccess::WriteOnly,
-                format: crate::gpu::TextureFormat::R32Float,
-                view_dimension: crate::gpu::TextureViewDimension::D2,
-            },
-            count: None,
-        };
-        let sampled_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
-            binding,
-            visibility: compute,
-            ty: crate::gpu::BindingType::Texture {
-                sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
-                view_dimension: crate::gpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let buffer_entry = |binding: u32, read_only: bool| crate::gpu::BindGroupLayoutEntry {
-            binding,
-            visibility: compute,
-            ty: crate::gpu::BindingType::Buffer {
-                ty: crate::gpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let uniform_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
-            binding,
-            visibility: compute,
-            ty: crate::gpu::BindingType::Buffer {
-                ty: crate::gpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-
-        let wgsl = |label: &str, src: &'static str| {
-            crate::resources::builders::wgsl_module(device, label, src)
-        };
-        let copy_shader = wgsl(
-            "hiz_copy_shader",
-            include_str!(concat!(env!("OUT_DIR"), "/hiz_copy.wgsl")),
-        );
-        let reproject_shader = wgsl(
-            "hiz_reproject_shader",
-            include_str!(concat!(env!("OUT_DIR"), "/hiz_reproject.wgsl")),
-        );
-        let to_texture_shader = wgsl(
-            "hiz_to_texture_shader",
-            include_str!(concat!(env!("OUT_DIR"), "/hiz_to_texture.wgsl")),
-        );
-        let reduce_shader = wgsl(
-            "hiz_reduce_shader",
-            include_str!(concat!(env!("OUT_DIR"), "/hiz_reduce.wgsl")),
-        );
-
-        // depth -> prev_depth (texture_depth_2d in, R32Float storage out).
-        let copy_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("hiz_copy_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: compute,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                storage_tex_entry(1),
-            ],
-        });
-        // Reprojection (init + scatter share this layout; init ignores the
-        // texture binding, which is allowed).
-        let reproj_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("hiz_reproj_bgl"),
-            entries: &[
-                uniform_entry(0),
-                sampled_tex_entry(1),
-                buffer_entry(2, false),
-            ],
-        });
-        let to_texture_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("hiz_to_texture_bgl"),
-                entries: &[buffer_entry(0, true), storage_tex_entry(1)],
-            });
-        let reduce_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("hiz_reduce_bgl"),
-            entries: &[sampled_tex_entry(0), storage_tex_entry(1)],
-        });
-
-        let pipeline = |label: &str,
-                        bgl: &crate::gpu::BindGroupLayout,
-                        module: &crate::gpu::ShaderModule,
-                        ep: &str| {
-            let layout = crate::resources::builders::pipeline_layout(device, label, &[bgl]);
-            crate::resources::builders::compute_pipeline(device, label, &layout, module, ep)
-        };
-        let copy_pipeline = pipeline("hiz_copy_pipeline", &copy_bgl, &copy_shader, "copy_depth");
-        let init_pipeline = pipeline("hiz_init_pipeline", &reproj_bgl, &reproject_shader, "init");
-        let scatter_pipeline = pipeline(
-            "hiz_scatter_pipeline",
-            &reproj_bgl,
-            &reproject_shader,
-            "scatter",
-        );
-        let to_texture_pipeline = pipeline(
-            "hiz_to_texture_pipeline",
-            &to_texture_bgl,
-            &to_texture_shader,
-            "to_texture",
-        );
-        let reduce_pipeline =
-            pipeline("hiz_reduce_pipeline", &reduce_bgl, &reduce_shader, "reduce");
-
+        let p = &*pipelines;
         let reproj_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("hiz_reproj_bg"),
-            layout: &reproj_bgl,
+            layout: &p.reproj_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -285,7 +372,7 @@ impl HizState {
         });
         let to_texture_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("hiz_to_texture_bg"),
-            layout: &to_texture_bgl,
+            layout: &p.to_texture_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -301,7 +388,7 @@ impl HizState {
             .map(|level| {
                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("hiz_reduce_bg"),
-                    layout: &reduce_bgl,
+                    layout: &p.reduce_bgl,
                     entries: &[
                         crate::gpu::BindGroupEntry {
                             binding: 0,
@@ -325,15 +412,11 @@ impl HizState {
             prev_depth_storage_view,
             has_prev_depth: false,
             prev_view_proj: [[0.0; 4]; 4],
+            prev_origin: glam::DVec3::ZERO,
             reproj_uniform_buf,
             all_view,
             storage_views,
-            copy_pipeline,
-            copy_bgl,
-            init_pipeline,
-            scatter_pipeline,
-            to_texture_pipeline,
-            reduce_pipeline,
+            pipelines,
             reproj_bg,
             to_texture_bg,
             reduce_bind_groups,
@@ -354,11 +437,17 @@ impl HizState {
         encoder: &mut crate::gpu::CommandEncoder,
         depth_view: &crate::gpu::TextureView,
         view_proj: [[f32; 4]; 4],
+        origin: glam::DVec3,
     ) {
         let [w, h] = self.dims;
+        // Still compiling: nothing stored, so next frame culls frustum-only.
+        let Some(copy_pipeline) = self.pipelines.family.get(HIZ_COPY) else {
+            self.has_prev_depth = false;
+            return;
+        };
         let copy_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("hiz_copy_bg"),
-            layout: &self.copy_bgl,
+            layout: &self.pipelines.copy_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -370,18 +459,23 @@ impl HizState {
                         &self.prev_depth_storage_view,
                     ),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: crate::gpu::BindingResource::Sampler(&self.pipelines.depth_sampler),
+                },
             ],
         });
         let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
             label: Some("hiz_store_prev_depth"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&self.copy_pipeline);
+        pass.set_pipeline(copy_pipeline);
         pass.set_bind_group(0, &copy_bg, &[]);
         pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         drop(pass);
 
         self.prev_view_proj = view_proj;
+        self.prev_origin = origin;
         self.has_prev_depth = true;
     }
 
@@ -394,15 +488,39 @@ impl HizState {
         queue: &crate::gpu::Queue,
         encoder: &mut crate::gpu::CommandEncoder,
         cur_view_proj: [[f32; 4]; 4],
+        cur_origin: glam::DVec3,
     ) -> bool {
         if !self.has_prev_depth {
             return false;
         }
+        let f = &self.pipelines.family;
+        let (
+            Some(init_pipeline),
+            Some(scatter_pipeline),
+            Some(to_texture_pipeline),
+            Some(reduce_pipeline),
+        ) = (
+            f.get(HIZ_INIT),
+            f.get(HIZ_SCATTER),
+            f.get(HIZ_TO_TEXTURE),
+            f.get(HIZ_REDUCE),
+        )
+        else {
+            // Still compiling: the cull runs frustum-only this frame.
+            return false;
+        };
         let [w, h] = self.dims;
 
-        let inv_prev_vp = glam::Mat4::from_cols_array_2d(&self.prev_view_proj)
-            .inverse()
-            .to_cols_array_2d();
+        let inv_prev_vp = glam::Mat4::from_cols_array_2d(&self.prev_view_proj).inverse();
+        // Last frame's points relative to this frame's origin:
+        // translate(prev_origin - cur_origin) * prev_inv_vp, composed in f64.
+        let inv_prev_vp = if self.prev_origin == cur_origin {
+            inv_prev_vp.to_cols_array_2d()
+        } else {
+            (glam::DMat4::from_translation(self.prev_origin - cur_origin) * inv_prev_vp.as_dmat4())
+                .as_mat4()
+                .to_cols_array_2d()
+        };
         let uniform = ReprojUniform {
             inv_prev_vp,
             cur_vp: cur_view_proj,
@@ -421,7 +539,7 @@ impl HizState {
                 label: Some("hiz_reproject_init"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.init_pipeline);
+            pass.set_pipeline(init_pipeline);
             pass.set_bind_group(0, &self.reproj_bg, &[]);
             pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
@@ -430,7 +548,7 @@ impl HizState {
                 label: Some("hiz_reproject_scatter"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.scatter_pipeline);
+            pass.set_pipeline(scatter_pipeline);
             pass.set_bind_group(0, &self.reproj_bg, &[]);
             pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
@@ -440,7 +558,7 @@ impl HizState {
                 label: Some("hiz_reproject_to_texture"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.to_texture_pipeline);
+            pass.set_pipeline(to_texture_pipeline);
             pass.set_bind_group(0, &self.to_texture_bg, &[]);
             pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
@@ -452,7 +570,7 @@ impl HizState {
                 label: Some("hiz_reduce_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.reduce_pipeline);
+            pass.set_pipeline(reduce_pipeline);
             pass.set_bind_group(0, &self.reduce_bind_groups[(level - 1) as usize], &[]);
             pass.dispatch_workgroups(lw.div_ceil(8), lh.div_ceil(8), 1);
         }
@@ -467,23 +585,30 @@ impl crate::resources::ViewportCullState {
     pub(crate) fn store_hiz_prev_depth(
         &mut self,
         device: &crate::gpu::Device,
+        pipelines: &std::sync::Arc<HizPipelines>,
         encoder: &mut crate::gpu::CommandEncoder,
         depth_view: &crate::gpu::TextureView,
         w: u32,
         h: u32,
         view_proj: [[f32; 4]; 4],
+        origin: glam::DVec3,
     ) {
         if w == 0 || h == 0 {
             return;
         }
         let stale = self.hiz.as_ref().map_or(true, |s| s.dims != [w, h]);
         if stale {
-            self.hiz = Some(HizState::new(device, w, h));
+            self.hiz = Some(HizState::new(
+                device,
+                w,
+                h,
+                std::sync::Arc::clone(pipelines),
+            ));
         }
         self.hiz
             .as_mut()
             .unwrap()
-            .store_prev_depth(device, encoder, depth_view, view_proj);
+            .store_prev_depth(device, encoder, depth_view, view_proj, origin);
     }
 
     /// Reproject last frame's depth and build the pyramid into the cull encoder.
@@ -493,9 +618,10 @@ impl crate::resources::ViewportCullState {
         queue: &crate::gpu::Queue,
         encoder: &mut crate::gpu::CommandEncoder,
         cur_view_proj: [[f32; 4]; 4],
+        cur_origin: glam::DVec3,
     ) -> bool {
         match self.hiz.as_ref() {
-            Some(s) => s.build_reprojected(queue, encoder, cur_view_proj),
+            Some(s) => s.build_reprojected(queue, encoder, cur_view_proj, cur_origin),
             None => false,
         }
     }
@@ -511,6 +637,16 @@ impl crate::resources::ViewportCullState {
 }
 
 impl crate::resources::DeviceResources {
+    /// The HiZ layouts and pipelines, composed on first call.
+    pub(crate) fn hiz_pipelines(
+        &self,
+        device: &crate::gpu::Device,
+    ) -> std::sync::Arc<HizPipelines> {
+        std::sync::Arc::clone(self.hiz_pipelines.get_or_init(|| {
+            std::sync::Arc::new(HizPipelines::new(device, &self.pipeline_compiler))
+        }))
+    }
+
     /// Enable or disable the HiZ occlusion test on the main-camera cull.
     pub(crate) fn set_occlusion_culling(&mut self, enabled: bool) {
         self.occlusion_culling_enabled = enabled;
@@ -525,5 +661,11 @@ impl crate::resources::DeviceResources {
     /// of the discard-free early-Z twin. Measurement knob only.
     pub(crate) fn set_force_po_discard(&mut self, force: bool) {
         self.force_po_discard = force;
+    }
+
+    /// Pin every per-object mesh draw to the universal pipeline. Measurement
+    /// knob only.
+    pub(crate) fn set_mesh_universal(&mut self, universal: bool) {
+        self.mesh_universal = universal;
     }
 }

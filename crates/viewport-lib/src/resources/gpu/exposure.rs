@@ -3,21 +3,26 @@
 //! Mirrors the clustered-shading resource pattern: shared compute pipelines and
 //! a bind group layout on `DeviceResources`, with the per-viewport buffers
 //! (histogram, adaptation state, params) living on `ViewportHdrState`. The three
-//! entry points of `exposure.wgsl` (clear -> build -> resolve) run between the
-//! HDR pass and the tone map in the same submission, so a single dirty render is
-//! correctly exposed on its own frame with no CPU readback.
+//! entry points of `exposure.wgsl` (clear -> build -> resolve) run after the
+//! HDR pass in the same submission, with no CPU readback. The HDR path copies
+//! the state's `exposure` into the camera uniform before the scene draws, so a
+//! frame shades with the exposure the previous frame resolved and the meter
+//! divides it back out.
 
-use crate::gpu::util::DeviceExt;
+use crate::resources::builders::LoggedAlloc;
 
 /// Number of log-luminance histogram bins. Must match `HISTOGRAM_BINS` in
 /// `exposure.wgsl`.
 pub const HISTOGRAM_BINS: u32 = 256;
 
-/// Lower bound of the metered log2-luminance range (bin 0). Chosen to cover deep
-/// shadow through a bright sky across the 256 bins.
+/// Lower bound of the metered log2-luminance range (bin 0), in nits: deep
+/// shadow.
 pub const LOG_LUM_MIN: f32 = -10.0;
-/// Upper bound of the metered log2-luminance range (last bin).
-pub const LOG_LUM_MAX: f32 = 12.0;
+/// Upper bound of the metered log2-luminance range (last bin), in nits. About
+/// 260,000 nits, well above a white surface in full sun (~30,000), so daylight
+/// scenes meter inside the range rather than piling into the top bin. The 256
+/// bins span 28 stops, about 0.11 stops each.
+pub const LOG_LUM_MAX: f32 = 18.0;
 
 /// Per-frame metering + adaptation parameters. Matches `ExposureParams` in
 /// `exposure.wgsl` (64 bytes, 16-byte aligned).
@@ -38,8 +43,9 @@ pub struct ExposureParams {
     pub max_ev: f32,
     /// Exposure compensation in stops (positive brightens).
     pub compensation: f32,
-    /// Interim neutral boost folded into the EV->multiplier form (temporary).
-    pub exposure_boost: f32,
+    /// EV100 that partial adaptation scales from: the passthrough EV, whose
+    /// multiplier is exactly `1.0`.
+    pub anchor_ev: f32,
     /// Adaptation rate (per second) when the scene brightens.
     pub speed_up: f32,
     /// Adaptation rate (per second) when the scene darkens.
@@ -54,8 +60,8 @@ pub struct ExposureParams {
     pub tex_width: f32,
     /// HDR target height in texels.
     pub tex_height: f32,
-    /// Center-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
-    pub center_weight: f32,
+    /// Centre-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
+    pub centre_weight: f32,
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
     /// metered scene. `1` drives the metered value to middle grey (full
     /// auto-exposure); `0` holds a fixed exposure; between, the image keeps some
@@ -70,12 +76,12 @@ const _: () = assert!(std::mem::size_of::<ExposureParams>() == 80);
 
 /// Persistent adaptation state. Matches `ExposureState` in `exposure.wgsl` and
 /// the tone-map exposure buffer (16 bytes). `exposure` is the linear multiplier
-/// the tone map reads; the other fields carry adaptation state and the
+/// the camera uniform carries; the other fields carry adaptation state and the
 /// "still adapting" signal for the optional readback.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ExposureState {
-    /// Linear exposure multiplier applied before tone mapping.
+    /// Linear exposure multiplier the shaders apply at each radiance read.
     pub exposure: f32,
     /// Current adapted EV100 (persists across frames for smoothing).
     pub current_ev: f32,
@@ -87,19 +93,41 @@ pub struct ExposureState {
 
 const _: () = assert!(std::mem::size_of::<ExposureState>() == 16);
 
+/// What the three exposure compute builds read: one layout and one module.
+pub struct ExposureRecipe {
+    device: crate::gpu::Device,
+    layout: crate::gpu::PipelineLayout,
+    shader: crate::resources::pipeline_slot::LazyModule,
+}
+
+fn build_exposure(r: &ExposureRecipe, i: usize) -> crate::gpu::ComputePipeline {
+    let (label, entry) = match i {
+        0 => ("exposure_clear_pipeline", "clear_main"),
+        1 => ("exposure_build_pipeline", "build_main"),
+        _ => ("exposure_resolve_pipeline", "resolve_main"),
+    };
+    crate::resources::builders::compute_pipeline(&r.device, label, &r.layout, r.shader.get(), entry)
+}
+
 /// Shared auto-exposure pipelines and bind group layout owned by
 /// `DeviceResources`.
 pub struct ExposureResources {
     /// Bind group layout for all three compute passes (hdr texture, params
     /// uniform, histogram storage, exposure-state storage).
     pub bgl: crate::gpu::BindGroupLayout,
-    clear_pipeline: crate::gpu::ComputePipeline,
-    build_pipeline: crate::gpu::ComputePipeline,
-    resolve_pipeline: crate::gpu::ComputePipeline,
+    /// The nearest sampler the build pass reads the scene depth through.
+    depth_sampler: crate::gpu::Sampler,
+    /// The clear, build and resolve pipelines, `None` until `ensure_pipelines`
+    /// composes them. A frame whose dispatch finds one still compiling skips
+    /// the pass and keeps the exposure it had.
+    pipelines: Option<
+        crate::resources::pipeline_slot::LazyFamily<ExposureRecipe, 3, crate::gpu::ComputePipeline>,
+    >,
 }
 
 impl ExposureResources {
-    /// Build the shared bind group layout and the clear/build/resolve pipelines.
+    /// Build the shared bind group layout. The pipelines wait for
+    /// `ensure_pipelines`.
     pub fn new(device: &crate::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("exposure_bgl"),
@@ -150,52 +178,67 @@ impl ExposureResources {
                     binding: 4,
                     visibility: crate::gpu::ShaderStages::COMPUTE,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
+                // binding 5: the nearest sampler the depth read goes through.
+                crate::resources::builders::nearest_sampler_entry(
+                    5,
+                    crate::gpu::ShaderStages::COMPUTE,
+                ),
             ],
         });
 
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "exposure_shader",
-            crate::resources::builders::wgsl_source!("exposure"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "exposure_pipeline_layout",
-            &[&bgl],
-        );
-        let clear_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_clear_pipeline",
-            &layout,
-            &shader,
-            "clear_main",
-        );
-        let build_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_build_pipeline",
-            &layout,
-            &shader,
-            "build_main",
-        );
-        let resolve_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "exposure_resolve_pipeline",
-            &layout,
-            &shader,
-            "resolve_main",
-        );
-
         Self {
             bgl,
-            clear_pipeline,
-            build_pipeline,
-            resolve_pipeline,
+            depth_sampler: crate::resources::builders::clamp_nearest_sampler(
+                device,
+                "exposure_depth_sampler",
+            ),
+            pipelines: None,
+        }
+    }
+
+    /// Compose the clear, build and resolve compute pipelines: the layout and
+    /// the module they share, with each pipeline built under the compilation
+    /// policy the first time a dispatch asks for it. A no-op after the first
+    /// call.
+    pub fn ensure_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    ) {
+        if self.pipelines.is_some() {
+            return;
+        }
+        let recipe = ExposureRecipe {
+            device: device.clone(),
+            layout: crate::resources::builders::pipeline_layout(
+                device,
+                "exposure_pipeline_layout",
+                &[&self.bgl],
+            ),
+            shader: crate::resources::pipeline_slot::LazyModule::new(
+                device,
+                "exposure_shader",
+                crate::resources::builders::wgsl_source!("exposure"),
+                Default::default(),
+            ),
+        };
+        self.pipelines = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            recipe,
+            std::sync::Arc::clone(compiler),
+            build_exposure,
+        ));
+    }
+
+    /// Ask for all three pipelines, for a warm-up.
+    pub fn request_all(&self) {
+        if let Some(p) = &self.pipelines {
+            p.request_all();
         }
     }
 
@@ -204,7 +247,7 @@ impl ExposureResources {
     pub fn create_viewport_buffers(
         device: &crate::gpu::Device,
     ) -> (crate::gpu::Buffer, crate::gpu::Buffer, crate::gpu::Buffer) {
-        let histogram_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let histogram_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("exposure_histogram_buf"),
             size: (HISTOGRAM_BINS as u64) * 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
@@ -219,14 +262,14 @@ impl ExposureResources {
             target_ev: 0.0,
             adapting: 0.0,
         };
-        let state_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let state_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("exposure_state_buf"),
             contents: bytemuck::cast_slice(&[state_seed]),
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::COPY_DST
                 | crate::gpu::BufferUsages::COPY_SRC,
         });
-        let params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let params_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("exposure_params_buf"),
             size: std::mem::size_of::<ExposureParams>() as u64,
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
@@ -270,6 +313,10 @@ impl ExposureResources {
                     binding: 4,
                     resource: crate::gpu::BindingResource::TextureView(depth_view),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: crate::gpu::BindingResource::Sampler(&self.depth_sampler),
+                },
             ],
         })
     }
@@ -293,12 +340,20 @@ impl ExposureResources {
         width: u32,
         height: u32,
     ) {
+        let Some(p) = self.pipelines.as_ref() else {
+            return;
+        };
+        let (Some(clear_pipeline), Some(build_pipeline), Some(resolve_pipeline)) =
+            (p.get(0), p.get(1), p.get(2))
+        else {
+            return;
+        };
         {
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("exposure_clear_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.clear_pipeline);
+            pass.set_pipeline(clear_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(HISTOGRAM_BINS.div_ceil(256), 1, 1);
         }
@@ -307,7 +362,7 @@ impl ExposureResources {
                 label: Some("exposure_build_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.build_pipeline);
+            pass.set_pipeline(build_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
         }
@@ -316,7 +371,7 @@ impl ExposureResources {
                 label: Some("exposure_resolve_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.resolve_pipeline);
+            pass.set_pipeline(resolve_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }

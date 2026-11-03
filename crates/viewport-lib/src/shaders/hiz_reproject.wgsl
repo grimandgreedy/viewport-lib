@@ -5,10 +5,11 @@
 //
 // Forward scatter: each source texel is unprojected to world space with the
 // previous view-projection, reprojected with the current one, and its depth is
-// written to the destination pixel with an atomic min (the nearest surface that
-// lands on a pixel wins). The destination starts at the far value, so texels no
-// source reaches (revealed this frame) stay far and read as "no occluder",
-// which keeps the cull from dropping anything that just became visible.
+// written to the destination pixel with an atomic max (the nearest surface that
+// lands on a pixel wins: depth is reversed, 1 at the near plane). The
+// destination starts at the far value, so texels no source reaches (revealed
+// this frame) stay far and read as "no occluder", which keeps the cull from
+// dropping anything that just became visible.
 
 struct ReprojUniform {
     // Inverse of the previous frame's view-projection (NDC -> world).
@@ -23,9 +24,11 @@ struct ReprojUniform {
 @group(0) @binding(1) var                      prev_depth: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read_write> dst:        array<atomic<u32>>;
 
-// Bit pattern of 1.0f. For depths in [0,1] the float bit pattern is monotonic,
-// so atomicMin over the bits is atomicMin over the depth.
-const FAR_BITS: u32 = 0x3f800000u;
+// #include "helpers/depth.wgsl"
+
+// Bit pattern of the far depth, 0.0f. For depths in [0,1] the float bit
+// pattern is monotonic, so atomicMax over the bits is atomicMax over the depth.
+const FAR_BITS: u32 = 0u;
 
 // 2D dispatch (not 1D over w*h) so neither workgroup dimension exceeds the
 // 65535 limit at large or supersampled resolutions.
@@ -47,7 +50,7 @@ fn scatter(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let d = textureLoad(prev_depth, vec2<i32>(gid.xy), 0).r;
     // Background carries no occluder to reproject.
-    if d >= 1.0 {
+    if viewport_depth_is_background(d) {
         return;
     }
 
@@ -75,5 +78,5 @@ fn scatter(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cx = min(px.x, dim.x - 1u);
     let cy = min(px.y, dim.y - 1u);
     let idx = cy * dim.x + cx;
-    atomicMin(&dst[idx], bitcast<u32>(ndc.z));
+    atomicMax(&dst[idx], bitcast<u32>(ndc.z));
 }

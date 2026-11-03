@@ -1,13 +1,9 @@
 pub use crate::resources::device_resources::ContentResources;
 pub use crate::resources::device_resources::DeviceResources;
-pub(crate) use crate::resources::device_resources::DualPipeline;
-pub(crate) use crate::resources::device_resources::ImageSliceResources;
-pub(crate) use crate::resources::device_resources::ImplicitResources;
+pub use crate::resources::device_resources::DualPipeline;
 pub(crate) use crate::resources::device_resources::OutlineResources;
 pub(crate) use crate::resources::device_resources::PickResources;
 pub(crate) use crate::resources::device_resources::ProjectedTetResources;
-pub(crate) use crate::resources::device_resources::ScatterViewportState;
-pub(crate) use crate::resources::device_resources::ScreenImageResources;
 pub(crate) use crate::resources::device_resources::ShadowCullState;
 pub(crate) use crate::resources::device_resources::SubHighlightResources;
 pub(crate) use crate::resources::device_resources::ViewportCullState;
@@ -24,6 +20,9 @@ pub use crate::resources::material::colourmap_data::ColourmapId;
 pub use crate::resources::material::matcap_data::BuiltinMatcap;
 pub use crate::resources::material::matcap_data::MatcapId;
 pub use crate::resources::material::textures::GpuTexture;
+pub use crate::resources::material::textures::{
+    TextureData, TexturePayload, TextureRequirement, TextureRole,
+};
 pub use crate::resources::memory::ResidentBytes;
 pub use crate::resources::memory::TextureMemoryStats;
 pub use crate::resources::memory::VramBudget;
@@ -31,17 +30,11 @@ pub use crate::resources::mesh::gpu_mesh::GpuMesh;
 pub use crate::resources::mesh::instancing::BatchMeta;
 pub(crate) use crate::resources::mesh::instancing::InstanceAabb;
 pub(crate) use crate::resources::mesh::instancing::InstanceData;
-pub(crate) use crate::resources::mesh::instancing::ObjectUniform;
-pub(crate) use crate::resources::mesh::instancing::PickInstance;
+pub use crate::resources::mesh::instancing::PickInstance;
 pub use crate::resources::mesh::meshes::{MeshData, SubmeshRange};
-pub(crate) use crate::resources::overlay::highlight::CurveMeshOutlineItem;
-pub(crate) use crate::resources::overlay::highlight::OutlineEdgeUniform;
+pub use crate::resources::overlay::highlight::OutlineEdgeUniform;
 pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;
 pub(crate) use crate::resources::overlay::highlight::OutlineUniform;
-pub(crate) use crate::resources::overlay::highlight::RawGeomOutlineBuffers;
-pub(crate) use crate::resources::overlay::highlight::ScreenRectOutlineBuffers;
-pub(crate) use crate::resources::overlay::highlight::SplatOutlineBuffers;
-pub(crate) use crate::resources::overlay::highlight::SplatOutlineMaskUniform;
 pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::ClipShapeGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShadowLayerGpu;
@@ -55,11 +48,7 @@ pub(crate) use crate::resources::overlay::overlay_text::OverlayTextVertex;
 pub(crate) use crate::resources::overlay::overlays::BackdropBlurState;
 pub(crate) use crate::resources::overlay::overlays::GridUniform;
 pub(crate) use crate::resources::overlay::overlays::GroundPlaneUniform;
-pub(crate) use crate::resources::overlay::overlays::OverlayUniform;
 pub use crate::resources::overlay::overlays::OverlayVertex;
-pub(crate) use crate::resources::postprocess::lic::LicAdvectUniform;
-pub(crate) use crate::resources::postprocess::lic::LicObjectUniform;
-pub use crate::resources::postprocess::lic::LicSurfaceGpuData;
 pub(crate) use crate::resources::postprocess::uniforms::AtlasBlitUniform;
 pub(crate) use crate::resources::postprocess::uniforms::BloomUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ContactShadowUniform;
@@ -67,28 +56,15 @@ pub(crate) use crate::resources::postprocess::uniforms::DofUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ShadowAtlasUniform;
 pub(crate) use crate::resources::postprocess::uniforms::SsaoUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ToneMapUniform;
-pub(crate) use crate::resources::scivis::gaussian_splat::GaussianSplatDrawData;
-pub(crate) use crate::resources::scivis::gaussian_splat::GaussianSplatStore;
-pub(crate) use crate::resources::scivis::glyph::GlyphBaseMesh;
-pub use crate::resources::scivis::glyph::GlyphGpuData;
-pub use crate::resources::scivis::glyph::TensorGlyphGpuData;
-pub use crate::resources::scivis::image::ScreenImageGpuData;
-pub use crate::resources::scivis::point_cloud::PointCloudGpuData;
-pub use crate::resources::scivis::polyline::PolylineGpuData;
-pub use crate::resources::scivis::sprite::SpriteGpuData;
-pub use crate::resources::scivis::tube::StreamtubeGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetChunk;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetUniform;
-pub(crate) use crate::resources::volume::volumes::ImageSliceGpuData;
-pub use crate::resources::volume::volumes::VolumeGpuData;
-pub(crate) use crate::resources::volume::volumes::VolumeSurfaceSliceGpuData;
 
 pub use viewport_lib_types::ids::{ProjectedTetId, VolumeId};
 
 pub use viewport_lib_types::data::attribute::{AttributeData, AttributeKind, AttributeRef};
 
-pub use viewport_lib_types::colourmap::BuiltinColourmap;
+pub use viewport_lib_types::colourmap::{BuiltinColourmap, UnknownColourmap};
 
 // ---------------------------------------------------------------------------
 // Vertex and uniform structs (bytemuck::Pod for GPU buffer casting)
@@ -173,9 +149,6 @@ impl VertexBufferLayoutExt for Vertex {
     }
 }
 
-/// Default shadow atlas resolution (width = height). The atlas is a 2x2 grid of tiles.
-pub(crate) const SHADOW_ATLAS_SIZE: u32 = 4096;
-
 /// Per-frame camera uniform: view-projection and eye position.
 ///
 /// GPU uniform struct : must remain 16-byte aligned (`#[repr(C)]`).
@@ -186,30 +159,56 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     /// Camera eye position in world space (used for specular lighting).
     pub eye_pos: [f32; 3],
-    /// Upper bound applied to the lit (pre-emissive) mesh colour.
+    /// Upper bound applied to the lit (pre-emissive) mesh colour, which is
+    /// exposed radiance.
     ///
-    /// 1.0 on the LDR path, so lit output stays normalised as before. On the
-    /// HDR path this is F16_MAX, letting bright direct light and ambient stay
-    /// above 1.0 into the Rgba16Float target so the tone mapper receives real
-    /// HDR (emissive was already unclamped on both paths). Occupies what was
-    /// alignment padding, so the struct layout is unchanged.
+    /// 1.0 on the LDR path, where the target cannot hold more. On the HDR path
+    /// this is F16_MAX, so bright direct light and ambient stay above 1.0 in
+    /// the Rgba16Float target and the tone mapper receives real HDR.
     pub lit_clamp: f32,
     /// Camera forward direction in world space (used for view-depth tests).
     pub forward: [f32; 3],
-    /// Padding to align `forward` to 16 bytes.
-    pub _pad1: f32,
+    /// The camera's exposure: the linear multiplier the shaders apply to every
+    /// radiance source where they read it (lights, environment, hemisphere
+    /// fill, probes, lightmaps, emissive). 1.0 under
+    /// `ExposureMode::Passthrough`; under `ExposureMode::Automatic` the HDR
+    /// path copies the adapted value in on the GPU before the scene draws.
+    pub exposure: f32,
     /// Inverse view-projection matrix (for reconstructing world-space rays, e.g. skybox).
     pub inv_view_proj: [[f32; 4]; 4],
     /// View matrix (world -> camera space, column-major).
     ///
     /// Used by the matcap shader to transform world-space normals to view space.
     pub view: [[f32; 4]; 4],
+    /// Projection matrix (view -> clip, column-major).
+    pub proj: [[f32; 4]; 4],
+    /// Inverse projection matrix.
+    pub inv_proj: [[f32; 4]; 4],
+    /// Viewport size in physical pixels: width, height, 1 / width, 1 / height.
+    pub viewport: [f32; 4],
+    /// Near plane, far plane, 1 for an orthographic projection (0 for
+    /// perspective), and a reserved zero.
+    pub clip: [f32; 4],
+    /// Frame time: seconds as f32, the remainder f32 drops from the f64
+    /// seconds, delta seconds, and the frame index modulo 2^24.
+    pub time: [f32; 4],
+    /// The world origin every position above is relative to, rounded to f32.
+    /// Too coarse far from zero to rebuild a position with; for procedural
+    /// effects that want world coordinates.
+    pub world_origin: [f32; 3],
+    /// Bumped each time `world_origin` moves.
+    pub origin_epoch: u32,
 }
+
+/// Byte offset of [`CameraUniform::exposure`], where the HDR path copies an
+/// automatic exposure in.
+pub(crate) const CAMERA_EXPOSURE_OFFSET: u64 = std::mem::offset_of!(CameraUniform, exposure) as u64;
+const _: () = assert!(CAMERA_EXPOSURE_OFFSET == 92);
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).
 ///
 /// Layout (144 bytes, 16-byte aligned):
-/// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; only used for `lights[0]`)
+/// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; a spot light's, when it has a layer)
 /// - pos_or_dir:        `[f32; 3]`     = 12 bytes  (direction for directional, position for point/spot)
 /// - light_type:        u32            =  4 bytes  (0=directional, 1=point, 2=spot)
 /// - colour:             `[f32; 3]`     = 12 bytes
@@ -217,17 +216,22 @@ pub struct CameraUniform {
 /// - range:             f32        =  4 bytes
 /// - inner_angle:       f32        =  4 bytes
 /// - outer_angle:       f32        =  4 bytes
-/// - _pad_align:        u32        =  4 bytes  (bridge to 16-byte boundary for spot_direction)
+/// - shadow_kind:       u32        =  4 bytes  (0 none, 1 cascades, 2 point layers, 3 spot layer)
 /// - spot_direction:    `[f32; 3]` = 12 bytes  (spot only; at offset 112 to match WGSL vec3 align)
-/// - _pad:              `[f32; 5]` = 20 bytes  (tail padding to 144)
+/// - shadow_layer:      i32        =  4 bytes  (base punctual shadow layer, -1 none)
+/// - point_shadow_near: f32        =  4 bytes
+/// - radius:            f32        =  4 bytes
+/// - channel_mask:      u32        =  4 bytes  (layer mask; AND-tested per object)
+/// - _reserved:         u32        =  4 bytes  (reserved tail to 144; see the field)
 /// Total: 64+12+4+12+4+4+4+4+4+12+20 = 144 bytes
 ///
 /// Note: WGSL `vec3<f32>` has AlignOf=16, so `spot_direction` must start at offset 112.
-/// The `_pad_align` field bridges the 4-byte gap between offset 108 and 112.
+/// `shadow_kind` fills the 4 bytes between offset 108 and 112.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SingleLightUniform {
-    /// Light-space view-projection matrix for shadow map rendering.
+    /// Light-space view-projection matrix of a spot light's shadow layer.
+    /// Identity for every other light.
     pub light_view_proj: [[f32; 4]; 4], // 64 bytes, offset   0
     /// World-space position (point/spot) or direction (directional) of the light.
     pub pos_or_dir: [f32; 3], // 12 bytes, offset  64
@@ -243,24 +247,40 @@ pub struct SingleLightUniform {
     pub inner_angle: f32, //  4 bytes, offset 100
     /// Cosine of the outer cone half-angle (spot lights; smooth falloff edge).
     pub outer_angle: f32, //  4 bytes, offset 104
-    /// Alignment padding : bridges 4-byte gap to align `spot_direction` to offset 112.
-    pub _pad_align: u32, //  4 bytes, offset 108 (aligns spot_direction to 112)
+    /// Which shadow this light samples: 0 none, 1 the cascade atlas, 2 a point
+    /// light's six layers of the punctual shadow array, 3 a spot light's one
+    /// layer. Also keeps `spot_direction` at offset 112.
+    pub shadow_kind: u32, //  4 bytes, offset 108
     /// World-space unit direction the spot cone points toward.
     pub spot_direction: [f32; 3], // 12 bytes, offset 112
-    /// Cubemap slot index for point-shadow sampling, or -1 if this light
-    /// does not have a slot allocated this frame. Only meaningful when
-    /// `light_type == 1` (point).
-    pub point_shadow_slot: i32, //  4 bytes, offset 124
-    /// Near plane for the point-shadow perspective projection (world units).
-    /// Used by the lit pass to map fragment distance back into the
-    /// normalised [0, 1] depth that was written into the cubemap.
+    /// Base layer of this light in the punctual shadow array, or -1 when it
+    /// has none this frame: a point light's six cube faces start here, a spot
+    /// light's map is this layer.
+    pub shadow_layer: i32, //  4 bytes, offset 124
+    /// Near plane of the punctual shadow projection (world units).
     pub point_shadow_near: f32, //  4 bytes, offset 128
     /// Source radius (world units) for point/spot lights: clamps the
     /// inverse-square falloff near the light and sizes a finite emitter.
     pub radius: f32, //  4 bytes, offset 132
-    /// Tail padding to reach 144-byte struct size.
-    pub _pad: [f32; 2], //  8 bytes, offset 136 : total 144
+    /// Layer mask this light illuminates (offset 136). AND-tested in the lit
+    /// mesh shaders against each object's mask; a light whose bits do not
+    /// intersect the object's mask is skipped for that fragment. Wired from
+    /// `LightSource::channel_mask`; `!0` (the default) lights everything.
+    pub channel_mask: u32, //  4 bytes, offset 136
+    /// Reserved tail (one lane, offset 140, to a 144-byte struct). Earmarked for
+    /// one of the remaining light extensions: an area-light size word or a
+    /// cookie/IES handle (only one lane is left after `channel_mask`, so the
+    /// other rides a parallel per-light buffer when it lands). Unread today and
+    /// uploaded as 0.
+    pub _reserved: u32, //  4 bytes, offset 140 : total 144
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<SingleLightUniform>() == 144);
+    assert!(std::mem::offset_of!(SingleLightUniform, shadow_kind) == 108);
+    assert!(std::mem::offset_of!(SingleLightUniform, spot_direction) == 112);
+    assert!(std::mem::offset_of!(SingleLightUniform, shadow_layer) == 124);
+};
 
 /// GPU-side lights header uniform (binding 3 of group 0).
 ///
@@ -269,6 +289,10 @@ pub struct SingleLightUniform {
 /// and the active light count. Sized so the structure cost stays well
 /// inside the uniform-buffer budget regardless of how many lights are
 /// active in a given frame.
+///
+/// One header serves every viewport of a scene, so its intensities are
+/// absolute (unexposed); a shader multiplies each by the viewport's
+/// `CameraUniform::exposure` where it reads it.
 ///
 /// Layout:
 /// - count:                u32            =  4 bytes
@@ -282,10 +306,14 @@ pub struct SingleLightUniform {
 /// - ibl_enabled:          u32            =  4 bytes
 /// - ibl_intensity:        f32            =  4 bytes
 /// - ibl_rotation:         f32            =  4 bytes
-/// - show_skybox:          u32            =  4 bytes
+/// - ibl_diffuse_scale:    f32            =  4 bytes
 /// - debug_vis_split_x:    f32            =  4 bytes
-/// - _pad_dbg:             [u32; 3]       = 12 bytes
-/// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
+/// - env_zone_count:       u32            =  4 bytes
+/// - ibl_specular_scale:   f32            =  4 bytes
+/// - custom_data_base:     u32            =  4 bytes
+/// - ao_flags:             u32            =  4 bytes
+/// - _pad_ao:              `[u32; 3]`     = 12 bytes
+/// Total: 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightsUniform {
@@ -309,17 +337,25 @@ pub struct LightsUniform {
     pub ibl_enabled: u32, // 4 bytes
     /// IBL intensity multiplier.
     pub ibl_intensity: f32, // 4 bytes
-    /// IBL Y-axis rotation in radians.
+    /// IBL rotation about +Z in radians.
     pub ibl_rotation: f32, // 4 bytes
-    /// 1 = show skybox background, 0 = use background colour.
-    pub show_skybox: u32, // 4 bytes
+    /// Scale on the IBL diffuse term.
+    pub ibl_diffuse_scale: f32, // 4 bytes
     /// Normalized split X position (0..1) for SplitScreen debug mode.
     pub debug_vis_split_x: f32, // 4 bytes
     /// Number of active environment-selection zones (binding 19). 0 = the single
     /// default environment (layer 0); the shaders skip the per-fragment zone loop.
     pub env_zone_count: u32, // 4 bytes
-    /// Reserved for future debug uniform fields.
-    pub _pad_dbg: [u32; 2], // 8 bytes
+    /// Scale on the IBL specular term.
+    pub ibl_specular_scale: f32, // 4 bytes
+    /// Start of the custom-data region of the binding-18 buffer, in `vec4`
+    /// elements.
+    pub custom_data_base: u32, // 4 bytes
+    /// Material AO options: bit 0 multi-bounce, bit 1 micro-shadowing of
+    /// directional lights.
+    pub ao_flags: u32, // 4 bytes
+    /// Padding to a 16-byte multiple.
+    pub _pad_ao: [u32; 3], // 12 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.
@@ -374,10 +410,35 @@ pub(crate) struct FrustumUniform {
     /// HiZ mip-0 dimensions in pixels (the depth target the pyramid was built
     /// from).
     pub(crate) viewport: [f32; 2],
-    pub(crate) _pad0: [f32; 2],
+    /// Camera layer mask. The cull kernel rejects an instance when its
+    /// per-object mask (read from the instance buffer at cull binding 8) shares
+    /// no bit with this. Only consulted when `do_mask_cull == 1`; wired from
+    /// `CameraFrame::cull_mask`.
+    pub(crate) cull_mask: u32,
+    /// 1 = run the per-camera layer-mask reject (main cull, real instance buffer
+    /// bound), 0 = skip it (shadow / single-mesh / plugin dispatches bind the
+    /// fallback instance buffer and leave this off).
+    pub(crate) do_mask_cull: u32,
+    /// 1 = the order-free compaction runs after the cull kernel and will write
+    /// both the visible list and the per-batch visible counts, so the cull
+    /// kernel skips its own arrival-order list and counter increments. 0 = the
+    /// compaction scratch this submission needs is past the device's
+    /// storage-buffer binding limit, so the cull kernel writes the list itself,
+    /// in arrival order.
+    pub(crate) compact_enabled: u32,
+    /// Size of the chunk-plan region of the compaction scratch, in u32s
+    /// (`batch_count + 1`). The shader lays the rest of the buffer out after it.
+    pub(crate) plan_cap: u32,
+    /// Size of the per-chunk totals region of the compaction scratch, in u32s.
+    pub(crate) chunk_cap: u32,
+    /// Where, in u32s, the visibility buffer's words region starts: the cull
+    /// copies each survivor's record words there, six to a visible slot, for
+    /// the culled mesh draws to fetch per instance. 0 = no words region (the
+    /// shadow and plugin culls).
+    pub(crate) words_base: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 192);
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 208);
 
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///
@@ -408,8 +469,8 @@ pub const CLIP_VOLUME_MAX: usize = 4;
 ///
 /// `volume_type` selects the active shape:
 /// - 0 = None (slot unused)
-/// - 2 = Box (oriented AABB : center, half-extents, three orientation columns)
-/// - 3 = Sphere (center + radius packed into `center` and `radius`)
+/// - 2 = Box (oriented AABB : centre, half-extents, three orientation columns)
+/// - 3 = Sphere (centre + radius packed into `centre` and `radius`)
 ///
 /// Layout mirrors the WGSL `ClipVolumeEntry` struct in each geometry shader.
 #[repr(C)]
@@ -419,8 +480,8 @@ pub struct ClipVolumeEntry {
     pub volume_type: u32,
     #[doc(hidden)]
     pub _pad: [u32; 3],
-    /// Box center (world space) or sphere center. Occupies the xyz components.
-    pub center: [f32; 3],
+    /// Box centre (world space) or sphere centre. Occupies the xyz components.
+    pub centre: [f32; 3],
     /// Sphere radius. Unused for boxes.
     pub radius: f32,
     /// Box half-extents. Unused for spheres.
@@ -443,12 +504,12 @@ pub struct ClipVolumeEntry {
 // 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
 
 impl ClipVolumeEntry {
-    /// Build a box entry from center, half-extents, and orientation columns.
-    pub fn from_box(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
+    /// Build a box entry from centre, half-extents, and orientation columns.
+    pub fn from_box(centre: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
         Self {
             volume_type: 2,
             _pad: [0; 3],
-            center,
+            centre,
             radius: 0.0,
             half_extents,
             _pad1: 0.0,
@@ -461,26 +522,26 @@ impl ClipVolumeEntry {
         }
     }
 
-    /// Build a sphere entry from center and radius.
-    pub fn from_sphere(center: [f32; 3], radius: f32) -> Self {
+    /// Build a sphere entry from centre and radius.
+    pub fn from_sphere(centre: [f32; 3], radius: f32) -> Self {
         Self {
             volume_type: 3,
             _pad: [0; 3],
-            center,
+            centre,
             radius,
             ..bytemuck::Zeroable::zeroed()
         }
     }
 
-    /// Build a cylinder entry from center, unit axis, radius, and half-length.
+    /// Build a cylinder entry from centre, unit axis, radius, and half-length.
     ///
     /// The cylinder extends `half_length` units in each direction along `axis`
-    /// from `center`. `axis` must be a unit vector.
-    pub fn from_cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
+    /// from `centre`. `axis` must be a unit vector.
+    pub fn from_cylinder(centre: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
         Self {
             volume_type: 4,
             _pad: [0; 3],
-            center,
+            centre,
             radius,
             half_extents: [half_length, 0.0, 0.0],
             _pad1: 0.0,
@@ -510,18 +571,19 @@ pub struct ClipVolumesUniform {
 
 /// Per-frame GPU data for one mesh-instance batch, created in `prepare()`.
 ///
-/// Mesh instances reuse the scene-graph `mesh_instanced` pipeline family but
-/// run through a host-built per-batch instance buffer rather than the global
-/// scene instance array. Each batch is one draw call.
+/// Mesh instances draw through the HDR mesh family's blended members, from a
+/// host-built per-batch instance buffer rather than the global scene
+/// instance array. Each batch is one draw call.
 pub struct MeshInstanceGpuData {
     /// Mesh handle used to look up the vertex / index buffers at draw time.
     pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Number of instances in this batch (= draw instance count).
     pub(crate) instance_count: u32,
-    /// Bind group (group 1): instance storage buf + albedo / sampler / normal / AO.
+    /// Bind group (group 1): the mesh group around `instance_buf`.
     pub(crate) bind_group: crate::gpu::BindGroup,
     /// Blend mode selected by the host. Drives pipeline selection at draw time.
     pub(crate) blend: crate::renderer::SpriteBlend,
-    // Keep buffers alive for the lifetime of this struct.
-    pub(crate) _instance_buf: crate::gpu::Buffer,
+    /// The batch's instance records, bound at group 1 binding 0 and as
+    /// vertex buffer slot 1.
+    pub(crate) instance_buf: crate::gpu::Buffer,
 }

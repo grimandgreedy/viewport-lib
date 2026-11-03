@@ -1,0 +1,124 @@
+//! The Gaussian splat submission types: the handle an upload mints, the data a
+//! consumer uploads, and the per-frame item that names one.
+
+use viewport_lib_types::material::ItemSettings;
+
+viewport_lib_types::slot_handle! {
+    /// Handle to an uploaded Gaussian splat set.
+    ///
+    /// Carries the slot index plus the generation the slot had when the handle
+    /// was issued. A handle whose splat set was removed (its slot freed and
+    /// reused by a later upload) resolves to no set on lookup, so it cannot
+    /// alias whatever now occupies the slot.
+    pub struct GaussianSplatId;
+}
+
+/// SH degree stored with a Gaussian splat set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ShDegree {
+    /// 3 floats per splat (base RGB only).
+    #[default]
+    Zero,
+    /// 12 floats per splat.
+    One,
+    /// 48 floats per splat. Below the full tier only the DC and degree-1
+    /// terms are drawn.
+    Three,
+}
+
+impl ShDegree {
+    /// Number of SH coefficients per splat for this degree.
+    pub fn coeff_count(self) -> usize {
+        match self {
+            ShDegree::Zero => 3,
+            ShDegree::One => 12,
+            ShDegree::Three => 48,
+        }
+    }
+}
+
+/// Upload data for a Gaussian splat set, handed to the renderer once with
+/// `renderer.upload(..)` (which needs the `gpu` feature).
+///
+/// `PartialEq` compares every array in full; `Debug` prints the splat count and
+/// SH degree rather than the arrays.
+#[derive(Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GaussianSplatData {
+    /// Object-space centre positions, one `[f32; 3]` per splat.
+    pub positions: Vec<[f32; 3]>,
+    /// Scale (positive floats, world-space metres) per splat, one `[f32; 3]`.
+    pub scales: Vec<[f32; 3]>,
+    /// Unit quaternion rotation per splat [x, y, z, w].
+    pub rotations: Vec<[f32; 4]>,
+    /// Opacity per splat in [0, 1].
+    pub opacities: Vec<f32>,
+    /// SH coefficients. Length must equal `positions.len() * sh_degree.coeff_count()`.
+    /// Each splat's block is coefficient-major: an RGB triple per coefficient,
+    /// DC first, then the degree 1, 2 and 3 terms in the standard 3DGS order.
+    /// For ShDegree::Zero these are [r, g, b] base colours per splat.
+    ///
+    /// The evaluated colour is sRGB-referred, matching how splat sets are
+    /// trained (from sRGB photographs), and the shader decodes it to linear
+    /// after evaluating the SH. Pass the coefficients exactly as the trainer
+    /// produced them; do not decode them first. This is the one colour in the
+    /// library converted in the shader rather than at the boundary: a
+    /// [`Colour`](viewport_lib_types::colour::Colour) converts at construction, and a texture
+    /// converts in the sampler.
+    pub sh_coefficients: Vec<f32>,
+    /// SH degree for this splat set.
+    pub sh_degree: ShDegree,
+}
+
+impl std::fmt::Debug for GaussianSplatData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GaussianSplatData")
+            .field("splats", &self.positions.len())
+            .field("sh_degree", &self.sh_degree)
+            .field("sh_coefficients", &self.sh_coefficients.len())
+            .finish()
+    }
+}
+
+/// Per-frame reference to an uploaded Gaussian splat set.
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct GaussianSplatItem {
+    /// Handle to the uploaded splat set this item draws.
+    pub source: GaussianSplatId,
+    /// World-space model matrix.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
+}
+
+impl Default for GaussianSplatItem {
+    fn default() -> Self {
+        Self {
+            source: GaussianSplatId::INVALID,
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splat_data_compares_and_prints_counts() {
+        let mut a = GaussianSplatData::default();
+        a.positions = vec![[1.25, 0.0, 0.0]; 2];
+        a.sh_coefficients = vec![0.5; 6];
+        let mut b = a.clone();
+        assert_eq!(a, b);
+        b.opacities.push(1.0);
+        assert_ne!(a, b);
+
+        let text = format!("{a:?}");
+        assert!(text.contains("splats: 2"), "{text}");
+        assert!(!text.contains("1.25"), "{text}");
+    }
+}

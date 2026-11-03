@@ -1,0 +1,41 @@
+# Copy to `.cargo/config.toml`. The real file is gitignored: the linker paths
+# below are specific to one machine's NDK install.
+#
+# Copy it for iOS too, even though iOS needs no linker entry, because of the
+# `[build]` section: cargo-mobile2's generated Xcode and Gradle projects run
+# cargo from this directory and then look for the library under `./target`, and
+# a `build.target-dir` in your `~/.cargo/config.toml` would send it elsewhere.
+# A config here outranks the one in your home directory, so this pins it back.
+#
+# Then point the linkers at your own NDK before building for Android.
+#
+# Find the version you have with `ls ~/Library/Android/sdk/ndk` (macOS) or
+# `ls $ANDROID_HOME/ndk` (Linux), and replace the `29.0.14206865` component. On
+# Linux the host triple in the path is `linux-x86_64`, not `darwin-x86_64`.
+#
+# The `24` in the clang name is the API level the linker targets, and must be at
+# least the `min_sdk_version` in Cargo.toml.
+
+[build]
+target-dir = "target"
+
+[target.aarch64-linux-android]
+linker = "/Users/YOU/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"
+rustflags = [
+    "-Clink-arg=-landroid",
+    "-Clink-arg=-llog",
+]
+
+[target.armv7-linux-androideabi]
+linker = "/Users/YOU/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi24-clang"
+rustflags = [
+    "-Clink-arg=-landroid",
+    "-Clink-arg=-llog",
+]
+
+[target.x86_64-linux-android]
+linker = "/Users/YOU/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android24-clang"
+rustflags = [
+    "-Clink-arg=-landroid",
+    "-Clink-arg=-llog",
+]

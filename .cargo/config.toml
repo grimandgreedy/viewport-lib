@@ -1,0 +1,23 @@
+# Shorthands for the two example crates that sit outside the workspace. Slint and
+# Bevy pin wgpu 29, and cargo unifies features across a workspace build, so those
+# crates cannot be members alongside the ones on the default wgpu 27 leg: they are
+# named by manifest path instead of `-p`. These aliases hide the path. When both
+# frameworks move to the default leg the crates become members and the aliases can
+# go.
+[alias]
+slint-example = "run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --example slint-minimal"
+bevy-example = "run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml --example bevy-swarm"
+# The build-check halves of the same two, for the post-API-change sweep.
+check-slint-example = "check --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --all-targets"
+check-bevy-example = "check --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml --all-targets"
+# The mobile example sits outside the workspace too, because cargo-mobile2's
+# generated projects expect its target directory to be its own. This runs it in
+# a desktop window; `cargo android run` and `cargo apple run` from the crate
+# directory build for a device, and scripts/check_mobile.sh compile-checks both
+# mobile targets.
+mobile-example = "run --release --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --bin mobile-desktop"
+check-mobile-example = "check --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --all-targets"
+# The eframe showcase on wgpu 30, where the path tracer and lightmap baker use
+# hardware ray queries on Apple silicon. The eframe crate defaults to wgpu 27
+# while some of its examples are still pinned there, so the leg is named here.
+showcase = "run --release -p viewport-lib-examples-eframe --no-default-features --features wgpu30,showcase --example showcase"

@@ -3,7 +3,7 @@
 //! Part of the headless integration suite (split from the former single
 //! headless.rs). Shared device and mesh helpers live in tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -47,20 +47,51 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 }
 
+/// A deformer that pushes every vertex along +x by its slot value, so a draw
+/// that runs it lands somewhere else on screen.
+fn shift_deformer() -> viewport_lib::resources::DeformerDesc {
+    viewport_lib::resources::DeformerDesc {
+        name: "shift_x".into(),
+        stage: viewport_lib::resources::DeformStage::ObjectSpace,
+        priority: 0,
+        wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if deform_slot_stride(ctx.slot) > 0u {\n        o.position.x = o.position.x + deform_read_f32(ctx.slot, v.vertex_index, 0u);\n    }\n    return o;\n}\n".to_string(),
+        per_vertex_stride: 4,
+    }
+}
+
+/// Register [`shift_deformer`] and give `mesh_id` a shift of `dx` on every vertex.
+fn attach_shift(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    mesh_id: viewport_lib::MeshId,
+    dx: f32,
+) {
+    let resources = renderer.resources_mut();
+    let id = resources
+        .register_deformer(device, shift_deformer())
+        .expect("a deformer registers");
+    let vertices = resources.mesh(mesh_id).expect("mesh").vertex_count();
+    let shift = vec![dx; vertices];
+    resources.attach_deform_slot(device, mesh_id, id.slot(), 4, bytemuck::cast_slice(&shift));
+}
+
 /// Regression test for the recurring class of bug where a draw site
 /// unconditionally binds wgpu group index 2. iced_wgpu 0.14 requests a device
 /// with `max_bind_groups: 2` and gives consumers no way to raise it, so any
 /// unconditional `set_bind_group(2, ...)` fails wgpu validation the moment a
 /// mesh, shadow, or HDR pass draws on that device. This has been fixed and
-/// silently reintroduced by new draw sites multiple times (see
-/// `docs/issues/iced-max-bind-groups-2-draw-path-incomplete.md`) because the
-/// only thing that previously caught it was manually running the iced
+/// silently reintroduced by new draw sites several times, because the only
+/// thing that previously caught it was manually running the iced
 /// example. This test exercises the same crash surface headlessly on every
 /// `cargo test`, with no reliance on remembering to gate a new call site.
 ///
 /// wgpu's default (no error-scope) behaviour is to raise the validation
 /// error through the uncaptured-error handler, which panics the calling
 /// thread; a regression here fails the test the same way it crashed iced.
+///
+/// Deformers run there too, since their data rides the mesh's sidecar record:
+/// the last frames draw the boxes through a registered deformer and must land
+/// somewhere else.
 #[test]
 fn two_bind_group_device_renders_without_validation_errors() {
     let Some((device, queue)) = headless_device_limited_bind_groups() else {
@@ -98,7 +129,7 @@ fn two_bind_group_device_renders_without_validation_errors() {
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // LDR path.
@@ -112,23 +143,111 @@ fn two_bind_group_device_renders_without_validation_errors() {
     let hdr_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(hdr_pixels.len(), 64 * 64 * 4);
 
-    // Wireframe mode is a separate draw path (wireframe pipeline, its own
-    // group-2 deform dummy bind) from both the solid and HDR paths above.
+    // Wireframe mode is a separate draw path (the wireframe pipeline) from
+    // both the solid and HDR paths above.
     frame.viewport.wireframe_mode = true;
     let wireframe_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(wireframe_pixels.len(), 64 * 64 * 4);
+    frame.viewport.wireframe_mode = false;
+
+    // A deformer on the same device: the colour, OIT and shadow passes all
+    // run it, and the boxes move.
+    attach_shift(&mut renderer, &device, mesh_id, 0.75);
+    frame.scene.generation += 1;
+    let deformed_hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        deformed_hdr, hdr_pixels,
+        "the deformer must run on a two-bind-group device"
+    );
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+    let deformed_ldr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(deformed_ldr, ldr_pixels);
 }
 
-/// Two non-instanced items that share one mesh but differ in transform and
-/// colour must each draw with their own data. The per-object path writes each
-/// item's `ObjectUniform` to a distinct slot in the shared object-data buffer
-/// and draws it with that slot as `@builtin(instance_index)`; if the indexing
-/// collapsed (every draw at instance 0) both boxes would render with the first
-/// item's red colour and the second item's green would never appear. A styled
-/// back-face policy forces the non-instanced path so this exercises the indexed
-/// object-data buffer rather than the instanced path.
+/// Material plugins need one bind group beyond the mesh path's two, so a
+/// three-group device draws a textured plugin material, with a deformer on
+/// the same mesh, on both paths without a validation error. The plugin's
+/// texture is solid red, so the plugin's draw shows it.
 #[test]
-fn per_object_items_select_distinct_object_data() {
+fn three_bind_group_device_draws_a_material_plugin() {
+    struct SampleTexture;
+    impl viewport_lib::MaterialPlugin for SampleTexture {
+        fn name(&self) -> &str {
+            "sample_texture"
+        }
+        fn wgsl_body(&self) -> String {
+            "fn recolour(surf: ShadingSurface, lit: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {\n    return textureSampleLevel(material_texture_0, material_sampler, surf.uv, 0.0).rgb;\n}\n".to_string()
+        }
+        fn texture_count(&self) -> u32 {
+            1
+        }
+    }
+    let Some((device, queue)) = viewport_lib_testkit::headless_device_with(
+        &viewport_lib_testkit::DeviceProfile::low_power("test-3-bind-groups").max_bind_groups(3),
+    ) else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(device.limits().max_bind_groups, 3);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_pipeline_compilation(viewport_lib::PipelineCompilation::Blocking);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &SampleTexture)
+        .expect("a material plugin registers on three bind groups");
+    let red = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, vec![255, 0, 0, 255]),
+        )
+        .unwrap();
+    let mut m = Material::default().with_plugin(plugin);
+    m.plugin_textures[0] = Some(red);
+    let material = upload_material(&mut renderer, m);
+    attach_shift(&mut renderer, &device, mesh_id, 0.25);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = material;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    for mode in [
+        viewport_lib::PipelineMode::Direct,
+        viewport_lib::PipelineMode::Hdr,
+    ] {
+        frame.effects.display.mode = mode;
+        frame.scene.generation += 1;
+        let px = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+        let red_pixels = px
+            .chunks_exact(4)
+            .filter(|p| p[0] > 150 && p[1] < 60 && p[2] < 60)
+            .count();
+        assert!(
+            red_pixels > 50,
+            "{mode:?}: the plugin's texture must reach the screen ({red_pixels} red pixels)"
+        );
+    }
+}
+
+/// Two items that share one mesh but differ in transform and colour each draw
+/// with their own record, selected by `@builtin(instance_index)`; if the
+/// indexing collapsed (every draw at instance 0) both boxes would render with
+/// the first item's red colour and the second item's green would never appear.
+/// The styled back-face policy draws through the two-sided pipeline.
+#[test]
+fn items_select_distinct_records() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -147,14 +266,16 @@ fn per_object_items_select_distinct_object_data() {
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
-    let make = |x: f32, colour: [f32; 3]| {
+    let mut make = |x: f32, colour: [f32; 3]| {
+        let mut m = Material::default();
+        m.base_colour = Colour::from_linear_rgb_array(colour);
+        // Styled back faces => is_instanceable is false => per-object path.
+        m.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material.base_colour = colour.into();
-        // Styled back faces => is_instanceable is false => per-object path.
-        it.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0].into());
+        it.material = upload_material(&mut renderer, m);
         it.settings.unlit = true;
-        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         it
     };
     frame.scene.surfaces = SurfaceSubmission::Flat(
@@ -215,12 +336,14 @@ fn renderer_fits_recommended_device_limits() {
     // pass (default lighting casts shadows) all build under the capped limits.
     let mut opaque = SceneRenderItem::default();
     opaque.mesh_id = mesh_id;
-    opaque.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0].into());
+    let mut styled = Material::default();
+    styled.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
+    opaque.material = upload_material(&mut renderer, styled);
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // HDR path builds the clustered lit / OIT pipeline layouts.
@@ -268,7 +391,7 @@ fn render_tuning_round_trips() {
 /// over a mid-grey background must leave visible non-background pixels.
 #[test]
 fn overlay_shape_shadow_layers_and_pivot_render() {
-    use viewport_lib::{OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
+    use viewport_lib::{OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
 
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -279,15 +402,11 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
     let size = 96u32;
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.3, 0.3, 0.3, 1.0));
 
     // A shape with two outer shadow layers plus two inner shadow layers,
     // rotated about an off-centre pivot. Fill is bright so it stands out.
@@ -297,17 +416,17 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
             [24.0, 24.0],
             [48.0, 48.0],
         )
-        .with_fill(OverlayFill::Solid([0.9, 0.2, 0.1, 1.0].into()))
-        .with_border([1.0, 1.0, 1.0, 1.0], 2.0)
+        .with_fill(OverlayFill::Solid(Colour::linear(0.9, 0.2, 0.1, 1.0)))
+        .with_outline(Colour::linear(1.0, 1.0, 1.0, 1.0), 2.0, OutlineMode::Inset)
         .with_rotation(0.5)
         .with_rotation_pivot([10.0, 6.0])
         .with_shadows(vec![
-            ShadowLayer::new([0.0, 0.0, 0.0, 0.5], 12.0, [0.0, 6.0]),
-            ShadowLayer::new([0.0, 0.0, 0.0, 0.6], 4.0, [0.0, 2.0]),
+            ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.5), 12.0, [0.0, 6.0]),
+            ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.6), 4.0, [0.0, 2.0]),
         ])
         .with_inner_shadows(vec![
-            ShadowLayer::new([1.0, 1.0, 1.0, 0.3], 5.0, [0.0, -2.0]),
-            ShadowLayer::new([0.0, 0.0, 0.0, 0.4], 8.0, [0.0, 3.0]),
+            ShadowLayer::new(Colour::linear(1.0, 1.0, 1.0, 0.3), 5.0, [0.0, -2.0]),
+            ShadowLayer::new(Colour::linear(0.0, 0.0, 0.0, 0.4), 8.0, [0.0, 3.0]),
         ]),
     ];
 
@@ -341,19 +460,15 @@ fn overlay_shape_backdrop_filters_render() {
     let size = 96u32;
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.2, 0.5, 0.8, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.2, 0.5, 0.8, 1.0));
 
     frame.overlays.shapes = vec![
         OverlayShapeItem::new(OverlayShape::Circle, [24.0, 24.0], [48.0, 48.0])
-            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
+            .with_fill(OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 0.1)))
             .with_backdrop_blur(8.0)
             .with_backdrop_filters(0.4, 0.9, 1.0),
     ];
@@ -382,21 +497,17 @@ fn overlay_shape_pivot_rotation_not_clipped() {
     let size = 160u32;
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.1, 1.0));
 
     // Tall narrow capsule: box x in [60, 76], centre (68, 80). Pivot at the
     // bottom end; rotate 90 degrees so the hand swings out horizontally.
     frame.overlays.shapes = vec![
         OverlayShapeItem::new(OverlayShape::Capsule, [60.0, 20.0], [16.0, 120.0])
-            .with_fill(OverlayFill::Solid([0.95, 0.75, 0.2, 1.0].into()))
+            .with_fill(OverlayFill::Solid(Colour::linear(0.95, 0.75, 0.2, 1.0)))
             .with_rotation(std::f32::consts::FRAC_PI_2)
             .with_rotation_pivot([0.0, 60.0]),
     ];

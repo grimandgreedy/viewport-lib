@@ -10,7 +10,6 @@
 //! Part of the headless integration suite. Shared device helpers live in
 //! tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;
@@ -91,7 +90,7 @@ fn blit_srgb_source_round_trips_into_srgb_target() {
     });
     {
         let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("blit_test_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -186,7 +185,7 @@ fn read_texture_rgba8(
 
     let mut out = Vec::with_capacity((width * height * 4) as usize);
     {
-        let mapped = staging.slice(..).get_mapped_range();
+        let mapped = viewport_lib::gpu::mapped_range(staging.slice(..));
         for row in 0..height as usize {
             let start = row * padded_row as usize;
             out.extend_from_slice(&mapped[start..start + unpadded_row as usize]);

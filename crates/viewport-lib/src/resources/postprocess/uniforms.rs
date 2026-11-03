@@ -5,7 +5,9 @@
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ToneMapUniform {
     pub(crate) exposure: f32,
-    pub(crate) mode: u32, // 0=Reinhard, 1=ACES, 2=KhronosNeutral
+    /// Operator: 0 Reinhard, 1 ACES fit, 2 Khronos Neutral, 3 AgX,
+    /// 4 ACES RRT, 5 generic curve, 6 view LUT; any other value applies none.
+    pub(crate) mode: u32,
     pub(crate) bloom_enabled: u32,
     pub(crate) ssao_enabled: u32,
     pub(crate) contact_shadows_enabled: u32,
@@ -13,18 +15,38 @@ pub(crate) struct ToneMapUniform {
     pub(crate) edl_radius: f32,
     pub(crate) edl_strength: f32,
     pub(crate) background_colour: [f32; 4],
+    /// Near, and the far distance EDL normalises view distance against.
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
-    pub(crate) lic_enabled: u32,
-    pub(crate) lic_strength: f32,
+    /// Non-zero for an orthographic projection.
+    pub(crate) orthographic: u32,
+    /// The projection's far plane, 0 when it has none.
+    pub(crate) projection_far: f32,
     /// Non-zero when the foreground pass ran this frame. Gates the
-    /// foreground-coverage test that skips SSAO/contact-shadow/EDL/LIC on
+    /// foreground-coverage test that skips SSAO/contact-shadow/EDL on
     /// pixels covered by foreground geometry.
     pub(crate) foreground_enabled: u32,
-    pub(crate) _pad: [u32; 3],
+    /// Vignette darkening strength at full falloff (0 = off).
+    pub(crate) vignette_amount: f32,
+    /// Centre-to-corner fraction where the vignette falloff starts.
+    pub(crate) vignette_radius: f32,
+    /// Width of the vignette falloff band past the radius.
+    pub(crate) vignette_softness: f32,
+    /// Grade LUT placement: 0 = none bound, 1 = display-referred,
+    /// 2 = scene-referred.
+    pub(crate) grade_mode: u32,
+    /// Slice count / height of the strip LUT (its texture height).
+    pub(crate) grade_lut_size: f32,
+    /// Working space of the grade and operator: 0 = Rec.709, 1 = Rec.2020.
+    pub(crate) working_space: u32,
+    /// AgX look: 0 = none, 1 = punchy, 2 = golden.
+    pub(crate) agx_look: u32,
+    /// Generic curve: contrast, input scale, output scale; the last lane is
+    /// the view LUT's slice count.
+    pub(crate) generic_curve: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 80);
+const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 112);
 
 /// Bloom pass uniform (16 bytes).
 #[repr(C)]
@@ -49,13 +71,14 @@ pub(crate) struct SsaoUniform {
     pub(crate) _pad: [f32; 2],
 }
 
-/// Depth of field uniform (32 bytes).
+/// Depth of field uniform (48 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DofUniform {
     pub(crate) focal_distance: f32,
     pub(crate) focal_range: f32,
     pub(crate) max_blur_radius: f32,
+    /// Near and far of the projection; far is 0 when it has none.
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
     pub(crate) viewport_width: f32,
@@ -63,13 +86,18 @@ pub(crate) struct DofUniform {
     /// Non-zero when the foreground pass ran this frame. Pixels covered by
     /// foreground geometry pass through unblurred.
     pub(crate) foreground_enabled: f32,
+    /// Non-zero for an orthographic projection.
+    pub(crate) orthographic: f32,
+    pub(crate) _pad: [f32; 3],
 }
 
-/// Shadow atlas uniform (416 bytes, bound at group 0 binding 5).
+const _: () = assert!(std::mem::size_of::<DofUniform>() == 48);
+
+/// Shadow atlas uniform (368 bytes, bound at group 0 binding 5).
 ///
-/// Contains per-cascade view-projection matrices, split distances, atlas layout,
-/// and PCSS parameters. Used by the fragment shader for CSM cascade selection
-/// and shadow sampling.
+/// Contains per-cascade view-projection matrices, split distances, the
+/// distance fade, atlas layout, and the PCSS sun size. Used by the fragment
+/// shader for CSM cascade selection and shadow sampling.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ShadowAtlasUniform {
@@ -79,21 +107,30 @@ pub(crate) struct ShadowAtlasUniform {
     pub(crate) cascade_splits: [f32; 4], //  16 bytes
     /// Number of active cascades (1-4).
     pub(crate) cascade_count: u32, //   4 bytes
-    /// Backing atlas texture size in pixels (always `SHADOW_ATLAS_SIZE`).
+    /// Backing atlas texture size in pixels: the resolved
+    /// `ShadowSettings::atlas_resolution`.
     ///
     /// Shaders derive everything from this plus the atlas rects: one texel in
     /// UV space is `1.0 / atlas_size`, and a tile's pixel width is
-    /// `atlas_size * (rect.z - rect.x)`. When the requested shadow resolution
-    /// is below `SHADOW_ATLAS_SIZE`, the rects shrink but this value does not.
+    /// `atlas_size * (rect.z - rect.x)`, half the atlas.
     pub(crate) atlas_size: f32, //   4 bytes
     /// Shadow filter mode: 0=PCF, 1=PCSS.
     pub(crate) shadow_filter: u32, //   4 bytes
-    /// PCSS light source radius in UV space.
-    pub(crate) pcss_light_radius: f32, //   4 bytes
-    /// Per-slot atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y] x 8 slots.
-    pub(crate) atlas_rects: [[f32; 4]; 8], // 128 bytes
+    /// `tan(ShadowSettings::sun_angular_radius)`: world penumbra radius per
+    /// world unit between blocker and receiver, for the PCSS tiers.
+    pub(crate) tan_sun: f32, //   4 bytes
+    /// `[far, fade_fraction, reserved, r_max_world]`: `far` is where the
+    /// cascades end along the view (0 = no distance cut), `fade_fraction`
+    /// the share of `far` over which shadows fade out before it.
+    /// `r_max_world` caps the PCSS search and filter radius in world units,
+    /// 24 texels of cascade 0, so the widest penumbra is the same in every
+    /// cascade.
+    pub(crate) range: [f32; 4], //  16 bytes
+    /// Per-cascade atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y].
+    pub(crate) atlas_rects: [[f32; 4]; 4], //  64 bytes
 }
-// Total: 256 + 16 + 16 + 128 = 416 bytes
+// Total: 256 + 16 + 16 + 16 + 64 = 368 bytes
+const _: () = assert!(std::mem::size_of::<ShadowAtlasUniform>() == 368);
 
 /// Uniform for the shadow atlas blit overlay. 16 bytes.
 #[repr(C)]

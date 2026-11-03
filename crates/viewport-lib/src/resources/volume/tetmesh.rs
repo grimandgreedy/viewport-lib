@@ -1,11 +1,13 @@
 //! Tetrahedral mesh data type.
 
-pub use viewport_lib_types::data::volume::{TetMesh, TetMeshAttributes};
+pub use viewport_lib_types::data::volume_mesh::{TetMesh, TetMeshAttributes};
 
 /// Uniform buffer layout for the projected tetrahedra pass.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ProjectedTetUniform {
+    /// Local to world transform of the volume, from `VolumeMeshItem::model`.
+    pub(crate) model: [[f32; 4]; 4],
     pub(crate) density: f32,
     pub(crate) scalar_min: f32,
     pub(crate) scalar_max: f32,

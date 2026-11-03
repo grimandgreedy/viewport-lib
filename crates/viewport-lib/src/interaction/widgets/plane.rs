@@ -1,25 +1,26 @@
-//! Plane widget: a draggable infinite plane defined by a center point and normal.
+//! Plane widget: a draggable infinite plane defined by a centre point and normal.
 
-use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::Colour;
+use crate::geometry::maths::intersect::ray_plane_intersection;
+use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
 use super::{
-    WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_world_radius,
-    ray_point_dist,
+    HandleMarkers, WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_colour,
+    handle_world_radius, ray_point_dist,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PlaneHandle {
-    Center,
+    Centre,
     NormalTip,
 }
 
-/// An interactive plane widget defined by a center point and unit normal.
+/// An interactive plane widget defined by a centre point and unit normal.
 ///
-/// Two handles: the center (moves the plane freely in 3D) and a normal tip
-/// (orbits the normal direction around the center by dragging).
+/// Two handles: the centre (moves the plane freely in 3D) and a normal tip
+/// (orbits the normal direction around the centre by dragging).
 ///
 /// # Usage
 ///
@@ -28,15 +29,16 @@ enum PlaneHandle {
 ///
 /// // Each frame:
 /// plane.update(&ctx);
-/// fd.scene.polylines.push(plane.plane_item(PLANE_ID));
-/// fd.scene.glyphs.push(plane.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(plane.plane_item(PLANE_ID));
+/// let markers = plane.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 ///
 /// // Suppress orbit while dragging:
 /// if plane.is_active() { orbit.resolve(); } else { orbit.apply_to_camera(&mut camera); }
 /// ```
 pub struct PlaneWidget {
-    /// World-space center of the plane.
-    pub center: glam::Vec3,
+    /// World-space centre of the plane.
+    pub centre: glam::Vec3,
     /// Unit normal vector of the plane (always normalized on output).
     pub normal: glam::Vec3,
     /// RGBA colour for the wireframe square outline and normal line.
@@ -45,7 +47,7 @@ pub struct PlaneWidget {
     pub handle_colour: crate::Colour,
     /// Half-size of the visual square in world space.
     pub display_half_size: f32,
-    /// Distance from center to the normal-tip handle sphere.
+    /// Distance from centre to the normal-tip handle sphere.
     pub normal_display_length: f32,
 
     hovered_handle: Option<PlaneHandle>,
@@ -59,7 +61,7 @@ impl PlaneWidget {
     /// Create a new plane widget.
     ///
     /// `normal` is normalized internally; if zero, defaults to `Vec3::Z`.
-    pub fn new(center: glam::Vec3, normal: glam::Vec3) -> Self {
+    pub fn new(centre: glam::Vec3, normal: glam::Vec3) -> Self {
         let len = normal.length();
         let normal = if len > 1e-6 {
             normal / len
@@ -67,10 +69,10 @@ impl PlaneWidget {
             glam::Vec3::Z
         };
         Self {
-            center,
+            centre,
             normal,
-            colour: [0.3, 0.7, 1.0, 1.0].into(),
-            handle_colour: [0.0; 4].into(),
+            colour: Colour::linear(0.3, 0.7, 1.0, 1.0),
+            handle_colour: Colour::TRANSPARENT,
             display_half_size: 1.5,
             normal_display_length: 2.0,
             hovered_handle: None,
@@ -101,10 +103,10 @@ impl PlaneWidget {
         if ctx.drag_started {
             if let Some(handle) = self.hovered_handle {
                 let anchor = match handle {
-                    PlaneHandle::Center => self.center,
+                    PlaneHandle::Centre => self.centre,
                     PlaneHandle::NormalTip => self.normal_tip_pos(),
                 };
-                let n = -glam::Vec3::from(ctx.camera.forward);
+                let n = -ctx.camera.forward();
                 self.drag_plane_normal = n;
                 self.drag_plane_d = -n.dot(anchor);
                 self.drag_anchor = anchor;
@@ -120,16 +122,16 @@ impl PlaneWidget {
                 ray_plane_intersection(ro, rd, self.drag_plane_normal, self.drag_plane_d)
             {
                 match handle {
-                    PlaneHandle::Center => {
+                    PlaneHandle::Centre => {
                         let delta = hit - self.drag_anchor;
                         if delta.length_squared() > 1e-10 {
-                            self.center += delta;
+                            self.centre += delta;
                             self.drag_anchor = hit;
                             updated = true;
                         }
                     }
                     PlaneHandle::NormalTip => {
-                        let dir = hit - self.center;
+                        let dir = hit - self.centre;
                         let len = dir.length();
                         if len > 1e-3 {
                             let new_normal = dir / len;
@@ -152,12 +154,12 @@ impl PlaneWidget {
 
     /// Build a `PolylineItem` for the wireframe square outline and normal indicator.
     ///
-    /// The square is oriented by `normal` and centered at `center`.
-    /// A line segment from the center to the normal-tip handle is included.
+    /// The square is oriented by `normal` and centred at `centre`.
+    /// A line segment from the centre to the normal-tip handle is included.
     pub fn plane_item(&self, id: u64) -> PolylineItem {
         let (u, v) = any_perpendicular_pair(self.normal);
         let s = self.display_half_size;
-        let c = self.center;
+        let c = self.centre;
         let tip = self.normal_tip_pos();
 
         // 5 points close the square, then 2 points for the normal indicator line.
@@ -186,43 +188,30 @@ impl PlaneWidget {
         }
     }
 
-    /// Build a `GlyphItem` with two sphere handles: center and normal tip.
+    /// Handle markers for the centre and the normal tip.
     ///
-    /// `id_base` is the pick ID for the center handle; `id_base + 1` for the normal-tip handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let tip = self.normal_tip_pos();
-        let rc = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let rt = handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0);
-
-        let sc = if matches!(self.hovered_handle, Some(PlaneHandle::Center))
-            || matches!(self.active_handle, Some(PlaneHandle::Center))
-        {
-            1.0_f32
-        } else {
-            0.2
+        let hot = |h: PlaneHandle| {
+            if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
+                1.0_f32
+            } else {
+                0.2
+            }
         };
-        let st = if matches!(self.hovered_handle, Some(PlaneHandle::NormalTip))
-            || matches!(self.active_handle, Some(PlaneHandle::NormalTip))
-        {
-            1.0_f32
-        } else {
-            0.2
-        };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.center.to_array(), tip.to_array()];
-        g.vectors = vec![[rc, 0.0, 0.0], [rt, 0.0, 0.0]];
-        g.scalars = vec![sc, st];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.centre, tip],
+            radii: vec![
+                handle_world_radius(self.centre, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(PlaneHandle::Centre)),
+                handle_colour(self.handle_colour, hot(PlaneHandle::NormalTip)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -230,7 +219,7 @@ impl PlaneWidget {
     // -----------------------------------------------------------------------
 
     fn normal_tip_pos(&self) -> glam::Vec3 {
-        self.center + self.normal * self.normal_display_length
+        self.centre + self.normal * self.normal_display_length
     }
 
     fn hit_test(
@@ -245,22 +234,22 @@ impl PlaneWidget {
             Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
         );
 
-        let rc = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
+        let rc = handle_world_radius(self.centre, &ctx.camera, ctx.viewport_size.y, 10.0);
         let rt = handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0);
 
-        let dc = ray_point_dist(ray_origin, ray_dir, self.center);
+        let dc = ray_point_dist(ray_origin, ray_dir, self.centre);
         let dt = ray_point_dist(ray_origin, ray_dir, tip);
 
-        let center_ball = parry3d::shape::Ball::new(rc);
+        let centre_ball = parry3d::shape::Ball::new(rc);
         let tip_ball = parry3d::shape::Ball::new(rt);
-        let center_pose = Pose::from_parts(
-            [self.center.x, self.center.y, self.center.z].into(),
+        let centre_pose = Pose::from_parts(
+            [self.centre.x, self.centre.y, self.centre.z].into(),
             glam::Quat::IDENTITY,
         );
         let tip_pose = Pose::from_parts([tip.x, tip.y, tip.z].into(), glam::Quat::IDENTITY);
 
         let tc = if dc < rc {
-            center_ball.cast_ray(&center_pose, &ray, f32::MAX, true)
+            centre_ball.cast_ray(&centre_pose, &ray, f32::MAX, true)
         } else {
             None
         };
@@ -272,11 +261,11 @@ impl PlaneWidget {
 
         match (tc, tt) {
             (Some(a), Some(b)) => Some(if a <= b {
-                PlaneHandle::Center
+                PlaneHandle::Centre
             } else {
                 PlaneHandle::NormalTip
             }),
-            (Some(_), None) => Some(PlaneHandle::Center),
+            (Some(_), None) => Some(PlaneHandle::Centre),
             (None, Some(_)) => Some(PlaneHandle::NormalTip),
             (None, None) => None,
         }
@@ -290,9 +279,9 @@ mod tests {
     use glam::{Vec2, Vec3};
 
     #[test]
-    fn new_sets_center_and_normalised_normal() {
+    fn new_sets_centre_and_normalised_normal() {
         let w = PlaneWidget::new(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 4.0));
-        assert_eq!(w.center, Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(w.centre, Vec3::new(1.0, 0.0, 0.0));
         assert!(
             (w.normal.length() - 1.0).abs() < 1e-5,
             "normal should be unit length"
@@ -305,14 +294,14 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = PlaneWidget::new(Vec3::ZERO, Vec3::Z);
         assert!(!w.plane_item(1).positions.is_empty());
-        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(2, &ctx).positions.is_empty());
     }
 
     #[test]
-    fn drag_center_moves_the_plane() {
+    fn drag_centre_moves_the_plane() {
         let ctx = ctx_at(CENTRE);
-        let center = point_on_cursor_ray(&ctx, 12.0);
-        let mut w = PlaneWidget::new(center, Vec3::Z);
+        let centre = point_on_cursor_ray(&ctx, 12.0);
+        let mut w = PlaneWidget::new(centre, Vec3::Z);
         w.update(&ctx);
         let mut begin = ctx.clone();
         begin.drag_started = true;
@@ -321,7 +310,7 @@ mod tests {
         let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
         drag.dragging = true;
         w.update(&drag);
-        assert_ne!(w.center, center);
+        assert_ne!(w.centre, centre);
         let mut rel = drag.clone();
         rel.released = true;
         w.update(&rel);

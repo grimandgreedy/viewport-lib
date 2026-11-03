@@ -52,7 +52,7 @@
 //! - Use `submit` + `collect` when a plugin does out-of-frame work (disk IO, decompression,
 //!   heavy CPU) and needs the result one or more frames later.
 //! - Use `collect` alone when the work is light enough to do in-frame after the step loop.
-//! - Store the integrated result in [`super::resources::RuntimeResources`] so other plugins
+//! - Store the integrated result in [`RuntimeResources`](crate::RuntimeResources) so other plugins
 //!   can read it. The `JobSlot` stays in the plugin that owns the job; downstream plugins
 //!   read from resources, not from the slot directly.
 //! - To replace stale data, remove the old resource and insert the new one in the same
@@ -62,7 +62,7 @@
 //! # Cross-plugin jobs
 //!
 //! If more than one plugin needs to check or fulfill the same job, store the
-//! [`JobSlot`] in [`super::resources::RuntimeResources`]. The owning plugin
+//! [`JobSlot`] in [`RuntimeResources`](crate::RuntimeResources). The owning plugin
 //! inserts it; other plugins read it via `resources.get::<JobSlot<T>>()`.
 
 use std::sync::{Arc, Mutex};

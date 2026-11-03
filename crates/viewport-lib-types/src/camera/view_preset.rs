@@ -3,8 +3,6 @@
 //! Use with `CameraAnimator::fly_to` (in the renderer crate)
 //! for smooth animated transitions.
 
-use crate::camera::camera::Projection;
-
 /// Standard viewport orientations matching engineering CAD conventions (Z-up).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -55,7 +53,7 @@ impl ViewPreset {
 
     /// Target camera orientation quaternion.
     ///
-    /// Convention: eye = center + orientation * Vec3::Z * distance.
+    /// Convention: eye = centre + orientation * Vec3::Z * distance.
     /// Identity = looking down from +Z (top view in Z-up world).
     pub fn orientation(self) -> glam::Quat {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
@@ -89,15 +87,13 @@ impl ViewPreset {
         }
     }
 
-    /// Preferred projection for this preset, if any.
-    ///
-    /// Orthographic views (Front, Back, Left, Right, Top, Bottom) return
-    /// `Some(Orthographic)`. Isometric returns `None` (keep current projection).
-    pub fn preferred_projection(self) -> Option<Projection> {
-        match self {
-            Self::Isometric => None,
-            _ => Some(Projection::Orthographic),
-        }
+    /// Whether this preset reads best orthographic: true for the axis views
+    /// (Front, Back, Left, Right, Top, Bottom), false for Isometric, which
+    /// keeps the current projection. Convert with
+    /// [`Projection::to_orthographic`](crate::camera::Projection::to_orthographic)
+    /// at the view's distance.
+    pub fn prefers_orthographic(self) -> bool {
+        !matches!(self, Self::Isometric)
     }
 }
 

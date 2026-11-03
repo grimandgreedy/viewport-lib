@@ -38,7 +38,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dims = vec2<f32>(textureDimensions(input_texture));
     let texel = 1.0 / dims;
 
-    // Sample center and 4 neighbors.
+    // Sample centre and 4 neighbors.
     let c  = textureSample(input_texture, input_sampler, in.uv).rgb;
     let n  = textureSample(input_texture, input_sampler, in.uv + vec2<f32>( 0.0,  texel.y)).rgb;
     let s  = textureSample(input_texture, input_sampler, in.uv + vec2<f32>( 0.0, -texel.y)).rgb;
@@ -76,7 +76,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let l_sw = luminance(sw);
     let l_se = luminance(se);
 
-    // Sub-pixel blend factor: 3x3 box minus center, weighted by distance.
+    // Sub-pixel blend factor: 3x3 box minus centre, weighted by distance.
     let l_subpix_aa = (2.0 * (ln + ls + le + lw) + (l_nw + l_ne + l_sw + l_se)) / 12.0;
     let l_subpix_delta = abs(l_subpix_aa - lc) / l_range;
     let blend = smoothstep(0.0, 1.0, l_subpix_delta) * 0.75;

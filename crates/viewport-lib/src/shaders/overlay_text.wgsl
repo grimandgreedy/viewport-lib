@@ -15,7 +15,7 @@
 // One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
 // parent_index, invert). Matches ClipShapeGpu on the CPU and overlay_shape.wgsl.
 struct ClipShape {
-    center:    vec2<f32>,
+    centre:    vec2<f32>,
     half_size: vec2<f32>,
     radii:     vec4<f32>,
     params:    vec4<f32>,
@@ -23,7 +23,9 @@ struct ClipShape {
     pad:       vec2<f32>,
 };
 
-@group(0) @binding(2) var<storage, read> clip_shapes: array<ClipShape>;
+// A uniform array of the renderer's `MAX_OVERLAY_CLIP_SHAPES` (256 at 64 bytes
+// fills a 16 KiB uniform binding); a frame's later masks are dropped.
+@group(0) @binding(2) var<uniform> clip_shapes: array<ClipShape, 256>;
 
 // Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
 // positions to NDC so overlay geometry is independent of the viewport size.
@@ -33,20 +35,50 @@ struct Viewport {
 };
 @group(0) @binding(3) var<uniform> viewport: Viewport;
 
-// Per-draw instance: a group's per-frame translate, opacity, and outer clip.
-// Indexed by @builtin(instance_index); slot 0 is the identity immediate draws use.
+// Per-draw instance: a group's per-frame translate, opacity, and outer clip,
+// from the instance stream; slot 0 is the identity immediate draws use.
 struct OverlayInstance {
     translate:  vec2<f32>,
     opacity:    f32,
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
     tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
-    scale:      f32,        // per-frame uniform scale about the local origin
-    _pad0:      f32,
-    _pad1:      f32,
-    _pad2:      f32,
+    scale:      f32,        // per-frame uniform scale about the pivot
+    rotation:   f32,        // per-frame rotation in radians about the pivot
+    pivot_x:    f32,        // two scalars, not a vec2: a vec2 would align to 8
+    pivot_y:    f32,
 };
-@group(0) @binding(4) var<storage, read> instances: array<OverlayInstance>;
+
+// One level of the composition contract: scale about the pivot, then rotate
+// about it, then translate. With the identity instance this returns `p`.
+fn group_apply(p: vec2<f32>, inst: OverlayInstance) -> vec2<f32> {
+    let piv = vec2<f32>(inst.pivot_x, inst.pivot_y);
+    let d = (p - piv) * inst.scale;
+    let s = sin(inst.rotation);
+    let c = cos(inst.rotation);
+    return piv + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c) + inst.translate;
+}
+// The per-draw instance as a per-instance vertex stream (see `OverlayInstance`).
+struct InstanceInput {
+    @location(7) translate_opacity_clip: vec4<f32>,
+    @location(8) clip_rect: vec4<f32>,
+    @location(9) tint: vec4<f32>,
+    @location(10) scale_rotation_pivot: vec4<f32>,
+};
+
+fn read_instance(i: InstanceInput) -> OverlayInstance {
+    return OverlayInstance(
+        i.translate_opacity_clip.xy,
+        i.translate_opacity_clip.z,
+        i.translate_opacity_clip.w,
+        i.clip_rect,
+        i.tint,
+        i.scale_rotation_pivot.x,
+        i.scale_rotation_pivot.y,
+        i.scale_rotation_pivot.z,
+        i.scale_rotation_pivot.w,
+    );
+}
 
 struct VertexInput {
     @location(0) position:    vec2<f32>,  // local logical pixels
@@ -55,7 +87,7 @@ struct VertexInput {
     @location(3) use_texture: f32,        // 1.0 = sample atlas, 0.0 = solid
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
-    @builtin(instance_index) instance_index: u32,
+    @location(6) group_tint:  f32,        // 1 = the group tint applies here, 0 = shadow geometry
 };
 
 struct VertexOutput {
@@ -76,13 +108,13 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 }
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
-    let inst = instances[in.instance_index];
-    // Scale about the local origin, then translate (identity scale/translate for
-    // immediate draws). Text-stream geometry is the vertex position itself, so this
-    // scales glyphs, polylines, and vector fills.
-    out.clip_position = vec4<f32>(px_to_ndc(in.position * inst.scale + inst.translate), 0.0, 1.0);
+    let inst = read_instance(instance);
+    // Apply the group transform (identity for immediate draws). Text-stream
+    // geometry is the vertex position itself, so this moves glyphs, polylines,
+    // and vector fills together.
+    out.clip_position = vec4<f32>(px_to_ndc(group_apply(in.position, inst)), 0.0, 1.0);
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;
@@ -93,7 +125,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_rect     = in.clip_rect;
     out.opacity       = inst.opacity;
     out.outer_clip    = inst.clip_rect;
-    out.tint          = inst.tint;
+    // A group's tint reaches its content and not its shadow layers, which are
+    // baked into this same stream, so the vertex says which it is. Opacity is
+    // the other way round and applies to both: a fading group takes its shadows
+    // with it.
+    out.tint          = mix(vec4<f32>(1.0, 1.0, 1.0, 1.0), inst.tint, in.group_tint);
     return out;
 }
 
@@ -310,7 +346,7 @@ fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
         let c = clip_shapes[idx];
         let rc = cos(-c.params.y);
         let rs = sin(-c.params.y);
-        let pd = (fp - c.center) - c.pivot;
+        let pd = (fp - c.centre) - c.pivot;
         let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
         if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
             return true;
@@ -345,16 +381,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
+    // Sampled with an explicit level rather than `textureSample`, which computes
+    // its own derivatives and is therefore only legal in uniform control flow.
+    // `use_texture` varies per vertex, so the branches below are not uniform,
+    // and a strict WGSL front end rejects the whole module: Tint does, naga
+    // does not, so the text pipeline failed to build in Chrome while working in
+    // Firefox. The atlas has one mip level, so level zero is what an implicit
+    // lookup would have chosen anyway.
+    let atlas = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0);
+
     var result: vec4<f32>;
     if (in.use_texture > 1.5) {
         // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
         // carries opacity through its alpha; the tint RGB is ignored.
-        let c = textureSample(glyph_atlas, atlas_sampler, in.uv);
-        result = vec4<f32>(c.rgb, c.a * in.colour.a);
+        result = vec4<f32>(atlas.rgb, atlas.a * in.colour.a);
     } else if (in.use_texture > 0.5) {
         // Coverage glyph: tint the atlas alpha by the run colour.
-        let atlas_a = textureSample(glyph_atlas, atlas_sampler, in.uv).a;
-        result = vec4<f32>(in.colour.rgb, in.colour.a * atlas_a);
+        result = vec4<f32>(in.colour.rgb, in.colour.a * atlas.a);
     } else {
         result = in.colour;
     }

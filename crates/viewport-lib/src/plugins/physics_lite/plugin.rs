@@ -84,7 +84,7 @@ impl PhysicsBody {
 /// A plugin that integrates velocity, applies gravity, and reflects bodies off
 /// bounding box walls.
 ///
-/// Runs in the [`RuntimePhase::Simulate`] phase. Pairs well with
+/// Runs in the [`RuntimePhase::Simulate`](crate::RuntimePhase::Simulate) phase. Pairs well with
 /// [`crate::FixedTimestep`] for stable integration.
 ///
 /// World-bounds collisions produce [`ContactEvent`]s in [`crate::RuntimeOutput`]
@@ -157,7 +157,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
             let Some(node) = ctx.scene.node(body.node_id) else {
                 continue;
             };
-            let world = node.world_transform();
+            let world = node.world_transform().to_mat4();
             let (scale, rotation, mut pos) = world.to_scale_rotation_translation();
 
             // Apply gravity.
@@ -224,7 +224,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
     }
 }
 
-impl crate::plugin_api::ViewportPlugin for PhysicsLitePlugin {
+impl crate::plugin_api::PluginInstaller for PhysicsLitePlugin {
     type Handle = ();
 
     /// Register the configured plugin on the runtime. Add bodies and set
@@ -243,13 +243,13 @@ impl crate::plugin_api::ViewportPlugin for PhysicsLitePlugin {
 mod tests {
     use super::*;
     use crate::interaction::select::selection::Selection;
+    use crate::resources::MaterialId;
     use crate::runtime::context::RuntimeFrameContext;
-    use crate::scene::material::Material;
     use crate::scene::scene::Scene;
 
     #[test]
     fn body_builders_set_fields() {
-        let node = Scene::new().add(None, glam::Mat4::IDENTITY, Material::default());
+        let node = Scene::new().add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         let b = PhysicsBody::new(node)
             .with_velocity(glam::Vec3::new(1.0, 2.0, 3.0))
             .with_gravity_scale(0.5)
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn body_falls_under_gravity() {
         let mut scene = Scene::new();
-        let node = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
         let mut phys = PhysicsLitePlugin::new(); // default gravity -Z
         phys.add_body(PhysicsBody::new(node));
 
@@ -280,8 +280,8 @@ mod tests {
             .node(node)
             .unwrap()
             .world_transform()
-            .col(3)
-            .truncate()
+            .translation
+            .as_vec3()
             .z;
         assert!(z < -0.5, "a body under gravity should fall; z = {z}");
     }

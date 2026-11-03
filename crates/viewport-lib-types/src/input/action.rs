@@ -4,15 +4,18 @@
 ///
 /// Actions are decoupled from their physical triggers (keys/mouse buttons),
 /// so bindings can be remapped and the same action can be reached through
-/// different triggers depending on context.
+/// different triggers depending on context. The named variants are the ones
+/// the library's controllers act on, plus [`Confirm`](Action::Confirm) and
+/// [`Cancel`](Action::Cancel) for any modal tool; an application or a tool crate
+/// binds its own actions to [`Action::Custom`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Action {
     // -- Viewport navigation --
-    /// Rotate the camera around the orbit center (arcball).
+    /// Rotate the camera around the orbit centre (arcball).
     Orbit,
-    /// Translate the orbit center in the camera plane.
+    /// Translate the orbit centre in the camera plane.
     Pan,
     /// Zoom in/out by adjusting camera distance.
     Zoom,
@@ -20,10 +23,6 @@ pub enum Action {
     FocusObject,
     /// Reset camera to the default view.
     ResetView,
-    /// Toggle between solid and wireframe render modes.
-    ToggleWireframe,
-    /// Cycle the gizmo mode (Translate -> Rotate -> Scale).
-    CycleGizmoMode,
 
     // -- Fly mode --
     /// Enter first-person fly-through mode.
@@ -43,55 +42,18 @@ pub enum Action {
     /// Hold to increase fly-mode movement speed.
     FlySpeedBoost,
 
-    // -- Object manipulation (keyboard G/R/S) --
-    /// Begin keyboard-driven move (G key).
-    BeginMove,
-    /// Begin keyboard-driven rotate (R key).
-    BeginRotate,
-    /// Begin keyboard-driven scale (S key).
-    BeginScale,
-    /// Constrain transform to the X axis.
-    ConstrainX,
-    /// Constrain transform to the Y axis.
-    ConstrainY,
-    /// Constrain transform to the Z axis.
-    ConstrainZ,
-    /// Shift+X/Y/Z : exclude that axis, operate in the perpendicular plane.
-    ExcludeX,
-    /// Exclude the Y axis; operate in the XZ plane.
-    ExcludeY,
-    /// Exclude the Z axis; operate in the XY plane.
-    ExcludeZ,
-
     // -- Shared modal --
     /// Confirm the current operation (Enter / left-click).
     Confirm,
     /// Cancel the current operation (Escape / right-click).
     Cancel,
 
-    // -- Numeric input (manipulation mode) --
-    /// Backspace: erase the last typed digit in the numeric buffer.
-    NumericBackspace,
-    /// Tab: advance focus to the next axis buffer in numeric input.
-    NumericNextAxis,
-
-    // -- Global --
-    /// Undo the last action.
-    Undo,
-    /// Redo the previously undone action.
-    Redo,
-
-    // -- Gizmo --
-    /// Toggle gizmo between World and Local coordinate space.
-    ToggleGizmoSpace,
-    /// Cycle the pivot mode forward (Selection Centroid -> Individual Origins -> Median Point -> World Origin -> ...).
-    CyclePivotModeForward,
-    /// Cycle the pivot mode backward (... -> World Origin -> Median Point -> Individual Origins -> Selection Centroid).
-    CyclePivotModeBackward,
-
-    // -- Scene object shortcuts --
-    /// Shift+A: open the radial "Add Object" menu.
-    OpenAddMenu,
-    /// X: prompt to delete the currently selected object.
-    DeleteSelected,
+    // -- Application-defined --
+    /// An action the application defines. The library binds nothing to it and
+    /// never acts on it; the resolver reports it like any other action, so an
+    /// application shortcut gets the same gestures, modifiers and keyboard
+    /// ownership as a built-in one. Give each shortcut its own constant.
+    /// Library crates take values from `0x1000_0000` upwards; an application
+    /// keeps the range below.
+    Custom(u32),
 }

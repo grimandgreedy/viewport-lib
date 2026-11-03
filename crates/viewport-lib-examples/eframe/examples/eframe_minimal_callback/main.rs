@@ -1,0 +1,171 @@
+//! Minimal viewport-lib example using eframe / egui 0.35 on the wgpu 29 leg.
+//!
+//! Same as `eframe_minimal`, but pinned to egui 0.35 (which pairs with wgpu 29)
+//! to exercise viewport-lib's `wgpu29` feature against a wgpu 29 host. Build it
+//! with `--no-default-features --features wgpu29`.
+//!
+//! Navigation:
+//!   Left drag / Middle drag   : orbit
+//!   Right drag                : pan
+//!   Scroll                    : zoom
+
+use viewport_lib::Colour;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
+mod viewport_callback;
+
+use crate::eframe::egui;
+use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
+use vpl::{
+    Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    ViewportRenderer, primitives,
+};
+
+fn main() -> eframe::Result {
+    eframe::run_native(
+        "viewport-lib : Minimal",
+        viewport_lib_examples_eframe::native_options([1280.0, 720.0]),
+        Box::new(|cc| {
+            let rs = cc
+                .wgpu_render_state
+                .as_ref()
+                .expect("wgpu backend required");
+            let device = &rs.device;
+            let format = rs.target_format;
+
+            // The paint callback draws into eframe's own pass, so the scene
+            // depth format is pinned to the attachment `native_options` set up.
+            let mut renderer = ViewportRenderer::with_config(
+                device,
+                &viewport_lib_examples_eframe::pass_renderer_config(format),
+            );
+            let res = renderer.resources_mut();
+
+            let m_sphere = res
+                .upload_mesh_data(device, &primitives::sphere(0.6, 24, 12))
+                .unwrap();
+            let m_cube = res
+                .upload_mesh_data(device, &primitives::cube(1.0))
+                .unwrap();
+            let m_torus = res
+                .upload_mesh_data(device, &primitives::torus(0.5, 0.18, 32, 16))
+                .unwrap();
+            // One material for all three; each item sets its own colour.
+            let mut material = Material::default();
+            material.backface_policy = vpl::BackfacePolicy::Identical;
+            let material = res.upload_material(material).unwrap();
+
+            rs.renderer.write().callback_resources.insert(renderer);
+
+            Ok(Box::new(App::new(material, m_sphere, m_cube, m_torus)))
+        }),
+    )
+}
+
+struct App {
+    camera: Camera,
+    controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
+    scene_items: Vec<SceneRenderItem>,
+}
+
+impl App {
+    fn new(material: MaterialId, m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
+        let make = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
+            let mut item = SceneRenderItem::new(mesh_id, material);
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
+            item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
+            item
+        };
+
+        Self {
+            camera: Camera::orbit(glam::DVec3::ZERO, 10.0, Camera::default().orientation()),
+            controller: OrbitCameraController::new_stateless(),
+            input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
+            scene_items: vec![
+                make(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2]),
+                make(m_cube, [0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
+                make(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
+            ],
+        }
+    }
+}
+
+// eframe 0.35 replaced `App::update(&Context, ..)` with `App::ui(&mut Ui, ..)`:
+// the app is handed a root Ui and shows panels into it rather than into the
+// Context. Both entry points delegate to one `draw`, so the example body below is
+// shared across all three legs.
+#[cfg(feature = "wgpu27")]
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| self.draw(ui));
+    }
+}
+
+#[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| self.draw(ui));
+    }
+}
+
+impl App {
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        let (rect, response) =
+            ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+
+        let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+        self.input.begin_frame(ViewportContext::new(
+            ownership,
+            [rect.width(), rect.height()],
+        ));
+        // Pan reads the viewport height off the controller.
+        self.controller
+            .set_viewport_size([rect.width(), rect.height()]);
+
+        let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+        let mut events = Vec::new();
+        ui.input(|i| {
+            vpl_egui::begin_frame(i, &actx, &mut events);
+            for event in &i.events {
+                vpl_egui::translate(event, &actx, &mut events);
+            }
+        });
+        for ev in events {
+            self.input.push_event(ev);
+        }
+
+        let w = rect.width();
+        let h = rect.height();
+        let action_frame = self.input.resolve();
+        let dt = ui.input(|i| i.stable_dt);
+        self.controller.apply(&mut self.camera, &action_frame, dt);
+        self.camera.set_aspect_ratio(w, h);
+
+        let mut frame_data = FrameData::new(
+            CameraFrame::from_camera(&self.camera, [w, h])
+                .with_pixels_per_point(ui.ctx().pixels_per_point()),
+            SceneFrame::from_surface_items(self.scene_items.clone()),
+        );
+        frame_data.effects.lighting = LightingSettings::default();
+
+        ui.painter()
+            .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                rect,
+                viewport_callback::ViewportCallback { frame: frame_data },
+            ));
+
+        if response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+    }
+}

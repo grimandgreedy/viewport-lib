@@ -31,7 +31,7 @@ impl Default for SkinningPath {
 
 /// Built-in plugin that applies CPU linear blend skinning each frame.
 ///
-/// Store a [`Pose`] in [`super::super::resources::RuntimeResources`] (keyed by
+/// Store a [`Pose`] in [`RuntimeResources`](crate::RuntimeResources) (keyed by
 /// the `Pose` type) during the `ANIMATE` phase or earlier. `SkeletonPlugin`
 /// runs at `POST_SIM`, reads the pose, computes the skinning matrices, and
 /// emits a [`SkinnedMeshUpdate`] event onto `ctx.output.events`.

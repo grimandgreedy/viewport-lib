@@ -5,16 +5,21 @@
 //! the list of lights whose volume of influence intersects it; lit pipelines
 //! then read just their cell's slice of the index list instead of scanning
 //! every active light per fragment. Every cluster owns a fixed
-//! `MAX_LIGHTS_PER_CLUSTER` slice of the index list, written in the host's
-//! priority order (directionals, then punctuals ranked by importance and
-//! proximity), so a crowded cluster degrades by dropping its lowest-priority
-//! lights and never disturbs any other cluster.
+//! `MAX_LIGHTS_PER_CLUSTER` slice of the index list, so a crowded cluster
+//! never disturbs any other. A cell whose lights overflow its slice records
+//! the overflow (`punctual_demand > punctual_count`) and its fragments walk
+//! the full light array instead, so a crowded cell costs more but drops no
+//! light.
 //!
-//! Bindings 14, 15, and 16 of the camera bind group expose the grid uniform,
-//! the per-cell offsets, and the global index list to every lit pipeline. The
-//! build pass uses a separate compute bind group with read-write access.
+//! Bindings 14 and 15 of the camera bind group expose the grid uniform and one
+//! storage buffer holding the per-cell offsets followed by the global index
+//! list (at [`CLUSTER_INDEX_BASE_BYTES`]) to every lit pipeline, so the pair
+//! costs one fragment storage binding. The build pass uses a separate compute
+//! bind group with read-write access to the two regions as two bindings.
+//!
+//! [`CLUSTER_INDEX_BASE_BYTES`]: crate::resources::gpu::clustered::CLUSTER_INDEX_BASE_BYTES
 
-use crate::gpu::util::DeviceExt;
+use crate::resources::builders::LoggedAlloc;
 
 /// X (screen-tile) count of the cluster grid. Aligns with 16:9 aspect framing.
 pub const CLUSTER_X_TILES: u32 = 16;
@@ -31,14 +36,23 @@ pub const CLUSTER_Z_SLICES: u32 = 24;
 /// Total cluster cell count (`16 * 9 * 24 = 3456`).
 pub const CLUSTER_COUNT: u32 = CLUSTER_X_TILES * CLUSTER_Y_TILES * CLUSTER_Z_SLICES;
 /// Fixed light-index capacity per cluster cell. Each cluster owns its own
-/// slice of the index list, so a crowded cluster can never starve another,
-/// and overflow within a cluster drops the lowest-priority lights (the host
-/// orders the light array by importance and proximity). Must match
-/// `MAX_PER_CLUSTER` in `cluster_build.wgsl`.
+/// slice of the index list, so a crowded cluster can never starve another.
+/// A cluster that overflows its slice shades with the full light array
+/// instead. Must match `MAX_PER_CLUSTER` in `cluster_build.wgsl`.
 pub const MAX_LIGHTS_PER_CLUSTER: u32 = 64;
 /// Total light-index list capacity: one fixed slice per cluster
 /// (`3456 * 64` entries, 864 KB at 4 bytes per index).
 pub const MAX_LIGHT_INDICES: u32 = CLUSTER_COUNT * MAX_LIGHTS_PER_CLUSTER;
+/// Start of the light index list in the cluster buffer: the cell region,
+/// rounded up to the storage binding offset alignment so the build pass can
+/// bind the list as its own range. Must equal `CLUSTER_INDEX_BASE` (in `u32`
+/// words) in `helpers/scene_lighting.wgsl`.
+pub const CLUSTER_INDEX_BASE_BYTES: u64 =
+    (CLUSTER_COUNT as u64 * 16).div_ceil(STORAGE_OFFSET_ALIGN) * STORAGE_OFFSET_ALIGN;
+/// The largest `min_storage_buffer_offset_alignment` wgpu allows.
+const STORAGE_OFFSET_ALIGN: u64 = 256;
+const _: () = assert!(std::mem::size_of::<ClusterCell>() == 16);
+const _: () = assert!(CLUSTER_INDEX_BASE_BYTES / 4 == 13824);
 /// Below this active-light count the build pass is skipped and the fragment
 /// shader iterates the full light array directly. Straight iteration is
 /// cheaper than cluster lookup overhead for small light counts.
@@ -62,8 +76,8 @@ pub struct ClusterGridUniform {
     /// not the camera near plane; see `CLUSTER_Z_SLICES`.
     pub depth: [f32; 4],
     /// (screen_w, screen_h, fallback_mode, _pad). `fallback_mode != 0` signals
-    /// the small-N fallback path to the shader, which then iterates the full
-    /// light array instead of the cluster list.
+    /// the small-N or forced fallback path to the shader, which then iterates
+    /// the full light array instead of the cluster list.
     pub screen: [f32; 4],
     /// (tan_half_fov_x, tan_half_fov_y, _pad, _pad). Used by the build pass
     /// to compute per-cluster view-space AABBs from screen-tile NDC bounds.
@@ -128,6 +142,7 @@ struct ClearParams {
 /// `ViewportRenderer::cluster_stats`; the readback is skipped when no
 /// consumer asks for it.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ClusterStats {
     /// Total cluster cells in the grid (constant per build).
     pub total_cells: u32,
@@ -149,9 +164,9 @@ pub struct ClusterStats {
     /// Capacity of the light index list (one fixed
     /// `MAX_LIGHTS_PER_CLUSTER` slice per cluster).
     pub max_index_slots: u32,
-    /// Punctual lights dropped by per-cluster capacity this frame, summed
-    /// over all cells (`punctual_demand - punctual_count`). Zero means no
-    /// cluster overflowed its slice.
+    /// Cells that fell back to the full light array this frame because their
+    /// punctual demand overflowed the per-cluster slice. Zero means no cluster
+    /// overflowed.
     pub dropped_punctual_slots: u32,
     /// Active light count after the CPU frustum cull.
     pub active_light_count: u32,
@@ -178,19 +193,40 @@ pub struct ClusterCell {
     /// out the per-cluster light density signal.
     pub punctual_count: u32,
     /// Punctual lights that intersect this cluster, before the per-cluster
-    /// capacity cap. `punctual_demand - punctual_count` is how many lights
-    /// this cluster dropped.
+    /// capacity cap. When it exceeds `punctual_count` the slice overflowed
+    /// and the cluster's fragments iterate the full light array.
     pub punctual_demand: u32,
+}
+
+/// What the clear and build compute builds read: a label, layout and module
+/// per pipeline.
+pub struct ClusterRecipe {
+    device: crate::gpu::Device,
+    stages: [(
+        &'static str,
+        crate::gpu::PipelineLayout,
+        crate::resources::pipeline_slot::LazyModule,
+    ); 2],
+}
+
+const CLUSTER_CLEAR: usize = 0;
+const CLUSTER_BUILD: usize = 1;
+
+fn build_cluster(r: &ClusterRecipe, i: usize) -> crate::gpu::ComputePipeline {
+    let (label, layout, shader) = &r.stages[i];
+    crate::resources::builders::compute_pipeline(&r.device, label, layout, shader.get(), "main")
 }
 
 /// All clustered-shading state owned by `DeviceResources`.
 pub struct ClusteredResources {
     /// `ClusterGridUniform` uniform buffer (group 0 binding 14).
     pub grid_uniform_buf: crate::gpu::Buffer,
-    /// Cluster cell storage (group 0 binding 15, read-only fragment).
-    pub cluster_grid_buf: crate::gpu::Buffer,
-    /// Global light index list (group 0 binding 16, read-only fragment).
-    pub light_index_buf: crate::gpu::Buffer,
+    /// Cluster cells, then the global light index list from
+    /// [`CLUSTER_INDEX_BASE_BYTES`] (group 0 binding 15, read-only fragment).
+    /// The index region is a placeholder of four entries until
+    /// `ensure_pipelines` allocates the full list; the fragment shader reads
+    /// it only once a frame uses the grid.
+    pub cluster_buf: crate::gpu::Buffer,
     /// View-space data for the active (post-cull) light set, uploaded each
     /// frame and consumed by the build pass.
     pub active_lights_buf: crate::gpu::Buffer,
@@ -198,19 +234,30 @@ pub struct ClusteredResources {
     /// pass no longer touches it (clusters own fixed slices); it stays
     /// allocated and zeroed so the clear bind group layout is unchanged.
     pub global_offset_buf: crate::gpu::Buffer,
-    /// CPU-readable staging buffer that mirrors `cluster_grid_buf`. Populated
-    /// only when the host calls `read_stats`.
-    stats_staging_buf: crate::gpu::Buffer,
-    /// Bind group for the cluster-clear compute pass.
-    clear_bind_group: crate::gpu::BindGroup,
-    /// Compute pipeline that zeroes both storage buffers each frame.
-    clear_pipeline: crate::gpu::ComputePipeline,
-    /// Bind group for the cluster-build compute pass.
-    build_bind_group: crate::gpu::BindGroup,
-    /// Compute pipeline that intersects each cluster with the active lights.
-    build_pipeline: crate::gpu::ComputePipeline,
+    /// CPU-readable staging buffer that mirrors the cell region. Allocated
+    /// by the first `read_stats`.
+    stats_staging_buf: std::sync::OnceLock<crate::gpu::Buffer>,
+    /// Bind group for the cluster-clear compute pass, made with the full
+    /// buffers by `ensure_pipelines`.
+    clear_bind_group: Option<crate::gpu::BindGroup>,
+    /// Layout the clear pipeline is built against.
+    clear_bgl: crate::gpu::BindGroupLayout,
+    /// The clear pipeline (zeroes both storage buffers) and the build
+    /// pipeline (intersects each cluster with the active lights). `None`
+    /// until a frame needs a dispatch; see `ensure_pipelines`.
+    pipelines: Option<
+        crate::resources::pipeline_slot::LazyFamily<ClusterRecipe, 2, crate::gpu::ComputePipeline>,
+    >,
+    /// Bind group for the cluster-build compute pass, made by `ensure_pipelines`.
+    build_bind_group: Option<crate::gpu::BindGroup>,
+    /// Layout the build pipeline is built against.
+    build_bgl: crate::gpu::BindGroupLayout,
+    /// Whether the cluster grid and index list are known to hold zero. wgpu
+    /// zero-initialises both buffers, so this starts true and only a build
+    /// dispatch makes it false: a viewport whose lights never reach the cluster
+    /// threshold never runs the clear at all.
+    grid_zeroed: bool,
     /// Uniform buffer for the clear pass parameters (constants for now).
-    #[allow(dead_code)]
     clear_params_buf: crate::gpu::Buffer,
 }
 
@@ -218,54 +265,31 @@ impl ClusteredResources {
     /// Allocate the cluster grid uniform, the cluster-cell storage, the global
     /// light index list, and the clear / build compute pipelines.
     pub fn new(device: &crate::gpu::Device) -> Self {
-        let grid_uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let grid_uniform_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("cluster_grid_uniform_buf"),
             contents: bytemuck::cast_slice(&[ClusterGridUniform::default()]),
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
         });
 
-        let cluster_grid_bytes = (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
-        let cluster_grid_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cluster_grid_buf"),
-            size: cluster_grid_bytes,
-            usage: crate::gpu::BufferUsages::STORAGE
-                | crate::gpu::BufferUsages::COPY_DST
-                | crate::gpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let light_index_bytes = (MAX_LIGHT_INDICES as u64) * 4;
-        let light_index_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cluster_light_index_buf"),
-            size: light_index_bytes,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let cluster_buf = Self::cluster_buffer(device, 4);
 
         let active_lights_bytes = (crate::resources::MAX_SCENE_LIGHTS as u64)
             * std::mem::size_of::<ActiveLightView>() as u64;
-        let active_lights_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let active_lights_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_active_lights_buf"),
             size: active_lights_bytes,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let global_offset_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let global_offset_buf = device.logged_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cluster_global_offset_buf"),
             size: 4,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let stats_staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("cluster_stats_staging_buf"),
-            size: cluster_grid_bytes,
-            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let clear_params_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        let clear_params_buf = device.logged_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("cluster_clear_params_buf"),
             contents: bytemuck::cast_slice(&[ClearParams {
                 cluster_count: CLUSTER_COUNT,
@@ -307,47 +331,6 @@ impl ClusteredResources {
             ],
         });
 
-        let clear_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("cluster_clear_bind_group"),
-            layout: &clear_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: cluster_grid_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: light_index_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: global_offset_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: clear_params_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        let clear_shader = crate::resources::builders::wgsl_module(
-            device,
-            "cluster_clear_shader",
-            crate::resources::builders::wgsl_source!("cluster_clear"),
-        );
-        let clear_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "cluster_clear_pipeline_layout",
-            &[&clear_bgl],
-        );
-        let clear_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "cluster_clear_pipeline",
-            &clear_layout,
-            &clear_shader,
-            "main",
-        );
-
         // Build pass : intersects each cluster's view-space AABB with the
         // active-light set and writes the per-cluster light index ranges.
         let build_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -360,66 +343,199 @@ impl ClusteredResources {
                 storage_entry(4, true),  // active_lights
             ],
         });
-        let build_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("cluster_build_bind_group"),
-            layout: &build_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: cluster_grid_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: light_index_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: global_offset_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: grid_uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: active_lights_buf.as_entire_binding(),
-                },
-            ],
-        });
-        let build_shader = crate::resources::builders::wgsl_module(
-            device,
-            "cluster_build_shader",
-            crate::resources::builders::wgsl_source!("cluster_build"),
-        );
-        let build_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "cluster_build_pipeline_layout",
-            &[&build_bgl],
-        );
-        let build_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "cluster_build_pipeline",
-            &build_layout,
-            &build_shader,
-            "main",
-        );
-
         Self {
             grid_uniform_buf,
-            cluster_grid_buf,
-            light_index_buf,
+            cluster_buf,
             active_lights_buf,
             global_offset_buf,
-            stats_staging_buf,
-            clear_bind_group,
-            clear_pipeline,
-            build_bind_group,
-            build_pipeline,
+            stats_staging_buf: std::sync::OnceLock::new(),
+            clear_bind_group: None,
+            clear_bgl,
+            pipelines: None,
+            build_bind_group: None,
+            build_bgl,
+            grid_zeroed: true,
             clear_params_buf,
         }
     }
 
-    /// Copy `cluster_grid_buf` to host-readable memory, map it, and compute
+    /// The cluster buffer: every cell, then room for `indices` light indices.
+    fn cluster_buffer(device: &crate::gpu::Device, indices: u32) -> crate::gpu::Buffer {
+        device.logged_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("cluster_buf"),
+            size: CLUSTER_INDEX_BASE_BYTES + indices as u64 * 4,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// The cell region, as the build and clear passes bind it.
+    fn cells_binding(&self) -> crate::gpu::BindingResource<'_> {
+        crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+            buffer: &self.cluster_buf,
+            offset: 0,
+            size: crate::gpu::BufferSize::new(CLUSTER_COUNT as u64 * 16),
+        })
+    }
+
+    /// The light index region, as the build and clear passes bind it.
+    fn indices_binding(&self) -> crate::gpu::BindingResource<'_> {
+        crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+            buffer: &self.cluster_buf,
+            offset: CLUSTER_INDEX_BASE_BYTES,
+            size: crate::gpu::BufferSize::new(MAX_LIGHT_INDICES as u64 * 4),
+        })
+    }
+
+    /// Replace the placeholder grid buffers with full-size ones and make the
+    /// compute bind groups over them. Returns false if already done.
+    fn allocate_grid(&mut self, device: &crate::gpu::Device) -> bool {
+        if self.clear_bind_group.is_some() {
+            return false;
+        }
+        self.cluster_buf = Self::cluster_buffer(device, MAX_LIGHT_INDICES);
+        let clear_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("cluster_clear_bind_group"),
+            layout: &self.clear_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.cells_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.indices_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.global_offset_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.clear_params_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let build_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("cluster_build_bind_group"),
+            layout: &self.build_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.cells_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.indices_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.global_offset_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.grid_uniform_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.active_lights_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.clear_bind_group = Some(clear_bind_group);
+        self.build_bind_group = Some(build_bind_group);
+        true
+    }
+
+    /// Allocate the full cluster grid and compose the clear and build compute
+    /// pipelines: their layouts and modules, with each pipeline built under
+    /// the compilation policy the first time
+    /// [`pipelines_ready`](Self::pipelines_ready) asks for it. Called by the
+    /// lighting prepare on the first frame that has a dispatch to encode.
+    ///
+    /// Returns true when it replaced the grid buffers, which the camera bind
+    /// groups name: the caller rebuilds those before anything draws.
+    pub fn ensure_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+    ) -> bool {
+        let replaced = self.allocate_grid(device);
+        if self.pipelines.is_some() {
+            return replaced;
+        }
+        let module = |label: &str, source: &str| {
+            crate::resources::pipeline_slot::LazyModule::new(
+                device,
+                label,
+                source,
+                Default::default(),
+            )
+        };
+        let recipe = ClusterRecipe {
+            device: device.clone(),
+            stages: [
+                (
+                    "cluster_clear_pipeline",
+                    crate::resources::builders::pipeline_layout(
+                        device,
+                        "cluster_clear_pipeline_layout",
+                        &[&self.clear_bgl],
+                    ),
+                    module(
+                        "cluster_clear_shader",
+                        crate::resources::builders::wgsl_source!("cluster_clear"),
+                    ),
+                ),
+                (
+                    "cluster_build_pipeline",
+                    crate::resources::builders::pipeline_layout(
+                        device,
+                        "cluster_build_pipeline_layout",
+                        &[&self.build_bgl],
+                    ),
+                    module(
+                        "cluster_build_shader",
+                        crate::resources::builders::wgsl_source!("cluster_build"),
+                    ),
+                ),
+            ],
+        };
+        self.pipelines = Some(crate::resources::pipeline_slot::LazyFamily::new(
+            recipe,
+            std::sync::Arc::clone(compiler),
+            build_cluster,
+        ));
+        replaced
+    }
+
+    /// Ask for both compute pipelines, for a warm-up. Needs `ensure_pipelines`
+    /// first.
+    pub fn request_all(&self) {
+        if let Some(p) = &self.pipelines {
+            p.request_all();
+        }
+    }
+
+    /// Whether both compute pipelines are built, asking for any that is not.
+    /// While this is false the lighting prepare takes the per-light fallback,
+    /// which shades the same without the grid.
+    pub fn pipelines_ready(&self) -> bool {
+        self.pipelines
+            .as_ref()
+            .is_some_and(|p| p.get(CLUSTER_CLEAR).is_some() & p.get(CLUSTER_BUILD).is_some())
+    }
+
+    /// Whether a clear dispatch is owed: something has written the cluster grid
+    /// since it was last known to hold zero.
+    pub fn grid_dirty(&self) -> bool {
+        !self.grid_zeroed
+    }
+
+    /// Copy the cell region to host-readable memory, map it, and compute
     /// `ClusterStats`. Blocks on a device poll while the GPU finishes the
     /// copy, so this should be called sparingly : it's a debug-path readback
     /// behind a host-controlled toggle, not a per-frame operation.
@@ -430,14 +546,26 @@ impl ClusteredResources {
         active_light_count: u32,
         fallback_active: bool,
     ) -> ClusterStats {
+        if self.clear_bind_group.is_none() {
+            // No frame has used the grid, so every cell is empty.
+            return compute_stats(&[], active_light_count, fallback_active);
+        }
         let bytes = (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
+        let staging = self.stats_staging_buf.get_or_init(|| {
+            device.logged_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("cluster_stats_staging_buf"),
+                size: bytes,
+                usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        });
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("cluster_stats_copy_encoder"),
         });
-        encoder.copy_buffer_to_buffer(&self.cluster_grid_buf, 0, &self.stats_staging_buf, 0, bytes);
+        encoder.copy_buffer_to_buffer(&self.cluster_buf, 0, staging, 0, bytes);
         queue.submit(std::iter::once(encoder.finish()));
 
-        let slice = self.stats_staging_buf.slice(..);
+        let slice = staging.slice(..);
         slice.map_async(crate::gpu::MapMode::Read, |_| {});
         let _ = device.poll(crate::gpu::PollType::Wait {
             submission_index: None,
@@ -449,7 +577,7 @@ impl ClusteredResources {
             let cells: &[ClusterCell] = bytemuck::cast_slice(&data);
             compute_stats(cells, active_light_count, fallback_active)
         };
-        self.stats_staging_buf.unmap();
+        staging.unmap();
         stats
     }
 
@@ -472,28 +600,40 @@ impl ClusteredResources {
         );
     }
 
-    /// Encode the per-frame clear + build dispatches. Always runs the clear so
-    /// the cluster grid and global reservation counter return to a known zero
-    /// state; the build is skipped when no active lights survive the CPU cull.
+    /// Encode the per-frame clear + build dispatches. The clear returns the
+    /// cluster grid and the global reservation counter to zero, and runs only
+    /// when a previous build left them non-zero; the build is skipped when no
+    /// active lights survive the CPU cull. Both are skipped when
+    /// `ensure_pipelines` has not run, which is the case until a frame needs one.
     pub fn dispatch_frame(
-        &self,
+        &mut self,
         encoder: &mut crate::gpu::CommandEncoder,
         active_light_count: u32,
         ts_query_set: Option<&crate::gpu::QuerySet>,
     ) {
-        {
+        let built = |i| self.pipelines.as_ref().and_then(|p| p.get(i));
+        let (Some(clear_bind_group), Some(build_bind_group)) =
+            (&self.clear_bind_group, &self.build_bind_group)
+        else {
+            return;
+        };
+        if let (false, Some(clear_pipeline)) = (self.grid_zeroed, built(CLUSTER_CLEAR)) {
             let clear_workgroups = MAX_LIGHT_INDICES.max(CLUSTER_COUNT).div_ceil(64);
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("cluster_clear_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.clear_pipeline);
-            pass.set_bind_group(0, &self.clear_bind_group, &[]);
+            pass.set_pipeline(clear_pipeline);
+            pass.set_bind_group(0, clear_bind_group, &[]);
             pass.dispatch_workgroups(clear_workgroups, 1, 1);
+            self.grid_zeroed = true;
         }
         if active_light_count == 0 {
             return;
         }
+        let Some(build_pipeline) = built(CLUSTER_BUILD) else {
+            return;
+        };
         {
             let slot = crate::renderer::GPU_TS_CLUSTER;
             let ts_writes = ts_query_set.map(|qs| crate::gpu::ComputePassTimestampWrites {
@@ -505,11 +645,12 @@ impl ClusteredResources {
                 label: Some("cluster_build_pass"),
                 timestamp_writes: ts_writes,
             });
-            pass.set_pipeline(&self.build_pipeline);
-            pass.set_bind_group(0, &self.build_bind_group, &[]);
+            pass.set_pipeline(build_pipeline);
+            pass.set_bind_group(0, build_bind_group, &[]);
             // One workgroup per cluster cell.
             pass.dispatch_workgroups(CLUSTER_COUNT, 1, 1);
         }
+        self.grid_zeroed = false;
     }
 }
 
@@ -530,7 +671,9 @@ fn compute_stats(
     let mut non_empty: u32 = 0;
     for c in cells {
         total_index_slots_used = total_index_slots_used.saturating_add(c.count);
-        dropped = dropped.saturating_add(c.punctual_demand.saturating_sub(c.punctual_count));
+        if c.punctual_demand > c.punctual_count {
+            dropped += 1;
+        }
         if c.punctual_demand > 0 {
             non_empty += 1;
             punctuals.push(c.punctual_demand);

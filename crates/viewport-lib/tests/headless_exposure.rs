@@ -5,15 +5,33 @@
 //! (with `dt = 0`, i.e. snap) drives both to a comparable tone-mapped output,
 //! while a fixed `Manual` exposure leaves them far apart. This exercises the
 //! full GPU path: histogram compute over `Rgba16Float` -> resolve/adapt compute
-//! -> exposure buffer -> tone map, all in one submission.
+//! -> exposure buffer -> the next frame's camera uniform. A frame shades with
+//! the exposure the frame before it metered, so each automatic case renders
+//! twice and reads the second.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
 use common::*;
 
-use viewport_lib::{AutoExposure, ExposureMode, ExposureSettings};
+use viewport_lib::{
+    AutoExposure, EnvironmentIntensity, EnvironmentLighting, EnvironmentMapId, ExposureMode,
+    ExposureSettings,
+};
+
+/// Render `frame` twice and return the second, which shades with the
+/// exposure the first metered.
+fn render_settled(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &FrameData,
+    size: u32,
+) -> Vec<u8> {
+    let _ = renderer.render_offscreen(device, queue, frame, size, size);
+    renderer.render_offscreen(device, queue, frame, size, size)
+}
 
 /// A camera-facing quad (normal +Z) scaled to fill the frame, so metering sees
 /// the lit surface rather than the background.
@@ -30,20 +48,33 @@ fn fill_quad() -> MeshData {
     mesh
 }
 
+/// The quad's material: matte, non-metal, to minimise the head-on specular
+/// highlight so the readback tracks diffuse radiance (which scales cleanly with
+/// light intensity).
+fn matte_material(renderer: &mut ViewportRenderer) -> MaterialId {
+    let mut m = Material::default();
+    m.base_colour = Colour::linear_rgb(0.6, 0.6, 0.6);
+    m.roughness = 1.0;
+    m.metallic = 0.0;
+    upload_material(renderer, m)
+}
+
 /// Build a frame with a full-frame white quad lit head-on by a directional
 /// light of the given intensity, exposure `exposure`, no ambient. `size` px.
-fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings) -> FrameData {
+fn lit_frame(
+    size: u32,
+    mesh: MeshId,
+    material: MaterialId,
+    intensity: f32,
+    exposure: ExposureSettings,
+) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
 
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {
@@ -59,12 +90,8 @@ fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
     // Scale the unit quad up so it covers the whole 1:1 frame.
-    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
-    item.material.base_colour = [0.6, 0.6, 0.6].into();
-    // Matte, non-metal: minimise the head-on specular highlight so the readback
-    // tracks diffuse radiance (which scales cleanly with light intensity).
-    item.material.roughness = 1.0;
-    item.material.metallic = 0.0;
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();
+    item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
 }
@@ -96,6 +123,7 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
         .resources_mut()
         .upload_mesh_data(&device, &fill_quad())
         .unwrap();
+    let matte = matte_material(&mut renderer);
 
     let size = 128u32;
     let dark_i = 0.5f32;
@@ -107,14 +135,14 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
     let man_dark = renderer.render_offscreen(
         &device,
         &queue,
-        &lit_frame(size, mesh, dark_i, ExposureSettings::manual(2.0)),
+        &lit_frame(size, mesh, matte, dark_i, ExposureSettings::manual(2.0)),
         size,
         size,
     );
     let man_bright = renderer.render_offscreen(
         &device,
         &queue,
-        &lit_frame(size, mesh, bright_i, ExposureSettings::manual(2.0)),
+        &lit_frame(size, mesh, matte, bright_i, ExposureSettings::manual(2.0)),
         size,
         size,
     );
@@ -135,16 +163,17 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             adaptation: 1.0,
             ..AutoExposure::default()
         };
-        renderer.render_offscreen(
+        render_settled(
+            &mut renderer,
             &device,
             &queue,
             &lit_frame(
                 size,
                 mesh,
+                matte,
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
-            size,
             size,
         )
     };
@@ -170,16 +199,17 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
             adaptation: 0.5,
             ..AutoExposure::default()
         };
-        renderer.render_offscreen(
+        render_settled(
+            &mut renderer,
             &device,
             &queue,
             &lit_frame(
                 size,
                 mesh,
+                matte,
                 i,
                 ExposureSettings::from_mode(ExposureMode::Automatic(a)),
             ),
-            size,
             size,
         )
     };
@@ -202,5 +232,80 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
         auto_gap > 20.0,
         "partial adaptation over-equalised: gap {auto_gap} (expected the brighter \
          scene to stay brighter at adaptation 0.5)"
+    );
+}
+
+/// A frame with nothing in view but a uniform skybox drawn at `nits`, auto
+/// exposure at full adaptation.
+fn sky_frame(size: u32, env: EnvironmentMapId, nits: f32) -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
+    frame.effects.environment = Some(EnvironmentLighting::new(env));
+    frame.effects.lighting.environment_intensity = EnvironmentIntensity::Multiplier(nits);
+    let a = AutoExposure {
+        adaptation: 1.0,
+        ..AutoExposure::default()
+    };
+    frame.effects.display.exposure = ExposureSettings::from_mode(ExposureMode::Automatic(a));
+    frame
+}
+
+/// The skybox is scene content to the meter. Looking only at the sky, a dim and
+/// a bright sky both expose to a mid level. When the meter skipped every
+/// far-plane texel it saw nothing here and held one exposure for both, so the
+/// bright sky clipped and the dim one went black.
+#[test]
+fn auto_exposure_meters_the_skybox() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let (w, h) = (16u32, 8u32);
+    let pixels: Vec<f32> = (0..w * h).flat_map(|_| [1.0, 1.0, 1.0, 1.0]).collect();
+    let env = renderer
+        .upload_environment(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(w, h, pixels),
+            viewport_lib::EnvironmentOptions::default(),
+        )
+        .unwrap();
+
+    let size = 64u32;
+    let dim = centre_luma(
+        &render_settled(
+            &mut renderer,
+            &device,
+            &queue,
+            &sky_frame(size, env, 5.0),
+            size,
+        ),
+        size,
+    );
+    let bright = centre_luma(
+        &render_settled(
+            &mut renderer,
+            &device,
+            &queue,
+            &sky_frame(size, env, 5000.0),
+            size,
+        ),
+        size,
+    );
+    for (label, l) in [("dim", dim), ("bright", bright)] {
+        assert!(
+            l > 40.0 && l < 240.0,
+            "{label} sky luma {l} out of the expected mid range"
+        );
+    }
+    assert!(
+        (bright - dim).abs() < 45.0,
+        "auto exposure did not adapt to the sky: dim {dim} vs bright {bright}"
     );
 }

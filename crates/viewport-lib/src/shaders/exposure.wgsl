@@ -1,9 +1,11 @@
 // exposure.wgsl : GPU auto-exposure. A log-luminance histogram over the HDR
 // scene target, reduced to a percentile-clipped average, converted to a target
 // EV100 and eased into a persistent exposure buffer. Three entry points share
-// one bind group and run clear -> build -> resolve between the HDR pass and the
-// tone map, in the same submission, so a single dirty render is correctly
-// exposed on its own frame (no CPU readback, no cross-frame dependency).
+// one bind group and run clear -> build -> resolve after the HDR pass, in the
+// same submission, with no CPU readback. The scene shades with the exposure
+// the buffer held when the frame began (copied into the camera uniform), so
+// the build pass divides it back out and meters absolute radiance; the next
+// frame shades with what resolve writes.
 
 const HISTOGRAM_BINS: u32 = 256u;
 
@@ -16,7 +18,7 @@ struct ExposureParams {
     min_ev:            f32,
     max_ev:            f32,
     compensation:      f32,
-    exposure_boost:    f32,
+    anchor_ev:         f32,
     speed_up:          f32,
     speed_down:        f32,
     dt:                f32,
@@ -24,15 +26,15 @@ struct ExposureParams {
     high_percent:      f32,
     tex_width:         f32,
     tex_height:        f32,
-    center_weight:     f32,
+    centre_weight:     f32,
     adaptation:        f32,
     _pad0:             f32,
     _pad1:             f32,
     _pad2:             f32,
 };
 
-// Persistent adaptation state; `exposure` is the linear multiplier the tone map
-// reads (see `ExposureState` in Rust and `tone_map.wgsl`).
+// Persistent adaptation state; `exposure` is the linear multiplier the next
+// frame's camera uniform carries (see `ExposureState` in Rust).
 struct ExposureState {
     exposure:   f32,
     current_ev: f32,
@@ -44,7 +46,11 @@ struct ExposureState {
 @group(0) @binding(1) var<uniform> params: ExposureParams;
 @group(0) @binding(2) var<storage, read_write> histogram: array<atomic<u32>, HISTOGRAM_BINS>;
 @group(0) @binding(3) var<storage, read_write> state: ExposureState;
-@group(0) @binding(4) var depth_texture: texture_depth_2d;
+@group(0) @binding(4) var depth_texture: texture_2d<f32>;
+@group(0) @binding(5) var depth_sampler: sampler;
+
+// #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -68,20 +74,20 @@ fn clear_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-// Center-weight for a texel, in units of the quantised histogram weight. Pixels
+// Centre-weight for a texel, in units of the quantised histogram weight. Pixels
 // near the frame centre count more, so a centred subject drives exposure and
-// zoom/pan barely move it. `center_weight = 0` gives a flat full-frame meter.
-fn center_weight_for(gid: vec2<u32>, w: u32, h: u32) -> u32 {
+// zoom/pan barely move it. `centre_weight = 0` gives a flat full-frame meter.
+fn centre_weight_for(gid: vec2<u32>, w: u32, h: u32) -> u32 {
     let uv = (vec2<f32>(vec2<u32>(gid)) + vec2<f32>(0.5)) / vec2<f32>(f32(w), f32(h));
     // Normalised radius from centre: 0 at centre, ~1 at the frame edges.
     let r = length((uv - vec2<f32>(0.5)) * 2.0) * 0.70710677;
     let falloff = smoothstep(1.0, 0.15, r); // 1 at centre -> 0 at the corners
-    let weight = mix(1.0, falloff, params.center_weight);
+    let weight = mix(1.0, falloff, params.centre_weight);
     // Quantise to an integer weight; keep a floor so edge pixels still register.
     return max(u32(weight * 64.0 + 0.5), 1u);
 }
 
-// One invocation per HDR texel: bin its log-luminance with a center weight.
+// One invocation per HDR texel: bin its log-luminance with a centre weight.
 @compute @workgroup_size(16, 16, 1)
 fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let w = u32(params.tex_width);
@@ -90,14 +96,19 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    // Skip background (far-plane) texels: the HDR target is cleared to the flat
-    // background fill, which is not scene content and must not bias the meter.
-    // (Matches the tone map's own background test.)
-    if textureLoad(depth_texture, coord, 0) >= 0.999999 {
+    let texel = textureLoad(hdr_texture, coord, 0);
+    // Skip empty background: a far-plane texel nothing was drawn into. The HDR
+    // target is cleared to zero alpha and the flat background fill is only added
+    // by the tone map, so it is not scene content and must not bias the meter. A
+    // skybox, or transparent content over the background, writes alpha and is
+    // metered like geometry. This is the tone map's own background test.
+    if viewport_depth_is_background(depth_texel(depth_texture, depth_sampler, coord))
+        && texel.a < 0.001 {
         return;
     }
-    let texel = textureLoad(hdr_texture, coord, 0);
-    let lum = luminance(texel.rgb);
+    // The texel is exposed by the multiplier this frame shaded with, which
+    // resolve has not yet replaced; divide it out to meter absolute radiance.
+    let lum = luminance(texel.rgb) / max(state.exposure, 1e-30);
     let bin = bin_for_lum(lum);
     // Bin 0 is a raw (unweighted) count of lit texels, used by resolve_main as a
     // confidence signal (how much of the frame is scene content vs excluded
@@ -106,13 +117,14 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // not bias metering.
     atomicAdd(&histogram[0], 1u);
     if bin >= 1u {
-        atomicAdd(&histogram[bin], center_weight_for(gid.xy, w, h));
+        atomicAdd(&histogram[bin], centre_weight_for(gid.xy, w, h));
     }
 }
 
 // Single invocation: reduce the histogram to an average log-luminance with a
 // low/high percentile clip, convert to a target EV, ease the persistent EV
-// toward it (dt<=0 snaps), then write the exposure multiplier the tone map reads.
+// toward it (dt<=0 snaps), then write the exposure multiplier the next frame
+// shades with.
 @compute @workgroup_size(1)
 fn resolve_main() {
     // Total lit pixels (bin 0 is near-black background / unlit, excluded).
@@ -161,7 +173,7 @@ fn resolve_main() {
     // physical-camera exposure are unaffected; this only sets the auto target.
     let middle_grey = 0.36;
     let middle_grey_stops = log2(middle_grey / (params.k_factor / 100.0));
-    // Partial adaptation. `target_ev` reduces to `log2(l_avg / middle_grey)` - the
+    // Partial adaptation. The adaptive term reduces to `log2(l_avg / middle_grey)` - the
     // full exposure that would render the metered value to `middle_grey`. Scaling
     // it by ADAPT (<1) makes the exposure only partially follow the scene: at the
     // reference level (l_avg == middle_grey) it is unchanged, and away from it the
@@ -170,7 +182,10 @@ fn resolve_main() {
     // AND proportionally shrinks every framing-driven swing - orbit, zoom onto a
     // bright/dark object, and the flare when the camera faces a dimly-lit
     // underside - since those are all `l_avg` moving.
-    var target_ev = params.adaptation * (log2(max(l_avg, 1e-5) * 100.0 / params.k_factor) - middle_grey_stops);
+    // Scaled from the passthrough EV, so `adaptation = 0` holds a 1.0 multiplier
+    // and full adaptation lands the metered value on `middle_grey`.
+    var target_ev = params.anchor_ev
+        + params.adaptation * (log2(max(l_avg, 1e-5) * 100.0 / params.k_factor) - middle_grey_stops);
     target_ev = clamp(target_ev, params.min_ev, params.max_ev);
 
     // Persistent EV; snap on first use (CPU seeds a non-finite value) or dt<=0.
@@ -214,8 +229,7 @@ fn resolve_main() {
     }
 
     let ev_used = new_ev - params.compensation;
-    let max_lum = 1.2 * exp2(ev_used);
-    state.exposure = params.exposure_boost / max_lum;
+    state.exposure = 1.0 / (1.2 * exp2(ev_used));
     state.current_ev = new_ev;
     state.target_ev = target_ev;
     state.adapting = select(0.0, 1.0, abs(target_ev - new_ev) > 0.01);

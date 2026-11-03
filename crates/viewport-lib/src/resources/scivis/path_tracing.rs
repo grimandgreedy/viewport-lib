@@ -32,7 +32,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "pt_pipeline_layout",
-            &[&self.binds.camera_bgl, bgl, lut_bgl],
+            &[&self.scene_tier.binds.camera_bgl, bgl, lut_bgl],
         );
 
         // Blend states match the existing OIT mesh pipeline.
@@ -92,8 +92,9 @@ impl DeviceResources {
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
                     false,
-                    crate::gpu::CompareFunction::LessEqual,
+                    crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: 1,

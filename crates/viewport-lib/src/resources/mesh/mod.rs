@@ -4,6 +4,8 @@ pub(crate) mod geometry;
 pub(crate) mod geometry_slab;
 /// Per-mesh GPU buffers and bind group.
 pub(crate) mod gpu_mesh;
+/// Bindless material-texture variant of the instanced path.
+pub(crate) mod instanced_bindless;
 pub(crate) mod instancing;
 pub mod lod;
 /// Factory functions for the mesh-family pipelines that share a single
@@ -12,5 +14,7 @@ pub(crate) mod mesh_pipelines;
 /// Slotted GPU mesh storage with free-list removal.
 pub mod mesh_store;
 pub(crate) mod meshes;
+/// Per-mesh sidecar streams in shared storage chunks.
+pub(crate) mod sidecar_pool;
 
 pub use meshes::OverrideBufferSlice;

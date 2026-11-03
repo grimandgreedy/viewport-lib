@@ -3,11 +3,9 @@
 /// Returned by [`crate::ViewportRenderer::shadow_debug_stats`]. All values reflect
 /// the most recently completed `prepare` call (one frame behind the display).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ShadowDebugStats {
-    /// True when the current frame uses the instanced draw path.
-    ///
-    /// When true, edits to `mesh.wgsl` shadow sampling code have no effect --
-    /// the active shader is `mesh_instanced.wgsl`.
+    /// True when the current frame draws its meshes in batches.
     pub using_instanced_path: bool,
     /// Number of instanced batches in the current frame. Zero when non-instanced.
     pub instanced_batch_count: usize,
@@ -17,9 +15,9 @@ pub struct ShadowDebugStats {
     pub cascade_splits: [f32; 4],
     /// Shadow atlas resolution (width = height) in pixels.
     pub shadow_atlas_resolution: u32,
-    /// Shadow frustum half-extent in world units.
-    ///
-    /// Auto-computed as 20.0 unless overridden via `shadow_extent_override`.
+    /// Half-extent in world units of the single shadow map used when the
+    /// camera has no view matrix: `ShadowSettings::extent_override` when set,
+    /// otherwise the shadow casters' half-extent seen from the light.
     pub shadow_extent_world: f32,
     /// True when screen-space contact shadows are enabled in post-process settings.
     pub contact_shadow_active: bool,

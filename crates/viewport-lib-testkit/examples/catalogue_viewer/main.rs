@@ -10,13 +10,14 @@
 //!   Right drag         : pan
 //!   Scroll             : zoom
 
+use viewport_lib::Colour;
 mod viewport_callback;
 
 use eframe::egui;
-use viewport_lib::wgpu;
+use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, Modifiers, MouseButton, OrbitCameraController,
-    SceneFrame, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
+    Camera, CameraFrame, FrameData, OrbitCameraController, SceneFrame, ViewportContext,
+    ViewportInput, ViewportRenderer,
 };
 use viewport_lib_testkit::{BuildCtx, BuiltScene, NamedCamera, catalogue};
 
@@ -38,7 +39,13 @@ fn main() -> eframe::Result {
             let queue = &rs.queue;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // The paint callback draws into eframe's own pass, whose depth
+            // attachment is 24-bit.
+            let mut renderer = ViewportRenderer::with_config(
+                device,
+                &viewport_lib::RendererConfig::new(format)
+                    .with_scene_depth_format(eframe::wgpu::TextureFormat::Depth24PlusStencil8),
+            );
 
             // Build every catalogue scene once, uploading all assets up front.
             let mut builts: Vec<BuiltScene> = Vec::new();
@@ -47,7 +54,7 @@ fn main() -> eframe::Result {
             for scene in catalogue() {
                 let built = {
                     let mut ctx = BuildCtx {
-                        res: renderer.resources_mut(),
+                        renderer: &mut renderer,
                         device,
                         queue,
                     };
@@ -67,7 +74,8 @@ fn main() -> eframe::Result {
                 cameras,
                 selected: 0,
                 camera,
-                controller: OrbitCameraController::viewport_primitives(),
+                controller: OrbitCameraController::new_stateless(),
+                input: ViewportInput::from_preset(viewport_lib::BindingPreset::Viewer),
                 cursor: None,
                 cursor_prev: None,
             }))
@@ -82,6 +90,9 @@ struct App {
     selected: usize,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     cursor: Option<glam::Vec2>,
     cursor_prev: Option<glam::Vec2>,
 }
@@ -110,67 +121,37 @@ impl eframe::App for App {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-                self.controller.begin_frame(ViewportContext {
-                    hovered: response.hovered(),
-                    focused: response.has_focus(),
-                    viewport_size: [rect.width(), rect.height()],
-                });
+                let ownership = vpl_egui::ownership(&response, ui.ctx(), rect, false);
+                self.input.begin_frame(ViewportContext::new(
+                    ownership,
+                    [rect.width(), rect.height()],
+                ));
+                // Pan reads the viewport height off the controller.
+                self.controller
+                    .set_viewport_size([rect.width(), rect.height()]);
 
+                let actx = AdapterCtx::new(1.0, glam::Vec2::new(rect.left(), rect.top()));
+                let mut events = Vec::new();
                 ui.input(|i| {
-                    self.controller
-                        .push_event(ViewportEvent::ModifiersChanged(Modifiers {
-                            alt: i.modifiers.alt,
-                            shift: i.modifiers.shift,
-                            ctrl: i.modifiers.command,
-                        }));
                     let local = i
                         .pointer
                         .interact_pos()
                         .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                     self.cursor_prev = self.cursor;
                     self.cursor = local;
-                    if let Some(pos) = local {
-                        self.controller
-                            .push_event(ViewportEvent::PointerMoved { position: pos });
-                    }
+                    vpl_egui::begin_frame(i, &actx, &mut events);
                     for event in &i.events {
-                        match event {
-                            egui::Event::PointerButton {
-                                button, pressed, ..
-                            } => {
-                                let vp = match button {
-                                    egui::PointerButton::Primary => MouseButton::Left,
-                                    egui::PointerButton::Secondary => MouseButton::Right,
-                                    egui::PointerButton::Middle => MouseButton::Middle,
-                                    _ => continue,
-                                };
-                                self.controller.push_event(ViewportEvent::MouseButton {
-                                    button: vp,
-                                    state: if *pressed {
-                                        ButtonState::Pressed
-                                    } else {
-                                        ButtonState::Released
-                                    },
-                                });
-                            }
-                            egui::Event::MouseWheel { unit, delta, .. } => {
-                                let units = match unit {
-                                    egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                    egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                    egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                                };
-                                self.controller.push_event(ViewportEvent::Wheel {
-                                    delta: glam::Vec2::new(delta.x, delta.y),
-                                    units,
-                                });
-                            }
-                            _ => {}
-                        }
+                        vpl_egui::translate(event, &actx, &mut events);
                     }
                 });
+                for ev in events {
+                    self.input.push_event(ev);
+                }
 
                 let (w, h) = (rect.width(), rect.height());
-                self.controller.apply_to_camera(&mut self.camera);
+                let action_frame = self.input.resolve();
+                let dt = ctx.input(|i| i.stable_dt);
+                self.controller.apply(&mut self.camera, &action_frame, dt);
                 self.camera.set_aspect_ratio(w, h);
 
                 let built = &self.builts[self.selected];
@@ -181,7 +162,7 @@ impl eframe::App for App {
                 );
                 fd.effects.lighting = built.lighting.clone();
                 if let Some(bg) = built.background {
-                    fd.viewport.background_colour = Some(bg);
+                    fd.viewport.background_colour = Some(Colour::from_linear_array(bg));
                 }
 
                 ui.painter()

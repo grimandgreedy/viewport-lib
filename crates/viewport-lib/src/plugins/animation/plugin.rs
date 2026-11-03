@@ -79,7 +79,7 @@ impl AnimationTrack {
 
 /// A plugin that drives node transforms from keyframed animation tracks.
 ///
-/// Runs in the [`RuntimePhase::Animate`] phase. Each frame it advances the
+/// Runs in the [`RuntimePhase::Animate`](crate::RuntimePhase::Animate) phase. Each frame it advances the
 /// playhead by `dt * speed` and writes the interpolated transform for each
 /// track via [`crate::TransformWriteback`].
 ///
@@ -185,7 +185,7 @@ impl RuntimePlugin for AnimationPlugin {
     }
 }
 
-impl crate::plugin_api::ViewportPlugin for AnimationPlugin {
+impl crate::plugin_api::PluginInstaller for AnimationPlugin {
     type Handle = ();
 
     /// Register the configured plugin on the runtime. Build the tracks first,
@@ -203,12 +203,12 @@ impl crate::plugin_api::ViewportPlugin for AnimationPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::material::Material;
+    use crate::resources::MaterialId;
     use crate::scene::scene::Scene;
     use glam::{Affine3A, Vec3};
 
     fn some_node() -> NodeId {
-        Scene::new().add(None, glam::Mat4::IDENTITY, Material::default())
+        Scene::new().add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT)
     }
     fn kf(time: f32, pos: Vec3) -> Keyframe {
         Keyframe {

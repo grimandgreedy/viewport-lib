@@ -15,12 +15,16 @@ pub(crate) struct SceneBindings {
     pub(crate) camera_bgl: crate::gpu::BindGroupLayout,
     /// Bind group layout for group 1 (per-object uniform: model, material, selection).
     pub(crate) object_bgl: crate::gpu::BindGroupLayout,
+    /// `object_bgl`'s entries, from which its bindless member is derived.
+    pub(crate) object_bgl_entries: Vec<crate::gpu::BindGroupLayoutEntry>,
+    /// The bindless member of group 1: `object_bgl` with the five material
+    /// texture slots replaced by one texture array at binding 1. Built with
+    /// the first bindless mesh family.
+    pub(crate) object_bindless_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Uniform buffer for clip planes (binding 4 of camera bind group).
     pub(crate) clip_planes_buf: crate::gpu::Buffer,
     /// Uniform buffer for the extended clip volume (binding 6 of camera bind group, 128 bytes).
     pub(crate) clip_volume_buf: crate::gpu::Buffer,
-    /// 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-    pub(crate) debug_frag_sentinel_buf: crate::gpu::Buffer,
 }
 
 #[cfg(test)]
@@ -35,14 +39,13 @@ mod tests {
             return;
         };
         // Building a bind group from the shared layout + buffers exercises that
-        // the camera BGL and the clip / sentinel buffers are mutually consistent.
+        // the camera BGL and the clip buffers are mutually consistent.
         let _bg = res.create_camera_bind_group(
             &device,
-            &res.binds.camera_uniform_buf,
-            &res.binds.clip_planes_buf,
-            &res.shadow.info_buf,
-            &res.binds.clip_volume_buf,
-            &res.binds.debug_frag_sentinel_buf,
+            &res.scene_tier.binds.camera_uniform_buf,
+            &res.scene_tier.binds.clip_planes_buf,
+            &res.scene_tier.shadow.info_buf,
+            &res.scene_tier.binds.clip_volume_buf,
             "test_camera_bg",
         );
     }

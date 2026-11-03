@@ -1,12 +1,21 @@
 //! Post-process configuration such as tone mapping applied at display time.
 
 /// Tone mapping operator used by the HDR pipeline.
+///
+/// A named operator keeps its curve: a corrected or retuned curve is a new
+/// variant. The AgX and ACES operators follow the reference implementations'
+/// constants; [`tone_operators`](crate::effects::tone_operators) holds a CPU
+/// version of each.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ToneMapping {
     /// Reinhard tone mapping (simple, good for scenes without extreme HDR).
     Reinhard,
-    /// ACES filmic tone mapping (cinematic look, strong colour shift).
+    /// Narkowicz's fit of the ACES filmic curve, applied per channel in the
+    /// working space: a cheap approximation with a strong colour shift in
+    /// saturated highlights. See [`AcesRrt`](Self::AcesRrt) for the fuller
+    /// model.
     Aces,
     /// Khronos Neutral tone mapping (perceptually uniform, minimal colour shift).
     ///
@@ -14,15 +23,182 @@ pub enum ToneMapping {
     /// is done on HDR values above 1.0. This is the default.
     #[default]
     KhronosNeutral,
+    /// AgX: a log encoding and sigmoid in a set of inset Rec.2020 primaries,
+    /// which desaturates bright colours smoothly towards white. Takes a look
+    /// from [`PostProcessSettings::agx_look`].
+    Agx,
+    /// An approximation of the ACES reference rendering and output
+    /// transforms (RRT and ODT, 100 nit display) with the glow, red
+    /// modifier and desaturation stages, evaluated in AP0 and AP1.
+    ///
+    /// Colours move to AP0 without adapting the white point, as the
+    /// reference does, so a neutral grey comes out slightly blue in the
+    /// shadows and warm in the highlights.
+    AcesRrt,
+    /// A configurable per-channel curve through a mid-grey point and a
+    /// white point, shaped by [`PostProcessSettings::generic_tone_curve`].
+    Generic,
+    /// A curve supplied as a view-transform LUT: a strip LUT baked with
+    /// [`bake_view_transform_lut`] and uploaded through the renderer's
+    /// texture API like any texture.
+    ///
+    /// The composite shapes exposed radiance with [`VIEW_LUT_SHAPER`],
+    /// samples the LUT and uses the result in place of a built-in operator;
+    /// the background composite and display-referred grading follow as
+    /// usual. Under [`WorkingSpace::Rec2020`] the LUT is looked up with
+    /// Rec.2020 values and its output is converted back to Rec.709, so bake
+    /// a curve that expects Rec.2020 input.
+    ///
+    /// A [`PostProcessSettings::grade_lut`] under [`GradingSpace::Scene`]
+    /// still applies first, and this LUT replaces only the operator. For one
+    /// LUT holding the whole view transform, bake the grade in through
+    /// [`bake_view_transform_lut`]'s `grade` argument and leave `grade_lut`
+    /// unset.
+    ///
+    /// An id that does not name an uploaded texture (or names an external
+    /// view, whose size the renderer cannot read) applies no operator: the
+    /// exposed colour reaches the display unchanged.
+    ///
+    /// [`bake_view_transform_lut`]: crate::effects::tone_curve::bake_view_transform_lut
+    /// [`VIEW_LUT_SHAPER`]: crate::effects::tone_curve::VIEW_LUT_SHAPER
+    Custom {
+        /// The baked LUT.
+        lut: crate::ids::TextureId,
+    },
 }
 
-/// Neutral exposure numerator. Cancels the `1.2` maxLuminance divisor so
-/// `ExposureMode::Manual { ev: 0.0 }` maps to a linear multiplier of exactly
-/// `1.0`, keeping exposure neutral while light intensities are still unitless
-/// (`~1`, not yet lux/candela). It goes away once lights carry photometric
-/// units, when the full `exposure = 1 / (1.2 * 2^EV)` form becomes correct.
-#[doc(hidden)]
-pub const INTERIM_EXPOSURE_BOOST: f32 = 1.2;
+impl ToneMapping {
+    /// The operator's index in the renderer's composite uniform.
+    #[doc(hidden)]
+    pub const fn composite_index(self) -> u32 {
+        match self {
+            ToneMapping::Reinhard => 0,
+            ToneMapping::Aces => 1,
+            ToneMapping::KhronosNeutral => 2,
+            ToneMapping::Agx => 3,
+            ToneMapping::AcesRrt => 4,
+            ToneMapping::Generic => 5,
+            ToneMapping::Custom { .. } => 6,
+        }
+    }
+}
+
+/// A creative look applied inside the AgX operator, after its sigmoid
+/// ([`ToneMapping::Agx`]).
+///
+/// A look is a slope and power per channel (an ASC CDL) followed by a
+/// saturation scale about Rec.709 luma.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AgxLook {
+    /// The base curve with no look.
+    #[default]
+    None,
+    /// More contrast and saturation: power 1.35, saturation 1.4.
+    Punchy,
+    /// A warm grade: slope (1.0, 0.9, 0.5), power 0.8, saturation 1.3.
+    Golden,
+}
+
+impl AgxLook {
+    /// The `(slope, power, saturation)` of the look's CDL.
+    pub fn cdl(self) -> ([f32; 3], [f32; 3], f32) {
+        match self {
+            AgxLook::None => ([1.0; 3], [1.0; 3], 1.0),
+            AgxLook::Punchy => ([1.0; 3], [1.35; 3], 1.4),
+            AgxLook::Golden => ([1.0, 0.9, 0.5], [0.8; 3], 1.3),
+        }
+    }
+}
+
+/// The curve of [`ToneMapping::Generic`].
+///
+/// Each channel `x` maps to `output_scale * x^c / (x^c + input_scale)`, with
+/// the two scales chosen so `mid_grey_in` maps to `mid_grey_out` and
+/// `hdr_max` maps to 1. See [`scales`](Self::scales).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GenericToneCurve {
+    /// The exponent `c`: higher is more contrast. Default: `1.55`.
+    pub contrast: f32,
+    /// The input value treated as mid-grey. Default: `0.18`.
+    pub mid_grey_in: f32,
+    /// The display value mid-grey maps to. Default: `0.215`.
+    pub mid_grey_out: f32,
+    /// The input value that maps to display white. Default: `10.0`.
+    pub hdr_max: f32,
+}
+
+impl Default for GenericToneCurve {
+    fn default() -> Self {
+        Self {
+            contrast: 1.55,
+            mid_grey_in: 0.18,
+            mid_grey_out: 0.215,
+            hdr_max: 10.0,
+        }
+    }
+}
+
+impl GenericToneCurve {
+    /// A curve from its four parameters.
+    pub fn new(contrast: f32, mid_grey_in: f32, mid_grey_out: f32, hdr_max: f32) -> Self {
+        Self {
+            contrast,
+            mid_grey_in,
+            mid_grey_out,
+            hdr_max,
+        }
+    }
+
+    /// The contrast exponent and the `(input_scale, output_scale)` pair, after
+    /// clamping the parameters to their valid ranges: contrast at least
+    /// `1e-5`, both mid-grey values in `[1e-5, 1]`, `hdr_max` at least 1.
+    ///
+    /// With `a = mid_grey_in^c`, `b = hdr_max^c` and
+    /// `k = a - mid_grey_out * b`, `input_scale = a * b * (mid_grey_out - 1) / k`
+    /// and `output_scale = mid_grey_out * (a - b) / k`.
+    pub fn scales(&self) -> (f32, f32, f32) {
+        let c = self.contrast.max(1e-5);
+        let mid_in = self.mid_grey_in.clamp(1e-5, 1.0);
+        let mid_out = self.mid_grey_out.clamp(1e-5, 1.0);
+        let hdr_max = self.hdr_max.max(1.0);
+        let a = mid_in.powf(c);
+        let b = hdr_max.powf(c);
+        let k = a - mid_out * b;
+        (c, a * b * (mid_out - 1.0) / k, mid_out * (a - b) / k)
+    }
+}
+
+/// The primaries the scene-referred grade and the tone-map operator work in.
+///
+/// Exposed radiance arrives in Rec.709 (sRGB) primaries and the display
+/// output is Rec.709. [`ToneMapping::Agx`] and [`ToneMapping::AcesRrt`]
+/// always convert to their own internal space and back, clamping negative
+/// channels to 0 on the way back, whatever the working space.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum WorkingSpace {
+    /// Grade and tone map in Rec.709 primaries. The default.
+    #[default]
+    Rec709,
+    /// Convert exposed radiance to Rec.2020 before the scene-referred grade,
+    /// evaluate the grade's log shaper and the operator there, and convert
+    /// the result back to Rec.709 (negative channels clamped to 0) before
+    /// the background composite. A per-channel operator such as
+    /// [`ToneMapping::Reinhard`] then compresses saturated colours
+    /// differently, and a scene-referred LUT reads Rec.2020 values.
+    Rec2020,
+}
+
+/// The EV100 whose exposure multiplier is exactly `1.0`: `-log2(1.2)`.
+///
+/// [`ExposureMode::Passthrough`] exposes at this EV, and auto-exposure scales
+/// partial adaptation from it.
+pub const PASSTHROUGH_EV100: f32 = -0.263_034_4;
 
 /// Reflected-light meter calibration constant `K` used to convert an average
 /// scene luminance to EV100 (`EV100 = log2(L * 100 / K)`). `12.5` is the
@@ -30,18 +206,30 @@ pub const INTERIM_EXPOSURE_BOOST: f32 = 1.2;
 #[doc(hidden)]
 pub const METER_CALIBRATION_K: f32 = 12.5;
 
-/// How the pre-tone-map exposure multiplier is derived each frame.
+/// How the camera's exposure multiplier is derived each frame.
 ///
-/// Every mode resolves to a single linear multiplier applied to scene radiance
-/// before tone mapping (see `tone_map.wgsl`). The multiplier is routed through a
-/// small GPU buffer so auto-exposure can write it from a compute pass in the
-/// same submission as the tone map, keeping a one-shot (dirty-only) render
-/// correctly exposed on its own frame.
+/// Every mode resolves to a single linear multiplier. The shaders apply it
+/// where they read radiance (lights, the environment, the hemisphere fill,
+/// probes, lightmaps, emissive), not in the composite, so shading, plugin
+/// hooks and post effects see exposed radiance and colours drawn without
+/// lighting are left alone; see
+/// [`light_transport`](crate::effects::light_transport).
+///
+/// The fixed modes resolve on the CPU and apply on the frame they are set.
+/// [`ExposureMode::Automatic`] meters the HDR target on the GPU, and a frame
+/// shades with the exposure the frame before it metered, so a viewport that
+/// switches to it, or renders only when dirty, needs a second frame to show
+/// the adapted exposure.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ExposureMode {
-    /// Manual EV100. `ev = 0.0` is the neutral default (a `1.0` multiplier
-    /// during the interim; see `INTERIM_EXPOSURE_BOOST`). Higher EV darkens.
+    /// No exposure scaling: scene radiance in nits goes to the tone map as-is,
+    /// so a white surface reflecting 1 nit displays as white. The default, for
+    /// lighting authored at the faithful scale. Equivalent to `Manual` at
+    /// [`PASSTHROUGH_EV100`].
+    Passthrough,
+    /// Manual EV100, mapped to a multiplier as `1 / (1.2 * 2^EV100)` (the
+    /// saturation-based form HDRP and Filament use). Higher EV darkens.
     Manual {
         /// Exposure value at ISO 100. Higher is darker.
         ev: f32,
@@ -56,13 +244,16 @@ pub enum ExposureMode {
         iso: f32,
     },
     /// Auto-exposure: meter the HDR target's log-luminance histogram each frame
-    /// and adapt an internal EV toward it (see [`AutoExposure`]).
+    /// and adapt an internal EV toward it (see [`AutoExposure`]). The next frame
+    /// shades with the adapted EV. Needs [`PipelineMode::Hdr`]: on
+    /// [`PipelineMode::Direct`] there is no target to meter, so the frame draws
+    /// at the passthrough exposure and the renderer reports a notice.
     Automatic(AutoExposure),
 }
 
 impl ExposureMode {
-    /// The physically-neutral default: a fixed `EV 0` manual exposure.
-    pub const NEUTRAL: ExposureMode = ExposureMode::Manual { ev: 0.0 };
+    /// The neutral default: [`ExposureMode::Passthrough`].
+    pub const NEUTRAL: ExposureMode = ExposureMode::Passthrough;
 }
 
 /// Auto-exposure metering and adaptation parameters (used by
@@ -71,7 +262,7 @@ impl ExposureMode {
 /// Metering reduces the HDR target to a percentile-clipped average
 /// log-luminance, converts it to a target EV100, and eases an internal EV
 /// toward it. `dt` is the smoothing control: `dt <= 0` snaps to the target this
-/// frame (the default, correct for consumers that render only when dirty);
+/// frame (the default), so the next frame shades at the metered exposure;
 /// `dt > 0` applies exponential smoothing (the "eye adjusting" look).
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -87,8 +278,8 @@ pub struct AutoExposure {
     /// Default: `1.0`.
     pub speed_down: f32,
     /// Frame time in seconds for temporal smoothing. `<= 0` snaps to the target
-    /// this frame (no adaptation animation). `ViewportApp` auto-fills this from
-    /// `ctx.dt`; hand-written hosts pass it (or `0.0`). Default: `0.0`.
+    /// this frame (no adaptation animation). `ViewportApp` auto-fills this
+    /// from `ctx.dt`; hand-written hosts pass it (or `0.0`). Default: `0.0`.
     pub dt: f32,
     /// Lower edge of the metering window: the cumulative pixel fraction below
     /// which luminances are discarded before averaging, in `[0, 1)`. Together
@@ -103,18 +294,19 @@ pub struct AutoExposure {
     /// specular highlights so a stray hot pixel does not drive exposure.
     /// Default: `0.95`.
     pub high_percent: f32,
-    /// Center-weighting of the meter, in `[0, 1]`. `0` meters the whole frame
+    /// Centre-weighting of the meter, in `[0, 1]`. `0` meters the whole frame
     /// uniformly (exposure then swings as bright content enters/leaves the frame
     /// on zoom/pan); `1` weights the centre strongly so a centred subject drives
     /// exposure and framing barely moves it. Default: `0.85`.
-    pub center_weight: f32,
+    #[cfg_attr(feature = "serde", serde(alias = "center_weight"))]
+    pub centre_weight: f32,
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
     /// metered scene. `1` (the default) is full auto-exposure, driving the metered
     /// value to middle grey so the scene is correctly exposed regardless of its
-    /// magnitude. `0` holds a fixed exposure. The correction is scaled from a
-    /// neutral (EV 0) anchor, so values below `1` leave scenes far from EV 0
-    /// permanently under-corrected: a real-daylight scene at `0.5` stays several
-    /// stops overexposed. Lower it only for near-neutral lighting where you want a
+    /// magnitude. `0` holds the passthrough exposure. The correction is scaled
+    /// from that passthrough anchor ([`PASSTHROUGH_EV100`]), so values below `1`
+    /// leave scenes far from it permanently under-corrected: a real-daylight
+    /// scene at `0.5` stays several stops overexposed. Lower it only for near-neutral lighting where you want a
     /// touch of brightness constancy and smaller framing-driven swings (orbit,
     /// zoom onto a bright/dark object). Default: `1.0`.
     pub adaptation: f32,
@@ -130,24 +322,27 @@ impl Default for AutoExposure {
             dt: 0.0,
             low_percent: 0.65,
             high_percent: 0.95,
-            center_weight: 0.85,
+            centre_weight: 0.85,
             adaptation: 1.0,
         }
     }
 }
 
-/// Physical-camera exposure configuration for the HDR pipeline.
+/// Physical-camera exposure configuration.
 ///
-/// Passed via `EffectsFrame::exposure`. `compensation` is a stops-of-bias
-/// applied on top of every mode (positive brightens the image).
+/// Passed via `DisplaySettings::exposure`. `compensation` is a stops-of-bias
+/// applied on top of every mode (positive brightens the image). The resolved
+/// multiplier is applied where the shaders read radiance, on both pipelines;
+/// which values it scales and which it leaves alone is set out in
+/// [`light_transport`](crate::effects::light_transport).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExposureSettings {
     /// How the base exposure multiplier is derived. Default:
-    /// [`ExposureMode::NEUTRAL`] (`Manual { ev: 0.0 }`) - a fixed neutral exposure
-    /// that passes linear radiance straight through, so the faithful default
-    /// lighting reads as authored ("colour is data"). Switch to
+    /// [`ExposureMode::NEUTRAL`] ([`ExposureMode::Passthrough`]) - no exposure
+    /// scaling, so the faithful default lighting reads as authored ("colour is
+    /// data"). Switch to
     /// [`ExposureMode::Automatic`] (e.g. via [`ExposureSettings::automatic`]) or
     /// [`ExposureMode::PhysicalCamera`] when authoring real photometric magnitudes
     /// that need mapping down.
@@ -179,6 +374,14 @@ impl ExposureSettings {
     pub fn with_compensation(mut self, stops: f32) -> Self {
         self.compensation = stops;
         self
+    }
+
+    /// Convenience: the passthrough exposure with no compensation.
+    pub fn passthrough() -> Self {
+        Self {
+            mode: ExposureMode::Passthrough,
+            compensation: 0.0,
+        }
     }
 
     /// Convenience: a manual EV100 exposure with no compensation.
@@ -214,6 +417,7 @@ impl ExposureSettings {
     #[doc(hidden)]
     pub fn base_ev100(&self) -> Option<f32> {
         match self.mode {
+            ExposureMode::Passthrough => Some(PASSTHROUGH_EV100),
             ExposureMode::Manual { ev } => Some(ev),
             ExposureMode::PhysicalCamera {
                 aperture,
@@ -239,13 +443,10 @@ pub(crate) fn ev100_from_physical(aperture: f32, shutter: f32, iso: f32) -> f32 
     (aperture * aperture / shutter).log2() + (100.0 / iso).log2()
 }
 
-/// EV100 to a linear exposure multiplier via the maxLuminance form:
-/// `maxLum = 1.2 * 2^EV100`, `exposure = boost / maxLum`. `boost` is the
-/// temporary neutral numerator (see `INTERIM_EXPOSURE_BOOST`); it is `1.0` once
-/// photometric units are pinned.
+/// EV100 to a linear exposure multiplier via the saturation-based maxLuminance
+/// form: `maxLum = 1.2 * 2^EV100`, `exposure = 1 / maxLum`.
 pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
-    let max_lum = 1.2 * 2.0_f32.powf(ev100);
-    INTERIM_EXPOSURE_BOOST / max_lum
+    1.0 / (1.2 * 2.0_f32.powf(ev100))
 }
 
 /// Which render pipeline turns scene geometry into display pixels.
@@ -253,10 +454,13 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
 /// `Hdr` is the main path; `Direct` is a constrained fallback for
 /// host-owned render passes (`paint_to` / `paint_viewport`, which always use it)
 /// and cheap inline rendering. `Direct` omits the HDR target and therefore
-/// exposure, tone mapping, every post effect, OIT (so transparency is
-/// order-dependent), the skybox, and item-type plugins. Transparent volume
+/// automatic exposure, tone mapping, every post effect, OIT (so transparency is
+/// order-dependent), the skybox, and item-type plugins that have not opted
+/// into LDR painting via `ItemTypePlugin::draws_ldr`. A fixed exposure
+/// (`Manual`, `PhysicalCamera`) applies on `Direct` as on `Hdr`, with lit
+/// radiance clamped to 1.0. Transparent volume
 /// meshes (`SceneFrame::transparent_volume_meshes`) require `Hdr`.
-// NOT #[non_exhaustive]: a closed, consumer-selected binary (cf. `ToneMapping`).
+// NOT #[non_exhaustive]: a closed, consumer-selected binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PipelineMode {
@@ -273,16 +477,17 @@ pub enum PipelineMode {
 ///
 /// Passed via `EffectsFrame::display`. Groups the three
 /// controls of the HDR-to-display stage - the [`PipelineMode`] switch, the
-/// [`ExposureSettings`] applied before tone mapping, and the [`ToneMapping`]
-/// operator. Exposure and the operator are inert on [`PipelineMode::Direct`].
+/// [`ExposureSettings`] the shaders apply where they read radiance, and the
+/// [`ToneMapping`] operator. The operator is inert on [`PipelineMode::Direct`],
+/// and so is an automatic exposure.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DisplaySettings {
     /// Which render pipeline runs. Default: [`PipelineMode::Hdr`].
     pub mode: PipelineMode,
-    /// Exposure model applied to linear radiance before tone mapping. Default:
-    /// neutral ([`ExposureMode::NEUTRAL`]).
+    /// The camera's exposure, applied to every radiance source where the shaders
+    /// read it. Default: [`ExposureMode::Passthrough`].
     pub exposure: ExposureSettings,
     /// Tone-map operator mapping exposed HDR radiance into display range.
     /// Default: [`ToneMapping::KhronosNeutral`].
@@ -316,7 +521,8 @@ impl DisplaySettings {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PostProcessSettings {
-    /// Enable screen-space ambient occlusion.
+    /// Enable screen-space ambient occlusion. It darkens the indirect share
+    /// of each pixel's light, not direct light or emission.
     pub ssao: bool,
     /// Bloom (glow) settings.
     pub bloom: BloomSettings,
@@ -335,6 +541,66 @@ pub struct PostProcessSettings {
     pub edl: EdlSettings,
     /// Depth-of-field bokeh settings.
     pub dof: DofSettings,
+    /// Vignette (corner darkening) settings.
+    pub vignette: VignetteSettings,
+    /// Colour-grading lookup texture. `None` = no grading. Where it applies
+    /// and what its axes mean is set by [`grading_space`](Self::grading_space).
+    ///
+    /// The id must reference a strip LUT uploaded through the renderer's
+    /// texture API: `n` slices of `n` x `n` laid out horizontally (width
+    /// `n * n`, height `n`), where red indexes across a slice, green down it,
+    /// and blue selects the slice. Upload it in a non-sRGB format so the
+    /// values pass through unmodified; texture ids registered as external
+    /// views are ignored (the renderer cannot read their dimensions).
+    pub grade_lut: Option<crate::ids::TextureId>,
+    /// Where [`grade_lut`](Self::grade_lut) applies. Default:
+    /// [`GradingSpace::Scene`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub grading_space: GradingSpace,
+    /// The look [`ToneMapping::Agx`] applies. Default: [`AgxLook::None`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub agx_look: AgxLook,
+    /// The curve [`ToneMapping::Generic`] applies. Default:
+    /// [`GenericToneCurve::default`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub generic_tone_curve: GenericToneCurve,
+    /// The primaries the scene-referred grade and the operator work in.
+    /// Default: [`WorkingSpace::Rec709`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub working_space: WorkingSpace,
+}
+
+/// Where the colour-grading LUT ([`PostProcessSettings::grade_lut`]) applies
+/// in the view transform.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum GradingSpace {
+    /// Grade exposed radiance before the tone-map operator, through a fixed
+    /// log shaper. Each channel `c` (nits after exposure) is shaped as
+    ///
+    /// ```text
+    /// s = clamp((log2(max(c, 2^-14)) + 14) / 24, 0, 1)
+    /// ```
+    ///
+    /// which maps `[2^-14, 2^10]` to `[0, 1]`. The LUT is looked up at `s`
+    /// and its output, in the same shaped space, is mapped back to radiance
+    /// with `2^(s * 24 - 14)` before the operator. A LUT whose texels hold
+    /// their own coordinates is an identity. Values outside the range clamp
+    /// to its ends, negative channels included.
+    ///
+    /// A LUT's output steps are steps of the shaped value, so an 8-bit LUT
+    /// quantises radiance to about 1/11 of a stop; upload a scene-referred
+    /// LUT as a float texture ([`TextureData::hdr`]) to keep it smooth. The
+    /// background colour is a display-space value and is not graded.
+    ///
+    /// [`TextureData::hdr`]: crate::data::texture::TextureData::hdr
+    #[default]
+    Scene,
+    /// Grade the display-space result after the tone-map operator and the
+    /// background composite, with the LUT's axes in `[0, 1]` display values.
+    /// The background colour is graded with everything else.
+    Display,
 }
 
 impl Default for PostProcessSettings {
@@ -347,6 +613,45 @@ impl Default for PostProcessSettings {
             contact_shadows: ContactShadowSettings::default(),
             edl: EdlSettings::default(),
             dof: DofSettings::default(),
+            vignette: VignetteSettings::default(),
+            grade_lut: None,
+            grading_space: GradingSpace::Scene,
+            agx_look: AgxLook::None,
+            generic_tone_curve: GenericToneCurve::default(),
+            working_space: WorkingSpace::Rec709,
+        }
+    }
+}
+
+/// Vignette settings, grouped on [`PostProcessSettings::vignette`].
+///
+/// Darkens the image toward the corners, applied at the very end of the
+/// tone-map composite (after grading in either space), so it affects the
+/// background too.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct VignetteSettings {
+    /// Enable the vignette.
+    pub enabled: bool,
+    /// Darkening strength at full falloff, `0.0..=1.0`. Default: `0.5`.
+    pub amount: f32,
+    /// Distance from the image centre where darkening starts, as a fraction
+    /// of the centre-to-corner distance (0 = centre, 1 = corner).
+    /// Default: `0.6`.
+    pub radius: f32,
+    /// Width of the falloff band past `radius`, in the same units.
+    /// Default: `0.45`.
+    pub softness: f32,
+}
+
+impl Default for VignetteSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amount: 0.5,
+            radius: 0.6,
+            softness: 0.45,
         }
     }
 }
@@ -387,7 +692,10 @@ impl Default for BloomSettings {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContactShadowSettings {
-    /// Enable screen-space contact shadows (thin shadows at object-ground contact).
+    /// Enable screen-space contact shadows (thin shadows at object-ground
+    /// contact). They are the key light's screen-space shadow, so they darken
+    /// the direct share of each pixel's light, not indirect light or
+    /// emission.
     pub enabled: bool,
     /// Maximum ray-march distance in view space. Default: `0.5`.
     pub max_distance: f32,
@@ -493,11 +801,19 @@ mod exposure_tests {
     }
 
     #[test]
-    fn ev0_is_unit_multiplier() {
-        // The neutral boost is chosen so EV 0 lands on a 1.0 multiplier,
-        // keeping exposure neutral. It goes away once lights carry
-        // photometric units.
-        assert!(approx(ev100_to_exposure(0.0), 1.0, 1e-4));
+    fn ev0_is_the_saturation_based_multiplier() {
+        assert!(approx(ev100_to_exposure(0.0), 1.0 / 1.2, 1e-4));
+    }
+
+    #[test]
+    fn passthrough_is_unit_multiplier() {
+        assert!(approx(ev100_to_exposure(PASSTHROUGH_EV100), 1.0, 1e-5));
+        let s = ExposureSettings::default();
+        assert!(matches!(s.mode, ExposureMode::Passthrough));
+        assert!(approx(s.manual_multiplier().unwrap(), 1.0, 1e-5));
+        // Compensation still applies: +1 stop doubles it.
+        let plus = ExposureSettings::passthrough().with_compensation(1.0);
+        assert!(approx(plus.manual_multiplier().unwrap(), 2.0, 1e-4));
     }
 
     #[test]

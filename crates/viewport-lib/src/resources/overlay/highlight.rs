@@ -47,7 +47,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "sub_highlight_layout",
-            &[&self.binds.camera_bgl, &bgl],
+            &[self.group0_layout(), &bgl],
         );
 
         let fill_shader = crate::resources::builders::wgsl_module(
@@ -66,6 +66,7 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("sub_highlight_sprite"),
         );
 
+        let depth_format = self.scene_depth_format();
         // Inline helper: build one fill pipeline for the given colour format.
         let make_fill = |label: &'static str, fmt: crate::gpu::TextureFormat| {
             crate::resources::builders::render_pipeline(
@@ -96,17 +97,13 @@ impl DeviceResources {
                         ..Default::default()
                     },
                     depth_stencil: Some(crate::gpu::DepthStencilState {
-                        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+                        format: depth_format,
                         depth_write_enabled: crate::resources::builders::dwrite(false),
                         depth_compare: crate::resources::builders::dcompare(
-                            crate::gpu::CompareFunction::LessEqual,
+                            crate::plugin_api::depth::DEPTH_COMPARE,
                         ),
                         stencil: crate::gpu::StencilState::default(),
-                        bias: crate::gpu::DepthBiasState {
-                            constant: -2,
-                            slope_scale: -1.0,
-                            clamp: 0.0,
-                        },
+                        bias: crate::plugin_api::depth::scene_depth_bias(-2, -1.0),
                     }),
                     multisample: crate::gpu::MultisampleState {
                         count: 1,
@@ -148,6 +145,7 @@ impl DeviceResources {
                     // geometry they belong to is a 3D solid (e.g. tube/streamtube
                     // where the control curve sits inside the rendered mesh).
                     depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        depth_format,
                         false,
                         crate::gpu::CompareFunction::Always,
                     )),
@@ -190,6 +188,7 @@ impl DeviceResources {
                     // Always pass depth so point sprites are visible even when
                     // the control point is inside a 3D solid (e.g. tube/streamtube).
                     depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        depth_format,
                         false,
                         crate::gpu::CompareFunction::Always,
                     )),
@@ -510,7 +509,7 @@ impl DeviceResources {
                         }
                     }
                     SubObjectRef::Instance(i) | SubObjectRef::Splat(i) => {
-                        // Instanced items (glyphs, tensor glyphs, sprites) and
+                        // Instanced items (vector and tensor fields, sprites) and
                         // Gaussian splats highlight as a sprite marker at the
                         // instance position, transformed by the node model.
                         if let Some(positions) = sel.instance_lookup.get(node_id) {
@@ -525,6 +524,18 @@ impl DeviceResources {
 
         // Append any extra edge segments (e.g. volume AABB outlines from object-level selection).
         edge_data.extend_from_slice(extra_edge_data);
+
+        // Drawn relative to the frame's world origin.
+        let origin = self.world_origin;
+        if !origin.is_zero() {
+            let rel = |p: &mut [f32; 3]| *p = origin.rel(glam::Vec3::from(*p)).to_array();
+            fill_verts.iter_mut().for_each(rel);
+            sprite_pos.iter_mut().for_each(rel);
+            for p in edge_data.chunks_exact_mut(3) {
+                let v = origin.rel(glam::Vec3::new(p[0], p[1], p[2]));
+                p.copy_from_slice(&v.to_array());
+            }
+        }
 
         // Helper: create a VERTEX | COPY_DST buffer from a byte slice, or a 1-byte
         // placeholder when the slice is empty (wgpu requires non-zero size).
@@ -633,7 +644,8 @@ impl DeviceResources {
 /// - position_override_base:    u32       =  4 bytes  (first vec3 element of the window)
 /// - position_override_len:     u32       =  4 bytes  (element count; u32::MAX = whole buffer)
 /// - deform_flags:              u32       =  4 bytes  (bit i set when deformer slot i is active for this draw)
-/// - _deform_pad:               [u32;3]   = 12 bytes
+/// - deform_table:              u32       =  4 bytes  (the draw's deform table in the binding 2 chunk, 0 none)
+/// - _deform_pad:               [u32;2]   =  8 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
@@ -644,95 +656,123 @@ pub(crate) struct OutlineUniform {
     /// vertex shader then reads binding 1 so the halo tracks the driven
     /// geometry instead of the bind pose.
     pub(crate) has_position_override: u32, //   4 bytes
-    /// Mirror of `ObjectUniform::position_override_base` for the mask pass.
+    /// Mirror of `InstanceData::position_override_base` for the mask pass.
     pub(crate) position_override_base: u32, //   4 bytes
-    /// Mirror of `ObjectUniform::position_override_len`.
+    /// Mirror of `InstanceData::position_override_len`.
     pub(crate) position_override_len: u32, //   4 bytes
     pub(crate) deform_flags: u32,    //   4 bytes
-    pub(crate) _deform_pad: [u32; 3], //  12 bytes
+    /// Mirror of `InstanceData::deform_table`, a word of the sidecar chunk
+    /// bound at binding 2.
+    pub(crate) deform_table: u32, //   4 bytes
+    pub(crate) _deform_pad: [u32; 2], //   8 bytes
 }
 
 pub(crate) struct OutlineObjectBuffers {
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     pub two_sided: bool,
-    /// Per-instance deformer id for the picked node, or `None` when the node
-    /// has no per-instance deformer data. When `Some` and the renderer has
-    /// per-instance data for `(mesh_id, instance_id)`, the outline mask is
-    /// drawn with that bind group so the selection halo tracks the deformed
-    /// silhouette.
-    pub deform_instance: Option<u32>,
-    pub _mask_uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
+    pub mask: OutlineBinding,
 }
 
-/// Per-item uniform for the Gaussian splat outline mask pass (112 bytes).
+/// A uniform buffer and bind group over the outline layout for one mask or
+/// x-ray draw, kept across frames: the next frame's draw at the same position
+/// rewrites the uniform only when it changed and rebuilds the bind group only
+/// when the position-override buffer or the sidecar chunk did.
 ///
-/// Padded to 112 bytes to match `OutlineUniform`. Both structs share the same
-/// bind group layout (`outline_bgl`) and wgpu enforces the maximum required
-/// size across all pipelines using that layout.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct SplatOutlineMaskUniform {
-    pub(crate) model: [[f32; 4]; 4], // 64 bytes
-    pub(crate) viewport_w: f32,      //  4 bytes
-    pub(crate) viewport_h: f32,      //  4 bytes
-    pub(crate) pixel_radius: f32,    //  4 bytes
-    pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
-}
-
-/// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
-pub(crate) struct SplatOutlineBuffers {
-    /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
-    pub(crate) position_buf: crate::gpu::Buffer,
-    /// Per-instance pixel radius as `f32`, instance-stepped.
-    pub(crate) size_buf: crate::gpu::Buffer,
-    /// Number of splats (= instance count).
-    pub(crate) instance_count: u32,
-    /// Uniform buffer kept alive for the duration of the frame.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// Bind group for group 1 (SplatOutlineMaskUniform).
-    pub(crate) bind_group: crate::gpu::BindGroup,
-}
-
-/// Inline geometry outline buffers for flat world-space quads (image slices).
-///
-/// Unlike `OutlineObjectBuffers`, the vertex/index data is owned here rather than
-/// looked up via a `MeshId`.
-pub(crate) struct RawGeomOutlineBuffers {
-    pub vertex_buf: crate::gpu::Buffer,
-    pub index_buf: crate::gpu::Buffer,
-    pub index_count: u32,
-    pub two_sided: bool,
-    pub _uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
-/// Per-frame outline item for a tube/streamtube/ribbon mesh.
-///
-/// Holds an index into the per-frame gpu_data array and a mask bind group
-/// that supplies an identity model matrix to the outline_mask shader.
-pub(crate) struct CurveMeshOutlineItem {
-    pub index: usize,
-    pub two_sided: bool,
-    pub _mask_uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
-/// NDC-space rect outline for screen image overlays.
-pub(crate) struct ScreenRectOutlineBuffers {
-    pub _uniform_buf: crate::gpu::Buffer,
+/// The full tier's layout also binds the position override and the sidecar
+/// chunk (`storage`); the compatibility tier's binds the uniform alone.
+pub(crate) struct OutlineBinding {
     pub bind_group: crate::gpu::BindGroup,
+    buf: crate::gpu::Buffer,
+    uniform: OutlineUniform,
+    storage: Option<(crate::gpu::Buffer, crate::gpu::Buffer)>,
 }
 
-/// Uniform for the fullscreen outline edge-detection pass (32 bytes).
+impl OutlineBinding {
+    pub(crate) fn reuse_or_new(
+        old: Option<Self>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        layout: &crate::gpu::BindGroupLayout,
+        uniform: OutlineUniform,
+        storage: Option<(&crate::gpu::Buffer, &crate::gpu::Buffer)>,
+        label: &'static str,
+    ) -> Self {
+        if let Some(mut old) = old {
+            if bytemuck::bytes_of(&old.uniform) != bytemuck::bytes_of(&uniform) {
+                queue.write_buffer(&old.buf, 0, bytemuck::bytes_of(&uniform));
+                old.uniform = uniform;
+            }
+            let same = match (&old.storage, storage) {
+                (Some((o, s)), Some((new_o, new_s))) => o == new_o && s == new_s,
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                old.bind_group = Self::bind_group(device, layout, &old.buf, storage, label);
+                old.storage = storage.map(|(o, s)| (o.clone(), s.clone()));
+            }
+            return old;
+        }
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some(label),
+            size: std::mem::size_of::<OutlineUniform>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::bytes_of(&uniform));
+        Self {
+            bind_group: Self::bind_group(device, layout, &buf, storage, label),
+            buf,
+            uniform,
+            storage: storage.map(|(o, s)| (o.clone(), s.clone())),
+        }
+    }
+
+    fn bind_group(
+        device: &crate::gpu::Device,
+        layout: &crate::gpu::BindGroupLayout,
+        buf: &crate::gpu::Buffer,
+        storage: Option<(&crate::gpu::Buffer, &crate::gpu::Buffer)>,
+        label: &'static str,
+    ) -> crate::gpu::BindGroup {
+        let mut entries = vec![crate::gpu::BindGroupEntry {
+            binding: 0,
+            resource: buf.as_entire_binding(),
+        }];
+        if let Some((override_buf, sidecar_buf)) = storage {
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: override_buf.as_entire_binding(),
+            });
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: sidecar_buf.as_entire_binding(),
+            });
+        }
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &entries,
+        })
+    }
+}
+
+/// Uniform for the fullscreen outline edge-detection pass (32 bytes), the
+/// one [`SHARED_OUTLINE_EDGE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_OUTLINE_EDGE_WGSL)
+/// reads.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct OutlineEdgeUniform {
-    pub(crate) colour: [f32; 4], // 16 bytes
-    pub(crate) radius: f32,      //  4 bytes
-    pub(crate) viewport_w: f32,  //  4 bytes
-    pub(crate) viewport_h: f32,  //  4 bytes
-    pub(crate) _pad: f32,        //  4 bytes
+pub struct OutlineEdgeUniform {
+    /// Ring colour, linear RGBA.
+    pub colour: [f32; 4],
+    /// Ring width in pixels.
+    pub radius: f32,
+    /// Width of the target in pixels.
+    pub viewport_w: f32,
+    /// Height of the target in pixels.
+    pub viewport_h: f32,
+    #[doc(hidden)]
+    pub _pad: f32,
 }
 
 /// Per-frame uniform for the sub-object highlight pass (48 bytes).

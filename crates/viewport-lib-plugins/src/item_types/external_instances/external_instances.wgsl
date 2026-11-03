@@ -1,0 +1,105 @@
+// External-instances shader: instanced mesh draw whose per-instance
+// translation comes from a consumer-owned storage buffer of tightly packed
+// [x, y, z] f32 triples (12-byte stride).
+//
+// The mesh vertex buffer is bound on slot 0 with the standard `Vertex`
+// layout; position and normal are consumed. The positions buffer is indexed
+// by `@builtin(instance_index)`: the draw call's instance range selects the
+// window of the buffer to render, so no per-instance offset uniform is
+// needed. WGSL's array<vec3<f32>> has a 16-byte element stride, so the
+// buffer is declared array<f32> and indexed 3 * i by hand.
+//
+// Simple fixed-direction lambert shading; the item colour is the albedo.
+
+struct DrawUniform {
+    model:  mat4x4<f32>,
+    colour: vec4<f32>,
+    scale:  f32,
+    // Always zero. See `vs_main`.
+    keep:   u32,
+    _pad1:  f32,
+    _pad2:  f32,
+};
+
+@group(1) @binding(0) var<uniform>       draw_ub:     DrawUniform;
+@group(1) @binding(1) var<storage, read> positions:   array<f32>;
+
+struct VertexIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) colour:   vec4<f32>,
+    @location(3) uv:       vec2<f32>,
+    @location(4) tangent:  vec4<f32>,
+};
+
+struct VertexOut {
+    @builtin(position) clip_pos:     vec4<f32>,
+    @location(0)       world_pos:    vec3<f32>,
+    @location(1)       world_normal: vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
+    var out: VertexOut;
+
+    let pi = ii * 3u;
+    let plen = arrayLength(&positions);
+    if pi + 2u >= plen {
+        // Out of range (stale count after a pool shrink): degenerate vertex,
+        // the rasteriser drops the whole instance.
+        out.clip_pos     = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.world_pos    = vec3<f32>(0.0);
+        out.world_normal = vec3<f32>(0.0, 0.0, 1.0);
+        return out;
+    }
+    let instance_pos = vec3<f32>(positions[pi], positions[pi + 1u], positions[pi + 2u]);
+
+    // The instance position goes through the model first, so a buffer of
+    // positions far from zero lands near the camera before the mesh offset is
+    // added, rather than the offset being rounded away against it.
+    let model3 = mat3x3<f32>(
+        draw_ub.model[0].xyz,
+        draw_ub.model[1].xyz,
+        draw_ub.model[2].xyz,
+    );
+    // The centre is pinned before the offset is added: OR-ing in a uniform
+    // the compiler cannot see is zero stops fast-math from reassociating the
+    // sum back to `instance_pos + offset`, which would round the offset away.
+    let centre = (draw_ub.model * vec4<f32>(instance_pos, 1.0)).xyz;
+    let pinned = bitcast<vec3<f32>>(bitcast<vec3<u32>>(centre) | vec3<u32>(draw_ub.keep));
+    let world4 = vec4<f32>(pinned + model3 * (in.position * draw_ub.scale), 1.0);
+
+    out.clip_pos     = camera.view_proj * world4;
+    out.world_pos    = world4.xyz;
+    out.world_normal = normalize(model3 * in.normal);
+    return out;
+}
+
+fn fs_main_body(in: VertexOut) -> vec4<f32> {
+    for (var i = 0u; i < clip_planes.count; i = i + 1u) {
+        if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
+            discard;
+        }
+    }
+    // Headlight lambert: lit from the camera with an ambient floor, so
+    // instances read as solids from any orbit angle without scene lighting.
+    let n = normalize(in.world_normal);
+    let l = normalize(camera.eye_pos - in.world_pos);
+    let ndl = max(dot(n, l), 0.0);
+    let shade = 0.25 + 0.75 * ndl;
+    // The floor is the indirect share.
+    scene_light_split(vec3<f32>(0.25), vec3<f32>(0.75 * ndl), vec3<f32>(0.0));
+    return vec4<f32>(draw_ub.colour.rgb * shade, draw_ub.colour.a);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return fs_main_body(in);
+}
+
+// `fs_main` for the HDR scene pass, with the indirect fraction.
+@fragment
+fn fs_scene(in: VertexOut) -> SceneFragment {
+    let colour = fs_main_body(in);
+    return scene_fragment(colour);
+}

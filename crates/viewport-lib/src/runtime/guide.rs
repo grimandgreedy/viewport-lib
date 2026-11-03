@@ -1,11 +1,11 @@
 //! Plugin authoring guide.
 //!
-//! This module documents how to write a [`super::RuntimePlugin`] and register it
-//! with [`super::ViewportRuntime`].
+//! This module documents how to write a [`RuntimePlugin`](crate::runtime::RuntimePlugin) and register it
+//! with [`ViewportRuntime`](crate::runtime::ViewportRuntime).
 //!
 //! # The RuntimePlugin trait
 //!
-//! A plugin is any type that implements [`super::RuntimePlugin`]:
+//! A plugin is any type that implements [`RuntimePlugin`](crate::runtime::RuntimePlugin):
 //!
 //! ```rust,ignore
 //! pub trait RuntimePlugin: Send + 'static {
@@ -36,7 +36,7 @@
 //!
 //! # RuntimePhase ordering
 //!
-//! Phase constants are plain `i32` values in the [`super::plugin::phase`] module.
+//! Phase constants are plain `i32` values in the [`phase`](crate::runtime::plugin::phase) module.
 //! Plugins execute in ascending numeric order each frame:
 //!
 //! | Phase        | Value | When it runs                                       |
@@ -44,7 +44,7 @@
 //! | Prepare      | 100   | First. Update time-dependent state before queries. |
 //! | Pick         | 200   | Ray-cast and object picking.                       |
 //! | Select       | 300   | Selection updates driven by pick results.          |
-//! | Manipulate   | 400   | Gizmo drag and keyboard transform sessions.        |
+//! | Manipulate   | 400   | Transform edits from a host tool (none built in).  |
 //! | Animate      | 500   | Procedural or keyframe animation.                  |
 //! | Simulate     | 600   | Physics or simulation. Fixed timestep: runs N times per frame. |
 //! | PostSimulate | 700   | After all Simulate iterations, before Writeback.   |
@@ -78,12 +78,12 @@
 //! `priority()` at the start of each frame.
 //!
 //! Call `runtime.step(&mut scene, &mut selection, &frame_ctx)` once per frame to
-//! drive all plugins. It returns a [`super::output::RuntimeOutput`] with selection
+//! drive all plugins. It returns a [`RuntimeOutput`](crate::runtime::output::RuntimeOutput) with selection
 //! ops, contact events, transform ops, and any application-defined events.
 //!
 //! # Accessing scene data
 //!
-//! Each hook receives a [`super::context::RuntimeStepContext`] with the following fields:
+//! Each hook receives a [`RuntimeStepContext`](crate::runtime::context::RuntimeStepContext) with the following fields:
 //!
 //! - `ctx.scene` -- read-only reference to the scene. Use this to query node
 //!   transforms, materials, and spatial structure.
@@ -100,7 +100,7 @@
 //!
 //! # Resource sharing between plugins
 //!
-//! [`super::RuntimeResources`] is a typed map keyed by `TypeId`. Any `Send + 'static`
+//! [`RuntimeResources`](crate::runtime::RuntimeResources) is a typed map keyed by `TypeId`. Any `Send + 'static`
 //! type can be stored as a resource. One value per type: inserting again overwrites.
 //!
 //! Typical pattern: one plugin writes, another reads in the same frame.
@@ -139,7 +139,7 @@
 //!
 //! # Debug visualization with DebugDraw
 //!
-//! [`super::DebugDraw`] is a resource, not a renderer type. Plugins draw to it by
+//! [`DebugDraw`](crate::runtime::DebugDraw) is a resource, not a renderer type. Plugins draw to it by
 //! calling `ctx.resources.get_mut::<DebugDraw>()` in their `step` implementations.
 //! After the frame, the host converts the accumulated primitives into render items.
 //!
@@ -159,10 +159,7 @@
 //!
 //! // After step: convert accumulated primitives to render items.
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
-//!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
-//!     }
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //! }
 //! ```
 //!
@@ -179,7 +176,7 @@
 //! Primitives submitted with `line`, `point`, `aabb`, `sphere`, and `label` are
 //! transient: `begin_frame` clears them. Persistent primitives are added with
 //! `add_persistent(key, prim)` keyed by a `u64` and stay until `remove_persistent(key)`
-//! is called. See the [`super::debug_draw`] module for the full API.
+//! is called. See the [`debug_draw`](crate::runtime::debug_draw) module for the full API.
 //!
 //! # Fixed timestep and the Simulate phase
 //!
@@ -214,8 +211,8 @@
 //!
 //! # File layout for new plugins
 //!
-//! New plugins live in a subdirectory under `src/runtime/plugins/`, not as a single
-//! file. The [`super::plugins::skeleton_plugin`] module is the reference template:
+//! New plugins live in a subdirectory under `src/plugins/`, not as a single
+//! file. The [`skeleton`](crate::plugins::skeleton) module is the reference template:
 //!
 //! ```text
 //! plugins/

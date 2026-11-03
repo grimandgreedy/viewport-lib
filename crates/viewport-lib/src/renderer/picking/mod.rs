@@ -1,9 +1,10 @@
 use super::*;
 
-mod helpers;
+mod clip_span;
+pub(crate) mod helpers;
 use helpers::*;
 mod gpu;
-pub(crate) use gpu::PendingPick;
+pub(crate) use gpu::{PendingPick, PendingSnap};
 /// Pick mask for controlling item types and sub-element levels in pick calls.
 pub mod pick_mask;
 pub(crate) mod point;
@@ -16,18 +17,24 @@ mod rect;
 pub use crate::interaction::query::pick_result::{GpuPickHit, PickHit, PickRectResult, SnapHit};
 pub use crate::interaction::select::sub_object;
 pub use pick_mask::PickMask;
+// The id a consumer stamps on an item to make it pickable. Defined in
+// `viewport-lib-types` so a consumer can build a scene without the renderer,
+// and re-exported here beside the rest of the picking vocabulary.
 pub use sub_object::{
     CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
     VolumeSelectionInfo,
 };
+pub use viewport_lib_types::ids::PickId;
 
 impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and
     /// `pick_rect()` can run later (e.g. on a mouse click) without the scene data.
     ///
-    /// Called from `prepare()` only when the CPU pick cache is enabled. The mesh
-    /// entry is cheap (it holds a `mesh_id`), but the data primitives carry inline
-    /// geometry, so this is the per-frame cost that `set_cpu_pick_cache` controls.
+    /// Called from `prepare()` only when the CPU pick cache is enabled. It keeps
+    /// the surfaces and volume meshes; item types answer from what their own
+    /// `prepare` kept. A surface entry is cheap (it holds a `mesh_id`), while a
+    /// volume mesh clones its face-to-cell map, which is the per-frame cost that
+    /// `set_cpu_pick_cache` controls.
     pub(crate) fn cache_pick_items(&mut self, frame: &FrameData) {
         let surfaces = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -46,22 +53,7 @@ impl ViewportRenderer {
                     .map(|item| item.to_render_item()),
             )
             .collect();
-        self.pick_point_cloud_items = frame.scene.point_clouds.clone();
-        self.pick_splat_items = frame.scene.gaussian_splats.clone();
-        self.pick_volume_items = frame.scene.volumes.clone();
-        self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
         self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
-        self.pick_polyline_items = frame.scene.polylines.clone();
-        self.pick_glyph_items = frame.scene.glyphs.clone();
-        self.pick_tensor_glyph_items = frame.scene.tensor_glyphs.clone();
-        self.pick_sprite_items = frame.scene.sprite_items.clone();
-        self.pick_streamtube_items = frame.scene.streamtube_items.clone();
-        self.pick_tube_items = frame.scene.tube_items.clone();
-        self.pick_ribbon_items = frame.scene.ribbon_items.clone();
-        self.pick_image_slice_items = frame.scene.image_slices.clone();
-        self.pick_volume_surface_slice_items = frame.scene.volume_surface_slices.clone();
-        self.pick_screen_image_items = frame.scene.screen_images.clone();
-        self.pick_decal_items = frame.scene.decals.clone();
 
         // Refresh the revs that tell the surface pick BVH when to rebuild vs refit.
         self.update_pick_bvh_revs();
@@ -74,22 +66,7 @@ impl ViewportRenderer {
         *self.pick_bvh.lock().unwrap() = None;
         self.pick_bvh_identity_rev = 0;
         self.pick_bvh_transform_rev = 0;
-        self.pick_point_cloud_items = Vec::new();
-        self.pick_splat_items = Vec::new();
-        self.pick_volume_items = Vec::new();
-        self.pick_scatter_volume_items = Vec::new();
         self.pick_volume_mesh_items = Vec::new();
-        self.pick_polyline_items = Vec::new();
-        self.pick_glyph_items = Vec::new();
-        self.pick_tensor_glyph_items = Vec::new();
-        self.pick_sprite_items = Vec::new();
-        self.pick_streamtube_items = Vec::new();
-        self.pick_tube_items = Vec::new();
-        self.pick_ribbon_items = Vec::new();
-        self.pick_image_slice_items = Vec::new();
-        self.pick_volume_surface_slice_items = Vec::new();
-        self.pick_screen_image_items = Vec::new();
-        self.pick_decal_items = Vec::new();
     }
 }
 
@@ -128,6 +105,15 @@ pub enum PickBackend {
     /// CPU ray-cast. Fills in sub-object identity (face, vertex, edge, cell, ...)
     /// per the mask, and reads the per-frame pick cache, which must be enabled
     /// with [`set_cpu_pick_cache`](ViewportRenderer::set_cpu_pick_cache).
+    ///
+    /// Answers only for geometry held in CPU memory: surfaces, volume meshes,
+    /// and item types submitted inline (a `PointCloudItem` with its positions,
+    /// a `VolumeItem` with `volume_data`). An item drawn from an upload handle,
+    /// such as a `PointCloudRefItem`, has no CPU copy and is never hit. The
+    /// [`Gpu`](Self::Gpu) backend answers for those;
+    /// [`pick_object_begin`](ViewportRenderer::pick_object_begin) is its form
+    /// for hosts that cannot wait on the queue. Below the full tier there is no
+    /// GPU pick pass, so every backend resolves to this one.
     Cpu,
     /// GPU object-id readback. Resolves sub-object identity from the pass's
     /// second channel: the hit instance (glyphs, sprites), segment (polylines),
@@ -165,6 +151,21 @@ pub enum PickPoll {
     Ready(Option<PickHit>),
 }
 
+/// Outcome of polling a non-blocking snap query with
+/// [`ViewportRenderer::snap_query_poll`].
+#[derive(Clone, Debug)]
+pub enum SnapPoll {
+    /// No snap query is in flight: none has been started, or the last one was
+    /// already read.
+    Idle,
+    /// A query was submitted but its read-back has not completed yet. Poll
+    /// again on a later frame.
+    Pending,
+    /// The query resolved. `Some` is the nearest feature within the tolerance;
+    /// `None` is nothing pickable within it.
+    Ready(Option<SnapHit>),
+}
+
 impl ViewportRenderer {
     /// Pick the nearest object under `cursor`, running `backend` and returning a
     /// shared [`PickHit`].
@@ -177,6 +178,9 @@ impl ViewportRenderer {
     /// its `SHADER_PRIMITIVE_INDEX` requirement. A type the GPU pass has no
     /// pipeline for yet is simply not drawn, so it returns no hit rather than a
     /// wrong one.
+    ///
+    /// The compatibility tier has no GPU pick pass, so there every `backend` picks
+    /// the surfaces on the CPU, which needs the CPU pick cache on.
     pub fn pick_object(
         &mut self,
         backend: PickBackend,
@@ -186,10 +190,24 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
+        if self.device_lost_now() {
+            return None;
+        }
+        // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
+        // has no GPU pick pass, so it picks its surfaces on the CPU.
+        let backend = if self.resources.scene_tier.is_built() {
+            self.resolve_pick_backend(backend, device, mask)
+        } else if self.resources.compatibility_tier.is_some() {
+            PickBackend::Cpu
+        } else {
+            return None;
+        };
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
-        let hit = match self.resolve_pick_backend(backend, device, mask) {
-            PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
+        let hit = match backend {
+            PickBackend::Cpu => {
+                self.pick_clipped(cursor, viewport_size, view_proj, mask, &frame.effects.clip.objects)
+            }
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
         };
@@ -199,7 +217,9 @@ impl ViewportRenderer {
         // replace the camera-facing normal stand-in with the real geometric
         // face normal, for align-to-surface placement.
         hit.map(|mut h| {
-            h.sub_object_world_pos = self.snap_world_pos(h.id, h.sub_object, h.world_pos, frame);
+            h.sub_object_world_pos = self
+                .snap_world_pos(h.id, h.sub_object, h.world_pos.as_vec3(), frame)
+                .map(|p| p.as_dvec3());
             if let Some(n) = self.pick_face_normal(&h, frame) {
                 h.normal = n;
             }
@@ -241,8 +261,7 @@ impl ViewportRenderer {
         // The pick struck the front face, so the outward normal points back
         // toward the eye. Orient it that way to resolve the winding sign, which
         // also matches the previous camera-facing stand-in.
-        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-        let to_eye = eye - hit.world_pos;
+        let to_eye = (frame.camera.render_camera.eye_position() - hit.world_pos).as_vec3();
         Some(if n.dot(to_eye) < 0.0 { -n } else { n })
     }
 
@@ -267,10 +286,13 @@ impl ViewportRenderer {
                 let p = mesh.cpu_positions.as_ref()?.get(i as usize)?;
                 Some(glam::Mat4::from_cols_array_2d(&model).transform_point3(glam::Vec3::from(*p)))
             }
-            // A curve control node or a point-cloud point: the index is into the
-            // item's inline positions. Falls back to the hit point for ref items
-            // (positions not inline on the frame).
-            SubObjectRef::Point(i) => self.pick_element_position(id, i, frame).or(Some(world_pos)),
+            // A curve control node or a point-cloud point: the owning item type
+            // resolves the index against its own positions. Falls back to the
+            // hit point when it cannot (a ref item, whose positions live in an
+            // upload store rather than on the frame).
+            point @ SubObjectRef::Point(_) => self
+                .plugin_sub_object_position(id, point, frame)
+                .or(Some(world_pos)),
             // The closest point on the hit edge to the cursor hit point. The edge
             // id is `face * 3 + local_edge` (see `pick_edge.wgsl`).
             SubObjectRef::Edge(e) => {
@@ -313,48 +335,37 @@ impl ViewportRenderer {
             .iter()
             .find(|i| i.settings.pick_id.0 == id && !i.settings.hidden)
         {
-            return Some((it.mesh_id, it.model));
+            return Some((it.mesh_id, it.model.to_mat4().to_cols_array_2d()));
         }
         for vm in &frame.scene.volume_meshes {
             let ri = vm.to_render_item();
             if ri.settings.pick_id.0 == id && !ri.settings.hidden {
-                return Some((ri.mesh_id, ri.model));
+                return Some((ri.mesh_id, ri.model.to_mat4().to_cols_array_2d()));
             }
         }
         None
     }
 
-    /// World position of node / point `i` of a curve control polyline or a point
-    /// cloud named by `pick_id`, from its inline positions times the item model.
-    /// `None` for ref items (positions live in the store, not on the frame).
-    fn pick_element_position(&self, id: u64, i: u32, frame: &FrameData) -> Option<glam::Vec3> {
-        let idx = i as usize;
-        let at = |positions: &[[f32; 3]], model: &[[f32; 4]; 4]| -> Option<glam::Vec3> {
-            positions.get(idx).map(|p| {
-                glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p))
-            })
-        };
-        for it in &frame.scene.streamtube_items {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        for it in &frame.scene.tube_items {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        for it in &frame.scene.ribbon_items {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        for it in &frame.scene.point_clouds {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        None
+    /// World position of the sub-object feature named by `pick_id`, asked of
+    /// the item-type plugin that owns it.
+    ///
+    /// The renderer cannot answer this itself: where a feature sits is a
+    /// function of the item type's own geometry. Every registered plugin is
+    /// offered the question and the first to answer wins, which is
+    /// unambiguous because a pick id names one item. `None` when no plugin
+    /// owns the id or the owner has no snap point for that feature.
+    fn plugin_sub_object_position(
+        &self,
+        id: u64,
+        sub_object: SubObjectRef,
+        frame: &FrameData,
+    ) -> Option<glam::Vec3> {
+        self.item_type_plugins.iter().find_map(|(name, plugin)| {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            plugin.sub_object_position(&items, crate::renderer::PickId(id), sub_object)
+        })
     }
 
     /// Whether this device can resolve GPU sub-object picking for triangle-meshed
@@ -406,6 +417,9 @@ impl ViewportRenderer {
     /// `SHADER_PRIMITIVE_INDEX`, the same as the point path (see
     /// [`PickBackend::Gpu`]). `Cpu` is the same as calling
     /// [`pick_rect`](Self::pick_rect); `Auto` routes per query.
+    ///
+    /// The compatibility tier has no GPU pick pass, so there every `backend` picks
+    /// on the CPU, which needs the CPU pick cache on.
     pub fn pick_rect_objects(
         &mut self,
         backend: PickBackend,
@@ -416,7 +430,19 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
-        match self.resolve_pick_backend(backend, device, mask) {
+        if self.device_lost_now() {
+            return PickRectResult::default();
+        }
+        // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
+        // has no GPU pick pass, so it picks on the CPU.
+        let backend = if self.resources.scene_tier.is_built() {
+            self.resolve_pick_backend(backend, device, mask)
+        } else if self.resources.compatibility_tier.is_some() {
+            PickBackend::Cpu
+        } else {
+            return PickRectResult::default();
+        };
+        match backend {
             PickBackend::Cpu => {
                 let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
                 let view_proj = frame.camera.render_camera.view_proj();
@@ -454,6 +480,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<SnapHit> {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() || self.device_lost_now() {
+            return None;
+        }
         self.snap_query_gpu(device, queue, cursor, radius_px, frame, mask)
     }
 }

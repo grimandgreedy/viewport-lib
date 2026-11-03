@@ -6,6 +6,9 @@
 //! player walks in. [`wish_xy_from_actions`] resolves the standard fly-movement
 //! actions against that basis and returns a normalised horizontal wish vector,
 //! so hosts do not reimplement the same movement block per view.
+//! [`wish_from_actions`] is the free-flight form: it adds up and down and takes a
+//! full 3D basis, as the orbit controller's
+//! [`NavigationMode::Fly`](crate::input::NavigationMode::Fly) uses.
 //!
 //! ```ignore
 //! let wish = wish_xy_from_actions(&frame, fps.forward_dir(), fps.right_dir());
@@ -47,6 +50,37 @@ pub fn wish_xy_from_actions(frame: &ActionFrame, forward_xy: Vec3, right_xy: Vec
     Vec2::new(wish.x, wish.y)
         .try_normalize()
         .unwrap_or(Vec2::ZERO)
+}
+
+/// Resolve all six fly actions (forward / back / left / right / up / down) into a
+/// unit wish vector in the given basis, or zero when nothing is held or the
+/// held actions cancel.
+///
+/// The free-flight counterpart of [`wish_xy_from_actions`]: the basis is
+/// typically the camera's own forward, right and up, so forward follows the
+/// pitch of the view. Normalising keeps a diagonal at the same speed as a
+/// single direction.
+pub fn wish_from_actions(frame: &ActionFrame, forward: Vec3, right: Vec3, up: Vec3) -> Vec3 {
+    let mut wish = Vec3::ZERO;
+    if frame.is_active(Action::FlyForward) {
+        wish += forward;
+    }
+    if frame.is_active(Action::FlyBackward) {
+        wish -= forward;
+    }
+    if frame.is_active(Action::FlyRight) {
+        wish += right;
+    }
+    if frame.is_active(Action::FlyLeft) {
+        wish -= right;
+    }
+    if frame.is_active(Action::FlyUp) {
+        wish += up;
+    }
+    if frame.is_active(Action::FlyDown) {
+        wish -= up;
+    }
+    wish.try_normalize().unwrap_or(Vec3::ZERO)
 }
 
 #[cfg(test)]
@@ -114,5 +148,23 @@ mod tests {
             Vec3::new(0.0, -1.0, 0.0),
         );
         assert!(approx_eq(wish, Vec2::X));
+    }
+
+    #[test]
+    fn wish_from_actions_normalises_three_axes() {
+        let wish = wish_from_actions(
+            &frame_with(&[Action::FlyForward, Action::FlyRight, Action::FlyUp]),
+            Vec3::Y,
+            Vec3::X,
+            Vec3::Z,
+        );
+        assert!((wish.length() - 1.0).abs() < 1e-5);
+        assert!((wish - Vec3::ONE / 3.0_f32.sqrt()).length() < 1e-5);
+    }
+
+    #[test]
+    fn wish_from_actions_is_zero_with_nothing_held() {
+        let wish = wish_from_actions(&frame_with(&[]), Vec3::Y, Vec3::X, Vec3::Z);
+        assert_eq!(wish, Vec3::ZERO);
     }
 }

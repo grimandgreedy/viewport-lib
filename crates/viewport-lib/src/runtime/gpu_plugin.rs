@@ -38,13 +38,10 @@ pub mod gpu_phase {
     /// audio-reactive displacement, probe capture.
     pub const PRE_PREPARE: i32 = 100;
 
-    /// Reserved priority band between `PRE_PREPARE` and `POST_PAINT`.
-    /// Currently unused; plugins cannot slot work between the renderer's own
-    /// internal passes.
-    pub const _RESERVED_INTERNAL: i32 = 500;
-
-    /// Compute that samples rendered targets (custom AO, motion blur,
-    /// screen-space outline, color grading).
+    /// Work that samples the rendered targets after paint: readbacks,
+    /// capture and export, and effects rendered into a plugin-owned texture
+    /// the host composites. This trait never slots work between the
+    /// renderer's own internal passes.
     pub const POST_PAINT: i32 = 900;
 }
 
@@ -154,6 +151,10 @@ impl<'a> GpuFrameContext<'a> {
 /// plugins. Registering two of the same type runs both in priority order; the
 /// runtime does not deduplicate. This is intentional and frozen behavior.
 ///
+/// [`ViewportRuntime::remove_gpu_plugin`](super::ViewportRuntime::remove_gpu_plugin)
+/// hands the plugin back without calling any hook: dropping the returned box
+/// releases the GPU resources it built in `init_gpu`.
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -203,27 +204,25 @@ pub trait GpuPlugin: Send + 'static {
         std::any::type_name::<Self>()
     }
 
+    /// What the plugin needs from the device. Checked before the first
+    /// `init_gpu`: a plugin whose requirements the device does not meet is
+    /// removed and reported by
+    /// [`ViewportRuntime::declined_gpu_plugins`](super::ViewportRuntime::declined_gpu_plugins).
+    /// Defaults to the full tier.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// Build pipelines, persistent buffers, and bind group layouts.
     ///
     /// Called once before the plugin's first `pre_prepare`. If a new GPU
     /// plugin is registered after the runtime has already run, every plugin's
     /// `init_gpu` is invoked again on the next frame; implementations should
-    /// either be idempotent or guard their own one-time setup.
+    /// either be idempotent or guard their own one-time setup. After
+    /// [`ViewportInstance::rebuild`](crate::ViewportInstance::rebuild) it runs
+    /// again with the new device, and everything built on the old one has to
+    /// be rebuilt here.
     fn init_gpu(&mut self, _device: &crate::gpu::Device) {}
-
-    /// Called when the wgpu device is recreated, e.g. after device loss or a
-    /// host-driven reset. Every cached buffer, texture, bind group, or
-    /// pipeline the plugin built against the old device is now invalid and
-    /// must be rebuilt against `device` / `queue`.
-    ///
-    /// The host invokes this via
-    /// [`ViewportRuntime::notify_device_recreated`](super::ViewportRuntime::notify_device_recreated);
-    /// the runtime does not detect device loss on its own. After this call
-    /// returns, [`init_gpu`](Self::init_gpu) is also re-invoked on every
-    /// plugin before the next `pre_prepare`, so a typical implementation
-    /// can simply drop its cached resources here and let `init_gpu` rebuild
-    /// them.
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
 
     /// Encode work that runs before `renderer.prepare()`.
     ///
@@ -261,9 +260,25 @@ pub trait GpuPlugin: Send + 'static {
     }
 }
 
+/// Handle returned by
+/// [`ViewportRuntime::add_gpu_plugin`](super::ViewportRuntime::add_gpu_plugin);
+/// pass it to
+/// [`remove_gpu_plugin`](super::ViewportRuntime::remove_gpu_plugin) to
+/// unregister the plugin. Ids count up from one per runtime, shared with
+/// [`RuntimePluginId`](crate::RuntimePluginId)'s counter, and are never reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GpuPluginId(pub(crate) u64);
+
+impl GpuPluginId {
+    /// The raw id.
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 /// Lets a plugin behind an `Arc<Mutex<P>>` register as a GPU plugin.
 ///
-/// The GPU-side counterpart to the same impl on [`RuntimePlugin`]. A feature
+/// The GPU-side counterpart to the same impl on [`RuntimePlugin`](crate::RuntimePlugin). A feature
 /// that implements both traits on one struct wraps it in `Arc<Mutex<..>>` and
 /// registers the same object into the runtime and GPU lists by cloning the
 /// `Arc`. `type_name` forwards to the inner plugin so `RuntimeStats` keys stay
@@ -281,10 +296,6 @@ impl<P: GpuPlugin> GpuPlugin for Arc<Mutex<P>> {
 
     fn init_gpu(&mut self, device: &crate::gpu::Device) {
         self.lock().unwrap().init_gpu(device);
-    }
-
-    fn on_device_recreated(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
-        self.lock().unwrap().on_device_recreated(device, queue);
     }
 
     fn pre_prepare(
@@ -311,8 +322,7 @@ impl<P: GpuPlugin> GpuPlugin for Arc<Mutex<P>> {
 ///
 /// Constructed by
 /// [`ViewportRuntime::with_gpu_plugin_for_viewport`](super::ViewportRuntime::with_gpu_plugin_for_viewport).
-/// The wrapper forwards `priority`, `init_gpu`, and `on_device_recreated`
-/// unconditionally, but only forwards `pre_prepare` / `post_paint` when
+/// The wrapper forwards `priority` and `init_gpu` unconditionally, but only forwards `pre_prepare` / `post_paint` when
 /// `ctx.viewport_id == Some(scoped_viewport)`.
 pub(super) struct ViewportScopedPlugin<P: GpuPlugin> {
     pub(super) viewport: ViewportId,
@@ -326,10 +336,6 @@ impl<P: GpuPlugin> GpuPlugin for ViewportScopedPlugin<P> {
 
     fn init_gpu(&mut self, device: &crate::gpu::Device) {
         self.inner.init_gpu(device);
-    }
-
-    fn on_device_recreated(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
-        self.inner.on_device_recreated(device, queue);
     }
 
     fn pre_prepare(
@@ -427,7 +433,7 @@ mod tests {
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -511,55 +517,6 @@ mod tests {
         let bufs = runtime.post_paint(&device, &queue, &targets, &ctx);
         assert!(bufs.is_empty());
         assert_eq!(*post_log.lock().unwrap(), vec![100, 200]);
-    }
-
-    struct DeviceLossRecorder {
-        recreated: Arc<Mutex<u32>>,
-        init_count: Arc<Mutex<u32>>,
-    }
-
-    impl GpuPlugin for DeviceLossRecorder {
-        fn init_gpu(&mut self, _device: &crate::gpu::Device) {
-            *self.init_count.lock().unwrap() += 1;
-        }
-        fn on_device_recreated(
-            &mut self,
-            _device: &crate::gpu::Device,
-            _queue: &crate::gpu::Queue,
-        ) {
-            *self.recreated.lock().unwrap() += 1;
-        }
-    }
-
-    #[test]
-    fn notify_device_recreated_invokes_hook_and_reinits() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-
-        let recreated = Arc::new(Mutex::new(0));
-        let init_count = Arc::new(Mutex::new(0));
-
-        let mut runtime =
-            crate::runtime::ViewportRuntime::new().with_gpu_plugin(DeviceLossRecorder {
-                recreated: recreated.clone(),
-                init_count: init_count.clone(),
-            });
-
-        let camera = Camera::default();
-        let ctx = GpuFrameContext::new(&camera, glam::Vec2::new(1.0, 1.0), 0.0, 0);
-
-        let _ = runtime.pre_prepare(&device, &queue, &ctx);
-        assert_eq!(*init_count.lock().unwrap(), 1);
-        assert_eq!(*recreated.lock().unwrap(), 0);
-
-        runtime.notify_device_recreated(&device, &queue);
-        assert_eq!(*recreated.lock().unwrap(), 1);
-
-        // Next pre_prepare re-runs init_gpu.
-        let _ = runtime.pre_prepare(&device, &queue, &ctx);
-        assert_eq!(*init_count.lock().unwrap(), 2);
     }
 
     #[test]

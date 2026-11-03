@@ -26,4 +26,6 @@ pub use clip::{AnimationClip, Channel, Interpolation, Sampler, Track, TrackValue
 pub use clip_player::ClipPlayerPlugin;
 pub use feature::{SkinnedMeshFeature, SkinnedMeshHandle};
 pub use plugin::{SkeletonPlugin, SkinningPath};
-pub use skeleton::{Joint, JointMatrices, MAX_JOINTS, Pose, Skeleton, apply_skin};
+pub use skeleton::{
+    Joint, JointMatrices, MAX_JOINTS, Pose, Skeleton, apply_skin, apply_skin_with_tangents,
+};

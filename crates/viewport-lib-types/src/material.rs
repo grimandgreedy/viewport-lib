@@ -1,5 +1,11 @@
 //! Per-item material and rendering settings.
 
+use crate::colour::ColourSpace;
+use crate::data::texture::{TextureRequirement, TextureRole};
+use crate::plugin::material::{
+    MATERIAL_PLUGIN_MAX_PARAMS, MATERIAL_PLUGIN_MAX_TEXTURES, ParamValue,
+};
+
 /// Per-item render settings: visibility, appearance overrides, pick identity, and selection state.
 ///
 /// Always use `Default::default()` as the base, then set individual fields:
@@ -19,6 +25,11 @@ pub struct ItemSettings {
     pub unlit: bool,
     /// Global opacity multiplier. 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
     pub opacity: f32,
+    /// Replaces the material's base colour for this item. Default `None`.
+    ///
+    /// Items that differ only in colour can share one material, and so one
+    /// batch, with a colour each; recolouring one item needs no new material.
+    pub colour: Option<crate::colour::Colour>,
     /// Render as wireframe regardless of the global wireframe flag. Default `false`. Extended conceptually to non-mesh
     /// objects to render their sub-objects as meshes, e.g., a VolumeItem has its voxels as wireframe boxes.
     pub wireframe: bool,
@@ -50,6 +61,71 @@ pub struct ItemSettings {
     /// Honoured by item types whose shader samples the clip uniform; types that
     /// do not sample it treat this flag as a no-op.
     pub ignore_clip: bool,
+    /// Raw per-instance material inputs, read by the shading path and (through a
+    /// material plugin) by custom material graphs. Default `[0.0; 8]`.
+    ///
+    /// This is the per-instance channel that lets instances sharing a material
+    /// vary their appearance without breaking batching, matching Unity's
+    /// `MaterialPropertyBlock` GPU-instanced properties and Unreal's ISM / HISM
+    /// per-instance custom float data. It is independent of `Material` (which is
+    /// shared across a batch) and of the per-instance `colour` tint.
+    ///
+    /// Built-in mesh shading reads slots `0..3` as an emissive addition in nits
+    /// (zero is a no-op, so unset custom data changes nothing). Slot `3` is
+    /// padding and is not read. Slots `4..8` are a raw channel for material
+    /// plugins to interpret, handed to the plugin hook as `surf.attr`. Honoured
+    /// on the scene-graph instanced mesh path; item types that do not sample it
+    /// treat it as a no-op.
+    pub custom_data: [f32; 8],
+    /// Layer membership for this item, as a 32-bit mask. Default `!0` (member
+    /// of every layer). Two things read it, both AND-tests against another
+    /// mask, so the default is inert:
+    ///
+    /// - Per-camera cull: an item is skipped on a camera whose
+    ///   `CameraFrame::cull_mask` shares no bit with this mask
+    ///   (`visibility_mask & cull_mask == 0`). This is the quad-view /
+    ///   editor-layer filter: give each camera the layers it should draw.
+    /// - Light channels: a light only lights an item when the light's
+    ///   `LightSource::channel_mask` shares a bit with this mask. Lets a light
+    ///   affect a chosen subset of the scene.
+    ///
+    /// Honoured by mesh-family items (the scene-graph per-object and instanced
+    /// paths); item types that do not carry the mask treat it as `!0`.
+    ///
+    /// Decals read it too, through the surface mask: a decal lands on an item
+    /// when the decal's `channel_mask` shares a layer with this mask. The
+    /// surface mask holds layers 0 to 7 only, so that test sees the low eight
+    /// bits of both masks. Clearing all eight (`visibility_mask &= !0xFF`)
+    /// keeps every decal off the item while leaving it on layers 8 and up for
+    /// cameras and lights.
+    ///
+    /// For decals this is honoured by mesh surfaces and by the item types
+    /// that stamp the surface mask: every depth-writing type in
+    /// `viewport-lib-plugins` does. A type that writes depth and does not
+    /// stamp it takes every decal whatever its mask; one that writes no depth
+    /// takes none.
+    pub visibility_mask: u32,
+    /// Draw order of the item within its pass. Default `0`; lower draws first.
+    ///
+    /// Opaque mesh draws are ordered by priority before anything else in their
+    /// pass, so a later priority draws over an earlier one where depth testing
+    /// lets it (equal depth, or depth writes off). Blended mesh draws on the
+    /// LDR path and in the foreground layer sort by priority first and view
+    /// depth second. On the HDR path the scene's blended draws resolve through
+    /// order-independent transparency, which ignores priority. Shadow passes
+    /// ignore it, and so do non-mesh item types.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub draw_priority: i8,
+    /// Fixed blend order for a blended mesh item. Default `None`.
+    ///
+    /// `None` sorts the item back to front by view depth. `Some(n)` replaces
+    /// the depth with `n`: within one `draw_priority`, items with a blend order
+    /// draw before every depth-sorted item, lowest `n` first, so a higher `n`
+    /// draws on top whatever the distance. Honoured where blended draws are
+    /// sorted (the LDR path and the foreground layer); the HDR path's
+    /// order-independent transparency ignores it. Opaque draws ignore it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub blend_order: Option<u16>,
 }
 
 impl Default for ItemSettings {
@@ -58,12 +134,17 @@ impl Default for ItemSettings {
             hidden: false,
             unlit: false,
             opacity: 1.0,
+            colour: None,
             wireframe: false,
             pick_id: crate::ids::PickId::NONE,
             selected: false,
             cast_shadows: true,
             receive_shadows: true,
             ignore_clip: false,
+            custom_data: [0.0; 8],
+            visibility_mask: !0,
+            draw_priority: 0,
+            blend_order: None,
         }
     }
 }
@@ -79,6 +160,7 @@ impl Default for ItemSettings {
 /// top of `Pbr` as separate fields on `Material` rather than as variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum ShadingModel {
     /// Blinn-Phong lit shading using `ambient` / `diffuse` / `specular` / `shininess`.
     Phong,
@@ -92,7 +174,7 @@ pub enum ShadingModel {
     /// derivatives of world position. Produces visible polygon edges on
     /// triangulated meshes without changing the lighting block; everything
     /// else (hemisphere ambient, scene lights, shadows, AO, alpha mode)
-    /// runs as it does for [`Phong`].
+    /// runs as it does for [`Phong`](Self::Phong).
     ///
     /// Edges appear at the triangulation level, not at logical-face
     /// boundaries. A quad authored as two triangles shows both; a CAD
@@ -208,15 +290,18 @@ impl Default for PatternConfig {
 /// Controls how back faces of a mesh are rendered.
 ///
 /// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
-/// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColour`]
+/// to shade them as front faces lit from the viewer's side, or [`BackfacePolicy::DifferentColour`]
 /// to shade back faces in a distinct colour : useful for spotting mesh orientation errors or
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum BackfacePolicy {
     /// Back faces are culled (invisible). Default.
     Cull,
-    /// Back faces are visible and shaded identically to front faces.
+    /// Back faces are visible and shaded as front faces, with the normal
+    /// flipped toward the viewer, so an open sheet seen from behind is lit from
+    /// the side the camera is on.
     Identical,
     /// Back faces are visible and shaded in the given colour.
     ///
@@ -248,6 +333,7 @@ impl Default for BackfacePolicy {
 /// Controls how the fragment alpha value is interpreted by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum AlphaMode {
     /// Alpha is ignored; the surface is always fully opaque. Default.
     Opaque,
@@ -277,10 +363,226 @@ impl Default for AlphaMode {
     }
 }
 
+/// Number of texture slots a material can transform independently, in the order
+/// [`TextureSlot`] lists: albedo, normal, AO, metallic-roughness, emissive.
+pub const MATERIAL_TEXTURE_SLOTS: usize = 5;
+
+/// The texture maps a [`Material`] can carry, used to index the per-slot
+/// arrays on it, and saying what each map needs from its texture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TextureSlot {
+    /// Base colour map.
+    Albedo = 0,
+    /// Tangent-space normal map.
+    Normal = 1,
+    /// Ambient occlusion map.
+    Ao = 2,
+    /// Packed metallic-roughness map.
+    MetallicRoughness = 3,
+    /// Emissive map.
+    Emissive = 4,
+}
+
+impl TextureSlot {
+    /// Every slot, in discriminant order.
+    pub const ALL: [TextureSlot; MATERIAL_TEXTURE_SLOTS] = [
+        TextureSlot::Albedo,
+        TextureSlot::Normal,
+        TextureSlot::Ao,
+        TextureSlot::MetallicRoughness,
+        TextureSlot::Emissive,
+    ];
+
+    /// The slot's position in the per-slot arrays on [`Material`], such as
+    /// [`Material::texture_transforms`].
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// What the slot needs from its texture, with the [`Material`] field it is
+    /// set through. The renderer checks bound textures against this.
+    pub const fn requirement(self) -> TextureRequirement {
+        match self {
+            TextureSlot::Albedo => TextureRequirement::colour("Material::texture_id"),
+            TextureSlot::Normal => TextureRequirement::normal_map("Material::normal_map_id"),
+            TextureSlot::Ao => TextureRequirement::linear("Material::ao_map_id"),
+            TextureSlot::MetallicRoughness => {
+                TextureRequirement::linear("Material::metallic_roughness_texture_id")
+            }
+            TextureSlot::Emissive => TextureRequirement::colour("Material::emissive_texture_id"),
+        }
+    }
+
+    /// The colour space the slot samples in: sRGB for [`Albedo`](Self::Albedo)
+    /// and [`Emissive`](Self::Emissive), linear for the rest.
+    pub const fn colour_space(self) -> ColourSpace {
+        self.requirement().colour_space()
+    }
+
+    /// The role the slot binds its texture as: a normal map for
+    /// [`Normal`](Self::Normal), an image for the rest.
+    pub const fn role(self) -> TextureRole {
+        self.requirement().role()
+    }
+}
+
+/// A per-texture UV transform: offset, scale, rotation, and UV-set selection.
+///
+/// This matches the glTF `KHR_texture_transform` extension (and Unity per-map
+/// `_ST`). The UV is transformed as
+/// `uv' = rotate((mesh_uv * scale + offset) - 0.5, rotation) + 0.5`, i.e. scale
+/// and offset apply first (as before rotation existed), then the result rotates
+/// about the texture centre `(0.5, 0.5)`. With `rotation = 0` this is exactly the
+/// prior `mesh_uv * scale + offset`, so adding rotation does not disturb existing
+/// scale/offset materials.
+///
+/// Set one on a material with [`Material::with_texture_transform`] to make a
+/// single map tile or orient differently from the material's shared
+/// [`uv_offset`](Material::uv_offset) / [`uv_scale`](Material::uv_scale) /
+/// [`uv_rotation`](Material::uv_rotation). A slot left unset uses the shared
+/// transform.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UvTransform {
+    /// UV offset added after scale. Default `[0.0, 0.0]`.
+    pub offset: [f32; 2],
+    /// UV scale (tiling). Default `[1.0, 1.0]`.
+    pub scale: [f32; 2],
+    /// Rotation about the texture centre, in radians. Default `0.0`.
+    pub rotation: f32,
+    /// UV-set index (glTF `texCoord`). `0` samples the mesh's primary UVs, `1`
+    /// samples [`MeshData::uvs1`](crate::data::mesh::MeshData::uvs1). A mesh
+    /// carrying no second set binds a zero fallback, so a slot selecting `1`
+    /// there samples `vec2(0.0)` rather than falling back to UV0. Values above
+    /// `1` are not carried: the renderer has two streams.
+    pub uv_set: u32,
+}
+
+impl Default for UvTransform {
+    fn default() -> Self {
+        UvTransform {
+            offset: [0.0, 0.0],
+            scale: [1.0, 1.0],
+            rotation: 0.0,
+            uv_set: 0,
+        }
+    }
+}
+
+impl UvTransform {
+    /// Identity: passes UVs through unchanged.
+    pub const IDENTITY: UvTransform = UvTransform {
+        offset: [0.0, 0.0],
+        scale: [1.0, 1.0],
+        rotation: 0.0,
+        uv_set: 0,
+    };
+
+    /// A pure rotation (radians) about the texture centre.
+    pub fn from_rotation(radians: f32) -> Self {
+        UvTransform {
+            rotation: radians,
+            ..UvTransform::IDENTITY
+        }
+    }
+}
+
+/// Texture address (wrap) mode: how a sampler treats UVs outside `[0, 1]`.
+/// Matches the glTF sampler wrap modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum WrapMode {
+    /// Tile the texture: the fractional part of the UV is used (glTF `REPEAT`).
+    /// This is the default and what makes [`UvTransform`] tiling work.
+    #[default]
+    Repeat,
+    /// Clamp to the nearest edge texel (glTF `CLAMP_TO_EDGE`).
+    ClampToEdge,
+    /// Mirror on each repeat (glTF `MIRRORED_REPEAT`).
+    MirrorRepeat,
+}
+
+/// Texture filtering: how a sampler blends texels for minification,
+/// magnification, and between mip levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TextureFilter {
+    /// Nearest-neighbour: crisp, blocky under magnification (pixel-art, data
+    /// textures that must not blend).
+    Nearest,
+    /// Linear (bi/trilinear): smooth. The default.
+    #[default]
+    Linear,
+}
+
+/// Per-texture sampler state: wrap mode, filtering, anisotropy, and LOD bias.
+///
+/// Set one per texture slot on a [`Material`] with [`Material::with_sampler`],
+/// paralleling [`Material::texture_transforms`]. A slot left `None` uses the
+/// renderer's default sampler (repeat + linear, anisotropy 1). This carries the
+/// glTF sampler state (wrap S/T, min/mag filter) so an importer can honour it.
+///
+/// Note the current renderer binds one sampler per lit draw, so it uses the
+/// first slot that sets a key (see [`Material::selected_sampler`]); distinct
+/// per-slot samplers land with the bindless sampler heap. The field is per-slot
+/// now so that later change is not breaking.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SamplerKey {
+    /// Wrap mode for the U (S) axis. Default [`WrapMode::Repeat`].
+    pub wrap_u: WrapMode,
+    /// Wrap mode for the V (T) axis. Default [`WrapMode::Repeat`].
+    pub wrap_v: WrapMode,
+    /// Min/mag/mip filtering. Default [`TextureFilter::Linear`].
+    pub filter: TextureFilter,
+    /// Max anisotropy, clamped to `1..=16` by the renderer. `1` disables
+    /// anisotropic filtering. Values above `1` force linear filtering.
+    pub anisotropy: u16,
+    /// LOD bias added when selecting the mip level. `0.0` is neutral; negative
+    /// sharpens, positive blurs. Reserved: the renderer does not apply it yet
+    /// (a sampler carries no LOD bias; it needs a shader-side bias), so today
+    /// only `wrap_u`/`wrap_v`/`filter`/`anisotropy` take effect.
+    pub lod_bias: f32,
+}
+
+impl Default for SamplerKey {
+    fn default() -> Self {
+        SamplerKey {
+            wrap_u: WrapMode::Repeat,
+            wrap_v: WrapMode::Repeat,
+            filter: TextureFilter::Linear,
+            anisotropy: 1,
+            lod_bias: 0.0,
+        }
+    }
+}
+
+impl SamplerKey {
+    /// Clamp-to-edge on both axes, linear filtering. For textures that must not
+    /// tile (a decal, a gradient ramp, a UI atlas cell).
+    pub fn clamp() -> Self {
+        SamplerKey {
+            wrap_u: WrapMode::ClampToEdge,
+            wrap_v: WrapMode::ClampToEdge,
+            ..SamplerKey::default()
+        }
+    }
+
+    /// Nearest filtering, repeat wrap. For crisp pixel-art or data textures that
+    /// must sample a single texel without blending.
+    pub fn nearest() -> Self {
+        SamplerKey {
+            filter: TextureFilter::Nearest,
+            ..SamplerKey::default()
+        }
+    }
+}
+
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
-/// Each `SceneRenderItem` carries its own `Material`, so shading parameters
-/// vary per object rather than applying globally to the whole scene.
+/// Uploaded once with `upload_material`; items name it by the returned
+/// `MaterialId`, and every item holding the id draws with it.
 ///
 /// This struct is `#[non_exhaustive]`: construct via [`Material::default`],
 /// [`Material::from_colour`], or spread syntax (`..Default::default()`). This allows new
@@ -294,11 +596,16 @@ pub struct Material {
     /// [`Colour::linear_rgb`](crate::colour::Colour::linear_rgb) for one already in
     /// linear space. Default is linear `[0.7, 0.7, 0.7]`.
     pub base_colour: crate::colour::Colour,
-    /// Ambient light coefficient. Default 0.15.
+    /// Ambient light coefficient of [`ShadingModel::Phong`] and
+    /// [`ShadingModel::Flat`], added to the hemisphere fill. PBR shading does
+    /// not read it: with image-based lighting off its ambient is the hemisphere
+    /// fill alone. Default 0.15.
     pub ambient: f32,
     /// Diffuse light coefficient. Default 0.75.
     pub diffuse: f32,
-    /// Specular highlight coefficient. Default 0.4.
+    /// Blinn-Phong specular highlight coefficient. Default 0.4. Only the Phong
+    /// shading model reads it; PBR takes its dielectric reflectance from
+    /// [`reflectance`](Self::reflectance).
     pub specular: f32,
     /// Specular shininess exponent. Default 32.0.
     pub shininess: f32,
@@ -307,11 +614,19 @@ pub struct Material {
     /// Roughness factor for PBR microfacet distribution. 0=mirror, 1=fully rough. Default 0.5.
     pub roughness: f32,
     /// Optional albedo texture identifier. None = no texture applied. Default None.
+    ///
+    /// Colour, so the texture must be uploaded sRGB
+    /// ([`TextureData::srgb`](crate::data::texture::TextureData::srgb)).
     pub texture_id: Option<crate::ids::TextureId>,
     /// Optional normal map texture identifier. None = no normal mapping. Default None.
     ///
     /// The normal map must be in tangent-space with XY encoded as RG (0..1 -> -1..+1).
     /// Requires UVs and tangents on the mesh for correct TBN construction.
+    ///
+    /// Directions, not colour, so the texture must be uploaded linear
+    /// ([`TextureData::normal_map`](crate::data::texture::TextureData::normal_map)).
+    /// Uploading it sRGB decodes a neutral 128 to 0.216 instead of 0 and biases
+    /// every normal the same way.
     pub normal_map_id: Option<crate::ids::TextureId>,
     /// Scales the tangent-space normal's XY before the TBN transform, so a normal
     /// map can be dialled up or down without re-authoring the texture. Default 1.0
@@ -324,6 +639,9 @@ pub struct Material {
     ///
     /// The AO map R channel encodes cavity factor (0=fully occluded, 1=fully lit).
     /// Applied multiplicatively to ambient and diffuse terms.
+    ///
+    /// A factor, not colour, so the texture must be uploaded linear
+    /// ([`TextureData::linear`](crate::data::texture::TextureData::linear)).
     pub ao_map_id: Option<crate::ids::TextureId>,
     /// Optional combined metallic-roughness texture (ORM layout). Default None.
     ///
@@ -331,6 +649,9 @@ pub struct Material {
     /// B channel encodes metallic. Each channel is multiplied by the corresponding
     /// scalar factor (`roughness`, `metallic`). Only sampled when the material's
     /// `shading_model` is `ShadingModel::Pbr`.
+    ///
+    /// Factors, not colour, so the texture must be uploaded linear
+    /// ([`TextureData::linear`](crate::data::texture::TextureData::linear)).
     pub metallic_roughness_texture_id: Option<crate::ids::TextureId>,
     /// Self-illumination colour, added to outgoing radiance after lighting.
     /// Default [0.0, 0.0, 0.0].
@@ -339,7 +660,8 @@ pub struct Material {
     /// **nits** is `emissive * emissive_strength`, so this sets the hue and
     /// `emissive_strength` sets the brightness. Applied to both the Blinn-Phong
     /// and PBR paths. When `emissive_texture_id` is set, it is multiplied by the
-    /// texture sample.
+    /// texture sample. The camera's exposure scales it as set by
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight).
     pub emissive: crate::colour::Colour,
     /// Emissive luminance in **nits**, multiplying [`Self::emissive`]. Default
     /// `1.0`.
@@ -348,11 +670,28 @@ pub struct Material {
     /// an emitter must reach a luminance comparable to the lit scene to read as
     /// glowing: a few hundred nits for a soft indoor glow, thousands to stay
     /// bright against daylight. `emissive = [0, 0, 0]` emits nothing regardless.
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight) sets how
+    /// far the camera's exposure scales it.
     pub emissive_strength: f32,
+    /// How far the camera's exposure scales this material's emissive, 0..1.
+    /// Default `1.0`.
+    ///
+    /// At 1 the emissive is radiance in nits, exposed with the rest of the
+    /// scene. At 0 it is display-relative: added after exposure, so an
+    /// emitter of 1 nit adds 1 to the exposed colour whatever the exposure,
+    /// for annotation and UI-like surfaces that should read the same in
+    /// daylight and indoors. Values between blend the scale linearly,
+    /// `mix(1, exposure, weight)`. Applies to the emissive factor and map, the
+    /// item's custom-data emissive and a material plugin's emissive.
+    #[cfg_attr(feature = "serde", serde(default = "default_emissive_exposure_weight"))]
+    pub emissive_exposure_weight: f32,
     /// Optional emissive texture identifier. Default None.
     ///
     /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`
     /// (and hence by `emissive_strength`).
+    ///
+    /// Colour, so the texture must be uploaded sRGB
+    /// ([`TextureData::srgb`](crate::data::texture::TextureData::srgb)).
     pub emissive_texture_id: Option<crate::ids::TextureId>,
     /// Alpha handling mode. Default [`AlphaMode::Opaque`].
     ///
@@ -392,6 +731,35 @@ pub struct Material {
     ///
     /// See [`uv_offset`](Self::uv_offset) for the full sampling formula.
     pub uv_scale: [f32; 2],
+    /// Shared UV rotation for every texture slot, in radians about the texture
+    /// centre `(0.5, 0.5)`. Default `0.0`. Applied after scale and offset:
+    /// `uv' = rotate((mesh_uv * uv_scale + uv_offset) - 0.5, uv_rotation) + 0.5`,
+    /// so `0.0` leaves the prior `mesh_uv * uv_scale + uv_offset` unchanged.
+    ///
+    /// This is the common case for orienting a directional texture (a road,
+    /// brick coursing, wood grain). For a single map to rotate or tile
+    /// differently from the rest, set a [`UvTransform`] on its slot via
+    /// [`with_texture_transform`](Self::with_texture_transform).
+    pub uv_rotation: f32,
+    /// Optional per-texture UV transform override, indexed by [`TextureSlot`]
+    /// (`0` albedo .. `4` emissive). A slot left `None` uses the shared
+    /// [`uv_offset`](Self::uv_offset) / [`uv_scale`](Self::uv_scale) /
+    /// [`uv_rotation`](Self::uv_rotation). Default all `None`.
+    ///
+    /// This carries glTF `KHR_texture_transform` per texture (offset, scale,
+    /// rotation, and `texCoord`) so an importer can honour it faithfully.
+    pub texture_transforms: [Option<UvTransform>; MATERIAL_TEXTURE_SLOTS],
+    /// Optional per-texture sampler state (wrap/filter/aniso/LOD bias), indexed
+    /// by [`TextureSlot`]. A slot left `None` uses the renderer's default
+    /// sampler (repeat + linear, anisotropy 1). Default all `None`.
+    ///
+    /// Carries the glTF sampler wrap/filter so an importer can honour it, and
+    /// lets a clamp-wrapped map (a decal, a gradient ramp) coexist with the
+    /// repeat-wrapped default. The current renderer binds one sampler per lit
+    /// draw, so it uses [`selected_sampler`](Self::selected_sampler) (the first
+    /// slot that sets a key); the per-slot form is kept for the bindless sampler
+    /// heap.
+    pub sampler: [Option<SamplerKey>; MATERIAL_TEXTURE_SLOTS],
     /// Min/max range applied to the AO map's R sample. Identity `[0.0, 1.0]`
     /// passes the sample through unchanged. Skipped when `ao_map_id` is None.
     ///
@@ -422,33 +790,223 @@ pub struct Material {
     /// built-in shading models above).
     ///
     /// `Some(id)` routes this material through the plugin registered with
-    /// `register_material_plugin` under that id: the plugin's `shade_light` /
-    /// `shade_ambient` / `recolor` hooks replace the built-in lighting terms,
-    /// always on the PBR loop structure (`shading_model` is ignored for the
-    /// lit path). Items with a plugin draw per-object rather than instanced.
-    /// The id is a small `Copy` handle; plugin parameters live in the plugin's
-    /// group-3 params buffer, not on this struct.
+    /// `register_material_plugin` under that id: the plugin's hooks replace the
+    /// built-in lighting terms, always on the PBR loop structure
+    /// (`shading_model` is ignored for the lit path). Set it with
+    /// [`with_plugin`](Self::with_plugin).
     #[cfg_attr(feature = "serde", serde(default))]
     pub shading_plugin: Option<MaterialPluginId>,
+    /// Values for the parameters the plugin declares, by name. A parameter left
+    /// unset draws with the plugin's declared default. Ignored without a
+    /// plugin. Set them with [`with_param`](Self::with_param).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub plugin_params: PluginParams,
+    /// The plugin's texture slots (`material_texture_0..N`). A slot left `None`,
+    /// or naming a freed texture, samples a 1x1 white texture. Ignored without
+    /// a plugin, and past the plugin's `texture_count`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub plugin_textures: [Option<crate::ids::TextureId>; MATERIAL_PLUGIN_MAX_TEXTURES],
+    /// Dielectric reflectance at normal incidence, as a perceptual 0..1 value:
+    /// PBR shading takes F0 = `0.16 * reflectance^2`. Default 0.5 (F0 = 0.04,
+    /// the reflectance of most plastics and glass). 0 removes the dielectric
+    /// specular; 1 gives F0 = 0.16, about a gemstone. Metals ignore it: their
+    /// F0 is the base colour. Set it from an index of refraction with
+    /// [`with_ior`](Self::with_ior).
+    #[cfg_attr(feature = "serde", serde(default = "default_reflectance"))]
+    pub reflectance: f32,
+    /// Scales the dielectric specular at normal and grazing incidence, as glTF
+    /// `KHR_materials_specular`'s `specularFactor`. Default 1.0. 0 removes the
+    /// dielectric specular lobe entirely, grazing Fresnel included.
+    #[cfg_attr(feature = "serde", serde(default = "default_specular_factor"))]
+    pub specular_factor: f32,
+    /// Tints the dielectric F0, as glTF `KHR_materials_specular`'s
+    /// `specularColorFactor`. Default linear white. The tinted F0 is clamped
+    /// to 1 before [`specular_factor`](Self::specular_factor) scales it.
+    #[cfg_attr(feature = "serde", serde(default = "default_specular_colour"))]
+    pub specular_colour: crate::colour::Colour,
+    /// Index of refraction, for refraction and transmission only. Default 1.5.
+    /// It bends the light [`transmission`](Self::transmission) lets through;
+    /// F0 comes from [`reflectance`](Self::reflectance), which
+    /// [`with_ior`](Self::with_ior) sets together with this field.
+    #[cfg_attr(feature = "serde", serde(default = "default_ior"))]
+    pub ior: f32,
+    /// Strength of a clear coat layered over the base, 0..1, as glTF
+    /// `KHR_materials_clearcoat`'s `clearcoatFactor`. Default 0 (no coat). The
+    /// coat is a dielectric (F0 0.04) GGX lobe on the shading normal; the
+    /// light it reflects is taken from the base beneath it. PBR shading only.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clearcoat: f32,
+    /// Perceptual roughness of the clear coat, 0..1. Default 0. The base's
+    /// roughness is raised toward it by [`clearcoat`](Self::clearcoat).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clearcoat_roughness: f32,
+    /// Colour of a sheen layer (a Charlie microfibre lobe, for cloth and
+    /// velvet), as glTF `KHR_materials_sheen`'s `sheenColorFactor`. Default
+    /// black (no sheen). The base is dimmed by the light the sheen reflects.
+    #[cfg_attr(feature = "serde", serde(default = "default_sheen_colour"))]
+    pub sheen_colour: crate::colour::Colour,
+    /// Perceptual roughness of the sheen, 0..1. Default 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub sheen_roughness: f32,
+    /// Anisotropy of the base specular lobe, -1..1. Default 0 (isotropic).
+    /// Positive values stretch the highlight along the tangent, negative along
+    /// the bitangent. Reads the mesh's tangents, or a frame built from the
+    /// normal when the mesh has none.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub anisotropy: f32,
+    /// Rotation of the anisotropy direction from the tangent toward the
+    /// bitangent, in radians. Default 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub anisotropy_rotation: f32,
+    /// Fraction of light that passes through the surface rather than being
+    /// diffusely reflected, 0..1, as glTF `KHR_materials_transmission`'s
+    /// `transmissionFactor`. Default 0 (opaque). The transmitted light is
+    /// tinted by the base colour and refracted by [`ior`](Self::ior). PBR
+    /// shading in the opaque or mask alpha mode only; metals do not transmit.
+    ///
+    /// An opaque-mode transmissive mesh draws after the opaque scene and reads
+    /// a copy of it, blurred by roughness. It sees opaque geometry only: a
+    /// transmissive surface behind another shows through as the environment.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub transmission: f32,
+    /// Thickness of the volume under the surface, in world units, as glTF
+    /// `KHR_materials_volume`'s `thicknessFactor`. Default 0 (a thin wall that
+    /// does not bend what is behind it). Sets how far the refracted ray
+    /// travels before it reads the scene behind, and the path length for
+    /// [`attenuation_colour`](Self::attenuation_colour).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub thickness: f32,
+    /// Colour white light becomes after travelling
+    /// [`attenuation_distance`](Self::attenuation_distance) through the
+    /// volume, as `KHR_materials_volume`'s `attenuationColor`. Default linear
+    /// white (no absorption).
+    #[cfg_attr(feature = "serde", serde(default = "default_attenuation_colour"))]
+    pub attenuation_colour: crate::colour::Colour,
+    /// Distance in world units over which light is absorbed to
+    /// [`attenuation_colour`](Self::attenuation_colour), as
+    /// `KHR_materials_volume`'s `attenuationDistance`. Default `f32::MAX`
+    /// (no absorption); `f32::MAX` rather than infinity so the value survives
+    /// formats without infinities.
+    #[cfg_attr(feature = "serde", serde(default = "default_attenuation_distance"))]
+    pub attenuation_distance: f32,
 }
 
-/// Handle to a material plugin registered with `register_material_plugin`,
-/// optionally qualified to one of its variants
-/// (`create_material_plugin_variant`).
+/// A material's values for its plugin's declared parameters, keyed by name.
 ///
-/// A small `Copy` id carried on [`Material::shading_plugin`]. All variants of
-/// a plugin share its WGSL and pipelines; each variant owns its group-3
-/// params window and texture set, which is how two materials run the same
-/// plugin with different parameters. `register_material_plugin` returns the
-/// default variant (index 0). The renderer resolves the id against the
-/// registry at draw time; an id from a different session (e.g. a deserialized
-/// scene rendered before the plugin is re-registered) simply falls back to
-/// built-in shading for the frame.
+/// Holds up to [`MATERIAL_PLUGIN_MAX_PARAMS`] values. Names are matched
+/// against the plugin's [`param_layout`](crate::plugin::material::MaterialPlugin::param_layout)
+/// when the material is uploaded; an unknown name, a value of the wrong kind,
+/// or more values than fit is refused there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PluginParams {
+    names: [u64; MATERIAL_PLUGIN_MAX_PARAMS],
+    values: [ParamValue; MATERIAL_PLUGIN_MAX_PARAMS],
+    len: u8,
+    overflowed: bool,
+}
+
+impl Default for PluginParams {
+    fn default() -> Self {
+        Self {
+            names: [0; MATERIAL_PLUGIN_MAX_PARAMS],
+            values: [ParamValue::F32(0.0); MATERIAL_PLUGIN_MAX_PARAMS],
+            len: 0,
+            overflowed: false,
+        }
+    }
+}
+
+impl PluginParams {
+    /// Set `name` to `value`, replacing an earlier value for the same name.
+    pub fn set(&mut self, name: &str, value: impl Into<ParamValue>) {
+        let key = param_name_hash(name);
+        let value = value.into();
+        let n = self.len as usize;
+        if let Some(i) = self.names[..n].iter().position(|&k| k == key) {
+            self.values[i] = value;
+        } else if n < MATERIAL_PLUGIN_MAX_PARAMS {
+            self.names[n] = key;
+            self.values[n] = value;
+            self.len += 1;
+        } else {
+            self.overflowed = true;
+        }
+    }
+
+    /// The value set for `name`, if any. Unset parameters draw with the
+    /// plugin's default, which this does not report.
+    pub fn get(&self, name: &str) -> Option<ParamValue> {
+        let key = param_name_hash(name);
+        self.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
+    }
+
+    /// Remove the value for `name`, so it draws with the plugin's default.
+    pub fn unset(&mut self, name: &str) {
+        let key = param_name_hash(name);
+        let n = self.len as usize;
+        if let Some(i) = self.names[..n].iter().position(|&k| k == key) {
+            self.names.copy_within(i + 1..n, i);
+            self.values.copy_within(i + 1..n, i);
+            self.len -= 1;
+        }
+    }
+
+    /// Number of values set.
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Whether no value is set.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The values set, by name hash ([`param_name_hash`]).
+    #[doc(hidden)]
+    pub fn iter(&self) -> impl Iterator<Item = (u64, ParamValue)> + '_ {
+        let n = self.len as usize;
+        self.names[..n]
+            .iter()
+            .copied()
+            .zip(self.values[..n].iter().copied())
+    }
+
+    /// Whether a `set` was dropped because every slot was taken.
+    #[doc(hidden)]
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+}
+
+/// The key [`PluginParams`] stores a parameter name under (64-bit FNV-1a).
+#[doc(hidden)]
+pub fn param_name_hash(name: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Handle to a material plugin registered with `register_material_plugin`.
+///
+/// A small `Copy` id carried on [`Material::shading_plugin`]. Every material on
+/// a plugin shares its WGSL and pipelines; each carries its own
+/// [`plugin_params`](Material::plugin_params) and
+/// [`plugin_textures`](Material::plugin_textures). The renderer resolves the id
+/// against its registry at draw time. An id that does not resolve falls back
+/// to built-in shading: one from a different session (e.g. a deserialized
+/// scene rendered before the plugin is re-registered), or one whose plugin
+/// was unregistered. Unregistering moves the slot's generation on, so the id
+/// does not resolve to a plugin registered into the same slot later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MaterialPluginId {
     pub(crate) plugin: u32,
-    pub(crate) variant: u32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) generation: u32,
 }
 
 impl MaterialPluginId {
@@ -457,17 +1015,25 @@ impl MaterialPluginId {
         self.plugin
     }
 
-    /// Variant index within the plugin (0 is the default variant).
-    pub fn variant_index(&self) -> u32 {
-        self.variant
+    /// Generation of the registration slot when this id was issued.
+    pub fn generation(&self) -> u32 {
+        self.generation
     }
 
-    /// Build a handle from a plugin registration index and variant index.
-    /// Crate-internal: the shading-hook registry mints these; outside code
-    /// obtains them from registration calls and treats them as opaque.
+    /// Build a handle from a plugin registration index, at the slot's first
+    /// generation. Crate-internal: the shading-hook registry mints these;
+    /// outside code obtains them from registration calls and treats them as
+    /// opaque.
     #[doc(hidden)]
-    pub fn from_parts(plugin: u32, variant: u32) -> Self {
-        Self { plugin, variant }
+    pub fn from_index(plugin: u32) -> Self {
+        Self::from_parts(plugin, 0)
+    }
+
+    /// Build a handle from a registration index and slot generation.
+    /// Crate-internal, like [`from_index`](Self::from_index).
+    #[doc(hidden)]
+    pub fn from_parts(plugin: u32, generation: u32) -> Self {
+        Self { plugin, generation }
     }
 }
 
@@ -477,6 +1043,46 @@ impl MaterialPluginId {
 #[cfg(feature = "serde")]
 fn default_normal_strength() -> f32 {
     1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_reflectance() -> f32 {
+    0.5
+}
+
+#[cfg(feature = "serde")]
+fn default_specular_factor() -> f32 {
+    1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_specular_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0)
+}
+
+#[cfg(feature = "serde")]
+fn default_emissive_exposure_weight() -> f32 {
+    1.0
+}
+
+#[cfg(feature = "serde")]
+fn default_ior() -> f32 {
+    1.5
+}
+
+#[cfg(feature = "serde")]
+fn default_attenuation_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0)
+}
+
+#[cfg(feature = "serde")]
+fn default_attenuation_distance() -> f32 {
+    f32::MAX
+}
+
+#[cfg(feature = "serde")]
+fn default_sheen_colour() -> crate::colour::Colour {
+    crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0)
 }
 
 impl Default for Material {
@@ -496,6 +1102,7 @@ impl Default for Material {
             metallic_roughness_texture_id: None,
             emissive: crate::colour::Colour::BLACK,
             emissive_strength: 1.0,
+            emissive_exposure_weight: 1.0,
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
             shading_model: ShadingModel::Phong,
@@ -503,10 +1110,29 @@ impl Default for Material {
             backface_policy: BackfacePolicy::Cull,
             uv_offset: [0.0, 0.0],
             uv_scale: [1.0, 1.0],
+            uv_rotation: 0.0,
+            texture_transforms: [None; MATERIAL_TEXTURE_SLOTS],
+            sampler: [None; MATERIAL_TEXTURE_SLOTS],
             ao_range: [0.0, 1.0],
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
             shading_plugin: None,
+            plugin_params: PluginParams::default(),
+            plugin_textures: [None; MATERIAL_PLUGIN_MAX_TEXTURES],
+            reflectance: 0.5,
+            specular_factor: 1.0,
+            specular_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
+            ior: 1.5,
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
+            sheen_colour: crate::colour::Colour::linear_rgb(0.0, 0.0, 0.0),
+            sheen_roughness: 0.0,
+            anisotropy: 0.0,
+            anisotropy_rotation: 0.0,
+            transmission: 0.0,
+            thickness: 0.0,
+            attenuation_colour: crate::colour::Colour::linear_rgb(1.0, 1.0, 1.0),
+            attenuation_distance: f32::MAX,
         }
     }
 }
@@ -517,14 +1143,179 @@ impl Material {
         !matches!(self.backface_policy, BackfacePolicy::Cull)
     }
 
+    /// Set the shared UV rotation (radians about the texture centre) for every
+    /// texture slot. See [`uv_rotation`](Self::uv_rotation).
+    pub fn with_uv_rotation(mut self, radians: f32) -> Self {
+        self.uv_rotation = radians;
+        self
+    }
+
+    /// Override one texture slot's UV transform, leaving the others on the shared
+    /// transform. See [`texture_transforms`](Self::texture_transforms).
+    pub fn with_texture_transform(mut self, slot: TextureSlot, transform: UvTransform) -> Self {
+        self.texture_transforms[slot as usize] = Some(transform);
+        self
+    }
+
+    /// Override one texture slot's sampler state, leaving the others on the
+    /// renderer default. See [`sampler`](Self::sampler).
+    pub fn with_sampler(mut self, slot: TextureSlot, sampler: SamplerKey) -> Self {
+        self.sampler[slot as usize] = Some(sampler);
+        self
+    }
+
+    /// The texture bound to `slot`: [`texture_id`](Self::texture_id) for
+    /// albedo, [`normal_map_id`](Self::normal_map_id) for normal, and so on.
+    pub fn texture(&self, slot: TextureSlot) -> Option<crate::ids::TextureId> {
+        match slot {
+            TextureSlot::Albedo => self.texture_id,
+            TextureSlot::Normal => self.normal_map_id,
+            TextureSlot::Ao => self.ao_map_id,
+            TextureSlot::MetallicRoughness => self.metallic_roughness_texture_id,
+            TextureSlot::Emissive => self.emissive_texture_id,
+        }
+    }
+
+    /// Bind `id` to `slot`, or clear the slot with `None`. Sets the same field
+    /// [`texture`](Self::texture) reads.
+    pub fn set_texture(&mut self, slot: TextureSlot, id: Option<crate::ids::TextureId>) {
+        let field = match slot {
+            TextureSlot::Albedo => &mut self.texture_id,
+            TextureSlot::Normal => &mut self.normal_map_id,
+            TextureSlot::Ao => &mut self.ao_map_id,
+            TextureSlot::MetallicRoughness => &mut self.metallic_roughness_texture_id,
+            TextureSlot::Emissive => &mut self.emissive_texture_id,
+        };
+        *field = id;
+    }
+
+    /// Bind `id` to `slot`. See [`set_texture`](Self::set_texture).
+    pub fn with_texture(mut self, slot: TextureSlot, id: crate::ids::TextureId) -> Self {
+        self.set_texture(slot, Some(id));
+        self
+    }
+
+    /// Set how far the camera's exposure scales the emissive: 1 exposes it with
+    /// the scene, 0 keeps it display-relative. See
+    /// [`emissive_exposure_weight`](Self::emissive_exposure_weight).
+    pub fn with_emissive_exposure_weight(mut self, weight: f32) -> Self {
+        self.emissive_exposure_weight = weight;
+        self
+    }
+
+    /// Set the index of refraction and derive [`reflectance`](Self::reflectance)
+    /// from it, so F0 = `((ior - 1) / (ior + 1))^2`. An IOR of 1.5 gives the
+    /// default reflectance of 0.5.
+    pub fn with_ior(mut self, ior: f32) -> Self {
+        self.ior = ior;
+        self.reflectance = ((ior - 1.0) / (ior + 1.0)).abs() / 0.4;
+        self
+    }
+
+    /// Layer a clear coat of `amount` (0..1) and perceptual `roughness` over
+    /// the base. See [`clearcoat`](Self::clearcoat).
+    pub fn with_clearcoat(mut self, amount: f32, roughness: f32) -> Self {
+        self.clearcoat = amount;
+        self.clearcoat_roughness = roughness;
+        self
+    }
+
+    /// Layer a sheen of `colour` and perceptual `roughness` over the base. See
+    /// [`sheen_colour`](Self::sheen_colour).
+    pub fn with_sheen(mut self, colour: crate::colour::Colour, roughness: f32) -> Self {
+        self.sheen_colour = colour;
+        self.sheen_roughness = roughness;
+        self
+    }
+
+    /// Stretch the base specular lobe by `strength` (-1..1), turned by
+    /// `rotation` radians from the tangent. See [`anisotropy`](Self::anisotropy).
+    pub fn with_anisotropy(mut self, strength: f32, rotation: f32) -> Self {
+        self.anisotropy = strength;
+        self.anisotropy_rotation = rotation;
+        self
+    }
+
+    /// Let `transmission` (0..1) of the light through a volume `thickness`
+    /// world units deep. See [`transmission`](Self::transmission).
+    pub fn with_transmission(mut self, transmission: f32, thickness: f32) -> Self {
+        self.transmission = transmission;
+        self.thickness = thickness;
+        self
+    }
+
+    /// Absorb light inside the volume so white becomes `colour` after
+    /// `distance` world units. See
+    /// [`attenuation_colour`](Self::attenuation_colour).
+    pub fn with_attenuation(mut self, colour: crate::colour::Colour, distance: f32) -> Self {
+        self.attenuation_colour = colour;
+        self.attenuation_distance = distance;
+        self
+    }
+
+    /// Shade through a registered material plugin. See
+    /// [`shading_plugin`](Self::shading_plugin).
+    pub fn with_plugin(mut self, plugin: MaterialPluginId) -> Self {
+        self.shading_plugin = Some(plugin);
+        self
+    }
+
+    /// Set one of the plugin's declared parameters. See
+    /// [`plugin_params`](Self::plugin_params).
+    pub fn with_param(mut self, name: &str, value: impl Into<ParamValue>) -> Self {
+        self.plugin_params.set(name, value);
+        self
+    }
+
+    /// Set one of the plugin's declared parameters in place.
+    pub fn set_param(&mut self, name: &str, value: impl Into<ParamValue>) {
+        self.plugin_params.set(name, value);
+    }
+
+    /// The value set for one of the plugin's parameters, if any.
+    pub fn param(&self, name: &str) -> Option<ParamValue> {
+        self.plugin_params.get(name)
+    }
+
+    /// Bind `id` to the plugin's texture slot `slot` (`material_texture_<slot>`).
+    ///
+    /// # Panics
+    ///
+    /// When `slot` is [`MATERIAL_PLUGIN_MAX_TEXTURES`] or more.
+    pub fn with_plugin_texture(mut self, slot: usize, id: crate::ids::TextureId) -> Self {
+        self.plugin_textures[slot] = Some(id);
+        self
+    }
+
+    /// The sampler this material binds for its textures, or `None` for the
+    /// renderer default (repeat + linear). The current renderer binds a single
+    /// sampler per lit draw at group-1 binding 2, so this returns the first slot
+    /// that sets a [`SamplerKey`] (usually albedo). Per-slot samplers land with
+    /// the bindless sampler heap; until then every slot on a material shares this
+    /// one sampler.
+    pub fn selected_sampler(&self) -> Option<SamplerKey> {
+        self.sampler.iter().flatten().next().copied()
+    }
+
+    /// The effective transform for a texture slot: its override if set, otherwise
+    /// the material's shared `uv_offset` / `uv_scale` / `uv_rotation`.
+    pub fn effective_texture_transform(&self, slot: TextureSlot) -> UvTransform {
+        self.texture_transforms[slot as usize].unwrap_or(UvTransform {
+            offset: self.uv_offset,
+            scale: self.uv_scale,
+            rotation: self.uv_rotation,
+            uv_set: 0,
+        })
+    }
+
     /// Returns `true` if back faces need the per-object draw path.
     ///
     /// `Cull` and `Identical` render correctly through the instanced path: `Cull`
-    /// uses back-face culling and `Identical` disables culling but shades back
-    /// faces with the geometric normal, neither of which needs per-item state the
-    /// instanced shader does not carry. The styled policies (`DifferentColour`,
-    /// `Tint`, `Pattern`) flip the normal and read a per-item back-face colour, so
-    /// they stay on the per-object path.
+    /// uses back-face culling and `Identical` disables culling and flips the
+    /// normal on back faces, neither of which needs per-item state the instanced
+    /// shader does not carry. The styled policies (`DifferentColour`, `Tint`,
+    /// `Pattern`) also read a per-item back-face colour, so they stay on the
+    /// per-object path.
     pub fn backface_needs_per_object(&self) -> bool {
         matches!(
             self.backface_policy,
@@ -692,6 +1483,87 @@ impl Material {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::colour::Colour;
+
+    #[test]
+    fn with_ior_derives_reflectance() {
+        let m = Material::default().with_ior(1.5);
+        assert_eq!(m.ior, 1.5);
+        assert!((m.reflectance - Material::default().reflectance).abs() < 1e-6);
+        // F0 = 0.16 r^2 reproduces ((ior - 1) / (ior + 1))^2.
+        let m = Material::default().with_ior(2.4);
+        let f0 = 0.16 * m.reflectance * m.reflectance;
+        let expected = ((2.4f32 - 1.0) / (2.4 + 1.0)).powi(2);
+        assert!((f0 - expected).abs() < 1e-6, "{f0} vs {expected}");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn emissive_exposure_weight_defaults_to_one_when_absent() {
+        let mut json =
+            serde_json::to_value(Material::default().with_emissive_exposure_weight(0.25)).unwrap();
+        assert_eq!(json["emissive_exposure_weight"], 0.25);
+        json.as_object_mut()
+            .unwrap()
+            .remove("emissive_exposure_weight");
+        let m: Material = serde_json::from_value(json).unwrap();
+        assert_eq!(m.emissive_exposure_weight, 1.0);
+    }
+
+    #[test]
+    fn texture_slots_list_in_index_order() {
+        for (i, slot) in TextureSlot::ALL.into_iter().enumerate() {
+            assert_eq!(slot.index(), i);
+        }
+    }
+
+    #[test]
+    fn texture_slots_build_what_they_require() {
+        use crate::data::texture::TextureData;
+        for slot in TextureSlot::ALL {
+            let req = slot.requirement();
+            let built = TextureData::for_slot(1, 1, vec![0u8; 4], slot);
+            assert_eq!(built.colour_space(), slot.colour_space(), "{slot:?}");
+            assert_eq!(built.role(), slot.role(), "{slot:?}");
+            let named = match req.constructor() {
+                "TextureData::srgb" => TextureData::srgb(1, 1, vec![0u8; 4]),
+                "TextureData::linear" => TextureData::linear(1, 1, vec![0u8; 4]),
+                "TextureData::normal_map" => TextureData::normal_map(1, 1, vec![0u8; 4]),
+                other => panic!("{slot:?} names an unknown constructor {other}"),
+            };
+            assert_eq!(named, built, "{slot:?}");
+        }
+        assert_eq!(TextureSlot::Albedo.colour_space(), ColourSpace::Srgb);
+        assert_eq!(TextureSlot::Normal.role(), TextureRole::NormalMap);
+        assert_eq!(TextureSlot::Ao.colour_space(), ColourSpace::Linear);
+    }
+
+    #[test]
+    fn texture_by_slot_sets_and_reads_one_field() {
+        use crate::ids::TextureId;
+        for (i, slot) in TextureSlot::ALL.into_iter().enumerate() {
+            let id = TextureId::from_raw(i as u64 + 1);
+            let m = Material::default().with_texture(slot, id);
+            for other in TextureSlot::ALL {
+                let expected = (other == slot).then_some(id);
+                assert_eq!(m.texture(other), expected, "{slot:?} set, {other:?} read");
+            }
+            // The slot's field is the one its requirement names.
+            let field = slot.requirement().field_name();
+            let direct = match field {
+                "Material::texture_id" => m.texture_id,
+                "Material::normal_map_id" => m.normal_map_id,
+                "Material::ao_map_id" => m.ao_map_id,
+                "Material::metallic_roughness_texture_id" => m.metallic_roughness_texture_id,
+                "Material::emissive_texture_id" => m.emissive_texture_id,
+                other => panic!("{slot:?} names an unknown field {other}"),
+            };
+            assert_eq!(direct, Some(id), "{slot:?}");
+            let mut cleared = m;
+            cleared.set_texture(slot, None);
+            assert_eq!(cleared.texture(slot), None);
+        }
+    }
 
     #[test]
     fn item_settings_defaults() {
@@ -716,7 +1588,7 @@ mod tests {
 
     #[test]
     fn flat_constructor_and_helpers() {
-        let m = Material::flat([0.4, 0.5, 0.6]);
+        let m = Material::flat(Colour::linear_rgb(0.4, 0.5, 0.6));
         assert!(m.is_flat());
         assert!(!m.is_pbr());
         assert!(m.matcap_id().is_none());
@@ -746,7 +1618,7 @@ mod tests {
 
     #[test]
     fn from_colour_sets_base_colour() {
-        let m = Material::from_colour([1.0, 0.0, 0.5]);
+        let m = Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.5));
         assert!((m.base_colour.to_linear_rgb()[0] - 1.0).abs() < 1e-6);
         assert!((m.base_colour.to_linear_rgb()[1]).abs() < 1e-6);
         assert!((m.base_colour.to_linear_rgb()[2] - 0.5).abs() < 1e-6);
@@ -756,7 +1628,7 @@ mod tests {
 
     #[test]
     fn pbr_constructor() {
-        let m = Material::pbr([0.8, 0.2, 0.1], 0.9, 0.3);
+        let m = Material::pbr(Colour::linear_rgb(0.8, 0.2, 0.1), 0.9, 0.3);
         assert!(m.is_pbr());
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
@@ -851,8 +1723,8 @@ mod tests {
     #[test]
     fn solid_delegates_to_from_colour() {
         let colour = [1.0_f32, 0.0, 0.5];
-        let a = Material::solid(colour);
-        let b = Material::from_colour(colour);
+        let a = Material::solid(Colour::from_linear_rgb_array(colour));
+        let b = Material::from_colour(Colour::from_linear_rgb_array(colour));
         assert!((a.base_colour.to_linear_rgb()[0] - b.base_colour.to_linear_rgb()[0]).abs() < 1e-6);
         assert!((a.base_colour.to_linear_rgb()[1] - b.base_colour.to_linear_rgb()[1]).abs() < 1e-6);
         assert!((a.base_colour.to_linear_rgb()[2] - b.base_colour.to_linear_rgb()[2]).abs() < 1e-6);
@@ -876,7 +1748,7 @@ mod tests {
     #[test]
     fn pbr_with_ao_sets_fields() {
         let m = Material::pbr_with_ao(
-            [0.8, 0.2, 0.1],
+            Colour::linear_rgb(0.8, 0.2, 0.1),
             0.9,
             0.3,
             Some(crate::ids::TextureId::from_raw(7)),
@@ -890,7 +1762,7 @@ mod tests {
 
     #[test]
     fn pbr_with_ao_accepts_none() {
-        let m = Material::pbr_with_ao([0.5; 3], 0.0, 1.0, None);
+        let m = Material::pbr_with_ao(Colour::linear_rgb(0.5, 0.5, 0.5), 0.0, 1.0, None);
         assert_eq!(m.ao_map_id, None);
     }
 

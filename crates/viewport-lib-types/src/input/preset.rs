@@ -6,54 +6,71 @@ use super::viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 
 /// Named viewport control presets.
 ///
-/// A preset packages a complete set of [`ViewportBinding`]s that define
-/// the viewport interaction behaviour for a given interaction style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A preset packages a complete set of [`ViewportBinding`]s that define the
+/// viewport interaction behaviour for a given interaction style. Bindings belong
+/// to the resolver that owns them, not to a camera controller: one
+/// `ViewportInput` per viewport holds the set, and controllers consume the
+/// `ActionFrame` it produces.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BindingPreset {
-    /// The canonical camera-navigation control scheme matching `examples/winit_primitives`.
+    /// The default scheme: the library takes the middle button and the wheel, and
+    /// nothing else.
     ///
-    /// - Left drag -> Orbit
-    /// - Right drag -> Pan
     /// - Middle drag -> Orbit
-    /// - Middle + Shift drag -> Pan
+    /// - Shift + Middle drag -> Pan
     /// - Scroll -> Zoom
-    /// - Ctrl + Scroll -> Orbit (two-axis)
-    /// - Shift + Scroll -> Pan (two-axis)
-    ViewportPrimitives,
+    /// - Ctrl + Scroll -> Orbit
+    /// - Shift + Scroll -> Pan
+    ///
+    /// Plus the viewport keyboard shortcuts: focus, reset view, fly mode and its
+    /// movement, confirm and cancel. Add a tool's own bindings with
+    /// `ViewportInput::with_bindings`.
+    ///
+    /// **Left drag and right drag are deliberately unbound** and belong to the
+    /// application: selection, gizmo dragging, tools, context menus.
+    ///
+    /// Two complete schemes with one rule connecting them. The middle button covers
+    /// orbit and pan; the wheel with modifiers covers all three with no buttons at
+    /// all, which is what makes a viewport usable on a trackpad. Across both, shift
+    /// means pan and ctrl means orbit. Zoom is scroll only.
+    #[default]
+    Default,
 
-    /// Full binding set: camera navigation plus all keyboard shortcuts (normal
-    /// mode, fly mode, manipulation mode, global).
+    /// [`Default`](Self::Default) plus `Left drag -> Orbit`.
     ///
-    /// Differs from [`ViewportPrimitives`](Self::ViewportPrimitives): left drag is **not** bound to orbit
-    /// because it is reserved for box selection and gizmo dragging. Orbit is
-    /// available via Ctrl+Scroll.
-    ///
-    /// Use this preset to replace `InputSystem` entirely.
-    ViewportAll,
+    /// Use this **only if the application never uses left drag**, which in practice
+    /// means it has no selection, no gizmo and no tools: a model viewer, a plot, a
+    /// thumbnail preview. In anything with a selection, left drag has two claimants
+    /// and the camera will fight the tool.
+    Viewer,
 }
 
-/// Returns the viewport bindings for the [`BindingPreset::ViewportPrimitives`] preset.
+/// Former name for the camera-only scheme. Resolves to [`BindingPreset::Viewer`],
+/// which keeps left-drag orbit; note that right-drag pan is no longer bound.
+#[deprecated(note = "renamed: use BindingPreset::Viewer (left drag still orbits) or ::Default")]
+pub const VIEWPORT_PRIMITIVES: BindingPreset = BindingPreset::Viewer;
+
+/// Former name for the full scheme. Resolves to [`BindingPreset::Default`].
+#[deprecated(note = "renamed: use BindingPreset::Default")]
+pub const VIEWPORT_ALL: BindingPreset = BindingPreset::Default;
+
+/// The camera-navigation half of [`BindingPreset::Default`]: the middle button, the
+/// wheel, and the touch gestures.
 ///
-/// This is the canonical reference control scheme, matching `examples/winit_primitives`.
-pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
+/// Left drag and right drag are unbound and belong to the application. Use this when
+/// you want the camera scheme without the viewport's keyboard shortcuts.
+pub fn viewport_camera_bindings() -> Vec<ViewportBinding> {
     vec![
-        // Left drag -> Orbit (no modifiers)
+        // Middle drag (no modifiers) -> Orbit. Exact, so shift+middle can mean pan.
         ViewportBinding::new(
             Action::Orbit,
             ViewportGesture::Drag {
-                button: MouseButton::Left,
+                button: MouseButton::Middle,
                 modifiers: ModifiersMatch::Exact(Modifiers::NONE),
             },
         ),
-        // Right drag -> Pan (any modifiers, pan takes priority over orbit for right)
-        ViewportBinding::new(
-            Action::Pan,
-            ViewportGesture::Drag {
-                button: MouseButton::Right,
-                modifiers: ModifiersMatch::Any,
-            },
-        ),
-        // Middle drag + Shift -> Pan
+        // Middle + Shift drag -> Pan. Shift means pan here and on the wheel below.
         ViewportBinding::new(
             Action::Pan,
             ViewportGesture::Drag {
@@ -61,104 +78,84 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
                 modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
             },
         ),
-        // Middle drag (no shift) -> Orbit
-        ViewportBinding::new(
-            Action::Orbit,
-            ViewportGesture::Drag {
-                button: MouseButton::Middle,
-                modifiers: ModifiersMatch::Exact(Modifiers::NONE),
-            },
-        ),
-        // Ctrl + Scroll -> Orbit (two-axis)
+        // Ctrl + Scroll -> Orbit (two-axis). Ctrl means orbit here and nowhere else.
         ViewportBinding::new(
             Action::Orbit,
             ViewportGesture::WheelXY {
                 modifiers: ModifiersMatch::Contains(Modifiers::CTRL),
             },
         ),
-        // Shift + Scroll -> Pan (two-axis)
+        // Shift + Scroll -> Pan (two-axis).
         ViewportBinding::new(
             Action::Pan,
             ViewportGesture::WheelXY {
                 modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
             },
         ),
-        // Plain Scroll -> Zoom
+        // Plain Scroll -> Zoom. Zoom is scroll only; there is no drag-to-zoom.
         ViewportBinding::new(
             Action::Zoom,
             ViewportGesture::WheelY {
                 modifiers: ModifiersMatch::Exact(Modifiers::NONE),
             },
         ),
+        // The touch scheme. One finger orbits and two pan, which is what every
+        // mobile 3D viewer does; selection is the tap, not the drag, so a viewport
+        // with tools still has the gesture it needs. Twist is not here because it has
+        // no Action to bind to: it resolves straight into navigation, like the
+        // trackpad rotation gesture.
+        ViewportBinding::new(Action::Orbit, ViewportGesture::TouchDrag { contacts: 1 }),
+        ViewportBinding::new(Action::Pan, ViewportGesture::TouchDrag { contacts: 2 }),
+        ViewportBinding::new(Action::Zoom, ViewportGesture::TouchPinch),
     ]
 }
 
-/// Returns the full binding set for [`BindingPreset::ViewportAll`].
+/// Left drag bound to orbit, the one addition [`BindingPreset::Viewer`] makes.
+fn left_drag_orbit() -> ViewportBinding {
+    ViewportBinding::new(
+        Action::Orbit,
+        ViewportGesture::Drag {
+            button: MouseButton::Left,
+            modifiers: ModifiersMatch::Exact(Modifiers::NONE),
+        },
+    )
+}
+
+/// Returns the bindings for [`BindingPreset::Viewer`]: the default set plus
+/// `Left drag -> Orbit`.
 ///
-/// Extends [`viewport_primitives_bindings`] with all keyboard shortcuts:
-/// normal-mode actions, fly-mode movement, manipulation constraints, and
-/// global actions (undo/redo).
+/// Only for an application that never uses left drag itself.
+pub fn viewer_bindings() -> Vec<ViewportBinding> {
+    let mut bindings = viewport_default_bindings();
+    bindings.push(left_drag_orbit());
+    bindings
+}
+
+/// Former name for the camera-only set. The scheme has changed: left drag and right
+/// drag are no longer bound to the camera.
+#[deprecated(note = "renamed: use viewport_camera_bindings (note the new scheme) or viewer_bindings")]
+pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
+    viewer_bindings()
+}
+
+/// Returns the full binding set for [`BindingPreset::Default`]: the camera scheme
+/// from [`viewport_camera_bindings`] plus the viewport's keyboard shortcuts.
+///
+/// Covers normal-mode actions, fly-mode movement, and confirm and cancel.
+/// Application and tool shortcuts (undo, delete, a gizmo's G, R and S) are not
+/// bound here: they belong to the application or the tool crate, which binds
+/// them to [`Action::Custom`] values of its own.
 ///
 /// Consumers are responsible for applying mode awareness : key bindings for
-/// fly mode and manipulation mode are always present in the resolved
+/// fly mode and confirm / cancel are always present in the resolved
 /// [`ActionFrame`](crate::input::action_frame::ActionFrame), so callers should
 /// gate on the current [`InputMode`](crate::input::mode::InputMode).
-pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
+pub fn viewport_default_bindings() -> Vec<ViewportBinding> {
     let none = ModifiersMatch::Exact(Modifiers::NONE);
     let any = ModifiersMatch::Any;
 
-    let mut bindings = viewport_primitives_bindings();
+    let mut bindings = viewport_camera_bindings();
 
-    // Left drag is reserved for box selection and gizmo interaction; orbit is
-    // available via Ctrl+Scroll (included via viewport_primitives_bindings).
-    bindings.retain(|b| {
-        !matches!(
-            b.gesture,
-            ViewportGesture::Drag {
-                button: MouseButton::Left,
-                ..
-            }
-        )
-    });
-
-    // -- Normal mode: object manipulation shortcuts --
-    bindings.push(ViewportBinding::new(
-        Action::BeginMove,
-        ViewportGesture::KeyPress {
-            key: KeyCode::G,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::BeginRotate,
-        ViewportGesture::KeyPress {
-            key: KeyCode::R,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::BeginScale,
-        ViewportGesture::KeyPress {
-            key: KeyCode::S,
-            modifiers: none,
-        },
-    ));
-
-    // -- Normal mode: object shortcuts --
-    bindings.push(ViewportBinding::new(
-        Action::OpenAddMenu,
-        ViewportGesture::KeyPress {
-            key: KeyCode::A,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::DeleteSelected,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: none,
-        },
-    ));
     bindings.push(ViewportBinding::new(
         Action::FocusObject,
         ViewportGesture::KeyPress {
@@ -170,27 +167,6 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
         Action::ResetView,
         ViewportGesture::KeyPress {
             key: KeyCode::R,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ToggleWireframe,
-        ViewportGesture::KeyPress {
-            key: KeyCode::W,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::CycleGizmoMode,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Tab,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ToggleGizmoSpace,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Backtick,
             modifiers: none,
         },
     ));
@@ -247,68 +223,14 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
             modifiers: any,
         },
     ));
-
-    // -- Manipulation mode: axis constraints --
     bindings.push(ViewportBinding::new(
-        Action::ConstrainX,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainY,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ConstrainZ,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeX,
-        ViewportGesture::KeyPress {
-            key: KeyCode::X,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeY,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::ExcludeZ,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
+        Action::FlySpeedBoost,
+        ViewportGesture::ModifiersHeld {
             modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
         },
     ));
 
-    // -- Manipulation mode: numeric input --
-    bindings.push(ViewportBinding::new(
-        Action::NumericBackspace,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Backspace,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::NumericNextAxis,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Tab,
-            modifiers: none,
-        },
-    ));
-
-    // -- Confirm / Cancel (fly mode + manipulation mode; callers must gate on mode) --
+    // -- Confirm / Cancel (fly mode and modal tools; callers must gate on mode) --
     bindings.push(ViewportBinding::new(
         Action::Confirm,
         ViewportGesture::KeyPress {
@@ -323,45 +245,12 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
             modifiers: none,
         },
     ));
-
-    // -- Pivot mode cycling (normal + manipulation mode) --
-    bindings.push(ViewportBinding::new(
-        Action::CyclePivotModeForward,
-        ViewportGesture::KeyPress {
-            key: KeyCode::LeftBracket,
-            modifiers: none,
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::CyclePivotModeBackward,
-        ViewportGesture::KeyPress {
-            key: KeyCode::RightBracket,
-            modifiers: none,
-        },
-    ));
-
-    // -- Global: undo/redo --
-    bindings.push(ViewportBinding::new(
-        Action::Redo,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: ModifiersMatch::Contains(Modifiers::CTRL_SHIFT),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::Undo,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Z,
-            modifiers: ModifiersMatch::Contains(Modifiers::CTRL),
-        },
-    ));
-    bindings.push(ViewportBinding::new(
-        Action::Redo,
-        ViewportGesture::KeyPress {
-            key: KeyCode::Y,
-            modifiers: ModifiersMatch::Contains(Modifiers::CTRL),
-        },
-    ));
-
     bindings
+}
+
+/// Former name for the full set. Renamed; note that undo and redo are no longer
+/// bound, and the camera scheme has changed.
+#[deprecated(note = "renamed: use viewport_default_bindings")]
+pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
+    viewport_default_bindings()
 }

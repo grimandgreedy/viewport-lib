@@ -33,6 +33,51 @@ pub enum ScrollUnits {
     Pages,
 }
 
+/// Identifies one finger or pen on a touch surface. Stable from the contact going
+/// down to it lifting; reused freely after that, so it is not a handle to keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TouchId(pub u64);
+
+/// Where a touch contact is in its lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TouchPhase {
+    /// The contact went down.
+    Started,
+    /// The contact moved, or one of its other properties changed.
+    Moved,
+    /// The contact lifted normally.
+    Ended,
+    /// The system took the contact away: a call arrived, a system gesture won it,
+    /// the finger slid off a bezel. Whatever the contact was doing does not count
+    /// as having happened.
+    Cancelled,
+}
+
+/// What the platform input method reported, for composing text (Japanese,
+/// Chinese, Korean, dead-key accents) into a text field.
+///
+/// Arrives only after the host turns composition on for the window (on
+/// `ViewportApp`, `FrameCtx::set_ime_allowed`). While it is on, accepted text
+/// comes as [`Commit`](ImeEvent::Commit); typing that never composed can still
+/// arrive as [`ViewportEvent::Character`], so a text field takes both.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ImeEvent {
+    /// Composition is available for the window.
+    Enabled,
+    /// The provisional text being composed, to show in the field without
+    /// writing it to the document. An empty `text` clears it.
+    Preedit {
+        /// The provisional text.
+        text: String,
+        /// The caret inside `text` as a byte range, or `None` to hide it.
+        cursor: Option<(usize, usize)>,
+    },
+    /// Accepted text, to insert at the caret. Clears any preedit.
+    Commit(String),
+    /// Composition is off for the window. Drop any preedit still shown.
+    Disabled,
+}
+
 /// An event delivered to the viewport input pipeline.
 ///
 /// Host applications translate their native windowing events into
@@ -62,32 +107,62 @@ pub enum ViewportEvent {
     },
     /// A keyboard key changed state.
     Key {
-        /// Which key changed state.
+        /// Which key changed state, by position: the key in the US-layout `A`
+        /// position is `KeyCode::A` whatever the layout prints on it. Bindings
+        /// match on this, so WASD stays in place on AZERTY.
         key: KeyCode,
         /// New key state.
         state: ButtonState,
         /// True if the event is a key-repeat (key held down).
         repeat: bool,
+        /// The character the layout gives this key, unshifted and lower case
+        /// (`z` for the key labelled Z on any layout), or `None` for keys that
+        /// produce no character (arrows, function keys). Match shortcuts such as
+        /// Ctrl+Z on this to follow the layout.
+        logical: Option<char>,
     },
     /// Modifier key state changed.
     ModifiersChanged(Modifiers),
     /// The pointer left the viewport area.
+    ///
+    /// **This releases every held button.** It exists to avoid a button being left
+    /// stuck down when the pointer goes somewhere the viewport will never hear the
+    /// release, so it ends any drag in flight.
+    ///
+    /// Send it when the pointer leaves the *window*, not every time it crosses the
+    /// viewport's own edge. A drag whose press landed inside the viewport keeps
+    /// resolving after the pointer leaves the rect, which is what lets a fast orbit
+    /// run past the edge; forwarding this event at that boundary throws that away.
+    /// Setting the pointer ownership in the
+    /// [`ViewportContext`](crate::input::ViewportContext) to
+    /// [`Elsewhere`](crate::input::PointerOwnership::Elsewhere) is the way to say
+    /// "the pointer is no longer over us" without ending the drag.
+    ///
+    /// Under a pointer grab it should never be sent at all: a grabbed pointer has no
+    /// rect to leave, and ending the gesture would end the look session.
+    /// [`forward_to_viewport`](crate::input::forward_to_viewport) drops it for you
+    /// under [`PointerOwnership::Grabbed`](crate::input::PointerOwnership::Grabbed).
     PointerLeft,
     /// The viewport lost keyboard focus.
     FocusLost,
-    /// A character was typed (Unicode).
+    /// A character was typed (Unicode): the text a key press produced after
+    /// layout, Shift and dead keys.
     ///
-    /// Only push this event when the manipulation controller is active
-    /// (`ManipulationController::is_active()`) to avoid swallowing other keypresses.
-    /// The library filters the character stream to digits, `.`, and `-` before
-    /// passing it to the numeric input buffer.
+    /// winit puts it in `KeyEvent::text`, and the winit adapter's `translate`
+    /// emits it after the key's [`Key`](ViewportEvent::Key) event. egui sends it
+    /// as `Event::Text`, which the egui adapter's `translate` turns into one
+    /// `Character` per character. The resolver keeps it only while the viewport
+    /// owns the keyboard, like a key, and a manipulation session reads its
+    /// digits, `.` and `-` for numeric entry.
     Character(char),
 
     /// Two-finger trackpad rotation gesture.
     ///
     /// `delta` is the change in angle this event, in radians.
     /// Positive = counter-clockwise (matches winit's `RotationGesture` convention,
-    /// converted from degrees to radians by the host).
+    /// converted from degrees to radians by the host). egui's angle convention is the
+    /// opposite, so its adapter negates; twist therefore turns the same way through
+    /// either host.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
@@ -95,9 +170,15 @@ pub enum ViewportEvent {
 
     /// Two-finger trackpad pinch (magnify) gesture.
     ///
-    /// `delta` is the change in scale this event (winit's `PinchGesture` delta):
-    /// positive = pinch out / zoom in. Pass-through by default; a consumer maps it to
-    /// camera zoom if desired.
+    /// `delta` is the change in magnification this event, on a log scale: positive =
+    /// pinch out / zoom in, and `0.0` is no change. This is winit's `PinchGesture`
+    /// convention. A host whose framework reports a multiplicative factor instead
+    /// (egui's `Event::Zoom`, where `1.0` is no change) converts with `ln`; the
+    /// adapters do this, so the same physical pinch resolves the same way whichever
+    /// shell hosts the viewport.
+    ///
+    /// Resolves into [`NavigationActions::zoom`](crate::input::NavigationActions::zoom),
+    /// gated on the pointer being inside the viewport, like the wheel.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
@@ -105,11 +186,34 @@ pub enum ViewportEvent {
 
     /// Two-finger trackpad pan gesture.
     ///
-    /// `delta` is the pan this event in logical points. Pass-through by default.
+    /// `delta` is the pan this event in logical points. Resolves into
+    /// [`NavigationActions::pan`](crate::input::NavigationActions::pan), gated on the
+    /// pointer being inside the viewport.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
     TrackpadPan(glam::Vec2),
+
+    /// A touch contact went down, moved, lifted, or was taken away.
+    ///
+    /// One event per contact per change, so a two-finger gesture arrives as two
+    /// interleaved streams distinguished by `id`. The viewport tracks the contacts
+    /// and recognises the gestures itself, rather than taking a host's derived
+    /// pinch or pan, so that the same finger movement feels the same whichever
+    /// shell hosts the viewport.
+    ///
+    /// A host that also synthesises mouse events from touch (most do) should send
+    /// one or the other, not both, or every gesture counts twice.
+    Touch {
+        /// Which contact this is.
+        id: TouchId,
+        /// What the contact just did.
+        phase: TouchPhase,
+        /// Viewport-local position in logical pixels, origin at top-left. The same
+        /// space as [`PointerMoved`](ViewportEvent::PointerMoved), which is what
+        /// lets the two share the hit-testing an application already has.
+        position: glam::Vec2,
+    },
 
     /// Raw, unaccelerated relative pointer motion from the input device, not tied to
     /// the window or surface. `delta` is in raw device units. Use this for
@@ -139,4 +243,249 @@ pub enum ViewportEvent {
     /// A file drag left the window without dropping, cancelling a prior
     /// [`FileHovered`](ViewportEvent::FileHovered).
     FileHoverCancelled,
+
+    /// The platform input method reported composition. For text fields; the
+    /// viewport itself ignores it.
+    Ime(ImeEvent),
+}
+
+/// The variant names of [`ViewportEvent`], listed once so the name table and the
+/// match in `variant_name` cannot drift apart. The match has no wildcard, so a new
+/// variant fails to compile here until it is listed.
+macro_rules! viewport_event_variants {
+    ($($name:ident),* $(,)?) => {
+        impl ViewportEvent {
+            /// Every variant's name, for tests that walk the event vocabulary (an
+            /// adapter checking it carries each one).
+            #[doc(hidden)]
+            pub const VARIANTS: &'static [&'static str] = &[$(stringify!($name)),*];
+
+            /// This event's variant name, one of [`VARIANTS`](Self::VARIANTS).
+            #[doc(hidden)]
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(ViewportEvent::$name { .. } => stringify!($name),)*
+                }
+            }
+        }
+    };
+}
+
+viewport_event_variants! {
+    PointerMoved,
+    MouseButton,
+    Wheel,
+    Key,
+    ModifiersChanged,
+    PointerLeft,
+    FocusLost,
+    Character,
+    TrackpadRotate,
+    TrackpadPinch,
+    TrackpadPan,
+    Touch,
+    RawMotion,
+    ThemeChanged,
+    Occluded,
+    FileDropped,
+    FileHovered,
+    FileHoverCancelled,
+    Ime,
+}
+
+impl ViewportEvent {
+    /// Whether this event would be claimed by both the viewport and anything drawn
+    /// over it, so at most one of them may act on it.
+    ///
+    /// A left press, the pointer motion after it, and a touch contact landing are
+    /// contested: a press-and-move is exactly what a camera orbit, a gizmo drag and
+    /// a UI drag would all claim, so it has to belong to one of them. Touch is
+    /// contested for the same reason: a finger is the only pointer a touch device
+    /// has, so a control that takes the contact takes all of it. Everything else is
+    /// **ambient**: the wheel, the other buttons and the modifiers can be acted on
+    /// by more than one claimant in the same frame. Releases and contact ends are
+    /// teardown, not claims, and are never contested: a resolver that saw the
+    /// press must see its release, and one that did not ignores it. A contact's
+    /// later moves are left to the resolver, which follows the contacts it saw
+    /// land.
+    ///
+    /// That asymmetry is deliberate. Withholding the whole event stream whenever
+    /// something over the viewport holds the pointer is the obvious implementation
+    /// and it fails in the most visible place: the moment the cursor crosses a gizmo
+    /// handle, scrolling stops zooming, which is exactly where someone is most likely
+    /// to scroll.
+    ///
+    /// The set is fixed and does not consult the active bindings. Right and middle
+    /// presses stay ambient even though the default scheme binds them to camera
+    /// navigation, because chrome overwhelmingly uses the primary button. The
+    /// resolver starts a drag from one only when it arrives while the viewport
+    /// owns the input, so a right press on chrome over the viewport does not
+    /// orbit.
+    ///
+    /// Used by [`forward_to_viewport`](super::context::forward_to_viewport), which is
+    /// what most callers want.
+    pub fn is_contested(&self) -> bool {
+        matches!(
+            self,
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed,
+            } | ViewportEvent::PointerMoved { .. }
+                | ViewportEvent::Touch {
+                    phase: TouchPhase::Started,
+                    ..
+                }
+        )
+    }
+
+    /// This event with any viewport-local position shifted by `-origin`, and
+    /// everything else unchanged.
+    ///
+    /// For a viewport embedded in a larger window: the adapters produce positions
+    /// relative to the window, and the viewport wants them relative to its own rect.
+    /// Subtract the rect's top-left corner, in the same logical pixels the positions
+    /// are already in.
+    ///
+    /// ```
+    /// # use viewport_lib_types::input::ViewportEvent;
+    /// let ev = ViewportEvent::PointerMoved { position: glam::Vec2::new(300.0, 120.0) };
+    /// let local = ev.offset_by(glam::Vec2::new(200.0, 100.0));
+    /// assert!(matches!(local, ViewportEvent::PointerMoved { position } if position == glam::Vec2::new(100.0, 20.0)));
+    /// ```
+    ///
+    /// Worth using rather than matching the position-carrying variants yourself:
+    /// that list grows (touch contacts joined it), and a host that enumerated it by
+    /// hand keeps compiling while quietly leaving the new ones in window space.
+    /// Deltas are not positions and are left alone: the wheel, the trackpad
+    /// gestures, and raw motion all mean the same thing wherever the rect is.
+    pub fn offset_by(&self, origin: glam::Vec2) -> ViewportEvent {
+        match self {
+            ViewportEvent::PointerMoved { position } => ViewportEvent::PointerMoved {
+                position: *position - origin,
+            },
+            ViewportEvent::Touch {
+                id,
+                phase,
+                position,
+            } => ViewportEvent::Touch {
+                id: *id,
+                phase: *phase,
+                position: *position - origin,
+            },
+            other => other.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod contested_tests {
+    use super::*;
+
+    #[test]
+    fn every_variant_has_a_listed_name() {
+        assert!(ViewportEvent::VARIANTS.contains(&ViewportEvent::PointerLeft.variant_name()));
+        assert_eq!(ViewportEvent::FocusLost.variant_name(), "FocusLost");
+        assert_eq!(ViewportEvent::Character('a').variant_name(), "Character");
+        let unique: std::collections::HashSet<_> = ViewportEvent::VARIANTS.iter().collect();
+        assert_eq!(unique.len(), ViewportEvent::VARIANTS.len());
+    }
+
+    #[test]
+    fn only_positions_are_offset() {
+        let origin = glam::Vec2::new(200.0, 100.0);
+
+        let moved = ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(300.0, 120.0),
+        }
+        .offset_by(origin);
+        assert!(
+            matches!(moved, ViewportEvent::PointerMoved { position } if position == glam::Vec2::new(100.0, 20.0))
+        );
+
+        let touch = ViewportEvent::Touch {
+            id: TouchId(3),
+            phase: TouchPhase::Moved,
+            position: glam::Vec2::new(300.0, 120.0),
+        }
+        .offset_by(origin);
+        match touch {
+            ViewportEvent::Touch {
+                id,
+                phase,
+                position,
+            } => {
+                assert_eq!(id, TouchId(3));
+                assert_eq!(phase, TouchPhase::Moved);
+                assert_eq!(position, glam::Vec2::new(100.0, 20.0));
+            }
+            other => panic!("expected Touch, got {other:?}"),
+        }
+
+        // A delta means the same thing wherever the rect is.
+        let wheel = ViewportEvent::Wheel {
+            delta: glam::Vec2::Y,
+            units: ScrollUnits::Lines,
+        }
+        .offset_by(origin);
+        assert!(matches!(wheel, ViewportEvent::Wheel { delta, .. } if delta == glam::Vec2::Y));
+        assert!(matches!(
+            ViewportEvent::PointerLeft.offset_by(origin),
+            ViewportEvent::PointerLeft
+        ));
+    }
+
+    #[test]
+    fn only_the_left_press_pointer_motion_and_a_landing_are_contested() {
+        assert!(
+            ViewportEvent::PointerMoved {
+                position: glam::Vec2::ZERO
+            }
+            .is_contested()
+        );
+        assert!(
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed
+            }
+            .is_contested()
+        );
+        assert!(
+            !ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Released
+            }
+            .is_contested(),
+            "a release is teardown"
+        );
+        let touch = |phase| ViewportEvent::Touch {
+            id: TouchId(1),
+            phase,
+            position: glam::Vec2::ZERO,
+        };
+        assert!(touch(TouchPhase::Started).is_contested());
+        for phase in [TouchPhase::Moved, TouchPhase::Ended, TouchPhase::Cancelled] {
+            assert!(!touch(phase).is_contested(), "{phase:?}");
+        }
+
+        // Ambient: acted on by the camera even while something over it holds the pointer.
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            assert!(
+                !ViewportEvent::MouseButton {
+                    button,
+                    state: ButtonState::Pressed
+                }
+                .is_contested(),
+                "{button:?} must stay ambient"
+            );
+        }
+        assert!(
+            !ViewportEvent::Wheel {
+                delta: glam::Vec2::Y,
+                units: ScrollUnits::Lines
+            }
+            .is_contested()
+        );
+        assert!(!ViewportEvent::ModifiersChanged(Modifiers::NONE).is_contested());
+        assert!(!ViewportEvent::PointerLeft.is_contested());
+    }
 }

@@ -1,42 +1,91 @@
 // Screen-space SDF overlay shape shader.
 //
 // Each shape is a bounding quad whose vertices carry the shape parameters.
-// The fragment shader evaluates a signed-distance function to produce
-// anti-aliased fill and border regions, with an optional outer shadow/glow.
+// The fragment shader evaluates a signed-distance function to produce an
+// anti-aliased fill, with stacked outer and inner shadow layers around it.
 
+// Twelve attributes, paired where they fit, so that with the four of the
+// instance stream the shader stays within the 16 WebGL2 allows.
 struct VertexInput {
     @location(0) position:        vec2<f32>,  // NDC xy
-    @location(1) local_pos:       vec2<f32>,  // pixels from shape centre
+    @location(1) local_half:      vec4<f32>,  // xy = pixels from shape centre, zw = half-extents
     @location(2) fill_colour:     vec4<f32>,  // start colour (or solid colour)
-    @location(3) border_colour:   vec4<f32>,
-    @location(4) half_size:       vec2<f32>,  // shape half-extents in pixels
-    @location(5) radii:           vec4<f32>,  // shape-specific params
-    @location(6) shape_meta:      vec2<f32>, // x=border_width, y=shape_type
-    @location(7) stop_positions:  vec4<f32>, // positions in [0,1] for stops a..d
-    @location(8) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
-    @location(9) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
-    @location(10) shadow_index:   vec4<f32>,  // base_index, outer_ct, inner_ct, border_mode
-    @location(11) rotation_pivot: vec4<f32>,  // rotation, pivot_x, pivot_y, pad
-    @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(13) clip_index:     f32,        // clip-shape index, or -1 for none
-    @location(14) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
-    @location(15) stop_colour_d:  vec4<f32>,  // 4th colour stop
-    @builtin(instance_index) instance_index: u32,
+    @location(3) radii:           vec4<f32>,  // shape-specific params
+    @location(4) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
+    @location(5) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
+    @location(6) shadow_meta:     vec4<f32>,  // base_index, outer_ct, inner_ct, shape_type
+    @location(7) rotation_clip:   vec4<f32>,  // rotation, pivot_x, pivot_y, clip-shape index (or -1)
+    @location(8) clip_rect:       vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(9) stop_colour_c:   vec4<f32>,  // 3rd colour stop (multi-stop gradients)
+    @location(10) stop_colour_d:  vec4<f32>,  // 4th colour stop
+    @location(11) stop_positions: vec4<f32>,  // positions in [0,1] for stops a..d
+};
+
+// The per-draw instance, a per-instance vertex stream (see `OverlayInstance`).
+struct InstanceInput {
+    @location(12) translate_opacity_clip: vec4<f32>,
+    @location(13) clip_rect: vec4<f32>,
+    @location(14) tint: vec4<f32>,
+    @location(15) scale_rotation_pivot: vec4<f32>,
 };
 
 // One stacked shadow layer. `params` = (radius, offset_x, offset_y, is_inner).
+// One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
+// `params2` = (spread, falloff, unused, unused).
 struct ShadowLayer {
     colour: vec4<f32>,
     params: vec4<f32>,
+    params2: vec4<f32>,
 };
 
-@group(0) @binding(0) var<storage, read> shadow_layers: array<ShadowLayer>;
+// Shadow coverage for a point whose signed distance to the (already offset)
+// silhouette is `sd`. `spread` grows the silhouette, `blur` is the fade
+// distance outward from that grown edge, and `falloff` shapes the fade curve:
+// 1.0 is the plain fade, above concentrates it against the item with a longer
+// light tail, below broadens it towards a glow. `aa` keeps a zero-blur edge
+// (a contour) antialiased instead of degenerate.
+fn shadow_coverage(sd: f32, spread: f32, blur: f32, falloff: f32, aa: f32) -> f32 {
+    let d = sd - spread;
+    let w = max(blur, aa);
+    let base = 1.0 - smoothstep(0.0, w, d);
+    if (falloff == 1.0) {
+        return base;
+    }
+    return pow(base, falloff);
+}
+
+// The inner (inset) counterpart: coverage rises from 0 at the shape edge to 1
+// across the blur band, with `spread` starting the band further inside.
+fn inner_shadow_coverage(sd: f32, spread: f32, blur: f32, falloff: f32, aa: f32) -> f32 {
+    let w = max(blur, aa);
+    let base = smoothstep(0.0, w, sd + spread);
+    if (falloff == 1.0) {
+        return base;
+    }
+    return pow(base, falloff);
+}
+
+@group(0) @binding(0) var shadow_layers: texture_2d<f32>;
+
+// The stacked shadow layers, as a data texture rather than a storage buffer so
+// the overlay family runs on devices without storage buffers. Layer `i` is
+// three `Rgba32Float` texels side by side, `SHADOW_LAYERS_PER_ROW` layers to a
+// row (the renderer's constant of the same name).
+const SHADOW_LAYERS_PER_ROW: i32 = 256;
+fn shadow_layer(i: i32) -> ShadowLayer {
+    let at = vec2<i32>((i % SHADOW_LAYERS_PER_ROW) * 3, i / SHADOW_LAYERS_PER_ROW);
+    return ShadowLayer(
+        textureLoad(shadow_layers, at, 0),
+        textureLoad(shadow_layers, at + vec2<i32>(1, 0), 0),
+        textureLoad(shadow_layers, at + vec2<i32>(2, 0), 0),
+    );
+}
 
 // One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
 // parent_index, invert). A vertex's `clip_index` selects an entry; `parent_index`
 // (or -1) chains to an enclosing mask so nested clips intersect.
 struct ClipShape {
-    center:    vec2<f32>,
+    centre:    vec2<f32>,
     half_size: vec2<f32>,
     radii:     vec4<f32>,
     params:    vec4<f32>,
@@ -44,7 +93,9 @@ struct ClipShape {
     pad:       vec2<f32>,
 };
 
-@group(0) @binding(1) var<storage, read> clip_shapes: array<ClipShape>;
+// A uniform array of the renderer's `MAX_OVERLAY_CLIP_SHAPES` (256 at 64 bytes
+// fills a 16 KiB uniform binding); a frame's later masks are dropped.
+@group(0) @binding(1) var<uniform> clip_shapes: array<ClipShape, 256>;
 
 // Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
 // positions to NDC so overlay geometry is independent of the viewport size.
@@ -55,8 +106,7 @@ struct Viewport {
 @group(0) @binding(2) var<uniform> viewport: Viewport;
 
 // Per-draw instance: a retained group's per-frame translate, opacity, and outer
-// clip. Indexed by @builtin(instance_index); slot 0 is the identity immediate
-// draws use. The shape shader is at the inter-stage variable limit, so the
+// clip, from the instance stream; slot 0 is the identity immediate draws use. The shape shader is at the inter-stage variable limit, so the
 // instance is consumed in the vertex stage: translate on the position, opacity
 // folded into the vertex colours, and the outer clip intersected with the baked
 // per-vertex clip into the single `clip_rect` varying (two bbox rejects are
@@ -68,12 +118,34 @@ struct OverlayInstance {
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
     tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
-    scale:      f32,        // per-frame uniform scale (text stream only; unused here)
-    _pad0:      f32,
-    _pad1:      f32,
-    _pad2:      f32,
+    scale:      f32,        // per-frame uniform scale about the pivot
+    rotation:   f32,        // per-frame rotation in radians about the pivot
+    pivot_x:    f32,        // two scalars, not a vec2: a vec2 would align to 8
+    pivot_y:    f32,
 };
-@group(0) @binding(3) var<storage, read> instances: array<OverlayInstance>;
+
+// One level of the composition contract: scale about the pivot, then rotate
+// about it, then translate. With the identity instance this returns `p`.
+fn group_apply(p: vec2<f32>, inst: OverlayInstance) -> vec2<f32> {
+    let piv = vec2<f32>(inst.pivot_x, inst.pivot_y);
+    let d = (p - piv) * inst.scale;
+    let s = sin(inst.rotation);
+    let c = cos(inst.rotation);
+    return piv + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c) + inst.translate;
+}
+fn read_instance(i: InstanceInput) -> OverlayInstance {
+    return OverlayInstance(
+        i.translate_opacity_clip.xy,
+        i.translate_opacity_clip.z,
+        i.translate_opacity_clip.w,
+        i.clip_rect,
+        i.tint,
+        i.scale_rotation_pivot.x,
+        i.scale_rotation_pivot.y,
+        i.scale_rotation_pivot.z,
+        i.scale_rotation_pivot.w,
+    );
+}
 
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
@@ -91,7 +163,9 @@ fn combine_clip(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
     if (!b_valid) { return a; }
     let r = vec4<f32>(max(a.x, b.x), max(a.y, b.y), min(a.z, b.z), min(a.w, b.w));
     if (r.z <= r.x || r.w <= r.y) {
-        return vec4<f32>(1.0e9, 1.0e9, 1.0e9 + 1.0, 1.0e9 + 1.0);
+        // Off the top-left, where no fragment falls. Not far off to the
+        // right: 1e9 + 1 rounds to 1e9 in f32 and the box would lose its area.
+        return vec4<f32>(-2.0, -2.0, -1.0, -1.0);
     }
     return r;
 }
@@ -100,56 +174,67 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local_pos:       vec2<f32>,
     @location(1) fill_colour:     vec4<f32>,
-    @location(2) border_colour:   vec4<f32>,
-    @location(3) half_size:       vec2<f32>,
-    @location(4) radii:           vec4<f32>,
-    @location(5) border_width:    f32,
-    @location(6) shape_type:      f32,
-    @location(7) fill_colour2:    vec4<f32>,
-    @location(8) gradient_params: vec4<f32>,
-    @location(9) @interpolate(flat) shadow_index:   vec4<f32>,
-    @location(10) @interpolate(flat) rotation_pivot: vec4<f32>,
-    @location(11) @interpolate(flat) clip_rect: vec4<f32>,
-    @location(12) @interpolate(flat) clip_index: f32,
-    @location(13) @interpolate(flat) stop_colour_c:  vec4<f32>,
-    @location(14) @interpolate(flat) stop_colour_d:  vec4<f32>,
-    @location(15) @interpolate(flat) stop_positions: vec4<f32>,
+    @location(2) half_size:       vec2<f32>,
+    @location(3) radii:           vec4<f32>,
+    @location(4) shape_type:      f32,
+    @location(5) fill_colour2:    vec4<f32>,
+    @location(6) gradient_params: vec4<f32>,
+    @location(7) @interpolate(flat) shadow_index:   vec3<f32>,
+    // rotation, pivot_x, pivot_y, and the group's uniform scale. The vertex
+    // buffer pads the fourth channel; the vertex stage fills it from the
+    // per-draw instance so the fragment can size its anti-aliasing band.
+    @location(8) @interpolate(flat) rotation_pivot: vec4<f32>,
+    @location(9) @interpolate(flat) clip_rect: vec4<f32>,
+    @location(10) @interpolate(flat) clip_index: f32,
+    @location(11) @interpolate(flat) stop_colour_c:  vec4<f32>,
+    @location(12) @interpolate(flat) stop_colour_d:  vec4<f32>,
+    @location(13) @interpolate(flat) stop_positions: vec4<f32>,
+    // The group's per-frame opacity, carried separately because the shadow
+    // layers are read from a texture in the fragment stage and so cannot
+    // have it folded into a vertex colour the way the fill does.
+    @location(14) @interpolate(flat) group_opacity: f32,
 };
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
-    let inst = instances[in.instance_index];
+    let inst = read_instance(instance);
     let a = inst.opacity;
     let t = inst.tint;
-    // The shape stream does not apply the per-frame scale (that is the text stream;
-    // scaling an SDF shape needs its size/border/radii scaled to match, a later step).
-    out.clip_position   = vec4<f32>(px_to_ndc(in.position + inst.translate), 0.0, 1.0);
-    out.local_pos       = in.local_pos;
+    // Apply the group transform to the quad only. `local_pos`, `half_size` and
+    // `radii` stay in the shape's own frame, so the SDF is still evaluated
+    // unrotated and unscaled and the group transform maps its result: a uniform
+    // scale and a rotation are exactly what that mapping can carry, which is why
+    // the transform's scale is a scalar. Edge anti-aliasing follows because the
+    // fragment derivatives of `local_pos` shrink as the quad grows.
+    out.clip_position   = vec4<f32>(px_to_ndc(group_apply(in.position, inst)), 0.0, 1.0);
+    out.local_pos       = in.local_half.xy;
     // Fold the per-draw opacity and colour tint into the vertex colours (identity
     // for immediate draws). Alpha interpolates linearly, so scaling per-vertex
     // matches scaling the resolved fragment alpha for these flat/lerped channels.
-    // The tint does not reach the SDF shadow layers (a separate storage buffer), so
+    // The tint does not reach the SDF shadow layers (read in the fragment stage), so
     // a tinted shape keeps its authored shadow colour.
     out.fill_colour     = vec4<f32>(in.fill_colour.rgb * t.rgb, in.fill_colour.a * a * t.a);
-    out.border_colour   = vec4<f32>(in.border_colour.rgb * t.rgb, in.border_colour.a * a * t.a);
-    out.half_size       = in.half_size;
+    out.half_size       = in.local_half.zw;
     out.radii           = in.radii;
-    out.border_width    = in.shape_meta.x;
-    out.shape_type      = in.shape_meta.y;
+    out.shape_type      = in.shadow_meta.w;
     out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb * t.rgb, in.fill_colour2.a * a * t.a);
     out.gradient_params = in.gradient_params;
-    out.shadow_index    = in.shadow_index;
-    out.rotation_pivot  = in.rotation_pivot;
+    out.shadow_index    = in.shadow_meta.xyz;
+    out.rotation_pivot  = vec4<f32>(in.rotation_clip.xyz, inst.scale);
     // Intersect the baked per-vertex clip with the per-frame group clip (identity
     // for immediate draws), so a retained shape group clips to its outer rect.
     out.clip_rect       = combine_clip(in.clip_rect, inst.clip_rect);
     // Prefer the per-frame group clip mask (retained groups) over the baked mask;
     // the identity instance is -1, so immediate draws keep their baked clip.
-    out.clip_index      = select(in.clip_index, inst.clip_index, inst.clip_index >= 0.0);
+    out.clip_index      = select(in.rotation_clip.w, inst.clip_index, inst.clip_index >= 0.0);
     out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb * t.rgb, in.stop_colour_c.a * a * t.a);
     out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb * t.rgb, in.stop_colour_d.a * a * t.a);
     out.stop_positions  = in.stop_positions;
+    // Opacity reaches the shadow layers; the tint does not. Fading a group out
+    // has to take its shadows and its border band with it, and a border band is
+    // a shadow layer.
+    out.group_opacity   = a;
     return out;
 }
 
@@ -432,7 +517,7 @@ fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
         let c = clip_shapes[idx];
         let rc = cos(-c.params.y);
         let rs = sin(-c.params.y);
-        let pd = (fp - c.center) - c.pivot;
+        let pd = (fp - c.centre) - c.pivot;
         let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
         if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
             return true;
@@ -474,28 +559,36 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let d = eval_sdf(p, hs, in.shape_type, in.radii);
 
-    // Anti-aliasing: 1 pixel smoothstep at the boundary.
-    let aa = 1.0;
+    // Anti-aliasing: 1 pixel smoothstep at the boundary. The band is in the
+    // shape's own units and the group transform scales the quad without
+    // scaling them, so one unit covers `scale` framebuffer pixels: divide by
+    // the scale to keep the edge one pixel wide whatever size the group is
+    // drawn at. The identity instance scales by 1, so an immediate shape and
+    // an unscaled group both land on exactly 1.0.
+    let aa = 1.0 / max(in.rotation_pivot.w, 1.0e-6);
 
-    // shadow_index: (base_index, outer_count, inner_count, border_mode).
+    // shadow_index: (base_index, outer_count, inner_count).
     let base_index = i32(in.shadow_index.x + 0.5);
     let outer_count = i32(in.shadow_index.y + 0.5);
     let inner_count = i32(in.shadow_index.z + 0.5);
-    let border_mode = i32(in.shadow_index.w + 0.5);
 
     // Accumulate the stacked outer shadow layers (drawn behind the fill).
     // Each layer is composited src-over the previous, first layer furthest
     // back. Sample the SDF at the layer's offset in the rotated frame.
     var shadow_col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     for (var i = 0; i < outer_count; i = i + 1) {
-        let layer = shadow_layers[base_index + i];
+        let layer = shadow_layer(base_index + i);
         let sr = layer.params.x;
         let soff = layer.params.yz;
-        if (sr > 0.0 && layer.colour.a > 0.0) {
+        let sspread = layer.params2.x;
+        let sfall = layer.params2.y;
+        if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
             let spd = (in.local_pos - soff) - pivot;
             let sp_r = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
             let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
-            let a = layer.colour.a * (1.0 - smoothstep(0.0, sr, sd));
+            let a = layer.colour.a
+                * in.group_opacity
+                * shadow_coverage(sd, sspread, sr, sfall, aa);
             let src = vec4<f32>(layer.colour.rgb, a);
             shadow_col = vec4<f32>(
                 mix(shadow_col.rgb, src.rgb, src.a),
@@ -506,7 +599,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
 
-    // If neither fill nor any outer shadow contributes, discard.
+    // Clip the outer shadow to outside the silhouette, the way CSS clips an
+    // outer box-shadow to outside the border box. Without this a translucent
+    // shape shows its own shadow through itself: the layers are drawn behind
+    // the fill, and a dilated silhouette covers the whole interior, not just
+    // the ring outside it. Inner shadows are the inside counterpart and are
+    // composited separately below.
+    shadow_col = vec4<f32>(shadow_col.rgb, shadow_col.a * (1.0 - fill_alpha));
+
+    // Nothing to draw where neither the fill nor an outer layer reaches.
     if (fill_alpha <= 0.0 && shadow_col.a <= 0.0) {
         discard;
     }
@@ -574,30 +675,42 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Start with the accumulated outer shadow layers.
     var colour = shadow_col;
 
-    // Composite fill on top of shadow.
+    // Composite fill on top of shadow, as a proper source-over on
+    // un-premultiplied colours. `mix(dst.rgb, src.rgb, src.a)` is only correct
+    // when the destination is opaque: with a cleared or clipped shadow behind
+    // it, the destination's colour still leaks through at full strength even
+    // though its alpha is zero. That is what made a translucent shape look
+    // tinted by its own clipped-away shadow.
     if (fill_alpha > 0.0) {
         let fc = vec4<f32>(fill_col.rgb, fill_col.a * fill_alpha);
-        colour = vec4<f32>(
-            mix(colour.rgb, fc.rgb, fc.a),
-            fc.a + colour.a * (1.0 - fc.a),
-        );
+        let out_a = fc.a + colour.a * (1.0 - fc.a);
+        let rgb = (fc.rgb * fc.a + colour.rgb * colour.a * (1.0 - fc.a)) / max(out_a, 1.0e-5);
+        colour = vec4<f32>(select(fc.rgb, rgb, out_a > 0.0), out_a);
     }
 
-    // Inner shadow layers: composite on top of the fill (so they tint the
-    // body) but under the border. Sample the SDF at (p - offset) in the
+    // Inner shadow layers: composite on top of the fill, so they tint the
+    // body. Sample the SDF at (p - offset) in the
     // rotated frame; positive sd means the offset point lies outside the
     // shape, so the current fragment is in the shadow band, fading over the
     // layer radius. Only contributes where the fragment is inside the shape.
     if (d < 0.0) {
         for (var j = 0; j < inner_count; j = j + 1) {
-            let layer = shadow_layers[base_index + outer_count + j];
+            let layer = shadow_layer(base_index + outer_count + j);
             let sr = layer.params.x;
             let soff = layer.params.yz;
-            if (sr > 0.0 && layer.colour.a > 0.0) {
+            let sspread = layer.params2.x;
+            let sfall = layer.params2.y;
+            if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
                 let spd = (in.local_pos - soff) - pivot;
                 let sp_ir = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
                 let inner_sd = eval_sdf(sp_ir, hs, in.shape_type, in.radii);
-                let inner_alpha = layer.colour.a * smoothstep(0.0, sr, inner_sd);
+                // Inner shadows ramp the other way: alpha rises as the offset
+                // point falls further outside the shape. Spread starts the band
+                // further in, blur is its fade width, falloff shapes the ramp
+                // the same way it does an outer layer.
+                let inner_alpha = layer.colour.a
+                    * in.group_opacity
+                    * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
                 if (inner_alpha > 0.0) {
                     let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
                     colour = vec4<f32>(
@@ -607,31 +720,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 }
             }
         }
-    }
-
-    // Border: blend border colour in a band near d = 0.
-    // border_mode (shadow_index.w): 0=inset, 1=outer, 2=center.
-    if (in.border_width > 0.0) {
-        let bw = in.border_width;
-        let bm = border_mode;
-        var lo: f32;
-        var hi: f32;
-        if (bm == 1) {
-            // Outer: band [0, bw]
-            lo = 0.0;
-            hi = bw;
-        } else if (bm == 2) {
-            // Center: band [-bw/2, bw/2]
-            lo = -bw * 0.5;
-            hi = bw * 0.5;
-        } else {
-            // Inset: band [-bw, 0]
-            lo = -bw;
-            hi = 0.0;
-        }
-        let border_alpha = (1.0 - smoothstep(hi, hi + aa, d)) * smoothstep(lo - aa, lo, d);
-        let border_ref_alpha = 1.0 - smoothstep(-aa, 0.0, d - hi);
-        colour = mix(colour, vec4<f32>(in.border_colour.rgb, in.border_colour.a * border_ref_alpha), border_alpha);
     }
 
     return colour;

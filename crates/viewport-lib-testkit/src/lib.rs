@@ -27,6 +27,11 @@
 pub mod device;
 pub mod harness;
 
+// Minimal plugin implementations, one per seam of the plugin API. Part of the
+// core: they are small, they pull no dependencies, and hiding them behind a
+// feature would let them rot.
+pub mod fixtures;
+
 // The scene corpus, behind the `scenes` feature so the core builds without it.
 // The `scenes` module tree holds the catalogue plus the meshes, rigs, textures,
 // and optional real-model loaders it builds from.
@@ -41,7 +46,10 @@ pub mod golden;
 #[cfg(feature = "counters")]
 pub mod counters;
 
-pub use device::{DeviceProfile, Limits, headless_device, headless_device_with};
+pub use device::{
+    DeviceProfile, HeadlessDevice, Limits, headless_device, headless_device_full,
+    headless_device_with,
+};
 pub use harness::Harness;
 
 // Re-export the corpus submodules and catalogue items at the crate root so the

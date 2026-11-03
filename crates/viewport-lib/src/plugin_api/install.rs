@@ -7,7 +7,7 @@
 //! and which object each one registers on. Adding a piece to a feature then
 //! breaks every host's setup code.
 //!
-//! [`ViewportPlugin`] moves that knowledge into the feature. The host builds a
+//! [`PluginInstaller`] moves that knowledge into the feature. The host builds a
 //! [`PluginInstallCtx`] from the two objects it already owns (the renderer and,
 //! if it uses one, the runtime) and makes one call:
 //!
@@ -21,6 +21,16 @@
 //! `renderer.resources_mut().register_deformer`, `runtime.add_plugin`,
 //! `runtime.add_gpu_plugin`) and returns whatever handle it wants the host to
 //! keep. The context is a bundle of borrows, not a new registration surface.
+//!
+//! A feature that can be taken out again implements
+//! [`PluginInstaller::uninstall`], which takes the handle back and calls the
+//! matching `remove_*` / `unregister_*` methods:
+//!
+//! ```rust,ignore
+//! viewport_lib::uninstall_plugin::<MyFeature>(
+//!     handle, &device, &queue, Some(&mut runtime), &mut renderer,
+//! )?;
+//! ```
 
 use crate::error::{ViewportError, ViewportResult};
 use crate::renderer::ViewportRenderer;
@@ -29,7 +39,7 @@ use crate::runtime::ViewportRuntime;
 /// The objects a feature borrows at install time.
 ///
 /// Constructed by the host from what it already owns and passed to
-/// [`ViewportPlugin::install`]. The fields are borrows: nothing here owns the
+/// [`PluginInstaller::install`]. The fields are borrows: nothing here owns the
 /// renderer or the runtime, and the two stay independent of each other.
 ///
 /// `runtime` is optional because the runtime is optional: the minimal hosts
@@ -100,13 +110,28 @@ impl<'a> PluginInstallCtx<'a> {
 /// reuse its id instead of erroring. Runtime and GPU plugins are multi-instance
 /// by contract, so `install` is a once-per-feature call, not a deduplicating
 /// one.
-pub trait ViewportPlugin {
+pub trait PluginInstaller {
     /// What the host gets back and keeps: an upload handle, a query handle, or
     /// `()`.
     type Handle;
 
     /// Register the feature's pieces against `ctx` and return its handle.
     fn install(self, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<Self::Handle>;
+
+    /// Remove what [`install`](Self::install) registered, consuming the
+    /// handle it returned.
+    ///
+    /// The default does nothing, for a feature with nothing to take out or
+    /// whose pieces stay for the renderer's lifetime. An implementation calls
+    /// the `remove_*` / `unregister_*` method of each piece it registered, so
+    /// the renderer reads as if the feature had never been installed.
+    fn uninstall(handle: Self::Handle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()>
+    where
+        Self: Sized,
+    {
+        let _ = (handle, ctx);
+        Ok(())
+    }
 }
 
 /// Install a feature without writing out the [`PluginInstallCtx`] by hand.
@@ -118,9 +143,9 @@ pub trait ViewportPlugin {
 /// ```
 ///
 /// Equivalent to building a [`PluginInstallCtx`] and calling
-/// [`ViewportPlugin::install`]. Pass `None` for `runtime` on a host that does
+/// [`PluginInstaller::install`]. Pass `None` for `runtime` on a host that does
 /// not use one.
-pub fn install_plugin<P: ViewportPlugin>(
+pub fn install_plugin<P: PluginInstaller>(
     feature: P,
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
@@ -129,6 +154,25 @@ pub fn install_plugin<P: ViewportPlugin>(
 ) -> ViewportResult<P::Handle> {
     let mut ctx = PluginInstallCtx::new(device, queue, runtime, renderer);
     feature.install(&mut ctx)
+}
+
+/// Uninstall a feature without writing out the [`PluginInstallCtx`] by hand:
+/// [`PluginInstaller::uninstall`] for the feature type `P`.
+///
+/// ```rust,ignore
+/// viewport_lib::uninstall_plugin::<MyFeature>(
+///     handle, &device, &queue, Some(&mut runtime), &mut renderer,
+/// )?;
+/// ```
+pub fn uninstall_plugin<P: PluginInstaller>(
+    handle: P::Handle,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    runtime: Option<&mut ViewportRuntime>,
+    renderer: &mut ViewportRenderer,
+) -> ViewportResult<()> {
+    let mut ctx = PluginInstallCtx::new(device, queue, runtime, renderer);
+    P::uninstall(handle, &mut ctx)
 }
 
 #[cfg(test)]
@@ -141,7 +185,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn headless() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -187,7 +231,7 @@ mod tests {
         deformer_id: crate::resources::mesh_sidecar::registry::DeformerId,
     }
 
-    impl ViewportPlugin for TestFeature {
+    impl PluginInstaller for TestFeature {
         type Handle = TestHandle;
 
         fn install(self, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<TestHandle> {
@@ -202,7 +246,7 @@ mod tests {
             let deformer_id = ctx.renderer.resources_mut().register_deformer(
                 device,
                 DeformerDesc {
-                    name: "test_feature",
+                    name: "test_feature".into(),
                     stage: DeformStage::ObjectSpace,
                     priority: 0,
                     wgsl_body: IDENTITY_BODY.to_string(),

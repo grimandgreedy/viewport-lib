@@ -6,8 +6,9 @@
 //! - [`ViewportInstance`]: the runner you drive yourself. Your application owns
 //!   the window, the event loop, and tool state; you feed the instance events and
 //!   drive it once per frame.
-//! - `ViewportApp` (feature `app`): the runner that owns the window and event
-//!   loop for you, so you write only scene setup and a per-frame closure.
+//! - `ViewportApp` (feature `app`): the runner that owns the windows and event
+//!   loop for you, so you write only scene setup and a per-frame closure for
+//!   each window.
 //!
 //! The library deliberately stops at [`FrameData`]: without a runner, every
 //! consumer writes the same setup by hand (translate native events, resolve
@@ -28,25 +29,24 @@
 mod assemble;
 mod extras;
 mod offscreen;
+mod rebuild;
 mod render;
 mod settings;
 
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
+pub use rebuild::StaleHandles;
 
-/// The standalone winit runner: `ViewportApp` owns the window and event loop
-/// (feature-gated behind `app`).
+/// The winit runner: `ViewportApp` owns one or more OS windows, one
+/// `ViewportInstance` each (feature-gated behind `app`).
 #[cfg(feature = "app")]
 pub mod viewport_app;
 
-/// The experimental multi-window winit runner: `ViewportAppV2` owns a set of OS
-/// windows, one `ViewportInstance` each (feature-gated behind `app`).
-#[cfg(feature = "app")]
-pub mod viewport_app_v2;
-
 use crate::camera::Camera;
-use crate::interaction::input::{ActionFrame, BindingPreset, ViewportContext, ViewportEvent};
-use crate::interaction::manipulation::{ManipResult, ManipulationController};
+use crate::interaction::input::{
+    ActionFrame, BindingPreset, InputOwnership, TouchSettings, ViewportBinding, ViewportContext,
+    ViewportEvent,
+};
 use crate::interaction::select::selection::Selection;
 use crate::resources::DeviceResources;
 use crate::runtime::ViewportRuntime;
@@ -64,11 +64,12 @@ use crate::{FrameData, InteractionFrame, ViewportInput, ViewportRenderer};
 /// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass framework).
 pub struct ViewportInstance {
     renderer: ViewportRenderer,
+    /// The config the renderer was built with, for [`rebuild`](Self::rebuild).
+    config: crate::RendererConfig,
     scene: Scene,
     selection: Selection,
     camera: Camera,
     input: ViewportInput,
-    manip: Option<ManipulationController>,
     runtime: Option<ViewportRuntime>,
 
     /// Retained frame. Its `effects` and `viewport` sub-frames hold persistent
@@ -77,8 +78,6 @@ pub struct ViewportInstance {
     frame: FrameData,
     /// Resolved input for the current frame. Set by [`resolve`](Self::resolve).
     action: ActionFrame,
-    /// Result of the last manipulation update, surfaced via [`last_manip`](Self::last_manip).
-    last_manip: ManipResult,
 
     /// Viewport size in logical pixels, recorded by [`begin_frame`](Self::begin_frame).
     viewport_size: [f32; 2],
@@ -93,9 +92,41 @@ pub struct ViewportInstance {
     outline_width_px: f32,
 
     // Retained non-mesh items, re-injected into the scene sub-frame each
-    // assembly so static point clouds/glyphs/volumes/splats are added once.
+    // assembly so static point clouds/fields/volumes/splats are added once.
     extras: Vec<(ExtraId, extras::SceneExtra)>,
     next_extra_id: u64,
+}
+
+/// The config a runner builds a window's renderer with: the app's settings
+/// on the surface format, without MSAA, with any loaded pipeline cache.
+#[cfg(feature = "app")]
+pub(crate) fn runner_renderer_config(
+    base: &crate::RendererConfig,
+    format: crate::gpu::TextureFormat,
+    cache_data: Option<Vec<u8>>,
+    adapter: &crate::gpu::Adapter,
+    device: &crate::gpu::Device,
+) -> crate::RendererConfig {
+    let mut config = base.clone().with_target_format(format).with_sample_count(1);
+    if cache_data.is_some() {
+        config.pipeline_cache_data = cache_data;
+    }
+    if config.downlevel_capabilities.is_none() {
+        config.downlevel_capabilities = Some(adapter.get_downlevel_capabilities());
+    }
+    if config.backend.is_none() {
+        config.backend = Some(adapter.get_info().backend);
+    }
+    // The runner owns the surface depth target, so it takes the float depth
+    // the device was created with; a host that pinned a format keeps it.
+    if config.scene_depth_format.is_none()
+        && device
+            .features()
+            .contains(crate::gpu::Features::DEPTH32FLOAT_STENCIL8)
+    {
+        config.scene_depth_format = Some(crate::gpu::TextureFormat::Depth32FloatStencil8);
+    }
+    config
 }
 
 impl ViewportInstance {
@@ -105,6 +136,54 @@ impl ViewportInstance {
     /// not keep it. CPU picking is enabled so [`pick`](Self::pick) works after
     /// the first frame.
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
+        Self::with_config(device, &crate::RendererConfig::new(target_format))
+    }
+
+    /// As [`new`](Self::new), seeding the renderer's pipeline cache from data a
+    /// previous run saved with [`pipeline_cache_data`](Self::pipeline_cache_data).
+    #[deprecated(note = "use `with_config` and `RendererConfig::with_pipeline_cache_data`")]
+    pub fn new_with_pipeline_cache(
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
+        Self::with_config(
+            device,
+            &crate::RendererConfig::new(target_format)
+                .with_pipeline_cache_data(pipeline_cache_data.map(<[u8]>::to_vec)),
+        )
+    }
+
+    /// As [`new`](Self::new), building the renderer from a
+    /// [`RendererConfig`](crate::RendererConfig): MSAA, a saved pipeline cache,
+    /// the compilation policy.
+    ///
+    /// A pipeline cache lets the driver skip shader compilation on a later
+    /// launch. It needs a device created with `Features::PIPELINE_CACHE`, which
+    /// `ViewportRenderer::recommended_device_features` requests where the
+    /// adapter has it; on any other device the data is ignored. Stale or
+    /// foreign data is discarded, so passing whatever was last saved is safe.
+    ///
+    /// # Panics
+    ///
+    /// When the device is below the tier the renderer can be built on, with
+    /// the message [`try_with_config`](Self::try_with_config) returns as an
+    /// error.
+    pub fn with_config(device: &crate::gpu::Device, config: &crate::RendererConfig) -> Self {
+        match Self::try_with_config(device, config) {
+            Ok(instance) => instance,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// As [`with_config`](Self::with_config), returning
+    /// [`ViewportError::DeviceUnsupported`](crate::ViewportError::DeviceUnsupported)
+    /// when the device is below the overlay floor, as
+    /// [`ViewportRenderer::try_with_config`] does, instead of panicking.
+    pub fn try_with_config(
+        device: &crate::gpu::Device,
+        config: &crate::RendererConfig,
+    ) -> Result<Self, crate::ViewportError> {
         // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
@@ -135,45 +214,30 @@ impl ViewportInstance {
                     missing.join("; ")
                 );
             }
-
-            // Unlike the features above, an insufficient storage-buffer limit is
-            // fatal: the renderer asserts on it at construction (a backend that
-            // enforces the limit cannot build the clustered mesh pipeline layout).
-            // Surface it here first so the actionable guidance is logged before
-            // that panic, alongside the feature diagnostics, rather than only
-            // appearing in the panic message deep in renderer bring-up.
-            let available = device.limits().max_storage_buffers_per_shader_stage;
-            let required = ViewportRenderer::REQUIRED_STORAGE_BUFFERS_PER_STAGE;
-            if available < required {
-                tracing::warn!(
-                    "ViewportInstance: device max_storage_buffers_per_shader_stage is {} but \
-                     viewport-lib needs {}; renderer construction will fail. Pass \
-                     ViewportRenderer::recommended_device_limits(adapter) as required_limits in \
-                     your device descriptor.",
-                    available,
-                    required,
-                );
-            }
         }
         warn_missing_device_capabilities(device);
 
-        let mut renderer = ViewportRenderer::new(device, target_format);
+        let mut renderer = ViewportRenderer::try_with_config(device, config)?;
+        tracing::info!(
+            target: "viewport_lib::init",
+            tier = %renderer.tier(),
+            downlevel_known = renderer.capabilities().downlevel_known,
+            "ViewportInstance: renderer tier"
+        );
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();
-        Self {
+        Ok(Self {
             renderer,
+            config: config.clone(),
             scene: Scene::new(),
             selection: Selection::new(),
             camera: Camera::default(),
-            // ViewportAll carries the manipulation keybindings (G/R/S, axis
-            // constraints) as well as camera navigation, so an instance with a
-            // ManipulationController resolves them without extra setup.
-            input: ViewportInput::from_preset(BindingPreset::ViewportAll),
-            manip: None,
+            // Camera navigation only. A host with a transform gizmo appends the
+            // gizmo's own bindings through `set_bindings`.
+            input: ViewportInput::from_preset(BindingPreset::Default),
             runtime: None,
             frame: FrameData::default(),
             action: ActionFrame::default(),
-            last_manip: ManipResult::None,
             viewport_size: [1.0, 1.0],
             pixels_per_point: 1.0,
             outline_selected: defaults.outline_selected,
@@ -181,7 +245,34 @@ impl ViewportInstance {
             outline_width_px: defaults.outline_width_px,
             extras: Vec::new(),
             next_extra_id: 0,
-        }
+        })
+    }
+
+    /// Replace the binding set this viewport resolves with, at construction.
+    ///
+    /// Bindings live here, on the resolver, not on a camera controller: a controller
+    /// applies the resolved [`ActionFrame`] and never sees which gesture produced it.
+    /// This is the one place to choose a control scheme, and a session honours it.
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{ViewportInstance, BindingPreset, viewer_bindings};
+    /// # fn demo(device: &viewport_lib::gpu::Device, fmt: viewport_lib::gpu::TextureFormat) {
+    /// // A pure viewer, with no selection or tools, so left drag can orbit.
+    /// let session = ViewportInstance::new(device, fmt).with_bindings(viewer_bindings());
+    /// # let _ = (session, BindingPreset::Default);
+    /// # }
+    /// ```
+    pub fn with_bindings(mut self, bindings: Vec<ViewportBinding>) -> Self {
+        self.input = ViewportInput::new(bindings);
+        self
+    }
+
+    /// Replace the binding set after construction.
+    ///
+    /// Resets the input accumulator, so call it between frames rather than part way
+    /// through one: any gesture in flight ends.
+    pub fn set_bindings(&mut self, bindings: Vec<ViewportBinding>) {
+        self.input = ViewportInput::new(bindings);
     }
 
     /// Attach a [`ViewportRuntime`] for physics, animation, and GPU plugins.
@@ -191,17 +282,6 @@ impl ViewportInstance {
     /// using the `add_*` methods.
     pub fn with_runtime(mut self, runtime: ViewportRuntime) -> Self {
         self.runtime = Some(runtime);
-        self
-    }
-
-    /// Attach a [`ManipulationController`] for move/rotate/scale sessions.
-    ///
-    /// Without it, [`update_orbit`](Self::update_orbit) skips the manipulation
-    /// step entirely. With it, the controller runs each frame and its result is
-    /// available from [`last_manip`](Self::last_manip); applying that result to
-    /// scene nodes stays with the application.
-    pub fn with_manipulation(mut self, manip: ManipulationController) -> Self {
-        self.manip = Some(manip);
         self
     }
 
@@ -216,9 +296,57 @@ impl ViewportInstance {
         self.input.begin_frame(ctx);
     }
 
+    /// Begin a frame, and tell the resolver what time it is.
+    ///
+    /// `time_seconds` is your own elapsed-seconds clock. Use this instead of
+    /// [`begin_frame`](Self::begin_frame) on anything with a touchscreen: double tap
+    /// and long press cannot be decided from positions alone, and stay quiet without
+    /// a clock.
+    pub fn begin_frame_at(&mut self, ctx: ViewportContext, time_seconds: f32) {
+        self.viewport_size = ctx.viewport_size;
+        self.input.begin_frame_at(ctx, time_seconds);
+    }
+
+    /// Change who owns the input without starting a new frame or resetting the
+    /// input accumulator. Events fed after this are routed on the new ownership.
+    ///
+    /// For a host that learns of a change between frames, such as the cursor
+    /// entering the window or the window gaining focus.
+    pub fn set_input_ownership(&mut self, ownership: InputOwnership) {
+        self.input.set_ownership(ownership);
+    }
+
+    /// The numbers touch recognition is calibrated on: sensitivities with per-axis
+    /// inversion, the tap and long-press tolerances, and the double-tap window.
+    pub fn touch_settings(&self) -> TouchSettings {
+        self.input.touch_settings()
+    }
+
+    /// Replace the touch calibration.
+    pub fn set_touch_settings(&mut self, settings: TouchSettings) {
+        self.input.set_touch_settings(settings);
+    }
+
     /// Feed one native event, already translated to a [`ViewportEvent`].
     pub fn handle_event(&mut self, event: ViewportEvent) {
         self.input.push_event(event);
+    }
+
+    /// Whether a pointer gesture of ours is in flight.
+    ///
+    /// A host checks this before taking the pointer for its own UI, so it does not
+    /// steal a drag half-way through.
+    pub fn is_gesture_active(&self) -> bool {
+        self.input.is_gesture_active()
+    }
+
+    /// End any gesture in flight without completing it, releasing every held button.
+    ///
+    /// For when something outside the viewport invalidates the gesture and no release
+    /// will arrive: the host taking the pointer, a mode change, a tool switch, a
+    /// cancelled touch.
+    pub fn cancel_gesture(&mut self) {
+        self.input.cancel_gesture();
     }
 
     /// Update the viewport size without resetting the input accumulator.
@@ -265,27 +393,6 @@ impl ViewportInstance {
     /// The most recently resolved [`ActionFrame`].
     pub fn action_frame(&self) -> &ActionFrame {
         &self.action
-    }
-
-    /// The result of the last manipulation update. [`ManipResult::None`] when no
-    /// controller is attached or nothing happened this frame.
-    pub fn last_manip(&self) -> ManipResult {
-        self.last_manip
-    }
-
-    /// Whether a move/rotate/scale session is currently active. An application driving
-    /// its own camera (first-person, fly) uses this to suppress camera motion
-    /// while a manipulation drag owns the pointer, the way
-    /// [`update_orbit`](Self::update_orbit) suppresses orbit internally.
-    pub fn is_manipulating(&self) -> bool {
-        self.manip.as_ref().is_some_and(|m| m.is_active())
-    }
-
-    /// Snapshot of the active manipulation session, or `None` when idle. The
-    /// `center` field is the pivot to rotate and scale about when applying a
-    /// [`last_manip`](Self::last_manip) delta to the selection.
-    pub fn manip_state(&self) -> Option<crate::interaction::manipulation::ManipulationState> {
-        self.manip.as_ref().and_then(|m| m.state())
     }
 
     // ---- camera ---------------------------------------------------------------
@@ -337,8 +444,90 @@ impl ViewportInstance {
     }
 
     /// The underlying renderer, for advanced use the instance does not wrap.
+    ///
+    /// This is the route to the per-type upload calls (`upload_polyline`,
+    /// `upload_gaussian_splat`, `upload_volume_for_mc` and the rest). They are
+    /// not mirrored here: they belong to the item types that hold the content,
+    /// and forwarding fifty-odd methods would only mean two places to keep in
+    /// step. `resources_mut` stays the route for content shared between item
+    /// types: meshes, textures, 3D volumes and colourmaps.
     pub fn renderer_mut(&mut self) -> &mut ViewportRenderer {
         &mut self.renderer
+    }
+
+    /// The renderer's pipeline cache contents, to save and pass to
+    /// [`RendererConfig::with_pipeline_cache_data`](crate::RendererConfig::with_pipeline_cache_data) on the next
+    /// launch. `None` on a device without `Features::PIPELINE_CACHE`.
+    pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
+        self.renderer.pipeline_cache_data()
+    }
+
+    /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin), the
+    /// same call as
+    /// [`ViewportRenderer::with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin).
+    pub fn with_item_type_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) -> Result<crate::plugin_api::ItemTypeId, crate::ViewportError> {
+        self.renderer.with_item_type_plugin(device, plugin)
+    }
+
+    /// Unregister an item type, the same call as
+    /// [`ViewportRenderer::remove_item_type_plugin`](crate::renderer::ViewportRenderer::remove_item_type_plugin).
+    pub fn remove_item_type_plugin(
+        &mut self,
+        id: crate::plugin_api::ItemTypeId,
+    ) -> Option<Box<dyn crate::plugin_api::ItemTypePlugin>> {
+        self.renderer.remove_item_type_plugin(id)
+    }
+
+    /// Why an item type was refused, the same call as
+    /// [`ViewportRenderer::item_type_declined`](crate::renderer::ViewportRenderer::item_type_declined).
+    pub fn item_type_declined(&self, type_name: &str) -> Option<&crate::ViewportError> {
+        self.renderer.item_type_declined(type_name)
+    }
+
+    /// Borrow a registered item-type plugin back as its concrete type.
+    pub fn item_type_plugin<T: crate::plugin_api::ItemTypePlugin>(
+        &self,
+        type_name: &str,
+    ) -> Option<&T> {
+        self.renderer.item_type_plugin(type_name)
+    }
+
+    /// Mutably borrow a registered item-type plugin back as its concrete type.
+    /// Use [`item_type_plugin_host`](Self::item_type_plugin_host) instead when
+    /// the call also needs the job runner or the shared arenas.
+    pub fn item_type_plugin_mut<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<&mut T> {
+        self.renderer.item_type_plugin_mut(type_name)
+    }
+
+    /// Borrow a registered item-type plugin together with the job runner and
+    /// the shared content arenas, which is what an upload into a plugin-owned
+    /// store needs. See
+    /// [`ViewportRenderer::item_type_plugin_host`](crate::renderer::ViewportRenderer::item_type_plugin_host).
+    pub fn item_type_plugin_host<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<crate::plugin_api::ItemTypeHost<'_, T>> {
+        self.renderer.item_type_plugin_host(type_name)
+    }
+
+    /// Resident GPU bytes for the working set, including what registered item
+    /// types report holding. See
+    /// [`ViewportRenderer::resident_bytes`](crate::renderer::ViewportRenderer::resident_bytes).
+    pub fn resident_bytes(&self) -> crate::resources::ResidentBytes {
+        self.renderer.resident_bytes()
+    }
+
+    /// Resident GPU bytes per registered item type, the breakdown behind
+    /// [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes).
+    pub fn plugin_resident_bytes(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+        self.renderer.plugin_resident_bytes()
     }
 
     // ---- streaming: upload + bind, and residency ------------------------------
@@ -392,7 +581,7 @@ impl ViewportInstance {
         device: &crate::gpu::Device,
         data: &crate::resources::MeshData,
         transform: glam::Mat4,
-        material: crate::Material,
+        material: crate::MaterialId,
     ) -> crate::error::ViewportResult<(crate::NodeId, crate::MeshId)> {
         let id = self
             .renderer
@@ -418,29 +607,17 @@ impl ViewportInstance {
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.renderer.upload_status(id)
     }
-
-    /// Forward a device recreation from your application to the renderer and runtime so their
-    /// GPU state re-initialises. Call after your application rebuilds the device.
-    pub fn notify_device_recreated(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-    ) {
-        self.renderer.notify_device_recreated(device, queue);
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.notify_device_recreated(device, queue);
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Colour;
     use crate::interaction::input::{ButtonState, MouseButton};
-    use crate::{Material, OrbitCameraController, PointCloudItem, primitives};
+    use crate::{Material, OrbitCameraController, PolylineItem, primitives};
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -462,11 +639,7 @@ mod tests {
     }
 
     fn ctx() -> ViewportContext {
-        ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [256.0, 256.0],
-        }
+        ViewportContext::new(InputOwnership::full_window(), [256.0, 256.0])
     }
 
     #[test]
@@ -479,12 +652,16 @@ mod tests {
         let mut session = ViewportInstance::new(&device, format);
 
         // upload_and_add creates a node already bound to the uploaded mesh.
+        let material = session
+            .resources_mut()
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)))
+            .unwrap();
         let (node, mesh) = session
             .upload_and_add(
                 &device,
                 &primitives::cube(1.0),
                 glam::Mat4::IDENTITY,
-                Material::from_colour([0.6, 0.6, 0.9]),
+                material,
             )
             .unwrap();
         assert_eq!(
@@ -520,16 +697,18 @@ mod tests {
             .resources_mut()
             .upload_mesh_data(&device, &primitives::cube(1.0))
             .unwrap();
-        session.scene_mut().add(
-            Some(cube),
-            glam::Mat4::IDENTITY,
-            Material::from_colour([0.6, 0.6, 0.9]),
-        );
-        session.camera_mut().distance = 6.0;
+        let material = session
+            .resources_mut()
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.9)))
+            .unwrap();
+        session
+            .scene_mut()
+            .add(Some(cube), glam::Mat4::IDENTITY, material);
+        session.camera_mut().set_orbit_distance(6.0);
 
         session.begin_frame(ctx());
-        let mut orbit = OrbitCameraController::viewport_all();
-        let frame = session.update_orbit(&mut orbit);
+        let mut orbit = OrbitCameraController::new_stateless();
+        let frame = session.update_orbit(&mut orbit, 1.0 / 60.0);
         // Assembly collected the scene node and stamped a non-default generation.
         assert!(
             frame.scene.generation != 0,
@@ -583,9 +762,10 @@ mod tests {
             action.pointer.clicked,
             "release without drag should be a click"
         );
+        assert!(action.pointer.pressed, "press should mark pressed");
         assert!(
-            action.pointer.drag_started,
-            "press should mark drag_started"
+            !action.pointer.drag_began,
+            "a press that never moved is not a drag"
         );
         assert_eq!(action.pointer.cursor, Some(glam::Vec2::new(40.0, 40.0)));
     }
@@ -598,28 +778,109 @@ mod tests {
         };
         let mut session = ViewportInstance::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         session.begin_frame(ctx());
-        let mut orbit = OrbitCameraController::viewport_all();
+        let mut orbit = OrbitCameraController::new_stateless();
 
         // A retained extra is re-injected into the scene every frame.
-        let mut pc = PointCloudItem::default();
-        pc.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let id = session.add_point_cloud(pc);
-        let frame = session.update_orbit(&mut orbit);
-        assert_eq!(frame.scene.point_clouds.len(), 1, "retained extra injected");
+        let mut line = PolylineItem::default();
+        line.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        line.strip_lengths = vec![2];
+        let id = session.add_item(line);
+        let frame = session.update_orbit(&mut orbit, 1.0 / 60.0);
+        assert_eq!(
+            frame.scene.items_of::<crate::PolylineItem>().len(),
+            1,
+            "retained extra injected"
+        );
 
         // The injection closure runs after assembly, so per-frame items land.
-        let frame = session.update_orbit_with(&mut orbit, |f| {
-            f.scene.point_clouds.push(PointCloudItem::default());
+        let frame = session.update_orbit_with(&mut orbit, 1.0 / 60.0, |f| {
+            let mut extra = PolylineItem::default();
+            extra.positions = vec![[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]];
+            extra.strip_lengths = vec![2];
+            f.scene.items_mut::<crate::PolylineItem>().push(extra);
         });
         assert_eq!(
-            frame.scene.point_clouds.len(),
+            frame.scene.items_of::<crate::PolylineItem>().len(),
             2,
             "retained + per-frame injected item"
         );
 
         // Removing the retained extra drops it from later frames.
         assert!(session.remove_extra(id));
-        let frame = session.update_orbit(&mut orbit);
-        assert_eq!(frame.scene.point_clouds.len(), 0, "removed extra gone");
+        let frame = session.update_orbit(&mut orbit, 1.0 / 60.0);
+        assert_eq!(
+            frame.scene.items_of::<crate::PolylineItem>().len(),
+            0,
+            "removed extra gone"
+        );
+    }
+}
+
+/// Read the pipeline cache a previous run saved. A missing or unreadable file is
+/// a first run, not an error.
+#[cfg(feature = "app")]
+pub(crate) fn load_pipeline_cache(path: Option<&std::path::Path>) -> Option<Vec<u8>> {
+    std::fs::read(path?).ok()
+}
+
+/// Save `instance`'s pipeline cache to `path`. Written to a sibling file and
+/// renamed into place, so an interrupted write cannot leave a truncated cache
+/// for the next launch to read. Does nothing on a device with no cache.
+#[cfg(feature = "app")]
+pub(crate) fn save_pipeline_cache(path: &std::path::Path, instance: &ViewportInstance) {
+    let Some(data) = instance.pipeline_cache_data() else {
+        return;
+    };
+    let tmp = path.with_extension("tmp");
+    let written = std::fs::write(&tmp, &data).and_then(|()| std::fs::rename(&tmp, path));
+    if let Err(error) = written {
+        tracing::warn!(
+            path = %path.display(),
+            %error,
+            "could not save the pipeline cache"
+        );
+    }
+}
+
+/// Startup timing for the runners, reported on the `viewport_lib::init` tracing
+/// target alongside the renderer's own construction phases. Each mark carries
+/// the time since the previous one, so a subscriber sees where the time between
+/// `resumed` and the first presented frame went.
+#[cfg(feature = "app")]
+pub(crate) struct InitMarks {
+    start: web_time::Instant,
+    last: web_time::Instant,
+}
+
+#[cfg(feature = "app")]
+impl InitMarks {
+    pub(crate) fn new() -> Self {
+        let now = web_time::Instant::now();
+        Self {
+            start: now,
+            last: now,
+        }
+    }
+
+    pub(crate) fn mark(&mut self, section: &str) {
+        let now = web_time::Instant::now();
+        tracing::info!(
+            target: "viewport_lib::init",
+            section,
+            ms = now.duration_since(self.last).as_secs_f32() * 1000.0,
+            "runner startup phase"
+        );
+        self.last = now;
+    }
+
+    /// Report the last phase and the total since `new`.
+    pub(crate) fn finish(mut self, section: &str) {
+        self.mark(section);
+        tracing::info!(
+            target: "viewport_lib::init",
+            section = "runner_startup_total",
+            ms = self.last.duration_since(self.start).as_secs_f32() * 1000.0,
+            "runner startup phase"
+        );
     }
 }

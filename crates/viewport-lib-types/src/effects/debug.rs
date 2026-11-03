@@ -44,15 +44,16 @@ pub enum DebugQuantity {
     Metallic,
     /// Ambient occlusion factor.
     AoFactor,
-    /// Direct light luminance (all lights, no ambient).
+    /// Direct light luminance (all lights, no ambient), exposed by the
+    /// camera's exposure like the shaded colour.
     DirectLightLuminance,
-    /// Hemisphere or IBL ambient luminance.
+    /// Hemisphere or IBL ambient luminance, exposed.
     AmbientLuminance,
-    /// IBL diffuse luminance only.
+    /// IBL diffuse luminance only, exposed.
     IblDiffuseLuminance,
-    /// IBL specular luminance only.
+    /// IBL specular luminance only, exposed.
     IblSpecularLuminance,
-    /// Emissive luminance only.
+    /// Emissive luminance only, exposed.
     EmissiveLuminance,
 }
 
@@ -112,10 +113,14 @@ pub enum DebugOutputMode {
 ///
 /// Attach to [`EffectsDebug::debug_vis`] to activate per-fragment channel output.
 /// When `active` is false the overhead is zero: the lit pipelines compile
-/// without the debug code entirely (its per-fragment storage write would
-/// disable hardware early depth rejection and slow dense scenes by an order
-/// of magnitude). Turning debug vis on or off rebuilds those pipelines, so
-/// expect a one-off hitch on the frame the flag flips.
+/// without the debug code entirely, so they do not carry its registers on every
+/// draw. Turning debug vis on or off rebuilds those pipelines, so expect a
+/// one-off hitch on the frame the flag flips.
+///
+/// The rebuilt pipelines keep the same depth behaviour as the ordinary ones, so
+/// the same fragments run and quantities fed by `dpdx`/`dpdy` read the same
+/// neighbours they would otherwise. What you see here is what the ordinary
+/// render computes.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -134,7 +139,7 @@ pub struct DebugVis {
     /// Use values > 1.0 to bring small quantities (e.g. bias in world units) into visible range.
     pub scale: f32,
     /// Split position for `SplitScreen` mode, in normalised viewport coordinates (0..1).
-    /// 0.5 = center. Ignored unless mode is `SplitScreen`.
+    /// 0.5 = centre. Ignored unless mode is `SplitScreen`.
     pub split_x: f32,
 }
 
@@ -201,7 +206,7 @@ pub enum AtlasViewerCorner {
 }
 
 /// Debug overlays and diagnostics for one frame. Grouped on
-/// [`EffectsFrame::debug`] to keep debug knobs out of the production effect,
+/// `EffectsFrame::debug` to keep debug knobs out of the production effect,
 /// lighting, and viewport fields.
 ///
 /// Not `Copy`: it carries the [`DebugVis`]

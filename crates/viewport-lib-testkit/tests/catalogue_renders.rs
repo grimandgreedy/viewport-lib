@@ -20,7 +20,25 @@ fn every_scene_builds_and_renders() {
         let has_content = !built.items.is_empty()
             || !built.point_clouds.is_empty()
             || !built.polylines.is_empty()
-            || !built.glyphs.is_empty();
+            || !built.vector_fields.is_empty()
+            || !built.tensor_fields.is_empty()
+            || !built.tube_items.is_empty()
+            || !built.streamtube_items.is_empty()
+            || !built.ribbon_items.is_empty()
+            || !built.sprite_items.is_empty()
+            || !built.volumes.is_empty()
+            || !built.gaussian_splats.is_empty()
+            || !built.image_slices.is_empty()
+            || !built.volume_surface_slices.is_empty()
+            || !built.gpu_implicit.is_empty()
+            || !built.gpu_mc_items.is_empty()
+            || !built.scatter_volumes.is_empty()
+            || !built.decals.is_empty()
+            || !built.surface_lics.is_empty()
+            || !built.surface_contours.is_empty()
+            || !built.mesh_instances.is_empty()
+            || !built.volume_meshes.is_empty()
+            || !built.gpu_particle_systems.is_empty();
         assert!(has_content, "{}: built no content", scene.name);
         assert!(!scene.cameras.is_empty(), "{}: no cameras", scene.name);
 
@@ -35,7 +53,7 @@ fn every_scene_builds_and_renders() {
         );
 
         // Mesh scenes must issue draw calls; non-mesh item types (point clouds,
-        // polylines, glyphs) are not counted in `draw_calls`, so their
+        // polylines, fields) are not counted in `draw_calls`, so their
         // correctness is covered by the snapshot test instead.
         if !built.items.is_empty() {
             let stats = harness.stats();

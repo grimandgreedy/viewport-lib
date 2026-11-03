@@ -18,10 +18,21 @@ default = []
 # Native-event translation adapters. Off by default so the resolver and
 # controllers build with no framework dependency.
 winit-adapter = ["dep:winit"]
-egui-adapter = ["dep:egui"]
+# egui's event types are versioned, so the adapter is built against one egui
+# version: enable the feature matching the egui your host runs. In practice that
+# follows the wgpu leg, because a framework embedding wgpu pins both (egui 0.33
+# with wgpu 27, 0.35 with 29, 0.36 with 30), but the choice is independent here.
+# Enable exactly one.
+egui-adapter = ["dep:egui033"]
+egui-adapter-035 = ["dep:egui035"]
+egui-adapter-036 = ["dep:egui036"]
 
 [dependencies]
 viewport-lib-types = { path = "../viewport-lib-types", version = "0.2.0" }
 glam = { workspace = true }
 winit = { version = "0.30", optional = true }
-egui = { version = "0.33", optional = true }
+# One aliased dependency per supported egui version; the adapter body is
+# generated once per enabled alias.
+egui033 = { package = "egui", version = "0.33", optional = true }
+egui035 = { package = "egui", version = "0.35", optional = true }
+egui036 = { package = "egui", version = "0.36", optional = true }

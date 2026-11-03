@@ -3,12 +3,14 @@
 //! World-space indicators for every clip shape (plane border + normal handle, box
 //! edges, sphere great circles, cylinder caps + longitudinal lines) plus the
 //! translucent plane fill. These produce standard scene primitives - a
-//! [`PolylineItem`] for the outlines and a unit-quad [`MeshData`] for the fill -
+//! [`PolylineItem`](crate::PolylineItem) for the outlines and a unit-quad
+//! [`MeshData`](crate::MeshData) for the fill -
 //! tagged with `ItemSettings::ignore_clip` so the indicators stay fully visible
 //! where the scene itself is clipped. The host submits the returned items; the
 //! renderer draws them through the normal polyline / mesh paths, not a bespoke
 //! clip pipeline.
 
+use crate::Colour;
 use crate::MeshData;
 use crate::PolylineItem;
 use crate::renderer::ClipShape;
@@ -21,23 +23,23 @@ const OUTLINE_WIDTH: f32 = 2.0;
 /// Tag an outline polyline as a clip indicator: give it its colour and width, and
 /// exempt it from the clip volumes so it stays visible through active clips.
 fn finish_outline(mut item: PolylineItem, colour: [f32; 4]) -> PolylineItem {
-    item.default_colour = colour.into();
+    item.default_colour = Colour::from_linear_array(colour);
     item.line_width = OUTLINE_WIDTH;
     item.settings.ignore_clip = true;
     item
 }
 
 /// Outline for a clip plane: the border rectangle (sized by `extent`) plus a
-/// normal-direction handle from the centre. `center` is the world point the quad
+/// normal-direction handle from the centre. `centre` is the world point the quad
 /// is drawn around (typically the foot of the normal, or a host-supplied lateral
 /// centre), `normal` is the plane normal.
 pub fn plane_outline(
-    center: [f32; 3],
+    centre: [f32; 3],
     normal: [f32; 3],
     extent: f32,
     colour: [f32; 4],
 ) -> PolylineItem {
-    let c = glam::Vec3::from(center);
+    let c = glam::Vec3::from(centre);
     let n = glam::Vec3::from(normal).normalize_or_zero();
     let (t1, t2) = plane_tangents(n);
     let u = t1 * extent;
@@ -61,7 +63,7 @@ pub fn plane_outline(
 
 /// Outline for a clip box: 12 edges as 2-point strips.
 pub fn box_outline(
-    center: [f32; 3],
+    centre: [f32; 3],
     half: [f32; 3],
     orientation: [[f32; 3]; 3],
     colour: [f32; 4],
@@ -69,7 +71,7 @@ pub fn box_outline(
     let ax = glam::Vec3::from(orientation[0]) * half[0];
     let ay = glam::Vec3::from(orientation[1]) * half[1];
     let az = glam::Vec3::from(orientation[2]) * half[2];
-    let c = glam::Vec3::from(center);
+    let c = glam::Vec3::from(centre);
 
     let corners = [
         c - ax - ay - az,
@@ -111,8 +113,8 @@ pub fn box_outline(
 }
 
 /// Outline for a clip sphere: three great circles (XY, XZ, YZ).
-pub fn sphere_outline(center: [f32; 3], radius: f32, colour: [f32; 4]) -> PolylineItem {
-    let c = glam::Vec3::from(center);
+pub fn sphere_outline(centre: [f32; 3], radius: f32, colour: [f32; 4]) -> PolylineItem {
+    let c = glam::Vec3::from(centre);
     let segs = 64usize;
     let mut positions = Vec::with_capacity((segs + 1) * 3);
     let mut strip_lengths = Vec::with_capacity(3);
@@ -140,13 +142,13 @@ pub fn sphere_outline(center: [f32; 3], radius: f32, colour: [f32; 4]) -> Polyli
 
 /// Outline for a clip cylinder: two end-cap circles plus longitudinal lines.
 pub fn cylinder_outline(
-    center: [f32; 3],
+    centre: [f32; 3],
     axis: [f32; 3],
     radius: f32,
     half_length: f32,
     colour: [f32; 4],
 ) -> PolylineItem {
-    let c = glam::Vec3::from(center);
+    let c = glam::Vec3::from(centre);
     let ax = glam::Vec3::from(axis).normalize();
 
     // Orthonormal frame around the axis.
@@ -165,12 +167,12 @@ pub fn cylinder_outline(
 
     // Two end-cap circles.
     for sign in [-1.0f32, 1.0] {
-        let cap_center = c + ax * (sign * half_length);
+        let cap_centre = c + ax * (sign * half_length);
         let start = positions.len();
         for i in 0..=segs {
             let t = i as f32 / segs as f32 * std::f32::consts::TAU;
             let (s, cs) = t.sin_cos();
-            let p = cap_center + perp_u * (cs * radius) + perp_v * (s * radius);
+            let p = cap_centre + perp_u * (cs * radius) + perp_v * (s * radius);
             positions.push(p.to_array());
         }
         strip_lengths.push((positions.len() - start) as u32);
@@ -202,21 +204,36 @@ pub fn outline(shape: &ClipShape, extent: f32, colour: [f32; 4]) -> PolylineItem
             // Foot of the normal from the world origin. A host that translates the
             // plane laterally (its own display centre) calls `plane_outline`
             // directly with that centre instead.
-            let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
-            plane_outline(center, normal, extent, colour)
+            let centre = (glam::Vec3::from(normal).normalize_or_zero().as_dvec3() * -distance)
+                .as_vec3()
+                .to_array();
+            plane_outline(centre, normal, extent, colour)
         }
         ClipShape::Box {
-            center,
+            centre,
             half_extents,
             orientation,
-        } => box_outline(center, half_extents, orientation, colour),
-        ClipShape::Sphere { center, radius } => sphere_outline(center, radius, colour),
+        } => box_outline(
+            centre.as_vec3().to_array(),
+            half_extents,
+            orientation,
+            colour,
+        ),
+        ClipShape::Sphere { centre, radius } => {
+            sphere_outline(centre.as_vec3().to_array(), radius, colour)
+        }
         ClipShape::Cylinder {
-            center,
+            centre,
             axis,
             radius,
             half_length,
-        } => cylinder_outline(center, axis, radius, half_length, colour),
+        } => cylinder_outline(
+            centre.as_vec3().to_array(),
+            axis,
+            radius,
+            half_length,
+            colour,
+        ),
     }
 }
 
@@ -238,15 +255,15 @@ pub fn fill_quad_mesh() -> MeshData {
 
 /// Per-frame model matrix that maps the [`fill_quad_mesh`] unit quad onto the
 /// plane: the `[-1, 1]^2` quad is scaled by `extent`, oriented into the plane's
-/// tangent frame, and translated to `center`.
-pub fn plane_fill_transform(center: [f32; 3], normal: [f32; 3], extent: f32) -> [[f32; 4]; 4] {
+/// tangent frame, and translated to `centre`.
+pub fn plane_fill_transform(centre: [f32; 3], normal: [f32; 3], extent: f32) -> [[f32; 4]; 4] {
     let n = glam::Vec3::from(normal).normalize_or_zero();
     let (t1, t2) = plane_tangents(n);
     glam::Mat4::from_cols(
         (t1 * extent).extend(0.0),
         (t2 * extent).extend(0.0),
         n.extend(0.0),
-        glam::Vec3::from(center).extend(1.0),
+        glam::Vec3::from(centre).extend(1.0),
     )
     .to_cols_array_2d()
 }
@@ -295,7 +312,7 @@ mod tests {
     #[test]
     fn outline_dispatches_per_shape() {
         let sphere = ClipShape::Sphere {
-            center: [0.0; 3],
+            centre: [0.0; 3].into(),
             radius: 1.0,
         };
         assert_eq!(outline(&sphere, 1.0, [1.0; 4]).strip_lengths.len(), 3);
@@ -309,10 +326,10 @@ mod tests {
     }
 
     #[test]
-    fn plane_fill_transform_places_quad_at_center() {
+    fn plane_fill_transform_places_quad_at_centre() {
         let m = plane_fill_transform([1.0, 2.0, 3.0], [0.0, 0.0, 1.0], 2.0);
         let mat = glam::Mat4::from_cols_array_2d(&m);
-        // Quad centre (local origin) maps to `center`.
+        // Quad centre (local origin) maps to `centre`.
         let centre = mat.transform_point3(glam::Vec3::ZERO);
         assert!((centre - glam::Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
         // A unit corner scales by extent.

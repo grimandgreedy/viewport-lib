@@ -3,7 +3,7 @@
 // and estimates per-pixel ambient occlusion.
 //
 // Point cloud fallback: point cloud billboards render all pixels with the same
-// depth (constant clip-space Z from the billboard center). The hemisphere kernel
+// depth (constant clip-space Z from the billboard centre). The hemisphere kernel
 // produces unreliable results for these fragments because samples land on
 // background or distant other billboards. When the 8-neighbor depth neighborhood
 // shows a constant-depth region (billboard interior), a depth-cavity test is used
@@ -17,12 +17,15 @@ struct SsaoUniform {
     _pad:     vec2<f32>,    //  8 bytes : alignment
 }
 
-@group(0) @binding(0) var depth_tex:  texture_depth_2d;
+@group(0) @binding(0) var depth_tex:  texture_2d<f32>;
 @group(0) @binding(1) var depth_samp: sampler;
 @group(0) @binding(2) var noise_tex:  texture_2d<f32>;
 @group(0) @binding(3) var noise_samp: sampler;
 @group(0) @binding(4) var<storage, read> kernel: array<vec4<f32>>;  // 64 hemisphere samples
 @group(0) @binding(5) var<uniform> params: SsaoUniform;
+
+// #include "helpers/depth_texel.wgsl"
+// #include "helpers/depth.wgsl"
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -43,7 +46,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 // Reconstruct view-space position from a UV and a depth value.
 fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0);
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), viewport_depth_finite(depth), 1.0);
     let vp = params.inv_proj * ndc;
     return vp.xyz / vp.w;
 }
@@ -55,7 +58,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
 
     // Load raw depth and bail on background pixels.
-    let depth = textureLoad(depth_tex, pixel, 0);
+    let depth = depth_texel(depth_tex, depth_samp, pixel);
 
     // View position and its screen-space derivatives, taken here in uniform
     // control flow: the background and billboard early-returns below are
@@ -65,12 +68,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pos_dx = dpdx(pos_v);
     let pos_dy = dpdy(pos_v);
 
-    if depth >= 0.9999 {
+    if viewport_depth_is_background(depth) {
         return vec4<f32>(1.0);
     }
 
     // Detect point cloud billboard pixels: sample 8 immediate neighbors and
-    // count how many have the same depth as the center within a tight tolerance.
+    // count how many have the same depth as the centre within a tight tolerance.
     // Billboard quads render all pixels at the same clip-space Z, so interior
     // pixels have exactly equal depth. Mesh surfaces have smoothly varying depth.
     let depth_eps = 0.000005;
@@ -84,8 +87,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     );
     for (var k: i32 = 0; k < 8; k = k + 1) {
         let np = clamp(pixel + n_offsets[k], vec2<i32>(0), dims_i - vec2<i32>(1));
-        let nd = textureLoad(depth_tex, np, 0);
-        if nd < 0.9999 {
+        let nd = depth_texel(depth_tex, depth_samp, np);
+        if !viewport_depth_is_background(nd) {
             nonbg_count = nonbg_count + 1u;
             if abs(nd - depth) < depth_eps {
                 same_depth_count = same_depth_count + 1u;
@@ -101,7 +104,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // standard NDC depth).  We only need relative comparison so use a simple proxy:
         // shallower depth value (smaller number) = closer to camera.
         //
-        // Sample 8 neighbors at a wider radius (~3 px). If the center is notably
+        // Sample 8 neighbors at a wider radius (~3 px). If the centre is notably
         // deeper (further) than most of its neighbors, it sits in a cavity between
         // point clusters and should be darkened.
         let ring = 3;
@@ -110,17 +113,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let cavity_thresh = 0.0002;
         for (var k: i32 = 0; k < 8; k = k + 1) {
             let np = clamp(pixel + n_offsets[k] * ring, vec2<i32>(0), dims_i - vec2<i32>(1));
-            let nd = textureLoad(depth_tex, np, 0);
-            if nd < 0.9999 {
+            let nd = depth_texel(depth_tex, depth_samp, np);
+            if !viewport_depth_is_background(nd) {
                 valid_count = valid_count + 1.0;
-                // Smaller depth value = closer; if neighbor is shallower than center
-                // by more than threshold, the center is in a cavity.
+                // Smaller depth value = closer; if neighbor is shallower than centre
+                // by more than threshold, the centre is in a cavity.
                 if nd < depth - cavity_thresh {
                     closer_count = closer_count + 1.0;
                 }
             }
         }
-        // Fraction of neighbors that are shallower (center is deeper = in cavity).
+        // Fraction of neighbors that are shallower (centre is deeper = in cavity).
         let cavity_ratio = select(0.0, closer_count / valid_count, valid_count > 0.0);
         let ao = 1.0 - cavity_ratio;
         return vec4<f32>(ao, ao, ao, 1.0);
@@ -166,7 +169,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             i32(clamp(sample_uv.x * dim.x, 0.0, dim.x - 1.0)),
             i32(clamp(sample_uv.y * dim.y, 0.0, dim.y - 1.0)),
         );
-        let scene_depth = textureLoad(depth_tex, sp, 0);
+        let scene_depth = depth_texel(depth_tex, depth_samp, sp);
         let scene_v     = view_pos_from_depth(sample_uv, scene_depth);
 
         // Ranged occlusion check.

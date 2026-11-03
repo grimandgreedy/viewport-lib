@@ -58,7 +58,7 @@ impl Constraint {
 
 /// A plugin that applies positional constraints to scene nodes.
 ///
-/// Runs in the [`RuntimePhase::Animate`] phase. Spring and damping constraints
+/// Runs in the [`RuntimePhase::Animate`](crate::RuntimePhase::Animate) phase. Spring and damping constraints
 /// maintain per-node velocity state internally.
 pub struct ConstraintPlugin {
     constraints: Vec<Constraint>,
@@ -103,7 +103,7 @@ impl RuntimePlugin for ConstraintPlugin {
             let Some(node) = ctx.scene.node(id) else {
                 continue;
             };
-            let world = node.world_transform();
+            let world = node.world_transform().to_mat4();
             let (scale, rotation, pos) = world.to_scale_rotation_translation();
             let vel = self.velocities.entry(id).or_insert(glam::Vec3::ZERO);
 
@@ -139,7 +139,7 @@ impl RuntimePlugin for ConstraintPlugin {
     }
 }
 
-impl crate::plugin_api::ViewportPlugin for ConstraintPlugin {
+impl crate::plugin_api::PluginInstaller for ConstraintPlugin {
     type Handle = ();
 
     /// Register the configured plugin on the runtime. Add constraints first,
@@ -158,14 +158,14 @@ impl crate::plugin_api::ViewportPlugin for ConstraintPlugin {
 mod tests {
     use super::*;
     use crate::interaction::select::selection::Selection;
+    use crate::resources::MaterialId;
     use crate::runtime::context::RuntimeFrameContext;
-    use crate::scene::material::Material;
     use crate::scene::scene::Scene;
 
     #[test]
     fn spring_target_pulls_the_node_toward_its_target() {
         let mut scene = Scene::new();
-        let node = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let node = scene.add(None, glam::Mat4::IDENTITY, MaterialId::DEFAULT);
 
         let plugin = ConstraintPlugin::new().add(Constraint::SpringTarget {
             node_id: node,
@@ -187,8 +187,8 @@ mod tests {
             .node(node)
             .unwrap()
             .world_transform()
-            .col(3)
-            .truncate()
+            .translation
+            .as_vec3()
             .x;
         assert!(x > 1.5, "spring should pull the node toward x = 3; x = {x}");
     }

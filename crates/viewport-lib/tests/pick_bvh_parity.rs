@@ -7,7 +7,6 @@
 //! coarse cursor grid and requires high agreement at the unambiguous interior pixels
 //! rather than an exact match at every cursor.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;
@@ -16,11 +15,7 @@ use common::*;
 fn pick_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -62,7 +57,7 @@ fn bvh_cpu_pick_matches_gpu_pick_many_objects() {
             glam::Quat::IDENTITY,
             t,
         )
-        .to_cols_array_2d();
+        .into();
         item.settings.pick_id = PickId(id);
         items.push(item);
     }
@@ -171,7 +166,7 @@ fn bvh_cpu_rect_pick_matches_oracle() {
             glam::Quat::IDENTITY,
             t,
         )
-        .to_cols_array_2d();
+        .into();
         item.settings.pick_id = PickId(id);
         items.push(item);
     }

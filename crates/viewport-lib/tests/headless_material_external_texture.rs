@@ -10,7 +10,7 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -76,7 +76,7 @@ fn register_update_free_semantics() {
     let (_t2, v2) = solid_srgb_texture(&device, &queue, 4, [40, 50, 60, 255]);
 
     // Register an external view, then re-point it in place.
-    let ext = res.register_texture_view(&device, &v1, 4, 4);
+    let ext = res.register_texture_view(&device, &v1, 4, 4).unwrap();
     assert!(
         res.update_texture_view(&device, ext, &v2, 4, 4),
         "update_texture_view should re-point an external id"
@@ -84,7 +84,11 @@ fn register_update_free_semantics() {
 
     // An owned (CPU-uploaded) texture is rejected by the external update path.
     let owned = res
-        .upload_texture(&device, &queue, 1, 1, &[255u8, 255, 255, 255])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, [255u8, 255, 255, 255].to_vec()),
+        )
         .unwrap();
     assert!(
         !res.update_texture_view(&device, owned, &v1, 4, 4),
@@ -113,7 +117,8 @@ fn external_view_is_sampled_by_a_material() {
     let (_src, view) = solid_srgb_texture(&device, &queue, 4, [0, 0, 255, 255]);
     let tex = renderer
         .resources_mut()
-        .register_texture_view(&device, &view, 4, 4);
+        .register_texture_view(&device, &view, 4, 4)
+        .unwrap();
 
     let mesh = renderer
         .resources_mut()
@@ -133,18 +138,16 @@ fn external_view_is_sampled_by_a_material() {
     frame.effects.lighting.lights = vec![light];
 
     let mut item = SceneRenderItem::default();
+    let mut mat = Material::default();
     item.mesh_id = mesh;
-    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.material.base_colour = [1.0, 1.0, 1.0].into();
-    item.material.texture_id = Some(tex);
+    item.model = glam::Mat4::IDENTITY.into();
+    mat.base_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+    mat.texture_id = Some(tex);
+    item.material = upload_material(&mut renderer, mat);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let cam = Camera::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, 64, 64);

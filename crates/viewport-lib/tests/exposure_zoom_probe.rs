@@ -4,7 +4,7 @@
 //! frame (zoom in -> dark, zoom out -> bright). Metering now skips far-plane
 //! (background) texels, so the metered EV barely moves with framing.
 
-#[cfg(feature = "wgpu29")]
+use viewport_lib::Colour;
 use viewport_lib::wgpu;
 
 mod common;
@@ -25,19 +25,22 @@ fn sphere_scene(
         .upload_mesh_data(device, &sphere)
         .unwrap();
 
+    let grey = upload_material(
+        renderer,
+        Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.6)),
+    );
     let mut items = Vec::new();
     for i in -1..=1 {
         let mut s = SceneRenderItem::default();
         s.mesh_id = sphere_id;
-        s.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.8, 0.0, 0.0))
-            .to_cols_array_2d();
-        s.material = Material::from_colour([0.6, 0.6, 0.6]);
+        s.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.8, 0.0, 0.0)).into();
+        s.material = grey;
         items.push(s);
     }
     items
 }
 
-fn center_luma(px: &[u8], size: u32) -> f32 {
+fn centre_luma(px: &[u8], size: u32) -> f32 {
     let lo = size / 2 - size / 10;
     let hi = size / 2 + size / 10;
     let (mut sum, mut n) = (0.0f32, 0.0f32);
@@ -65,23 +68,15 @@ fn auto_exposure_stable_across_zoom() {
 
     let size = 160u32;
     let mut evs: Vec<f32> = Vec::new();
-    eprintln!("distance |  center_luma |  metered_EV | mult");
+    eprintln!("distance |  centre_luma |  metered_EV | mult");
     for &dist in &[6.0f32, 10.0, 16.0, 26.0, 40.0] {
-        let cam = Camera {
-            center: glam::Vec3::ZERO,
-            distance: dist,
-            ..Camera::default()
-        };
+        let cam = Camera::orbit(glam::DVec3::ZERO, dist, Camera::default().orientation());
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.15, 0.15, 0.17, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.15, 0.15, 0.17, 1.0));
 
         let mut light = LightSource::default();
         light.kind = LightKind::Directional {
@@ -100,7 +95,7 @@ fn auto_exposure_stable_across_zoom() {
             .unwrap_or((f32::NAN, f32::NAN));
         eprintln!(
             "{dist:7.1} | {:11.1} | {ev:10.3} | {mult:.4}",
-            center_luma(&px, size)
+            centre_luma(&px, size)
         );
         evs.push(ev);
     }
@@ -150,19 +145,20 @@ fn probe_example_scene() {
     let mut items = Vec::new();
     let mut g = SceneRenderItem::default();
     g.mesh_id = ground;
-    g.model =
-        glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)).to_cols_array_2d();
-    g.material = Material::from_colour([0.45, 0.45, 0.48]);
-    g.material.roughness = 0.95;
+    g.model = glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)).into();
+    let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
+    m.roughness = 0.95;
+    g.material = upload_material(&mut renderer, m);
     items.push(g);
     for c in 0..cols {
         let a = 0.05 + (c as f32 / (cols - 1) as f32) * 0.85;
         let mut s = SceneRenderItem::default();
         s.mesh_id = sphere;
-        s.model = glam::Mat4::from_translation(glam::Vec3::new(c as f32 * spacing, 0.8, 0.8))
-            .to_cols_array_2d();
-        s.material = Material::from_colour([a, a, a]);
-        s.material.roughness = 0.6;
+        s.model =
+            glam::Mat4::from_translation(glam::Vec3::new(c as f32 * spacing, 0.8, 0.8)).into();
+        let mut m = Material::from_colour(Colour::linear_rgb(a, a, a));
+        m.roughness = 0.6;
+        s.material = upload_material(&mut renderer, m);
         items.push(s);
     }
 
@@ -176,22 +172,17 @@ fn probe_example_scene() {
         s / n
     };
     let make = |orient: glam::Quat, dist: f32, hemi: f32| {
-        let cam = Camera {
-            center: glam::Vec3::new(span * 0.5, 0.4, 0.6),
-            distance: dist,
-            orientation: orient,
-            ..Camera::default()
-        };
+        let cam = Camera::orbit(
+            glam::Vec3::new(span * 0.5, 0.4, 0.6).as_dvec3(),
+            dist,
+            orient,
+        );
         let mut frame = FrameData::default();
-        frame.camera.render_camera = {
-            let mut rc = RenderCamera::from_camera(&cam);
-            rc.aspect = 1.0;
-            rc
-        };
+        frame.camera.render_camera = RenderCamera::from_camera(&cam);
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.12, 0.12, 0.14, 1.0].into());
+        frame.viewport.background_colour = Some(Colour::linear(0.12, 0.12, 0.14, 1.0));
         let mut light = LightSource::default();
         light.cast_shadows = true;
         light.kind = LightKind::Directional {

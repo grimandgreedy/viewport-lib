@@ -21,6 +21,12 @@
 
 /// Order-2 real spherical harmonics: 9 coefficients per RGB channel.
 ///
+/// Linear. These are radiance, not a display colour, so they are used as they
+/// arrive with no sRGB decode anywhere in the path. Worth stating because
+/// Gaussian-splat SH looks like the same thing and is not: splat coefficients
+/// are trained against sRGB images, so the splat shader decodes them before
+/// use. Bake probe coefficients from linear radiance.
+///
 /// These are radiance coefficients (the raw projection of incoming light).
 /// [`evaluate_sh`] applies the cosine-lobe convolution that turns them into the
 /// diffuse irradiance a surface receives.
@@ -68,9 +74,9 @@ impl SHCoefficients {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LightProbe {
-    /// World-space position the probe was sampled at.
-    pub position: [f32; 3],
-    /// SH radiance at that position.
+    /// World-space position the probe was sampled at, in f64.
+    pub position: glam::DVec3,
+    /// SH radiance at that position. Linear; see [`SHCoefficients`].
     pub sh: SHCoefficients,
 }
 
@@ -104,7 +110,8 @@ impl LightProbeSet {
     /// A point sitting on a probe returns that probe's SH. An empty set returns
     /// zero SH. The interpolation is confined to this method, so a barycentric
     /// tetrahedral lookup can replace it without touching anything else.
-    pub fn blend_sh_at(&self, position: [f32; 3]) -> SHCoefficients {
+    pub fn blend_sh_at(&self, position: impl crate::IntoWorldPosition) -> SHCoefficients {
+        let position = position.into_world_position();
         if self.probes.is_empty() {
             return SHCoefficients::default();
         }
@@ -115,7 +122,7 @@ impl LightProbeSet {
             .probes
             .iter()
             .enumerate()
-            .map(|(i, p)| (dist_sq(p.position, position), i))
+            .map(|(i, p)| (p.position.distance_squared(position) as f32, i))
             .collect();
         let k = K_NEAREST.min(nearest.len());
         nearest.select_nth_unstable_by(k - 1, |a, b| a.0.total_cmp(&b.0));
@@ -167,8 +174,8 @@ pub const PROBE_VOLUME_INDEX: u32 = 0xffff_ffff;
 /// `min + (ix, iy, iz) * cell_size`.
 #[derive(Clone, Debug)]
 pub struct LightProbeVolume {
-    /// World position of probe `(0, 0, 0)` (the box's minimum corner).
-    pub min: [f32; 3],
+    /// World position of probe `(0, 0, 0)` (the box's minimum corner), in f64.
+    pub min: glam::DVec3,
     /// World spacing between adjacent probes on each axis.
     pub cell_size: [f32; 3],
     /// Probe counts per axis. Each must be >= 1.
@@ -180,11 +187,12 @@ pub struct LightProbeVolume {
 impl LightProbeVolume {
     /// Build a volume. `sh.len()` must equal `dims[0]*dims[1]*dims[2]`.
     pub fn new(
-        min: [f32; 3],
+        min: impl crate::IntoWorldPosition,
         cell_size: [f32; 3],
         dims: [u32; 3],
         sh: Vec<SHCoefficients>,
     ) -> Self {
+        let min = min.into_world_position();
         assert_eq!(
             sh.len(),
             (dims[0] * dims[1] * dims[2]) as usize,
@@ -204,7 +212,8 @@ impl LightProbeVolume {
     }
 
     /// Trilinearly interpolate the probe SH at a world position (edge-clamped).
-    pub fn sample_sh(&self, pos: [f32; 3]) -> SHCoefficients {
+    pub fn sample_sh(&self, pos: impl crate::IntoWorldPosition) -> SHCoefficients {
+        let rel = (pos.into_world_position() - self.min).as_vec3();
         // Continuous grid coordinate per axis, clamped so a point outside the box
         // takes the boundary probes.
         let mut base = [0u32; 3];
@@ -212,7 +221,7 @@ impl LightProbeVolume {
         for a in 0..3 {
             let n = self.dims[a].max(1);
             let g = if self.cell_size[a].abs() > 1e-8 && n > 1 {
-                (pos[a] - self.min[a]) / self.cell_size[a]
+                rel[a] / self.cell_size[a]
             } else {
                 0.0
             };
@@ -255,7 +264,11 @@ impl LightProbeVolume {
 
     /// Diffuse irradiance the volume gives a surface at `pos` facing `normal`.
     /// Trilinear SH interpolation followed by [`evaluate_sh`].
-    pub fn sample_irradiance(&self, pos: [f32; 3], normal: [f32; 3]) -> [f32; 3] {
+    pub fn sample_irradiance(
+        &self,
+        pos: impl crate::IntoWorldPosition,
+        normal: [f32; 3],
+    ) -> [f32; 3] {
         evaluate_sh(&self.sample_sh(pos), normal)
     }
 
@@ -265,7 +278,8 @@ impl LightProbeVolume {
     /// `sample_probe_volume` in `helpers/ambient.wgsl`.
     pub fn to_gpu(&self) -> Vec<[f32; 4]> {
         let mut v = Vec::with_capacity(3 + self.sh.len() * 9);
-        v.push([self.min[0], self.min[1], self.min[2], 1.0]);
+        let min = self.min.as_vec3();
+        v.push([min.x, min.y, min.z, 1.0]);
         let inv = |a: usize| {
             if self.cell_size[a].abs() > 1e-8 {
                 1.0 / self.cell_size[a]
@@ -378,13 +392,6 @@ pub fn project_equirect_to_sh(rgba: &[f32], width: u32, height: u32) -> SHCoeffi
     sh
 }
 
-fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    let dz = a[2] - b[2];
-    dx * dx + dy * dy + dz * dz
-}
-
 fn normalize(v: [f32; 3]) -> [f32; 3] {
     let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     if len > 1e-8 {
@@ -469,11 +476,11 @@ mod tests {
         b.r[0] = 3.0;
         let set = LightProbeSet::new(vec![
             LightProbe {
-                position: [0.0, 0.0, 0.0],
+                position: [0.0, 0.0, 0.0].into(),
                 sh: a,
             },
             LightProbe {
-                position: [10.0, 0.0, 0.0],
+                position: [10.0, 0.0, 0.0].into(),
                 sh: b,
             },
         ]);
