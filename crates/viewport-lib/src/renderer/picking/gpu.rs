@@ -523,6 +523,9 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> PickBegin {
+        // A pick hands an answer back with no later frame to catch up on, so
+        // every pipeline its pass draws with is built now rather than skipped.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -1218,6 +1221,9 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> crate::renderer::picking::PickRectResult {
+        // A pick hands an answer back with no later frame to catch up on, so
+        // every pipeline its pass draws with is built now rather than skipped.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let wants_object = mask.intersects(PickMask::OBJECT);
 
         let logical_lo = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
@@ -1500,6 +1506,9 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> Option<PendingSnap> {
+        // A pick hands an answer back with no later frame to catch up on, so
+        // every pipeline its pass draws with is built now rather than skipped.
+        let _blocking = self.resources.pipeline_compiler.blocking_scope();
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
