@@ -147,23 +147,39 @@ fn slab_and_collapse_invariants_hold() {
     }
 
     let (w, h) = (320u32, 240u32);
-    // `TESTKIT_SCENE` runs only the named scenes (comma-separated), for a fault
-    // on one adapter.
-    let only: Vec<String> = std::env::var("TESTKIT_SCENE")
-        .unwrap_or_default()
-        .split(',')
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
+    // For a fault on one adapter: `TESTKIT_SCENE` runs only the named scenes
+    // and `TESTKIT_SKIP` leaves the named ones out (both comma-separated), and
+    // `TESTKIT_REPEAT` runs each scene that many times.
+    let names = |var: &str| -> Vec<String> {
+        std::env::var(var)
+            .unwrap_or_default()
+            .split(',')
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect()
+    };
+    let only = names("TESTKIT_SCENE");
+    let skip = names("TESTKIT_SKIP");
+    let repeat: usize = std::env::var("TESTKIT_REPEAT")
+        .ok()
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or(1);
     // `TESTKIT_SHARED_DEVICE` builds every scene's harness on one device, so a
     // fault that needs many devices in one process can be told apart.
     let shared = std::env::var_os("TESTKIT_SHARED_DEVICE")
         .is_some_and(|v| !v.is_empty())
         .then(|| Harness::new().expect("adapter present"));
-    for scene in catalogue() {
-        if !only.is_empty() && !only.iter().any(|name| name == scene.name) {
-            continue;
-        }
+    let scenes: Vec<_> = catalogue()
+        .into_iter()
+        .filter(|scene| {
+            (only.is_empty() || only.iter().any(|name| name == scene.name))
+                && !skip.iter().any(|name| name == scene.name)
+        })
+        .collect();
+    for scene in scenes
+        .iter()
+        .flat_map(|scene| std::iter::repeat_n(scene, repeat))
+    {
         // Named at each step, so a run that faults in the driver shows where.
         eprintln!("scene {}", scene.name);
         // Fresh harness per scene so slab residency reflects that scene alone.

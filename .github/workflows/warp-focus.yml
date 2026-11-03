@@ -19,6 +19,12 @@ on:
       testkit_scene:
         description: buffer_invariants runs only these catalogue scenes (comma-separated, empty for all)
         default: ''
+      testkit_skip:
+        description: buffer_invariants leaves out these catalogue scenes (comma-separated)
+        default: ''
+      testkit_repeat:
+        description: buffer_invariants runs each scene this many times
+        default: '1'
 
 env:
   CARGO_TERM_COLOR: always
@@ -60,6 +66,8 @@ jobs:
         working-directory: crates/viewport-lib-testkit
         env:
           TESTKIT_SCENE: ${{ inputs.testkit_scene }}
+          TESTKIT_SKIP: ${{ inputs.testkit_skip }}
+          TESTKIT_REPEAT: ${{ inputs.testkit_repeat }}
           TESTKIT_SHARED_DEVICE: ${{ inputs.testkit_shared_device && '1' || '' }}
           # Pipelines compile on the test's thread, in order, so the step
           # messages show which stage a fault is in.
