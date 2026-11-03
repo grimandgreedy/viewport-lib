@@ -7,15 +7,14 @@ members = [
     "crates/viewport-lib-geometry",
     "crates/viewport-lib-input",
     "crates/viewport-lib-post-effects",
-    "crates/viewport-lib-examples/eframe",
     "crates/viewport-lib-examples/winit",
     "crates/viewport-lib-examples/iced",
     "crates/viewport-lib-examples/headless",
 ]
 # A bare `cargo build` / `cargo test` at the root builds the library crates only,
 # so routine work does not compile a UI framework. `--workspace` opts into the
-# example crates: `cargo build --workspace --all-targets` compiles every example
-# with no feature flags.
+# example crates: `cargo build --workspace --all-targets` compiles every member
+# example with no feature flags.
 default-members = [
     "crates/viewport-lib",
     "crates/viewport-lib-types",
@@ -24,21 +23,21 @@ default-members = [
     "crates/viewport-lib-input",
     "crates/viewport-lib-post-effects",
 ]
-# The testkit lives in `crates/` and has its own `[workspace]` table (it is a
-# `publish = false` crate, not a member, so `cargo publish -p viewport-lib` stays
-# clean). Excluding it here stops cargo treating that nested workspace root as
-# part of this one when `viewport-lib`'s dev-dependency resolves the path.
+# The testkit lives in `crates/` and has its own `[workspace]` table. Excluding it
+# here stops cargo treating that nested workspace root as part of this one when
+# `viewport-lib`'s dev-dependency resolves the path.
 #
-# The slint and bevy example crates are excluded for a different reason: their
-# frameworks pin wgpu 29, and features unify across a workspace build, so as
-# members they would turn the 29 leg on for every crate defaulting to 27.
-#
-# The mobile example is excluded for a third: the Xcode and Gradle projects
-# cargo-mobile2 generates for it build the Rust side by running cargo from that
-# directory and looking for the library under `./target`, which a member's
-# workspace-root target directory does not satisfy.
+# The eframe example crate is excluded because it takes the gizmo extension by a
+# path outside this repository, and cargo reads every member's manifest for any
+# command, `cargo publish` included, so on a checkout without that path the
+# workspace would not load. Slint and bevy are excluded because their frameworks
+# pin wgpu 29 and features unify across a workspace build. The mobile crate is
+# excluded because the projects cargo-mobile2 generates look for its library
+# under its own `./target`. Each excluded crate is built by manifest path (the
+# aliases in `.cargo/config.toml`) and resolves its own `Cargo.lock`.
 exclude = [
     "crates/viewport-lib-testkit",
+    "crates/viewport-lib-examples/eframe",
     "crates/viewport-lib-examples/slint",
     "crates/viewport-lib-examples/bevy",
     "crates/viewport-lib-examples/mobile",

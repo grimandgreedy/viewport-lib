@@ -43,21 +43,21 @@
 - **mobile**: the same scene on Android and iOS, orbited with touch. Needs cargo-mobile2 and a device toolchain; see the crate's README.
 
 ```
-cargo run --release -p viewport-lib-examples-eframe --example eframe-showcase
-cargo run --release -p viewport-lib-examples-eframe --example eframe-minimal
+cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --example eframe-showcase
+cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --example eframe-minimal
 cargo run --release -p viewport-lib-examples-winit  --example winit-minimal
 cargo run --release -p viewport-lib-examples-iced   --example iced-viewport
 cargo run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --example slint-minimal
 cargo run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml  --example bevy-swarm
 ```
 
-The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. The mobile crate is outside the workspace too, because cargo-mobile2's generated Xcode and Gradle projects expect its target directory to be its own; it is built and deployed from its own directory, which its README covers. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
+The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. The eframe crate is built by manifest path too, because it takes the `viewport-lib-gizmo` extension by path from an `extensions` checkout beside this repository. The mobile crate is outside the workspace too, because cargo-mobile2's generated Xcode and Gradle projects expect its target directory to be its own; it is built and deployed from its own directory, which its README covers. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
 
 ```
 cargo run --release -p viewport-lib-examples-winit --no-default-features --features wgpu30 --example winit-minimal
 ```
 
-`cargo slint-example` and `cargo bevy-example` are aliases for the two manifest-path commands above.
+`cargo eframe-examples --example <name>`, `cargo slint-example` and `cargo bevy-example` are aliases for the manifest-path commands above.
 
 ## Quick start
 

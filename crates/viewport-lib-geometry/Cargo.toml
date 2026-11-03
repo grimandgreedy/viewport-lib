@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib-geometry"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "CPU geometry algorithms for viewport-lib: mesh primitives, triangle-mesh operations, marching cubes and unstructured volume meshes, built on viewport-lib-types."
 readme = "README.md"
@@ -14,7 +14,7 @@ rust-version = "1.85"
 publish = true
 
 [dependencies]
-viewport-lib-types = { path = "../viewport-lib-types", version = "0.2.0" }
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.3.0" }
 glam = { workspace = true }
 
 # CPU parallelism, used through `par`. Not pulled in on wasm: that target has no

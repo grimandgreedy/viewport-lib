@@ -6,13 +6,13 @@
 //! scene, camera controllers, and interaction. Pick a showcase from the side
 //! panel; the host resets the scene and calls the new one's `setup`.
 //!
-//! Run with: cargo run --release -p viewport-lib-examples-eframe --example showcase
+//! Run with: cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --example showcase
 //!
 //! It builds on every wgpu leg. On wgpu 30 the path tracer and the lightmap
 //! baker trace in hardware where the GPU has ray queries, Apple silicon
 //! included:
 //!
-//! cargo run --release -p viewport-lib-examples-eframe --no-default-features \
+//! cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --no-default-features \
 //!     --features wgpu30,showcase --example showcase
 //!
 //! `VPL_SHOWCASE=<n>` opens on showcase n (1-based) instead of the first.

@@ -13,7 +13,7 @@
 //! pipelines would fit within its limits. The testkit's device profiles do
 //! that.
 //!
-//! Run with: cargo run --release -p viewport-lib-examples-eframe --example tiers
+//! Run with: cargo run --release --manifest-path crates/viewport-lib-examples/eframe/Cargo.toml --example tiers
 //!
 //! `VPL_TIER=<n>` opens on tab n (1-based) instead of the first.
 //! Cmd+[ and Cmd+] (Ctrl on Windows and Linux) step through the tabs.
