@@ -36,7 +36,7 @@ viewport-lib-gizmo = "0.1.0"
 # unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Desktop-only:
 # xatlas is C++ and does not cross-compile to wasm.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-viewport-lib-lightbake = { version = "0.1.0" }
+viewport-lib-lightbake = { version = "0.2.0" }
 
 [features]
 # Each leg pairs viewport-lib's wgpu leg with the eframe version that embeds the
