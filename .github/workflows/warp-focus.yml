@@ -12,6 +12,10 @@ on:
       testkit_tests:
         description: testkit test targets (space-separated, empty to skip)
         default: buffer_invariants
+      testkit_shared_device:
+        description: buffer_invariants builds every scene on one device
+        type: boolean
+        default: false
       testkit_scene:
         description: buffer_invariants runs only these catalogue scenes (comma-separated, empty for all)
         default: ''
@@ -56,6 +60,7 @@ jobs:
         working-directory: crates/viewport-lib-testkit
         env:
           TESTKIT_SCENE: ${{ inputs.testkit_scene }}
+          TESTKIT_SHARED_DEVICE: ${{ inputs.testkit_shared_device && '1' || '' }}
           # Pipelines compile on the test's thread, in order, so the step
           # messages show which stage a fault is in.
           VPL_PIPELINE_COMPILATION: blocking

@@ -155,6 +155,11 @@ fn slab_and_collapse_invariants_hold() {
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .collect();
+    // `TESTKIT_SHARED_DEVICE` builds every scene's harness on one device, so a
+    // fault that needs many devices in one process can be told apart.
+    let shared = std::env::var_os("TESTKIT_SHARED_DEVICE")
+        .is_some_and(|v| !v.is_empty())
+        .then(|| Harness::new().expect("adapter present"));
     for scene in catalogue() {
         if !only.is_empty() && !only.iter().any(|name| name == scene.name) {
             continue;
@@ -162,7 +167,14 @@ fn slab_and_collapse_invariants_hold() {
         // Named at each step, so a run that faults in the driver shows where.
         eprintln!("scene {}", scene.name);
         // Fresh harness per scene so slab residency reflects that scene alone.
-        let mut harness = Harness::new().expect("adapter present");
+        let mut harness = match &shared {
+            Some(h) => Harness::from_device(
+                h.device.clone(),
+                h.queue.clone(),
+                Harness::DEFAULT_TARGET_FORMAT,
+            ),
+            None => Harness::new().expect("adapter present"),
+        };
         let built = harness.build_scene(&scene);
         eprintln!("  built");
         let frame = frame_for(&built, &scene.cameras[0].camera, [w as f32, h as f32]);
