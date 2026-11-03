@@ -44,10 +44,11 @@ pub const MASK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForm
 pub const PICK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::R32Uint;
 
 /// Pick depth-channel format (`@location(2)`): the fragment framebuffer `z`
-/// written as a float so the renderer can reconstruct world position on
-/// read-back.
+/// written as `bitcast<u32>(z)`, so the renderer can reconstruct world position
+/// on read-back. An integer target because GL renders to `R32Float` only with
+/// `EXT_color_buffer_float`.
 pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
-    crate::gpu::TextureFormat::R32Float;
+    crate::gpu::TextureFormat::R32Uint;
 
 impl DeviceResources {
     // ------------------------------------------------------------------

@@ -104,9 +104,9 @@ impl DeviceResources {
                             blend: None,
                             write_mask: crate::gpu::ColorWrites::ALL,
                         }),
-                        // location 2: R32Float depth
+                        // location 2: depth bits
                         Some(crate::gpu::ColorTargetState {
-                            format: crate::gpu::TextureFormat::R32Float,
+                            format: crate::gpu::TextureFormat::R32Uint,
                             blend: None,
                             write_mask: crate::gpu::ColorWrites::ALL,
                         }),
@@ -305,7 +305,7 @@ impl DeviceResources {
                             write_mask: crate::gpu::ColorWrites::ALL,
                         }),
                         Some(crate::gpu::ColorTargetState {
-                            format: crate::gpu::TextureFormat::R32Float,
+                            format: crate::gpu::TextureFormat::R32Uint,
                             blend: None,
                             write_mask: crate::gpu::ColorWrites::ALL,
                         }),
@@ -407,7 +407,7 @@ impl DeviceResources {
                             write_mask: crate::gpu::ColorWrites::ALL,
                         }),
                         Some(crate::gpu::ColorTargetState {
-                            format: crate::gpu::TextureFormat::R32Float,
+                            format: crate::gpu::TextureFormat::R32Uint,
                             blend: None,
                             write_mask: crate::gpu::ColorWrites::ALL,
                         }),

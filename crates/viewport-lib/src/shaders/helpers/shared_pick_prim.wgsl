@@ -10,7 +10,7 @@
 struct ViewportPickPrimOut {
     @location(0) object_id: u32,
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth: u32,
 };
 
 @fragment
@@ -22,6 +22,6 @@ fn viewport_pick_prim_fs(
     var out: ViewportPickPrimOut;
     out.object_id = pick_id;
     out.primitive_id = prim_index;
-    out.depth = frag_pos.z;
+    out.depth = bitcast<u32>(frag_pos.z);
     return out;
 }

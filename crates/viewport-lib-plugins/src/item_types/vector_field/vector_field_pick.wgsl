@@ -99,7 +99,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 struct FragOut {
     @location(0) object_id:    u32,
     @location(1) primitive_id: u32,
-    @location(2) depth:        f32,
+    @location(2) depth:        u32,
 };
 
 @fragment
@@ -108,6 +108,6 @@ fn fs_main(in: VertexOut) -> FragOut {
     var out: FragOut;
     out.object_id    = pick.id;
     out.primitive_id = in.instance_index;
-    out.depth        = in.clip_pos.z;
+    out.depth        = bitcast<u32>(in.clip_pos.z);
     return out;
 }

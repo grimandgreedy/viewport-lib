@@ -284,7 +284,7 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                             write_mask: viewport_lib::gpu::ColorWrites::ALL,
                         }),
                         Some(viewport_lib::gpu::ColorTargetState {
-                            format: viewport_lib::gpu::TextureFormat::R32Float,
+                            format: viewport_lib::gpu::TextureFormat::R32Uint,
                             blend: None,
                             write_mask: viewport_lib::gpu::ColorWrites::ALL,
                         }),

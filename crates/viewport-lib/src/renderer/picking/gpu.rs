@@ -307,7 +307,7 @@ impl PickTargets {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R32Float,
+            format: crate::resources::PICK_DEPTH_CHANNEL_FORMAT,
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
                 | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
@@ -386,7 +386,8 @@ impl PickTargets {
                     depth_slice: None,
                     ops: crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                            r: f64::from(crate::plugin_api::depth::DEPTH_CLEAR),
+                            // The far-plane depth's bits, as the shaders write them.
+                            r: f64::from(crate::plugin_api::depth::DEPTH_CLEAR.to_bits()),
                             g: 0.0,
                             b: 0.0,
                             a: 0.0,

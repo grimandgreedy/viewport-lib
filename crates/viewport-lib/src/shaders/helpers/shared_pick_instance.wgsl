@@ -11,7 +11,7 @@
 struct ViewportPickInstOut {
     @location(0) object_id: u32,
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth: u32,
 };
 
 @fragment
@@ -23,6 +23,6 @@ fn viewport_pick_instance_fs(
     var out: ViewportPickInstOut;
     out.object_id = pick_id;
     out.primitive_id = instance_id;
-    out.depth = frag_pos.z;
+    out.depth = bitcast<u32>(frag_pos.z);
     return out;
 }

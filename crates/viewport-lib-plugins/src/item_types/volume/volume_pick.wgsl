@@ -179,7 +179,7 @@ fn clip_ray_cylinder(
 struct PickOut {
     @location(0) object_id: u32,
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth: u32,
     @builtin(frag_depth) frag_depth: f32,
 };
 
@@ -271,7 +271,7 @@ fn fs_pick(in: VertexOutput) -> PickOut {
         var out: PickOut;
         out.object_id = pick_id.x;
         out.primitive_id = flat;
-        out.depth = ndc_z;
+        out.depth = bitcast<u32>(ndc_z);
         out.frag_depth = ndc_z;
         return out;
     }
@@ -281,7 +281,7 @@ fn fs_pick(in: VertexOutput) -> PickOut {
     var miss: PickOut;
     miss.object_id = 0u;
     miss.primitive_id = 0u;
-    miss.depth = VIEWPORT_DEPTH_FAR;
+    miss.depth = bitcast<u32>(VIEWPORT_DEPTH_FAR);
     miss.frag_depth = VIEWPORT_DEPTH_FAR;
     return miss;
 }

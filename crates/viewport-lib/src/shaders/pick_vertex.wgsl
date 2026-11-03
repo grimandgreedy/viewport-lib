@@ -119,7 +119,7 @@ fn vertex_position(vi: u32) -> vec3<f32> {
 struct FragOut {
     @location(0) object_id: u32,
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth: u32,
 };
 
 @fragment
@@ -149,6 +149,6 @@ fn fs_main(in: VertexOut, @builtin(primitive_index) prim: u32) -> FragOut {
     var out: FragOut;
     out.object_id = in.object_id;
     out.primitive_id = best;
-    out.depth = in.clip_pos.z;
+    out.depth = bitcast<u32>(in.clip_pos.z);
     return out;
 }

@@ -138,7 +138,7 @@ struct FragOut {
     // write the hit triangle here, which readback maps to a face / cell / tube
     // segment.
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth: u32,
 };
 
 @fragment
@@ -152,6 +152,6 @@ fn fs_main(in: VertexOut) -> FragOut {
         out.primitive_id = in.instance_index;
     }
     // clip_pos.z in the fragment stage is the depth buffer value in [0, 1].
-    out.depth = in.clip_pos.z;
+    out.depth = bitcast<u32>(in.clip_pos.z);
     return out;
 }

@@ -124,7 +124,7 @@ fn scene_sdf(p: vec3<f32>) -> f32 {
 struct PickOut {
     @location(0) object_id: u32,
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth: u32,
     @builtin(frag_depth) frag_depth: f32,
 };
 
@@ -161,7 +161,7 @@ fn fs_pick(in: VertexOutput) -> PickOut {
     var out: PickOut;
     out.object_id = pick_id.x;
     out.primitive_id = 0u;
-    out.depth = ndc_z;
+    out.depth = bitcast<u32>(ndc_z);
     out.frag_depth = ndc_z;
     return out;
 }
