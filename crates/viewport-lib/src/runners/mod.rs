@@ -103,10 +103,17 @@ pub(crate) fn runner_renderer_config(
     base: &crate::RendererConfig,
     format: crate::gpu::TextureFormat,
     cache_data: Option<Vec<u8>>,
+    adapter: &crate::gpu::Adapter,
 ) -> crate::RendererConfig {
     let mut config = base.clone().with_target_format(format).with_sample_count(1);
     if cache_data.is_some() {
         config.pipeline_cache_data = cache_data;
+    }
+    if config.downlevel_capabilities.is_none() {
+        config.downlevel_capabilities = Some(adapter.get_downlevel_capabilities());
+    }
+    if config.backend.is_none() {
+        config.backend = Some(adapter.get_info().backend);
     }
     config
 }
@@ -145,7 +152,27 @@ impl ViewportInstance {
     /// `ViewportRenderer::recommended_device_features` requests where the
     /// adapter has it; on any other device the data is ignored. Stale or
     /// foreign data is discarded, so passing whatever was last saved is safe.
+    ///
+    /// # Panics
+    ///
+    /// When the device is below the tier the renderer can be built on, with
+    /// the message [`try_with_config`](Self::try_with_config) returns as an
+    /// error.
     pub fn with_config(device: &crate::gpu::Device, config: &crate::RendererConfig) -> Self {
+        match Self::try_with_config(device, config) {
+            Ok(instance) => instance,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// As [`with_config`](Self::with_config), returning
+    /// [`ViewportError::DeviceUnsupported`](crate::ViewportError::DeviceUnsupported)
+    /// when the device is below the overlay floor, as
+    /// [`ViewportRenderer::try_with_config`] does, instead of panicking.
+    pub fn try_with_config(
+        device: &crate::gpu::Device,
+        config: &crate::RendererConfig,
+    ) -> Result<Self, crate::ViewportError> {
         // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
@@ -176,30 +203,19 @@ impl ViewportInstance {
                     missing.join("; ")
                 );
             }
-
-            // Below MIN the renderer cannot build the mesh pipeline layouts and
-            // asserts at construction, so surface the actionable guidance here
-            // first rather than leaving it to a panic deep in bring-up. Every
-            // built-in feature fits in MIN, so there is no lower tier to report.
-            let available = device.limits().max_storage_buffers_per_shader_stage;
-            let minimum = ViewportRenderer::MIN_STORAGE_BUFFERS_PER_STAGE;
-            if available < minimum {
-                tracing::warn!(
-                    "ViewportInstance: device max_storage_buffers_per_shader_stage is {} but \
-                     the base mesh path needs {}; renderer construction will fail. Pass \
-                     ViewportRenderer::recommended_device_limits(adapter) as required_limits in \
-                     your device descriptor.",
-                    available,
-                    minimum,
-                );
-            }
         }
         warn_missing_device_capabilities(device);
 
-        let mut renderer = ViewportRenderer::with_config(device, config);
+        let mut renderer = ViewportRenderer::try_with_config(device, config)?;
+        tracing::info!(
+            target: "viewport_lib::init",
+            tier = %renderer.tier(),
+            downlevel_known = renderer.capabilities().downlevel_known,
+            "ViewportInstance: renderer tier"
+        );
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();
-        Self {
+        Ok(Self {
             renderer,
             scene: Scene::new(),
             selection: Selection::new(),
@@ -220,7 +236,7 @@ impl ViewportInstance {
             outline_width_px: defaults.outline_width_px,
             extras: Vec::new(),
             next_extra_id: 0,
-        }
+        })
     }
 
     /// Replace the binding set this viewport resolves with, at construction.
@@ -467,8 +483,14 @@ impl ViewportInstance {
         &mut self,
         device: &crate::gpu::Device,
         plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
-    ) {
-        self.renderer.with_item_type_plugin(device, plugin);
+    ) -> Result<(), crate::ViewportError> {
+        self.renderer.with_item_type_plugin(device, plugin)
+    }
+
+    /// Why an item type was refused, the same call as
+    /// [`ViewportRenderer::item_type_declined`](crate::renderer::ViewportRenderer::item_type_declined).
+    pub fn item_type_declined(&self, type_name: &str) -> Option<&crate::ViewportError> {
+        self.renderer.item_type_declined(type_name)
     }
 
     /// Borrow a registered item-type plugin back as its concrete type.
@@ -613,7 +635,7 @@ mod tests {
     use crate::{Material, OrbitCameraController, PolylineItem, primitives};
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

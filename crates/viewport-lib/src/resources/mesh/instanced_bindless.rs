@@ -125,10 +125,11 @@ impl DeviceResources {
     /// `object_bgl` with the five material texture slots replaced by the
     /// texture array at binding 1.
     pub(crate) fn ensure_object_bindless_bgl(&mut self, device: &crate::gpu::Device) {
-        if self.binds.object_bindless_bgl.is_some() {
+        if self.scene_tier.binds.object_bindless_bgl.is_some() {
             return;
         }
         let mut entries: Vec<_> = self
+            .scene_tier
             .binds
             .object_bgl_entries
             .iter()
@@ -136,7 +137,7 @@ impl DeviceResources {
             .cloned()
             .collect();
         entries.push(texture_array_entry(1));
-        self.binds.object_bindless_bgl = Some(device.create_bind_group_layout(
+        self.scene_tier.binds.object_bindless_bgl = Some(device.create_bind_group_layout(
             &crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("object_bindless_bgl"),
                 entries: &entries,
@@ -155,8 +156,8 @@ impl DeviceResources {
         crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             label,
-            &self.binds.camera_bgl,
-            self.binds.object_bindless_bgl.as_ref().unwrap(),
+            &self.scene_tier.binds.camera_bgl,
+            self.scene_tier.binds.object_bindless_bgl.as_ref().unwrap(),
         )
     }
 
@@ -173,7 +174,7 @@ impl DeviceResources {
     /// an unbound entry. The vector is rebuilt only when the bind group is, which
     /// is a change in the instance generation, the slot count, or the free epoch.
     pub(crate) fn bindless_texture_views(&self) -> Vec<&crate::gpu::TextureView> {
-        let fallback = &self.material.texture.view;
+        let fallback = &self.scene_tier.material.texture.view;
         (0..BINDLESS_TEXTURE_CAPACITY as usize)
             .map(|i| {
                 self.content

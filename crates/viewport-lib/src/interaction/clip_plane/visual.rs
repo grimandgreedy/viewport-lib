@@ -3,7 +3,8 @@
 //! World-space indicators for every clip shape (plane border + normal handle, box
 //! edges, sphere great circles, cylinder caps + longitudinal lines) plus the
 //! translucent plane fill. These produce standard scene primitives - a
-//! [`PolylineItem`] for the outlines and a unit-quad [`MeshData`] for the fill -
+//! [`PolylineItem`](crate::PolylineItem) for the outlines and a unit-quad
+//! [`MeshData`](crate::MeshData) for the fill -
 //! tagged with `ItemSettings::ignore_clip` so the indicators stay fully visible
 //! where the scene itself is clipped. The host submits the returned items; the
 //! renderer draws them through the normal polyline / mesh paths, not a bespoke

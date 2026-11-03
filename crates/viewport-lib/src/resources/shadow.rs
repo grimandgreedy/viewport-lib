@@ -130,14 +130,27 @@ pub(crate) fn create_atlas_texture(
     (texture, view)
 }
 
+/// The view dimension binding 17 samples the point-light shadow array through:
+/// `CubeArray`, or `D2Array` on a device without cube-array textures.
+pub(crate) fn point_shadow_view_dimension(
+    cube_array_textures: bool,
+) -> crate::gpu::TextureViewDimension {
+    if cube_array_textures {
+        crate::gpu::TextureViewDimension::CubeArray
+    } else {
+        crate::gpu::TextureViewDimension::D2Array
+    }
+}
+
 /// Create the point-light cube array for `lights` cubes of `face_size` square,
-/// with the `CubeArray` sampling view and one 2D view per face for the depth
-/// passes. Called at 1x1x1 cube for the placeholder and at
-/// `POINT_SHADOW_FACE_SIZE` / `MAX_POINT_SHADOW_LIGHTS` when promoted.
+/// with the sampling view (see [`point_shadow_view_dimension`]) and one 2D view
+/// per face for the depth passes. Called at 1x1x1 cube for the placeholder and
+/// at `POINT_SHADOW_FACE_SIZE` / `MAX_POINT_SHADOW_LIGHTS` when promoted.
 pub(crate) fn create_point_cube_array(
     device: &crate::gpu::Device,
     face_size: u32,
     lights: u32,
+    cube_array_textures: bool,
 ) -> (
     crate::gpu::Texture,
     crate::gpu::TextureView,
@@ -161,13 +174,7 @@ pub(crate) fn create_point_cube_array(
     });
     let cube_view = texture.create_view(&crate::gpu::TextureViewDescriptor {
         label: Some("point_shadow_cube_view"),
-        // iOS Metal does not support CubeArray views. Use D2Array instead;
-        // the shader is patched at build time to match.
-        dimension: Some(if cfg!(target_os = "ios") {
-            crate::gpu::TextureViewDimension::D2Array
-        } else {
-            crate::gpu::TextureViewDimension::CubeArray
-        }),
+        dimension: Some(point_shadow_view_dimension(cube_array_textures)),
         aspect: crate::gpu::TextureAspect::DepthOnly,
         base_array_layer: 0,
         array_layer_count: Some(layers),
@@ -275,7 +282,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let shadow = &res.shadow;
+        let shadow = &res.scene_tier.shadow;
         assert!(shadow.atlas_size > 0, "atlas size must be recorded");
         assert_eq!(
             shadow.map_texture.width(),
@@ -322,8 +329,11 @@ mod tests {
         };
         assert!(res.ensure_shadow_atlas(&device), "first call allocates");
         assert!(!res.ensure_shadow_atlas(&device), "second call is a no-op");
-        assert_eq!(res.shadow.map_texture.width(), res.shadow.atlas_size);
-        assert!(res.shadow.atlas_allocated);
+        assert_eq!(
+            res.scene_tier.shadow.map_texture.width(),
+            res.scene_tier.shadow.atlas_size
+        );
+        assert!(res.scene_tier.shadow.atlas_allocated);
 
         assert!(
             res.ensure_point_shadow_cubes(&device),
@@ -334,14 +344,14 @@ mod tests {
             "second call is a no-op"
         );
         assert_eq!(
-            res.shadow.point_face_views.len(),
+            res.scene_tier.shadow.point_face_views.len(),
             (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as usize
         );
         assert_eq!(
-            res.shadow.point_cube_texture.width(),
+            res.scene_tier.shadow.point_cube_texture.width(),
             crate::renderer::POINT_SHADOW_FACE_SIZE
         );
-        assert!(res.shadow.point_cubes_allocated);
+        assert!(res.scene_tier.shadow.point_cubes_allocated);
     }
 
     /// Same completeness guarantee as `scene_pipelines::hdr_opaque_resolves_every_key_once_built`
@@ -360,8 +370,8 @@ mod tests {
             .set_policy(crate::resources::PipelineCompilation::Blocking);
         res.ensure_cascade_shadow_pipelines(&device);
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            assert!(res.shadow.cascade(key).is_some());
-            assert!(res.shadow.cascade_culled(key).is_some());
+            assert!(res.scene_tier.shadow.cascade(key).is_some());
+            assert!(res.scene_tier.shadow.cascade_culled(key).is_some());
         }
     }
 }

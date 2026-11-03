@@ -88,11 +88,14 @@ pub(super) struct CurvePickRecipe {
     device: viewport_lib::gpu::Device,
     builder: viewport_lib::plugin_api::PipelineBuilder,
     instance_bgl: viewport_lib::gpu::BindGroupLayout,
-    node_bgl: viewport_lib::gpu::BindGroupLayout,
     pick_shader: viewport_lib::plugin_api::LazyModule,
-    /// `None` on a device without the primitive-index feature: the pick then
-    /// stays object-level, matching the built-in surfaces.
-    node_shader: Option<viewport_lib::plugin_api::LazyModule>,
+    /// The node payload layout and shader, `None` on a device without the
+    /// primitive-index feature or fragment-stage storage buffers: the pick
+    /// then stays object-level, matching the built-in surfaces.
+    node: Option<(
+        viewport_lib::gpu::BindGroupLayout,
+        viewport_lib::plugin_api::LazyModule,
+    )>,
     mask_layout: viewport_lib::gpu::PipelineLayout,
     mask_shader: viewport_lib::plugin_api::LazyModule,
     mask_cull: Option<viewport_lib::gpu::Face>,
@@ -126,27 +129,30 @@ fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
                 )
             },
         ),
-        PICK_NODE => r.builder.build_pick_pipeline(
-            &r.device,
-            &viewport_lib::resources::PluginPipelineOpts {
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
+        PICK_NODE => {
+            let (node_bgl, node_shader) = r
+                .node
+                .as_ref()
+                .expect("the node pick is only asked for where the device has it");
+            r.builder.build_pick_pipeline(
+                &r.device,
+                &viewport_lib::resources::PluginPipelineOpts {
+                    primitive: viewport_lib::gpu::PrimitiveState {
+                        topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    extra_bind_group_layouts: &[&r.instance_bgl, node_bgl],
+                    ..viewport_lib::resources::PluginPipelineOpts::new(
+                        Some(&format!("{}_pick_node_pipeline", r.label)),
+                        node_shader.get(),
+                        "vs_main",
+                        "fs_main",
+                        &vertex_buffers,
+                    )
                 },
-                extra_bind_group_layouts: &[&r.instance_bgl, &r.node_bgl],
-                ..viewport_lib::resources::PluginPipelineOpts::new(
-                    Some(&format!("{}_pick_node_pipeline", r.label)),
-                    r.node_shader
-                        .as_ref()
-                        .expect("the node pick is only asked for with primitive index")
-                        .get(),
-                    "vs_main",
-                    "fs_main",
-                    &vertex_buffers,
-                )
-            },
-        ),
+            )
+        }
         MASK => viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
             &r.device,
             &format!("{}_outline_mask_pipeline", r.label),
@@ -175,7 +181,6 @@ fn build_pick(r: &CurvePickRecipe, i: usize) -> viewport_lib::gpu::RenderPipelin
 pub(super) struct CurvePickGpu {
     pub(super) pipelines: CurvePickPipelines,
     pub(super) instance_bgl: viewport_lib::gpu::BindGroupLayout,
-    pub(super) node_bgl: viewport_lib::gpu::BindGroupLayout,
 }
 
 impl CurvePickGpu {
@@ -188,7 +193,6 @@ impl CurvePickGpu {
         two_sided: bool,
     ) -> Self {
         let instance_bgl = instance_bgl(device, &format!("{label}_pick_instance_bgl"));
-        let node_bgl = node_bgl(device, &format!("{label}_pick_node_bgl"));
         let pick_shader_label = format!("{label}_pick_shader");
         let node_shader_label = format!("{label}_pick_node_shader");
         let mask_shader_label = format!("{label}_outline_mask_shader");
@@ -196,6 +200,8 @@ impl CurvePickGpu {
         let has_prim = device
             .features()
             .contains(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE);
+        let has_node = has_prim
+            && viewport_lib::plugin_api::PluginResources::capabilities(resources).fragment_storage;
 
         // The default fragment writes a constant 0 into the primitive-id
         // channel. With the primitive-index feature, rewrite it to report the
@@ -218,14 +224,17 @@ impl CurvePickGpu {
         } else {
             resources.lazy_module(device, &pick_shader_label, &pick_src)
         };
-        let node_shader = has_prim.then(|| {
-            resources.lazy_module(
-                device,
-                &node_shader_label,
-                viewport_lib::plugin_api::builders::with_primitive_index_enable(&scene_shader(
-                    &[],
-                    wgsl_source!("curve_pick_node"),
-                )),
+        let node = has_node.then(|| {
+            (
+                node_bgl(device, &format!("{label}_pick_node_bgl")),
+                resources.lazy_module(
+                    device,
+                    &node_shader_label,
+                    viewport_lib::plugin_api::builders::with_primitive_index_enable(&scene_shader(
+                        &[],
+                        wgsl_source!("curve_pick_node"),
+                    )),
+                ),
             )
         });
 
@@ -237,7 +246,7 @@ impl CurvePickGpu {
         let mask_layout = pipeline_layout(
             device,
             mask_layout_label.as_str(),
-            &[resources.shared_bindings().group0_layout, &instance_bgl],
+            &[resources.group0_layout(), &instance_bgl],
         );
 
         let pipelines = resources.lazy_pipelines(
@@ -245,9 +254,8 @@ impl CurvePickGpu {
                 device: device.clone(),
                 builder: resources.pipeline_builder(),
                 instance_bgl: instance_bgl.clone(),
-                node_bgl: node_bgl.clone(),
                 pick_shader,
-                node_shader,
+                node,
                 mask_layout,
                 mask_shader,
                 mask_cull: (!two_sided).then_some(viewport_lib::gpu::Face::Back),
@@ -259,13 +267,12 @@ impl CurvePickGpu {
         Self {
             pipelines,
             instance_bgl,
-            node_bgl,
         }
     }
 
     /// Whether the POLY_NODE pick variant exists on this device.
     pub(super) fn has_node(&self) -> bool {
-        self.pipelines.context().node_shader.is_some()
+        self.pipelines.context().node.is_some()
     }
 
     /// Ask for every pipeline this device can build.
@@ -322,13 +329,11 @@ impl CurvePickGpu {
         node_buffer: Option<&viewport_lib::gpu::Buffer>,
     ) -> Option<viewport_lib::gpu::BindGroup> {
         let node_buffer = node_buffer?;
-        if !self.has_node() {
-            return None;
-        }
+        let (node_bgl, _) = self.pipelines.context().node.as_ref()?;
         Some(
             device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
                 label: Some("curve_pick_node_bg"),
-                layout: &self.node_bgl,
+                layout: node_bgl,
                 entries: &[viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
                     resource: node_buffer.as_entire_binding(),
@@ -420,7 +425,7 @@ impl CurveMeshGpu {
         let layout = standard_scene_layout(
             device,
             &format!("{label}_pipeline_layout"),
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &layouts.bgl,
         );
         let pipelines = resources.lazy_pipelines(

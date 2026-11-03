@@ -206,12 +206,24 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 /// A plain lit backdrop, so overlays are composited over geometry rather than
 /// over the clear colour alone.
+///
+/// An overlay-only renderer has no meshes, so there the overlays draw over the
+/// clear colour.
 fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
-    let mesh = ctx
+    let mesh = match ctx
         .renderer
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::sphere(1.6, 32, 16))
-        .expect("mesh upload");
+    {
+        Ok(mesh) => mesh,
+        Err(viewport_lib::ViewportError::TierUnsupported { .. }) => {
+            return BuiltScene {
+                overlays,
+                ..Default::default()
+            };
+        }
+        Err(e) => panic!("mesh upload: {e}"),
+    };
     let mut item = viewport_lib::SceneRenderItem::default();
     item.mesh_id = mesh;
     item.material = super::material(

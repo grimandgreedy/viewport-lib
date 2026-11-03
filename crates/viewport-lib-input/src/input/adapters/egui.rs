@@ -27,8 +27,28 @@ macro_rules! egui_adapter {
         use $egui as egui;
 
         use crate::input::{
-            ButtonState, KeyCode, MouseButton, ScrollUnits, TouchId, TouchPhase, ViewportEvent,
+            ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, TouchId, TouchPhase,
+            ViewportEvent,
         };
+
+        /// Translate egui's modifier state into [`Modifiers`], for a
+        /// [`ViewportEvent::ModifiersChanged`]. Ctrl and Cmd (`mac_cmd`) stay
+        /// apart; bindings still treat them as one key.
+        pub fn modifiers_from_egui(m: &egui::Modifiers) -> Modifiers {
+            Modifiers::NONE
+                .with_alt(m.alt)
+                .with_shift(m.shift)
+                .with_ctrl(m.ctrl)
+                .with_super(m.mac_cmd)
+        }
+
+        /// The character egui's layout-following key stands for, lower case, or
+        /// `None` for keys with no printable character.
+        fn logical_char(key: egui::Key) -> Option<char> {
+            let mut chars = key.symbol_or_name().chars();
+            let c = chars.next()?;
+            (chars.next().is_none() && c.is_ascii_graphic()).then(|| c.to_ascii_lowercase())
+        }
 
         /// Translate an `egui::Event` into a [`ViewportEvent`], or `None` for
         /// events the viewport does not consume.
@@ -42,6 +62,10 @@ macro_rules! egui_adapter {
         /// not carried on `ViewportEvent`; push a
         /// [`ViewportEvent::ModifiersChanged`] from the frame's `InputState`
         /// separately.
+        ///
+        /// `ViewportEvent::Key` carries the key's position (its US-layout name),
+        /// taken from the event's `physical_key`. A host that leaves
+        /// `physical_key` empty gets egui's layout-following `key` instead.
         pub fn from_egui(
             event: &egui::Event,
             viewport_origin: glam::Vec2,
@@ -95,19 +119,24 @@ macro_rules! egui_adapter {
                     phase: map_touch_phase(*phase),
                     position: glam::Vec2::new(pos.x, pos.y) - viewport_origin,
                 }),
+                // The key position, as `from_winit` reports it, so a binding means
+                // the same key through either adapter. egui's `key` follows the
+                // layout; it is the fallback when the host gives no physical key.
                 Event::Key {
                     key,
+                    physical_key,
                     pressed,
                     repeat,
                     ..
                 } => Some(ViewportEvent::Key {
-                    key: map_key(*key)?,
+                    key: map_key(physical_key.unwrap_or(*key))?,
                     state: if *pressed {
                         ButtonState::Pressed
                     } else {
                         ButtonState::Released
                     },
                     repeat: *repeat,
+                    logical: logical_char(*key),
                 }),
                 _ => None,
             }
@@ -466,6 +495,42 @@ macro_rules! egui_adapter {
                 ));
             }
 
+            // AZERTY: the key in the US W position types Z. The binding follows the
+            // position, as through winit.
+            #[test]
+            fn key_event_uses_the_physical_key() {
+                let ev = from_egui(
+                    &Event::Key {
+                        key: E::Z,
+                        physical_key: Some(E::W),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::default(),
+                    },
+                    glam::Vec2::ZERO,
+                );
+                assert!(matches!(
+                    ev,
+                    Some(ViewportEvent::Key {
+                        key: KeyCode::W,
+                        logical: Some('z'),
+                        ..
+                    })
+                ));
+            }
+
+            #[test]
+            fn modifiers_keep_cmd_apart_from_ctrl() {
+                let cmd = modifiers_from_egui(&Modifiers {
+                    mac_cmd: true,
+                    command: true,
+                    ..Default::default()
+                });
+                assert!(cmd.super_key && !cmd.ctrl);
+                assert_eq!(logical_char(E::ArrowLeft), None);
+                assert_eq!(logical_char(E::Num1), Some('1'));
+            }
+
             #[test]
             fn key_event_carries_state_and_repeat() {
                 let ev = from_egui(
@@ -479,7 +544,9 @@ macro_rules! egui_adapter {
                     glam::Vec2::ZERO,
                 );
                 match ev {
-                    Some(ViewportEvent::Key { key, state, repeat }) => {
+                    Some(ViewportEvent::Key {
+                        key, state, repeat, ..
+                    }) => {
                         assert_eq!(key, KeyCode::W);
                         assert_eq!(state, ButtonState::Pressed);
                         assert!(repeat);
@@ -496,18 +563,18 @@ mod v033 {
     egui_adapter!(egui033);
 }
 #[cfg(feature = "egui-adapter")]
-pub use v033::from_egui;
+pub use v033::{from_egui, modifiers_from_egui};
 
 #[cfg(feature = "egui-adapter-035")]
 mod v035 {
     egui_adapter!(egui035);
 }
 #[cfg(feature = "egui-adapter-035")]
-pub use v035::from_egui;
+pub use v035::{from_egui, modifiers_from_egui};
 
 #[cfg(feature = "egui-adapter-036")]
 mod v036 {
     egui_adapter!(egui036);
 }
 #[cfg(feature = "egui-adapter-036")]
-pub use v036::from_egui;
+pub use v036::{from_egui, modifiers_from_egui};

@@ -46,6 +46,24 @@ pub struct RendererConfig {
     /// `dev-knobs` feature is on. A smaller first
     /// chunk suits an application with little geometry. Default `None`.
     pub geometry_chunk_bytes: Option<u64>,
+    /// The adapter's downlevel capabilities
+    /// (`adapter.get_downlevel_capabilities()`). A device cannot report these,
+    /// so without them the renderer assumes compute, storage buffers in both
+    /// stages, cube-array textures and indirect execution are present wherever
+    /// the limits allow. Pass them on wgpu's GL backend and on older Metal
+    /// devices, where that assumption does not hold. Default `None`.
+    pub downlevel_capabilities: Option<crate::gpu::DownlevelCapabilities>,
+    /// The adapter's backend (`adapter.get_info().backend`). wgpu 29 and 30
+    /// read it from the device; on wgpu 27 a device cannot report it, so pass
+    /// it on the GL backend, whose shaders cannot load from depth textures.
+    /// Default `None`.
+    pub backend: Option<crate::gpu::Backend>,
+    /// The highest tier the renderer runs at, whatever the device offers.
+    /// `Some(Tier::Compatibility)` on a desktop GPU builds the renderer a WebGL2
+    /// device gets, to see what that tier draws without one; see
+    /// [`Capabilities::capped_at`](crate::Capabilities::capped_at) for what it
+    /// does and does not model. Default `None`.
+    pub max_tier: Option<crate::capabilities::Tier>,
 }
 
 impl RendererConfig {
@@ -57,6 +75,9 @@ impl RendererConfig {
             pipeline_cache_data: None,
             pipeline_compilation: None,
             geometry_chunk_bytes: None,
+            downlevel_capabilities: None,
+            backend: None,
+            max_tier: None,
         }
     }
 
@@ -87,6 +108,28 @@ impl RendererConfig {
     /// Set the size of the geometry store's first chunk, in bytes.
     pub fn with_geometry_chunk_bytes(mut self, bytes: u64) -> Self {
         self.geometry_chunk_bytes = Some(bytes);
+        self
+    }
+
+    /// Pass the adapter's downlevel capabilities, so the renderer's
+    /// [`Capabilities`](crate::Capabilities) read them rather than assume them.
+    pub fn with_downlevel_capabilities(mut self, caps: crate::gpu::DownlevelCapabilities) -> Self {
+        self.downlevel_capabilities = Some(caps);
+        self
+    }
+
+    /// Run at `tier` at most, whatever the device offers. See
+    /// [`max_tier`](Self::max_tier).
+    pub fn with_max_tier(mut self, tier: crate::capabilities::Tier) -> Self {
+        self.max_tier = Some(tier);
+        self
+    }
+
+    /// Pass what the renderer reads from the adapter rather than assumes: its
+    /// downlevel capabilities and its backend.
+    pub fn with_adapter(mut self, adapter: &crate::gpu::Adapter) -> Self {
+        self.downlevel_capabilities = Some(adapter.get_downlevel_capabilities());
+        self.backend = Some(adapter.get_info().backend);
         self
     }
 }

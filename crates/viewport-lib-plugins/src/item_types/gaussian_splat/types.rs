@@ -22,7 +22,8 @@ pub enum ShDegree {
     Zero,
     /// 12 floats per splat.
     One,
-    /// 48 floats per splat.
+    /// 48 floats per splat. Below the full tier only the DC and degree-1
+    /// terms are drawn.
     Three,
 }
 
@@ -54,6 +55,8 @@ pub struct GaussianSplatData {
     /// Opacity per splat in [0, 1].
     pub opacities: Vec<f32>,
     /// SH coefficients. Length must equal `positions.len() * sh_degree.coeff_count()`.
+    /// Each splat's block is coefficient-major: an RGB triple per coefficient,
+    /// DC first, then the degree 1, 2 and 3 terms in the standard 3DGS order.
     /// For ShDegree::Zero these are [r, g, b] base colours per splat.
     ///
     /// The evaluated colour is sRGB-referred, matching how splat sets are

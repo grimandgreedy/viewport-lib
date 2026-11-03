@@ -422,7 +422,7 @@ impl OverlayPolylineItem {
     }
 
     /// Clip the path to the mask shape with this id (registered via
-    /// [`OverlayShapeItem::with_clip_mask`](crate::overlay::OverlayShapeItem::with_clip_mask)).
+    /// [`OverlayShapeItem::provides_mask`](crate::overlay::OverlayShapeItem::provides_mask)).
     /// Fragments outside the mask are discarded, so a path drawn inside a
     /// scrolling region is contained.
     pub fn with_clip(mut self, clip_id: u32) -> Self {

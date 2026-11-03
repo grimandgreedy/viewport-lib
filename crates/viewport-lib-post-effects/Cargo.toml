@@ -29,6 +29,9 @@ example-egui = ["dep:eframe", "viewport-lib/egui-adapter"]
 
 [dev-dependencies]
 viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
+# naga's GLSL writer, the path wgpu's GL backend takes, for the GL translation
+# test. Version 27 matches the default leg.
+naga = { version = "27", features = ["wgsl-in", "glsl-out"] }
 
 [[example]]
 name = "toggle"

@@ -61,7 +61,7 @@ fn encode_volume_texels(
 
 impl DeviceResources {
     /// Upload a 3D scalar field to the GPU as a filterable 3D texture
-    /// ([`volume_texture_format`]: `R32Float` at full precision, or the
+    /// (`volume_texture_format`: `R32Float` at full precision, or the
     /// `R16Float` fallback), sampled with trilinear interpolation at draw time.
     ///
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in
@@ -438,7 +438,7 @@ mod tests {
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

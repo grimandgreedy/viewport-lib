@@ -31,11 +31,11 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::from_egui;
+use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, ItemSettings, LightKind, LightSource,
-    LightingSettings, Lumen, Lux, Material, Modifiers, OrbitCameraController, ViewportContext,
-    ViewportEvent, ViewportInstance, primitives,
+    LightingSettings, Lumen, Lux, Material, OrbitCameraController, ViewportContext, ViewportEvent,
+    ViewportInstance, primitives,
 };
 
 const COLUMNS: usize = 6;
@@ -504,12 +504,9 @@ impl eframe::App for App {
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {
-                    self.session
-                        .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
-                            alt: i.modifiers.alt,
-                            shift: i.modifiers.shift,
-                            ctrl: i.modifiers.command,
-                        }));
+                    self.session.handle_event(ViewportEvent::ModifiersChanged(
+                        modifiers_from_egui(&i.modifiers),
+                    ));
                     for event in &i.events {
                         if let Some(ev) = from_egui(event, origin) {
                             self.session.handle_event(ev);

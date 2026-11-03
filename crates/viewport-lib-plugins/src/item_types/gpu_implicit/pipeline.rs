@@ -5,7 +5,7 @@
 use super::types::{GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive};
 use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
 use viewport_lib::gpu;
-use viewport_lib::plugin_api::builders;
+use viewport_lib::plugin_api::{builders, shared_wgsl};
 use viewport_lib::renderer::PickId;
 use viewport_lib::resources::DeviceResources;
 
@@ -135,7 +135,7 @@ pub(super) struct GpuImplicitFrame {
 
 /// Flat uniform buffer layout matching the WGSL `ImplicitUniform` struct.
 ///
-/// Total size: 32 header bytes + 16 * 64 primitive bytes = 1056 bytes.
+/// Total size: 48 header bytes + 16 * 64 primitive bytes = 1072 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ImplicitUniformRaw {
@@ -147,6 +147,8 @@ struct ImplicitUniformRaw {
     hit_threshold: f32,
     max_distance: f32,
     opacity: f32,
+    ignore_clip: u32,
+    _pad: [u32; 3],
     primitives: [ImplicitPrimitive; 16],
 }
 
@@ -158,13 +160,16 @@ impl GpuImplicitGpu {
         let shader = resources.lazy_module(
             device,
             "implicit_shader",
-            lit_shader(&[], wgsl_source!("implicit")),
+            lit_shader(
+                &[shared_wgsl::SHARED_CLIP_WGSL],
+                wgsl_source!("implicit"),
+            ),
         );
         // Group 0 reuses the shared camera layout (CameraUniform + LightsUniform).
         let layout = builders::standard_scene_layout(
             device,
             "implicit_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &bgl,
         );
         let mask_shader = resources.lazy_module(
@@ -242,6 +247,8 @@ impl GpuImplicitGpu {
             hit_threshold: item.march_options.hit_threshold,
             max_distance: item.march_options.max_distance,
             opacity: item.settings.opacity,
+            ignore_clip: item.settings.ignore_clip as u32,
+            _pad: [0; 3],
             primitives: [ImplicitPrimitive::zeroed(); 16],
         };
         for (i, prim) in item.primitives.iter().take(16).enumerate() {

@@ -31,19 +31,21 @@ pub(crate) use super::types::VectorFieldId;
 pub(super) struct VectorFieldResources {
     /// Bind group layout for the field uniform, LUT and sampler (group 1).
     pub(super) bgl: viewport_lib::gpu::BindGroupLayout,
-    /// Bind group layout for the instance storage buffer (group 2).
-    pub(super) instance_bgl: viewport_lib::gpu::BindGroupLayout,
+    /// Bind group layout for the instance storage buffer (group 2). `None` on
+    /// a device without vertex storage, where the samples are an
+    /// instance-stepped vertex buffer instead.
+    pub(super) instance_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
 }
 
 impl VectorFieldResources {
-    pub(super) fn new(device: &viewport_lib::gpu::Device) -> Self {
+    pub(super) fn new(device: &viewport_lib::gpu::Device, streams: bool) -> Self {
         let bgl = viewport_lib::plugin_api::builders::uniform_texture_sampler_bgl(
             device,
             "vector_field_bgl",
             viewport_lib::gpu::ShaderStages::VERTEX | viewport_lib::gpu::ShaderStages::FRAGMENT,
             viewport_lib::gpu::ShaderStages::VERTEX,
         );
-        let instance_bgl =
+        let instance_bgl = (!streams).then(|| {
             device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
                 label: Some("vector_field_instance_bgl"),
                 entries: &[viewport_lib::gpu::BindGroupLayoutEntry {
@@ -56,7 +58,8 @@ impl VectorFieldResources {
                     },
                     count: None,
                 }],
-            });
+            })
+        });
         Self { bgl, instance_bgl }
     }
 }
@@ -68,7 +71,7 @@ pub(super) struct VectorFieldBindings {
     lut_view: viewport_lib::gpu::TextureView,
     lut_sampler: viewport_lib::gpu::Sampler,
     bgl: viewport_lib::gpu::BindGroupLayout,
-    instance_bgl: viewport_lib::gpu::BindGroupLayout,
+    instance_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
 }
 
 /// Resolve the colourmap LUT and the clamping LUT sampler.
@@ -167,7 +170,7 @@ pub(super) fn build_vector_field(
     let mut samples = ContentBuffer::new(
         device,
         "vector_field_instance_buf",
-        viewport_lib::gpu::BufferUsages::STORAGE,
+        viewport_lib::gpu::BufferUsages::STORAGE | viewport_lib::gpu::BufferUsages::VERTEX,
         INSTANCE_STRIDE,
         capacity.max(count as u32),
     );
@@ -212,14 +215,7 @@ pub(super) fn build_vector_field(
         ],
     });
 
-    let instance_bind_group = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
-        label: Some("vector_field_instance_bg"),
-        layout: &binds.instance_bgl,
-        entries: &[viewport_lib::gpu::BindGroupEntry {
-            binding: 0,
-            resource: samples.buffer().as_entire_binding(),
-        }],
-    });
+    let instance_bind_group = instance_bind_group(device, binds, &samples);
 
     VectorFieldGpuData {
         shape: item.shape,
@@ -231,6 +227,25 @@ pub(super) fn build_vector_field(
         uniform_buf,
         samples,
     }
+}
+
+/// The group-2 bind group over a field's samples, on the storage path.
+fn instance_bind_group(
+    device: &viewport_lib::gpu::Device,
+    binds: &VectorFieldBindings,
+    samples: &ContentBuffer,
+) -> Option<viewport_lib::gpu::BindGroup> {
+    let layout = binds.instance_bgl.as_ref()?;
+    Some(
+        device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
+            label: Some("vector_field_instance_bg"),
+            layout,
+            entries: &[viewport_lib::gpu::BindGroupEntry {
+                binding: 0,
+                resource: samples.buffer().as_entire_binding(),
+            }],
+        }),
+    )
 }
 
 /// Rewrite a stored field's instance buffer and uniform in place, keeping both
@@ -326,8 +341,9 @@ pub(crate) struct VectorFieldGpuData {
     pub(crate) pick_id: viewport_lib::PickId,
     /// Bind group (group 1): uniform + LUT texture + sampler.
     pub(crate) uniform_bind_group: viewport_lib::gpu::BindGroup,
-    /// Bind group (group 2): per-instance storage buffer.
-    pub(crate) instance_bind_group: viewport_lib::gpu::BindGroup,
+    /// Bind group (group 2): per-instance storage buffer. `None` on the
+    /// stream path.
+    pub(crate) instance_bind_group: Option<viewport_lib::gpu::BindGroup>,
     /// The colourmap the uniform bind group's LUT view came from, or `None`
     /// for the default. A replace naming a different one has to rebuild it.
     pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
@@ -348,7 +364,21 @@ pub(crate) struct VectorFieldDraw {
     pub(crate) instance_count: u32,
     pub(crate) pick_id: viewport_lib::PickId,
     pub(crate) uniform_bind_group: viewport_lib::gpu::BindGroup,
-    pub(crate) instance_bind_group: viewport_lib::gpu::BindGroup,
+    /// Group 2 on the storage path; `None` where `samples` is bound as an
+    /// instance-stepped vertex buffer instead.
+    pub(crate) instance_bind_group: Option<viewport_lib::gpu::BindGroup>,
+    pub(crate) samples: viewport_lib::gpu::Buffer,
+}
+
+impl VectorFieldDraw {
+    /// Bind the samples: group 2 on the storage path, vertex buffer 1 on the
+    /// stream path.
+    pub(crate) fn bind_instances(&self, pass: &mut viewport_lib::gpu::RenderPass<'_>) {
+        match &self.instance_bind_group {
+            Some(group) => pass.set_bind_group(2, group, &[]),
+            None => pass.set_vertex_buffer(1, self.samples.slice(..)),
+        }
+    }
 }
 
 impl VectorFieldGpuData {
@@ -361,6 +391,7 @@ impl VectorFieldGpuData {
             pick_id: self.pick_id,
             uniform_bind_group: self.uniform_bind_group.clone(),
             instance_bind_group: self.instance_bind_group.clone(),
+            samples: self.samples.buffer().clone(),
         }
     }
 
@@ -390,15 +421,7 @@ impl VectorFieldGpuData {
     ) -> bool {
         let moved = self.samples.reserve(device, queue, capacity);
         if moved {
-            self.instance_bind_group =
-                device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
-                    label: Some("vector_field_instance_bg"),
-                    layout: &self.binds.instance_bgl,
-                    entries: &[viewport_lib::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.samples.buffer().as_entire_binding(),
-                    }],
-                });
+            self.instance_bind_group = instance_bind_group(device, &self.binds, &self.samples);
         }
         moved
     }

@@ -16,9 +16,8 @@
 //
 // Group 0: the shared scene bindings, prefixed from SHARED_BINDINGS_WGSL; the
 //          vertex stage reads the camera and the fragment stage needs none.
-//          Section-plane clipping is skipped, matching the implicit-surface
-//          pick's simplification: it would need world_pos threaded through an
-//          extra varying for little benefit at object level.
+//          The pick pass binds clip volumes and no clip planes, so a splat
+//          whose centre a clip volume cuts away is not picked.
 // Group 1: SplatUniform + sorted_indices + positions + scales + rotations
 //          (bindings 0-4), reused unchanged from the render bind group.
 //          Bindings 5 (opacities) is read; binding 6 (sh_coefficients) is
@@ -31,6 +30,10 @@ struct SplatUniform {
     viewport_h: f32,
     sh_degree:  u32,
     count:      u32,
+    ignore_clip: u32,   // 1 = take no part in clipping
+    _pad0:      u32,
+    _pad1:      u32,
+    _pad2:      u32,
 };
 
 // Per-draw pick id (one splat item = one draw of all its splats).
@@ -87,6 +90,8 @@ struct VsOut {
     // Instance index forwarded flat so the fragment can write the per-splat
     // instance into the primitive-id channel for sub-object picking.
     @location(5) @interpolate(flat) instance_index: u32,
+    // The splat's centre, for the clip-volume test: a splat is kept or cut whole.
+    @location(6) @interpolate(flat) centre: vec3<f32>,
 };
 
 const QUAD_UV: array<vec2<f32>, 6> = array<vec2<f32>, 6>(
@@ -179,6 +184,7 @@ fn vs_main(
     // primitive channel must name the actual splat so the pick resolves to a
     // stable SubObjectRef::Splat regardless of the back-to-front sort order.
     out.instance_index = splat_idx;
+    out.centre = world_pos;
 
     return out;
 }
@@ -191,6 +197,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VsOut) -> FragOut {
+    if splat_u.ignore_clip == 0u && !viewport_pass_clip_volumes(in.centre) { discard; }
     let ux = in.uv.x;
     let uy = in.uv.y;
     let d2 = ux*ux*in.sigma_inv_a + 2.0*ux*uy*in.sigma_inv_b + uy*uy*in.sigma_inv_c;

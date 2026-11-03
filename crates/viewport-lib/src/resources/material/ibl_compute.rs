@@ -546,7 +546,7 @@ pub(crate) fn bake_environment_layer(
         let roughness = mip as f32 / (prefilter_mips - 1).max(1) as f32;
 
         // Roughness 0 (mip 0) reads pyramid level 1, the size of this mip.
-        let params = [roughness, 1.0f32, 0.0, 0.0];
+        let params = [roughness, 1.0f32, (IBL_FILTER_LEVELS - 1) as f32, 0.0];
         let params_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("ibl_prefilter_params"),
             contents: bytemuck::cast_slice(&params),

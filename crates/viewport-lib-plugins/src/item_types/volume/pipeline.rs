@@ -235,7 +235,7 @@ impl VolumeGpu {
         let layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "volume_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &bgl,
         );
         let mask_shader = resources.lazy_module(
@@ -299,7 +299,9 @@ impl VolumeGpu {
         self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
     }
 
-    /// Build the per-item uniform, bind group, and cube proxy buffers.
+    /// Build the per-item uniform, bind group, and cube proxy buffers. `None`
+    /// when the item's volume does not resolve on this renderer (released, or
+    /// uploaded to another one).
     pub(super) fn upload_item(
         &self,
         device: &viewport_lib::gpu::Device,
@@ -310,11 +312,8 @@ impl VolumeGpu {
         clip_objects: &[ClipObject],
         step_scale_multiplier: f32,
         wireframe: bool,
-    ) -> VolumeFrame {
-        let dims = resources.volume_dims(item.volume_id).unwrap_or_else(|| {
-            let vol_id = item.volume_id;
-            panic!("invalid VolumeId: {vol_id:?}")
-        });
+    ) -> Option<VolumeFrame> {
+        let dims = resources.volume_dims(item.volume_id)?;
 
         let item_model = glam::Mat4::from_cols_array_2d(&item.model);
         let bbox_min = glam::Vec3::from(item.bbox_min);
@@ -496,7 +495,7 @@ impl VolumeGpu {
             (pick_buf, pick_bg)
         });
 
-        VolumeFrame {
+        Some(VolumeFrame {
             bind_group,
             vertex_buffer,
             index_buffer,
@@ -504,7 +503,7 @@ impl VolumeGpu {
             pick,
             wireframe,
             selected: item.settings.selected,
-        }
+        })
     }
 }
 

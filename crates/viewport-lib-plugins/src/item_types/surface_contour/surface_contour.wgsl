@@ -33,9 +33,10 @@ struct Contour {
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
     @location(0) scalar: f32,
-    // NDC x, interpolated linearly on screen so its rate of change is the
-    // pass's NDC per pixel.
-    @location(1) @interpolate(linear) ndc_x: f32,
+    // Clip x and w. Their perspective-correct ratio is NDC x interpolated
+    // linearly on screen, so its rate of change is the pass's NDC per pixel.
+    // GLSL ES has no `noperspective`, so `@interpolate(linear)` is not used.
+    @location(1) clip_xw: vec2<f32>,
     @location(2) world_pos: vec3<f32>,
 }
 
@@ -50,7 +51,7 @@ fn vs_main(
     var out: VertexOutput;
     out.pos = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.scalar = scalar;
-    out.ndc_x = out.pos.x / out.pos.w;
+    out.clip_xw = vec2<f32>(out.pos.x, out.pos.w);
     out.world_pos = world_pos;
     return out;
 }
@@ -65,7 +66,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let s = in.scalar;
     let ds = fwidth(s);
     // 2 / pass width, constant across the pass.
-    let dndc = fwidth(in.ndc_x);
+    let dndc = fwidth(in.clip_xw.x / in.clip_xw.y);
 
     // Clipped with the surface it sits on.
     if !viewport_clip_test(in.world_pos) {

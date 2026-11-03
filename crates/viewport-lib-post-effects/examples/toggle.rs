@@ -16,9 +16,9 @@ use viewport_lib as vpl;
 use viewport_lib_post_effects::{
     ContactShadowEffect, ContactShadowEffectSettings, SettingsHandle, VfxSettings, vfx_stack,
 };
-use vpl::input::adapters::from_egui;
+use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
-    LightKind, LightSource, Material, Modifiers, OffscreenViewportTarget, OrbitCameraController,
+    LightKind, LightSource, Material, OffscreenViewportTarget, OrbitCameraController,
     ViewportContext, ViewportEvent, ViewportInstance, primitives,
 };
 
@@ -107,10 +107,14 @@ fn main() -> eframe::Result {
             });
             session
                 .renderer_mut()
-                .add_post_effect_producer(Box::new(cs));
+                .add_post_effect_producer(Box::new(cs))
+                .unwrap();
             let (stages, vfx_handle) = vfx_stack();
             for (stage, order) in stages {
-                session.renderer_mut().add_post_effect_stage(stage, order);
+                session
+                    .renderer_mut()
+                    .add_post_effect_stage(stage, order)
+                    .unwrap();
             }
             {
                 let mut s = vfx_handle.lock().unwrap();
@@ -227,12 +231,9 @@ impl eframe::App for App {
                 self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {
-                    self.session
-                        .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
-                            alt: i.modifiers.alt,
-                            shift: i.modifiers.shift,
-                            ctrl: i.modifiers.command,
-                        }));
+                    self.session.handle_event(ViewportEvent::ModifiersChanged(
+                        modifiers_from_egui(&i.modifiers),
+                    ));
                     for event in &i.events {
                         if let Some(ev) = from_egui(event, origin) {
                             self.session.handle_event(ev);

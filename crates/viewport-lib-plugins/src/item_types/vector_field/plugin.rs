@@ -34,6 +34,23 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
             "vector_field_outline_mask.wgsl",
             scene_shader(&[], wgsl_source!("vector_field_outline_mask")),
         ),
+        (
+            "vector_field_stream.wgsl",
+            pipeline::instance_source(
+                lit_shader(
+                    &[shared_wgsl::SHARED_CLIP_VOLUME_WGSL],
+                    wgsl_source!("vector_field"),
+                ),
+                true,
+            ),
+        ),
+        (
+            "vector_field_outline_mask_stream.wgsl",
+            pipeline::instance_source(
+                scene_shader(&[], wgsl_source!("vector_field_outline_mask")),
+                true,
+            ),
+        ),
     ]
 }
 
@@ -68,6 +85,9 @@ pub struct VectorFieldPlugin {
     /// Reference items are not here: their instances live on the GPU, so they
     /// answer the GPU pick only.
     pick_items: Vec<VectorFieldItem>,
+    /// The device has no vertex storage, so the samples are an
+    /// instance-stepped vertex buffer. Set on registration.
+    streams: bool,
 }
 
 impl ItemTypePlugin for VectorFieldPlugin {
@@ -78,9 +98,14 @@ impl ItemTypePlugin for VectorFieldPlugin {
     fn init_gpu(
         &mut self,
         device: &viewport_lib::gpu::Device,
-        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
-        self.layouts = Some(VectorFieldResources::new(device));
+        self.streams = !resources.capabilities().vertex_storage;
+        self.layouts = Some(VectorFieldResources::new(device, self.streams));
+    }
+
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::compatibility_tier()
     }
 
     fn warm(
@@ -88,9 +113,10 @@ impl ItemTypePlugin for VectorFieldPlugin {
         device: &viewport_lib::gpu::Device,
         resources: &viewport_lib::DeviceResources,
     ) {
+        let streams = self.streams;
         let layouts = self
             .layouts
-            .get_or_insert_with(|| VectorFieldResources::new(device));
+            .get_or_insert_with(|| VectorFieldResources::new(device, streams));
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::VectorFieldGpu::new(device, resources, layouts));
@@ -106,7 +132,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
         device: &viewport_lib::gpu::Device,
         _queue: &viewport_lib::gpu::Queue,
     ) {
-        self.layouts = Some(VectorFieldResources::new(device));
+        self.layouts = Some(VectorFieldResources::new(device, self.streams));
         self.gpu = None;
         self.frame.clear();
     }
@@ -126,9 +152,10 @@ impl ItemTypePlugin for VectorFieldPlugin {
         if items.is_empty() && refs.is_empty() {
             return Vec::new();
         }
+        let streams = self.streams;
         let layouts = self
             .layouts
-            .get_or_insert_with(|| VectorFieldResources::new(device));
+            .get_or_insert_with(|| VectorFieldResources::new(device, streams));
         let stored = &self.stored;
         let gpu = self
             .gpu
@@ -209,7 +236,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 bound = true;
             }
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
-            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
+            entry.draw.bind_instances(pass);
             ctx.meshes
                 .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
         }
@@ -241,7 +268,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 bound = true;
             }
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
-            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
+            entry.draw.bind_instances(pass);
             match instance_filter {
                 None => {
                     ctx.meshes.draw_indexed_instanced(
@@ -250,10 +277,21 @@ impl ItemTypePlugin for VectorFieldPlugin {
                         entry.draw.instance_count,
                     );
                 }
-                Some(indices) => {
+                Some(indices) if entry.draw.instance_bind_group.is_some() => {
                     for &i in indices {
                         ctx.meshes
                             .draw_indexed_instance_range(pass, entry.draw.shape, i..i + 1);
+                    }
+                }
+                // On the stream path each sample is its own slice of the
+                // vertex buffer, so nothing leans on a first instance, which
+                // WebGL2 does not have.
+                Some(indices) => {
+                    let stride = std::mem::size_of::<channels::Sample>() as u64;
+                    for &i in indices {
+                        let at = i as u64 * stride;
+                        pass.set_vertex_buffer(1, entry.draw.samples.slice(at..at + stride));
+                        ctx.meshes.draw_indexed(pass, entry.draw.shape);
                     }
                 }
             }
@@ -283,7 +321,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
             }
             pass.set_stencil_reference(value);
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
-            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
+            entry.draw.bind_instances(pass);
             ctx.meshes
                 .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
         }
@@ -421,7 +459,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 bound = true;
             }
             pass.set_bind_group(1, pick_bg, &[]);
-            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
+            entry.draw.bind_instances(pass);
             ctx.meshes
                 .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
         }
@@ -514,9 +552,10 @@ impl VectorFieldPlugin {
         item: &VectorFieldItem,
         capacity: u32,
     ) -> VectorFieldGpuData {
+        let streams = self.streams;
         let layouts = self
             .layouts
-            .get_or_insert_with(|| VectorFieldResources::new(device));
+            .get_or_insert_with(|| VectorFieldResources::new(device, streams));
         let binds = resolve_bindings(resources, layouts, item);
         build_vector_field(device, queue, &binds, item, capacity)
     }
@@ -644,9 +683,10 @@ impl VectorFieldPlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: VectorFieldItem,
     ) -> viewport_lib::resources::JobId {
+        let streams = self.streams;
         let layouts = self
             .layouts
-            .get_or_insert_with(|| VectorFieldResources::new(device));
+            .get_or_insert_with(|| VectorFieldResources::new(device, streams));
         let binds = resolve_bindings(resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();

@@ -197,7 +197,7 @@ impl ContourGpu {
         let layout = builders::pipeline_layout(
             device,
             "surface_contour_layout",
-            &[resources.shared_bindings().group0_layout, &bgl],
+            &[resources.group0_layout(), &bgl],
         );
         let shader = resources.lazy_module(device, "surface_contour", &shader_source());
         let pipelines = resources.lazy_pipelines(

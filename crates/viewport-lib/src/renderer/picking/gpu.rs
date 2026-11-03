@@ -387,6 +387,10 @@ impl ViewportRenderer {
         cursor: glam::Vec2,
         frame: &FrameData,
     ) -> Option<GpuPickHit> {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return None;
+        }
         self.pick_scene_gpu_masked(device, queue, cursor, frame, PickMask::all())
     }
 
@@ -761,7 +765,7 @@ impl ViewportRenderer {
                 model_c2: m[2],
                 model_c3: m[3],
                 object_id: item.settings.pick_id.0 as u32,
-                deform_table: self.resources.deform.table_word(
+                deform_table: self.resources.scene_tier.deform.table_word(
                     item.mesh_id,
                     item.deform_instance,
                     record,
@@ -920,7 +924,7 @@ impl ViewportRenderer {
         let clip_volume_buf = self
             .viewport_slots
             .get(frame.camera.viewport_index)
-            .map_or(&self.resources.binds.clip_volume_buf, |slot| {
+            .map_or(&self.resources.scene_tier.binds.clip_volume_buf, |slot| {
                 &slot.clip_volume_buf
             });
         let pick_camera_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -942,7 +946,12 @@ impl ViewportRenderer {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 23,
-                    resource: self.resources.deform.header_buffer.as_entire_binding(),
+                    resource: self
+                        .resources
+                        .scene_tier
+                        .deform
+                        .header_buffer
+                        .as_entire_binding(),
                 },
             ],
         });
@@ -1664,6 +1673,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> bool {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return false;
+        }
         match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
             PickBegin::Miss => {
                 self.pending_pick = None;
@@ -1686,7 +1699,7 @@ impl ViewportRenderer {
     /// for empty space). [`PickPoll::Idle`] means no pick is in flight.
     ///
     /// This never waits on the GPU queue, so unlike the blocking
-    /// [`pick_scene_gpu_masked`](Self::pick_scene_gpu_masked) it cannot stall the
+    /// [`pick_scene_gpu`](Self::pick_scene_gpu) it cannot stall the
     /// calling thread behind queued frames. It does assume the app keeps
     /// rendering (or otherwise polls the device); a caller that submits no other
     /// work between polls should use the blocking path instead.
@@ -1733,6 +1746,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> bool {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return false;
+        }
         self.pending_snap = self.snap_query_submit(device, queue, cursor, radius_px, frame, mask);
         self.pending_snap.is_some()
     }

@@ -205,7 +205,7 @@ pub enum AtlasViewerCorner {
 }
 
 /// Debug overlays and diagnostics for one frame. Grouped on
-/// [`EffectsFrame::debug`] to keep debug knobs out of the production effect,
+/// `EffectsFrame::debug` to keep debug knobs out of the production effect,
 /// lighting, and viewport fields.
 ///
 /// Not `Copy`: it carries the [`DebugVis`]

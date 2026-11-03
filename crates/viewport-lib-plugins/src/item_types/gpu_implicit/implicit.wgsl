@@ -58,6 +58,10 @@ struct ImplicitUniform {
     hit_threshold:  f32,
     max_distance:   f32,
     opacity:        f32,
+    ignore_clip:    u32,   // 1 = take no part in clipping
+    _pad0:          u32,
+    _pad1:          u32,
+    _pad2:          u32,
     primitives:     array<ImplicitPrimitive, 16>,
 };
 
@@ -228,7 +232,10 @@ fn fs_main(in: VertexOutput) -> FragOutput {
         }
     }
 
-    if !hit {
+    // A hit the clip objects cut away is not drawn. Sphere tracing cannot step
+    // through the solid behind it to a surface further on, so a section shows
+    // the background there rather than the inside.
+    if !hit || (u.ignore_clip == 0u && !viewport_clip_test(hit_pos)) {
         discard;
     }
 

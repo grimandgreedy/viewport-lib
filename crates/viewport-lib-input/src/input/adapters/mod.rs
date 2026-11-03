@@ -1,7 +1,7 @@
-//! Native-event translation into [`ViewportEvent`](super::ViewportEvent).
+//! Native-event translation into [`ViewportEvent`](crate::input::ViewportEvent).
 //!
 //! Each host framework delivers input as its own event type, but the mapping
-//! to [`ViewportEvent`](super::ViewportEvent) (buttons, wheel units,
+//! to [`ViewportEvent`](crate::input::ViewportEvent) (buttons, wheel units,
 //! modifiers, click-vs-drag) is otherwise identical, so it lives here once
 //! per framework instead of in every host application. These adapters are
 //! feature-gated per framework and can be used standalone, without any other
@@ -10,7 +10,7 @@
 #[cfg(feature = "winit-adapter")]
 mod winit;
 #[cfg(feature = "winit-adapter")]
-pub use winit::{from_winit, from_winit_device};
+pub use winit::{from_winit, from_winit_device, from_winit_into, modifiers_from_winit};
 
 // One module for every egui version the adapter supports; the enabled one
 // re-exports `from_egui`.
@@ -25,4 +25,4 @@ mod egui;
     feature = "egui-adapter-035",
     feature = "egui-adapter-036"
 ))]
-pub use egui::from_egui;
+pub use egui::{from_egui, modifiers_from_egui};

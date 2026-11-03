@@ -253,7 +253,7 @@ impl crate::resources::DeviceResources {
                 overlay_layout: crate::resources::builders::pipeline_layout(
                     device,
                     "overlay_pipeline_layout",
-                    &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
+                    &[&self.scene_tier.binds.camera_bgl, &self.guides.overlay_bgl],
                 ),
                 grid_layout: crate::resources::builders::pipeline_layout(
                     device,
@@ -263,7 +263,7 @@ impl crate::resources::DeviceResources {
                 atlas_layout: crate::resources::builders::pipeline_layout(
                     device,
                     "atlas_blit_layout",
-                    &[&self.shadow.atlas_viewer_bgl],
+                    &[&self.scene_tier.shadow.atlas_viewer_bgl],
                 ),
                 overlay_shader: self.shared_module(
                     device,

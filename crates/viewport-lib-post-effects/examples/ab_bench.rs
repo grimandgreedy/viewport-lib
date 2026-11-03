@@ -152,7 +152,7 @@ fn run_variant(
 
     if variant == Variant::External {
         let (cs, _h) = ContactShadowEffect::new(CS);
-        renderer.add_post_effect_producer(Box::new(cs));
+        renderer.add_post_effect_producer(Box::new(cs)).unwrap();
     }
 
     // Ground slab plus a GRID x GRID field of cubes, every eighth emissive

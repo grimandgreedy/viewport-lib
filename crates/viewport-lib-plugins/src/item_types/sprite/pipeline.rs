@@ -408,7 +408,7 @@ impl SpriteGpu {
     ) -> Self {
         let bgl = &layouts.bgl;
         let lit_bgl = &layouts.lit_bgl;
-        let group0 = resources.shared_bindings().group0_layout;
+        let group0 = resources.group0_layout();
 
         // Group 2: scene depth + sampler for the soft-particle fade. The
         // shader skips the sample unless soft_particle_distance > 0, so a pass

@@ -52,7 +52,7 @@ macro_rules! standard_uploads {
                 queue: &viewport_lib::gpu::Queue,
                 item: &$item,
             ) -> viewport_lib::error::ViewportResult<$id> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 Ok(host.plugin.upload(device, queue, host.resources, item))
             }
 
@@ -62,7 +62,7 @@ macro_rules! standard_uploads {
                 queue: &viewport_lib::gpu::Queue,
                 item: $item,
             ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 Ok(host
                     .plugin
                     .begin_upload(&host.jobs, device, queue, host.resources, item))
@@ -75,7 +75,7 @@ macro_rules! standard_uploads {
                 id: $id,
                 item: &$item,
             ) -> viewport_lib::error::ViewportResult<()> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 host.plugin.replace(device, queue, host.resources, id, item)
             }
         }
@@ -85,12 +85,13 @@ macro_rules! standard_uploads {
                 &mut self,
                 job: viewport_lib::resources::JobId,
             ) -> viewport_lib::error::ViewportResult<$id> {
-                let host = $crate::item_types::host::<$plugin>(self, $name);
+                let host = $crate::item_types::host::<$plugin>(self, $name)?;
                 host.plugin.take_upload_result(&host.jobs, job)
             }
 
             fn release(&mut self, id: $id) -> bool {
-                $crate::item_types::plugin_mut::<$plugin>(self, $name).drop_stored(id)
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)
+                    .is_ok_and(|p| p.drop_stored(id))
             }
         }
     };
@@ -116,7 +117,7 @@ macro_rules! field_sample_writes {
                 data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
             ) -> viewport_lib::error::ViewportResult<()> {
                 let bytes = $encode(data);
-                $crate::item_types::plugin_mut::<$plugin>(self, $name).write_samples(
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)?.write_samples(
                     queue,
                     id,
                     first_element,
@@ -132,7 +133,7 @@ macro_rules! field_sample_writes {
                 id: $id,
                 capacity: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                $crate::item_types::plugin_mut::<$plugin>(self, $name)
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)?
                     .reserve_stored(device, queue, id, capacity)
             }
 
@@ -142,7 +143,7 @@ macro_rules! field_sample_writes {
                 id: $id,
                 len: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                $crate::item_types::plugin_mut::<$plugin>(self, $name).set_stored_len(id, len)
+                $crate::item_types::plugin_mut::<$plugin>(self, $name)?.set_stored_len(id, len)
             }
 
             fn extent(
@@ -220,57 +221,54 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
 ///
 /// Calling this links every type into the binary, shaders included. Register
 /// only the types you draw instead and the linker leaves the rest out.
+///
+/// A type whose requirements the device does not meet is left out rather than
+/// failing the rest. The ones left out are returned with the reason each was
+/// declined, empty on a device that runs them all.
 pub fn install(
     renderer: &mut viewport_lib::renderer::ViewportRenderer,
     device: &viewport_lib::gpu::Device,
-) {
+) -> Vec<(&'static str, viewport_lib::ViewportError)> {
+    let mut declined = Vec::new();
+    let mut register = |plugin: Box<dyn viewport_lib::plugin_api::ItemTypePlugin>| {
+        let name = plugin.type_name();
+        if let Err(e) = renderer.with_item_type_plugin(device, plugin) {
+            declined.push((name, e));
+        }
+    };
     // Registration order is draw order, and it is the order the renderer used
     // when these types were built into it. Keep it.
-    renderer.with_item_type_plugin(device, Box::new(decal::DecalPlugin::default()));
+    register(Box::new(decal::DecalPlugin::default()));
     // After decals, so a decal on a flow surface takes the streaks too.
-    renderer.with_item_type_plugin(device, Box::new(surface_lic::SurfaceLicPlugin::default()));
+    register(Box::new(surface_lic::SurfaceLicPlugin::default()));
     // Draws in the scene pass, so the decals and streaks above, which run
     // after it, land over the lines.
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(surface_contour::SurfaceContourPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(gaussian_splat::GaussianSplatPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(tensor_field::TensorFieldPlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(vector_field::VectorFieldPlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(external_instances::ExternalInstancesPlugin::default()),
-    );
-    renderer.with_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(gpu_particles::GpuParticlesPlugin::default()),
-    );
+    register(Box::new(surface_contour::SurfaceContourPlugin::default()));
+    register(Box::new(image_slice::ImageSlicePlugin::default()));
+    register(Box::new(
+        volume_surface_slice::VolumeSurfaceSlicePlugin::default(),
+    ));
+    register(Box::new(point_cloud::PointCloudPlugin::default()));
+    register(Box::new(gaussian_splat::GaussianSplatPlugin::default()));
+    register(Box::new(gpu_implicit::GpuImplicitPlugin::default()));
+    register(Box::new(
+        gpu_marching_cubes::GpuMarchingCubesPlugin::default(),
+    ));
+    register(Box::new(volume::VolumePlugin::default()));
+    register(Box::new(curves::StreamtubePlugin::default()));
+    register(Box::new(curves::TubePlugin::default()));
+    register(Box::new(tensor_field::TensorFieldPlugin::default()));
+    register(Box::new(vector_field::VectorFieldPlugin::default()));
+    register(Box::new(curves::RibbonPlugin::default()));
+    register(Box::new(
+        external_instances::ExternalInstancesPlugin::default(),
+    ));
+    register(Box::new(sprite::SpritePlugin::default()));
+    register(Box::new(gpu_particles::GpuParticlesPlugin::default()));
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.
-    renderer.with_item_type_plugin(
-        device,
-        Box::new(scatter_volume::ScatterVolumePlugin::default()),
-    );
+    register(Box::new(scatter_volume::ScatterVolumePlugin::default()));
+    declined
 }
 
 #[cfg(feature = "gpu")]
@@ -281,13 +279,18 @@ pub(crate) fn cast_bytes<T: bytemuck::Pod>(data: &[T]) -> std::borrow::Cow<'_, [
 
 #[cfg(feature = "gpu")]
 /// A registered item type plugin, borrowed back as its concrete type.
+///
+/// When the type is not registered this is the error the renderer declined it
+/// with, so an upload on a device that cannot run the type says why, or
+/// `ItemTypePluginMissing` when `install` was never called.
 pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
     renderer: &'a mut viewport_lib::renderer::ViewportRenderer,
-    type_name: &str,
-) -> &'a mut T {
+    type_name: &'static str,
+) -> viewport_lib::error::ViewportResult<&'a mut T> {
+    check_registered(renderer, type_name)?;
     renderer
         .item_type_plugin_mut(type_name)
-        .unwrap_or_else(|| panic!("{type_name} must be registered; call install() first"))
+        .ok_or(viewport_lib::ViewportError::ItemTypePluginMissing { type_name })
 }
 
 #[cfg(feature = "gpu")]
@@ -295,9 +298,24 @@ pub(crate) fn plugin_mut<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
 /// arenas an upload needs.
 pub(crate) fn host<'a, T: viewport_lib::plugin_api::ItemTypePlugin>(
     renderer: &'a mut viewport_lib::renderer::ViewportRenderer,
-    type_name: &str,
-) -> viewport_lib::plugin_api::ItemTypeHost<'a, T> {
+    type_name: &'static str,
+) -> viewport_lib::error::ViewportResult<viewport_lib::plugin_api::ItemTypeHost<'a, T>> {
+    check_registered(renderer, type_name)?;
     renderer
         .item_type_plugin_host(type_name)
-        .unwrap_or_else(|| panic!("{type_name} must be registered; call install() first"))
+        .ok_or(viewport_lib::ViewportError::ItemTypePluginMissing { type_name })
+}
+
+#[cfg(feature = "gpu")]
+fn check_registered(
+    renderer: &viewport_lib::renderer::ViewportRenderer,
+    type_name: &'static str,
+) -> viewport_lib::error::ViewportResult<()> {
+    if renderer.has_item_type_plugin(type_name) {
+        return Ok(());
+    }
+    Err(renderer
+        .item_type_declined(type_name)
+        .cloned()
+        .unwrap_or(viewport_lib::ViewportError::ItemTypePluginMissing { type_name }))
 }

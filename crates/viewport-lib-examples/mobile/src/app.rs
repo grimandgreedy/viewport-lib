@@ -120,7 +120,12 @@ impl ApplicationHandler for App {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        let mut renderer = ViewportRenderer::new(&device, format);
+        // The device cannot report the downlevel flags (cube-array textures for
+        // point shadows, indirect execution), so hand the renderer the adapter's.
+        let mut renderer = ViewportRenderer::with_config(
+            &device,
+            &viewport_lib::RendererConfig::new(format).with_adapter(&adapter),
+        );
         let res = renderer.resources_mut();
 
         let m_sphere = res

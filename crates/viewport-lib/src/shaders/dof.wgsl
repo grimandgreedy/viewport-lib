@@ -26,12 +26,15 @@ struct DofUniform {
 
 @group(0) @binding(0) var hdr_texture: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
-@group(0) @binding(2) var depth_tex:   texture_depth_2d;
+@group(0) @binding(2) var depth_tex:   texture_2d<f32>;
 @group(0) @binding(3) var<uniform> params: DofUniform;
 // Foreground pass coverage mask: depth < 1.0 where foreground geometry was
 // drawn. Covered pixels pass through unblurred; their scene depth belongs to
 // whatever the foreground drew over, not to what the pixel shows.
-@group(0) @binding(4) var foreground_depth: texture_depth_2d;
+@group(0) @binding(4) var foreground_depth: texture_2d<f32>;
+@group(0) @binding(5) var depth_sampler: sampler;
+
+// #include "helpers/depth_texel.wgsl"
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -70,7 +73,7 @@ fn vogel_disc(index: u32, count: u32, rotation: f32) -> vec2<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
-    let depth = textureLoad(depth_tex, pixel, 0);
+    let depth = depth_texel(depth_tex, depth_sampler, pixel);
 
     // Foreground-covered pixels stay sharp: the scene depth under them does
     // not describe what is visible there.
@@ -81,7 +84,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             vec2<u32>(0u),
             fg_dims - vec2<u32>(1u),
         );
-        if textureLoad(foreground_depth, fg_coord, 0) < 1.0 {
+        if depth_texel(foreground_depth, depth_sampler, vec2<i32>(fg_coord)) < 1.0 {
             return textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0);
         }
     }

@@ -69,7 +69,7 @@ impl ViewportRenderer {
                 _ => [0.4, -1.0, 1.0, -0.4], // fallback for future variants
             };
             queue.write_buffer(
-                &self.resources.shadow.atlas_viewer_buf,
+                &self.resources.scene_tier.shadow.atlas_viewer_buf,
                 0,
                 bytemuck::cast_slice(&[crate::resources::AtlasBlitUniform { rect }]),
             );

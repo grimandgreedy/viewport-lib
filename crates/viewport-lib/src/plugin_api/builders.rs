@@ -13,10 +13,11 @@
 pub use crate::resources::builders::{
     ADDITIVE_BLEND, PREMULTIPLIED_BLEND, RenderPipelineDesc, build_outline_mask_pipeline,
     clamp_linear_mip_sampler, clamp_linear_sampler, clamp_nearest_sampler, compute_pipeline,
-    dcompare, depth_stencil, dmipmap, dwrite, mesh_vertex_layout, pipeline_layout, render_pipeline,
-    repeat_linear_sampler, sampler_entry, scalar_attribute_layout, scene_depth_stencil,
-    standard_scene_layout, texture_entry, texture_sampler_bgl, uniform_bgl, uniform_entry,
-    uniform_texture_sampler_bgl, vector_attribute_layout, wgsl_module, write_mapped,
+    dcompare, depth_stencil, depth_texel_entry, dmipmap, dwrite, mesh_vertex_layout,
+    nearest_sampler_entry, pipeline_layout, render_pipeline, repeat_linear_sampler, sampler_entry,
+    scalar_attribute_layout, scene_depth_stencil, standard_scene_layout, texture_entry,
+    texture_sampler_bgl, uniform_bgl, uniform_entry, uniform_texture_sampler_bgl,
+    vector_attribute_layout, wgsl_module, write_mapped,
 };
 pub use crate::resources::builders::{
     DualPipelineDesc, build_dual_pipeline, build_dual_pipeline_variant, build_fullscreen_pipeline,
@@ -24,18 +25,17 @@ pub use crate::resources::builders::{
 };
 
 pub use crate::resources::device_resources::DualPipeline;
-/// The depth bias the renderer's own two-sided surfaces cast shadows with.
-///
-/// An item type drawing cull-none geometry that casts into the cascade atlas
-/// takes this on its shadow pipeline so its contact shadows land where the
-/// built-in ones do.
-pub use crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED;
 
 /// The vertex of the shared mesh arena, which
 /// [`mesh_vertex_layout`] describes. Fill this to build geometry for a
 /// pipeline declaring that layout.
 pub use crate::resources::Vertex;
 
+/// [`PluginResources::adapt_wgsl`](crate::plugin_api::PluginResources::adapt_wgsl)
+/// for a `Capabilities` you hold, with no renderer: to check how a shader
+/// adapts for a device class, such as a WebGL2 device, without one.
+pub use crate::resources::builders::adapt_wgsl;
+pub use crate::resources::builders::select_wgsl_alternative;
 /// Prepend the `enable primitive_index;` directive when the active wgpu leg's
 /// shader front end requires it. Shaders using `@builtin(primitive_index)`
 /// pass their source through this before compiling.

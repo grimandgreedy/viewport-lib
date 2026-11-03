@@ -7,15 +7,14 @@ use viewport_lib::plugin_api::shared_wgsl::{
 };
 use viewport_lib::plugin_api::{
     DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemTypePlugin,
-    PaintContext, PickPassContext, ShadowCastContext, SharedBindings,
+    PaintContext, PickPassContext, PluginPipelineOpts, PluginResources, ShadowCastContext,
 };
-use viewport_lib::resources::{DeviceResources, PluginPipelineOpts};
 use viewport_lib::wgpu;
 
 /// A world-space triangle, drawn in the opaque scene pass and the pick pass,
-/// with pipelines built by
-/// [`build_opaque_pipeline`](DeviceResources::build_opaque_pipeline) and
-/// [`build_pick_pipeline`](DeviceResources::build_pick_pipeline).
+/// with pipelines built in `init_gpu` by
+/// [`build_opaque_pipeline`](PluginResources::build_opaque_pipeline) and
+/// [`build_pick_pipeline`](PluginResources::build_pick_pipeline).
 ///
 /// The `Logging*` fixtures prove the renderer still calls a plugin. This one
 /// proves a plugin can still *render*: it reads the camera from group 0, so
@@ -30,6 +29,13 @@ use viewport_lib::wgpu;
 pub struct TriangleItemTypePlugin {
     log: CallLog,
     type_name: &'static str,
+    centre: glam::Vec3,
+    colour: [f32; 3],
+    gpu: Option<TriangleGpu>,
+    pick_id_group: Option<wgpu::BindGroup>,
+}
+
+struct TriangleGpu {
     opaque: wgpu::RenderPipeline,
     pick: wgpu::RenderPipeline,
     shadow: wgpu::RenderPipeline,
@@ -39,23 +45,32 @@ pub struct TriangleItemTypePlugin {
     /// Drawn in `paint_depth_read`, inside the lib's read-only-depth pass.
     depth_read: wgpu::RenderPipeline,
     pick_id_layout: wgpu::BindGroupLayout,
-    pick_id_group: Option<wgpu::BindGroup>,
 }
 
 impl TriangleItemTypePlugin {
-    /// Build the plugin's pipelines against `resources` and register it under
-    /// `type_name`.
-    ///
-    /// The pipeline builders live on [`DeviceResources`], which
-    /// [`ItemTypePlugin::init_gpu`] is not handed (it receives the device and
-    /// the shared bind layout only), so a plugin that uses them is
-    /// constructed by the host, which has the renderer. This is the same
-    /// shape the shipped renderer-side handles use.
+    /// A triangle at `centre` in `colour`, registered under `type_name`. Its
+    /// pipelines are built when the renderer calls `init_gpu`.
     pub fn new(
-        resources: &DeviceResources,
-        device: &wgpu::Device,
         log: CallLog,
         type_name: &'static str,
+        centre: glam::Vec3,
+        colour: [f32; 3],
+    ) -> Self {
+        Self {
+            log,
+            type_name,
+            centre,
+            colour,
+            gpu: None,
+            pick_id_group: None,
+        }
+    }
+}
+
+impl TriangleGpu {
+    fn new(
+        resources: &dyn PluginResources,
+        device: &wgpu::Device,
         centre: glam::Vec3,
         colour: [f32; 3],
     ) -> Self {
@@ -145,15 +160,12 @@ impl TriangleItemTypePlugin {
         );
 
         Self {
-            log,
-            type_name,
             opaque,
             pick,
             shadow,
             encode,
             depth_read,
             pick_id_layout,
-            pick_id_group: None,
         }
     }
 }
@@ -163,12 +175,17 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         self.type_name
     }
 
-    fn init_gpu(&mut self, _device: &wgpu::Device, shared: &SharedBindings<'_>) {
-        // The pipelines were built in `new`; record the sample count the
-        // renderer reports so a test can check it matches what they were
-        // built against.
+    fn init_gpu(&mut self, device: &wgpu::Device, resources: &dyn PluginResources) {
+        // Record the sample count the renderer reports so a test can check it
+        // matches what the pipelines were built against.
         self.log
-            .record(format!("init_gpu:samples={}", shared.sample_count));
+            .record(format!("init_gpu:samples={}", resources.sample_count()));
+        self.gpu = Some(TriangleGpu::new(
+            resources,
+            device,
+            self.centre,
+            self.colour,
+        ));
     }
 
     fn prepare(
@@ -179,6 +196,9 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         self.log.record(format!("prepare:items={}", items.len()));
+        let Some(gpu) = self.gpu.as_ref() else {
+            return Vec::new();
+        };
         if items.is_empty() {
             return Vec::new();
         }
@@ -195,7 +215,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         queue.write_buffer(&buffer, 0, &bytes);
         self.pick_id_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("triangle_item_pick_id_bg"),
-            layout: &self.pick_id_layout,
+            layout: &gpu.pick_id_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
@@ -215,7 +235,10 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
             return;
         }
         // Group 0 is bound by the renderer on pass entry.
-        pass.set_pipeline(&self.opaque);
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(&gpu.opaque);
         pass.draw(0..3, 0..1);
     }
 
@@ -232,7 +255,10 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         }
         // Group 0 (the cascade's light view-projection, at its dynamic offset)
         // is bound by the renderer on pass entry.
-        pass.set_pipeline(&self.shadow);
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(&gpu.shadow);
         pass.draw(0..3, 0..1);
     }
 
@@ -253,7 +279,10 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         // Group 0 is bound by the renderer on pass entry. The fixture does not
         // sample the depth it is handed; drawing at all is what the tests here
         // are checking.
-        pass.set_pipeline(&self.depth_read);
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(&gpu.depth_read);
         pass.draw(0..3, 0..1);
     }
 
@@ -299,7 +328,10 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
             // between the wgpu legs (29 added multiview_mask).
             ..Default::default()
         });
-        pass.set_pipeline(&self.encode);
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(&gpu.encode);
         pass.set_bind_group(0, ctx.camera_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
@@ -317,7 +349,10 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         if items.is_empty() || items.item_settings(0).hidden {
             return;
         }
-        pass.set_pipeline(&self.pick);
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(&gpu.pick);
         pass.set_bind_group(1, group, &[]);
         pass.draw(0..3, 0..1);
     }

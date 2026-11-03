@@ -5,6 +5,10 @@ pub(crate) mod cached_bind_group;
 /// Opt-in record of what each pipeline and shader module cost to create, for
 /// attributing startup time. See [`builders::build_log`].
 pub use builders::build_log;
+/// The basic mesh path the compatibility tier draws meshes with.
+pub(crate) mod basic_mesh;
+/// Group 0 on the compatibility tier.
+pub(crate) mod compatibility_tier;
 /// A growable GPU buffer addressed in elements, with a ranged write.
 pub mod content_buffer;
 pub(crate) mod custom_data;
@@ -12,6 +16,9 @@ pub(crate) mod custom_data;
 pub(crate) mod device_resources;
 /// A cheap hasher for the maps rebuilt or probed every frame.
 pub(crate) mod fast_hash;
+/// Group 0's bindings on every tier, declared once.
+pub(crate) mod group0;
+pub use self::compatibility_tier::COMPATIBILITY_MAX_LIGHTS;
 /// GPU compute resources: clustered shading, hierarchical-Z, and dynamic resolution.
 pub mod gpu;
 /// Ground-plane pipeline, uniform, and bind group.
@@ -32,6 +39,7 @@ mod memory;
 /// Mesh storage, instancing, level-of-detail, and mesh-family pipelines.
 pub mod mesh;
 pub(crate) mod mesh_sidecar;
+pub(crate) mod outline;
 pub(crate) mod overlay;
 /// Lazy GPU pick-pipeline construction (`ensure_*_pick_pipeline` methods).
 mod pick_pipelines;
@@ -39,7 +47,7 @@ mod pick_pipelines;
 pub(crate) mod pipeline_slot;
 pub use pipeline_slot::PipelineCompilation;
 mod plugin_builders;
-mod postprocess;
+pub(crate) mod postprocess;
 pub(crate) use postprocess::TargetGroups;
 /// A GPU readback that can be polled instead of waited on.
 #[cfg(any(feature = "raytrace", feature = "bake"))]
@@ -92,10 +100,9 @@ pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, Overla
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
     PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT,
+    SHADOW_DEPTH_FORMAT, ShadowCaster,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
-pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub use self::types::OutlineEdgeUniform;
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
@@ -131,7 +138,7 @@ pub use self::types::{
 // `plugin_api::shared_wgsl` instead.
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
-    OverlayVertex, PolylineGpuData, SingleLightUniform, VertexBufferLayoutExt,
+    OverlayVertex, SingleLightUniform, VertexBufferLayoutExt,
 };
 // The mesh vertex is the exception: `plugin_api::builders::mesh_vertex_layout`
 // publishes its buffer layout, so an item type building geometry for a

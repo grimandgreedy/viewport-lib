@@ -15,6 +15,8 @@
 //! list (at [`CLUSTER_INDEX_BASE_BYTES`]) to every lit pipeline, so the pair
 //! costs one fragment storage binding. The build pass uses a separate compute
 //! bind group with read-write access to the two regions as two bindings.
+//!
+//! [`CLUSTER_INDEX_BASE_BYTES`]: crate::resources::gpu::clustered::CLUSTER_INDEX_BASE_BYTES
 
 use crate::resources::builders::LoggedAlloc;
 

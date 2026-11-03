@@ -38,9 +38,9 @@ pub const WGSL_VERSION: u32 = 6;
 /// Group-0 bind declarations and shared scene-data structs.
 ///
 /// Declares every binding in the lib's camera/lights/shadows/clip/IBL group,
-/// matching the layout exposed via
-/// [`SharedBindings`](super::SharedBindings). Plugin shaders include this
-/// once and must not re-declare these bindings.
+/// matching
+/// [`PluginResources::group0_layout`](super::PluginResources::group0_layout).
+/// Plugin shaders include this once and must not re-declare these bindings.
 ///
 /// Bindings exposed:
 ///
@@ -52,7 +52,7 @@ pub const WGSL_VERSION: u32 = 6;
 /// | 3  | `Lights` header uniform | `lights` |
 /// | 4  | `ClipPlanes` uniform | `clip_planes` |
 /// | 5  | *(internal: CSM uniform; route through `viewport_sample_csm`)* | *(opaque)* |
-/// | 6  | `ClipVolumes` uniform | `clip_volumes` |
+/// | 6  | `ClipVolumeUB` uniform | `clip_volume` |
 /// | 7  | IBL irradiance equirect | `ibl_irradiance_tex` |
 /// | 8  | IBL specular equirect | `ibl_specular_tex` |
 /// | 9  | BRDF integration LUT | `ibl_brdf_lut` |
@@ -122,6 +122,46 @@ pub const SHARED_CSM_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/helper
 pub const SHARED_CLIP_VOLUME_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_volume_test.wgsl"));
 
+/// The section-view clip uniforms and tests, for a body that declares its own
+/// group-0 bindings.
+///
+/// Declares `clip_planes: ClipPlanes` at group 0 binding 4 and
+/// `clip_volume: ClipVolumeUB` at binding 6, and provides:
+///
+/// ```ignore
+/// fn viewport_pass_clip_planes(world_pos: vec3<f32>) -> bool;
+/// fn viewport_pass_clip_volumes(world_pos: vec3<f32>) -> bool;
+/// fn viewport_clip_test(world_pos: vec3<f32>) -> bool;
+/// ```
+///
+/// [`SHARED_BINDINGS_WGSL`] already includes all of this. Compose it instead
+/// when the body cannot take the shared bindings, which is a body lit through
+/// [`SHARED_SCENE_LIGHTING_WGSL`]: the two declare the light list on the same
+/// binding. Never compose both.
+pub const SHARED_CLIP_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/clip_bindings.wgsl"));
+
+/// Read one texel of a depth or stencil texture on every backend, GL included.
+///
+/// Provides:
+///
+/// ```ignore
+/// fn depth_texel(tex: texture_2d<f32>, samp: sampler, coord: vec2<i32>) -> f32;
+/// fn stencil_texel(tex: texture_2d<u32>, samp: sampler, coord: vec2<i32>) -> u32;
+/// ```
+///
+/// Bind the depth view as `texture_2d<f32>` with an unfilterable-float layout
+/// entry ([`depth_texel_entry`](crate::plugin_api::builders::depth_texel_entry))
+/// and a non-filtering sampler
+/// ([`nearest_sampler_entry`](crate::plugin_api::builders::nearest_sampler_entry),
+/// [`clamp_nearest_sampler`](crate::plugin_api::builders::clamp_nearest_sampler)).
+/// Do not `textureLoad` a `texture_depth_2d` (wgpu's GL backend cannot
+/// translate it) or sample one without a comparison (the GLSL it becomes does
+/// not compile). A `texture_2d<f32>` read with `textureLoad` reads 0 on GLES.
+/// It declares no bindings, so it composes anywhere.
+pub const SHARED_DEPTH_TEXEL_WGSL: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/helpers/depth_texel.wgsl"));
+
 /// The direct Cook-Torrance BRDF the renderer's lit mesh shaders evaluate.
 ///
 /// Provides `D_GGX`, `G1_Smith` and the functions built on them, for a body
@@ -176,7 +216,7 @@ pub const SHARED_PBR_WGSL: &str =
 
 /// Fragment-output struct and packing helper for the OIT pass.
 ///
-/// A transparent plugin fragment shader returns [`OitOutput`] from its
+/// A transparent plugin fragment shader returns `OitOutput` from its
 /// `fs_main`. Use `viewport_oit_pack(color_premul, alpha, view_z)` to
 /// build the struct; the weight function matches the lib's built-in OIT
 /// pipelines so plugin transparents composite consistently with native
@@ -201,12 +241,13 @@ pub const SHARED_OIT_WGSL: &str =
 /// Declare the depth binding and sample it yourself, then pass the value in:
 ///
 /// ```wgsl
-/// // In a group the plugin owns, at any free binding index:
-/// @group(2) @binding(4) var scene_depth_tex:  texture_depth_2d;
+/// // In a group the plugin owns, at any free binding index. The depth view is
+/// // bound as unfilterable float, with a non-filtering sampler.
+/// @group(2) @binding(4) var scene_depth_tex:  texture_2d<f32>;
 /// @group(2) @binding(5) var scene_depth_samp: sampler;
 /// // ...
 /// let screen_uv    = frag_pos.xy / viewport_size;
-/// let scene_ndc_z  = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
+/// let scene_ndc_z  = textureSampleLevel(scene_depth_tex, scene_depth_samp, screen_uv, 0.0).r;
 /// let fade         = viewport_soft_fade_from_ndc(world_pos, screen_uv, scene_ndc_z, soft_dist);
 /// ```
 ///

@@ -1,7 +1,8 @@
 //! The `viewport-lib-vfx` kit rebuilt as a [`PostEffectStage`] stack:
 //! colour grade, depth fog, and edge detect as three chained display-space
 //! stages behind one settings handle. (The kit's fourth effect, bloom, is
-//! covered HDR-correctly by [`crate::BloomEffect`].)
+//! left to the built-in HDR bloom, configured through
+//! [`BloomSettings`](viewport_lib::BloomSettings).)
 //!
 //! The original kit could not compose back through `GpuPlugin::post_paint`,
 //! so it owned a parallel `VfxRenderer` with its own scene colour/depth
@@ -17,7 +18,7 @@
 //! ```ignore
 //! let (stages, settings) = vfx_stack();
 //! for (stage, order) in stages {
-//!     renderer.add_post_effect_stage(stage, order);
+//!     renderer.add_post_effect_stage(stage, order)?;
 //! }
 //! settings.lock().unwrap().depth_fog.enabled = true;
 //! ```
@@ -144,11 +145,21 @@ enum Pass {
 }
 
 impl Pass {
-    fn shader(self) -> &'static str {
-        match self {
+    /// The pass's WGSL, with the depth-texel helper in front of the passes
+    /// that read depth.
+    fn shader(self) -> String {
+        let body = match self {
             Pass::ColourGrade => include_str!(concat!(env!("OUT_DIR"), "/colour_grade.wgsl")),
             Pass::DepthFog => include_str!(concat!(env!("OUT_DIR"), "/depth_fog.wgsl")),
             Pass::EdgeDetect => include_str!(concat!(env!("OUT_DIR"), "/edge_detect.wgsl")),
+        };
+        if self.reads_depth() {
+            format!(
+                "{}\n{body}",
+                viewport_lib::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL
+            )
+        } else {
+            body.to_string()
         }
     }
 
@@ -185,6 +196,7 @@ pub struct VfxStage {
     pipeline: Option<wgpu::RenderPipeline>,
     bgl: Option<wgpu::BindGroupLayout>,
     sampler: Option<wgpu::Sampler>,
+    depth_sampler: Option<wgpu::Sampler>,
     per_viewport: HashMap<usize, VfxViewport>,
 }
 
@@ -202,6 +214,7 @@ pub fn vfx_stack() -> (
             pipeline: None,
             bgl: None,
             sampler: None,
+            depth_sampler: None,
             per_viewport: HashMap::new(),
         })
     };
@@ -288,7 +301,7 @@ impl PostEffectStage for VfxStage {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -312,6 +325,20 @@ impl PostEffectStage for VfxStage {
             },
             count: None,
         });
+        if self.pass.reads_depth() {
+            // After the uniform: the nearest sampler the depth is read through.
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: next + 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                count: None,
+            });
+            self.depth_sampler = Some(clamp_sampler(
+                device,
+                self.pass.label(),
+                wgpu::FilterMode::Nearest,
+            ));
+        }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some(self.pass.label()),
             entries: &entries,
@@ -333,7 +360,7 @@ impl PostEffectStage for VfxStage {
             return;
         };
         if self.pipeline.is_none() {
-            let shader = wgsl_module(device, self.pass.label(), self.pass.shader());
+            let shader = wgsl_module(device, self.pass.label(), &self.pass.shader());
             self.pipeline = Some(build_post_effect_pipeline(
                 device,
                 self.pass.label(),
@@ -370,6 +397,12 @@ impl PostEffectStage for VfxStage {
             binding: next + 1,
             resource: uniform_buf.as_entire_binding(),
         });
+        if let Some(depth_sampler) = &self.depth_sampler {
+            entries.push(wgpu::BindGroupEntry {
+                binding: next + 2,
+                resource: wgpu::BindingResource::Sampler(depth_sampler),
+            });
+        }
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(self.pass.label()),
             layout: bgl,

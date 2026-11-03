@@ -58,14 +58,20 @@ pub(crate) fn emit_indirect_run(
 /// this is shared verbatim across paths.
 macro_rules! emit_overlay_2d_hardcoded {
     ($this:ident, $ov:ident, $render_pass:ident) => {{
+        // The per-draw instance stream the text and shape pipelines read at
+        // vertex slot 1. Immediate draws take slot 0, the identity.
+        let instances = $ov.overlay_bindings.instances.buffer();
         // SDF overlay shapes (drawn before rects and labels).
         if let Some(ref sd) = $ov.overlay_shape_gpu_data {
             if sd.vertex_count > 0 {
                 if let Some(pipeline) = &$this.resources.overlay_shape.pipeline {
-                    if let (Some(vbuf), Some(shadow_bg)) = (&sd.vertex_buf, &sd.shadow_bind_group) {
+                    if let (Some(vbuf), Some(shadow_bg), Some(inst)) =
+                        (&sd.vertex_buf, &sd.shadow_bind_group, instances)
+                    {
                         $render_pass.set_pipeline(pipeline);
                         $render_pass.set_bind_group(0, shadow_bg, &[]);
                         $render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass.draw(0..sd.vertex_count, 0..1);
                     }
                 }
@@ -87,10 +93,13 @@ macro_rules! emit_overlay_2d_hardcoded {
         }
         // Overlay labels, glyph runs, and polylines (merged text batch).
         if let Some(ref ld) = $ov.label_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
+            if let (Some(pipeline), Some(inst)) =
+                (&$this.resources.overlay_text.pipeline, instances)
+            {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &ld.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                $render_pass.set_vertex_buffer(1, inst.slice(..));
                 $render_pass.draw(0..ld.vertex_count, 0..1);
             }
         }
@@ -116,6 +125,9 @@ macro_rules! emit_overlay_2d_ordered {
             Text,
         }
         let mut last_pipe = LastPipe::None;
+        // The per-draw instance stream the text and shape pipelines read at
+        // vertex slot 1: slot 0 is the identity, retained groups their own.
+        let instances = $ov.overlay_bindings.instances.buffer();
         for seg in &$ov.overlay_draw_segments {
             match seg.source {
                 OverlayDrawSource::Shape {
@@ -123,10 +135,11 @@ macro_rules! emit_overlay_2d_ordered {
                     vertex_count,
                 } => {
                     if let Some(ref sd) = $ov.overlay_shape_gpu_data {
-                        if let (Some(pipeline), Some(vbuf), Some(shadow_bg)) = (
+                        if let (Some(pipeline), Some(vbuf), Some(shadow_bg), Some(inst)) = (
                             &$this.resources.overlay_shape.pipeline,
                             &sd.vertex_buf,
                             &sd.shadow_bind_group,
+                            instances,
                         ) {
                             if last_pipe != LastPipe::Shape {
                                 $render_pass.set_pipeline(pipeline);
@@ -134,6 +147,7 @@ macro_rules! emit_overlay_2d_ordered {
                             }
                             $render_pass.set_bind_group(0, shadow_bg, &[]);
                             $render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                            $render_pass.set_vertex_buffer(1, inst.slice(..));
                             $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                         }
                     }
@@ -164,9 +178,10 @@ macro_rules! emit_overlay_2d_ordered {
                     vertex_start,
                     vertex_count,
                 } => {
-                    if let (Some(pipeline), Some(td)) = (
+                    if let (Some(pipeline), Some(td), Some(inst)) = (
                         &$this.resources.overlay_text.pipeline,
                         $ov.label_gpu_data.as_ref(),
+                        instances,
                     ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
@@ -174,18 +189,19 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                         $render_pass.set_bind_group(0, &td.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, td.vertex_buf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                     }
                 }
                 OverlayDrawSource::Retained { draw_index } => {
                     // A retained group draws through the text pipeline, sharing its
-                    // bind group (atlas, clip, viewport, instances) with the
-                    // immediate text batch, from its own cached buffer and
-                    // per-frame instance slot.
-                    if let (Some(pipeline), Some(td), Some(rd)) = (
+                    // bind group (atlas, clip, viewport) with the immediate text
+                    // batch, from its own cached buffer and per-frame instance slot.
+                    if let (Some(pipeline), Some(td), Some(rd), Some(inst)) = (
                         &$this.resources.overlay_text.pipeline,
                         $ov.label_gpu_data.as_ref(),
                         $ov.overlay_retained_draws.get(draw_index as usize),
+                        instances,
                     ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
@@ -193,6 +209,7 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                         $render_pass.set_bind_group(0, &td.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass
                             .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
                     }
@@ -201,9 +218,10 @@ macro_rules! emit_overlay_2d_ordered {
                     // A retained group's SDF shape stream, through the shape
                     // pipeline, from its cached buffer, shadow bind group, and
                     // per-frame instance.
-                    if let (Some(pipeline), Some(rd)) = (
+                    if let (Some(pipeline), Some(rd), Some(inst)) = (
                         &$this.resources.overlay_shape.pipeline,
                         $ov.overlay_retained_shape_draws.get(draw_index as usize),
+                        instances,
                     ) {
                         if last_pipe != LastPipe::Shape {
                             $render_pass.set_pipeline(pipeline);
@@ -211,6 +229,7 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                         $render_pass.set_bind_group(0, &rd.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                        $render_pass.set_vertex_buffer(1, inst.slice(..));
                         $render_pass
                             .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
                     }
@@ -321,7 +340,7 @@ impl ViewportRenderer {
                 &self.prepared_surfaces,
                 self.per_object_bundle.as_ref()
             );
-            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
+            self.draw_mesh_instance_batches(&mut render_pass, camera_bg);
             // TransparentVolumeMesh boundary wireframe overlay.
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
@@ -363,35 +382,7 @@ impl ViewportRenderer {
             // Outline composite after all scene content.
             emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             // Sub-object highlight (LDR path).
-            if let Some(sub_hl) = slot.sub_highlight.as_ref() {
-                if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
-                    &self.resources.sub_highlight.fill_ldr_pipeline,
-                    &self.resources.sub_highlight.edge_ldr_pipeline,
-                    &self.resources.sub_highlight.sprite_ldr_pipeline,
-                ) {
-                    if sub_hl.fill_vertex_count > 0 {
-                        render_pass.set_pipeline(fill_pl);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
-                        render_pass.draw(0..sub_hl.fill_vertex_count, 0..1);
-                    }
-                    if sub_hl.edge_segment_count > 0 {
-                        render_pass.set_pipeline(edge_pl);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
-                        render_pass.draw(0..6, 0..sub_hl.edge_segment_count);
-                    }
-                    if sub_hl.sprite_point_count > 0 {
-                        render_pass.set_pipeline(sprite_pl);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
-                        render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
-                    }
-                }
-            }
+            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
             let ov = &self.viewport_slots[vp_idx].overlay;
             emit_overlay_2d!(self, ov, render_pass);
         }
@@ -559,13 +550,14 @@ impl ViewportRenderer {
             }
         }
         // Shadow atlas viewer overlay.
-        if let (true, Some(pipeline)) = (
+        if let (true, true, Some(pipeline)) = (
+            self.resources.scene_tier.is_built(),
             frame.effects.debug.show_shadow_atlas,
             self.resources
                 .guide_pipeline(crate::resources::overlay::guides::GUIDE_ATLAS_VIEWER),
         ) {
             render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
+            render_pass.set_bind_group(0, &self.resources.scene_tier.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }
     }
@@ -611,7 +603,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        if frame.effects.display.is_hdr() {
+        if self.renders_hdr(frame) {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
         } else {
@@ -641,7 +633,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
-        if frame.effects.display.is_hdr() {
+        if self.renders_hdr(frame) {
             if self
                 .viewport_slots
                 .get(vp_idx)
@@ -811,7 +803,7 @@ impl ViewportRenderer {
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
         let needed = {
             use crate::resources::TargetGroups as G;
-            if frame.effects.display.is_hdr() {
+            if self.renders_hdr(frame) {
                 let pp = &frame.effects.post_process;
                 G::SCENE
                     | G::when(G::BLOOM, pp.bloom.enabled)
@@ -823,16 +815,20 @@ impl ViewportRenderer {
                 G::LDR_DEPTH
             }
         };
-        self.ensure_viewport_hdr(
-            device,
-            queue,
-            vp_idx,
-            w.max(1),
-            h.max(1),
-            ssaa_factor,
-            self.current_render_scale,
-            needed,
-        );
+        if self.resources.scene_tier.is_built() {
+            self.ensure_viewport_hdr(
+                device,
+                queue,
+                vp_idx,
+                w.max(1),
+                h.max(1),
+                ssaa_factor,
+                self.current_render_scale,
+                needed,
+            );
+        } else {
+            self.ensure_overlay_depth(device, vp_idx, w.max(1), h.max(1));
+        }
 
         // Lazy-initialize GPU timestamp resources on first render call when supported.
         if self.ts_query_set.is_none()
@@ -874,10 +870,15 @@ impl ViewportRenderer {
             self.ts_period = queue.get_timestamp_period();
         }
 
-        let cmd_buf = if !frame.effects.display.is_hdr() {
+        if frame.effects.display.is_hdr() && !self.renders_hdr(frame) {
+            self.last_stats.hdr_drawn_as_ldr = true;
+        }
+        let cmd_buf = if !self.renders_hdr(frame) {
             // The LDR path binds the LDR mesh family. Prepare has normally
             // built it; this covers a frame prepared for the other family.
-            if !scene_items.is_empty() || Self::has_mesh_content(frame) {
+            if self.resources.scene_tier.is_built()
+                && (!scene_items.is_empty() || Self::has_mesh_content(frame))
+            {
                 self.resources.ensure_ldr_mesh_pipelines(device);
             }
             self.render_frame_ldr(
@@ -936,6 +937,13 @@ impl ViewportRenderer {
             .load(std::sync::atomic::Ordering::Relaxed);
         self.last_stats.feature_pipelines_built = self.resources.feature_sets() as u32;
         cmd_buf
+    }
+
+    /// Whether `frame` draws through the HDR path. A frame that asks for it on
+    /// an overlay-only renderer draws through the LDR path instead, which is
+    /// all the overlay family needs.
+    pub(crate) fn renders_hdr(&self, frame: &FrameData) -> bool {
+        frame.effects.display.is_hdr() && self.resources.scene_tier.is_built()
     }
 
     /// Panic, naming both formats, when `output_view`'s texture cannot be drawn
@@ -1015,7 +1023,7 @@ impl ViewportRenderer {
     ///
     /// Creates a temporary [`wgpu::Texture`] render target of the given dimensions,
     /// runs all render passes (shadow, scene, post-processing) into it via
-    /// [`render()`](Self::render), then copies the result back to CPU memory.
+    /// [`OwnedPath::render`](crate::OwnedPath::render), then copies the result back to CPU memory.
     ///
     /// No OS window or [`wgpu::Surface`] is required. The caller is responsible for
     /// initialising the wgpu adapter with `compatible_surface: None` and for
@@ -1467,61 +1475,19 @@ impl ViewportRenderer {
 }
 
 impl crate::renderer::ViewportRenderer {
-    /// Draw the line substrate and the mesh-instance batches from the per-frame
-    /// GPU data `prepare()` built.
+    /// Draw the mesh-instance batches from the per-frame GPU data `prepare()`
+    /// built.
     ///
-    /// Both are core rather than item-type plugins, and deliberately so: the
-    /// line substrate is shared machinery with several producers (scatter
-    /// and volume bounds, clip outlines, the splat and sprite
-    /// wireframes), and a mesh-instance batch rides the scene graph's own
-    /// instanced pipeline. Every item type that used to draw from here has
-    /// moved to [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
-    ///
-    /// `is_hdr` selects the pipeline variant matching the pass's colour target.
-    pub(crate) fn draw_line_and_instance_layers(
+    /// Core rather than an item-type plugin, and deliberately so: a
+    /// mesh-instance batch rides the scene graph's own instanced pipeline.
+    /// Lines, the other layer that used to draw from here, belong to the
+    /// polyline item type, which also draws the other types' wireframe
+    /// overlays.
+    pub(crate) fn draw_mesh_instance_batches(
         &self,
         render_pass: &mut crate::gpu::RenderPass<'_>,
         camera_bg: &crate::gpu::BindGroup,
-        is_hdr: bool,
     ) {
-        // Polyline pass : screen-space thick lines via instanced quad expansion.
-        // Each segment instance is drawn as 6 vertices (2 triangles).
-        // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
-        // pipeline so they are always fully visible regardless of active clip volumes.
-        // Items with wireframe=true use the thin 1px LineList pipeline instead, still
-        // honouring skip_clip (see `PolylineKey`).
-        if !self.polyline_gpu_data.is_empty() && self.resources.polyline.pipelines.get().is_some() {
-            let polyline_pipelines = self.resources.polyline.pipelines.get();
-            for pl in self.polyline_gpu_data.iter() {
-                if pl.segment_count == 0 {
-                    continue;
-                }
-                let key = crate::resources::PolylineKey {
-                    skip_clip: pl.skip_clip,
-                    wireframe: pl.wireframe,
-                };
-                if pl.wireframe {
-                    if let (Some(wf_pipeline), Some(wf_bg)) = (
-                        polyline_pipelines.and_then(|ps| ps.get(key, is_hdr)),
-                        pl.wireframe_bind_group.as_ref(),
-                    ) {
-                        render_pass.set_pipeline(wf_pipeline);
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(1, wf_bg, &[]);
-                        render_pass.draw(0..2, 0..pl.segment_count);
-                    }
-                    continue;
-                }
-                if let Some(pipeline) = polyline_pipelines.and_then(|ps| ps.get(key, is_hdr)) {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    render_pass.set_bind_group(1, &pl.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
-                    render_pass.draw(0..6, 0..pl.segment_count);
-                }
-            }
-        }
-
         // Mesh-instance pass: one draw call per host-built batch, routed by
         // blend mode, through the HDR mesh family's blended members.
         if !self.mesh_instance_gpu_data.is_empty() {

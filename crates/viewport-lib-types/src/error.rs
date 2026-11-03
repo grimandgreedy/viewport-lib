@@ -571,6 +571,35 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// The device is below the floor the renderer can be built on.
+    ///
+    /// Returned by `ViewportRenderer::try_with_config`; `with_config` panics
+    /// with the same message.
+    #[error("the renderer cannot run on this device: {reason}")]
+    DeviceUnsupported {
+        /// What the device lacks.
+        reason: String,
+    },
+
+    /// A plugin needs more than the device offers, so it was not registered.
+    #[error("plugin '{type_name}' was not registered: the device lacks {}", .missing.join(", "))]
+    PluginUnsupported {
+        /// The plugin's name.
+        type_name: String,
+        /// One entry per capability the device lacks.
+        missing: Vec<String>,
+    },
+
+    /// The call needs a higher tier than the renderer runs at: scene content on
+    /// an overlay-only device.
+    #[error("this needs the {needed} tier and the renderer runs at the {have} tier")]
+    TierUnsupported {
+        /// The tier the call needs.
+        needed: crate::tier::Tier,
+        /// The tier the renderer runs at.
+        have: crate::tier::Tier,
+    },
+
     /// A LOD group id does not refer to a registered group.
     #[error("LOD group {index} is not registered")]
     LodGroupNotFound {

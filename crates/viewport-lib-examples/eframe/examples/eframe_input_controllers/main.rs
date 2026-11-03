@@ -21,6 +21,7 @@
 use std::sync::{Arc, Mutex};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 
 use crate::eframe::{egui, wgpu};
@@ -515,11 +516,9 @@ impl eframe::App for App {
                 ui.input(|i| {
                     self.shift_held = i.modifiers.shift;
 
-                    vp_events.push(ViewportEvent::ModifiersChanged(vpl::Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    vp_events.push(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
 
                     let local_pos = i
                         .pointer
@@ -560,6 +559,7 @@ impl eframe::App for App {
                                             ButtonState::Released
                                         },
                                         repeat: *repeat,
+                                        logical: None,
                                     });
                                 }
                             }

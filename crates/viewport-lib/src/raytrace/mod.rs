@@ -30,6 +30,17 @@
 //! Not handled yet: a two-level BVH, and importance sampling of the environment
 //! (it is sampled on miss but not used for next-event estimation, so pure-IBL
 //! scenes converge more slowly).
+//!
+//! [`RtScene`]: crate::raytrace::RtScene
+//! [`trace`]: crate::raytrace::trace
+//! [`RtImage`]: crate::raytrace::RtImage
+//! [`RtSettings::denoise`]: crate::raytrace::RtSettings::denoise
+//! [`RtScene::set_environment`]: crate::raytrace::RtScene::set_environment
+//! [`bake_lightmap`]: crate::raytrace::bake_lightmap
+//! [`Tracer::bake`]: crate::raytrace::Tracer::bake
+//! [`TexelSurfaces`]: crate::raytrace::TexelSurfaces
+//! [`pick_backend`]: crate::raytrace::pick_backend
+//! [`request_ray_queries`]: crate::raytrace::request_ray_queries
 
 #[cfg(feature = "raytrace-hardware")]
 mod accel;

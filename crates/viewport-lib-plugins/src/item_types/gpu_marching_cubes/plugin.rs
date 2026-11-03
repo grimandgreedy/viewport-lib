@@ -15,8 +15,7 @@ use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_vol
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
-    use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
-    use viewport_lib::plugin_api::shared_wgsl;
+    use crate::item_types::shader::{scene_shader, wgsl_source};
     vec![
         ("mc_classify.wgsl", wgsl_source!("mc_classify").to_string()),
         (
@@ -25,10 +24,8 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
         ),
         ("mc_generate.wgsl", wgsl_source!("mc_generate").to_string()),
         ("mc_shadow.wgsl", wgsl_source!("mc_shadow").to_string()),
-        (
-            "mc_surface.wgsl",
-            lit_shader(&[shared_wgsl::SHARED_CSM_WGSL], wgsl_source!("mc_surface")),
-        ),
+        ("mc_surface.wgsl", pipeline::surface_source()),
+        ("mc_isosurface.wgsl", iso::isosurface_source()),
         (
             "mc_wireframe.wgsl",
             scene_shader(&[], wgsl_source!("mc_wireframe")),
@@ -75,11 +72,29 @@ pub struct GpuMarchingCubesPlugin {
     outline_active: bool,
     /// The frame's global wireframe toggle, applied alongside the per-item flag.
     wireframe_mode: bool,
+    /// Below the full tier there is no compute stage: fields are 3D textures
+    /// and the isosurface is ray-marched. Set on registration.
+    iso: bool,
+    iso_gpu: Option<iso::McIsoGpu>,
+    /// Per drawn item on the ray-marched path, rebuilt each prepare.
+    iso_frame: Vec<iso::McIsoFrame>,
 }
 
 impl ItemTypePlugin for GpuMarchingCubesPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn init_gpu(
+        &mut self,
+        _device: &viewport_lib::gpu::Device,
+        resources: &dyn viewport_lib::plugin_api::PluginResources,
+    ) {
+        self.iso = resources.capabilities().tier() != viewport_lib::Tier::Full;
+    }
+
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::compatibility_tier()
     }
 
     fn resident_bytes(&self) -> u64 {
@@ -92,6 +107,13 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         device: &viewport_lib::gpu::Device,
         resources: &viewport_lib::DeviceResources,
     ) {
+        if self.iso {
+            let gpu = self
+                .iso_gpu
+                .get_or_insert_with(|| iso::McIsoGpu::new(device, resources));
+            gpu.pipelines.request_all();
+            return;
+        }
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::McGpu::new(device, resources));
@@ -105,7 +127,9 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         _queue: &viewport_lib::gpu::Queue,
     ) {
         self.gpu = None;
+        self.iso_gpu = None;
         self.frame.clear();
+        self.iso_frame.clear();
         self.pick_bgs.clear();
     }
 
@@ -117,6 +141,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         self.frame.clear();
+        self.iso_frame.clear();
         self.pick_bgs.clear();
         self.pick_items.clear();
         self.outline_active = ctx.outline_selected;
@@ -125,7 +150,22 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         if items.is_empty() {
             return Vec::new();
         }
+        self.pick_items.extend(items.iter().filter_map(|job| {
+            let volume_data = job.cpu_data.clone()?;
+            (job.settings.pick_id != PickId::NONE).then_some(McPickItem {
+                id: job.settings.pick_id.0,
+                isovalue: job.isovalue,
+                volume_data,
+            })
+        }));
         let volumes = &self.volumes;
+        if self.iso {
+            let gpu = self
+                .iso_gpu
+                .get_or_insert_with(|| iso::McIsoGpu::new(device, ctx.resources));
+            self.iso_frame = gpu.frame(device, volumes, items);
+            return Vec::new();
+        }
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::McGpu::new(device, ctx.resources));
@@ -135,20 +175,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
         for entry in &self.frame {
             self.pick_bgs
-                .push(gpu.pick_bind_group(device, queue, entry.pick_id));
+                .push(gpu.pick_bind_group(device, queue, entry.pick_id, entry.settings.ignore_clip));
         }
-        for job in items {
-            if job.settings.pick_id != PickId::NONE {
-                if let Some(cpu_data) = &job.cpu_data {
-                    self.pick_items.push(McPickItem {
-                        id: job.settings.pick_id.0,
-                        isovalue: job.isovalue,
-                        volume_data: cpu_data.clone(),
-                    });
-                }
-            }
-        }
-
         buf.into_iter().collect()
     }
 
@@ -158,6 +186,19 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
+        if let Some(gpu) = &self.iso_gpu {
+            // A wireframe has no triangles to come from here, so every item
+            // draws as its surface.
+            let Some(pl) = gpu.pipelines.get(iso::COLOUR) else {
+                return;
+            };
+            pass.set_pipeline(pl);
+            for entry in &self.iso_frame {
+                pass.set_bind_group(1, &entry.bind_group, &[]);
+                pass.draw(0..36, 0..1);
+            }
+            return;
+        }
         let Some(gpu) = &self.gpu else { return };
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
         for entry in &self.frame {
@@ -240,12 +281,23 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
-            return;
-        };
         if !self.outline_active {
             return;
         }
+        if let Some(gpu) = self.iso_gpu.as_ref().filter(|g| g.drawn()) {
+            let Some(pl) = gpu.pipelines.get(iso::MASK) else {
+                return;
+            };
+            pass.set_pipeline(pl);
+            for entry in self.iso_frame.iter().filter(|e| e.selected) {
+                pass.set_bind_group(1, &entry.bind_group, &[]);
+                pass.draw(0..36, 0..1);
+            }
+            return;
+        }
+        let Some(gpu) = self.gpu.as_ref().filter(|g| g.drawn()) else {
+            return;
+        };
         let mut bound = false;
         for entry in &self.frame {
             if entry.hidden || !entry.selected {
@@ -432,7 +484,11 @@ impl GpuMarchingCubesPlugin {
         queue: &viewport_lib::gpu::Queue,
         vol: &VolumeData,
     ) -> viewport_lib::error::ViewportResult<McVolumeId> {
-        let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
+        let gpu_data = if self.iso {
+            iso::build_field(device, queue, vol)?
+        } else {
+            build_mc_volume_gpu_data(device, queue, vol)?
+        };
         Ok(self.volumes.insert_sized(gpu_data))
     }
 
@@ -449,6 +505,13 @@ impl GpuMarchingCubesPlugin {
         buffer: viewport_lib::gpu::Buffer,
         offset_bytes: u64,
     ) -> viewport_lib::error::ViewportResult<()> {
+        // The ray-marched field is a texture, refreshed by no dispatch.
+        if self.iso {
+            return Err(viewport_lib::error::ViewportError::TierUnsupported {
+                needed: viewport_lib::Tier::Full,
+                have: viewport_lib::Tier::Compatibility,
+            });
+        }
         if !buffer
             .usage()
             .contains(viewport_lib::gpu::BufferUsages::COPY_SRC)
@@ -514,9 +577,14 @@ impl GpuMarchingCubesPlugin {
     ) -> viewport_lib::resources::JobId {
         let device = device.clone();
         let queue = queue.clone();
+        let ray_marched = self.iso;
         jobs.try_submit_cpu(move |progress| {
             progress.set(0.1);
-            let gpu_data = build_mc_volume_gpu_data(&device, &queue, &vol)?;
+            let gpu_data = if ray_marched {
+                iso::build_field(&device, &queue, &vol)?
+            } else {
+                build_mc_volume_gpu_data(&device, &queue, &vol)?
+            };
             progress.set(0.95);
             Ok(gpu_data)
         })

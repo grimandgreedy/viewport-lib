@@ -410,7 +410,7 @@ pub(crate) fn feature_set_violations(
                 )
                 .with(
                     FeatureSet::DEFORM,
-                    resources.deform.flag_bits(batch.mesh_id) != 0,
+                    resources.scene_tier.deform.flag_bits(batch.mesh_id) != 0,
                 );
                 if needs.union(batch.features) != batch.features {
                     out.push(format!(
@@ -670,7 +670,7 @@ impl ViewportRenderer {
         visible_count > SMALL_SCENE_REPACK
             && !resources.material_table.variants_near_limit()
             && resources.mesh_sidecar_epoch == instancing.last_sidecar_epoch
-            && resources.deform.epoch == instancing.last_deform_epoch
+            && resources.scene_tier.deform.epoch == instancing.last_deform_epoch
             && featured_count == instancing.last_instancable_count
             && visible_count == instancing.last_visible_count
             && frame.scene.generation == instancing.last_scene_generation
@@ -1150,7 +1150,7 @@ impl ViewportRenderer {
             instancing.last_instancable_count = featured_count;
             instancing.last_visible_count = visible_count;
             instancing.last_sidecar_epoch = resources.mesh_sidecar_epoch;
-            instancing.last_deform_epoch = resources.deform.epoch;
+            instancing.last_deform_epoch = resources.scene_tier.deform.epoch;
             instancing.last_resource_free_epoch = resources.resource_free_epoch;
             instancing.last_resource_view_epoch = resources.resource_view_epoch;
         }
@@ -1236,6 +1236,7 @@ impl ViewportRenderer {
             // multi-draw run.
             let cutout = batch.has_alpha_mask
                 || resources
+                    .scene_tier
                     .deform
                     .may_discard(batch.mesh_id, batch.deform_instance);
             let mut prime = |g: &GroupInputs, bindless: bool| {
@@ -1337,7 +1338,12 @@ impl ViewportRenderer {
         if hdr_family {
             resources.ensure_hdr_cull_pipelines(device);
         }
-        cull_state.ensure_outputs(device, instance_count, batch_count);
+        cull_state.ensure_outputs(
+            device,
+            instance_count,
+            batch_count,
+            resources.capabilities.indirect_execution,
+        );
         // Drop cull bind groups whose binding-0 instance storage buffer was
         // rebuilt this frame; `ensure_outputs` already handles a resized vis
         // buffer. These bind groups also sample the albedo/normal/ao views

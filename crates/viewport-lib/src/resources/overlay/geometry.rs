@@ -13,7 +13,7 @@ pub(crate) struct CompiledOverlay {
     pub vertex_buf: crate::gpu::Buffer,
     /// Number of vertices in `vertex_buf`.
     pub vertex_count: u32,
-    /// GPU bytes held by the shape stream: `shape_vertex_buf` plus `shadow_buf`.
+    /// GPU bytes held by the shape stream: `shape_vertex_buf` plus `shadow_tex`.
     ///
     /// The entry's total charge lives on its store slot. Only the text stream is
     /// rebuilt on a re-emit, so the shape half is kept here rather than measured
@@ -24,10 +24,10 @@ pub(crate) struct CompiledOverlay {
     pub shape_vertex_buf: Option<crate::gpu::Buffer>,
     /// Number of vertices in `shape_vertex_buf`.
     pub shape_vertex_count: u32,
-    /// The stacked shadow-layer storage buffer the SDF shapes reference. Kept
-    /// alive alongside `shape_vertex_buf`; always at least one (dummy) entry when
-    /// the shape stream is present.
-    pub shadow_buf: Option<crate::gpu::Buffer>,
+    /// The stacked shadow-layer texture the SDF shapes reference. Kept alive
+    /// alongside `shape_vertex_buf`; always at least one (dummy) layer when the
+    /// shape stream is present.
+    pub shadow_tex: Option<crate::gpu::TextureView>,
     /// Retained source items for re-emission, present only when the group carries
     /// glyphs. Glyph geometry bakes atlas UVs at a physical size, so it goes stale
     /// when the atlas grows or `pixels_per_point` changes; the renderer re-emits
@@ -67,8 +67,9 @@ pub(crate) struct CompiledSource {
 /// Per-draw instance data shared by immediate and retained overlay draws.
 ///
 /// Slot 0 is the identity used by every immediate draw (no transform, full
-/// opacity, no clip); each retained group gets its own slot. The overlay vertex
-/// shader reads the slot named by `@builtin(instance_index)`.
+/// opacity, no clip); each retained group gets its own slot. The text and shape
+/// pipelines read it as a per-instance vertex stream, four `vec4` attributes, so
+/// a draw over instances `i..i + 1` sees slot `i`.
 ///
 /// `translate` / `scale` / `rotation` / `pivot` mirror the group's
 /// `OverlayTransform` and are applied as `translate . rotate_about(pivot) .
@@ -100,12 +101,54 @@ pub(crate) struct OverlayInstance {
     /// `translate`.
     pub rotation: f32,
     /// Centre of rotation and scaling, in logical pixels in the group's own
-    /// space. Two scalars rather than a `vec2` so the WGSL mirror keeps the
-    /// 4-byte offsets this tail has (a `vec2<f32>` member would align to 8).
+    /// space.
     pub pivot: [f32; 2],
 }
 
+// The four attributes cover the whole struct.
+const _: () = assert!(std::mem::size_of::<OverlayInstance>() == 64);
+
+/// The instance stream's attributes in the shape pipeline, after the shape
+/// vertex's twelve.
+pub(crate) const SHAPE_INSTANCE_ATTRIBUTES: [crate::gpu::VertexAttribute; 4] =
+    instance_attributes(12);
+
+/// The instance stream's attributes in the text pipeline, after the text
+/// vertex's seven.
+pub(crate) const TEXT_INSTANCE_ATTRIBUTES: [crate::gpu::VertexAttribute; 4] =
+    instance_attributes(7);
+
+/// `[translate, opacity, clip_index]`, `clip_rect`, `tint` and
+/// `[scale, rotation, pivot]` at `first`, `first + 1`, ...
+const fn instance_attributes(first: u32) -> [crate::gpu::VertexAttribute; 4] {
+    const fn at(offset: u64, shader_location: u32) -> crate::gpu::VertexAttribute {
+        crate::gpu::VertexAttribute {
+            offset,
+            shader_location,
+            format: crate::gpu::VertexFormat::Float32x4,
+        }
+    }
+    [
+        at(0, first),
+        at(16, first + 1),
+        at(32, first + 2),
+        at(48, first + 3),
+    ]
+}
+
 impl OverlayInstance {
+    /// The instance stream's layout over `attributes`, one of
+    /// `SHAPE_INSTANCE_ATTRIBUTES` and `TEXT_INSTANCE_ATTRIBUTES`.
+    pub(crate) fn buffer_layout(
+        attributes: &'static [crate::gpu::VertexAttribute],
+    ) -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayInstance>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Instance,
+            attributes,
+        }
+    }
+
     /// The identity instance immediate draws use: no offset, full opacity, no clip,
     /// no tint, no scale.
     pub const IDENTITY: OverlayInstance = OverlayInstance {

@@ -15,21 +15,21 @@
 //!
 //! Two knobs handle this:
 //!
-//! 1. **Padded AABBs.** Use [`build_from_scene_skin_aware`](PickAccelerator::build_from_scene_skin_aware)
+//! 1. **Padded AABBs.** Use [`build_from_scene_skin_aware`](crate::PickAccelerator::build_from_scene_skin_aware)
 //!    (or pass an already-expanded AABB through the closure to
-//!    [`build_from_scene`](PickAccelerator::build_from_scene)) so the BVH leaf
+//!    [`build_from_scene`](crate::PickAccelerator::build_from_scene)) so the BVH leaf
 //!    covers the deformation envelope, not just the bind pose. Without the
 //!    padding the BVH can reject rays that would actually hit the deformed
 //!    mesh.
 //! 2. **Optional refresh-on-pose-change.** For accurate clicks on the
 //!    deformed silhouette (paying CPU cost every frame), call
-//!    [`invalidate_skinned_meshes`](PickAccelerator::invalidate_skinned_meshes)
-//!    after applying a [`crate::SkinnedMeshUpdate`] and pass the deformed
-//!    positions in the `mesh_lookup` argument of [`pick`](PickAccelerator::pick).
+//!    [`invalidate_skinned_meshes`](crate::PickAccelerator::invalidate_skinned_meshes)
+//!    after applying a [`SkinnedMeshUpdate`](crate::plugins::skinning::SkinnedMeshUpdate) and pass the deformed
+//!    positions in the `mesh_lookup` argument of [`pick`](crate::PickAccelerator::pick).
 //!    The next pick rebuilds the cached `TriMesh` against the current pose.
 //!    On the GPU skinning path the CPU does not receive deformed positions,
 //!    so this refresh path is only available when the plugin runs on
-//!    [`crate::SkinningPath::Cpu`].
+//!    [`SkinningPath::Cpu`](crate::plugins::skeleton::SkinningPath::Cpu).
 //!
 //! GPU picking (`renderer::picking`) reads the rasterised object-ID
 //! framebuffer and therefore needs no skinning awareness here: skinned meshes
@@ -250,7 +250,7 @@ impl PickAccelerator {
 
     /// Drop cached `TriMesh` instances for every mesh in `skinned_mesh_ids`.
     ///
-    /// Call this after applying [`crate::SkinnedMeshUpdate`]s when you want
+    /// Call this after applying [`SkinnedMeshUpdate`](crate::plugins::skinning::SkinnedMeshUpdate)s when you want
     /// CPU picking to test the deformed silhouette rather than the bind pose.
     /// The next `pick` call will rebuild the `TriMesh` from whatever positions
     /// are passed in `mesh_lookup` (typically the just-updated, deformed

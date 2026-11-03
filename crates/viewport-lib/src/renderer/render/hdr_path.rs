@@ -390,7 +390,8 @@ impl ViewportRenderer {
             // Manual and physical-camera exposure write the state buffer
             // directly; only automatic exposure dispatches the metering passes.
             if frame.effects.display.exposure.manual_multiplier().is_none() {
-                res.exposure
+                res.scene_tier
+                    .exposure
                     .ensure_pipelines(device, &res.pipeline_compiler);
             }
             let slot = &self.viewport_slots[vp_idx];
@@ -605,37 +606,28 @@ impl ViewportRenderer {
         // Item-type plugins that composite onto the finished opaque surfaces:
         // decals stamp here, underneath the selection affordances and the
         // depth-read transparency that follow.
-        self.dispatch_plugin_encode(
+        self.encode_scope(
+            &ctx,
             &mut encoder,
-            frame,
             crate::plugin_api::EncoderScope::OnOpaqueSurfaces,
-            device,
-            queue,
-            vp_idx,
         );
         self.hdr_sub_highlight(&ctx, &mut encoder);
         self.hdr_depth_read_pass(&ctx, &mut encoder);
         // Item-type plugins that own passes rather than draws get the encoder
         // here, with the opaque image and final opaque depth in hand.
-        self.dispatch_plugin_encode(
+        self.encode_scope(
+            &ctx,
             &mut encoder,
-            frame,
             crate::plugin_api::EncoderScope::AfterOpaque,
-            device,
-            queue,
-            vp_idx,
         );
         self.hdr_oit(&ctx, &mut encoder);
         // The second scope: opaque plus resolved transparency, which is what a
         // volumetric effect composites over. The scatter-volume plugin encodes
         // its ray-march, temporal blend and composite here.
-        self.dispatch_plugin_encode(
+        self.encode_scope(
+            &ctx,
             &mut encoder,
-            frame,
             crate::plugin_api::EncoderScope::AfterTransparent,
-            device,
-            queue,
-            vp_idx,
         );
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
@@ -969,7 +961,7 @@ impl ViewportRenderer {
             // depth. The post-pass targets the ssaa_* attachments and samples
             // ssaa_depth_only_view when SSAA is active, the hdr_* attachments
             // otherwise. Sprites are always skipped inline here.
-            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, true);
+            self.draw_mesh_instance_batches(&mut render_pass, camera_bg);
 
             // TransparentVolumeMesh boundary wireframe overlay (HDR path).
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
@@ -1013,7 +1005,7 @@ impl ViewportRenderer {
             if let Some(skybox_bg) = skybox_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_bind_group(1, skybox_bg, &[]);
-                render_pass.set_pipeline(resources.ibl.skybox_pipeline());
+                render_pass.set_pipeline(resources.scene_tier.ibl.skybox_pipeline());
                 render_pass.draw(0..3, 0..1);
             }
 
@@ -1233,18 +1225,31 @@ impl ViewportRenderer {
         if !self.any_plugin_draws_depth_read(frame) {
             return;
         }
+        // The depth plugins sample. Where a read-only depth attachment cannot
+        // also be sampled (wgpu's GL backend counts it as written), that is a
+        // copy taken just before the pass; elsewhere the scene depth itself.
+        let sample_view = if self.resources.capabilities.direct_depth_sampling {
+            self.viewport_slots[ctx.vp_idx]
+                .hdr
+                .as_ref()
+                .unwrap()
+                .hdr_depth_only_view
+                .clone()
+        } else {
+            self.copy_depth_for_read(ctx, encoder)
+        };
         // Prebuilt group handed to plugins that have a spare bind group. Plugins
         // at the four-group limit ignore it and bake the same depth-only view +
         // sampler into a group of their own.
         let depth_bg = {
             let resources = &self.resources;
             let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
-            let view = hdr.hdr_depth_only_view.clone();
+            let view = sample_view.clone();
             hdr.depth_read_bg.get(view.clone(), || {
                 ctx.device
                     .create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("plugin_depth_read_bg"),
-                        layout: &resources.material.depth_read_bgl,
+                        layout: &resources.scene_tier.material.depth_read_bgl,
                         entries: &[
                             crate::gpu::BindGroupEntry {
                                 binding: 0,
@@ -1253,7 +1258,7 @@ impl ViewportRenderer {
                             crate::gpu::BindGroupEntry {
                                 binding: 1,
                                 resource: crate::gpu::BindingResource::Sampler(
-                                    &resources.material.depth_read_sampler,
+                                    &resources.scene_tier.material.depth_read_sampler,
                                 ),
                             },
                         ],
@@ -1274,10 +1279,10 @@ impl ViewportRenderer {
         // choice correctly because it runs *before* the resolve.
         let colour_view = &slot_hdr.hdr_view;
         let depth_view = &slot_hdr.hdr_depth_view;
-        let depth_only_view = &slot_hdr.hdr_depth_only_view;
 
-        // Depth attachment read-only (`depth_ops: None`) so `depth_only_view`,
-        // a depth-aspect view of the same buffer, can be sampled in the pass.
+        // Depth attachment read-only (`depth_ops: None`) so `sample_view`, a
+        // depth-aspect view of the same buffer where the device allows it, can
+        // be sampled in the pass.
         let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
             #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
@@ -1304,10 +1309,131 @@ impl ViewportRenderer {
         self.dispatch_plugin_paint_depth_read(
             &mut pass,
             frame,
-            depth_only_view,
-            &resources.material.depth_read_sampler,
+            &sample_view,
+            &resources.scene_tier.material.depth_read_sampler,
             &depth_bg,
         );
+    }
+
+    /// Hand the encoder to the plugins that encode at `scope`. Without direct
+    /// depth sampling their `scene_depth_only` is the depth-read copy, taken
+    /// here so it holds the depth as of this scope.
+    fn encode_scope(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+        scope: crate::plugin_api::EncoderScope,
+    ) {
+        if !self.resources.capabilities.direct_depth_sampling
+            && self
+                .item_type_plugins
+                .values()
+                .any(|p| p.encoder_scopes().contains(&scope))
+        {
+            self.copy_depth_for_read(ctx, encoder);
+        }
+        self.dispatch_plugin_encode(encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx);
+    }
+
+    /// Copy the scene depth into the viewport's depth-read copy with the depth
+    /// blit, and return the copy's depth-aspect view. For a device whose
+    /// read-only depth attachments cannot be sampled in the same pass.
+    fn copy_depth_for_read(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) -> crate::gpu::TextureView {
+        self.resources.ensure_depth_blit_pipeline(ctx.device);
+        let resources = &self.resources;
+        let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
+        let size = hdr.hdr_depth_texture.size();
+        if hdr
+            .depth_read_copy
+            .as_ref()
+            .is_none_or(|c| c.texture.size() != size)
+        {
+            let texture = ctx.device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some("depth_read_copy"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: hdr.hdr_depth_texture.format(),
+                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let depth_only_view = texture.create_view(&crate::gpu::TextureViewDescriptor {
+                aspect: crate::gpu::TextureAspect::DepthOnly,
+                ..Default::default()
+            });
+            hdr.depth_read_copy = Some(crate::resources::postprocess::targets::DepthTarget {
+                texture,
+                view,
+                depth_only_view,
+            });
+        }
+        let source = hdr.hdr_depth_only_view.clone();
+        let blit_bg = hdr.depth_read_copy_bg.get(source.clone(), || {
+            ctx.device
+                .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("depth_read_copy_bg"),
+                    layout: resources
+                        .post
+                        .depth_blit_bgl
+                        .as_ref()
+                        .expect("ensure_hdr_infra not called"),
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(&source),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(
+                                resources
+                                    .post
+                                    .pp_nearest_sampler
+                                    .as_ref()
+                                    .expect("ensure_hdr_infra not called"),
+                            ),
+                        },
+                    ],
+                })
+        });
+        let copy = hdr.depth_read_copy.as_ref().unwrap();
+        {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("depth_read_copy_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                    view: &copy.view,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(0),
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(
+                resources
+                    .post
+                    .depth_blit_pipeline
+                    .as_ref()
+                    .expect("built above"),
+            );
+            pass.set_bind_group(0, &blit_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        copy.depth_only_view.clone()
     }
 
     fn hdr_oit(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
@@ -1674,8 +1800,14 @@ impl ViewportRenderer {
         {
             // Skipped while the pipeline is on a worker: the outline appears
             // a frame or two late.
-            if let Some(pipeline) = self.resources.outline.composite_hdr() {
-                let bg = &slot_hdr.outline_composite_bind_group;
+            if let (Some(pipeline), Some(targets)) = (
+                self.resources
+                    .outline
+                    .as_ref()
+                    .and_then(|o| o.composite_hdr()),
+                slot.outline_targets.as_ref(),
+            ) {
+                let bg = &targets.composite_bind_group;
                 let hdr_view = &slot_hdr.hdr_view;
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
                 let mut outline_pass =
@@ -2142,20 +2274,27 @@ impl ViewportRenderer {
         // tone map pass has already consumed).
         if self.foreground_active(ctx.frame) {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
-            if let (Some(fg_view), Some(pipeline), Some(bgl)) = (
+            if let (Some(fg_view), Some(pipeline), Some(bgl), Some(nearest)) = (
                 hdr.foreground_depth_only_view.clone(),
                 self.resources.post.foreground_stamp_pipeline.as_ref(),
                 self.resources.post.foreground_stamp_bgl.as_ref(),
+                self.resources.post.pp_nearest_sampler.as_ref(),
             ) {
                 let stamp_bg = hdr.foreground_stamp_bg.get(fg_view.clone(), || {
                     ctx.device
                         .create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("foreground_stamp_bg"),
                             layout: bgl,
-                            entries: &[crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::TextureView(&fg_view),
-                            }],
+                            entries: &[
+                                crate::gpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: crate::gpu::BindingResource::TextureView(&fg_view),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: crate::gpu::BindingResource::Sampler(nearest),
+                                },
+                            ],
                         })
                 });
                 let slot_hdr = &*hdr;
@@ -2259,11 +2398,11 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            gp_pass.set_pipeline(self.resources.ground.pipeline());
+            gp_pass.set_pipeline(self.resources.scene_tier.ground.pipeline());
             let ground_bg = self.viewport_slots[vp_idx]
                 .ground_bind_group
                 .current()
-                .unwrap_or(&self.resources.ground.bind_group);
+                .unwrap_or(&self.resources.scene_tier.ground.bind_group);
             gp_pass.set_bind_group(0, ground_bg, &[]);
             gp_pass.draw(0..3, 0..1);
         }
@@ -2323,7 +2462,7 @@ impl ViewportRenderer {
                 }
 
                 if !slot.xray_object_buffers.is_empty() {
-                    overlay_pass.set_pipeline(self.resources.outline.xray_pipeline());
+                    overlay_pass.set_pipeline(self.resources.scene_tier.outline.xray_pipeline());
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (mesh_id, xray) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {

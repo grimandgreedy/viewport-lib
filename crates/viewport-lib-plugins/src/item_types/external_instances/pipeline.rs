@@ -69,7 +69,7 @@ impl ExternalInstancesGpu {
         let layout = builders::standard_scene_layout(
             device,
             "external_instances_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             bgl,
         );
         let pipelines = resources.lazy_pipelines(

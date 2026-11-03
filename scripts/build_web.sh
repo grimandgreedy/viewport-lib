@@ -7,11 +7,12 @@
 #
 # Examples:
 #   winit-web           the render path: a lit scene with orbit and zoom
-#   web-scivis-smoke    the CPU paths: iso-surface extraction, BVH, ray query
+#   web-scivis-smoke    the checks: iso-surface extraction, BVH, ray query, and
+#                       the built-in item types drawn and read back
 #
 # --check builds nothing to serve: it compile-checks the library crates (with
-# their default features, plus the plugins and post-effects crates the examples
-# do not use) and both web examples for wasm32. Code that only breaks on wasm,
+# their default features, which the examples do not all use, plus the
+# post-effects crate) and both web examples for wasm32. Code that only breaks on wasm,
 # such as a rayon call the serial stand-in in util/par.rs does not cover, builds
 # on every native target, so this is the quick way to catch it. It needs no
 # wasm-bindgen.

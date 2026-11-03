@@ -9,6 +9,8 @@
 //! This is the one part of a lightmapper that must be a renderer pass. Unwrap +
 //! pack, the solve, denoise, and encode belong in an offline bake tool; this
 //! primitive lives in core because it is a rasterisation into a GPU target.
+//!
+//! [`rasterize_texel_gbuffer`]: crate::bake::rasterize_texel_gbuffer
 
 use crate::gpu::util::DeviceExt;
 use glam::{Mat3, Mat4};

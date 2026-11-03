@@ -1,20 +1,13 @@
 // Polyline wireframe shader: thin 1px LineList representation.
 //
-// Reads segment endpoints directly from the segment storage buffer using
-// instance_index and vertex_index. Each instance is one segment; each segment
-// draws two vertices (LineList topology), producing a single 1px GPU line.
+// Each instance is one segment and draws two vertices (LineList topology),
+// producing a single 1px GPU line. The segment endpoints arrive as instance
+// attributes from the same 112-byte segment buffer the thick polyline
+// pipeline reads: pos_a (offset 0) at location 0 and pos_b (offset 12) at
+// location 1. No storage buffer, so the same pipeline runs on every tier.
 //
-// The storage buffer holds the same 112-byte segment layout used by the thick
-// polyline vertex buffer (28 floats per segment):
-//   floats 0-2 : pos_a (segment start, world space)
-//   floats 3-5 : pos_b (segment end, world space)
-//   floats 6+  : ignored by this shader
-//
-// Group 0: camera uniform + ClipPlanes + ClipVolume (matching camera_bgl
-// layout, same as polyline.wgsl's group 0 -- the pipeline layout is shared
-// with the thick-line pipeline, this module just did not declare or use the
-// clip bindings until now).
-// Group 1: binding 0 = segment storage buffer.
+// Group 0: camera uniform + ClipPlanes + ClipVolume (matching the scene group
+// 0 layout, as polyline.wgsl does).
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -61,26 +54,20 @@ struct ClipVolumeUB {
 
 // #include "helpers/clip_volume_test.wgsl"
 
-@group(1) @binding(0) var<storage, read> seg_data: array<f32>;
-
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
 };
 
+// One instance per segment, from the same 112-byte segment records the thick
+// line pipeline reads: only the two endpoints are bound.
 @vertex
 fn vs_main(
-    @builtin(vertex_index)   vid: u32,
-    @builtin(instance_index) iid: u32,
+    @builtin(vertex_index) vid:   u32,
+    @location(0)           pos_a: vec3<f32>,
+    @location(1)           pos_b: vec3<f32>,
 ) -> VertexOut {
-    // 112 bytes per segment = 28 floats.
-    let base = iid * 28u;
-    let is_b = vid == 1u;
-    let pos = select(
-        vec3<f32>(seg_data[base],       seg_data[base + 1u], seg_data[base + 2u]),
-        vec3<f32>(seg_data[base + 3u],  seg_data[base + 4u], seg_data[base + 5u]),
-        is_b,
-    );
+    let pos = select(pos_a, pos_b, vid == 1u);
     var out: VertexOut;
     out.clip_pos = camera.view_proj * vec4<f32>(pos, 1.0);
     out.world_pos = pos;

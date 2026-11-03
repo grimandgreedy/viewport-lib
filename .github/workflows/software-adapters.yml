@@ -5,8 +5,8 @@ name: Software adapters
 # on Windows, lavapipe (Vulkan) on Linux, and llvmpipe (GL) on Linux. Beside
 # them: the wasm compile check, the web smoke page in headless Chrome, and the
 # Android and iOS compile checks. None of it gates anything: the workflow runs
-# only when started by hand from the Actions tab, and a job that is expected to
-# fail says so on the job. A platform with no job here is a platform nobody is
+# only when started by hand from the Actions tab, and a job or step that is
+# expected to fail says so where it is declared. A platform with no job here is a platform nobody is
 # testing, which is how a backend quietly stops working.
 on:
   workflow_dispatch:
@@ -94,11 +94,13 @@ jobs:
     name: llvmpipe (GL, Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Expected to fail until the overlay family stops binding storage buffers:
-    # wgpu's GL backend on llvmpipe reports a GL 4.5 context, which clears the
-    # storage floor, but naga's GLSL writer has never seen these shaders. Kept
-    # so the failure list is in the log rather than unknown.
-    continue-on-error: true
+    # llvmpipe reports a GL 4.5 context, which clears the storage floor, so the
+    # renderer builds at the full tier here and every shader goes through naga's
+    # GLSL writer. The tier tests come first and are the part of this job that
+    # has to pass: they also run the overlay-only renderer on the WebGL2 limits.
+    # The broader steps after them are the first run of the whole shader set on
+    # GL and may fail; they are kept so the failure list is in the log rather
+    # than unknown.
     env:
       WGPU_BACKEND: gl
       LIBGL_ALWAYS_SOFTWARE: 1
@@ -117,14 +119,23 @@ jobs:
       - name: Adapter probe
         run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
 
+      - name: Tier tests
+        working-directory: crates/viewport-lib-testkit
+        run: cargo test --release --test tier
+
       - name: Library headless tests
+        continue-on-error: true
         run: cargo test --release -p viewport-lib --tests
 
       - name: Testkit tests
+        continue-on-error: true
         working-directory: crates/viewport-lib-testkit
         run: cargo test --release --tests
 
+      # No references are blessed for GL in CI; as on WARP and lavapipe this is
+      # a check that every scene renders, not a pixel comparison.
       - name: Catalogue scenes render
+        continue-on-error: true
         working-directory: crates/viewport-lib-testkit
         run: |
           cargo test --release --test snapshots
@@ -165,8 +176,10 @@ jobs:
           cargo install wasm-bindgen-cli --version "$ver" --locked
 
       # Builds the smoke example, serves it, loads it in headless Chrome and
-      # reads the page's report. This is the WebGPU path; a second run with
-      # WebGPU unavailable belongs here once the bring-up can fall back to GL.
+      # reads the page's report. It runs twice: on WebGPU, and with the GPU
+      # process off, where the page falls back to WebGL2 and the overlay-only
+      # renderer. The page names the API it landed on, so a run that took the
+      # wrong path fails rather than passing on the other one.
       - name: Run the smoke page
         run: |
           VPL_WASM_TOOLCHAIN="$(rustc --print sysroot)" \

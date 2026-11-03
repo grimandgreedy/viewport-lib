@@ -46,7 +46,7 @@ impl ItemTypePlugin for StreamtubePlugin {
     fn init_gpu(
         &mut self,
         device: &viewport_lib::gpu::Device,
-        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        _resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
         self.layouts = Some(super::store::StreamtubeResources::new(device));
     }
@@ -172,6 +172,12 @@ impl ItemTypePlugin for StreamtubePlugin {
 
     fn draws_ldr(&self) -> bool {
         true
+    }
+
+    /// Draws without storage buffers or compute, so it also registers on the
+    /// compatibility tier.
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::compatibility_tier()
     }
 
     fn outline_mask(

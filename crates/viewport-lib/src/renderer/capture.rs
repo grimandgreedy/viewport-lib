@@ -397,7 +397,7 @@ impl ViewportRenderer {
     /// The on-GPU counterpart of [`capture_equirect`](Self::capture_equirect):
     /// it renders the same six 90-degree faces from `position`, but keeps them
     /// in a GPU texture array and resolves them to equirect with a fragment
-    /// pass ([`cube_to_equirect.wgsl`]) instead of a CPU loop. The direction ->
+    /// pass (`cube_to_equirect.wgsl`) instead of a CPU loop. The direction ->
     /// UV mapping is identical, so the result samples the same as the CPU path
     /// and as an environment loaded from a file. The panorama is
     /// `2 * equirect_height` wide by `equirect_height` tall.
@@ -497,20 +497,26 @@ impl ViewportRenderer {
     /// Sampled by every lit mesh path: opaque and transparent, per-object and
     /// instanced.
     pub fn set_light_probes(&mut self, probes: crate::resources::LightProbeSet) {
-        self.resources.lighting.probes = Some(probes);
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
+        self.resources.scene_tier.lighting.probes = Some(probes);
     }
 
     /// Remove the uploaded light-probe field. Objects revert to global IBL /
     /// hemisphere ambient.
     pub fn clear_light_probes(&mut self) {
-        self.resources.lighting.probes = None;
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
+        self.resources.scene_tier.lighting.probes = None;
     }
 
     /// Bake SH light probes at the given world positions.
     ///
     /// Captures an equirect panorama at each position with
     /// [`capture_equirect`](Self::capture_equirect) and projects it to order-2
-    /// spherical harmonics, returning a [`LightProbeSet`] ready to sample. This
+    /// spherical harmonics, returning a [`LightProbeSet`](crate::resources::LightProbeSet) ready to sample. This
     /// is the generation half of the light-probe feature: run it once (at bake
     /// time, off the render loop) and keep the result to light dynamic objects
     /// by position.
@@ -573,16 +579,22 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         volume: &crate::resources::LightProbeVolume,
     ) {
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
         let gpu = volume.to_gpu();
         self.replace_indirect_light_buffer(device, Some(&gpu));
-        self.resources.lighting.has_probe_volume = true;
+        self.resources.scene_tier.lighting.has_probe_volume = true;
     }
 
     /// Remove the uploaded probe volume. Objects that opted into it fall back to
     /// no indirect (a disabled header takes its place).
     pub fn clear_light_probe_volume(&mut self, device: &crate::gpu::Device) {
+        if !self.resources.scene_tier.is_built() {
+            return;
+        }
         self.replace_indirect_light_buffer(device, None);
-        self.resources.lighting.has_probe_volume = false;
+        self.resources.scene_tier.lighting.has_probe_volume = false;
     }
 
     /// Swap in an indirect-light buffer holding `volume`. The probe volume
@@ -600,9 +612,9 @@ impl ViewportRenderer {
             volume,
             self.resources.instance_custom_data_capacity,
         );
-        self.resources.lighting.indirect_buf = buffer;
-        self.resources.lighting.custom_data_base_bytes = custom_base;
-        self.resources.ibl.zones_dirty = true;
+        self.resources.scene_tier.lighting.indirect_buf = buffer;
+        self.resources.scene_tier.lighting.custom_data_base_bytes = custom_base;
+        self.resources.scene_tier.ibl.zones_dirty = true;
         self.resources.custom_data_written.clear();
         self.rebuild_camera_bind_groups(device);
     }
@@ -1057,7 +1069,7 @@ mod tests {
     use crate::resources::UploadStatus;
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -1567,13 +1579,15 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let calls = std::sync::Arc::new(PluginCalls::default());
-        renderer.with_item_type_plugin(
-            &device,
-            Box::new(MockPlugin {
-                calls: calls.clone(),
-                draws_ldr: false,
-            }),
-        );
+        renderer
+            .with_item_type_plugin(
+                &device,
+                Box::new(MockPlugin {
+                    calls: calls.clone(),
+                    draws_ldr: false,
+                }),
+            )
+            .unwrap();
 
         let mut fd = empty_frame();
         // Route through the HDR path so the opaque plugin paint dispatch runs.
@@ -1644,13 +1658,15 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let calls = std::sync::Arc::new(PluginCalls::default());
-        renderer.with_item_type_plugin(
-            &device,
-            Box::new(MockPlugin {
-                calls: calls.clone(),
-                draws_ldr: false,
-            }),
-        );
+        renderer
+            .with_item_type_plugin(
+                &device,
+                Box::new(MockPlugin {
+                    calls: calls.clone(),
+                    draws_ldr: false,
+                }),
+            )
+            .unwrap();
 
         let mut fd = empty_frame();
         fd.effects.display.mode = crate::renderer::types::PipelineMode::Direct;
@@ -1688,13 +1704,15 @@ mod tests {
         );
 
         // Re-register as an opted-in plugin: paint now runs.
-        renderer.with_item_type_plugin(
-            &device,
-            Box::new(MockPlugin {
-                calls: calls.clone(),
-                draws_ldr: true,
-            }),
-        );
+        renderer
+            .with_item_type_plugin(
+                &device,
+                Box::new(MockPlugin {
+                    calls: calls.clone(),
+                    draws_ldr: true,
+                }),
+            )
+            .unwrap();
         let cmd = renderer.render(&device, &queue, &view, &fd);
         queue.submit(std::iter::once(cmd));
         assert!(

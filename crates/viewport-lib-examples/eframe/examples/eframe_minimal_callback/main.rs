@@ -10,6 +10,7 @@
 //!   Scroll                    : zoom
 
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 mod viewport_callback;
 
 use crate::eframe::egui;
@@ -153,11 +154,9 @@ impl App {
 
         ui.input(|i| {
             self.input
-                .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
-                    alt: i.modifiers.alt,
-                    shift: i.modifiers.shift,
-                    ctrl: i.modifiers.command,
-                }));
+                .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                    &i.modifiers,
+                )));
 
             // Cursor position in viewport-local space.
             let local_pos = i

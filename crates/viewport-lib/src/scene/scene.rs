@@ -119,9 +119,10 @@ pub struct SceneNode {
     /// as the local-space template.
     pub light: Option<LightSource>,
     /// Where this node's indirect diffuse light comes from. Default:
-    /// [`IndirectLightSource::GlobalIbl`]. Set to
-    /// [`IndirectLightSource::LightProbe`] to sample the uploaded probe field at
-    /// the node's position instead of the global environment.
+    /// [`IndirectLightSource::GlobalIbl`](crate::IndirectLightSource::GlobalIbl).
+    /// Set to [`IndirectLightSource::LightProbe`](crate::IndirectLightSource::LightProbe)
+    /// to sample the uploaded probe field at the node's position instead of the
+    /// global environment.
     pub indirect_light: crate::renderer::IndirectLightSource,
 }
 
@@ -2051,7 +2052,7 @@ mod tests {
 
     /// Resources on a headless device, for the tests that store materials.
     fn resources() -> Option<crate::resources::DeviceResources> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

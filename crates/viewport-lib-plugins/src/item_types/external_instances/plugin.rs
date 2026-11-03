@@ -138,7 +138,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
     fn init_gpu(
         &mut self,
         device: &gpu::Device,
-        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
+        _resources: &dyn viewport_lib::plugin_api::PluginResources,
     ) {
         self.bgl = Some(store::build_bgl(device));
     }

@@ -4,7 +4,9 @@
 // Group 0: Camera uniform (view-projection, eye position) + Lights (binding 3)
 //          + ClipPlanes (binding 4) + ClipVolume (binding 6).
 // Group 1: VectorFieldUniform + LUT texture + sampler.
-// Group 2: Per-instance storage buffer.
+// Group 2: Per-instance storage buffer. On a device without vertex storage
+//          the plugin selects the STREAM alternative, and the same 48-byte
+//          records arrive as instance-stepped attributes 5-7 instead.
 //
 // Vertex input: the consumer's shape mesh (full Vertex layout; position and
 // normal are the only locations read).
@@ -85,7 +87,10 @@ struct VectorFieldInstance {
 @group(1) @binding(1) var               lut_texture:  texture_2d<f32>;
 @group(1) @binding(2) var               lut_sampler:  sampler;
 
+// BEGIN_INSTANCE_SOURCE
 @group(2) @binding(0) var<storage, read> instances: array<VectorFieldInstance>;
+// ALT(STREAM): // The instances arrive as vertex attributes 5-7 instead.
+// END_INSTANCE_SOURCE
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -94,6 +99,11 @@ struct VertexIn {
     @location(3) uv:       vec2<f32>,   // unused
     @location(4) tangent:  vec4<f32>,   // unused
     @builtin(instance_index) instance_index: u32,
+    // BEGIN_INSTANCE_SOURCE
+    // ALT(STREAM): @location(5) inst_position_size: vec4<f32>,
+    // ALT(STREAM): @location(6) inst_vector_scalar: vec4<f32>,
+    // ALT(STREAM): @location(7) inst_colour: vec4<f32>,
+    // END_INSTANCE_SOURCE
 };
 
 struct VertexOut {
@@ -124,7 +134,10 @@ fn rotation_to_align_z(dir: vec3<f32>) -> mat3x3<f32> {
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
 
+    // BEGIN_INSTANCE_SOURCE
     let inst = instances[in.instance_index];
+    // ALT(STREAM): let inst = VectorFieldInstance(in.inst_position_size.xyz, in.inst_position_size.w, in.inst_vector_scalar.xyz, in.inst_vector_scalar.w, in.inst_colour);
+    // END_INSTANCE_SOURCE
     let mag  = length(inst.direction);
 
     var rot = mat3x3<f32>(

@@ -4,11 +4,13 @@
 
 use crate::plugin_api::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc,
-    PickTargetDesc, ShadowTargetDesc, SharedBindings,
+    PickTargetDesc, ShadowTargetDesc,
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
 use crate::resources::DeviceResources;
 use crate::resources::mesh::mesh_store::MeshId;
+
+const NO_LIT_GROUP0: &str = "item types register only where there is a lit group 0";
 
 /// HDR colour format used by the scene buffer. Plugins targeting the HDR
 /// path build pipelines against this format.
@@ -36,7 +38,7 @@ pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
 
 impl DeviceResources {
     // ------------------------------------------------------------------
-    // Target descriptors and SharedBindings accessor
+    // Group 0, target descriptors and the builder inputs
     // ------------------------------------------------------------------
 
     /// A set of `N` pipelines built on first read under this renderer's
@@ -92,9 +94,10 @@ impl DeviceResources {
     /// or on another thread.
     pub fn pipeline_builder(&self) -> PipelineBuilder {
         PipelineBuilder {
-            camera_bgl: self.binds.camera_bgl.clone(),
-            shadow_camera_bgl: self.shadow.camera_bgl.clone(),
+            camera_bgl: self.group0_layout().clone(),
+            shadow_camera_bgl: self.shadow_group0_layout().clone(),
             opaque: self.opaque_target_desc(),
+            ldr_opaque: self.ldr_opaque_target_desc(),
             foreground: self.foreground_target_desc(),
             oit: self.oit_target_desc(),
             depth_read: self.depth_read_target_desc(),
@@ -104,13 +107,41 @@ impl DeviceResources {
         }
     }
 
-    /// Group-0 bind layout shared by every scene pipeline. Use as group 0
-    /// when building a plugin pipeline layout.
-    pub fn shared_bindings(&self) -> SharedBindings<'_> {
-        SharedBindings {
-            group0_layout: &self.binds.camera_bgl,
-            sample_count: self.sample_count,
-        }
+    /// Group 0 of every scene pipeline: camera, lights, shadows, clip and
+    /// IBL, from whichever tier the device runs. List it as group 0 of a
+    /// pipeline layout; the WGSL declarations are
+    /// [`SHARED_BINDINGS_WGSL`](crate::plugin_api::shared_wgsl::SHARED_BINDINGS_WGSL).
+    ///
+    /// Panics on the overlay-only tier, which has no lit group 0 and accepts
+    /// no item types.
+    pub fn group0_layout(&self) -> &crate::gpu::BindGroupLayout {
+        self.lit_group0_layouts().expect(NO_LIT_GROUP0).0
+    }
+
+    /// Group 0 of the shadow pass: the cascade light matrix the renderer
+    /// binds before calling
+    /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
+    /// List it as group 0 of a shadow pipeline layout instead of building a
+    /// copy, which stops matching when the library adds a binding to it.
+    ///
+    /// Panics on the overlay-only tier, like [`group0_layout`](Self::group0_layout).
+    pub fn shadow_group0_layout(&self) -> &crate::gpu::BindGroupLayout {
+        self.lit_group0_layouts().expect(NO_LIT_GROUP0).1
+    }
+
+    /// Adapt a shader source that includes the shared group 0 declarations
+    /// to this device, before handing it to `create_shader_module`.
+    ///
+    /// On a device without cube-array textures binding 17 is a
+    /// `texture_depth_2d_array`, so a source declaring it
+    /// `texture_depth_cube_array` would not match the layout. On the compatibility
+    /// tier the light list at binding 13 is a uniform array of
+    /// [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) and the
+    /// cluster lookups in `apply_scene_lighting` walk every light, since that
+    /// tier's group 0 has no storage buffers. Modules built through
+    /// [`lazy_module`](Self::lazy_module) are adapted already.
+    pub fn adapt_wgsl<'s>(&self, source: &'s str) -> std::borrow::Cow<'s, str> {
+        crate::resources::builders::adapt_wgsl(source, &self.capabilities)
     }
 
     /// Render-target descriptor for the HDR opaque scene pass.
@@ -243,7 +274,7 @@ impl DeviceResources {
         &self,
         slot: crate::scene::material::TextureSlot,
     ) -> &crate::gpu::TextureView {
-        self.material.slot_view(slot)
+        self.scene_tier.material.slot_view(slot)
     }
 
     /// Shared linear-repeat sampler used by the lib's material pipelines.
@@ -251,7 +282,10 @@ impl DeviceResources {
     /// Use this when building a plugin bind group that samples user
     /// textures the same way `Material` does (linear filter, repeat wrap).
     pub fn material_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material.sampler
+        match &self.compatibility_tier {
+            Some(compat) => &compat.material_sampler,
+            None => &self.scene_tier.material.sampler,
+        }
     }
 
     /// Non-filtering clamp sampler for the read-only-depth pass.
@@ -263,7 +297,7 @@ impl DeviceResources {
     /// [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group);
     /// use this only when building your own.
     pub fn depth_read_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material.depth_read_sampler
+        &self.scene_tier.material.depth_read_sampler
     }
 
     /// Bind group layout for the read-only-depth pass: binding 0 is the scene
@@ -273,13 +307,14 @@ impl DeviceResources {
     /// A convenience for plugins that have a spare bind group: place this at
     /// whatever free slot of `extra_bind_group_layouts` when building the
     /// pipeline with [`build_depth_read_pipeline`](Self::build_depth_read_pipeline),
-    /// declare the matching `@group(K) @binding(0/1)` in the shader, and bind
+    /// declare the matching `@group(K) @binding(0/1)` in the shader
+    /// (`texture_2d<f32>` and `sampler`: binding 0 is unfilterable float), and bind
     /// the ready-made bind group there. A plugin already using all four bind
     /// groups skips this and folds the depth texture + sampler into an existing
     /// group instead (see
     /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
     pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
-        &self.material.depth_read_bgl
+        &self.scene_tier.material.depth_read_bgl
     }
 
     /// Shared linear-clamp sampler used by the lib for colormap LUTs.
@@ -287,7 +322,10 @@ impl DeviceResources {
     /// Use this when sampling 1D LUT-style data (colourmaps, transfer
     /// functions) where the texture should not wrap.
     pub fn lut_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material.lut_sampler
+        match &self.compatibility_tier {
+            Some(compat) => &compat.lut_sampler,
+            None => &self.scene_tier.material.lut_sampler,
+        }
     }
 
     /// Comparison sampler used for PCF shadow filtering.
@@ -295,7 +333,10 @@ impl DeviceResources {
     /// Plugins that sample the shadow atlas directly (rather than through
     /// `viewport_sample_csm`) use this sampler when binding the atlas.
     pub fn shadow_filter_sampler(&self) -> &crate::gpu::Sampler {
-        &self.shadow.sampler
+        match &self.compatibility_tier {
+            Some(compat) => &compat.shadow_sampler,
+            None => &self.scene_tier.shadow.sampler,
+        }
     }
 
     /// Number of live user-uploaded textures.
@@ -382,16 +423,6 @@ impl DeviceResources {
         Some([size.width, size.height, size.depth_or_array_layers])
     }
 
-    /// Read-only borrow of the shared cached base mesh (vertex + index
-    /// buffers) for a glyph shape.
-    ///
-    /// `None` until the mesh has been built; use
-    /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) to build it on
-    /// the spot instead. Vertices use the lib's full 64-byte `Vertex` layout,
-
-    /// Borrow the shared base mesh for a glyph shape, building and caching it
-    /// on the first call. Idempotent and cheap once cached, and callable from
-
     // ------------------------------------------------------------------
     // Pipeline builders
     // ------------------------------------------------------------------
@@ -399,7 +430,7 @@ impl DeviceResources {
     /// Build an opaque scene pipeline that draws into the HDR scene pass.
     ///
     /// Standard depth state: `LessEqual` test, depth write on. The pipeline
-    /// layout lists [`shared_bindings`](Self::shared_bindings) as group 0,
+    /// layout lists [`group0_layout`](Self::group0_layout) as group 0,
     /// then `extra_bind_group_layouts` as groups 1.., in order. The plugin
     /// owns all groups past 0.
     pub fn build_opaque_pipeline(
@@ -408,6 +439,23 @@ impl DeviceResources {
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
         self.pipeline_builder().build_opaque_pipeline(device, opts)
+    }
+
+    /// Build an opaque pipeline for the LDR scene pass: the same as
+    /// [`build_opaque_pipeline`](Self::build_opaque_pipeline) against
+    /// [`ldr_opaque_target_desc`](Self::ldr_opaque_target_desc). The compatibility
+    /// tier draws only through this pass; on the full tier it is the pipeline
+    /// a type that sets
+    /// [`draws_ldr`](crate::plugin_api::ItemTypePlugin::draws_ldr) selects when
+    /// [`PaintContext::target_format`](crate::plugin_api::PaintContext::target_format)
+    /// is not the HDR format.
+    pub fn build_ldr_opaque_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.pipeline_builder()
+            .build_ldr_opaque_pipeline(device, opts)
     }
 
     /// Build a pipeline that draws into the foreground pass.
@@ -576,6 +624,7 @@ pub struct PipelineBuilder {
     camera_bgl: crate::gpu::BindGroupLayout,
     shadow_camera_bgl: crate::gpu::BindGroupLayout,
     opaque: OpaqueTargetDesc,
+    ldr_opaque: OpaqueTargetDesc,
     foreground: ForegroundTargetDesc,
     oit: OitTargetDesc,
     depth_read: DepthReadTargetDesc,
@@ -591,13 +640,30 @@ impl PipelineBuilder {
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
+        self.build_opaque_into(device, opts, self.opaque)
+    }
+
+    /// See [`DeviceResources::build_ldr_opaque_pipeline`].
+    pub fn build_ldr_opaque_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        self.build_opaque_into(device, opts, self.ldr_opaque)
+    }
+
+    fn build_opaque_into(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+        desc: OpaqueTargetDesc,
+    ) -> crate::gpu::RenderPipeline {
         let layout = build_layout(
             device,
             opts.label,
             &self.camera_bgl,
             opts.extra_bind_group_layouts,
         );
-        let desc = self.opaque;
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
@@ -984,7 +1050,7 @@ pub struct PluginPipelineOpts<'a> {
     pub vertex_layouts: &'a [crate::gpu::VertexBufferLayout<'a>],
     /// Bind group layouts for groups 1.. (the plugin's per-object data).
     /// Group 0 is supplied automatically from
-    /// [`DeviceResources::shared_bindings`].
+    /// [`DeviceResources::group0_layout`].
     pub extra_bind_group_layouts: &'a [&'a crate::gpu::BindGroupLayout],
     /// Primitive topology, cull mode, polygon mode.
     pub primitive: crate::gpu::PrimitiveState,
@@ -1000,13 +1066,44 @@ pub struct PluginPipelineOpts<'a> {
     pub depth_compare: crate::gpu::CompareFunction,
     /// Depth bias for the shadow builder. Ignored by the others.
     ///
-    /// `None` uses a mild default suited to solid, closed geometry. Thin or
-    /// two-sided geometry self-shadows badly under it and wants a much larger
-    /// one: the lib's own casters use `constant: 2, slope_scale: 0.0` for
-    /// single-sided meshes and `constant: 1000, slope_scale: 8.0` where the
-    /// shadow pass does not cull, which is what the curve and isosurface item
-    /// types pass here.
+    /// `None` uses a mild default (`constant: 2, slope_scale: 2.0`). Prefer
+    /// [`shadow_caster`](Self::shadow_caster), which sets this and the cull
+    /// mode to the pair the renderer's own meshes cast with.
     pub depth_bias: Option<crate::gpu::DepthBiasState>,
+}
+
+/// How a shadow pipeline's triangles cast into the cascade atlas. Each case
+/// pairs a cull mode with the depth bias the renderer's own meshes use for
+/// it. The bias is calibrated against the receiver-side normal offset in the
+/// shared shadow lookup, so the two are not independent settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShadowCaster {
+    /// A closed solid. Back faces cast (`cull_mode: Front`), so a front face
+    /// never compares against its own depth, and a small constant bias
+    /// closes coplanar leaks. No acne, and contact shadows stay attached.
+    Closed,
+    /// Open or thin geometry whose back faces show. Both faces cast, with the
+    /// large bias the renderer's two-sided surfaces use to keep a surface off
+    /// its own depth. A contact shadow under it can lift by a texel or two.
+    TwoSided,
+}
+
+impl ShadowCaster {
+    /// The faces the shadow pass culls.
+    pub fn cull_mode(self) -> Option<crate::gpu::Face> {
+        match self {
+            Self::Closed => Some(crate::gpu::Face::Front),
+            Self::TwoSided => None,
+        }
+    }
+
+    /// The caster's depth bias.
+    pub fn depth_bias(self) -> crate::gpu::DepthBiasState {
+        match self {
+            Self::Closed => crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
+            Self::TwoSided => crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        }
+    }
 }
 
 impl<'a> PluginPipelineOpts<'a> {
@@ -1038,6 +1135,14 @@ impl<'a> PluginPipelineOpts<'a> {
             depth_compare: crate::gpu::CompareFunction::LessEqual,
             depth_bias: None,
         }
+    }
+
+    /// Set the cull mode and depth bias for a shadow pipeline from how its
+    /// geometry casts. See [`ShadowCaster`].
+    pub fn shadow_caster(mut self, caster: ShadowCaster) -> Self {
+        self.primitive.cull_mode = caster.cull_mode();
+        self.depth_bias = Some(caster.depth_bias());
+        self
     }
 }
 

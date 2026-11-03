@@ -70,7 +70,9 @@ fn the_two_sprite_handle_spaces_do_not_alias() {
     let mut renderer = renderer_with_item_types(&device);
 
     let set = renderer.upload(&device, &queue, &sample_sprites()).unwrap();
-    let instance_set = renderer.upload_sprite_instance_set(&device, &queue, &sample_sprites());
+    let instance_set = renderer
+        .upload_sprite_instance_set(&device, &queue, &sample_sprites())
+        .unwrap();
 
     // Dropping one leaves the other live.
     assert!(renderer.release(set));

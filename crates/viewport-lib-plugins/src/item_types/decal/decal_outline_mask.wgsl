@@ -13,8 +13,9 @@
 // Group 2: per-decal bind group (same as the colour pass); the DecalUniform at
 //          binding 0 and the albedo texture/sampler at bindings 1/2 are read
 
-@group(1) @binding(0) var scene_depth:   texture_depth_2d;
+@group(1) @binding(0) var scene_depth:   texture_2d<f32>;
 @group(1) @binding(1) var scene_stencil: texture_2d<u32>;
+@group(1) @binding(2) var scene_sampler: sampler;
 
 struct DecalUniform {
     inv_transform:         mat4x4<f32>,
@@ -68,9 +69,9 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pix   = vec2<i32>(i32(in.clip_pos.x), i32(in.clip_pos.y));
-    let depth = textureLoad(scene_depth, pix, 0);
+    let depth = depth_texel(scene_depth, scene_sampler, pix);
 
-    let stencil = textureLoad(scene_stencil, pix, 0).r;
+    let stencil = stencil_texel(scene_stencil, scene_sampler, pix);
     if (stencil & u.surface_mask) == 0u { discard; }
 
     if depth >= 1.0 {

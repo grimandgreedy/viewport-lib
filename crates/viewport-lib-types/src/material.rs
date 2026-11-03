@@ -151,7 +151,7 @@ pub enum ShadingModel {
     /// derivatives of world position. Produces visible polygon edges on
     /// triangulated meshes without changing the lighting block; everything
     /// else (hemisphere ambient, scene lights, shadows, AO, alpha mode)
-    /// runs as it does for [`Phong`].
+    /// runs as it does for [`Phong`](Self::Phong).
     ///
     /// Edges appear at the triangulation level, not at logical-face
     /// boundaries. A quad authored as two triangles shows both; a CAD

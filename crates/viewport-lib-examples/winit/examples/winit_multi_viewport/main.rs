@@ -32,7 +32,7 @@ use vpl::{
     Projection, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
     ViewportInput, ViewportRenderer, primitives,
 };
-use vpl::{ButtonState, Modifiers, MouseButton, PostProcessSettings, ScrollUnits};
+use vpl::{ButtonState, MouseButton, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -354,11 +354,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::ModifiersChanged(mods) => {
-                let m = Modifiers {
-                    shift: mods.state().shift_key(),
-                    ctrl: mods.state().control_key(),
-                    alt: mods.state().alt_key(),
-                };
+                let m = vpl::input::adapters::modifiers_from_winit(mods.state());
                 // Send to active quadrant only.
                 state.inputs[state.hovered_quad as usize]
                     .push_event(ViewportEvent::ModifiersChanged(m));

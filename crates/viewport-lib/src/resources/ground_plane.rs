@@ -45,9 +45,9 @@ mod tests {
         // Field access is enough to prove the fields are present and typed; the
         // pipeline / bind group cannot be meaningfully introspected headlessly.
         let _ = (
-            &res.ground.pipeline,
-            &res.ground.uniform_buf,
-            &res.ground.bind_group,
+            &res.scene_tier.ground.pipeline,
+            &res.scene_tier.ground.uniform_buf,
+            &res.scene_tier.ground.bind_group,
         );
     }
 }

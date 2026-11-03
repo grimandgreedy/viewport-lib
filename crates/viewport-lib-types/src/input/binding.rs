@@ -7,16 +7,28 @@
 use super::action::Action;
 use super::mode::InputMode;
 
-/// Modifier key state : exact-match semantics (all must match).
+/// Modifier key state.
+///
+/// Bindings treat Ctrl and Super as one key, so a binding on Ctrl also fires on
+/// Cmd on macOS (see [`for_bindings`](Self::for_bindings)). Text fields and
+/// shortcut handlers that follow platform conventions read `ctrl` and `super_key`
+/// apart, or [`command`](Self::command).
+///
+/// Build one from a constant and the `with_*` methods, or with an adapter
+/// (`modifiers_from_egui`); struct literals are not available outside this crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct Modifiers {
     /// Alt/Option key held.
     pub alt: bool,
     /// Shift key held.
     pub shift: bool,
-    /// Ctrl/Cmd key held.
+    /// Ctrl key held.
     pub ctrl: bool,
+    /// Super key held: Cmd on macOS, the Windows key on Windows.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub super_key: bool,
 }
 
 impl Modifiers {
@@ -25,31 +37,61 @@ impl Modifiers {
         alt: false,
         shift: false,
         ctrl: false,
+        super_key: false,
     };
     /// Only Alt held.
-    pub const ALT: Self = Self {
-        alt: true,
-        shift: false,
-        ctrl: false,
-    };
+    pub const ALT: Self = Self::NONE.with_alt(true);
     /// Only Shift held.
-    pub const SHIFT: Self = Self {
-        alt: false,
-        shift: true,
-        ctrl: false,
-    };
+    pub const SHIFT: Self = Self::NONE.with_shift(true);
     /// Only Ctrl held.
-    pub const CTRL: Self = Self {
-        alt: false,
-        shift: false,
-        ctrl: true,
-    };
+    pub const CTRL: Self = Self::NONE.with_ctrl(true);
     /// Ctrl + Shift held.
-    pub const CTRL_SHIFT: Self = Self {
-        alt: false,
-        shift: true,
-        ctrl: true,
-    };
+    pub const CTRL_SHIFT: Self = Self::CTRL.with_shift(true);
+
+    /// This state with Alt set to `held`.
+    pub const fn with_alt(mut self, held: bool) -> Self {
+        self.alt = held;
+        self
+    }
+
+    /// This state with Shift set to `held`.
+    pub const fn with_shift(mut self, held: bool) -> Self {
+        self.shift = held;
+        self
+    }
+
+    /// This state with Ctrl set to `held`.
+    pub const fn with_ctrl(mut self, held: bool) -> Self {
+        self.ctrl = held;
+        self
+    }
+
+    /// This state with Super set to `held`.
+    pub const fn with_super(mut self, held: bool) -> Self {
+        self.super_key = held;
+        self
+    }
+
+    /// Whether the platform's shortcut modifier is held: Cmd (`super_key`) on
+    /// macOS, Ctrl elsewhere. Decided by the target this is compiled for, so a
+    /// web build reads Ctrl on a Mac too.
+    pub const fn command(self) -> bool {
+        if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
+            self.super_key
+        } else {
+            self.ctrl
+        }
+    }
+
+    /// This state as bindings compare it: Super folded into Ctrl, so a binding
+    /// on Ctrl fires on either key.
+    pub const fn for_bindings(self) -> Self {
+        Self {
+            ctrl: self.ctrl || self.super_key,
+            super_key: false,
+            ..self
+        }
+    }
 }
 
 /// Keyboard key codes

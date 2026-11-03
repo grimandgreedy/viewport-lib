@@ -16,6 +16,8 @@ pub const TYPE_NAME: &str = "vpl.gaussian_splat";
 #[cfg(feature = "gpu")]
 pub mod channels;
 #[cfg(feature = "gpu")]
+mod packed;
+#[cfg(feature = "gpu")]
 mod pipeline;
 #[cfg(feature = "gpu")]
 mod plugin;

@@ -23,6 +23,25 @@
 use super::packing::{GpuRefractionVolume, GpuScatterVolume};
 use super::volume::{ColourSource, MAX_SCATTER_VOLUMES, ScatterVolume};
 use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
+use viewport_lib::plugin_api::shared_wgsl;
+
+/// The ray-march shader: the scene-lighting section and the depth read in
+/// front of the volume body.
+pub(super) fn volume_source() -> String {
+    lit_shader(
+        &[shared_wgsl::SHARED_DEPTH_TEXEL_WGSL],
+        wgsl_source!("scatter_volume"),
+    )
+}
+
+/// The refraction shader: the shared bindings and the depth read in front of
+/// its body.
+pub(super) fn refraction_source() -> String {
+    scene_shader(
+        &[shared_wgsl::SHARED_DEPTH_TEXEL_WGSL],
+        wgsl_source!("scatter_refraction"),
+    )
+}
 
 /// Unit proxy geometry for the pick pass: positions, indices, and the index
 /// count to draw.
@@ -440,13 +459,15 @@ impl ScatterGpu {
                     binding: 1,
                     visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
                     ty: viewport_lib::gpu::BindingType::Texture {
-                        sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: false,
+                        },
                         view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                // 2: depth sampler (NonFiltering for the textureLoad path).
+                // 2: the nearest sampler the opaque depth is read through.
                 viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
@@ -521,7 +542,9 @@ impl ScatterGpu {
                     binding: 4,
                     visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
                     ty: viewport_lib::gpu::BindingType::Texture {
-                        sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: false,
+                        },
                         view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -649,7 +672,7 @@ impl ScatterGpu {
         else {
             return;
         };
-        let camera_bgl = resources.shared_bindings().group0_layout;
+        let camera_bgl = resources.group0_layout();
         let module = |label, source: &str| resources.lazy_module(device, label, source);
         let layout = |label, bgls: &[&viewport_lib::gpu::BindGroupLayout]| {
             viewport_lib::plugin_api::builders::pipeline_layout(device, label, bgls)
@@ -661,10 +684,7 @@ impl ScatterGpu {
                 "scatter_volume_pipeline_layout",
                 &[camera_bgl, per_vol, per_tex, frame_bgl],
             ),
-            march_shader: module(
-                "scatter_volume_shader",
-                &lit_shader(&[], wgsl_source!("scatter_volume")),
-            ),
+            march_shader: module("scatter_volume_shader", &volume_source()),
             composite_layout: layout("scatter_composite_pipeline_layout", &[composite_bgl]),
             composite_shader: module(
                 "scatter_composite_shader",
@@ -679,10 +699,7 @@ impl ScatterGpu {
                 "scatter_refraction_pipeline_layout",
                 &[camera_bgl, refraction_per_vol, refraction_source],
             ),
-            refraction_shader: module(
-                "scatter_refraction_shader",
-                &scene_shader(&[], wgsl_source!("scatter_refraction")),
-            ),
+            refraction_shader: module("scatter_refraction_shader", &self::refraction_source()),
             blit_layout: layout("scatter_refraction_blit_pipeline_layout", &[composite_bgl]),
             blit_shader: module(
                 "scatter_refraction_blit_shader",
@@ -1051,6 +1068,7 @@ impl ScatterGpu {
     }
 
     fn ensure_refraction_source_bgl(&mut self, device: &viewport_lib::gpu::Device) {
+        self.ensure_depth_sampler(device);
         if self.refraction_source_bgl.is_some() {
             return;
         }
@@ -1081,12 +1099,18 @@ impl ScatterGpu {
                     binding: 2,
                     visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
                     ty: viewport_lib::gpu::BindingType::Texture {
-                        sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: false,
+                        },
                         view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
+                viewport_lib::plugin_api::builders::nearest_sampler_entry(
+                    3,
+                    viewport_lib::gpu::ShaderStages::FRAGMENT,
+                ),
             ],
         });
         self.refraction_source_bgl = Some(bgl);
@@ -1205,6 +1229,12 @@ impl ScatterGpu {
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
                     resource: viewport_lib::gpu::BindingResource::TextureView(depth_view),
+                },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: viewport_lib::gpu::BindingResource::Sampler(
+                        self.depth_sampler.as_ref().unwrap(),
+                    ),
                 },
             ],
         })

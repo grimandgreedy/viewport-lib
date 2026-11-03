@@ -11,7 +11,8 @@ use crate::input::{
 /// This covers window events (pointer, buttons, wheel, keys, modifiers, focus,
 /// gestures, theme, occlusion, file drag-and-drop). Raw relative pointer motion for
 /// mouselook arrives as a device event instead; translate that with
-/// [`from_winit_device`].
+/// [`from_winit_device`]. A key press's typed text is not included: use
+/// [`from_winit_into`] to get it as [`ViewportEvent::Character`] events.
 ///
 /// winit reports cursor positions in physical pixels; `scale_factor`
 /// (`window.scale_factor()`) divides them down to logical points, the space the
@@ -41,14 +42,9 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
             };
             Some(ViewportEvent::Wheel { delta, units })
         }
-        WindowEvent::ModifiersChanged(mods) => {
-            let s = mods.state();
-            Some(ViewportEvent::ModifiersChanged(Modifiers {
-                alt: s.alt_key(),
-                shift: s.shift_key(),
-                ctrl: s.control_key() || s.super_key(),
-            }))
-        }
+        WindowEvent::ModifiersChanged(mods) => Some(ViewportEvent::ModifiersChanged(
+            modifiers_from_winit(mods.state()),
+        )),
         WindowEvent::Focused(false) => Some(ViewportEvent::FocusLost),
         WindowEvent::KeyboardInput { event, .. } => {
             let key = map_key(&event.physical_key)?;
@@ -56,6 +52,7 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
                 key,
                 state: map_state(event.state),
                 repeat: event.repeat,
+                logical: logical_char(event),
             })
         }
         WindowEvent::ThemeChanged(theme) => Some(ViewportEvent::ThemeChanged(match theme {
@@ -93,6 +90,86 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
             ::winit::event::Ime::Disabled => ImeEvent::Disabled,
         })),
         _ => None,
+    }
+}
+
+/// Translate winit's modifier state into [`Modifiers`], with Ctrl and Super
+/// (Cmd, the Windows key) kept apart.
+pub fn modifiers_from_winit(state: ::winit::keyboard::ModifiersState) -> Modifiers {
+    Modifiers::NONE
+        .with_alt(state.alt_key())
+        .with_shift(state.shift_key())
+        .with_ctrl(state.control_key())
+        .with_super(state.super_key())
+}
+
+/// The character the layout gives a key, unshifted and lower case. Where winit
+/// offers the key without modifiers (desktop platforms) it is used; elsewhere the
+/// logical key is lowercased, which is right for letters but leaves a shifted
+/// symbol (`!`) as it is.
+fn logical_char(event: &::winit::event::KeyEvent) -> Option<char> {
+    #[cfg(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+    ))]
+    let key = {
+        use ::winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        event.key_without_modifiers()
+    };
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+    )))]
+    let key = event.logical_key.clone();
+    single_lower_char(&key)
+}
+
+fn single_lower_char(key: &::winit::keyboard::Key) -> Option<char> {
+    let ::winit::keyboard::Key::Character(text) = key else {
+        return None;
+    };
+    let mut chars = text.chars();
+    let c = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    let mut lower = c.to_lowercase();
+    let l = lower.next()?;
+    lower.next().is_none().then_some(l)
+}
+
+/// As [`from_winit`], appending to `out`, plus the text a key press types.
+///
+/// A pressed key whose `KeyEvent::text` is set is followed by one
+/// [`ViewportEvent::Character`] per character, control characters left out. Use
+/// this rather than `from_winit` when a text field or manipulation numeric entry
+/// needs typed text; `ViewportApp` does.
+pub fn from_winit_into(
+    event: &::winit::event::WindowEvent,
+    scale_factor: f32,
+    out: &mut Vec<ViewportEvent>,
+) {
+    out.extend(from_winit(event, scale_factor));
+    if let ::winit::event::WindowEvent::KeyboardInput { event: key, .. } = event {
+        if key.state == ::winit::event::ElementState::Pressed {
+            if let Some(text) = &key.text {
+                out.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .map(ViewportEvent::Character),
+                );
+            }
+        }
     }
 }
 
@@ -400,6 +477,24 @@ mod tests {
             from_winit(&WindowEvent::Occluded(false), 1.0),
             Some(ViewportEvent::Occluded(false))
         ));
+    }
+
+    #[test]
+    fn modifiers_keep_super_apart_from_ctrl() {
+        use ::winit::keyboard::ModifiersState as M;
+        let cmd = modifiers_from_winit(M::SUPER);
+        assert!(cmd.super_key && !cmd.ctrl);
+        let ctrl = modifiers_from_winit(M::CONTROL | M::SHIFT);
+        assert!(ctrl.ctrl && ctrl.shift && !ctrl.super_key);
+    }
+
+    #[test]
+    fn logical_char_is_one_lower_case_character() {
+        use ::winit::keyboard::{Key, NamedKey};
+        assert_eq!(single_lower_char(&Key::Character("Z".into())), Some('z'));
+        assert_eq!(single_lower_char(&Key::Character("1".into())), Some('1'));
+        assert_eq!(single_lower_char(&Key::Character("ab".into())), None);
+        assert_eq!(single_lower_char(&Key::Named(NamedKey::ArrowLeft)), None);
     }
 
     #[test]

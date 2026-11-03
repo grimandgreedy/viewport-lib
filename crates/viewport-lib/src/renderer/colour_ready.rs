@@ -51,7 +51,10 @@ impl DeviceResources {
             )
             && item.active_attribute.is_none()
             && item.submesh_materials.is_none()
-            && !self.deform.may_discard(item.mesh_id, item.deform_instance);
+            && !self
+                .scene_tier
+                .deform
+                .may_discard(item.mesh_id, item.deform_instance);
         let keys = [
             PipelineKey::two_sided(two_sided),
             PipelineKey {
@@ -117,6 +120,7 @@ impl DeviceResources {
                     && !batch.has_attribute
                     && !matches!(batch.draw, DrawKind::Range(..))
                     && !self
+                        .scene_tier
                         .deform
                         .may_discard(batch.mesh_id, batch.deform_instance),
                 ..PipelineKey::default()

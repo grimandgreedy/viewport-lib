@@ -101,6 +101,7 @@ impl DeviceResources {
         vertices: &[Vertex],
         indices: &[u32],
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
+        self.require_lit_group0()?;
         if vertices.is_empty() || indices.is_empty() {
             return Err(crate::error::ViewportError::EmptyMesh {
                 positions: vertices.len(),
@@ -109,27 +110,39 @@ impl DeviceResources {
         }
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + indices.len() * std::mem::size_of::<u32>()) as u64;
-        let mut mesh = Self::create_mesh(
-            device,
-            &mut self.geometry,
-            &self.binds.object_bgl,
-            &self.material.texture.view,
-            &self.material.texture_array_view,
-            &self.material.normal_map_view,
-            &self.material.ao_map_view,
-            &self.material.mesh_sampler,
-            &self.material.lut_sampler,
-            &self.content.fallback_lut_view,
-            self.sidecar.fallback(),
-            &self.material.texture.view,
-            &self.content.fallback_position_override_buf,
-            &self.content.fallback_normal_override_buf,
-            &self.material.metallic_roughness_view,
-            &self.material.emissive_view,
-            &self.content.fallback_uv1_buf,
-            vertices,
-            indices,
-        );
+        let mut mesh = if let Some(compat) = self.compatibility_tier.as_deref() {
+            Self::create_basic_mesh(
+                device,
+                &mut self.geometry,
+                compat,
+                &self.content.fallback_lut_view,
+                vertices,
+                indices,
+                None,
+            )
+        } else {
+            Self::create_mesh(
+                device,
+                &mut self.geometry,
+                &self.scene_tier.binds.object_bgl,
+                &self.scene_tier.material.texture.view,
+                &self.scene_tier.material.texture_array_view,
+                &self.scene_tier.material.normal_map_view,
+                &self.scene_tier.material.ao_map_view,
+                &self.scene_tier.material.mesh_sampler,
+                &self.scene_tier.material.lut_sampler,
+                &self.content.fallback_lut_view,
+                self.sidecar.fallback(),
+                &self.scene_tier.material.texture.view,
+                &self.content.fallback_position_override_buf,
+                &self.content.fallback_normal_override_buf,
+                &self.scene_tier.material.metallic_roughness_view,
+                &self.scene_tier.material.emissive_view,
+                &self.content.fallback_uv1_buf,
+                vertices,
+                indices,
+            )
+        };
         mesh.closed_check = Some(ClosedCheck::spawn(
             vertices.iter().map(|v| v.position).collect(),
             indices.to_vec(),
@@ -168,6 +181,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
+        self.require_lit_group0()?;
         validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
         let prep = Self::prep_mesh_data(data, self.retain_mesh_cpu_geometry, false);
@@ -290,29 +304,41 @@ impl DeviceResources {
         } = prep;
         let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
 
-        let mut mesh = Self::create_mesh_with_normals(
-            device,
-            &mut self.geometry,
-            &self.binds.object_bgl,
-            &self.material.texture.view,
-            &self.material.texture_array_view,
-            &self.material.normal_map_view,
-            &self.material.ao_map_view,
-            &self.material.mesh_sampler,
-            &self.material.lut_sampler,
-            &self.content.fallback_lut_view,
-            self.sidecar.fallback(),
-            &self.material.texture.view,
-            &self.content.fallback_position_override_buf,
-            &self.content.fallback_normal_override_buf,
-            &self.material.metallic_roughness_view,
-            &self.material.emissive_view,
-            &self.content.fallback_uv1_buf,
-            &vertices,
-            &data.indices,
-            uv1_bytes,
-            None,
-        );
+        let mut mesh = if let Some(compat) = self.compatibility_tier.as_deref() {
+            Self::create_basic_mesh(
+                device,
+                &mut self.geometry,
+                compat,
+                &self.content.fallback_lut_view,
+                &vertices,
+                &data.indices,
+                uv1_bytes,
+            )
+        } else {
+            Self::create_mesh_with_normals(
+                device,
+                &mut self.geometry,
+                &self.scene_tier.binds.object_bgl,
+                &self.scene_tier.material.texture.view,
+                &self.scene_tier.material.texture_array_view,
+                &self.scene_tier.material.normal_map_view,
+                &self.scene_tier.material.ao_map_view,
+                &self.scene_tier.material.mesh_sampler,
+                &self.scene_tier.material.lut_sampler,
+                &self.content.fallback_lut_view,
+                self.sidecar.fallback(),
+                &self.scene_tier.material.texture.view,
+                &self.content.fallback_position_override_buf,
+                &self.content.fallback_normal_override_buf,
+                &self.scene_tier.material.metallic_roughness_view,
+                &self.scene_tier.material.emissive_view,
+                &self.content.fallback_uv1_buf,
+                &vertices,
+                &data.indices,
+                uv1_bytes,
+                None,
+            )
+        };
         let pending_check = match closed {
             Some(closed) => {
                 mesh.closed = closed;
@@ -370,6 +396,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: MeshData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_lit_group0()?;
         validate_mesh_data(&data)?;
         Self::validate_mesh_size(device, &data)?;
 
@@ -512,29 +539,43 @@ impl DeviceResources {
                             let tangent_slice =
                                 data.tangents.as_deref().or(computed_tangents.as_deref());
                             resources.frame_upload_bytes += upload_bytes;
-                            let mut mesh = DeviceResources::create_mesh_from_buffers(
-                                &device,
-                                &resources.binds.object_bgl,
-                                &resources.material.texture.view,
-                                &resources.material.texture_array_view,
-                                &resources.material.normal_map_view,
-                                &resources.material.ao_map_view,
-                                &resources.material.mesh_sampler,
-                                &resources.material.lut_sampler,
-                                &resources.content.fallback_lut_view,
-                                resources.sidecar.fallback(),
-                                &resources.material.texture.view,
-                                &resources.content.fallback_position_override_buf,
-                                &resources.content.fallback_normal_override_buf,
-                                &resources.material.metallic_roughness_view,
-                                &resources.material.emissive_view,
-                                &resources.content.fallback_uv1_buf,
-                                vertex_span,
-                                index_span,
-                                data.indices.len() as u32,
-                                aabb,
-                                data.uvs1.is_some(),
-                            );
+                            let mut mesh =
+                                if let Some(compat) = resources.compatibility_tier.as_deref() {
+                                    DeviceResources::basic_mesh_from_spans(
+                                        &device,
+                                        compat,
+                                        &resources.content.fallback_lut_view,
+                                        vertex_span,
+                                        index_span,
+                                        data.indices.len() as u32,
+                                        aabb,
+                                        data.uvs1.is_some(),
+                                    )
+                                } else {
+                                    DeviceResources::create_mesh_from_buffers(
+                                        &device,
+                                        &resources.scene_tier.binds.object_bgl,
+                                        &resources.scene_tier.material.texture.view,
+                                        &resources.scene_tier.material.texture_array_view,
+                                        &resources.scene_tier.material.normal_map_view,
+                                        &resources.scene_tier.material.ao_map_view,
+                                        &resources.scene_tier.material.mesh_sampler,
+                                        &resources.scene_tier.material.lut_sampler,
+                                        &resources.content.fallback_lut_view,
+                                        resources.sidecar.fallback(),
+                                        &resources.scene_tier.material.texture.view,
+                                        &resources.content.fallback_position_override_buf,
+                                        &resources.content.fallback_normal_override_buf,
+                                        &resources.scene_tier.material.metallic_roughness_view,
+                                        &resources.scene_tier.material.emissive_view,
+                                        &resources.content.fallback_uv1_buf,
+                                        vertex_span,
+                                        index_span,
+                                        data.indices.len() as u32,
+                                        aabb,
+                                        data.uvs1.is_some(),
+                                    )
+                                };
                             // Usually landed by now, so the mesh starts with
                             // its real answer and never repacks for it.
                             let pending = match closed_check.try_get() {
@@ -599,6 +640,7 @@ impl DeviceResources {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
+        self.require_lit_group0()?;
         let mut map = self
             .job_results
             .mesh
@@ -636,6 +678,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
+        self.require_lit_group0()?;
         self.upload_mesh_data(device, data)
     }
 
@@ -646,8 +689,8 @@ impl DeviceResources {
     /// FACE, EDGE, and VERTEX picks after this call.
     ///
     /// `set_pickable(id, true)` is a no-op: CPU data is either already present
-    /// (the mesh was uploaded via [`upload_mesh_data`] or
-    /// [`upload_mesh_data_pickable`]) or it was freed and cannot be recovered
+    /// (the mesh was uploaded via [`upload_mesh_data`](Self::upload_mesh_data) or
+    /// [`upload_mesh_data_pickable`](Self::upload_mesh_data_pickable)) or it was freed and cannot be recovered
     /// without re-uploading.
     ///
     /// Has no effect if `mesh_id` is not found.
@@ -679,7 +722,7 @@ impl DeviceResources {
     ///
     /// The vertex count must match the original upload exactly. Use this for deforming meshes
     /// where topology is stable across frames: the index buffer, edge buffer, and bind groups
-    /// are all reused. Colour, UVs, and tangents are written as defaults (white, zero, [0,0,0,1]).
+    /// are all reused. Colour, UVs, and tangents are written as defaults (white, zero, `[0,0,0,1]`).
     ///
     /// The normal line visualization buffer is also updated in place if it was created at upload time.
     ///
@@ -823,6 +866,7 @@ impl DeviceResources {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         buffer: crate::gpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -875,6 +919,7 @@ impl DeviceResources {
         buffer: crate::gpu::Buffer,
         slice: OverrideBufferSlice,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         Self::validate_override_slice(&buffer, slice)?;
         let store_len = self.mesh_store.len();
         let mesh =
@@ -905,6 +950,7 @@ impl DeviceResources {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         buffer: crate::gpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -939,6 +985,7 @@ impl DeviceResources {
         buffer: crate::gpu::Buffer,
         slice: OverrideBufferSlice,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         Self::validate_override_slice(&buffer, slice)?;
         let store_len = self.mesh_store.len();
         let mesh =
@@ -985,6 +1032,7 @@ impl DeviceResources {
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -1011,6 +1059,7 @@ impl DeviceResources {
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -1057,6 +1106,7 @@ impl DeviceResources {
         data: crate::resources::lightmap::LightmapData,
         mode: crate::resources::lightmap::LightmapMode,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         self.set_lightmap_impl(device, mesh_id, uv1, None, data, mode)
     }
 
@@ -1085,6 +1135,7 @@ impl DeviceResources {
         data: crate::resources::lightmap::LightmapData,
         mode: crate::resources::lightmap::LightmapMode,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         self.set_lightmap_impl(device, mesh_id, uv1, Some(pages), data, mode)
     }
 
@@ -1187,6 +1238,7 @@ impl DeviceResources {
         scale_bias: [f32; 4],
         mode: crate::resources::lightmap::LightmapMode,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -1227,6 +1279,7 @@ impl DeviceResources {
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -1393,6 +1446,7 @@ impl DeviceResources {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
+        self.require_lit_group0()?;
         if !self.mesh_store.contains(mesh_id) {
             return Err(crate::error::ViewportError::StaleHandle {
                 index: mesh_id.index(),
@@ -1527,35 +1581,48 @@ impl DeviceResources {
             self.geometry.free_vertex(ovs);
             self.geometry.free_index(ois);
         }
-        let mut new_mesh = Self::create_mesh_with_normals(
-            device,
-            &mut self.geometry,
-            &self.binds.object_bgl,
-            &self.material.texture.view,
-            &self.material.texture_array_view,
-            &self.material.normal_map_view,
-            &self.material.ao_map_view,
-            &self.material.mesh_sampler,
-            &self.material.lut_sampler,
-            &self.content.fallback_lut_view,
-            self.sidecar.fallback(),
-            &self.material.texture.view,
-            &self.content.fallback_position_override_buf,
-            &self.content.fallback_normal_override_buf,
-            &self.material.metallic_roughness_view,
-            &self.material.emissive_view,
-            &self.content.fallback_uv1_buf,
-            &vertices,
-            &data.indices,
-            data.uvs1.as_ref().map(|uvs1| {
-                let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
-                for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
-                    *dst = *src;
-                }
-                bytemuck::cast_slice(&packed).to_vec()
-            }),
-            None,
-        );
+        let uv1_bytes = data.uvs1.as_ref().map(|uvs1| {
+            let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+            for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                *dst = *src;
+            }
+            bytemuck::cast_slice(&packed).to_vec()
+        });
+        let mut new_mesh = if let Some(compat) = self.compatibility_tier.as_deref() {
+            Self::create_basic_mesh(
+                device,
+                &mut self.geometry,
+                compat,
+                &self.content.fallback_lut_view,
+                &vertices,
+                &data.indices,
+                uv1_bytes,
+            )
+        } else {
+            Self::create_mesh_with_normals(
+                device,
+                &mut self.geometry,
+                &self.scene_tier.binds.object_bgl,
+                &self.scene_tier.material.texture.view,
+                &self.scene_tier.material.texture_array_view,
+                &self.scene_tier.material.normal_map_view,
+                &self.scene_tier.material.ao_map_view,
+                &self.scene_tier.material.mesh_sampler,
+                &self.scene_tier.material.lut_sampler,
+                &self.content.fallback_lut_view,
+                self.sidecar.fallback(),
+                &self.scene_tier.material.texture.view,
+                &self.content.fallback_position_override_buf,
+                &self.content.fallback_normal_override_buf,
+                &self.scene_tier.material.metallic_roughness_view,
+                &self.scene_tier.material.emissive_view,
+                &self.content.fallback_uv1_buf,
+                &vertices,
+                &data.indices,
+                uv1_bytes,
+                None,
+            )
+        };
         if retain_cpu {
             new_mesh.cpu_positions = Some(data.positions.clone());
             new_mesh.cpu_normals = Some(data.normals.clone());
@@ -1603,8 +1670,10 @@ impl DeviceResources {
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
         self.pending_closed_checks.push(mesh_id);
         // The fresh record holds the attributes only; the mesh's deform slots
-        // follow it there.
-        self.sync_deform_record(device, mesh_id, &[]);
+        // follow it there. Deformers exist only on the full tier.
+        if self.scene_tier.is_built() {
+            self.sync_deform_record(device, mesh_id, &[]);
+        }
         tracing::debug!(
             mesh_index = mesh_id.index(),
             vertices = data.positions.len(),
@@ -1697,6 +1766,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
+        self.require_scene_tier()?;
         let (mesh_data, face_to_cell) =
             crate::resources::volume::volume_mesh::extract_boundary_faces(data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
@@ -1728,6 +1798,7 @@ impl DeviceResources {
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
+        self.require_scene_tier()?;
         let (mesh_data, face_to_cell) =
             crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
@@ -1752,6 +1823,7 @@ impl DeviceResources {
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
+        self.require_scene_tier()?;
         let (mesh_data, face_to_cell) =
             crate::resources::volume::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
@@ -1776,6 +1848,7 @@ impl DeviceResources {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::error::ViewportResult<Vec<u32>> {
+        self.require_scene_tier()?;
         self.replace_clipped_volume_mesh(device, queue, mesh_id, data, &[])
     }
 
@@ -1794,6 +1867,7 @@ impl DeviceResources {
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
     ) -> crate::error::ViewportResult<Vec<u32>> {
+        self.require_scene_tier()?;
         let (mesh_data, face_to_cell) =
             crate::resources::volume::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         self.replace_mesh_data(device, queue, mesh_id, &mesh_data)?;
@@ -1846,6 +1920,7 @@ impl DeviceResources {
         face_to_cell: &[u32],
         cell_scalars: &[f32],
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let gpu_mesh =
             self.mesh_store
                 .get_mut(mesh_id)
@@ -1984,6 +2059,7 @@ impl DeviceResources {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
+        self.require_scene_tier()?;
         let mut map = self
             .job_results
             .volume_mesh
@@ -2061,6 +2137,7 @@ impl DeviceResources {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
+        self.require_scene_tier()?;
         let mut map = self
             .job_results
             .clipped_volume_mesh
@@ -2922,6 +2999,28 @@ impl DeviceResources {
             ],
         });
 
+        Self::mesh_record(
+            vertex_span,
+            index_span,
+            index_count,
+            aabb,
+            has_uv1,
+            (object_uniform_buf, object_bind_group),
+            (normal_uniform_buf, normal_bind_group),
+        )
+    }
+
+    /// A mesh record around its slab windows and the two object bind groups
+    /// (the draw's and the normal-line visualisation's) with their buffers.
+    pub(crate) fn mesh_record(
+        vertex_span: crate::resources::mesh::geometry_slab::SlabSpan,
+        index_span: crate::resources::mesh::geometry_slab::SlabSpan,
+        index_count: u32,
+        aabb: crate::scene::aabb::Aabb,
+        has_uv1: bool,
+        (object_uniform_buf, object_bind_group): (crate::gpu::Buffer, crate::gpu::BindGroup),
+        (normal_uniform_buf, normal_bind_group): (crate::gpu::Buffer, crate::gpu::BindGroup),
+    ) -> GpuMesh {
         GpuMesh {
             vertex_span,
             index_span,
@@ -3071,7 +3170,7 @@ impl DeviceResources {
             .lut_bind_group_layout
             .as_ref()
             .expect("pt_lut_bind_group_layout must exist");
-        let sampler = &self.material.sampler;
+        let sampler = &self.scene_tier.material.sampler;
 
         match colourmap_id.and_then(|id| self.content.colourmap_views.get(id.0).map(|_| id.0)) {
             Some(slot) => {
@@ -3333,6 +3432,7 @@ impl DeviceResources {
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         self.ensure_pt_bind_group_layout(device);
 
         let (pending, scalar_range, _new_uniform) =
@@ -3428,6 +3528,7 @@ impl DeviceResources {
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         let scalars = crate::resources::volume::volume_mesh::tet_scalars(data, scalar_attribute);
 
         let gpu = self
@@ -3946,7 +4047,7 @@ mod override_tests {
     use crate::geometry::primitives;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -4678,7 +4779,7 @@ mod async_upload_tests {
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -4904,7 +5005,7 @@ mod c4_volume_mesh_tests {
     use crate::resources::{CELL_SENTINEL, UploadStatus};
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -5133,6 +5234,7 @@ impl crate::resources::DeviceResources {
         name: &str,
         data: &[f32],
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         // Resolve the mesh.
         let gpu_mesh =
             self.mesh_store

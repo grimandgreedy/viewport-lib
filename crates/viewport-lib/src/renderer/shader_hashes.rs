@@ -236,6 +236,7 @@ fn f() -> f32 {
 
     let a  =  1.0; // trailing
     // BEGIN_DEBUG_VIS
+    // ALT(UNIFORM): let c = 2.0;
     // <viewport-deform-keep> out.keep = 1.0; // still code
     /* block // not a line comment */ let b = a;
     return a;
@@ -246,12 +247,30 @@ fn f() -> f32 {
 fn f() -> f32 {
 let a  =  1.0;
 // BEGIN_DEBUG_VIS
+// ALT(UNIFORM): let c = 2.0;
 // <viewport-deform-keep> out.keep = 1.0; // still code
 /* block // not a line comment */ let b = a;
 return a;
 }
 ";
         assert_eq!(minify_wgsl(src), want);
+    }
+
+    /// `adapt_wgsl` swaps in a region's `ALT` lines, so a minified source has
+    /// to keep them: the compatibility tier's light list comes from one.
+    #[test]
+    fn alternatives_survive_minification() {
+        use crate::plugin_api::shared_wgsl as s;
+        let caps = crate::capabilities::Capabilities::from_parts(
+            &crate::gpu::Limits::downlevel_webgl2_defaults(),
+            crate::gpu::Features::empty(),
+            Some(crate::gpu::DownlevelFlags::empty()),
+        );
+        for src in [s::SHARED_SCENE_LIGHTING_WGSL, s::SHARED_BINDINGS_WGSL] {
+            let minified = minify_wgsl(src);
+            let adapted = crate::resources::builders::adapt_wgsl(minified.as_str(), &caps);
+            assert!(adapted.contains("var<uniform> lights_storage"));
+        }
     }
 
     #[test]
@@ -306,6 +325,7 @@ return a;
             ("SHARED_SCENE_LIGHTING_WGSL", s::SHARED_SCENE_LIGHTING_WGSL),
             ("SHARED_CSM_WGSL", s::SHARED_CSM_WGSL),
             ("SHARED_CLIP_VOLUME_WGSL", s::SHARED_CLIP_VOLUME_WGSL),
+            ("SHARED_CLIP_WGSL", s::SHARED_CLIP_WGSL),
             ("SHARED_BRDF_WGSL", s::SHARED_BRDF_WGSL),
             ("SHARED_OUTLINE_EDGE_WGSL", s::SHARED_OUTLINE_EDGE_WGSL),
             ("SHARED_BINDINGS_WGSL", s::SHARED_BINDINGS_WGSL),

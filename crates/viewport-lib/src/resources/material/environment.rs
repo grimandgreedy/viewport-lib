@@ -198,9 +198,10 @@ pub fn environment_upper_hemisphere_lux(
     id: EnvironmentMapId,
 ) -> Option<f32> {
     resources
+        .scene_tier
         .ibl
         .is_baked(id)
-        .then(|| resources.ibl.env_slots[id.index() as usize].lux)
+        .then(|| resources.scene_tier.ibl.env_slots[id.index() as usize].lux)
 }
 
 /// Integrate the luminance of an equirect panorama over the upper hemisphere,
@@ -284,7 +285,7 @@ pub(crate) fn prepare_background(
     };
     resources.ensure_skybox_pipeline(device);
     if binding.as_ref().is_none_or(|b| b.env != env) {
-        let ibl = &resources.ibl;
+        let ibl = &resources.scene_tier.ibl;
         let (_, source) = ibl.env_slots[env.index() as usize]
             .source
             .as_ref()
@@ -405,7 +406,7 @@ pub fn set_environment_zones(
             "environment zones exceed the cap; extra zones dropped"
         );
     }
-    resources.ibl.zones = zones[..n].to_vec();
+    resources.scene_tier.ibl.zones = zones[..n].to_vec();
     write_environment_zones(resources, queue);
 }
 
@@ -415,7 +416,7 @@ pub(crate) fn write_environment_zones(
     resources: &mut crate::resources::DeviceResources,
     queue: &crate::gpu::Queue,
 ) {
-    let ibl = &mut resources.ibl;
+    let ibl = &mut resources.scene_tier.ibl;
     ibl.zones_dirty = false;
     let gpu: Vec<EnvZoneGpu> = ibl
         .zones
@@ -432,20 +433,20 @@ pub(crate) fn write_environment_zones(
         .collect();
     if !gpu.is_empty() {
         queue.write_buffer(
-            &resources.lighting.indirect_buf,
+            &resources.scene_tier.lighting.indirect_buf,
             ENV_ZONE_REGION_OFFSET_BYTES,
             bytemuck::cast_slice(&gpu),
         );
     }
-    resources.ibl.env_zone_count = gpu.len() as u32;
+    resources.scene_tier.ibl.env_zone_count = gpu.len() as u32;
 }
 
 /// Clear all environment-selection zones. Fragments revert to the lighting
 /// environment.
 pub fn clear_environment_zones(resources: &mut crate::resources::DeviceResources) {
-    resources.ibl.zones.clear();
-    resources.ibl.zones_dirty = false;
-    resources.ibl.env_zone_count = 0;
+    resources.scene_tier.ibl.zones.clear();
+    resources.scene_tier.ibl.zones_dirty = false;
+    resources.scene_tier.ibl.env_zone_count = 0;
 }
 
 // -------------------------------------------------------------------------
@@ -492,6 +493,7 @@ pub fn upload_environment(
     data: crate::TextureData,
     options: EnvironmentOptions,
 ) -> crate::error::ViewportResult<EnvironmentMapId> {
+    resources.require_scene_tier()?;
     let job = begin_upload_environment(resources, device, queue, data, options)?;
     let drained = drain_until_ready(resources, device, queue, job);
     let env = upload_result_environment(resources, job);
@@ -542,15 +544,18 @@ pub fn begin_upload_environment(
     data: crate::TextureData,
     _options: EnvironmentOptions,
 ) -> crate::error::ViewportResult<JobId> {
+    resources.require_scene_tier()?;
     let source = environment_source(data, device)?;
     let layer =
         alloc_env_layer(resources).ok_or(crate::error::ViewportError::TooManyEnvironments {
             max: IBL_ENV_CAPACITY - 1,
         })?;
-    let env =
-        EnvironmentMapId::from_parts(layer, resources.ibl.env_slots[layer as usize].generation);
+    let env = EnvironmentMapId::from_parts(
+        layer,
+        resources.scene_tier.ibl.env_slots[layer as usize].generation,
+    );
     let job = submit_bake(resources, device, queue, source, env);
-    resources.ibl.env_jobs.insert(job, env);
+    resources.scene_tier.ibl.env_jobs.insert(job, env);
     Ok(job)
 }
 
@@ -565,19 +570,20 @@ pub fn upload_result_environment(
     resources: &mut crate::resources::DeviceResources,
     job: JobId,
 ) -> crate::error::ViewportResult<EnvironmentMapId> {
-    let Some(&env) = resources.ibl.env_jobs.get(&job) else {
+    resources.require_scene_tier()?;
+    let Some(&env) = resources.scene_tier.ibl.env_jobs.get(&job) else {
         return Err(crate::error::ViewportError::JobResultMissing {
             reason: "unknown id or wrong upload type",
         });
     };
-    if resources.ibl.is_baked(env) {
-        resources.ibl.env_jobs.remove(&job);
+    if resources.scene_tier.ibl.is_baked(env) {
+        resources.scene_tier.ibl.env_jobs.remove(&job);
         return Ok(env);
     }
     match resources.upload_status(job) {
         UploadStatus::Failed(e) => {
-            resources.ibl.env_jobs.remove(&job);
-            resources.ibl.env_slots[env.index() as usize].release();
+            resources.scene_tier.ibl.env_jobs.remove(&job);
+            resources.scene_tier.ibl.env_slots[env.index() as usize].release();
             Err(e)
         }
         _ => Err(crate::error::ViewportError::JobNotReady),
@@ -594,14 +600,14 @@ pub fn free_environment(
     resources: &mut crate::resources::DeviceResources,
     id: EnvironmentMapId,
 ) -> bool {
-    if resources.ibl.live_slot(id).is_none() {
+    if resources.scene_tier.ibl.live_slot(id).is_none() {
         return false;
     }
-    resources.ibl.env_slots[id.index() as usize].release();
-    resources.ibl.zones_dirty = true;
-    if resources.ibl.lighting == Some(id) {
-        resources.ibl.lighting = None;
-        resources.ibl.skybox_view = None;
+    resources.scene_tier.ibl.env_slots[id.index() as usize].release();
+    resources.scene_tier.ibl.zones_dirty = true;
+    if resources.scene_tier.ibl.lighting == Some(id) {
+        resources.scene_tier.ibl.lighting = None;
+        resources.scene_tier.ibl.skybox_view = None;
         resources.camera_bind_groups_dirty = true;
     }
     true
@@ -618,17 +624,21 @@ pub(crate) fn select_lighting_environment(
     queue: &crate::gpu::Queue,
     requested: EnvironmentMapId,
 ) -> bool {
-    let selected = resources.ibl.is_baked(requested).then_some(requested);
-    if selected == resources.ibl.lighting {
+    let selected = resources
+        .scene_tier
+        .ibl
+        .is_baked(requested)
+        .then_some(requested);
+    if selected == resources.scene_tier.ibl.lighting {
         return selected.is_some();
     }
-    resources.ibl.lighting = selected;
+    resources.scene_tier.ibl.lighting = selected;
     resources.camera_bind_groups_dirty = true;
     let Some(env) = selected else {
-        resources.ibl.skybox_view = None;
+        resources.scene_tier.ibl.skybox_view = None;
         return false;
     };
-    let ibl = &mut resources.ibl;
+    let ibl = &mut resources.scene_tier.ibl;
     let (Some(irradiance), Some(prefiltered)) = (&ibl.irradiance_texture, &ibl.prefiltered_texture)
     else {
         unreachable!("a baked environment implies the arrays exist");
@@ -906,7 +916,7 @@ fn submit_bake(
     // The GPU bake wherever the device can run it; a compressed source is only
     // accepted there.
     let compute = super::ibl_compute::compute_bake_possible(device);
-    let needs_brdf = resources.ibl.brdf_lut_texture.is_none();
+    let needs_brdf = resources.scene_tier.ibl.brdf_lut_texture.is_none();
     let (irr_array, pref_array) = ensure_ibl_arrays(resources, device);
     let layer = env.index();
 
@@ -1001,15 +1011,20 @@ fn ensure_ibl_arrays(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
 ) -> (crate::gpu::Texture, crate::gpu::Texture) {
-    if resources.ibl.irradiance_texture.is_none() {
+    if resources.scene_tier.ibl.irradiance_texture.is_none() {
         let compute = super::ibl_compute::compute_bake_possible(device);
         let (irr, pref) = super::ibl_compute::create_ibl_arrays(device, compute);
-        resources.ibl.irradiance_texture = Some(irr);
-        resources.ibl.prefiltered_texture = Some(pref);
+        resources.scene_tier.ibl.irradiance_texture = Some(irr);
+        resources.scene_tier.ibl.prefiltered_texture = Some(pref);
     }
     (
-        resources.ibl.irradiance_texture.clone().unwrap(),
-        resources.ibl.prefiltered_texture.clone().unwrap(),
+        resources.scene_tier.ibl.irradiance_texture.clone().unwrap(),
+        resources
+            .scene_tier
+            .ibl
+            .prefiltered_texture
+            .clone()
+            .unwrap(),
     )
 }
 
@@ -1017,6 +1032,7 @@ fn ensure_ibl_arrays(
 /// allocation starts at 1. Returns `None` once every slot is in use.
 fn alloc_env_layer(resources: &mut crate::resources::DeviceResources) -> Option<u32> {
     let (layer, slot) = resources
+        .scene_tier
         .ibl
         .env_slots
         .iter_mut()
@@ -1037,7 +1053,7 @@ fn install_bake(
     brdf: Option<(crate::gpu::Texture, crate::gpu::TextureView)>,
 ) -> ApplyFn {
     Box::new(move |resources: &mut crate::resources::DeviceResources| {
-        let ibl = &mut resources.ibl;
+        let ibl = &mut resources.scene_tier.ibl;
         let mut rebind = false;
         if let Some((tex, view)) = brdf {
             ibl.brdf_lut_view = Some(view);
@@ -1678,7 +1694,7 @@ mod tests {
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -1719,7 +1735,12 @@ mod tests {
         queue: &crate::gpu::Queue,
         layer: u32,
     ) -> [f32; 3] {
-        let texture = resources.ibl.irradiance_texture.as_ref().unwrap();
+        let texture = resources
+            .scene_tier
+            .ibl
+            .irradiance_texture
+            .as_ref()
+            .unwrap();
         let row = IBL_IRR_W * 8;
         let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: None,
@@ -2183,7 +2204,7 @@ mod tests {
             return;
         };
         let resources = make_resources(&device);
-        let ibl = &resources.ibl;
+        let ibl = &resources.scene_tier.ibl;
         // Before any environment upload the view slots are empty but the
         // fallbacks and the slot table are wired, so the lit-pass bind group
         // stays valid.
@@ -2223,7 +2244,7 @@ mod tests {
             other => panic!("unexpected error: {other:?}"),
         }
         assert_eq!(resources.uploads_pending(), 0);
-        assert!(resources.ibl.env_slots.iter().all(|s| !s.live));
+        assert!(resources.scene_tier.ibl.env_slots.iter().all(|s| !s.live));
     }
 
     #[test]
@@ -2361,7 +2382,7 @@ mod tests {
             return;
         };
         let mut resources = make_resources(&device);
-        assert!(resources.ibl.irradiance_view.is_none());
+        assert!(resources.scene_tier.ibl.irradiance_view.is_none());
 
         let data = crate::TextureData::hdr(8, 4, make_solid_env(8, 4, [0.5, 0.6, 0.7]));
         let job =
@@ -2392,20 +2413,20 @@ mod tests {
         };
         assert_eq!(env.index(), 1, "layer 0 is never handed out");
 
-        assert!(resources.ibl.irradiance_view.is_some());
-        assert!(resources.ibl.prefiltered_view.is_some());
-        assert!(resources.ibl.brdf_lut_view.is_some());
+        assert!(resources.scene_tier.ibl.irradiance_view.is_some());
+        assert!(resources.scene_tier.ibl.prefiltered_view.is_some());
+        assert!(resources.scene_tier.ibl.brdf_lut_view.is_some());
         assert!(resources.camera_bind_groups_dirty);
         // The skybox follows the lighting selection, made in prepare.
-        assert!(resources.ibl.skybox_view.is_none());
+        assert!(resources.scene_tier.ibl.skybox_view.is_none());
         assert!(select_lighting_environment(
             &mut resources,
             &device,
             &queue,
             env
         ));
-        assert_eq!(resources.ibl.lighting, Some(env));
-        assert!(resources.ibl.skybox_view.is_some());
+        assert_eq!(resources.scene_tier.ibl.lighting, Some(env));
+        assert!(resources.scene_tier.ibl.skybox_view.is_some());
         // The handle is taken once.
         assert!(matches!(
             upload_result_environment(&mut resources, job),
@@ -2422,10 +2443,10 @@ mod tests {
         let mut resources = make_resources(&device);
 
         let a = upload(&mut resources, &device, &queue, [0.5, 0.5, 0.5]).unwrap();
-        assert!(resources.ibl.brdf_lut_texture.is_some());
+        assert!(resources.scene_tier.ibl.brdf_lut_texture.is_some());
         let b = upload(&mut resources, &device, &queue, [0.1, 0.9, 0.4]).unwrap();
         assert_eq!((a.index(), b.index()), (1, 2));
-        assert!(resources.ibl.brdf_lut_texture.is_some());
+        assert!(resources.scene_tier.ibl.brdf_lut_texture.is_some());
         assert!(resources.all_uploads_complete());
     }
 
@@ -2486,7 +2507,7 @@ mod tests {
 
         assert!(free_environment(&mut resources, env));
         assert!(!free_environment(&mut resources, env), "already freed");
-        assert!(resources.ibl.skybox_view.is_none());
+        assert!(resources.scene_tier.ibl.skybox_view.is_none());
         assert!(!select_lighting_environment(
             &mut resources,
             &device,
@@ -2555,21 +2576,24 @@ mod tests {
             parallax: true,
         };
         set_environment_zones(&mut resources, &queue, &[zone]);
-        assert_eq!(resources.ibl.env_zone_count, 1);
+        assert_eq!(resources.scene_tier.ibl.env_zone_count, 1);
 
         // Over the cap: the live count clamps to MAX_ENV_ZONES.
         let many = vec![zone; MAX_ENV_ZONES + 5];
         set_environment_zones(&mut resources, &queue, &many);
-        assert_eq!(resources.ibl.env_zone_count, MAX_ENV_ZONES as u32);
+        assert_eq!(
+            resources.scene_tier.ibl.env_zone_count,
+            MAX_ENV_ZONES as u32
+        );
 
         // Freeing the environment drops its zones on the next write.
         free_environment(&mut resources, env);
-        assert!(resources.ibl.zones_dirty);
+        assert!(resources.scene_tier.ibl.zones_dirty);
         write_environment_zones(&mut resources, &queue);
-        assert_eq!(resources.ibl.env_zone_count, 0);
+        assert_eq!(resources.scene_tier.ibl.env_zone_count, 0);
 
         set_environment_zones(&mut resources, &queue, &[zone]);
         clear_environment_zones(&mut resources);
-        assert_eq!(resources.ibl.env_zone_count, 0);
+        assert_eq!(resources.scene_tier.ibl.env_zone_count, 0);
     }
 }

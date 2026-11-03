@@ -69,7 +69,7 @@ pub struct GlyphRunItem {
     /// default anchor and alignment it is the absolute screen placement.
     /// Rotation turns the item inside its extent box, which stays
     /// axis-aligned, so `anchoring.align` places the unrotated box and the
-    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// content turns within it. See [`OverlayTransform`](crate::overlay::OverlayTransform) for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: crate::overlay::OverlayTransform,
@@ -251,10 +251,10 @@ impl GlyphRunItem {
     }
 
     /// Clip the run to the mask shape with this id (registered via
-    /// [`OverlayShapeItem::with_clip_mask`]). Fragments outside the mask are
+    /// [`OverlayShapeItem::provides_mask`]). Fragments outside the mask are
     /// discarded.
     ///
-    /// [`OverlayShapeItem::with_clip_mask`]: crate::overlay::OverlayShapeItem::with_clip_mask
+    /// [`OverlayShapeItem::provides_mask`]: crate::overlay::OverlayShapeItem::provides_mask
     pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip.mask = Some(clip_id);
         self

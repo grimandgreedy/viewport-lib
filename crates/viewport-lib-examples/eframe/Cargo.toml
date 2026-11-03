@@ -111,5 +111,10 @@ path = "examples/showcase/main.rs"
 required-features = ["showcase"]
 
 [[example]]
+name = "tiers"
+path = "examples/tiers/main.rs"
+required-features = ["showcase"]
+
+[[example]]
 name = "debug-light"
 path = "examples/debug_light/main.rs"

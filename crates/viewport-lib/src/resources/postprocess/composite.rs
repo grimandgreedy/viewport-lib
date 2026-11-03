@@ -20,6 +20,8 @@ pub(crate) mod slot {
     pub(crate) const AO: u32 = 4;
     pub(crate) const CONTACT_SHADOW: u32 = 5;
     pub(crate) const SCENE_DEPTH: u32 = 6;
+    /// The nearest sampler both depth reads go through.
+    pub(crate) const DEPTH_SAMPLER: u32 = 7;
     pub(crate) const FOREGROUND_DEPTH: u32 = 8;
     pub(crate) const EXPOSURE: u32 = 9;
     /// Colour-grading strip LUT, sampled after tone mapping. A neutral
@@ -33,10 +35,12 @@ pub(crate) mod slot {
 enum BindingKind {
     /// Filterable 2D float texture.
     FilterableTexture,
-    /// Depth texture (`texture_depth_2d`).
+    /// Depth texture, read as unfilterable float.
     DepthTexture,
     /// Filtering sampler.
     Sampler,
+    /// Non-filtering sampler, for the depth reads.
+    NearestSampler,
     /// Uniform buffer.
     Uniform,
     /// Read-only storage buffer.
@@ -52,6 +56,7 @@ const BINDINGS: &[(u32, BindingKind)] = &[
     (slot::AO, BindingKind::FilterableTexture),
     (slot::CONTACT_SHADOW, BindingKind::FilterableTexture),
     (slot::SCENE_DEPTH, BindingKind::DepthTexture),
+    (slot::DEPTH_SAMPLER, BindingKind::NearestSampler),
     (slot::FOREGROUND_DEPTH, BindingKind::DepthTexture),
     (slot::EXPOSURE, BindingKind::StorageReadOnly),
     (slot::GRADE_LUT, BindingKind::FilterableTexture),
@@ -71,12 +76,15 @@ pub(crate) fn create_tone_map_bgl(device: &crate::gpu::Device) -> crate::gpu::Bi
                     multisampled: false,
                 },
                 BindingKind::DepthTexture => crate::gpu::BindingType::Texture {
-                    sample_type: crate::gpu::TextureSampleType::Depth,
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                     view_dimension: crate::gpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
                 BindingKind::Sampler => {
                     crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering)
+                }
+                BindingKind::NearestSampler => {
+                    crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::NonFiltering)
                 }
                 BindingKind::Uniform => crate::gpu::BindingType::Buffer {
                     ty: crate::gpu::BufferBindingType::Uniform,

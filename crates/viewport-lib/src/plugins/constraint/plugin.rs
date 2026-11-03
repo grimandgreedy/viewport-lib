@@ -58,7 +58,7 @@ impl Constraint {
 
 /// A plugin that applies positional constraints to scene nodes.
 ///
-/// Runs in the [`RuntimePhase::Animate`] phase. Spring and damping constraints
+/// Runs in the [`RuntimePhase::Animate`](crate::RuntimePhase::Animate) phase. Spring and damping constraints
 /// maintain per-node velocity state internally.
 pub struct ConstraintPlugin {
     constraints: Vec<Constraint>,

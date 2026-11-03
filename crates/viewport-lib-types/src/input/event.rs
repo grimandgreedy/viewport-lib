@@ -107,12 +107,19 @@ pub enum ViewportEvent {
     },
     /// A keyboard key changed state.
     Key {
-        /// Which key changed state.
+        /// Which key changed state, by position: the key in the US-layout `A`
+        /// position is `KeyCode::A` whatever the layout prints on it. Bindings
+        /// match on this, so WASD stays in place on AZERTY.
         key: KeyCode,
         /// New key state.
         state: ButtonState,
         /// True if the event is a key-repeat (key held down).
         repeat: bool,
+        /// The character the layout gives this key, unshifted and lower case
+        /// (`z` for the key labelled Z on any layout), or `None` for keys that
+        /// produce no character (arrows, function keys). Match shortcuts such as
+        /// Ctrl+Z on this to follow the layout.
+        logical: Option<char>,
     },
     /// Modifier key state changed.
     ModifiersChanged(Modifiers),
@@ -136,12 +143,13 @@ pub enum ViewportEvent {
     PointerLeft,
     /// The viewport lost keyboard focus.
     FocusLost,
-    /// A character was typed (Unicode).
+    /// A character was typed (Unicode): the text a key press produced after
+    /// layout, Shift and dead keys.
     ///
-    /// Only push this event when the manipulation controller is active
-    /// (`ManipulationController::is_active()`) to avoid swallowing other keypresses.
-    /// The library filters the character stream to digits, `.`, and `-` before
-    /// passing it to the numeric input buffer.
+    /// winit puts it in `KeyEvent::text`, which `from_winit` drops;
+    /// `from_winit_into` emits it after the key's [`Key`](ViewportEvent::Key)
+    /// event, and `ViewportApp` uses that. The viewport reads only digits, `.`
+    /// and `-`, for manipulation numeric entry.
     Character(char),
 
     /// Two-finger trackpad rotation gesture.

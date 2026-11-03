@@ -51,6 +51,9 @@ pub(super) struct McVolumeGpuData {
     /// caller-supplied buffer before every MC dispatch, so the isosurface
     /// tracks the buffer's contents with no CPU upload.
     pub external_scalar: Option<McExternalScalarSource>,
+    /// The field as a 3D texture, on a device that ray-marches the
+    /// isosurface instead of extracting it. `slabs` is empty then.
+    pub field: Option<super::iso::McField>,
 }
 
 /// A caller-supplied buffer feeding a volume's scalar field.
@@ -75,7 +78,8 @@ impl viewport_lib::resources::handle::GpuByteSize for McVolumeGpuData {
                     + s.indirect_buf.size()
                     + s.wire_indirect_buf.size()
             })
-            .sum()
+            .sum::<u64>()
+            + self.field.as_ref().map_or(0, |f| f.bytes())
     }
 }
 
@@ -224,6 +228,7 @@ pub(super) fn build_mc_volume_gpu_data(
             slabs,
             dims: vol.dims,
             external_scalar: None,
+            field: None,
         })
     }
 }

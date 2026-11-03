@@ -98,7 +98,7 @@ fn main() {
     macro_rules! register {
         ($($name:literal => $plugin:ty),* $(,)?) => {$(
             let t = Instant::now();
-            renderer.with_item_type_plugin(&device, Box::new(<$plugin>::default()));
+            renderer.with_item_type_plugin(&device, Box::new(<$plugin>::default())).unwrap();
             let took = ms(t);
             total += took;
             let built = build_log::drain();

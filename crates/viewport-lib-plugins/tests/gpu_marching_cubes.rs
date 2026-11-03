@@ -339,7 +339,9 @@ fn begin_upload_volume_for_mc_drains_to_a_handle() {
     };
     let mut renderer = renderer_with_item_types(&device);
 
-    let job = renderer.begin_upload_volume_for_mc(&device, &queue, sample_volume());
+    let job = renderer
+        .begin_upload_volume_for_mc(&device, &queue, sample_volume())
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.resources().upload_status(job) {

@@ -122,8 +122,8 @@ pub enum OverlayShape {
 
 /// One soft drop or inset shadow.
 ///
-/// Used with [`OverlayShapeItem::shadows`] (drawn behind the item, clipped to
-/// outside it) and [`OverlayShapeItem::inner_shadows`] (drawn over it, eroding
+/// Used with [`OverlayStyle::shadows`] (drawn behind the item, clipped to
+/// outside it) and [`OverlayStyle::inner_shadows`] (drawn over it, eroding
 /// inward from the boundary) to stack several effects on one item: a soft
 /// ambient shadow for depth plus a tighter one for contact, an outer glow for
 /// focus, or a plain contour band for a border.

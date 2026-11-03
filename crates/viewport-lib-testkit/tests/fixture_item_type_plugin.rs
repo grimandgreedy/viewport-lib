@@ -25,10 +25,13 @@ fn item_type_fixture_dispatches_only_when_submitted() {
         return;
     };
     let log = CallLog::new();
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
-    );
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
+        )
+        .unwrap();
     assert_eq!(
         log.count("init_gpu"),
         1,
@@ -64,14 +67,20 @@ fn item_type_fixture_routes_by_type_name() {
     };
     let wanted = CallLog::new();
     let other = CallLog::new();
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(wanted.clone(), "wanted")),
-    );
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(other.clone(), "other")),
-    );
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(wanted.clone(), "wanted")),
+        )
+        .unwrap();
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(other.clone(), "other")),
+        )
+        .unwrap();
     wanted.clear();
     other.clear();
 
@@ -95,10 +104,13 @@ fn item_type_fixture_receives_hidden_items() {
         return;
     };
     let log = CallLog::new();
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
-    );
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
+        )
+        .unwrap();
     log.clear();
 
     let mut items = CountedItemCollection::new(2);
@@ -115,9 +127,9 @@ fn item_type_fixture_receives_hidden_items() {
     );
 }
 
-/// The CPU pick router consults registered plugins after the built-in
-/// pickers, so a plugin that reports a hit is returned when nothing else is in
-/// the scene.
+/// The CPU pick router consults the registered plugins whose items were in
+/// the last frame prepared, after the built-in pickers, so a plugin that
+/// reports a hit is returned when nothing else is in the scene.
 #[test]
 fn item_type_fixture_is_consulted_by_cpu_pick() {
     let Some(mut harness) = Harness::new() else {
@@ -128,11 +140,17 @@ fn item_type_fixture_is_consulted_by_cpu_pick() {
     // The CPU pick router is opt-in: without the cache the whole query short
     // circuits before any picker, plugins included.
     harness.renderer.set_cpu_pick_cache(true);
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items").pickable()),
-    );
-    let frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items").pickable()),
+        )
+        .unwrap();
+    let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+    frame
+        .scene
+        .submit_plugin_items("probe_items", CountedItemCollection::new(1));
     harness.render(&frame, SIZE, SIZE);
     log.clear();
 
@@ -174,10 +192,13 @@ fn a_plugin_cannot_take_a_built_in_item_type_name() {
             "skipping: no GPU adapter available (is taken by a type the renderer installed itself)"
         );
     };
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.polyline")),
-    );
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.polyline")),
+        )
+        .unwrap();
 }
 
 /// A name of one's own is fine, including one that merely mentions the
@@ -189,10 +210,13 @@ fn a_plugin_may_register_under_any_unreserved_name() {
         return;
     };
     for name in ["mycrate.sprite", "vpl_sprite", "not.vpl.sprite"] {
-        harness.renderer.with_item_type_plugin(
-            &harness.device,
-            Box::new(LoggingItemTypePlugin::new(CallLog::new(), name)),
-        );
+        harness
+            .renderer
+            .with_item_type_plugin(
+                &harness.device,
+                Box::new(LoggingItemTypePlugin::new(CallLog::new(), name)),
+            )
+            .unwrap();
         assert!(harness.renderer.has_item_type_plugin(name));
     }
     let reserved = viewport_lib::renderer::RESERVED_TYPE_NAME_PREFIX;
@@ -218,10 +242,13 @@ fn item_type_fixture_sees_the_scene_generation() {
         return;
     };
     let log = CallLog::new();
-    harness.renderer.with_item_type_plugin(
-        &harness.device,
-        Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
-    );
+    harness
+        .renderer
+        .with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
+        )
+        .unwrap();
     log.clear();
 
     for generation in [7u64, 7, 9] {

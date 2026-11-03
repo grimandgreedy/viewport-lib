@@ -36,7 +36,7 @@ const FIG8_CY: f32 = 790.0;
 /// Carl Gauss portrait, pre-converted raw RGBA, shared with the old showcase.
 const CARLGAUSS_W: u32 = 1500;
 const CARLGAUSS_H: u32 = 1000;
-const CARLGAUSS_RGBA: &[u8] = include_bytes!("../../eframe_showcase/carlgauss.rgba");
+const CARLGAUSS_RGBA: &[u8] = include_bytes!("../../eframe_showcase/assets/carlgauss.rgba");
 
 pub struct OverlaysShowcase {
     show_labels: bool,

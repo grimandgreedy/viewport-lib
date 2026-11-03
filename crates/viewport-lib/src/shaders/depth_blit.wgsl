@@ -5,7 +5,10 @@
 // depth buffer for post-tone-map overlay passes (grid, gizmos, axes, etc.) that draw
 // into the native-res output surface but need occlusion testing against scene geometry.
 
-@group(0) @binding(0) var src_depth: texture_depth_2d;
+@group(0) @binding(0) var src_depth: texture_2d<f32>;
+@group(0) @binding(1) var src_sampler: sampler;
+
+// #include "helpers/depth_texel.wgsl"
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -34,5 +37,5 @@ fn fs_main(in: VertexOutput) -> @builtin(frag_depth) f32 {
         vec2<u32>(0u),
         dims - vec2<u32>(1u),
     );
-    return textureLoad(src_depth, coord, 0);
+    return depth_texel(src_depth, src_sampler, vec2<i32>(coord));
 }

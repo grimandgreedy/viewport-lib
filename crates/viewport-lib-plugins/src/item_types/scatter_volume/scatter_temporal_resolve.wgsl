@@ -22,7 +22,7 @@ struct TemporalUniform {
 @group(0) @binding(1) var raw_tex: texture_2d<f32>;
 @group(0) @binding(2) var history_tex: texture_2d<f32>;
 @group(0) @binding(3) var bilinear_sampler: sampler;
-@group(0) @binding(4) var opaque_depth: texture_depth_2d;
+@group(0) @binding(4) var opaque_depth: texture_2d<f32>;
 @group(0) @binding(5) var depth_sampler: sampler;
 
 struct VsOut {
@@ -48,13 +48,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let blend = uniforms.temporal_pack.x;
     let history_valid = uniforms.temporal_pack.y > 0.5;
 
-    // Phony references keep the matrix and depth bindings in the shader's
-    // reflection so the pipeline layout matches the bind-group layout. The
-    // depth_sampler binding stays declared at module scope but is not
-    // referenced; wgpu tolerates layout bindings that the shader does not
-    // consume.
+    // Phony references keep the matrix, depth and depth sampler bindings in
+    // the shader's reflection so the pipeline layout matches the bind-group
+    // layout.
     _ = uniforms.prev_view_proj[0];
-    _ = textureLoad(opaque_depth, vec2<i32>(0, 0), 0);
+    _ = textureSampleLevel(opaque_depth, depth_sampler, vec2<f32>(0.0), 0.0);
 
     if !history_valid || blend <= 0.0 {
         return raw;

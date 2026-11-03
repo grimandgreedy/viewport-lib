@@ -570,7 +570,7 @@ impl crate::resources::DeviceResources {
                     crate::resources::builders::strip_debug_vis(
                         crate::resources::mesh_sidecar::registry::compose_shader(
                             mesh_src,
-                            &self.deform.registrations,
+                            &self.scene_tier.deform.registrations,
                         ),
                         self.debug_vis_shaders,
                     ),
@@ -587,8 +587,8 @@ impl crate::resources::DeviceResources {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "mesh_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
         let bindless = if self.bindless_textures() {
             let source = crate::resources::mesh::instanced_bindless::bindlessify_mesh(&source);
@@ -635,7 +635,7 @@ impl crate::resources::DeviceResources {
         let base = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
         let source = crate::resources::mesh_sidecar::registry::compose_shader(
             base,
-            &self.deform.registrations,
+            &self.scene_tier.deform.registrations,
         );
         crate::resources::builders::builtin_hook_env(crate::resources::builders::strip_debug_vis(
             source,
@@ -663,8 +663,8 @@ impl crate::resources::DeviceResources {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "hdr_mesh_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
         let overlay_shader = crate::resources::builders::wgsl_module(
             device,
@@ -674,7 +674,7 @@ impl crate::resources::DeviceResources {
         let overlay_layout = crate::resources::builders::pipeline_layout(
             device,
             "hdr_overlay_pipeline_layout",
-            &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
+            &[&self.scene_tier.binds.camera_bgl, &self.guides.overlay_bgl],
         );
         let bindless = if self.bindless_textures() {
             let source = crate::resources::mesh::instanced_bindless::bindlessify_mesh(&final_src);

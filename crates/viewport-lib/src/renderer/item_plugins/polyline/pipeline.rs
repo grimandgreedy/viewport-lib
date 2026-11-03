@@ -1,16 +1,9 @@
-//! GPU state for the polyline item type: the pick pipeline and its object-id
-//! layout, and the outline mask pipeline.
-//!
-//! The render pipelines are not here. Polylines are the shared line substrate:
-//! scatter-volume bounds, volume bounding boxes, clip-object outlines
-//! and the splat and sprite wireframe overlays all render through the same
-//! pipelines, and none of them are items. Those pipelines therefore stay in
-//! `resources`, and this plugin borrows a clone of them during `prepare` rather
-//! than compiling a second set that would have to track `polyline.wgsl` for
-//! ever. The upload store and `upload_polyline_per_frame` stay for the same
-//! reason.
+//! GPU state for the polyline item type: the line pipelines and segment
+//! layout (`lines`), the pick pipeline and its object-id layout, and the
+//! outline mask pipeline.
 
-use crate::resources::{DeviceResources, PolylineGpuData, PolylineVariantSet};
+use super::lines::{Lines, PolylineGpuData};
+use crate::resources::DeviceResources;
 
 /// What the pick and outline mask builds read.
 pub(super) struct PolylinePassRecipe {
@@ -73,9 +66,9 @@ fn build_pass(r: &PolylinePassRecipe, i: usize) -> crate::gpu::RenderPipeline {
 /// Pipelines owned by the item type, composed on the first prepare with items
 /// and each built the first time a draw needs it.
 pub(super) struct PolylineGpu {
-    /// A handle to the shared substrate pipelines, taken once so the draw
-    /// hooks can reach them without a borrow of the resources.
-    pub(super) pipelines: PolylineVariantSet,
+    /// The line pipelines and their group-1 layout, which every upload binds
+    /// against.
+    pub(super) lines: Lines,
     /// The pick and outline mask pipelines.
     pub(super) passes: crate::plugin_api::LazyPipelines<PolylinePassRecipe, 2>,
     pub(super) pick_id_bgl: crate::gpu::BindGroupLayout,
@@ -125,7 +118,7 @@ fn instance_attributes(with_dist: bool) -> Vec<crate::gpu::VertexAttribute> {
 
 impl PolylineGpu {
     pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
-        let pipelines = resources.ensure_polyline_pipeline(device).clone();
+        let lines = Lines::new(device, resources);
         let pick_id_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("polyline_pick_id_bgl"),
             entries: &[crate::gpu::BindGroupLayoutEntry {
@@ -143,7 +136,7 @@ impl PolylineGpu {
             PolylinePassRecipe {
                 device: device.clone(),
                 builder: resources.pipeline_builder(),
-                polyline_bgl: resources.polyline.bgl.clone(),
+                polyline_bgl: lines.bgl.clone(),
                 pick_id_bgl: pick_id_bgl.clone(),
                 pick_shader: resources.lazy_module(
                     device,
@@ -153,8 +146,8 @@ impl PolylineGpu {
                 mask_layout: crate::resources::builders::standard_scene_layout(
                     device,
                     "polyline_outline_mask_pipeline_layout",
-                    resources.shared_bindings().group0_layout,
-                    &resources.polyline.bgl,
+                    resources.group0_layout(),
+                    &lines.bgl,
                 ),
                 mask_shader: resources.lazy_module(
                     device,
@@ -165,7 +158,7 @@ impl PolylineGpu {
             build_pass,
         );
         Self {
-            pipelines,
+            lines,
             passes,
             pick_id_bgl,
         }
@@ -174,7 +167,7 @@ impl PolylineGpu {
     /// Whether `entry`'s line pipeline can draw this frame, without starting
     /// it.
     pub(super) fn drawable(&self, entry: &PolylineFrame) -> bool {
-        self.pipelines.drawable(crate::resources::PolylineKey {
+        self.lines.pipelines.drawable(super::lines::PolylineKey {
             skip_clip: entry.gpu.skip_clip,
             wireframe: entry.gpu.wireframe,
         })
@@ -182,7 +175,7 @@ impl PolylineGpu {
 
     /// Ask for everything the type can draw with, for a warm-up.
     pub(super) fn request_all(&self) {
-        self.pipelines.request_all();
+        self.lines.pipelines.request_all();
         self.passes.request_all();
     }
 

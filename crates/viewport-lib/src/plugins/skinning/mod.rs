@@ -291,7 +291,7 @@ impl SkinningPlugin {
     /// [`Self::attach_weights`] has not been called for `mesh_id`.
     ///
     /// `palette[i]` is the object-space skinning matrix for joint `i`
-    /// produced by [`crate::JointMatrices::compute`]: the joint's
+    /// produced by [`JointMatrices::compute`](crate::plugins::skeleton::JointMatrices::compute): the joint's
     /// skeleton-local transform multiplied by its inverse bind. The mesh's
     /// `object.model` is applied separately at draw time, so the palette
     /// composes with the scene node transform rather than replacing it.
@@ -456,7 +456,7 @@ mod async_skin_tests {
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

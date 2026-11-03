@@ -1334,7 +1334,8 @@ fn node_endpoints(
 
 /// Build the per-triangle node payload buffer for the POLY_NODE pick pipeline.
 /// One entry per triangle, ordered to match `tri_segment`. `None` when the item
-/// has no triangles or control points.
+/// has no triangles or control points, or the device has no storage buffers to
+/// hold it.
 fn build_node_pick_buffer(
     device: &viewport_lib::gpu::Device,
     queue: &viewport_lib::gpu::Queue,
@@ -1342,7 +1343,10 @@ fn build_node_pick_buffer(
     positions: &[[f32; 3]],
     strip_lengths: &[u32],
 ) -> Option<viewport_lib::gpu::Buffer> {
-    if tri_segment.is_empty() || positions.is_empty() {
+    if tri_segment.is_empty()
+        || positions.is_empty()
+        || device.limits().max_storage_buffers_per_shader_stage == 0
+    {
         return None;
     }
     let first_nodes = segment_first_nodes(strip_lengths);

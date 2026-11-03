@@ -771,7 +771,7 @@ impl JobRunner {
     /// issued or have been reaped past the retention window.
     ///
     /// This is a progress probe, not a delivery mechanism: a terminal status is
-    /// retained for [`FINISHED_RETAIN_CYCLES`] drain cycles and then dropped
+    /// retained for `FINISHED_RETAIN_CYCLES` drain cycles and then dropped
     /// whether or not anyone looked. Build a readiness check on the typed
     /// result (`take` / `upload_result_*`) or on `on_complete`, both of which
     /// are independent of this window.
@@ -1372,7 +1372,8 @@ impl super::DeviceResources {
 // Optional `future` feature: a thin Future wrapper around a JobId.
 // ---------------------------------------------------------------------------
 
-/// Future returned by [`DeviceResources::upload_handle`].
+/// Future returned by
+/// [`DeviceResources::upload_handle`](crate::DeviceResources::upload_handle).
 ///
 /// Polling drives the wrapped job to completion using the standard
 /// `process_uploads` machinery; the consumer's main loop must keep calling
@@ -2117,7 +2118,7 @@ mod tests {
         crate::gpu::Queue,
         super::super::DeviceResources,
     )> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -2347,7 +2348,7 @@ mod tests {
     /// builds without a GPU should pass the CPU-only tests above and skip
     /// the GPU-gated one.
     fn with_test_gpu<F: FnOnce(&crate::gpu::Device, &crate::gpu::Queue)>(f: F) {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = match pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

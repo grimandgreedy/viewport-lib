@@ -24,7 +24,8 @@ pub fn enabled() -> bool {
 /// Comment lines the renderer reads at runtime are kept whole: a full-line
 /// comment whose text starts with `<` (region tags such as
 /// `// <viewport-shade-slot:...>`), `#` (`// #include`), `@`
-/// (`// @viewport-wgsl-version`), `BEGIN_` or `END_`.
+/// (`// @viewport-wgsl-version`), `BEGIN_`, `END_` or `ALT(` (an alternative
+/// a region carries for `adapt_wgsl` to swap in).
 /// A kept line also keeps any code after its tag, since some tags turn the
 /// rest of their line back into code when removed.
 ///
@@ -74,6 +75,7 @@ fn is_marker(comment_body: &str) -> bool {
         || b.starts_with('@')
         || b.starts_with("BEGIN_")
         || b.starts_with("END_")
+        || b.starts_with("ALT(")
 }
 
 // Track nesting of `/* */` comments across a line, ignoring `//` inside them.

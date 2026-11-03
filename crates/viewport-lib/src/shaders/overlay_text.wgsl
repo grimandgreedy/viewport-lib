@@ -23,7 +23,9 @@ struct ClipShape {
     pad:       vec2<f32>,
 };
 
-@group(0) @binding(2) var<storage, read> clip_shapes: array<ClipShape>;
+// A uniform array of the renderer's `MAX_OVERLAY_CLIP_SHAPES` (256 at 64 bytes
+// fills a 16 KiB uniform binding); a frame's later masks are dropped.
+@group(0) @binding(2) var<uniform> clip_shapes: array<ClipShape, 256>;
 
 // Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
 // positions to NDC so overlay geometry is independent of the viewport size.
@@ -33,8 +35,8 @@ struct Viewport {
 };
 @group(0) @binding(3) var<uniform> viewport: Viewport;
 
-// Per-draw instance: a group's per-frame translate, opacity, and outer clip.
-// Indexed by @builtin(instance_index); slot 0 is the identity immediate draws use.
+// Per-draw instance: a group's per-frame translate, opacity, and outer clip,
+// from the instance stream; slot 0 is the identity immediate draws use.
 struct OverlayInstance {
     translate:  vec2<f32>,
     opacity:    f32,
@@ -56,7 +58,27 @@ fn group_apply(p: vec2<f32>, inst: OverlayInstance) -> vec2<f32> {
     let c = cos(inst.rotation);
     return piv + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c) + inst.translate;
 }
-@group(0) @binding(4) var<storage, read> instances: array<OverlayInstance>;
+// The per-draw instance as a per-instance vertex stream (see `OverlayInstance`).
+struct InstanceInput {
+    @location(7) translate_opacity_clip: vec4<f32>,
+    @location(8) clip_rect: vec4<f32>,
+    @location(9) tint: vec4<f32>,
+    @location(10) scale_rotation_pivot: vec4<f32>,
+};
+
+fn read_instance(i: InstanceInput) -> OverlayInstance {
+    return OverlayInstance(
+        i.translate_opacity_clip.xy,
+        i.translate_opacity_clip.z,
+        i.translate_opacity_clip.w,
+        i.clip_rect,
+        i.tint,
+        i.scale_rotation_pivot.x,
+        i.scale_rotation_pivot.y,
+        i.scale_rotation_pivot.z,
+        i.scale_rotation_pivot.w,
+    );
+}
 
 struct VertexInput {
     @location(0) position:    vec2<f32>,  // local logical pixels
@@ -66,7 +88,6 @@ struct VertexInput {
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
     @location(6) group_tint:  f32,        // 1 = the group tint applies here, 0 = shadow geometry
-    @builtin(instance_index) instance_index: u32,
 };
 
 struct VertexOutput {
@@ -87,9 +108,9 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 }
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
-    let inst = instances[in.instance_index];
+    let inst = read_instance(instance);
     // Apply the group transform (identity for immediate draws). Text-stream
     // geometry is the vertex position itself, so this moves glyphs, polylines,
     // and vector fills together.

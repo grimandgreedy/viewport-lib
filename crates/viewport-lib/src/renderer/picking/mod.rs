@@ -1,5 +1,6 @@
 use super::*;
 
+mod clip_span;
 pub(crate) mod helpers;
 use helpers::*;
 mod gpu;
@@ -29,9 +30,11 @@ impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and
     /// `pick_rect()` can run later (e.g. on a mouse click) without the scene data.
     ///
-    /// Called from `prepare()` only when the CPU pick cache is enabled. The mesh
-    /// entry is cheap (it holds a `mesh_id`), but the data primitives carry inline
-    /// geometry, so this is the per-frame cost that `set_cpu_pick_cache` controls.
+    /// Called from `prepare()` only when the CPU pick cache is enabled. It keeps
+    /// the surfaces and volume meshes; item types answer from what their own
+    /// `prepare` kept. A surface entry is cheap (it holds a `mesh_id`), while a
+    /// volume mesh clones its face-to-cell map, which is the per-frame cost that
+    /// `set_cpu_pick_cache` controls.
     pub(crate) fn cache_pick_items(&mut self, frame: &FrameData) {
         let surfaces = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -102,6 +105,15 @@ pub enum PickBackend {
     /// CPU ray-cast. Fills in sub-object identity (face, vertex, edge, cell, ...)
     /// per the mask, and reads the per-frame pick cache, which must be enabled
     /// with [`set_cpu_pick_cache`](ViewportRenderer::set_cpu_pick_cache).
+    ///
+    /// Answers only for geometry held in CPU memory: surfaces, volume meshes,
+    /// and item types submitted inline (a `PointCloudItem` with its positions,
+    /// a `VolumeItem` with `volume_data`). An item drawn from an upload handle,
+    /// such as a `PointCloudRefItem`, has no CPU copy and is never hit. The
+    /// [`Gpu`](Self::Gpu) backend answers for those;
+    /// [`pick_object_begin`](ViewportRenderer::pick_object_begin) is its form
+    /// for hosts that cannot wait on the queue. Below the full tier there is no
+    /// GPU pick pass, so every backend resolves to this one.
     Cpu,
     /// GPU object-id readback. Resolves sub-object identity from the pass's
     /// second channel: the hit instance (glyphs, sprites), segment (polylines),
@@ -166,6 +178,9 @@ impl ViewportRenderer {
     /// its `SHADER_PRIMITIVE_INDEX` requirement. A type the GPU pass has no
     /// pipeline for yet is simply not drawn, so it returns no hit rather than a
     /// wrong one.
+    ///
+    /// The compatibility tier has no GPU pick pass, so there every `backend` picks
+    /// the surfaces on the CPU, which needs the CPU pick cache on.
     pub fn pick_object(
         &mut self,
         backend: PickBackend,
@@ -175,10 +190,21 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<PickHit> {
+        // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
+        // has no GPU pick pass, so it picks its surfaces on the CPU.
+        let backend = if self.resources.scene_tier.is_built() {
+            self.resolve_pick_backend(backend, device, mask)
+        } else if self.resources.compatibility_tier.is_some() {
+            PickBackend::Cpu
+        } else {
+            return None;
+        };
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
-        let hit = match self.resolve_pick_backend(backend, device, mask) {
-            PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
+        let hit = match backend {
+            PickBackend::Cpu => {
+                self.pick_clipped(cursor, viewport_size, view_proj, mask, &frame.effects.clip.objects)
+            }
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
         };
@@ -387,6 +413,9 @@ impl ViewportRenderer {
     /// `SHADER_PRIMITIVE_INDEX`, the same as the point path (see
     /// [`PickBackend::Gpu`]). `Cpu` is the same as calling
     /// [`pick_rect`](Self::pick_rect); `Auto` routes per query.
+    ///
+    /// The compatibility tier has no GPU pick pass, so there every `backend` picks
+    /// on the CPU, which needs the CPU pick cache on.
     pub fn pick_rect_objects(
         &mut self,
         backend: PickBackend,
@@ -397,7 +426,16 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
-        match self.resolve_pick_backend(backend, device, mask) {
+        // Nothing pickable is drawn on the overlay-only tier. The compatibility tier
+        // has no GPU pick pass, so it picks on the CPU.
+        let backend = if self.resources.scene_tier.is_built() {
+            self.resolve_pick_backend(backend, device, mask)
+        } else if self.resources.compatibility_tier.is_some() {
+            PickBackend::Cpu
+        } else {
+            return PickRectResult::default();
+        };
+        match backend {
             PickBackend::Cpu => {
                 let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
                 let view_proj = frame.camera.render_camera.view_proj();
@@ -435,6 +473,10 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> Option<SnapHit> {
+        // Nothing pickable is drawn without the scene resources.
+        if !self.resources.scene_tier.is_built() {
+            return None;
+        }
         self.snap_query_gpu(device, queue, cursor, radius_px, frame, mask)
     }
 }

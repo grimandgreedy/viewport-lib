@@ -763,16 +763,18 @@ impl Default for ClipSettings {
 // so `crate::renderer::types::*` paths keep resolving.
 pub use viewport_lib_types::effects::debug::EffectsDebug;
 
-/// Scene-global effects for one frame, consumed by [`ViewportRenderer::prepare_scene`].
+/// Scene-global effects for one frame, consumed by
+/// [`PassPath::prepare_scene`](crate::PassPath::prepare_scene) and
+/// [`OwnedPath::prepare_scene`](crate::OwnedPath::prepare_scene).
 ///
 /// Groups the lighting, environment, and scatter configuration that applies
 /// to the whole scene (not per-viewport). Construct directly or obtain via
 /// [`EffectsFrame::split`].
 ///
 /// # Multi-viewport usage
-/// Call [`ViewportRenderer::prepare_scene`] once per frame with this struct.
-/// Each viewport's per-viewport effects are passed separately via
-/// [`ViewportEffects`] in [`ViewportRenderer::prepare_viewport`].
+/// Call `prepare_scene` once per frame with this struct. Each viewport's
+/// per-viewport effects are passed separately via [`ViewportEffects`] in
+/// `prepare_viewport`.
 pub struct SceneEffects<'a> {
     /// Per-frame lighting configuration (drives the shadow pass and light uniform).
     pub lighting: &'a LightingSettings,
@@ -782,15 +784,16 @@ pub struct SceneEffects<'a> {
     pub scatter: &'a ScatterSettings,
 }
 
-/// Per-viewport effects for one frame, consumed by [`ViewportRenderer::prepare_viewport`].
+/// Per-viewport effects for one frame, consumed by
+/// [`PassPath::prepare_viewport`](crate::PassPath::prepare_viewport) and
+/// [`OwnedPath::prepare_viewport`](crate::OwnedPath::prepare_viewport).
 ///
 /// Groups the clip objects and post-processing settings that differ
 /// per viewport. Construct directly or obtain via [`EffectsFrame::split`].
 ///
 /// # Multi-viewport usage
-/// Pass one `ViewportEffects` per viewport to [`ViewportRenderer::prepare_viewport`].
-/// Scene-global effects are passed once via [`SceneEffects`] in
-/// [`ViewportRenderer::prepare_scene`].
+/// Pass one `ViewportEffects` per viewport to `prepare_viewport`. Scene-global
+/// effects are passed once via [`SceneEffects`] in `prepare_scene`.
 pub struct ViewportEffects<'a> {
     /// Clip objects and cap-fill toggle.
     pub clip: &'a ClipSettings,
@@ -872,11 +875,15 @@ impl EffectsFrame {
     /// Decompose into scene-global and per-viewport effect references.
     ///
     /// Both halves borrow from `self` and cannot outlive the `EffectsFrame`.
-    /// The scene half is passed to [`ViewportRenderer::prepare_scene`]; the
-    /// viewport half is passed to [`ViewportRenderer::prepare_viewport`].
+    /// The scene half is passed to
+    /// [`PassPath::prepare_scene`](crate::PassPath::prepare_scene); the
+    /// viewport half is passed to
+    /// [`PassPath::prepare_viewport`](crate::PassPath::prepare_viewport) (or the
+    /// [`OwnedPath`](crate::OwnedPath) equivalents).
     ///
-    /// Single-viewport callers can continue using [`ViewportRenderer::prepare`]
-    /// directly without calling `split()`.
+    /// Single-viewport callers can continue using
+    /// [`PassPath::prepare`](crate::PassPath::prepare) directly without calling
+    /// `split()`.
     pub fn split(&self) -> (SceneEffects<'_>, ViewportEffects<'_>) {
         (
             SceneEffects {

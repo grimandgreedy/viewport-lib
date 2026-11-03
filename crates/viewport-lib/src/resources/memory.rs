@@ -1,6 +1,7 @@
 //! GPU memory accounting and the hardware VRAM budget query.
 
-/// Texture memory usage reported by [`DeviceResources::texture_memory_stats`].
+/// Texture memory usage reported by
+/// [`DeviceResources::texture_memory_stats`](crate::DeviceResources::texture_memory_stats).
 ///
 /// Counts bytes and textures uploaded via both the sync and async paths.
 /// Internal resources (shadow maps, colourmaps, post-process targets) are
@@ -321,7 +322,7 @@ mod tests {
     use super::vram_budget;
 
     fn try_make_device() -> Option<crate::gpu::Device> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

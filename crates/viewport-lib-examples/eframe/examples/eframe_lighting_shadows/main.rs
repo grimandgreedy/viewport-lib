@@ -28,13 +28,13 @@ use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 pub use viewport_lib_examples_eframe::eframe;
-use vpl::input::adapters::from_egui;
+use vpl::input::adapters::{from_egui, modifiers_from_egui};
 use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
     LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
-    Modifiers, OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
+    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
     ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportInstance,
     primitives,
 };
@@ -42,7 +42,7 @@ use vpl::{
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
 const PERCY_WIDTH: u32 = 2203;
 const PERCY_HEIGHT: u32 = 2009;
-const PERCY_RGBA: &[u8] = include_bytes!("../eframe_showcase/percy.rgba");
+const PERCY_RGBA: &[u8] = include_bytes!("../eframe_showcase/assets/percy.rgba");
 
 // Equirectangular environment resolution. Small is fine: it feeds the IBL
 // prefilter (diffuse irradiance + a few specular mips), not a sharp backdrop.
@@ -936,11 +936,9 @@ impl eframe::App for App {
             let origin = glam::Vec2::new(rect.left(), rect.top());
             ui.input(|i| {
                 self.session
-                    .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    .handle_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
                 for event in &i.events {
                     if let Some(ev) = from_egui(event, origin) {
                         self.session.handle_event(ev);

@@ -20,7 +20,7 @@ use viewport_lib::renderer::ViewportRenderer;
 use viewport_lib::wgpu;
 
 fn adapter() -> Option<wgpu::Adapter> {
-    let instance = viewport_lib::wgpu::default_instance();
+    let instance = viewport_lib::wgpu::instance_from_env();
     pollster::block_on(
         instance.request_adapter(&viewport_lib::wgpu::headless_adapter_options(
             wgpu::PowerPreference::LowPower,

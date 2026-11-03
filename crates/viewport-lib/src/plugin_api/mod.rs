@@ -10,19 +10,21 @@
 //!   the render-target formats, blend states, and depth-stencil state each
 //!   lib pass expects. Pipelines built against these are compatible with the
 //!   corresponding pass.
-//! - [`SharedBindings`] is the group-0 bind layout (camera, lights, shadows,
-//!   clip, IBL) shared by every scene pipeline. Plugin pipeline layouts list
-//!   it as group 0.
+//! - [`PluginResources`] is what an item type's `init_gpu` builds against:
+//!   the group 0 layout (camera, lights, shadows, clip, IBL) every scene
+//!   pipeline lists first, the shadow pass's group 0, the sample count, the
+//!   shared samplers and the pipeline builders.
 //! - [`shared_wgsl`] holds string constants with the standard bind
 //!   declarations and shading helpers (`viewport_pbr_shade`,
 //!   `viewport_oit_pack`, `viewport_sample_csm`, etc.) so plugin shaders stay
 //!   in lockstep with the lib's lighting and transparency contracts.
-//! - Pipeline builders on [`crate::resources::DeviceResources`]
-//!   (`build_opaque_pipeline`, `build_oit_pipeline`, ...) construct the
-//!   common variants in one call. Plugins ship one shader and call a
-//!   builder per variant.
+//! - Pipeline builders (`build_opaque_pipeline`, `build_oit_pipeline`, ...)
+//!   construct the common variants in one call. Plugins ship one shader and
+//!   call a builder per variant.
 //!
-//! All accessors live on [`crate::resources::DeviceResources`].
+//! The accessors live on [`crate::resources::DeviceResources`], which the
+//! per-frame hooks receive; `init_gpu` reaches them through
+//! [`PluginResources`].
 //!
 //! # Who owns what
 //!
@@ -77,10 +79,10 @@
 //! convention is that a minor bump may rename or remove items the audit
 //! flags as non-additive; a patch bump never does.
 //!
-//! - **Group-0 binding indices ([`SharedBindings`]) are additive-only.**
-//!   The constants in `SharedBindings` (`CAMERA_BINDING`, ...) keep their
-//!   numeric values forever. New bindings are appended at the next free
-//!   index. This is the strongest guarantee in the API: a plugin pipeline
+//! - **Group-0 binding indices are additive-only.** The bindings
+//!   [`SHARED_BINDINGS_WGSL`](crate::plugin_api::shared_wgsl::SHARED_BINDINGS_WGSL)
+//!   declares keep their numbers forever. New bindings are appended at the
+//!   next free index. This is the strongest guarantee in the API: a plugin pipeline
 //!   built once stays valid as new bindings are added.
 //!
 //! - **WGSL helper strings in [`shared_wgsl`] are stable within a minor
@@ -132,21 +134,32 @@
 //! [`viewport_lib::wgpu`](crate::wgpu) rather than an external `wgpu` crate so a
 //! plugin follows whichever version the build chose; a plugin that names its own
 //! `wgpu` dependency is coupled to one version and must match the library's.
+//!
+//! [`OpaqueTargetDesc`]: crate::plugin_api::OpaqueTargetDesc
+//! [`ForegroundTargetDesc`]: crate::plugin_api::ForegroundTargetDesc
+//! [`OitTargetDesc`]: crate::plugin_api::OitTargetDesc
+//! [`DepthReadTargetDesc`]: crate::plugin_api::DepthReadTargetDesc
+//! [`MaskTargetDesc`]: crate::plugin_api::MaskTargetDesc
+//! [`PickTargetDesc`]: crate::plugin_api::PickTargetDesc
+//! [`ShadowTargetDesc`]: crate::plugin_api::ShadowTargetDesc
+//! [`PluginResources`]: crate::plugin_api::PluginResources
+//! [`shared_wgsl`]: crate::plugin_api::shared_wgsl
 
 pub mod builders;
 pub mod cull;
 pub mod install;
 pub mod item_type;
 pub mod pick_helpers;
+mod plugin_resources;
 pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
 pub mod uploads;
 pub mod writes;
 
-pub use crate::resources::PipelineBuilder;
 pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;
 pub use crate::resources::pipeline_slot::LazyModule;
+pub use crate::resources::{PipelineBuilder, PluginPipelineOpts, ShadowCaster};
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
@@ -155,6 +168,7 @@ pub use item_type::{
     PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
     SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
 };
+pub use plugin_resources::PluginResources;
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,
     PostEffectSlot, PostEffectStage, PostEffectStageId, build_post_effect_pipeline,
@@ -165,68 +179,3 @@ pub use target_desc::{
 };
 pub use uploads::{Handles, Uploads};
 pub use writes::{Channel, Extent, Sourced, Span, Writes};
-
-/// Group-0 bind layout shared by every scene pipeline.
-///
-/// Plugin pipeline layouts must list this layout as group 0 so the lib's bound
-/// camera / lights / shadow / clip / IBL resources are visible to the plugin's
-/// shader. Bindings 0-13 match [`shared_wgsl::SHARED_BINDINGS_WGSL`]; do not
-/// re-declare them in plugin WGSL.
-///
-/// Obtain a reference via
-/// [`DeviceResources::shared_bindings`](crate::resources::DeviceResources::shared_bindings).
-pub struct SharedBindings<'a> {
-    /// The group-0 `BindGroupLayout`. Pass by reference when calling
-    /// `device.create_pipeline_layout`.
-    pub group0_layout: &'a crate::gpu::BindGroupLayout,
-    /// MSAA sample count of the renderer's HDR scene target, as configured by
-    /// [`ViewportRenderer::with_sample_count`](crate::renderer::ViewportRenderer::with_sample_count)
-    /// (1 when MSAA is off).
-    ///
-    /// A plugin that hand-rolls a render pipeline (rather than building through
-    /// the `DeviceResources::build_*_pipeline` helpers, which already apply
-    /// this) must set its `multisample.count` to this value for the HDR colour
-    /// passes: `paint`, `paint_transparent`, and `paint_depth_read`. The stock
-    /// helpers read the same field, so pipelines built through them need no
-    /// change.
-    ///
-    /// This applies to the HDR colour passes only. The shadow, pick, and
-    /// outline-mask passes always render single-sampled (the library's own
-    /// descriptors peg them to 1), so a plugin's `cast_shadow_pass`,
-    /// `render_pick`, and `outline_mask` pipelines use `sample_count: 1`
-    /// regardless of this value.
-    pub sample_count: u32,
-}
-
-impl<'a> SharedBindings<'a> {
-    /// Binding indices inside group 0. Stable across releases: additive
-    /// changes only. See [`shared_wgsl::SHARED_BINDINGS_WGSL`] for the WGSL
-    /// declarations.
-    pub const CAMERA_BINDING: u32 = 0;
-    /// Shadow atlas depth texture.
-    pub const SHADOW_ATLAS_BINDING: u32 = 1;
-    /// Comparison sampler used for PCF shadow filtering.
-    pub const SHADOW_SAMPLER_BINDING: u32 = 2;
-    /// Lights header uniform (count, hemisphere, IBL toggles).
-    pub const LIGHTS_HEADER_BINDING: u32 = 3;
-    /// Clip planes uniform (section-view planes).
-    pub const CLIP_PLANES_BINDING: u32 = 4;
-    /// Shadow info uniform (CSM matrices, splits, PCSS params).
-    pub const SHADOW_INFO_BINDING: u32 = 5;
-    /// Clip volume uniform (box/sphere/cylinder regions).
-    pub const CLIP_VOLUME_BINDING: u32 = 6;
-    /// IBL irradiance equirect texture.
-    pub const IBL_IRRADIANCE_BINDING: u32 = 7;
-    /// IBL prefiltered specular equirect texture.
-    pub const IBL_SPECULAR_BINDING: u32 = 8;
-    /// BRDF integration LUT.
-    pub const IBL_BRDF_LUT_BINDING: u32 = 9;
-    /// IBL filtering sampler (linear, clamp-to-edge).
-    pub const IBL_SAMPLER_BINDING: u32 = 10;
-    /// Skybox / environment equirect texture (full-resolution).
-    pub const SKYBOX_BINDING: u32 = 11;
-    /// Per-fragment debug storage buffer.
-    pub const DEBUG_FRAG_BINDING: u32 = 12;
-    /// Lights array storage buffer.
-    pub const LIGHTS_ARRAY_BINDING: u32 = 13;
-}

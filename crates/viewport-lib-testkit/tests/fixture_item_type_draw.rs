@@ -2,8 +2,8 @@
 //!
 //! The `LoggingItemTypePlugin` tests cover dispatch. These cover the part a
 //! real item type depends on and dispatch alone cannot prove: that a plugin
-//! outside the library can still build working pipelines from
-//! `SharedBindings` and the published target descriptors, read the camera out
+//! outside the library can still build working pipelines through
+//! `PluginResources` in `init_gpu`, read the camera out
 //! of group 0, and land pixels in the scene pass, the shadow atlas, and the
 //! pick targets.
 
@@ -48,17 +48,12 @@ fn triangle_fixture_draws_into_the_scene_pass() {
         return;
     };
     let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.2, 0.2],
-    );
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.2, 0.2]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -99,9 +94,9 @@ fn triangle_fixture_draws_into_the_scene_pass() {
     );
 }
 
-/// The sample count the renderer reports to `init_gpu` is the one the
-/// pipelines were built against. A plugin that hand-rolls its pipelines has
-/// to apply this itself, so a mismatch here is the bug that shows up as a
+/// The sample count the renderer reports to `init_gpu` is the one its
+/// passes run at. A plugin that hand-rolls its pipelines has to apply this
+/// itself, so a mismatch here is the bug that shows up as a
 /// pipeline-incompatible-with-pass validation failure.
 #[test]
 fn triangle_fixture_agrees_with_the_renderer_sample_count() {
@@ -110,18 +105,13 @@ fn triangle_fixture_agrees_with_the_renderer_sample_count() {
         return;
     };
     let log = CallLog::new();
-    let sample_count = harness.renderer.resources().shared_bindings().sample_count;
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.9, 0.9],
-    );
+    let sample_count = harness.renderer.resources().sample_count();
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.9, 0.9]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     log.assert_take(&[&format!("init_gpu:samples={sample_count}")]);
 }
@@ -141,17 +131,12 @@ fn triangle_fixture_is_dispatched_by_the_shadow_pass() {
             return;
         };
         let log = CallLog::new();
-        let plugin = TriangleItemTypePlugin::new(
-            harness.renderer.resources(),
-            &harness.device,
-            log.clone(),
-            TYPE_NAME,
-            glam::Vec3::ZERO,
-            [0.9, 0.9, 0.9],
-        );
+        let plugin =
+            TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.9, 0.9]);
         harness
             .renderer
-            .with_item_type_plugin(&harness.device, Box::new(plugin));
+            .with_item_type_plugin(&harness.device, Box::new(plugin))
+            .unwrap();
 
         let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
         frame.scene.lights = vec![LightSource::directional_lux(
@@ -193,17 +178,12 @@ fn triangle_fixture_draws_into_the_pick_pass() {
         return;
     };
     let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.9, 0.9],
-    );
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.9, 0.9]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     frame
@@ -253,17 +233,12 @@ fn triangle_fixture_draws_from_the_encode_hook() {
         return;
     };
     let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.2, 0.2],
-    );
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.2, 0.2]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -312,17 +287,12 @@ fn a_hidden_item_draws_nothing_from_the_encode_hook() {
         return;
     };
     let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.2, 0.2],
-    );
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.2, 0.2]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -356,17 +326,12 @@ fn triangle_fixture_draws_from_the_depth_read_pass() {
         return;
     };
     let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.2, 0.2],
-    );
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.2, 0.2]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     let empty = harness.render(&frame, SIZE, SIZE);
@@ -403,17 +368,12 @@ fn every_draw_hook_survives_supersampling() {
         return;
     };
     let log = CallLog::new();
-    let plugin = TriangleItemTypePlugin::new(
-        harness.renderer.resources(),
-        &harness.device,
-        log.clone(),
-        TYPE_NAME,
-        glam::Vec3::ZERO,
-        [0.9, 0.2, 0.2],
-    );
+    let plugin =
+        TriangleItemTypePlugin::new(log.clone(), TYPE_NAME, glam::Vec3::ZERO, [0.9, 0.2, 0.2]);
     harness
         .renderer
-        .with_item_type_plugin(&harness.device, Box::new(plugin));
+        .with_item_type_plugin(&harness.device, Box::new(plugin))
+        .unwrap();
 
     // Each hook draws its triangle in its own third of the frame: depth-read on
     // the left, opaque in the middle, encode on the right.

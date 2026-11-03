@@ -145,9 +145,145 @@ fn build(r: &PointCloudRecipe, i: usize) -> gpu::RenderPipeline {
     }
 }
 
+/// Channel sets the stream path draws: no per-point colour, scalars or RGBA,
+/// each with or without per-point radii and transparencies.
+pub(super) const STREAM_VARIANTS: usize = 12;
+
+/// The stream variant for a cloud's channels. Scalars and colours are never
+/// both present; scalars win, as in the shader.
+pub(crate) fn stream_key(scalars: bool, colours: bool, radius: bool, transparency: bool) -> usize {
+    let colour = if scalars {
+        1
+    } else if colours {
+        2
+    } else {
+        0
+    };
+    colour * 4 + (radius as usize) * 2 + transparency as usize
+}
+
+/// The stream path's shader body: the common shading and one vertex entry
+/// point per channel set, `vs_stream_<key>`, each reading its channels as
+/// instance-stepped attributes at fixed locations (scalar 1, colour 2,
+/// radius 3, transparency 4).
+pub(crate) fn stream_shader_body() -> String {
+    let mut out = String::from(wgsl_source!("point_cloud_common"));
+    for key in 0..STREAM_VARIANTS {
+        let (colour, radius, transparency) = (key / 4, key & 2 != 0, key & 1 != 0);
+        let mut args = String::from("@location(0) position: vec3<f32>");
+        if colour == 1 {
+            args.push_str(", @location(1) scalar: f32");
+        }
+        if colour == 2 {
+            args.push_str(", @location(2) colour: vec4<f32>");
+        }
+        if radius {
+            args.push_str(", @location(3) radius: f32");
+        }
+        if transparency {
+            args.push_str(", @location(4) transparency: f32");
+        }
+        let scalar = if colour == 1 { "scalar" } else { "0.0" };
+        let colour = if colour == 2 {
+            "colour"
+        } else {
+            "vec4<f32>(0.0)"
+        };
+        let radius = if radius { "radius" } else { "0.0" };
+        let transparency = if transparency { "transparency" } else { "1.0" };
+        out.push_str(&format!(
+            "\n@vertex\nfn vs_stream_{key}({args}, @builtin(vertex_index) vertex_index: u32) -> VertexOut {{\n    \
+             return expand_point(PointInputs(position, {scalar}, {colour}, {radius}, {transparency}), vertex_index);\n}}\n"
+        ));
+    }
+    out
+}
+
+/// What a stream pipeline build reads.
+pub(super) struct PointCloudStreamRecipe {
+    device: gpu::Device,
+    layout: gpu::PipelineLayout,
+    shader: viewport_lib::plugin_api::LazyModule,
+    ldr_format: gpu::TextureFormat,
+}
+
+/// The LDR colour pipeline per channel set, each built the first time a cloud
+/// with that set draws.
+pub(super) type PointCloudStreamPipelines =
+    viewport_lib::plugin_api::LazyPipelines<PointCloudStreamRecipe, STREAM_VARIANTS>;
+
+const SCALAR_ATTRS: [gpu::VertexAttribute; 1] = [gpu::VertexAttribute {
+    offset: 0,
+    shader_location: 1,
+    format: gpu::VertexFormat::Float32,
+}];
+const COLOUR_ATTRS: [gpu::VertexAttribute; 1] = [gpu::VertexAttribute {
+    offset: 0,
+    shader_location: 2,
+    format: gpu::VertexFormat::Float32x4,
+}];
+const RADIUS_ATTRS: [gpu::VertexAttribute; 1] = [gpu::VertexAttribute {
+    offset: 0,
+    shader_location: 3,
+    format: gpu::VertexFormat::Float32,
+}];
+const TRANSPARENCY_ATTRS: [gpu::VertexAttribute; 1] = [gpu::VertexAttribute {
+    offset: 0,
+    shader_location: 4,
+    format: gpu::VertexFormat::Float32,
+}];
+
+fn instance_layout(
+    stride: u64,
+    attributes: &'static [gpu::VertexAttribute],
+) -> gpu::VertexBufferLayout<'static> {
+    gpu::VertexBufferLayout {
+        array_stride: stride,
+        step_mode: gpu::VertexStepMode::Instance,
+        attributes,
+    }
+}
+
+fn build_stream(r: &PointCloudStreamRecipe, key: usize) -> gpu::RenderPipeline {
+    let mut buffers = vec![position_layout()];
+    match key / 4 {
+        1 => buffers.push(instance_layout(4, &SCALAR_ATTRS)),
+        2 => buffers.push(instance_layout(16, &COLOUR_ATTRS)),
+        _ => {}
+    }
+    if key & 2 != 0 {
+        buffers.push(instance_layout(4, &RADIUS_ATTRS));
+    }
+    if key & 1 != 0 {
+        buffers.push(instance_layout(4, &TRANSPARENCY_ATTRS));
+    }
+    builders::build_dual_pipeline_variant(
+        &r.device,
+        &builders::DualPipelineDesc {
+            label: "point_cloud_stream_pipeline",
+            layout: &r.layout,
+            shader: r.shader.get(),
+            vertex_entry: &format!("vs_stream_{key}"),
+            fragment_entry: "fs_main",
+            vertex_buffers: &buffers,
+            blend: Some(gpu::BlendState::ALPHA_BLENDING),
+            topology: gpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            depth_write: true,
+            depth_compare: gpu::CompareFunction::Less,
+            sample_count: 1,
+            ldr_format: r.ldr_format,
+        },
+        false,
+    )
+}
+
 /// Pipelines and layouts, made on the first prepare with items.
 pub(super) struct PointCloudGpu {
     pub(super) pipelines: PointCloudPipelines,
+    /// The colour pipelines of the stream path, on a device without vertex
+    /// storage. `pipelines` then serves only the selection mask.
+    pub(super) streams: Option<PointCloudStreamPipelines>,
     pub(super) pick_id_bgl: gpu::BindGroupLayout,
     /// Group 1 of the outline mask pipeline: the single uniform
     /// `point_disc_mask.wgsl` reads.
@@ -173,6 +309,15 @@ pub(super) struct PointCloudOutline {
     pub(super) bind_group: gpu::BindGroup,
 }
 
+/// The storage path's shader body: the common shading and `vs_main`, which
+/// reads the channels from storage buffers.
+pub(crate) fn storage_shader_body() -> String {
+    let mut out = String::from(wgsl_source!("point_cloud_common"));
+    out.push('\n');
+    out.push_str(wgsl_source!("point_cloud"));
+    out
+}
+
 /// Position per instance, the vertex layout the render and pick pipelines share.
 const POSITION_ATTRS: [gpu::VertexAttribute; 1] = [gpu::VertexAttribute {
     offset: 0,
@@ -193,18 +338,34 @@ impl PointCloudGpu {
         device: &gpu::Device,
         resources: &DeviceResources,
         bgl: &gpu::BindGroupLayout,
+        streams: bool,
     ) -> Self {
         let shader = resources.lazy_module(
             device,
             "point_cloud_shader",
-            &scene_shader(&[], wgsl_source!("point_cloud")),
+            &scene_shader(&[], &storage_shader_body()),
         );
         let layout = builders::standard_scene_layout(
             device,
             "point_cloud_pipeline_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             bgl,
         );
+        let streams = streams.then(|| {
+            resources.lazy_pipelines(
+                PointCloudStreamRecipe {
+                    device: device.clone(),
+                    layout: layout.clone(),
+                    shader: resources.lazy_module(
+                        device,
+                        "point_cloud_stream_shader",
+                        &scene_shader(&[], &stream_shader_body()),
+                    ),
+                    ldr_format: resources.target_format(),
+                },
+                build_stream,
+            )
+        });
         // Group 2 of the pick pipeline: the item's object id.
         let pick_id_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("point_cloud_pick_id_bgl"),
@@ -241,7 +402,7 @@ impl PointCloudGpu {
         let mask_layout = builders::pipeline_layout(
             device,
             "point_cloud_outline_mask_layout",
-            &[resources.shared_bindings().group0_layout, &mask_bgl],
+            &[resources.group0_layout(), &mask_bgl],
         );
         let pipelines = resources.lazy_pipelines(
             PointCloudRecipe {
@@ -262,6 +423,7 @@ impl PointCloudGpu {
 
         Self {
             pipelines,
+            streams,
             pick_id_bgl,
             mask_bgl,
         }
@@ -271,7 +433,10 @@ impl PointCloudGpu {
     /// mask and pick passes wait for it, so a cloud is never outlined or picked
     /// before it is drawn.
     pub(super) fn drawn(&self) -> bool {
-        self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR)
+        match &self.streams {
+            Some(streams) => (0..STREAM_VARIANTS).any(|key| streams.available(key)),
+            None => self.pipelines.available(COLOUR_LDR) || self.pipelines.available(COLOUR_HDR),
+        }
     }
 
     /// Build the group-2 object-id bind group for one pickable item.

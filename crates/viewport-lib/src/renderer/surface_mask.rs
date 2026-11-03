@@ -231,7 +231,7 @@ fn build_mesh_pipeline(
     let layout = crate::resources::builders::pipeline_layout(
         device,
         "surface_mask_mesh_layout",
-        &[resources.shared_bindings().group0_layout],
+        &[resources.group0_layout()],
     );
     // Position only; the stride is the full mesh vertex.
     let vertex_layout = crate::gpu::VertexBufferLayout {

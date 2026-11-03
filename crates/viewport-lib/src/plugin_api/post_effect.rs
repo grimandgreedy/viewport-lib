@@ -81,8 +81,9 @@ pub struct PostEffectStageId(pub(crate) u64);
 ///
 /// Stages run in ascending order of the `i32` key given at registration;
 /// stages sharing a key run in registration order, with built-in stages
-/// first. Keys below [`ANTI_ALIASING`] run before the built-in FXAA (still
-/// on tone-mapped LDR input); keys above run after it.
+/// first. Keys below [`ANTI_ALIASING`](stage_order::ANTI_ALIASING) run
+/// before the built-in FXAA (still on tone-mapped LDR input); keys above run
+/// after it.
 pub mod stage_order {
     /// The built-in FXAA stage's position in the chain.
     pub const ANTI_ALIASING: i32 = 0;
@@ -166,6 +167,17 @@ pub trait PostEffectProducer: Send + Sync + 'static {
     /// Stable identifying name, used in diagnostics and pass labels.
     fn type_name(&self) -> &'static str;
 
+    /// What the producer needs from the device. Checked at registration: a
+    /// producer whose requirements the renderer's
+    /// [`Capabilities`](crate::Capabilities) do not meet is declined with
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported).
+    /// Defaults to the full tier, so a producer that binds more storage buffers
+    /// than [`Requirements::full_tier`](crate::Requirements::full_tier) names,
+    /// or more bind groups, should say so.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// The composite input this producer fills. Declared once; a producer
     /// contributes to exactly one slot.
     fn slot(&self) -> PostEffectSlot;
@@ -246,6 +258,17 @@ pub trait PostEffectProducer: Send + Sync + 'static {
 pub trait PostEffectStage: Send + Sync + 'static {
     /// Stable identifying name, used in diagnostics and pass labels.
     fn type_name(&self) -> &'static str;
+
+    /// What the stage needs from the device. Checked at registration: a
+    /// stage whose requirements the renderer's
+    /// [`Capabilities`](crate::Capabilities) do not meet is declined with
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported).
+    /// Defaults to the full tier, so a stage that binds more storage buffers
+    /// than [`Requirements::full_tier`](crate::Requirements::full_tier) names,
+    /// or more bind groups, should say so.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
 
     /// Whether the stage runs this frame. Stages carry their own settings;
     /// the host mutates them through its own handle to the stage's state.

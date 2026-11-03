@@ -56,7 +56,6 @@ pub(crate) use crate::resources::postprocess::uniforms::DofUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ShadowAtlasUniform;
 pub(crate) use crate::resources::postprocess::uniforms::SsaoUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ToneMapUniform;
-pub use crate::resources::scivis::polyline::PolylineGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetChunk;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetUniform;

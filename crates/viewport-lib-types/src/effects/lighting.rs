@@ -384,7 +384,7 @@ pub enum ShadowFilter {
 ///
 /// Supports up to 8 light sources; each casts shadows when its `cast_shadows`
 /// flag is set. Blinn-Phong shading coefficients (ambient, diffuse, specular,
-/// shininess) have moved to per-object [`Material`] structs.
+/// shininess) have moved to per-object [`Material`](crate::material::Material) structs.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -482,6 +482,9 @@ impl LightingSettings {
     /// `EffectsFrame::with_posture` with
     /// `LightingPosture::PhysicalDaylight`; pair them by
     /// hand only when you need a non-default exposure:
+    ///
+    /// [`ExposureSettings::automatic`]: crate::effects::postprocess::ExposureSettings::automatic
+    /// [`ExposureSettings::physical`]: crate::effects::postprocess::ExposureSettings::physical
     ///
     /// ```
     /// # use viewport_lib_types::effects::lighting::LightingSettings;

@@ -148,6 +148,10 @@ pub use viewport_lib_input as vpli;
 /// Error types for the viewport library.
 pub mod error;
 
+/// What a device can do, the tier the renderer runs at on it, and what a
+/// plugin needs.
+pub mod capabilities;
+
 mod util;
 
 /// Arcball camera, frustum, view presets, and animator.
@@ -217,6 +221,7 @@ pub use scene::traits;
 // re-export it too so the caller can name it without a deep import.
 // ---------------------------------------------------------------------------
 
+pub use capabilities::{Capabilities, Requirements, Tier};
 pub use error::{ViewportError, ViewportResult};
 
 pub use plugin_api::{
@@ -361,7 +366,7 @@ pub use resources::mesh::mesh_store::MeshId;
 pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use resources::volume::volume_mesh::{
     CELL_SENTINEL, ConversionReport, GridCells, ToTetMeshError, VolumeMeshData,
-    extract_clipped_volume_faces,
+    extract_clipped_volume_faces, extract_volume_mesh_isosurface,
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

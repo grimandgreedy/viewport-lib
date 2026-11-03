@@ -1,6 +1,6 @@
 //! Generational handles for GPU content.
 //!
-//! The handle machinery ([`ContentHandle`] and [`slot_handle!`]) lives here;
+//! The handle machinery ([`ContentHandle`] and `slot_handle!`) lives here;
 //! the individual handle types are defined in the domain submodules and
 //! re-exported.
 //!
@@ -11,7 +11,7 @@
 //! A stale handle then resolves to nothing rather than aliasing whatever now
 //! occupies the slot.
 //!
-//! [`slot_handle!`] generates one of these handle types with the standard
+//! `slot_handle!` generates one of these handle types with the standard
 //! surface (an `INVALID` sentinel, `index`, and a private `new`), so every
 //! content handle looks and behaves the same. [`ContentHandle`] is the common
 //! interface over them.

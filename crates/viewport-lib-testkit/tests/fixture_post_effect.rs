@@ -65,7 +65,8 @@ fn producer_fixture_lifecycle() {
             log.clone(),
             PostEffectSlot::Bloom,
             enabled.clone(),
-        )));
+        )))
+        .unwrap();
 
     let frame = probe_frame(SIZE, [0.3, 0.3, 0.3, 1.0]);
     harness.render(&frame, SIZE, SIZE);
@@ -105,14 +106,17 @@ fn producer_fixture_fills_its_slot() {
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         if with_producer {
-            harness.renderer.add_post_effect_producer(Box::new(
-                LoggingPostEffectProducer::new(
-                    CallLog::new(),
-                    PostEffectSlot::AmbientOcclusion,
-                    Arc::new(AtomicBool::new(true)),
-                )
-                .filling(0.25),
-            ));
+            harness
+                .renderer
+                .add_post_effect_producer(Box::new(
+                    LoggingPostEffectProducer::new(
+                        CallLog::new(),
+                        PostEffectSlot::AmbientOcclusion,
+                        Arc::new(AtomicBool::new(true)),
+                    )
+                    .filling(0.25),
+                ))
+                .unwrap();
         }
         let frame = quad_frame(&mut harness);
         harness.render(&frame, SIZE, SIZE)
@@ -145,16 +149,19 @@ fn stage_fixture_is_in_the_image_path() {
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         if with_stage {
-            harness.renderer.add_post_effect_stage(
-                Box::new(PassthroughPostEffectStage::new(
-                    &device,
-                    log.clone(),
-                    "half",
-                    0.5,
-                    Arc::new(AtomicBool::new(true)),
-                )),
-                stage_order::EXTERNAL_DEFAULT,
-            );
+            harness
+                .renderer
+                .add_post_effect_stage(
+                    Box::new(PassthroughPostEffectStage::new(
+                        &device,
+                        log.clone(),
+                        "half",
+                        0.5,
+                        Arc::new(AtomicBool::new(true)),
+                    )),
+                    stage_order::EXTERNAL_DEFAULT,
+                )
+                .unwrap();
         }
         let frame = quad_frame(&mut harness);
         harness.render(&frame, SIZE, SIZE)
@@ -202,26 +209,32 @@ fn stage_fixtures_chain_in_order_key_order() {
 
     // Registered in reverse of chain order so the ordering cannot come from
     // registration order.
-    harness.renderer.add_post_effect_stage(
-        Box::new(PassthroughPostEffectStage::new(
-            &device,
-            log.clone(),
-            "second",
-            0.5,
-            second_enabled.clone(),
-        )),
-        stage_order::EXTERNAL_DEFAULT + 10,
-    );
-    harness.renderer.add_post_effect_stage(
-        Box::new(PassthroughPostEffectStage::new(
-            &device,
-            log.clone(),
-            "first",
-            1.0,
-            Arc::new(AtomicBool::new(true)),
-        )),
-        stage_order::EXTERNAL_DEFAULT,
-    );
+    harness
+        .renderer
+        .add_post_effect_stage(
+            Box::new(PassthroughPostEffectStage::new(
+                &device,
+                log.clone(),
+                "second",
+                0.5,
+                second_enabled.clone(),
+            )),
+            stage_order::EXTERNAL_DEFAULT + 10,
+        )
+        .unwrap();
+    harness
+        .renderer
+        .add_post_effect_stage(
+            Box::new(PassthroughPostEffectStage::new(
+                &device,
+                log.clone(),
+                "first",
+                1.0,
+                Arc::new(AtomicBool::new(true)),
+            )),
+            stage_order::EXTERNAL_DEFAULT,
+        )
+        .unwrap();
 
     let frame = quad_frame(&mut harness);
     let both = harness.render(&frame, SIZE, SIZE);

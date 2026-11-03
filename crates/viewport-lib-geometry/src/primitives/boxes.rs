@@ -136,7 +136,7 @@ fn box_unwrap_uvs() -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// Unit cube with a **box-unwrap** UV layout ([`box_unwrap_uvs`]).
+/// Unit cube with a **box-unwrap** UV layout (`box_unwrap_uvs`).
 ///
 /// Geometry is identical to [`cube`]; only the UVs differ. Where [`cube`]'s six
 /// faces share one `[0,1]x[0,1]` square (so a texture repeats identically on every

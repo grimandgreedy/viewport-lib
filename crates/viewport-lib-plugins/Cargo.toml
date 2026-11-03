@@ -28,6 +28,9 @@ parry3d = { version = "0.26", optional = true }
 
 [dev-dependencies]
 viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
+# naga's GLSL writer, the path wgpu's GL backend takes, for the compatibility-tier
+# shader test. Version 27 matches the default leg.
+naga = { version = "27", features = ["wgsl-in", "glsl-out"] }
 
 [features]
 default = ["gpu", "wgpu27", "item-types", "deformers"]

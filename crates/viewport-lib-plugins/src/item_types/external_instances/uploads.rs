@@ -36,12 +36,14 @@ impl ExternalInstanceUploads for ViewportRenderer {
         device: &gpu::Device,
         config: &ExternalInstanceSetConfig,
     ) -> viewport_lib::error::ViewportResult<ExternalInstanceSetId> {
-        let host = host::<ExternalInstancesPlugin>(self, TYPE_NAME);
+        let host = host::<ExternalInstancesPlugin>(self, TYPE_NAME)?;
         host.plugin.create_set(device, host.resources, config)
     }
 
     fn drop_external_instance_set(&mut self, id: ExternalInstanceSetId) {
-        plugin_mut::<ExternalInstancesPlugin>(self, TYPE_NAME).drop_set(id)
+        if let Ok(plugin) = plugin_mut::<ExternalInstancesPlugin>(self, TYPE_NAME) {
+            plugin.drop_set(id);
+        }
     }
 
     fn set_external_instance_set_buffer(
@@ -49,6 +51,6 @@ impl ExternalInstanceUploads for ViewportRenderer {
         id: ExternalInstanceSetId,
         positions: gpu::Buffer,
     ) -> viewport_lib::error::ViewportResult<()> {
-        plugin_mut::<ExternalInstancesPlugin>(self, TYPE_NAME).set_buffer(id, positions)
+        plugin_mut::<ExternalInstancesPlugin>(self, TYPE_NAME)?.set_buffer(id, positions)
     }
 }

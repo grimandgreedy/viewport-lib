@@ -15,7 +15,7 @@ impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
         queue: &gpu::Queue,
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
-        plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME).upload(device, queue, data)
+        plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME)?.upload(device, queue, data)
     }
 
     fn begin_upload(
@@ -24,7 +24,7 @@ impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
         queue: &gpu::Queue,
         data: GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
-        let host = host::<GaussianSplatPlugin>(self, TYPE_NAME);
+        let host = host::<GaussianSplatPlugin>(self, TYPE_NAME)?;
         host.plugin.begin_upload(&host.jobs, device, queue, data)
     }
 
@@ -35,7 +35,7 @@ impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
         id: GaussianSplatId,
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<()> {
-        plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME).replace(device, queue, id, data)
+        plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME)?.replace(device, queue, id, data)
     }
 }
 
@@ -44,12 +44,12 @@ impl viewport_lib::plugin_api::Handles<GaussianSplatId> for ViewportRenderer {
         &mut self,
         job: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
-        let host = host::<GaussianSplatPlugin>(self, TYPE_NAME);
+        let host = host::<GaussianSplatPlugin>(self, TYPE_NAME)?;
         host.plugin.take_upload_result(&host.jobs, job)
     }
 
     fn release(&mut self, id: GaussianSplatId) -> bool {
-        plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME).free(id)
+        plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME).is_ok_and(|p| p.free(id))
     }
 }
 
@@ -71,7 +71,7 @@ macro_rules! splat_writes {
             ) -> viewport_lib::error::ViewportResult<()> {
                 let bytes: std::borrow::Cow<'_, [u8]> = $encode(data);
                 let mirror: Option<&[[f32; 3]]> = $mirror(data);
-                plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME).write_channel(
+                plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME)?.write_channel(
                     queue,
                     id,
                     SplatChannel::$variant,
@@ -90,7 +90,7 @@ macro_rules! splat_writes {
                 id: GaussianSplatId,
                 capacity: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME)
+                plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME)?
                     .reserve_stored(device, queue, id, capacity)
             }
 
@@ -100,7 +100,7 @@ macro_rules! splat_writes {
                 id: GaussianSplatId,
                 len: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME).set_stored_len(id, len)
+                plugin_mut::<GaussianSplatPlugin>(self, TYPE_NAME)?.set_stored_len(id, len)
             }
 
             fn extent(

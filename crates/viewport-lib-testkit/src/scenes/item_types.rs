@@ -318,9 +318,17 @@ fn build_vector_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         }
     }
     field.scale = 0.6;
+    field.settings.pick_id = PickId(1624);
+
+    // A second, selected item so the outline pass has coverage.
+    let mut sel = VectorFieldItem::new(shape);
+    sel.positions.push([-0.6, 0.0, 1.2]);
+    sel.vectors.push([1.0, 0.0, 0.0]);
+    sel.scale = 2.0;
+    sel.settings.selected = true;
 
     BuiltScene {
-        vector_fields: vec![field],
+        vector_fields: vec![field, sel],
         lighting: rigs::from_above(),
         ..Default::default()
     }
@@ -706,7 +714,8 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     };
     let system = ctx
         .renderer
-        .create_gpu_particle_system(ctx.device, ctx.queue, &config);
+        .create_gpu_particle_system(ctx.device, ctx.queue, &config)
+        .expect("gpu particles are registered");
 
     let mut item =
         viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem::new(system, 0.4);
@@ -796,6 +805,15 @@ fn build_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     v.enable_shading = true;
     v.settings.pick_id = PickId(1606);
     v.settings.selected = true;
+    // The CPU copy the voxel pick reads, over the same box.
+    v.volume_data = Some(std::sync::Arc::new(
+        viewport_lib::geometry::volume::grid::VolumeData {
+            data,
+            dims,
+            origin: v.bbox_min,
+            spacing: [2.4 / (dims[0] - 1) as f32; 3],
+        },
+    ));
     BuiltScene {
         volumes: vec![v],
         lighting: rigs::from_above(),
@@ -979,7 +997,9 @@ fn build_gpu_marching_cubes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             isovalue: 0.0,
             material,
             settings,
-            cpu_data: None,
+            // Carried so the CPU pick paths, the only ones below the full
+            // tier, reach the surface.
+            cpu_data: Some(std::sync::Arc::new(vol)),
         }],
         lighting: rigs::grazing(),
         ..Default::default()

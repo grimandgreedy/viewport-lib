@@ -1,7 +1,7 @@
 //! Body-attached first-person camera controller.
 //!
 //! [`FirstPersonCameraController`] drives the look direction of a host-owned
-//! [`Camera`] from the resolved [`ActionFrame`] and attaches the eye to a
+//! [`Camera`](crate::Camera) from the resolved [`ActionFrame`](crate::input::ActionFrame) and attaches the eye to a
 //! world-space position supplied each frame (typically a player body from
 //! physics). Look is held as [`LookAngles`](crate::LookAngles): explicit `yaw`
 //! and `pitch`, so clamping is clean and the movement basis is cheap to derive.

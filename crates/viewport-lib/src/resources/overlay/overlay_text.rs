@@ -23,8 +23,8 @@ impl crate::resources::DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        // binding 0: glyph atlas texture, binding 1: sampler, binding 2: clip-shape
-        // storage buffer (shared clip model, evaluated per fragment).
+        // binding 0: glyph atlas texture, binding 1: sampler, binding 2: the
+        // clip-shape uniform array (shared clip model, evaluated per fragment).
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_text_bgl"),
             entries: &[
@@ -44,21 +44,7 @@ impl crate::resources::DeviceResources {
                     ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<
-                                crate::resources::ClipShapeGpu,
-                            >() as u64)
-                            .unwrap(),
-                        ),
-                    },
-                    count: None,
-                },
+                crate::resources::overlay::overlay_shape::clip_shapes_entry(2),
                 // binding 3: viewport-size uniform (logical w, h). The vertex
                 // shader maps local-pixel positions to NDC with it.
                 crate::gpu::BindGroupLayoutEntry {
@@ -66,19 +52,6 @@ impl crate::resources::DeviceResources {
                     visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 4: per-draw instance data (translate, opacity, clip),
-                // indexed by the draw's instance index. Slot 0 is the identity used
-                // by immediate draws; retained groups use their own slot.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -106,7 +79,15 @@ impl crate::resources::DeviceResources {
                 layout: &layout,
                 vertex_module: &shader,
                 vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayTextVertex::buffer_layout()],
+                // The per-draw instance is a second, per-instance stream: slot 0
+                // is the identity immediate draws use, retained groups draw over
+                // their own slot.
+                vertex_buffers: &[
+                    OverlayTextVertex::buffer_layout(),
+                    crate::resources::OverlayInstance::buffer_layout(
+                        &crate::resources::overlay::geometry::TEXT_INSTANCE_ATTRIBUTES,
+                    ),
+                ],
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
@@ -162,7 +143,7 @@ pub(crate) struct OverlayTextVertex {
     pub colour: [f32; 4],
     /// 1.0 = sample glyph atlas alpha, 0.0 = solid colour.
     pub use_texture: f32,
-    /// Index into the frame's clip-shape storage buffer, or `-1.0` for no clip.
+    /// Index into the frame's clip-shape array, or `-1.0` for no clip.
     /// Selects the mask whose SDF (and parent chain) clips this vertex.
     pub clip_index: f32,
     /// Bounding-box clip in framebuffer pixels `[x0, y0, x1, y1]`; all-zero means
@@ -242,11 +223,7 @@ pub(crate) struct LabelGpuData {
     pub vertex_count: u32,
     /// Bind group referencing the glyph atlas texture, sampler, and clip buffer.
     pub bind_group: crate::gpu::BindGroup,
-    /// Backing clip-shape storage buffer for `bind_group` (binding 2). Kept alive
+    /// Backing clip-shape uniform for `bind_group` (binding 2). Kept alive
     /// alongside it.
     pub _clip_buf: crate::gpu::Buffer,
-    /// Per-draw instance storage buffer for `bind_group` (binding 4): the identity
-    /// instance at slot 0 plus one per retained group this frame. Kept alive
-    /// alongside the bind group; retained draws index into it.
-    pub _instances_buf: crate::gpu::Buffer,
 }

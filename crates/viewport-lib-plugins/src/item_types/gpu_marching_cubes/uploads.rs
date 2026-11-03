@@ -33,7 +33,7 @@ pub trait McVolumes {
         device: &gpu::Device,
         queue: &gpu::Queue,
         vol: viewport_lib_geometry::volume::grid::VolumeData,
-    ) -> viewport_lib::resources::JobId;
+    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId>;
 
     /// Feed a volume from a caller-supplied buffer, refreshed before every
     /// dispatch so the isosurface tracks it with no CPU upload.
@@ -64,7 +64,7 @@ impl McVolumes for ViewportRenderer {
         queue: &gpu::Queue,
         vol: &viewport_lib_geometry::volume::grid::VolumeData,
     ) -> viewport_lib::error::ViewportResult<McVolumeId> {
-        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME).upload(device, queue, vol)
+        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME)?.upload(device, queue, vol)
     }
 
     fn begin_upload_volume_for_mc(
@@ -72,9 +72,9 @@ impl McVolumes for ViewportRenderer {
         device: &gpu::Device,
         queue: &gpu::Queue,
         vol: viewport_lib_geometry::volume::grid::VolumeData,
-    ) -> viewport_lib::resources::JobId {
-        let host = host::<GpuMarchingCubesPlugin>(self, TYPE_NAME);
-        host.plugin.begin_upload(&host.jobs, device, queue, vol)
+    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
+        let host = host::<GpuMarchingCubesPlugin>(self, TYPE_NAME)?;
+        Ok(host.plugin.begin_upload(&host.jobs, device, queue, vol))
     }
 
     fn set_mc_scalar_source_buffer(
@@ -83,7 +83,7 @@ impl McVolumes for ViewportRenderer {
         buffer: gpu::Buffer,
         offset_bytes: u64,
     ) -> viewport_lib::error::ViewportResult<()> {
-        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME).set_scalar_source(
+        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME)?.set_scalar_source(
             id,
             buffer,
             offset_bytes,
@@ -94,7 +94,7 @@ impl McVolumes for ViewportRenderer {
         &mut self,
         id: McVolumeId,
     ) -> viewport_lib::error::ViewportResult<()> {
-        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME).clear_scalar_source(id)
+        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME)?.clear_scalar_source(id)
     }
 }
 
@@ -103,11 +103,11 @@ impl viewport_lib::plugin_api::Handles<McVolumeId> for ViewportRenderer {
         &mut self,
         job: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<McVolumeId> {
-        let host = host::<GpuMarchingCubesPlugin>(self, TYPE_NAME);
+        let host = host::<GpuMarchingCubesPlugin>(self, TYPE_NAME)?;
         host.plugin.take_upload_result(&host.jobs, job)
     }
 
     fn release(&mut self, id: McVolumeId) -> bool {
-        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME).free(id)
+        plugin_mut::<GpuMarchingCubesPlugin>(self, TYPE_NAME).is_ok_and(|p| p.free(id))
     }
 }

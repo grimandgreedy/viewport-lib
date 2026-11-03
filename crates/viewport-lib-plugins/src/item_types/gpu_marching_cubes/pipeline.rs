@@ -129,13 +129,10 @@ fn build(r: &McRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                 "vs_main",
                 "",
                 &[MC_SURFACE_VERTEX_LAYOUT],
-            );
-            opts.primitive.cull_mode = None;
+            )
+            // The isosurface is an open, thin shell.
+            .shadow_caster(viewport_lib::plugin_api::ShadowCaster::TwoSided);
             opts.depth_compare = viewport_lib::gpu::CompareFunction::Less;
-            // The isosurface is an open, thin shell, so it self-shadows badly
-            // under the mild default. Same bias the lib uses where the shadow
-            // pass does not cull.
-            opts.depth_bias = Some(viewport_lib::plugin_api::builders::CSM_SHADOW_BIAS_TWO_SIDED);
             r.builder.build_shadow_pipeline(&r.device, &opts)
         }
         // Outline mask: the generated vertex buffer rasterised into the R8
@@ -214,6 +211,14 @@ fn build_compute(r: &McComputeRecipe, i: usize) -> viewport_lib::gpu::ComputePip
         layout,
         shader.get(),
         "main",
+    )
+}
+
+/// The triangle surface's shader: the shared shading, then its entry points.
+pub(crate) fn surface_source() -> String {
+    lit_shader(
+        &[shared_wgsl::SHARED_CSM_WGSL, shared_wgsl::SHARED_CLIP_WGSL],
+        &[wgsl_source!("mc_shading"), wgsl_source!("mc_surface")].join("\n"),
     )
 }
 
@@ -360,15 +365,11 @@ impl McGpu {
         // ----------------------------------------------------------------
         // Surface render pipeline.
         // ----------------------------------------------------------------
-        let surface_shader = resources.lazy_module(
-            device,
-            "mc_surface_shader",
-            &lit_shader(&[shared_wgsl::SHARED_CSM_WGSL], wgsl_source!("mc_surface")),
-        );
+        let surface_shader = resources.lazy_module(device, "mc_surface_shader", surface_source());
         let surface_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "mc_surface_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &render_bgl,
         );
 
@@ -401,7 +402,7 @@ impl McGpu {
         let wireframe_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
             "mc_wireframe_layout",
-            resources.shared_bindings().group0_layout,
+            resources.group0_layout(),
             &wireframe_render_bgl,
         );
         let mask_shader = resources.lazy_module(
@@ -475,11 +476,13 @@ impl McGpu {
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
         pick_id: PickId,
+        ignore_clip: bool,
     ) -> Option<(viewport_lib::gpu::Buffer, viewport_lib::gpu::BindGroup)> {
         if pick_id == PickId::NONE {
             return None;
         }
-        let id_data: [u32; 4] = [pick_id.0 as u32, 0, 0, 0];
+        // `.y` is `ItemSettings::ignore_clip`, read by the pick's clip test.
+        let id_data: [u32; 4] = [pick_id.0 as u32, ignore_clip as u32, 0, 0];
         let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some("mc_pick_id_buf"),
             size: std::mem::size_of_val(&id_data) as u64,
@@ -573,14 +576,7 @@ impl McGpu {
             // ----------------------------------------------------------
             // Per-item surface material (one bind group shared by all slabs).
             // ----------------------------------------------------------
-            let mat_raw = McSurfaceRaw {
-                base_colour: job.material.base_colour.to_linear_rgb(),
-                roughness: job.material.roughness,
-                unlit: job.settings.unlit as u32,
-                opacity: job.settings.opacity,
-                ambient: job.material.ambient,
-                receive_shadows: job.settings.receive_shadows as u32,
-            };
+            let mat_raw = McSurfaceRaw::for_item(job);
             let mat_buf =
                 device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
                     label: Some("mc_surface_mat"),
@@ -1006,9 +1002,10 @@ struct GenerateParams {
     _pad1: f32,
 }
 
+/// `McSurfaceUniform` in mc_shading.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct McSurfaceRaw {
+pub(super) struct McSurfaceRaw {
     base_colour: [f32; 3],
     roughness: f32,
     unlit: u32,
@@ -1020,4 +1017,24 @@ struct McSurfaceRaw {
     /// darker on its shadowed side than an equivalent regular mesh.
     ambient: f32,
     receive_shadows: u32,
+    /// `ItemSettings::ignore_clip`: the item takes no part in clipping.
+    ignore_clip: u32,
+    /// The WGSL struct rounds up to 48 bytes.
+    _pad: [u32; 3],
+}
+
+impl McSurfaceRaw {
+    /// The shading block for one item's material and settings.
+    pub(super) fn for_item(job: &GpuMarchingCubesItem) -> Self {
+        Self {
+            base_colour: job.material.base_colour.to_linear_rgb(),
+            roughness: job.material.roughness,
+            unlit: job.settings.unlit as u32,
+            opacity: job.settings.opacity,
+            ambient: job.material.ambient,
+            receive_shadows: job.settings.receive_shadows as u32,
+            ignore_clip: job.settings.ignore_clip as u32,
+            _pad: [0; 3],
+        }
+    }
 }

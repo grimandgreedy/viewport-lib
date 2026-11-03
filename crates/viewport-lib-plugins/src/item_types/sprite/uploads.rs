@@ -23,7 +23,7 @@ macro_rules! sprite_writes {
                 data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
             ) -> viewport_lib::error::ViewportResult<()> {
                 let bytes = $encode(data);
-                plugin_mut::<SpritePlugin>(self, TYPE_NAME).write_set_channel(
+                plugin_mut::<SpritePlugin>(self, TYPE_NAME)?.write_set_channel(
                     queue,
                     id,
                     $positions,
@@ -40,7 +40,8 @@ macro_rules! sprite_writes {
                 id: SpriteSetId,
                 capacity: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<SpritePlugin>(self, TYPE_NAME).reserve_set(device, queue, id, capacity)
+                plugin_mut::<SpritePlugin>(self, TYPE_NAME)?
+                    .reserve_set(device, queue, id, capacity)
             }
 
             fn set_len(
@@ -49,7 +50,7 @@ macro_rules! sprite_writes {
                 id: SpriteSetId,
                 len: u32,
             ) -> viewport_lib::error::ViewportResult<()> {
-                plugin_mut::<SpritePlugin>(self, TYPE_NAME).set_set_len(id, len)
+                plugin_mut::<SpritePlugin>(self, TYPE_NAME)?.set_set_len(id, len)
             }
 
             fn extent(
@@ -84,7 +85,7 @@ impl viewport_lib::plugin_api::Uploads<SpriteItem> for ViewportRenderer {
         queue: &gpu::Queue,
         item: &SpriteItem,
     ) -> viewport_lib::error::ViewportResult<SpriteSetId> {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
         Ok(host.plugin.upload_set(device, queue, host.resources, item))
     }
 
@@ -94,7 +95,7 @@ impl viewport_lib::plugin_api::Uploads<SpriteItem> for ViewportRenderer {
         queue: &gpu::Queue,
         item: SpriteItem,
     ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
         Ok(host
             .plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item))
@@ -107,7 +108,7 @@ impl viewport_lib::plugin_api::Uploads<SpriteItem> for ViewportRenderer {
         id: SpriteSetId,
         item: &SpriteItem,
     ) -> viewport_lib::error::ViewportResult<()> {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
         host.plugin
             .replace_set(device, queue, host.resources, id, item)
     }
@@ -118,12 +119,12 @@ impl viewport_lib::plugin_api::Handles<SpriteSetId> for ViewportRenderer {
         &mut self,
         job: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<SpriteSetId> {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
         host.plugin.take_set_result(&host.jobs, job)
     }
 
     fn release(&mut self, id: SpriteSetId) -> bool {
-        plugin_mut::<SpritePlugin>(self, TYPE_NAME).drop_set(id)
+        plugin_mut::<SpritePlugin>(self, TYPE_NAME).is_ok_and(|p| p.drop_set(id))
     }
 }
 
@@ -139,7 +140,7 @@ pub trait SpriteInstanceUploads {
         device: &gpu::Device,
         queue: &gpu::Queue,
         item: &SpriteItem,
-    ) -> SpriteInstanceSetId;
+    ) -> viewport_lib::error::ViewportResult<SpriteInstanceSetId>;
 
     /// Start an off-thread upload of an instance set.
     fn begin_upload_sprite_instance_set(
@@ -147,7 +148,7 @@ pub trait SpriteInstanceUploads {
         device: &gpu::Device,
         queue: &gpu::Queue,
         item: SpriteItem,
-    ) -> viewport_lib::resources::JobId;
+    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId>;
 
     /// Replace the sprites behind an instance-set handle, keeping the handle.
     fn replace_sprite_instance_set(
@@ -165,10 +166,11 @@ impl SpriteInstanceUploads for ViewportRenderer {
         device: &gpu::Device,
         queue: &gpu::Queue,
         item: &SpriteItem,
-    ) -> SpriteInstanceSetId {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
-        host.plugin
-            .upload_instance_set(device, queue, host.resources, item)
+    ) -> viewport_lib::error::ViewportResult<SpriteInstanceSetId> {
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
+        Ok(host
+            .plugin
+            .upload_instance_set(device, queue, host.resources, item))
     }
 
     fn begin_upload_sprite_instance_set(
@@ -176,10 +178,11 @@ impl SpriteInstanceUploads for ViewportRenderer {
         device: &gpu::Device,
         queue: &gpu::Queue,
         item: SpriteItem,
-    ) -> viewport_lib::resources::JobId {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
-        host.plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item)
+    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
+        Ok(host
+            .plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item))
     }
 
     fn replace_sprite_instance_set(
@@ -189,7 +192,7 @@ impl SpriteInstanceUploads for ViewportRenderer {
         id: SpriteInstanceSetId,
         item: &SpriteItem,
     ) -> viewport_lib::error::ViewportResult<()> {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
         host.plugin
             .replace_instance_set(device, queue, host.resources, id, item)
     }
@@ -200,11 +203,11 @@ impl viewport_lib::plugin_api::Handles<SpriteInstanceSetId> for ViewportRenderer
         &mut self,
         job: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<SpriteInstanceSetId> {
-        let host = host::<SpritePlugin>(self, TYPE_NAME);
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
         host.plugin.take_instance_set_result(&host.jobs, job)
     }
 
     fn release(&mut self, id: SpriteInstanceSetId) -> bool {
-        plugin_mut::<SpritePlugin>(self, TYPE_NAME).drop_instance_set(id)
+        plugin_mut::<SpritePlugin>(self, TYPE_NAME).is_ok_and(|p| p.drop_instance_set(id))
     }
 }

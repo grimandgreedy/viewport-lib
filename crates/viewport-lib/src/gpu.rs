@@ -149,6 +149,63 @@ pub fn instance_from_env() -> Instance {
     Instance::new(InstanceDescriptor::new_without_display_handle_from_env())
 }
 
+/// Bring up a browser instance, surface and adapter, on WebGPU when the browser
+/// has a WebGPU adapter and on WebGL2 otherwise.
+///
+/// `navigator.gpu` existing is not enough: Chromium on Linux exposes it and
+/// returns no adapter unless the GPU is on its allowlist. This asks for a WebGPU
+/// adapter first and only then creates the surface, so a canvas is never claimed
+/// by a WebGPU context that has no adapter behind it. Without one it builds a GL
+/// instance instead; WebGL2 needs the surface to enumerate an adapter, so the
+/// surface is created before the request on that path.
+///
+/// Keep all three: the surface has to come from the instance that made the
+/// adapter. Native targets need no equivalent, since `Backends::all()` already
+/// enumerates GL adapters after Vulkan, Metal and DX12.
+#[cfg(all(target_arch = "wasm32", wgpu27))]
+pub async fn request_adapter_with_gl_fallback(
+    target: impl Into<SurfaceTarget<'static>>,
+    power_preference: PowerPreference,
+) -> Result<(Instance, Surface<'static>, Adapter), WebAdapterError> {
+    let instance = util::new_instance_with_webgpu_detection(&InstanceDescriptor::default()).await;
+    let surface = instance
+        .create_surface(target)
+        .map_err(WebAdapterError::Surface)?;
+    let adapter = instance
+        .request_adapter(&RequestAdapterOptions {
+            power_preference,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        })
+        .await
+        .map_err(WebAdapterError::NoAdapter)?;
+    Ok((instance, surface, adapter))
+}
+
+/// Why [`request_adapter_with_gl_fallback`] failed.
+#[cfg(all(target_arch = "wasm32", wgpu27))]
+#[derive(Debug)]
+pub enum WebAdapterError {
+    /// The canvas gave no surface, for example because it already holds a 2D
+    /// or WebGL context.
+    Surface(CreateSurfaceError),
+    /// Neither WebGPU nor WebGL2 offered an adapter for the surface.
+    NoAdapter(RequestAdapterError),
+}
+
+#[cfg(all(target_arch = "wasm32", wgpu27))]
+impl std::fmt::Display for WebAdapterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Surface(e) => write!(f, "no surface: {e}"),
+            Self::NoAdapter(e) => write!(f, "no adapter: {e}"),
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", wgpu27))]
+impl std::error::Error for WebAdapterError {}
+
 /// The outcome of acquiring the next surface texture, normalised across wgpu legs.
 ///
 /// wgpu 27 returns `Result<SurfaceTexture, SurfaceError>`; wgpu 29 and 30 return a

@@ -126,18 +126,21 @@ fn build_fullscreen(r: &FullscreenRecipe, _i: usize) -> crate::gpu::RenderPipeli
 /// What the outline composite builds read: one shader and layout, three
 /// targets (LDR single-sample, LDR multisampled, HDR).
 pub(crate) struct OutlineCompositeRecipe {
-    device: crate::gpu::Device,
-    layout: crate::gpu::PipelineLayout,
-    shader: crate::resources::pipeline_slot::LazyModule,
-    target_format: crate::gpu::TextureFormat,
-    sample_count: u32,
+    pub(crate) device: crate::gpu::Device,
+    pub(crate) layout: crate::gpu::PipelineLayout,
+    pub(crate) shader: crate::resources::pipeline_slot::LazyModule,
+    pub(crate) target_format: crate::gpu::TextureFormat,
+    pub(crate) sample_count: u32,
 }
 
 pub(crate) const OUTLINE_COMPOSITE_SINGLE: usize = 0;
 pub(crate) const OUTLINE_COMPOSITE_MSAA: usize = 1;
 pub(crate) const OUTLINE_COMPOSITE_HDR: usize = 2;
 
-fn build_outline_composite(r: &OutlineCompositeRecipe, i: usize) -> crate::gpu::RenderPipeline {
+pub(crate) fn build_outline_composite(
+    r: &OutlineCompositeRecipe,
+    i: usize,
+) -> crate::gpu::RenderPipeline {
     let (label, format, sample_count) = match i {
         OUTLINE_COMPOSITE_SINGLE => ("outline_composite_pipeline_single", r.target_format, 1),
         OUTLINE_COMPOSITE_MSAA => (
@@ -210,7 +213,7 @@ impl DeviceResources {
             &self.post.contact_shadow,
             &self.post.bloom,
             &self.post.dof,
-            &self.exposure,
+            &self.scene_tier.exposure,
         ]
     }
 
@@ -244,7 +247,7 @@ impl DeviceResources {
             return;
         }
         // --- Fallback textures (one-time uploads) ---
-        if !self.material.uploaded {
+        if self.scene_tier.is_built() && !self.scene_tier.material.uploaded {
             let upload = |tex: &crate::gpu::Texture, data: &[u8]| {
                 queue.write_texture(
                     crate::gpu::TexelCopyTextureInfo {
@@ -266,17 +269,24 @@ impl DeviceResources {
                     },
                 );
             };
-            upload(&self.material.normal_map, &[128u8, 128u8, 255u8, 255u8]);
-            upload(&self.material.ao_map, &[255u8, 255u8, 255u8, 255u8]);
             upload(
-                self.material
+                &self.scene_tier.material.normal_map,
+                &[128u8, 128u8, 255u8, 255u8],
+            );
+            upload(
+                &self.scene_tier.material.ao_map,
+                &[255u8, 255u8, 255u8, 255u8],
+            );
+            upload(
+                self.scene_tier
+                    .material
                     .texture
                     .texture
                     .as_ref()
                     .expect("fallback albedo texture is owned"),
                 &[255u8, 255u8, 255u8, 255u8],
             );
-            self.material.uploaded = true;
+            self.scene_tier.material.uploaded = true;
         }
 
         // --- Placeholder textures (one-time) ---
@@ -357,16 +367,46 @@ impl DeviceResources {
             self.post.cs_placeholder_view = Some(cv);
 
             // Foreground depth placeholder: 1x1 depth at 1.0 = no coverage.
-            // Depth16Unorm is the only depth format write_texture accepts,
-            // and it binds to texture_depth_2d like any other depth format.
-            let (_ft, fv) = make_placeholder(
-                device,
-                queue,
-                "foreground_depth_placeholder",
-                crate::gpu::TextureFormat::Depth16Unorm,
-                &[0xFFu8, 0xFF],
-                2,
-            );
+            // Set by clearing it in a pass rather than with write_texture,
+            // which GL refuses for depth textures (no
+            // DEPTH_TEXTURE_AND_BUFFER_COPIES).
+            let depth = device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some("foreground_depth_placeholder"),
+                size: crate::gpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::Depth16Unorm,
+                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let fv = depth.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("foreground_depth_placeholder_clear"),
+                });
+            encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("foreground_depth_placeholder_clear"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                    view: &fv,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            queue.submit(std::iter::once(encoder.finish()));
             self.post.foreground_placeholder_view = Some(fv);
         }
 
@@ -454,8 +494,6 @@ impl DeviceResources {
         let fxaa_sampler = crate::resources::builders::clamp_linear_sampler(device, "fxaa_sampler");
         let oit_sampler =
             crate::resources::builders::clamp_linear_sampler(device, "oit_composite_sampler");
-        let outline_sampler =
-            crate::resources::builders::clamp_linear_sampler(device, "outline_composite_sampler");
 
         // --- Bind group layouts ---
         // The tone-map layout is driven by the composite binding table; see
@@ -501,7 +539,7 @@ impl DeviceResources {
                     binding: 0,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -567,7 +605,7 @@ impl DeviceResources {
                     binding: 0,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -635,8 +673,6 @@ impl DeviceResources {
                 ],
             });
 
-        self.ensure_outline_composite_bgl(device);
-
         // --- SSAA resolve bind group layout ---
         let ssaa_resolve_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -696,7 +732,7 @@ impl DeviceResources {
                     binding: 2,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -718,12 +754,17 @@ impl DeviceResources {
                     binding: 4,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                         view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
+                // binding 5: the nearest sampler both depth reads go through.
+                crate::resources::builders::nearest_sampler_entry(
+                    5,
+                    crate::gpu::ShaderStages::FRAGMENT,
+                ),
             ],
         });
 
@@ -732,7 +773,6 @@ impl DeviceResources {
         self.post.pp_nearest_sampler = Some(nearest_sampler);
         self.post.fxaa.sampler = Some(fxaa_sampler);
         self.oit.composite_sampler = Some(oit_sampler);
-        self.outline.composite_sampler = Some(outline_sampler);
 
         self.post.tone_map_bgl = Some(tone_map_bgl);
         self.post.bloom.bgl = Some(bloom_bgl);
@@ -750,16 +790,22 @@ impl DeviceResources {
         if self.post.depth_blit_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("depth_blit_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::nearest_sampler_entry(
+                        1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                ],
             });
             self.post.depth_blit_bgl = Some(bgl);
         }
@@ -773,7 +819,7 @@ impl DeviceResources {
                         binding: 0,
                         visibility: crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
                             view_dimension: crate::gpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
@@ -781,6 +827,10 @@ impl DeviceResources {
                     },
                     crate::resources::builders::uniform_entry(
                         1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                    crate::resources::builders::nearest_sampler_entry(
+                        2,
                         crate::gpu::ShaderStages::FRAGMENT,
                     ),
                 ],
@@ -792,65 +842,25 @@ impl DeviceResources {
         if self.post.foreground_stamp_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("foreground_stamp_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    crate::resources::builders::nearest_sampler_entry(
+                        1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                ],
             });
             self.post.foreground_stamp_bgl = Some(bgl);
         }
-    }
-
-    /// The outline composite's bind group layout, shared by the three composite
-    /// pipelines and by each viewport's composite bind group.
-    fn ensure_outline_composite_bgl(&mut self, device: &crate::gpu::Device) {
-        if self.outline.composite_bgl.is_none() {
-            self.outline.composite_bgl = Some(crate::resources::builders::texture_sampler_bgl(
-                device,
-                "outline_composite_bgl",
-                crate::gpu::ShaderStages::FRAGMENT,
-            ));
-        }
-    }
-
-    /// Compose the three fullscreen pipelines that blit the offscreen outline
-    /// texture onto the main target: LDR single-sample, LDR multisampled, and
-    /// the HDR variant. Composed on the first frame that has a selection
-    /// outline to draw, in either path; each is built when a pass binds it.
-    pub(crate) fn ensure_outline_composite_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.outline.composite.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        self.ensure_outline_composite_bgl(device);
-        let bgl = self.outline.composite_bgl.clone().expect("just ensured");
-        let shader = self.shared_module(
-            device,
-            "outline_composite_shader",
-            crate::resources::builders::wgsl_source!("outline_composite"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_composite_layout",
-            &[&bgl],
-        );
-        self.outline.composite = Some(LazyFamily::new(
-            OutlineCompositeRecipe {
-                device: device.clone(),
-                layout,
-                shader,
-                target_format: self.target_format,
-                sample_count: self.sample_count,
-            },
-            std::sync::Arc::clone(&self.pipeline_compiler),
-            build_outline_composite,
-        ));
     }
 
     /// Build every shared pipeline the HDR path can bind, whatever a frame asks
@@ -866,7 +876,8 @@ impl DeviceResources {
     ) {
         self.ensure_hdr_infra(device, queue);
         self.ensure_tone_map_pipeline(device, output_format);
-        self.exposure
+        self.scene_tier
+            .exposure
             .ensure_pipelines(device, &self.pipeline_compiler);
         self.ensure_bloom_pipelines(device);
         self.ensure_ssao_pipelines(device);
@@ -876,7 +887,7 @@ impl DeviceResources {
         self.ensure_oit_composite_pipeline(device);
         self.ensure_oit_mesh_pipelines(device);
         self.ensure_hdr_mesh_pipelines(device);
-        self.ensure_outline_composite_pipelines(device);
+        self.ensure_outline_shared(device);
         self.ensure_ssaa_resolve_pipelines(device);
         self.ensure_depth_blit_pipeline(device);
         self.ensure_foreground_stamp_pipeline(device);
@@ -1169,7 +1180,7 @@ impl DeviceResources {
         let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
         let source = crate::resources::mesh_sidecar::registry::compose_shader(
             base,
-            &self.deform.registrations,
+            &self.scene_tier.deform.registrations,
         );
         crate::resources::builders::builtin_hook_env(crate::resources::builders::strip_debug_vis(
             source,
@@ -1192,8 +1203,8 @@ impl DeviceResources {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
-            &self.binds.camera_bgl,
-            &self.binds.object_bgl,
+            &self.scene_tier.binds.camera_bgl,
+            &self.scene_tier.binds.object_bgl,
         );
         let bindless = if self.bindless_textures() {
             let shader = self.shared_module(
@@ -1529,37 +1540,6 @@ impl DeviceResources {
             ),
         };
 
-        // Outline offscreen : mask (R8), colour (target_format), and depth -- at scene resolution.
-        let ((outline_mask_tex, outline_mask_view), (outline_colour_tex, outline_colour_view)) =
-            match kept(TargetGroups::OUTLINE) {
-                Some(old) => (
-                    (
-                        old.outline_mask_texture.clone(),
-                        old.outline_mask_view.clone(),
-                    ),
-                    (
-                        old.outline_colour_texture.clone(),
-                        old.outline_colour_view.clone(),
-                    ),
-                ),
-                None => {
-                    let size = groups.size(TargetGroups::OUTLINE, TargetSize::Scene);
-                    (
-                        alloc.colour(
-                            "outline_mask_texture",
-                            crate::gpu::TextureFormat::R8Unorm,
-                            size,
-                            crate::gpu::TextureUsages::empty(),
-                        ),
-                        alloc.colour(
-                            "outline_colour_texture",
-                            self.target_format,
-                            size,
-                            crate::gpu::TextureUsages::empty(),
-                        ),
-                    )
-                }
-            };
         // The LDR path renders against this depth target and the outline mask
         // pass tests against it. It is sampleable so the HiZ occlusion
         // prev-depth copy can read the LDR scene depth.
@@ -1580,8 +1560,7 @@ impl DeviceResources {
             };
 
         // Uniform buffers. None depends on a target's size, so a promotion keeps
-        // the old state's: the outline pass has already written its edge
-        // uniform this frame, and the exposure state is the adaptation history.
+        // the old state's: the exposure state is the adaptation history.
         let uniform = |old: Option<&crate::gpu::Buffer>, label: &str, size: usize| match old {
             Some(buf) => buf.clone(),
             None => device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -1692,11 +1671,6 @@ impl DeviceResources {
             .composite_sampler
             .as_ref()
             .expect("ensure_hdr_infra not called");
-        let outline_sampler = self
-            .outline
-            .composite_sampler
-            .as_ref()
-            .expect("ensure_hdr_infra not called");
         let bloom_placeholder_view = self
             .post
             .bloom_placeholder_view
@@ -1764,12 +1738,6 @@ impl DeviceResources {
             .composite_bgl
             .as_ref()
             .expect("ensure_hdr_infra not called");
-        let outline_composite_bgl = self
-            .outline
-            .composite_bgl
-            .as_ref()
-            .expect("ensure_hdr_infra not called");
-
         // Bind groups
         let tone_map_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tone_map_bg"),
@@ -1802,6 +1770,15 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::SCENE_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::DEPTH_SAMPLER,
+                    resource: crate::gpu::BindingResource::Sampler(
+                        self.post
+                            .pp_nearest_sampler
+                            .as_ref()
+                            .expect("ensure_hdr_infra not called"),
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::FOREGROUND_DEPTH,
@@ -1974,6 +1951,15 @@ impl DeviceResources {
                             .expect("ensure_hdr_infra not called"),
                     ),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: crate::gpu::BindingResource::Sampler(
+                        self.post
+                            .pp_nearest_sampler
+                            .as_ref()
+                            .expect("ensure_hdr_infra not called"),
+                    ),
+                },
             ],
         });
         let contact_shadow_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2008,48 +1994,6 @@ impl DeviceResources {
                 },
             ],
         });
-        let outline_composite_bind_group =
-            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("outline_composite_bg"),
-                layout: outline_composite_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&outline_colour_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(outline_sampler),
-                    },
-                ],
-            });
-
-        // Edge-detection bind group : reads the R8 mask, writes outline ring.
-        let outline_edge_uniform_buf = uniform(
-            reuse.map(|o| &o.outline_edge_uniform_buf),
-            "outline_edge_uniform_buf",
-            std::mem::size_of::<OutlineEdgeUniform>(),
-        );
-        let outline_edge_bgl = &self.outline.edge_bgl;
-        let outline_edge_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("outline_edge_bg"),
-            layout: outline_edge_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&outline_mask_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(outline_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: outline_edge_uniform_buf.as_entire_binding(),
-                },
-            ],
-        });
-
         // OIT composite bind group placeholder (created lazily via ensure_viewport_oit)
         // We create a dummy one using placeholders so the bind group is always valid.
         // It will be rebuilt on first ensure_viewport_oit call.
@@ -2154,8 +2098,8 @@ impl DeviceResources {
                 ssaa_depth_only_view.as_ref(),
                 ssaa_ubuf.as_ref(),
             ) {
-                (Some(bgl), Some(depth_view), Some(ubuf)) => {
-                    Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                (Some(bgl), Some(depth_view), Some(ubuf)) => Some(
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("ssaa_depth_resolve_bg"),
                         layout: bgl,
                         entries: &[
@@ -2167,9 +2111,18 @@ impl DeviceResources {
                                 binding: 1,
                                 resource: ubuf.as_entire_binding(),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: crate::gpu::BindingResource::Sampler(
+                                    self.post
+                                        .pp_nearest_sampler
+                                        .as_ref()
+                                        .expect("ensure_hdr_infra not called"),
+                                ),
+                            },
                         ],
-                    }))
-                }
+                    }),
+                ),
                 _ => None,
             };
 
@@ -2200,10 +2153,23 @@ impl DeviceResources {
                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("depth_blit_bg"),
                     layout: bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &hdr_depth_only_view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(
+                                self.post
+                                    .pp_nearest_sampler
+                                    .as_ref()
+                                    .expect("ensure_hdr_infra not called"),
+                            ),
+                        },
+                    ],
                 })
             });
             (Some(tex), view, bg)
@@ -2246,7 +2212,7 @@ impl DeviceResources {
         // Auto-exposure compute bind group. Metering reads the sharp scene HDR
         // (`hdr_view`), never the DOF-blurred copy. The buffers are allocated
         // earlier so the tone-map bind group can bind `exposure_state_buf`.
-        let exposure_bind_group = self.exposure.create_bind_group(
+        let exposure_bind_group = self.scene_tier.exposure.create_bind_group(
             device,
             &hdr_view,
             &hdr_depth_only_view,
@@ -2324,20 +2290,15 @@ impl DeviceResources {
             foreground_depth_view: reuse.and_then(|o| o.foreground_depth_view.clone()),
             foreground_depth_only_view: reuse.and_then(|o| o.foreground_depth_only_view.clone()),
             foreground_depth_size: reuse.map_or([0, 0], |o| o.foreground_depth_size),
-            outline_mask_texture: outline_mask_tex,
-            outline_mask_view,
-            outline_colour_texture: outline_colour_tex,
-            outline_colour_view,
             outline_depth_texture: outline_depth_tex,
             outline_depth_view,
             outline_depth_only_view,
-            outline_edge_bind_group,
-            outline_edge_uniform_buf,
-            outline_composite_bind_group,
             tone_map_bind_group,
             tone_map_bg_views: None,
             dof_bg_foreground: None,
             depth_read_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
+            depth_read_copy: None,
+            depth_read_copy_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             foreground_stamp_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             tone_map_uniform_buf,
             exposure_state_buf,
@@ -2486,6 +2447,15 @@ impl DeviceResources {
                         ),
                     },
                     crate::gpu::BindGroupEntry {
+                        binding: composite::slot::DEPTH_SAMPLER,
+                        resource: crate::gpu::BindingResource::Sampler(
+                            self.post
+                                .pp_nearest_sampler
+                                .as_ref()
+                                .expect("ensure_hdr_infra not called"),
+                        ),
+                    },
+                    crate::gpu::BindGroupEntry {
                         binding: composite::slot::FOREGROUND_DEPTH,
                         resource: crate::gpu::BindingResource::TextureView(foreground_view),
                     },
@@ -2532,6 +2502,15 @@ impl DeviceResources {
                         crate::gpu::BindGroupEntry {
                             binding: 4,
                             resource: crate::gpu::BindingResource::TextureView(&foreground_view),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 5,
+                            resource: crate::gpu::BindingResource::Sampler(
+                                self.post
+                                    .pp_nearest_sampler
+                                    .as_ref()
+                                    .expect("ensure_hdr_infra not called"),
+                            ),
                         },
                     ],
                 });

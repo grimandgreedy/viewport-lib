@@ -3,7 +3,7 @@
 use crate::fixtures::CallLog;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
-    PickPassContext, PickRay, SharedBindings,
+    PickPassContext, PickRay, PluginResources,
 };
 use viewport_lib::renderer::PickHit;
 use viewport_lib::wgpu;
@@ -43,9 +43,9 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         self.type_name
     }
 
-    fn init_gpu(&mut self, _device: &wgpu::Device, shared: &SharedBindings<'_>) {
+    fn init_gpu(&mut self, _device: &wgpu::Device, resources: &dyn PluginResources) {
         self.log
-            .record(format!("init_gpu:samples={}", shared.sample_count));
+            .record(format!("init_gpu:samples={}", resources.sample_count()));
     }
 
     fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {

@@ -15,7 +15,7 @@ use crate::gpu::ShaderStages;
 /// `create_shader_module`, so a wgpu upgrade that changes shader-module
 /// construction only has to be audited here.
 ///
-/// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
+/// `source` accepts a baked `&'static str` (via `wgsl_source!`) or an owned
 /// `String` (a shader composed at runtime, e.g. by the deform registry).
 pub fn wgsl_module<'a>(
     device: &crate::gpu::Device,
@@ -34,6 +34,633 @@ pub fn wgsl_module<'a>(
         );
     }
     module
+}
+
+/// Adapt a shader source to the device it is compiled for.
+///
+/// Shaders mark device-dependent code as a region, `// BEGIN_<REGION>` to
+/// `// END_<REGION>`, holding the default code and, on `// ALT(<NAME>): code`
+/// lines, the alternative. Where the device needs an alternative, the region
+/// is replaced by its `ALT(<NAME>)` lines' code; everywhere else the source is
+/// unchanged. The alternatives and the conditions:
+///
+/// - `POINT_SHADOW_SAMPLE` / `NO_CUBE_ARRAY`: no cube-array textures. The
+///   point-light shadow array is also declared `texture_depth_2d_array`, to
+///   match the `D2Array` view binding 17 carries there.
+/// - `PCSS_BLOCKER_SEARCH` / `NO_DEPTH_LOADS`: shaders cannot load from depth
+///   textures (wgpu's GL backend). The PCSS tiers filter as PCF.
+/// - `LIGHT_LIST` / `UNIFORM`: the group 0 profile holds the light list in a
+///   uniform array (the compatibility tier).
+/// - `CLUSTER_LOOKUP` and `CLUSTER_INDEX` / `UNCLUSTERED`: the group 0
+///   profile has no clusters, so the lighting loops walk every light.
+pub fn adapt_wgsl<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+    caps: &crate::capabilities::Capabilities,
+) -> std::borrow::Cow<'a, str> {
+    let mut source = source.into();
+    let profile = crate::resources::group0::Group0Profile::for_caps(caps);
+    let mut picks: Vec<(&str, &str)> = Vec::new();
+    if !caps.cube_array_textures {
+        const CUBE: &str = "texture_depth_cube_array";
+        if source.contains(CUBE) {
+            source = std::borrow::Cow::Owned(source.replace(CUBE, "texture_depth_2d_array"));
+        }
+        picks.push(("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"));
+    }
+    if !caps.depth_texture_loads {
+        picks.push(("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"));
+    }
+    if let Some(profile) = profile {
+        if profile.uniform_light_list.is_some() {
+            picks.push(("LIGHT_LIST", "UNIFORM"));
+        }
+        if !profile.clusters {
+            picks.push(("CLUSTER_LOOKUP", "UNCLUSTERED"));
+            picks.push(("CLUSTER_INDEX", "UNCLUSTERED"));
+        }
+    }
+    for (region, alt) in picks {
+        let begin = format!("// BEGIN_{region}");
+        if source.contains(&begin) {
+            let mut out = source.into_owned();
+            select_alternative(&mut out, &begin, &format!("// END_{region}"), alt);
+            source = std::borrow::Cow::Owned(out);
+        }
+    }
+    source
+}
+
+/// Replace each `// BEGIN_<region>` .. `// END_<region>` region of `source`
+/// with the code on its `// ALT(<alt>):` lines, the way [`adapt_wgsl`] picks
+/// a device alternative. For a shader that keeps its own variants in one
+/// file; a source without the region comes back unchanged.
+pub fn select_wgsl_alternative<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+    region: &str,
+    alt: &str,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    let begin = format!("// BEGIN_{region}");
+    if !source.contains(&begin) {
+        return source;
+    }
+    let mut out = source.into_owned();
+    select_alternative(&mut out, &begin, &format!("// END_{region}"), alt);
+    std::borrow::Cow::Owned(out)
+}
+
+/// Replace every `begin`..`end` region of `out`, markers included, with the
+/// code on its `// ALT(<alt>):` lines.
+fn select_alternative(out: &mut String, begin: &str, end: &str, alt: &str) {
+    let tag = format!("// ALT({alt}):");
+    while let Some(start) = out.find(begin) {
+        let Some(len) = out[start..].find(end) else {
+            break;
+        };
+        let region = &out[start..start + len];
+        let code: Vec<&str> = region
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix(tag.as_str()))
+            .map(str::trim)
+            .collect();
+        debug_assert!(
+            region.contains(tag.as_str()),
+            "{begin} has no {tag} alternative"
+        );
+        let code = code.join("\n");
+        out.replace_range(start..start + len + end.len(), &code);
+    }
+}
+
+#[cfg(test)]
+mod adapt_wgsl_tests {
+    use super::adapt_wgsl;
+
+    fn caps(backend: crate::gpu::Backend) -> crate::capabilities::Capabilities {
+        crate::capabilities::Capabilities::from_parts(
+            &crate::gpu::Limits::default(),
+            crate::gpu::Features::empty(),
+            None,
+        )
+        .with_backend(backend)
+    }
+
+    const MESH: &str = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
+    const MESH_OIT: &str = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
+
+    /// naga's GLSL writer rejects `textureLoad` from a depth texture, so the
+    /// mesh shaders as adapted for GL must not contain one.
+    #[test]
+    fn gl_mesh_shaders_do_not_load_the_shadow_atlas() {
+        for src in [MESH, MESH_OIT] {
+            assert!(src.contains("textureLoad(shadow_map"));
+            let gl = adapt_wgsl(src, &caps(crate::gpu::Backend::Gl));
+            assert!(!gl.contains("textureLoad(shadow_map"));
+            assert!(!gl.contains("BEGIN_PCSS_BLOCKER_SEARCH"));
+        }
+    }
+
+    #[test]
+    fn other_backends_keep_the_source() {
+        for backend in [crate::gpu::Backend::Metal, crate::gpu::Backend::Vulkan] {
+            let adapted = adapt_wgsl(MESH, &caps(backend));
+            assert!(matches!(adapted, std::borrow::Cow::Borrowed(_)));
+        }
+    }
+
+    /// The source left after the strip is still a valid module.
+    #[test]
+    fn gl_mesh_shader_still_compiles() {
+        let instance = crate::gpu::instance_from_env();
+        let Some(adapter) = pollster::block_on(instance.request_adapter(
+            &crate::gpu::headless_adapter_options(crate::gpu::PowerPreference::LowPower),
+        ))
+        .ok() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let Ok((device, _queue)) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default()))
+        else {
+            eprintln!("skipping: no device");
+            return;
+        };
+        for src in [MESH, MESH_OIT] {
+            let gl = adapt_wgsl(src, &caps(crate::gpu::Backend::Gl));
+            let scope = crate::gpu::push_error_scope(&device, crate::gpu::ErrorFilter::Validation);
+            let _ = device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
+                label: Some("gl-adapted mesh"),
+                source: crate::gpu::ShaderSource::Wgsl(gl.into_owned().into()),
+            });
+            if let Some(e) = pollster::block_on(scope.pop()) {
+                panic!("the GL-adapted mesh shader does not compile: {e}");
+            }
+        }
+    }
+
+    fn compatibility_caps() -> crate::capabilities::Capabilities {
+        let caps = crate::capabilities::Capabilities::from_parts(
+            &crate::gpu::Limits::downlevel_webgl2_defaults(),
+            crate::gpu::Features::empty(),
+            Some(crate::gpu::DownlevelFlags::empty()),
+        )
+        .with_backend(crate::gpu::Backend::Gl);
+        assert_eq!(caps.tier(), crate::capabilities::Tier::Compatibility);
+        caps
+    }
+
+    const LIT_BODY: &str = "
+@group(0) @binding(0) var<uniform> test_view_proj: mat4x4<f32>;
+@group(0) @binding(3) var<uniform> test_lights: Lights;
+struct TestOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+};
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> TestOut {
+    var out: TestOut;
+    out.clip = test_view_proj * vec4<f32>(position, 1.0);
+    out.world = position;
+    return out;
+}
+@fragment
+fn fs_main(in: TestOut) -> @location(0) vec4<f32> {
+    let lit = apply_scene_lighting(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0), false, in.world, test_lights);
+    return vec4<f32>(lit, 1.0);
+}
+";
+
+    const BINDINGS_BODY: &str = "
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(position, 1.0);
+}
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    var c = vec3<f32>(0.0);
+    for (var i = 0u; i < lights.count; i++) {
+        c += lights_storage[i].colour;
+    }
+    return vec4<f32>(c, 1.0);
+}
+";
+
+    fn lit_source() -> String {
+        format!(
+            "{}\n{LIT_BODY}",
+            crate::plugin_api::shared_wgsl::SHARED_SCENE_LIGHTING_WGSL
+        )
+    }
+
+    fn bindings_source() -> String {
+        format!(
+            "{}\n{BINDINGS_BODY}",
+            crate::plugin_api::shared_wgsl::SHARED_BINDINGS_WGSL
+        )
+    }
+
+    /// On the compatibility tier the light list is a uniform array and nothing
+    /// reads the cluster buffers; on the full tier both sources are kept.
+    #[test]
+    fn the_compatibility_tier_gets_the_uniform_light_list() {
+        for src in [lit_source(), bindings_source()] {
+            let compat = adapt_wgsl(src.as_str(), &compatibility_caps());
+            let list = format!(
+                "var<uniform> lights_storage: array<SingleLight, {}>;",
+                crate::resources::COMPATIBILITY_MAX_LIGHTS
+            );
+            assert!(compat.contains(&list), "the light list is not {list}");
+            assert!(!compat.contains("var<storage, read> lights_storage"));
+            assert!(!compat.contains("BEGIN_LIGHT_LIST"));
+            assert!(!compat.contains("cluster_data[cid"));
+            assert!(!compat.contains("cluster_data[CLUSTER_INDEX_BASE"));
+
+            let full = adapt_wgsl(src.as_str(), &caps(crate::gpu::Backend::Metal));
+            assert!(matches!(full, std::borrow::Cow::Borrowed(_)));
+        }
+    }
+
+    /// Every region carries the alternative each device condition can ask
+    /// for, so a missing `ALT` line fails here rather than at a device.
+    #[test]
+    fn every_region_carries_its_alternatives() {
+        let sources = [
+            MESH,
+            MESH_OIT,
+            crate::plugin_api::shared_wgsl::SHARED_SCENE_LIGHTING_WGSL,
+            crate::plugin_api::shared_wgsl::SHARED_BINDINGS_WGSL,
+            crate::plugin_api::shared_wgsl::SHARED_CSM_WGSL,
+        ];
+        let wants = [
+            ("POINT_SHADOW_SAMPLE", "NO_CUBE_ARRAY"),
+            ("PCSS_BLOCKER_SEARCH", "NO_DEPTH_LOADS"),
+            ("LIGHT_LIST", "UNIFORM"),
+            ("CLUSTER_LOOKUP", "UNCLUSTERED"),
+            ("CLUSTER_INDEX", "UNCLUSTERED"),
+        ];
+        for src in sources {
+            for (region, alt) in wants {
+                let begin = format!("// BEGIN_{region}");
+                let end = format!("// END_{region}");
+                let mut rest = src;
+                while let Some(start) = rest.find(&begin) {
+                    let len = rest[start..].find(&end).expect("an unterminated region");
+                    assert!(
+                        rest[start..start + len].contains(&format!("// ALT({alt}):")),
+                        "{begin} has no ALT({alt}) line"
+                    );
+                    rest = &rest[start + len..];
+                }
+            }
+        }
+    }
+
+    #[cfg(wgpu27)]
+    /// The first function-local array `module` indexes with a run-time value, as
+    /// `` `function`: `array` ``. Adreno's GLES compiler miscompiles that pattern
+    /// with no error (an isosurface whose box corners came from one drew nothing on
+    /// an Adreno 650), so shaders that run below the full tier keep such tables at
+    /// module scope as a `const`, or compute them.
+    fn local_array_indexed_at_run_time(module: &naga::Module) -> Option<String> {
+        let functions = module
+            .functions
+            .iter()
+            .map(|(_, f)| f)
+            .chain(module.entry_points.iter().map(|ep| &ep.function));
+        for function in functions {
+            for (_, expr) in function.expressions.iter() {
+                let naga::Expression::Access { base, .. } = expr else {
+                    continue;
+                };
+                let (array, name) = match function.expressions[*base] {
+                    naga::Expression::LocalVariable(local) => {
+                        let local = &function.local_variables[local];
+                        (local.ty, local.name.clone())
+                    }
+                    naga::Expression::Compose { ty, .. } => (ty, None),
+                    _ => continue,
+                };
+                if matches!(module.types[array].inner, naga::TypeInner::Array { .. }) {
+                    return Some(format!(
+                        "`{}`: `{}`",
+                        function.name.as_deref().unwrap_or("?"),
+                        name.as_deref().unwrap_or("an array constructed in place")
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// The first function of `module` that samples or gathers a depth texture
+    /// without a depth reference, as `` `function`: `texture` ``. naga declares
+    /// every depth texture a `sampler2DShadow` in GLSL and emits the lookup with no
+    /// reference value, which matches no GLSL overload, so the driver rejects the
+    /// program although naga reports no error.
+    #[cfg(wgpu27)]
+    fn depth_sampled_without_comparison(module: &naga::Module) -> Option<String> {
+        let functions = module
+            .functions
+            .iter()
+            .map(|(_, f)| f)
+            .chain(module.entry_points.iter().map(|ep| &ep.function));
+        for function in functions {
+            for (_, expr) in function.expressions.iter() {
+                let naga::Expression::ImageSample {
+                    image,
+                    depth_ref: None,
+                    ..
+                } = expr
+                else {
+                    continue;
+                };
+                let (ty, name) = match function.expressions[*image] {
+                    naga::Expression::GlobalVariable(var) => {
+                        let var = &module.global_variables[var];
+                        (var.ty, var.name.clone())
+                    }
+                    naga::Expression::FunctionArgument(i) => {
+                        let arg = &function.arguments[i as usize];
+                        (arg.ty, arg.name.clone())
+                    }
+                    _ => continue,
+                };
+                if matches!(
+                    module.types[ty].inner,
+                    naga::TypeInner::Image {
+                        class: naga::ImageClass::Depth { .. },
+                        ..
+                    }
+                ) {
+                    return Some(format!(
+                        "`{}`: `{}`",
+                        function.name.as_deref().unwrap_or("?"),
+                        name.as_deref().unwrap_or("?")
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// The entry points of `src` naga's GLSL writer cannot translate at
+    /// `version`, the path wgpu's GL backend takes, as `(entry point, error)`.
+    /// An error that is not about one entry point (parsing, validation, a
+    /// uniform size) is the `Err`.
+    #[cfg(wgpu27)]
+    fn glsl_failures(
+        src: &str,
+        version: naga::back::glsl::Version,
+    ) -> Result<Vec<(String, String)>, String> {
+        let module = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|e| format!("{e:?}"))?;
+        // wgpu's GL backend (no `BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED`) refuses a
+        // pipeline whose uniform types are not a multiple of 16 bytes, a rule no
+        // native device enforces, so it is checked here.
+        for (_, var) in module.global_variables.iter() {
+            if var.space == naga::AddressSpace::Uniform {
+                let size = module.types[var.ty].inner.size(module.to_ctx());
+                if size % 16 != 0 {
+                    return Err(format!(
+                        "uniform `{}` is {size} bytes, not a multiple of 16",
+                        var.name.as_deref().unwrap_or("?")
+                    ));
+                }
+            }
+        }
+        let mut failures = Vec::new();
+        for ep in &module.entry_points {
+            let result = naga::back::pipeline_constants::process_overrides(
+                &module,
+                &info,
+                Some((ep.stage, ep.name.as_str())),
+                &Default::default(),
+            )
+            .map_err(|e| e.to_string())
+            .and_then(|(module, info)| {
+                let options = naga::back::glsl::Options {
+                    version,
+                    ..Default::default()
+                };
+                let pipeline = naga::back::glsl::PipelineOptions {
+                    shader_stage: ep.stage,
+                    entry_point: ep.name.clone(),
+                    multiview: None,
+                };
+                let mut out = String::new();
+                naga::back::glsl::Writer::new(
+                    &mut out,
+                    &module,
+                    &info,
+                    &options,
+                    &pipeline,
+                    naga::proc::BoundsCheckPolicies::default(),
+                )
+                .and_then(|mut writer| writer.write())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            });
+            if let Err(e) = result {
+                failures.push((ep.name.clone(), e));
+            }
+        }
+        Ok(failures)
+    }
+
+    /// Translate every entry point of `src` to GLSL ES `version`.
+    #[cfg(wgpu27)]
+    fn translate_to_glsl(src: &str, version: u16, is_webgl: bool) -> Result<(), String> {
+        let version = naga::back::glsl::Version::Embedded { version, is_webgl };
+        match glsl_failures(src, version)?.into_iter().next() {
+            Some((ep, e)) => Err(format!("{ep}: {e}")),
+            None => Ok(()),
+        }
+    }
+
+    /// The shared lighting sources a compatibility-tier item type composes, the
+    /// basic mesh shader, the selection outline's and sub-object highlight's
+    /// shaders, and the overlay family, adapted for that tier, translate to the
+    /// GLSL ES 3.0 WebGL2 compiles, with no function-local array indexed at
+    /// run time.
+    #[cfg(wgpu27)]
+    #[test]
+    fn forward_shaders_translate_to_webgl2_glsl() {
+        for (name, src) in [
+            ("lit", lit_source()),
+            ("bindings", bindings_source()),
+            (
+                "mesh_basic",
+                crate::resources::basic_mesh::MESH_BASIC_WGSL.to_string(),
+            ),
+            (
+                "outline_mask_basic",
+                include_str!(concat!(env!("OUT_DIR"), "/outline_mask_basic.wgsl")).to_string(),
+            ),
+            (
+                "outline_edge",
+                include_str!(concat!(env!("OUT_DIR"), "/outline_edge.wgsl")).to_string(),
+            ),
+            (
+                "outline_composite",
+                include_str!(concat!(env!("OUT_DIR"), "/outline_composite.wgsl")).to_string(),
+            ),
+            (
+                "sub_highlight_fill",
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_fill.wgsl")).to_string(),
+            ),
+            (
+                "sub_highlight_edge",
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_edge.wgsl")).to_string(),
+            ),
+            (
+                "sub_highlight_sprite",
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_sprite.wgsl")).to_string(),
+            ),
+            (
+                "polyline",
+                include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).to_string(),
+            ),
+            (
+                "polyline_wireframe",
+                include_str!(concat!(env!("OUT_DIR"), "/polyline_wireframe.wgsl")).to_string(),
+            ),
+            (
+                "polyline_outline_mask",
+                include_str!(concat!(env!("OUT_DIR"), "/polyline_outline_mask.wgsl")).to_string(),
+            ),
+            (
+                "overlay_shape",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape.wgsl")).to_string(),
+            ),
+            (
+                "overlay_shape_tex",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape_tex.wgsl")).to_string(),
+            ),
+            (
+                "overlay_text",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_text.wgsl")).to_string(),
+            ),
+            (
+                "backdrop_blur",
+                include_str!(concat!(env!("OUT_DIR"), "/backdrop_blur.wgsl")).to_string(),
+            ),
+        ] {
+            let adapted = adapt_wgsl(src.as_str(), &compatibility_caps());
+            if let Err(e) = translate_to_glsl(&adapted, 300, true) {
+                panic!("{name}: {e}");
+            }
+            let module = naga::front::wgsl::parse_str(&adapted).expect("parsed above");
+            if let Some(at) = depth_sampled_without_comparison(&module) {
+                panic!("{name}: {at} samples a depth texture without a comparison");
+            }
+            if let Some(at) = local_array_indexed_at_run_time(&module) {
+                panic!(
+                    "{name}: {at} is a function-local array indexed by a run-time value, \
+                     which Adreno miscompiles; make it a module-scope const or compute it"
+                );
+            }
+        }
+    }
+
+    /// The full tier's mesh shaders, adapted for a desktop GL device (cube
+    /// arrays, no depth-texture loads), translate to GLSL ES 3.2.
+    #[cfg(wgpu27)]
+    #[test]
+    fn gl_mesh_shaders_translate_to_glsl() {
+        let mut gl = caps(crate::gpu::Backend::Gl);
+        gl.cube_array_textures = true;
+        for (name, src) in [("mesh", MESH), ("mesh_oit", MESH_OIT)] {
+            let adapted = adapt_wgsl(src, &gl);
+            if let Err(e) = translate_to_glsl(&adapted, 320, false) {
+                panic!("{name}: {e}");
+            }
+        }
+    }
+
+    /// Shader entry points the GLSL writer cannot translate yet, as
+    /// `shader:entry point`. The test fails when one is fixed and still listed,
+    /// so the list stays exact.
+    #[cfg(wgpu27)]
+    const GL_KNOWN_FAILURES: &[&str] = &[];
+
+    /// The `(shader:entry point, error)` pairs that fail at either GLSL version
+    /// wgpu's GL backend emits for a full-tier device: GLSL ES 3.2 on a GLES
+    /// context and desktop GLSL 4.50 (the driver's version, which wgpu caps at
+    /// 450) on a desktop one.
+    #[cfg(wgpu27)]
+    fn gl_failures(
+        sources: impl IntoIterator<Item = (String, String)>,
+    ) -> std::collections::BTreeMap<String, String> {
+        let versions = [
+            naga::back::glsl::Version::Embedded {
+                version: 320,
+                is_webgl: false,
+            },
+            naga::back::glsl::Version::Desktop(450),
+        ];
+        let mut failures = std::collections::BTreeMap::new();
+        for (name, src) in sources {
+            if let Some(at) = naga::front::wgsl::parse_str(&src)
+                .ok()
+                .and_then(|m| depth_sampled_without_comparison(&m))
+            {
+                failures.insert(
+                    format!("{name}:depth-sample"),
+                    format!("{at} samples a depth texture without a comparison"),
+                );
+            }
+            for version in versions {
+                match glsl_failures(&src, version) {
+                    Ok(eps) => {
+                        for (ep, e) in eps {
+                            let at: &mut String =
+                                failures.entry(format!("{name}:{ep}")).or_default();
+                            at.push_str(&format!("[{version:?}] {e} "));
+                        }
+                    }
+                    Err(e) => {
+                        failures.entry(format!("{name}:*")).or_insert(e);
+                    }
+                }
+            }
+        }
+        failures
+    }
+
+    /// Every shader in viewport-lib's catalogue, adapted for a desktop GL device at the
+    /// full tier (cube arrays, no depth-texture loads), translates at both GLSL
+    /// versions wgpu emits, apart from the listed failures.
+    #[cfg(wgpu27)]
+    #[test]
+    fn full_tier_shaders_translate_to_gl_glsl() {
+        let mut gl = caps(crate::gpu::Backend::Gl);
+        gl.cube_array_textures = true;
+        let sources: Vec<(String, String)> = crate::renderer::shader_hashes::SHADERS
+            .iter()
+            .map(|s| (s.name.to_string(), adapt_wgsl(s.source, &gl).into_owned()))
+            .collect();
+        let failures = gl_failures(sources);
+        let new: Vec<String> = failures
+            .iter()
+            .filter(|(k, _)| !GL_KNOWN_FAILURES.contains(&k.as_str()))
+            .map(|(k, e)| format!("{k}: {e}"))
+            .collect();
+        let fixed: Vec<&str> = GL_KNOWN_FAILURES
+            .iter()
+            .copied()
+            .filter(|k| !failures.contains_key(*k))
+            .collect();
+        assert!(
+            new.is_empty() && fixed.is_empty(),
+            "new GL translation failures:\n{}\n\nlisted but now translate: {fixed:?}",
+            new.join("\n")
+        );
+    }
 }
 
 /// Prepend the module directive `@builtin(primitive_index)` needs on the
@@ -343,6 +970,38 @@ pub fn clamp_linear_sampler(device: &crate::gpu::Device, label: &str) -> crate::
         min_filter: crate::gpu::FilterMode::Linear,
         ..Default::default()
     })
+}
+
+/// A layout entry for a 2D depth view read as unfilterable float, the way
+/// `depth_texel` reads it. Pair it with [`nearest_sampler_entry`].
+pub fn depth_texel_entry(
+    binding: u32,
+    visibility: crate::gpu::ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: crate::gpu::BindingType::Texture {
+            sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+            view_dimension: crate::gpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// A non-filtering sampler layout entry, for a depth texture read through
+/// [`clamp_nearest_sampler`] as unfilterable float.
+pub fn nearest_sampler_entry(
+    binding: u32,
+    visibility: crate::gpu::ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::NonFiltering),
+        count: None,
+    }
 }
 
 /// Nearest-filtered sampler clamped to edge on all axes. Used where
@@ -757,7 +1416,7 @@ pub(crate) fn surface_mask_depth_stencil() -> crate::gpu::DepthStencilState {
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
 /// shape: a shader, its layout, and an entry point, with default compilation
 /// options, created against the device's pipeline cache when it has one (see
-/// [`device_pipeline_cache`]). This is the one place the crate calls
+/// `device_pipeline_cache`). This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
 pub fn compute_pipeline(
     device: &crate::gpu::Device,
@@ -1052,7 +1711,7 @@ mod device_pipeline_cache_tests {
     use super::device_pipeline_cache;
 
     fn device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -1577,7 +2236,7 @@ mod strip_debug_vis_tests {
 
 /// Vertex buffer layout of the meshes in the shared arena.
 ///
-/// A plugin that draws a [`MeshId`](crate::resources::MeshId) through
+/// A plugin that draws a [`MeshId`](crate::MeshId) through
 /// [`MeshGeometry`](crate::resources::MeshGeometry) binds those buffers
 /// directly, so its pipeline has to declare the layout they were uploaded
 /// with. Locations 0 to 4 are position, normal, colour, uv and tangent.

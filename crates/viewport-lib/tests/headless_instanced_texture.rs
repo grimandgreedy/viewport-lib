@@ -541,7 +541,7 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
 /// adapter does not offer the feature set (Metal pre-Tier-2, WebGPU, older HW),
 /// so the test skips instead of failing there.
 fn headless_bindless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = viewport_lib::gpu::default_instance();
+    let instance = viewport_lib::gpu::instance_from_env();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
@@ -1217,7 +1217,8 @@ fn update_texture_view_reaches_the_screen() {
         .unwrap();
     let id = renderer
         .resources_mut()
-        .register_texture_view(&device, &view_a, 2, 2);
+        .register_texture_view(&device, &view_a, 2, 2)
+        .unwrap();
     let mat = upload_plane_material(&mut renderer, id);
     let items = vec![
         textured_plane(mesh, mat, -1.05),

@@ -17,9 +17,21 @@
 //!   3. Upload that surface, put it in a scene, build a pick accelerator over
 //!      it, and fire a ray down the view axis.
 //!   4. Draw the result, and report the extraction and pick outcomes.
+//!   5. Register the built-in item types and draw one item of each type the
+//!      tier runs, read back to check it covered pixels (`item_types.rs`), and
+//!      below the full tier time the Gaussian splat sort, which runs on the CPU
+//!      there.
 //!
 //! A green line per step means that path works in a browser. Anything else is
 //! the thing to go and fix. Click the surface to run a fresh pick at the cursor.
+//!
+//! On a browser with no WebGPU adapter the page comes up on WebGL2, where the
+//! renderer runs at the compatibility tier. The CPU steps run the same; the surface
+//! draws through the basic mesh path, and a frame of it with the overlays,
+//! drawn under error scopes, checks both on the real GL driver. A tier
+//! without a lit group 0 refuses the upload. The first
+//! line names the API the page landed on, which is what `scripts/check_web.sh`
+//! reads to confirm each run took the path it asked for.
 //!
 //! Native runs too, which is what keeps it honest: the same code, the same
 //! assertions, one target with threads and one without.
@@ -30,13 +42,17 @@ use viewport_lib::Colour;
 
 use web_time::Instant;
 
+mod item_types;
+
 use viewport_lib::picking::screen_to_ray;
 use viewport_lib::vplg::volume::grid::VolumeData;
 use viewport_lib::vplg::volume::marching_cubes::extract_isosurface;
 use viewport_lib::{
-    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Material, MaterialId,
-    MouseButton, OrbitCameraController, PickAccelerator, Scene, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
+    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LabelItem, Material,
+    MaterialId, MeshId, MouseButton, OrbitCameraController, OverlayFill, OverlayShape,
+    OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, SceneRenderItem,
+    ScrollUnits, Tier, ViewportContext, ViewportError, ViewportEvent, ViewportInput,
+    ViewportRenderer, wgpu,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
@@ -47,11 +63,6 @@ use winit::window::{Window, WindowAttributes, WindowId};
 /// 64^3 cells, so this sits above that: the serial path would otherwise be the
 /// one under test, and the parallel path is the one that has never run here.
 const GRID: u32 = 80;
-
-/// How many lines the setup phase reports. A click appends one more and the
-/// oldest click line is dropped, so the page shows the setup results plus the
-/// latest click rather than growing without bound.
-const SETUP_LINES: usize = 5;
 
 /// The field is a smooth blob, so the iso-surface is a closed shell a ray can
 /// be relied on to hit.
@@ -153,6 +164,10 @@ struct State {
     /// Last cursor position, in physical pixels from the viewport top-left.
     cursor: glam::Vec2,
     results: Results,
+    /// How many lines the setup phase reported. A click appends one more and
+    /// the oldest click line is dropped, so the page shows the setup results
+    /// plus the latest click rather than growing without bound.
+    setup_lines: usize,
 }
 
 struct App {
@@ -278,8 +293,8 @@ impl State {
                 .pass("click pick: no hit (pointing past the surface)"),
         }
         // Keep the report to the setup lines plus the most recent click.
-        if self.results.lines.len() > SETUP_LINES + 1 {
-            self.results.lines.remove(SETUP_LINES);
+        if self.results.lines.len() > self.setup_lines + 1 {
+            self.results.lines.remove(self.setup_lines);
         }
         self.results.publish();
     }
@@ -309,10 +324,11 @@ impl State {
         self.controller.apply(&mut self.camera, &action_frame, dt);
         self.camera.set_aspect_ratio(w, h);
 
-        let frame_data = FrameData::new(
+        let mut frame_data = FrameData::new(
             CameraFrame::from_camera(&self.camera, [w, h]),
             SceneFrame::from_surface_items(self.scene_items.clone()),
         );
+        frame_data.overlays = tier_overlay(self.renderer.tier());
         let cmd = self
             .renderer
             .owned()
@@ -333,16 +349,28 @@ impl State {
 async fn build_state(window: Arc<Window>) -> State {
     let mut results = Results::default();
 
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    let surface = instance.create_surface(window.clone()).expect("surface");
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        })
-        .await
-        .expect("adapter (is WebGPU available in this browser?)");
+    #[cfg(target_arch = "wasm32")]
+    let (_instance, surface, adapter) = viewport_lib::gpu::request_adapter_with_gl_fallback(
+        window.clone(),
+        wgpu::PowerPreference::HighPerformance,
+    )
+    .await
+    .expect("neither WebGPU nor WebGL2 gave an adapter");
+    #[cfg(not(target_arch = "wasm32"))]
+    let (surface, adapter) = {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = instance.create_surface(window.clone()).expect("surface");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+            .expect("adapter");
+        (surface, adapter)
+    };
+    let backend = adapter.get_info().backend;
 
     let required_features = ViewportRenderer::recommended_device_features(&adapter);
     let mut required_limits = ViewportRenderer::recommended_device_limits(&adapter);
@@ -355,7 +383,12 @@ async fn build_state(window: Arc<Window>) -> State {
         })
         .await
         .expect("device");
-    results.pass("WebGPU adapter and device");
+    let api = match backend {
+        wgpu::Backend::BrowserWebGpu => "WebGPU".to_string(),
+        wgpu::Backend::Gl if cfg!(target_arch = "wasm32") => "WebGL2".to_string(),
+        other => format!("{other:?}"),
+    };
+    results.pass(format!("{api} adapter and device"));
 
     // Step 1 and 2: build the field and extract a surface from it. This is the
     // call that would panic outright if the parallelism module still reached
@@ -394,18 +427,85 @@ async fn build_state(window: Arc<Window>) -> State {
     };
     surface.configure(&device, &surface_config);
 
-    let mut renderer = ViewportRenderer::new(&device, format);
-    let mesh_id = renderer
-        .resources_mut()
-        .upload_mesh_data(&device, &mesh)
-        .expect("upload extracted surface");
-    results.pass("extracted surface uploaded to the GPU");
+    let config = RendererConfig::new(format).with_adapter(&adapter);
+    let mut renderer = ViewportRenderer::try_with_config(&device, &config)
+        .expect("the renderer refused the device");
+    let tier = renderer.tier();
+    results.pass(format!("renderer built at the {tier:?} tier"));
 
-    let material = renderer
-        .resources_mut()
-        .upload_material(Material::from_colour(Colour::linear_rgb(0.35, 0.72, 0.95)))
-        .expect("upload material");
-    let scene_items = vec![SceneRenderItem::new(mesh_id, material)];
+    // The full and compatibility tiers draw the surface. Below them the upload is
+    // refused, and the pick accelerator, which only needs a key per mesh, runs
+    // on a placeholder.
+    let mut scene_items = Vec::new();
+    let mesh_id = if tier >= Tier::Compatibility {
+        let mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &mesh)
+            .expect("upload extracted surface");
+        results.pass("extracted surface uploaded to the GPU");
+        let material = renderer
+            .resources_mut()
+            .upload_material(Material::from_colour(Colour::linear_rgb(0.35, 0.72, 0.95)))
+            .expect("upload material");
+        scene_items.push(SceneRenderItem::new(mesh_id, material));
+        mesh_id
+    } else {
+        match renderer.resources_mut().upload_mesh_data(&device, &mesh) {
+            Err(ViewportError::TierUnsupported { .. }) => {
+                results.pass("mesh upload refused on this tier, as expected")
+            }
+            Ok(_) => results.fail("mesh upload succeeded on a tier that cannot draw it"),
+            Err(e) => results.fail(format!("mesh upload failed with the wrong error: {e}")),
+        }
+        MeshId::INVALID
+    };
+
+    // A frame of the surface and the overlays under error scopes: on WebGL2
+    // this is the first time their shaders meet the browser's GL driver. A
+    // GLSL compile or link failure is an internal error there, not a
+    // validation one, so both are watched.
+    let probe = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("overlay probe"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 128,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let probe_view = probe.create_view(&wgpu::TextureViewDescriptor::default());
+    let internal = viewport_lib::gpu::push_error_scope(&device, wgpu::ErrorFilter::Internal);
+    let validation = viewport_lib::gpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
+    let mut probe_frame = FrameData::new(
+        CameraFrame::from_camera(&Camera::default(), [256.0, 128.0]),
+        SceneFrame::from_surface_items(scene_items.clone()),
+    );
+    probe_frame.overlays = tier_overlay(tier);
+    let cmd = renderer
+        .owned()
+        .render(&device, &queue, &probe_view, &probe_frame);
+    queue.submit(std::iter::once(cmd));
+    let validation = validation.pop().await;
+    let internal = internal.pop().await;
+    match validation.or(internal) {
+        None => results.pass("surface and overlay frame drawn with no GPU error"),
+        Some(e) => results.fail(format!("surface and overlay frame: {e}")),
+    }
+
+    if tier >= Tier::Compatibility {
+        let mut gpu = item_types::Gpu {
+            device: &device,
+            queue: &queue,
+            renderer: &mut renderer,
+            format,
+        };
+        item_types::check(&mut gpu, &mut results).await;
+    }
 
     // Step 3: the pick accelerator builds a BVH over the scene, which is the
     // other CPU path a consumer hits on the first click.
@@ -468,8 +568,30 @@ async fn build_state(window: Arc<Window>) -> State {
         accelerator,
         mesh_lookup,
         cursor: glam::Vec2::ZERO,
+        setup_lines: results.lines.len(),
         results,
     }
+}
+
+/// A panel and a label naming the tier, so the page shows which path it is on
+/// and the overlay shape and text pipelines both draw every frame.
+fn tier_overlay(tier: Tier) -> viewport_lib::OverlayFrame {
+    let mut overlays = viewport_lib::OverlayFrame::default();
+    overlays.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 6.0 },
+            [8.0, 8.0],
+            [220.0, 34.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.05, 0.05, 0.1, 0.8))),
+    );
+    overlays.labels.push(
+        LabelItem::new(format!("tier: {tier:?}"))
+            .with_position([18.0, 16.0])
+            .with_font_size(16.0)
+            .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
+    );
+    overlays
 }
 
 fn main() {

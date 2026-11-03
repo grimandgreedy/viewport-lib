@@ -37,8 +37,6 @@ impl TargetGroups {
     /// The depth buffer the LDR path renders against, which the outline mask
     /// pass also tests.
     pub(crate) const LDR_DEPTH: Self = Self(1 << 1);
-    /// Outline mask and colour.
-    pub(crate) const OUTLINE: Self = Self(1 << 2);
     /// Bloom threshold, ping and pong.
     pub(crate) const BLOOM: Self = Self(1 << 3);
     /// SSAO and its blur.

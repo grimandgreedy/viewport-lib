@@ -44,7 +44,10 @@ struct ExposureState {
 @group(0) @binding(1) var<uniform> params: ExposureParams;
 @group(0) @binding(2) var<storage, read_write> histogram: array<atomic<u32>, HISTOGRAM_BINS>;
 @group(0) @binding(3) var<storage, read_write> state: ExposureState;
-@group(0) @binding(4) var depth_texture: texture_depth_2d;
+@group(0) @binding(4) var depth_texture: texture_2d<f32>;
+@group(0) @binding(5) var depth_sampler: sampler;
+
+// #include "helpers/depth_texel.wgsl"
 
 fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -96,7 +99,7 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // by the tone map, so it is not scene content and must not bias the meter. A
     // skybox, or transparent content over the background, writes alpha and is
     // metered like geometry. This is the tone map's own background test.
-    if textureLoad(depth_texture, coord, 0) >= 0.999999 && texel.a < 0.001 {
+    if depth_texel(depth_texture, depth_sampler, coord) >= 0.999999 && texel.a < 0.001 {
         return;
     }
     let lum = luminance(texel.rgb);

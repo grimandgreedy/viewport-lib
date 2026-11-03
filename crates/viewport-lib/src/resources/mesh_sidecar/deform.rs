@@ -581,11 +581,14 @@ impl DeviceResources {
     /// Write the shared header uniform's `time_seconds` field. Cheap; safe to
     /// call per frame.
     pub fn set_deform_time(&mut self, queue: &crate::gpu::Queue, time_seconds: f32) {
-        self.deform.header_cpu.time_seconds = time_seconds;
+        if !self.scene_tier.is_built() {
+            return;
+        }
+        self.scene_tier.deform.header_cpu.time_seconds = time_seconds;
         queue.write_buffer(
-            &self.deform.header_buffer,
+            &self.scene_tier.deform.header_buffer,
             0,
-            bytemuck::bytes_of(&self.deform.header_cpu),
+            bytemuck::bytes_of(&self.scene_tier.deform.header_cpu),
         );
     }
 
@@ -600,12 +603,12 @@ impl DeviceResources {
         assert!(slot < DEFORM_SLOT_COUNT);
         let base = slot * DEFORM_PARAMS_PER_SLOT;
         for (i, p) in params.iter().enumerate() {
-            self.deform.header_cpu.slot_params[base + i] = *p;
+            self.scene_tier.deform.header_cpu.slot_params[base + i] = *p;
         }
         queue.write_buffer(
-            &self.deform.header_buffer,
+            &self.scene_tier.deform.header_buffer,
             0,
-            bytemuck::bytes_of(&self.deform.header_cpu),
+            bytemuck::bytes_of(&self.scene_tier.deform.header_cpu),
         );
     }
 
@@ -628,7 +631,8 @@ impl DeviceResources {
             stride_bytes >= 4 && stride_bytes % 4 == 0,
             "deform slot stride must be a positive multiple of 4 bytes"
         );
-        self.deform
+        self.scene_tier
+            .deform
             .set_data(mesh_id, None, slot, stride_bytes / 4, data);
         self.sync_deform_record(device, mesh_id, &[StreamKind::DeformSlot(slot as u8)]);
     }
@@ -673,12 +677,14 @@ impl DeviceResources {
         first_element: u32,
         data: &[u8],
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         assert!(slot < DEFORM_SLOT_COUNT);
         let not_attached = || crate::error::ViewportError::DeformSlotNotAttached {
             mesh_id: mesh_id.index(),
             slot,
         };
         let entry = self
+            .scene_tier
             .deform
             .meshes
             .get_mut(&mesh_id)
@@ -738,7 +744,8 @@ impl DeviceResources {
     /// a ranged write.
     #[cfg(test)]
     pub(crate) fn deform_slot_bytes(&self, mesh_id: MeshId, slot: usize) -> Option<Vec<u8>> {
-        self.deform
+        self.scene_tier
+            .deform
             .meshes
             .get(&mesh_id)
             .and_then(|m| m.mesh.slot_data[slot].clone())
@@ -751,7 +758,10 @@ impl DeviceResources {
         mesh_id: MeshId,
         slot: usize,
     ) -> bool {
-        let removed = self.deform.clear_slot(mesh_id, None, slot, false);
+        let removed = self
+            .scene_tier
+            .deform
+            .clear_slot(mesh_id, None, slot, false);
         if removed {
             self.sync_deform_record(device, mesh_id, &[]);
         }
@@ -761,7 +771,7 @@ impl DeviceResources {
     /// Returns `true` when the mesh has per-mesh data attached at the given
     /// slot.
     pub fn has_deform_slot(&self, mesh_id: MeshId, slot: usize) -> bool {
-        self.deform.has_slot(mesh_id, slot)
+        self.scene_tier.deform.has_slot(mesh_id, slot)
     }
 
     /// Attach raw bytes for one deformer slot on a single instance of the
@@ -791,6 +801,7 @@ impl DeviceResources {
         // Same length and stride as what is there: a per-frame update (a joint
         // palette, say), written in place.
         let same_shape = self
+            .scene_tier
             .deform
             .meshes
             .get(&mesh_id)
@@ -809,6 +820,7 @@ impl DeviceResources {
         });
         if let Some(Some((chunk, at))) = in_place {
             let inst = self
+                .scene_tier
                 .deform
                 .meshes
                 .get_mut(&mesh_id)
@@ -818,7 +830,8 @@ impl DeviceResources {
             self.sidecar.write_bytes_with(queue, chunk, at, data);
             return;
         }
-        self.deform
+        self.scene_tier
+            .deform
             .set_data(mesh_id, Some(instance_id), slot, stride_bytes / 4, data);
         self.sync_deform_record(device, mesh_id, &[kind]);
     }
@@ -835,6 +848,7 @@ impl DeviceResources {
     ) -> bool {
         let _ = queue;
         let removed = self
+            .scene_tier
             .deform
             .clear_slot(mesh_id, Some(instance_id), slot, false);
         if removed {
@@ -846,17 +860,18 @@ impl DeviceResources {
     /// Returns `true` when the given instance of the mesh has per-instance
     /// data attached at the given slot.
     pub fn has_deform_slot_instance(&self, mesh_id: MeshId, instance_id: u32, slot: usize) -> bool {
-        self.deform.has_slot_instance(mesh_id, instance_id, slot)
+        self.scene_tier
+            .deform
+            .has_slot_instance(mesh_id, instance_id, slot)
     }
 
     /// Bind a per-mesh deform slot to a consumer-owned, same-device
     /// `wgpu::Buffer` instead of a CPU upload. The renderer copies the whole
     /// buffer into the slot's region of the packed deform buffer once per
     /// frame (in `prepare`), so a GPU-resident producer can feed the deformer
-    /// stack without a CPU round-trip. This is the deform-slot analogue of
-    /// [`set_mc_scalar_source_buffer`](Self::set_mc_scalar_source_buffer): it
-    /// copies, it does not bind a new buffer into the shader, so the deform
-    /// shader path is unchanged for every other consumer.
+    /// stack without a CPU round-trip. It copies rather than binding a new
+    /// buffer into the shader, so the deform shader path is unchanged for every
+    /// other consumer.
     ///
     /// The slot reads the copied data exactly as an attached slot does
     /// (`deform_read_f32(slot, vertex_index, component)`), so `buffer` must
@@ -888,9 +903,12 @@ impl DeviceResources {
         buffer: crate::gpu::Buffer,
         stride_bytes: u32,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         let len_bytes = buffer.size();
         let src = build_external_source(&buffer, stride_bytes, 0, len_bytes)?;
-        self.deform.set_external(mesh_id, None, slot, src);
+        self.scene_tier
+            .deform
+            .set_external(mesh_id, None, slot, src);
         self.sync_deform_record(device, mesh_id, &[StreamKind::DeformSlot(slot as u8)]);
         Ok(())
     }
@@ -913,6 +931,7 @@ impl DeviceResources {
         slot: usize,
         name: &str,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         // The attribute is a stream of the mesh's own record; the slot's table
         // entry points at it.
         let found = self
@@ -926,7 +945,7 @@ impl DeviceResources {
                 name: name.to_string(),
             });
         }
-        self.deform.set_alias(mesh_id, slot, name);
+        self.scene_tier.deform.set_alias(mesh_id, slot, name);
         self.sync_deform_record(device, mesh_id, &[]);
         Ok(())
     }
@@ -953,10 +972,13 @@ impl DeviceResources {
         stride_bytes: u32,
         slice: DeformSourceSlice,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         let offset = slice.base_element as u64 * stride_bytes as u64;
         let len = slice.element_count as u64 * stride_bytes as u64;
         let src = build_external_source(&buffer, stride_bytes, offset, len)?;
-        self.deform.set_external(mesh_id, None, slot, src);
+        self.scene_tier
+            .deform
+            .set_external(mesh_id, None, slot, src);
         self.sync_deform_record(device, mesh_id, &[StreamKind::DeformSlot(slot as u8)]);
         Ok(())
     }
@@ -969,7 +991,7 @@ impl DeviceResources {
         mesh_id: MeshId,
         slot: usize,
     ) -> bool {
-        let removed = self.deform.clear_slot(mesh_id, None, slot, true);
+        let removed = self.scene_tier.deform.clear_slot(mesh_id, None, slot, true);
         if removed {
             self.sync_deform_record(device, mesh_id, &[]);
         }
@@ -978,7 +1000,7 @@ impl DeviceResources {
 
     /// True when a per-mesh slot is bound to an external buffer source.
     pub fn has_deform_slot_source(&self, mesh_id: MeshId, slot: usize) -> bool {
-        self.deform.has_slot_external(mesh_id, slot)
+        self.scene_tier.deform.has_slot_external(mesh_id, slot)
     }
 
     /// Per-instance analogue of
@@ -1001,10 +1023,12 @@ impl DeviceResources {
         buffer: crate::gpu::Buffer,
         stride_bytes: u32,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         let len_bytes = buffer.size();
         let _ = queue;
         let src = build_external_source(&buffer, stride_bytes, 0, len_bytes)?;
-        self.deform
+        self.scene_tier
+            .deform
             .set_external(mesh_id, Some(instance_id), slot, src);
         let kind = StreamKind::DeformInstanceSlot(slot as u8, instance_id);
         self.sync_deform_record(device, mesh_id, &[kind]);
@@ -1028,11 +1052,13 @@ impl DeviceResources {
         stride_bytes: u32,
         slice: DeformSourceSlice,
     ) -> ViewportResult<()> {
+        self.require_scene_tier()?;
         let offset = slice.base_element as u64 * stride_bytes as u64;
         let len = slice.element_count as u64 * stride_bytes as u64;
         let _ = queue;
         let src = build_external_source(&buffer, stride_bytes, offset, len)?;
-        self.deform
+        self.scene_tier
+            .deform
             .set_external(mesh_id, Some(instance_id), slot, src);
         let kind = StreamKind::DeformInstanceSlot(slot as u8, instance_id);
         self.sync_deform_record(device, mesh_id, &[kind]);
@@ -1051,6 +1077,7 @@ impl DeviceResources {
     ) -> bool {
         let _ = queue;
         let removed = self
+            .scene_tier
             .deform
             .clear_slot(mesh_id, Some(instance_id), slot, true);
         if removed {
@@ -1066,7 +1093,8 @@ impl DeviceResources {
         instance_id: u32,
         slot: usize,
     ) -> bool {
-        self.deform
+        self.scene_tier
+            .deform
             .has_slot_instance_external(mesh_id, instance_id, slot)
     }
 
@@ -1083,13 +1111,13 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         sink: &mut crate::renderer::SubmitSink,
     ) {
-        if self.deform.external_source_count == 0 {
+        if self.scene_tier.deform.external_source_count == 0 {
             return;
         }
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("deform_slot_copy_encoder"),
         });
-        for (mesh_id, m) in &self.deform.meshes {
+        for (mesh_id, m) in &self.scene_tier.deform.meshes {
             let Some(record) = self
                 .mesh_store
                 .get(*mesh_id)
@@ -1146,6 +1174,7 @@ impl DeviceResources {
             return;
         };
         let wanted = self
+            .scene_tier
             .deform
             .meshes
             .get(&mesh_id)
@@ -1205,11 +1234,13 @@ impl DeviceResources {
                     self.sidecar.free(&old);
                 }
             }
-            self.deform.counters.buffer_reallocations += 1;
+            self.scene_tier.deform.counters.buffer_reallocations += 1;
             self.mesh_sidecar_epoch = self.mesh_sidecar_epoch.wrapping_add(1);
         }
-        let (Some(record), Some(m)) = (mesh.sidecar.as_ref(), self.deform.meshes.get(&mesh_id))
-        else {
+        let (Some(record), Some(m)) = (
+            mesh.sidecar.as_ref(),
+            self.scene_tier.deform.meshes.get(&mesh_id),
+        ) else {
             return;
         };
         for stream in record.streams.iter() {
@@ -1253,11 +1284,12 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
-        validate_name(&self.deform.registrations, desc.name)?;
-        let slot = allocate_slot(&self.deform.registrations)?;
+        self.require_scene_tier()?;
+        validate_name(&self.scene_tier.deform.registrations, desc.name)?;
+        let slot = allocate_slot(&self.scene_tier.deform.registrations)?;
 
         let candidate = StoredDeformer { desc, slot };
-        let mut trial = self.deform.registrations.clone();
+        let mut trial = self.scene_tier.deform.registrations.clone();
         trial.push(candidate.clone());
 
         for shader_name in MESH_FAMILY_SHADERS {
@@ -1272,9 +1304,9 @@ impl DeviceResources {
         }
 
         if defines_keep(&candidate) {
-            self.deform.keep_slots |= 1u32 << slot;
+            self.scene_tier.deform.keep_slots |= 1u32 << slot;
         }
-        self.deform.registrations.push(candidate);
+        self.scene_tier.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
     }
@@ -1291,11 +1323,11 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
-        validate_name(&self.deform.registrations, desc.name)?;
-        let slot = allocate_internal_slot(&self.deform.registrations)?;
+        validate_name(&self.scene_tier.deform.registrations, desc.name)?;
+        let slot = allocate_internal_slot(&self.scene_tier.deform.registrations)?;
 
         let candidate = StoredDeformer { desc, slot };
-        let mut trial = self.deform.registrations.clone();
+        let mut trial = self.scene_tier.deform.registrations.clone();
         trial.push(candidate.clone());
 
         for shader_name in MESH_FAMILY_SHADERS {
@@ -1310,22 +1342,29 @@ impl DeviceResources {
         }
 
         if defines_keep(&candidate) {
-            self.deform.keep_slots |= 1u32 << slot;
+            self.scene_tier.deform.keep_slots |= 1u32 << slot;
         }
-        self.deform.registrations.push(candidate);
+        self.scene_tier.deform.registrations.push(candidate);
         self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
     }
 
     /// Number of currently registered deformers (host + internal).
     pub fn registered_deformer_count(&self) -> usize {
-        self.deform.registrations.len()
+        if !self.scene_tier.is_built() {
+            return 0;
+        }
+        self.scene_tier.deform.registrations.len()
     }
 
     /// Look up a registered deformer's id by its name. Returns `None` when
     /// no deformer with that name has been registered.
     pub fn deformer_id_by_name(&self, name: &str) -> Option<DeformerId> {
-        self.deform
+        if !self.scene_tier.is_built() {
+            return None;
+        }
+        self.scene_tier
+            .deform
             .registrations
             .iter()
             .find(|r| r.desc.name == name)
@@ -1338,7 +1377,7 @@ impl DeviceResources {
     /// that only carry `&wgpu::Queue`.
     pub fn deform_slot_handle(&self, id: DeformerId) -> DeformSlotHandle {
         DeformSlotHandle {
-            header_buffer: self.deform.header_buffer.clone(),
+            header_buffer: self.scene_tier.deform.header_buffer.clone(),
             slot: id.slot(),
         }
     }
@@ -1407,16 +1446,16 @@ impl DeviceResources {
         // The shadow passes run the deformer too: a caster skinned on the GPU
         // keeps the bind pose in its vertex buffer, so a depth pass that does
         // not deform rasterises the bind pose and the shadow never moves a limb.
-        if self.shadow.pipeline.is_some() {
-            self.shadow.pipeline = None;
+        if self.scene_tier.shadow.pipeline.is_some() {
+            self.scene_tier.shadow.pipeline = None;
             self.ensure_cascade_shadow_pipelines(device);
         }
-        if self.shadow.point_pipeline.is_some() {
-            self.shadow.point_pipeline = None;
+        if self.scene_tier.shadow.point_pipeline.is_some() {
+            self.scene_tier.shadow.point_pipeline = None;
             self.ensure_point_shadow_pipeline(device);
         }
-        if self.outline.mask_pipeline.is_some() {
-            self.outline.mask_pipeline = None;
+        if self.scene_tier.outline.mask_pipeline.is_some() {
+            self.scene_tier.outline.mask_pipeline = None;
             self.ensure_outline_pipelines(device);
         }
         // The object pick deforms too, so a deformed mesh is picked where it is
@@ -1538,7 +1577,10 @@ mod tests {
         instance: Option<u32>,
     ) -> Vec<u32> {
         let rec = record(resources, mesh_id);
-        let word = resources.deform.table_word(mesh_id, instance, rec.as_ref());
+        let word = resources
+            .scene_tier
+            .deform
+            .table_word(mesh_id, instance, rec.as_ref());
         assert_ne!(word, 0, "the draw names a table");
         read_words(device, queue, resources, mesh_id, word, DEFORM_TABLE_WORDS)
     }
@@ -1553,7 +1595,7 @@ mod tests {
         let slot2: Vec<u32> = (0..2 * n as u32).map(|i| 500 + i).collect();
         res.attach_deform_slot(&device, mesh, 0, 4, bytemuck::cast_slice(&slot0));
         res.attach_deform_slot(&device, mesh, 2, 8, bytemuck::cast_slice(&slot2));
-        assert_eq!(res.deform.flag_bits(mesh), 0b0101);
+        assert_eq!(res.scene_tier.deform.flag_bits(mesh), 0b0101);
 
         let table = table_on_gpu(&device, &queue, res, mesh, None);
         assert_eq!(table[1], 1, "slot 0 stride");
@@ -1581,11 +1623,11 @@ mod tests {
         assert!(record(res, mesh).is_none());
         res.attach_deform_slot(&device, mesh, 1, 4, &vec![0u8; n * 4]);
         assert!(record(res, mesh).is_some());
-        assert_eq!(res.deform.flag_bits(mesh), 0b0010);
+        assert_eq!(res.scene_tier.deform.flag_bits(mesh), 0b0010);
 
         assert!(res.detach_deform_slot(&device, mesh, 1));
-        assert_eq!(res.deform.flag_bits(mesh), 0);
-        assert!(!res.deform.meshes.contains_key(&mesh));
+        assert_eq!(res.scene_tier.deform.flag_bits(mesh), 0);
+        assert!(!res.scene_tier.deform.meshes.contains_key(&mesh));
         assert!(record(res, mesh).is_none());
         assert!(!res.detach_deform_slot(&device, mesh, 1));
     }
@@ -1608,17 +1650,22 @@ mod tests {
             bytemuck::cast_slice(&palette),
         );
         // The flags fold the per-mesh and per-instance slots together.
-        assert_eq!(res.deform.flag_bits(mesh), 0b0011);
+        assert_eq!(res.scene_tier.deform.flag_bits(mesh), 0b0011);
         assert!(res.has_deform_slot_instance(mesh, 3, 0));
         assert!(!res.has_deform_slot_instance(mesh, 3, 1));
 
         let rec = record(res, mesh);
-        let mesh_table = res.deform.table_word(mesh, None, rec.as_ref());
-        let own = res.deform.table_word(mesh, Some(3), rec.as_ref());
+        let mesh_table = res.scene_tier.deform.table_word(mesh, None, rec.as_ref());
+        let own = res
+            .scene_tier
+            .deform
+            .table_word(mesh, Some(3), rec.as_ref());
         assert_ne!(own, mesh_table);
         // An instance with no data of its own reads the mesh table.
         assert_eq!(
-            res.deform.table_word(mesh, Some(99), rec.as_ref()),
+            res.scene_tier
+                .deform
+                .table_word(mesh, Some(99), rec.as_ref()),
             mesh_table
         );
 
@@ -1632,7 +1679,7 @@ mod tests {
         );
 
         // A same-shape palette lands in place: no record move.
-        let _ = res.deform.take_counters();
+        let _ = res.scene_tier.deform.take_counters();
         let next: Vec<u32> = (100..132).collect();
         res.attach_deform_slot_instance(
             &device,
@@ -1643,19 +1690,24 @@ mod tests {
             64,
             bytemuck::cast_slice(&next),
         );
-        assert_eq!(res.deform.take_counters().buffer_reallocations, 0);
+        assert_eq!(
+            res.scene_tier.deform.take_counters().buffer_reallocations,
+            0
+        );
         assert_eq!(
             read_words(&device, &queue, res, mesh, table[half], 32),
             next
         );
 
         assert!(res.detach_deform_slot_instance(&device, &queue, mesh, 3, 0));
-        assert_eq!(res.deform.flag_bits(mesh), 0b0010);
+        assert_eq!(res.scene_tier.deform.flag_bits(mesh), 0b0010);
         assert!(!res.has_deform_slot_instance(mesh, 3, 0));
         let rec = record(res, mesh);
         assert_eq!(
-            res.deform.table_word(mesh, Some(3), rec.as_ref()),
-            res.deform.table_word(mesh, None, rec.as_ref())
+            res.scene_tier
+                .deform
+                .table_word(mesh, Some(3), rec.as_ref()),
+            res.scene_tier.deform.table_word(mesh, None, rec.as_ref())
         );
     }
 
@@ -1848,8 +1900,8 @@ mod tests {
         res.set_deform_slot_source_buffer(&device, mesh, 2, src, 12)
             .unwrap();
         assert!(res.has_deform_slot_source(mesh, 2));
-        assert_eq!(res.deform.flag_bits(mesh), 0b0100);
-        assert_eq!(res.deform.external_source_count, 1);
+        assert_eq!(res.scene_tier.deform.flag_bits(mesh), 0b0100);
+        assert_eq!(res.scene_tier.deform.external_source_count, 1);
 
         res.flush_sidecars(&device, &queue);
         res.run_deform_slot_copies(&device, &mut crate::renderer::SubmitSink::inline(&queue));
@@ -1869,7 +1921,7 @@ mod tests {
         res.attach_deform_slot(&device, mesh, 2, 12, &vec![0u8; n * 12]);
         assert!(!res.has_deform_slot_source(mesh, 2));
         assert!(res.has_deform_slot(mesh, 2));
-        assert_eq!(res.deform.external_source_count, 0);
+        assert_eq!(res.scene_tier.deform.external_source_count, 0);
     }
 
     #[test]
@@ -1884,7 +1936,7 @@ mod tests {
         res.set_deform_slot_instance_source_buffer(&device, &queue, mesh, 5, 1, buf, 12)
             .unwrap();
         assert!(res.has_deform_slot_instance_source(mesh, 5, 1));
-        assert_eq!(res.deform.external_source_count, 2);
+        assert_eq!(res.scene_tier.deform.external_source_count, 2);
         res.flush_sidecars(&device, &queue);
         res.run_deform_slot_copies(&device, &mut crate::renderer::SubmitSink::inline(&queue));
 
@@ -1892,8 +1944,8 @@ mod tests {
         assert!(!res.has_deform_slot_instance_source(mesh, 5, 1));
         assert!(res.clear_deform_slot_source(&device, mesh, 2));
         assert!(!res.has_deform_slot_source(mesh, 2));
-        assert_eq!(res.deform.external_source_count, 0);
-        assert!(!res.deform.meshes.contains_key(&mesh));
+        assert_eq!(res.scene_tier.deform.external_source_count, 0);
+        assert!(!res.scene_tier.deform.meshes.contains_key(&mesh));
         assert!(!res.clear_deform_slot_source(&device, mesh, 2));
     }
 

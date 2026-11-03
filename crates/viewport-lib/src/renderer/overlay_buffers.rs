@@ -20,6 +20,9 @@ pub(crate) struct GrowBuffer {
     capacity: u64,
     label: &'static str,
     usage: crate::gpu::BufferUsages,
+    /// The smallest allocation, for a uniform buffer whose binding has a fixed
+    /// size.
+    min_capacity: u64,
     /// The bytes last written, kept by `write_changed` to skip identical writes.
     written: Vec<u8>,
 }
@@ -35,11 +38,14 @@ impl GrowBuffer {
         Self::with_usage(label, crate::gpu::BufferUsages::INDEX)
     }
 
-    /// A `STORAGE | COPY_DST` grow buffer with no allocation yet. Shaders read
-    /// it as a runtime-sized array and index only what this frame wrote, so the
-    /// stale tail is never read.
-    pub(crate) fn storage(label: &'static str) -> Self {
-        Self::with_usage(label, crate::gpu::BufferUsages::STORAGE)
+    /// A `UNIFORM | COPY_DST` buffer of exactly `size` bytes, for a fixed-size
+    /// uniform array. Shaders index only what this frame wrote, so the stale
+    /// tail is never read.
+    pub(crate) fn uniform(label: &'static str, size: u64) -> Self {
+        Self {
+            min_capacity: size,
+            ..Self::with_usage(label, crate::gpu::BufferUsages::UNIFORM)
+        }
     }
 
     fn with_usage(label: &'static str, usage: crate::gpu::BufferUsages) -> Self {
@@ -48,6 +54,7 @@ impl GrowBuffer {
             capacity: 0,
             label,
             usage: usage | crate::gpu::BufferUsages::COPY_DST,
+            min_capacity: 0,
             written: Vec::new(),
         }
     }
@@ -92,7 +99,7 @@ impl GrowBuffer {
         let bytes: &[u8] = bytemuck::cast_slice(verts);
         let needed = bytes.len() as u64;
         if self.buf.is_none() || needed > self.capacity {
-            let cap = grow_capacity(needed, self.capacity);
+            let cap = grow_capacity(needed, self.capacity.max(self.min_capacity));
             self.buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some(self.label),
                 size: cap,
@@ -179,30 +186,88 @@ impl OverlayGeometrySlot {
     }
 }
 
-/// The overlay pass's per-frame storage buffers and the bind groups over
-/// them, kept across frames. Buffers grow on demand and are rewritten only when
-/// their contents change; bind groups are rebuilt only when a buffer, the glyph
-/// atlas or a texture they bind was replaced.
+/// A shadow-layer data texture that persists across frames, grows by rows when
+/// a frame has more layers than it holds, and is rewritten only when the
+/// layers change. The layout is `shadow_layer_texels`'s.
+pub(crate) struct ShadowLayerTexture {
+    texture: Option<(crate::gpu::Texture, crate::gpu::TextureView)>,
+    /// The texels last written, so an unchanged frame skips the upload.
+    written: Vec<u8>,
+}
+
+impl ShadowLayerTexture {
+    pub(crate) fn new() -> Self {
+        Self {
+            texture: None,
+            written: Vec::new(),
+        }
+    }
+
+    /// Upload `layers` (at least one) and return the view to bind.
+    pub(crate) fn write_changed(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        layers: &[crate::resources::OverlayShadowLayerGpu],
+    ) -> crate::gpu::TextureView {
+        let (texels, rows) = crate::resources::overlay::overlay_shape::shadow_layer_texels(layers);
+        let fits = self
+            .texture
+            .as_ref()
+            .is_some_and(|(t, _)| t.height() >= rows);
+        if !fits {
+            // Grow in steps so a frame-to-frame wobble in the count does not
+            // reallocate each time.
+            let rows = rows.next_power_of_two();
+            let texture =
+                crate::resources::overlay::overlay_shape::create_shadow_layer_texture(device, rows);
+            let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            self.texture = Some((texture, view));
+            self.written.clear();
+        }
+        let (texture, view) = self.texture.as_ref().unwrap();
+        if self.written != texels {
+            crate::resources::overlay::overlay_shape::write_shadow_layer_texels(
+                queue, texture, &texels, rows,
+            );
+            self.written = texels;
+        }
+        view.clone()
+    }
+}
+
+/// The overlay pass's per-frame buffers and the bind groups over them, kept
+/// across frames. Buffers grow on demand and are rewritten only when their
+/// contents change; bind groups are rebuilt only when a buffer, the glyph atlas
+/// or a texture they bind was replaced.
 pub(crate) struct OverlayBindings {
-    /// Clip-mask shapes, shared by the text, shape and textured-shape pipelines.
+    /// Clip-mask shapes, shared by the text, shape and textured-shape pipelines:
+    /// a uniform array of `MAX_OVERLAY_CLIP_SHAPES`.
     pub clip: GrowBuffer,
-    /// Slot 0 identity plus one instance per retained group.
+    /// Slot 0 identity plus one instance per retained group, bound as the
+    /// per-instance vertex stream of the text and shape pipelines.
     pub instances: GrowBuffer,
     /// Shape shadow layers, read by all three shape pipelines.
-    pub shape_shadow: GrowBuffer,
+    pub shape_shadow: ShadowLayerTexture,
     pub label_bg: crate::resources::cached_bind_group::CachedBindGroup<(
         crate::gpu::TextureView,
         crate::gpu::Buffer,
         crate::gpu::Buffer,
+    )>,
+    pub shape_shadow_bg: crate::resources::cached_bind_group::CachedBindGroup<(
+        crate::gpu::TextureView,
+        crate::gpu::Buffer,
         crate::gpu::Buffer,
     )>,
-    pub shape_shadow_bg:
-        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 4]>,
-    pub tex_clip_bg: crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 3]>,
-    /// Per retained group, keyed by the group's own shadow buffer.
-    pub retained_shape_bgs: std::collections::HashMap<
+    pub tex_clip_bg: crate::resources::cached_bind_group::CachedBindGroup<(
         crate::gpu::Buffer,
-        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 3]>,
+        crate::gpu::Buffer,
+        crate::gpu::TextureView,
+    )>,
+    /// Per retained group, keyed by the group's own shadow-layer texture.
+    pub retained_shape_bgs: std::collections::HashMap<
+        crate::gpu::TextureView,
+        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 2]>,
     >,
     /// Per overlay texture.
     pub tex_bgs: std::collections::HashMap<crate::gpu::TextureView, crate::gpu::BindGroup>,
@@ -211,9 +276,12 @@ pub(crate) struct OverlayBindings {
 impl OverlayBindings {
     pub(crate) fn new() -> Self {
         Self {
-            clip: GrowBuffer::storage("overlay_clip_buf"),
-            instances: GrowBuffer::storage("overlay_instances_buf"),
-            shape_shadow: GrowBuffer::storage("overlay_shape_shadow_buf"),
+            clip: GrowBuffer::uniform(
+                "overlay_clip_buf",
+                crate::resources::overlay::overlay_shape::CLIP_UNIFORM_BYTES,
+            ),
+            instances: GrowBuffer::vertex("overlay_instances_buf"),
+            shape_shadow: ShadowLayerTexture::new(),
             label_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             shape_shadow_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             tex_clip_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
@@ -235,8 +303,8 @@ pub(crate) struct RetainedDraw {
 }
 
 /// One retained group's SDF shape-stream draw: the group's cached shape vertex
-/// buffer, its count, a bind group (the group's shadow buffer plus the shared clip
-/// / viewport / instances), and the per-draw instance index. Drawn through the
+/// buffer, its count, a bind group (the group's shadow-layer texture plus the
+/// shared clip and viewport), and the per-draw instance index. Drawn through the
 /// overlay shape pipeline.
 pub(crate) struct RetainedShapeDraw {
     pub vertex_buf: crate::gpu::Buffer,

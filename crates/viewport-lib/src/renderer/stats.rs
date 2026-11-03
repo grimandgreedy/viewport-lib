@@ -309,7 +309,8 @@ pub struct GpuBreakdown {
     pub overlay_ms: f32,
 }
 
-/// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
+/// Per-frame rendering statistics for the last prepared frame, read back with
+/// [`ViewportRenderer::last_frame_stats`](crate::ViewportRenderer::last_frame_stats).
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FrameStats {
@@ -590,6 +591,14 @@ pub struct FrameStats {
     /// Reported for the most recently prepared viewport, not summed across
     /// them, matching [`PrepareBreakdown::overlay_ms`].
     pub overlay_retained_submitted: u32,
+    /// Overlay clip masks this frame dropped because the frame already held
+    /// the most there is room for (256, a 16 KiB uniform array of masks). An
+    /// item clipped by a dropped mask draws unclipped, as it would with a mask
+    /// id no shape provides.
+    ///
+    /// Reported for the most recently prepared viewport, like
+    /// [`overlay_retained_submitted`](Self::overlay_retained_submitted).
+    pub clip_masks_dropped: u32,
     /// Retained overlay groups drawn from their compiled buffers this frame.
     ///
     /// Counts groups, not draws: a group carrying both text and SDF-shape
@@ -640,6 +649,25 @@ pub struct FrameStats {
     /// in LOD groups or the `min_screen_size` thresholds never trigger, and the
     /// triangle count is not coming down.
     pub lod_items_reduced: u32,
+    /// The tier the renderer runs at on its device. The same every frame; here
+    /// so a recorded frame says what device class produced it.
+    pub tier: crate::capabilities::Tier,
+    /// Scene items this frame that were not drawn because the renderer runs
+    /// below the full tier: volume meshes, mesh instances, foreground items
+    /// and the items of item types that did not register, and on the
+    /// overlay-only tier the surfaces and every plugin item too. Zero on the
+    /// full tier. The compatibility tier draws the surfaces through its basic mesh
+    /// path and the items of the types that registered on it; an overlay-only
+    /// renderer draws the overlays and ignores the scene.
+    pub items_skipped_by_tier: u32,
+    /// Set when the frame asked for the HDR path and was drawn through the LDR
+    /// path, which is what a renderer below the full tier does.
+    pub hdr_drawn_as_ldr: bool,
+    /// Lights left out of this frame's light list because it was full, after
+    /// the frustum cull and ranked lowest first. The list holds 512 on the full
+    /// tier and [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) on
+    /// the compatibility tier.
+    pub lights_dropped: u32,
 }
 
 #[cfg(test)]

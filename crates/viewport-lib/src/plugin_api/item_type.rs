@@ -18,7 +18,7 @@
 
 use std::any::Any;
 
-use crate::plugin_api::SharedBindings;
+use crate::plugin_api::PluginResources;
 use crate::renderer::PickHit;
 use crate::renderer::PickId;
 use crate::scene::material::ItemSettings;
@@ -202,7 +202,7 @@ impl<'a> ItemCollections<'a> {
 /// The lib reads the collection through this trait object during prepare
 /// and paint; the plugin downcasts back to its concrete type inside
 /// [`ItemTypePlugin::prepare`] and [`ItemTypePlugin::paint`] using
-/// [`Any::downcast_ref`].
+/// [`Any::downcast_ref`](std::any::Any#method.downcast_ref).
 ///
 /// Implementations must be `Send + Sync` so the collection survives the
 /// `SceneFrame` lifetime (Frame submission may be moved across threads in
@@ -291,8 +291,6 @@ pub struct ItemFrameContext<'a> {
     /// [`has_texture`](crate::resources::DeviceResources::has_texture)),
     /// colourmap LUT views
     /// ([`colourmap_view`](crate::resources::DeviceResources::colourmap_view)),
-    /// the shared glyph base meshes
-    /// ([`glyph_base_mesh`](crate::resources::DeviceResources::glyph_base_mesh)),
     /// and the target descriptors and samplers the pipeline builders expose.
     /// Borrows taken from it must not outlive `prepare` / `cull`; bake what
     /// the draw hooks need into the plugin's own bind groups here.
@@ -418,6 +416,15 @@ pub struct PaintContext<'a> {
 ///   list that layout at the matching slot of `extra_bind_group_layouts` when
 ///   building the pipeline via
 ///   [`build_depth_read_pipeline`](crate::resources::DeviceResources::build_depth_read_pipeline).
+///
+/// Either way, declare the depth as `texture_2d<f32>` (the layout entry is
+/// unfilterable float, see
+/// [`depth_texel_entry`](crate::plugin_api::builders::depth_texel_entry)) and
+/// read it through the sampler: `textureSampleLevel(...).r`, or `depth_texel`
+/// from [`SHARED_DEPTH_TEXEL_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL)
+/// for one texel. A `texture_depth_2d` read with `textureLoad` or a
+/// non-comparison sample does not build on wgpu's GL backend, and
+/// `textureLoad` on the `texture_2d<f32>` reads 0 on GLES.
 #[non_exhaustive]
 pub struct DepthReadContext<'a> {
     /// Active render-camera snapshot for this viewport.
@@ -434,7 +441,7 @@ pub struct DepthReadContext<'a> {
     /// own, or use the ready-made
     /// [`scene_depth_bind_group`](Self::scene_depth_bind_group).
     pub scene_depth: &'a crate::gpu::TextureView,
-    /// Non-filtering clamp sampler matching the depth view. Pair it with
+    /// Non-filtering, nearest, clamp sampler matching the depth view. Pair it with
     /// [`scene_depth`](Self::scene_depth) when building a bind group; the same
     /// sampler backs [`scene_depth_bind_group`](Self::scene_depth_bind_group).
     pub scene_depth_sampler: &'a crate::gpu::Sampler,
@@ -549,7 +556,11 @@ pub struct EncoderScopeContext<'a> {
     /// depth writes disabled.
     pub scene_depth: &'a crate::gpu::TextureView,
     /// Read-only depth-aspect view of the same target, for sampling scene
-    /// depth inside the effect's own shaders.
+    /// depth inside the effect's own shaders. Without
+    /// [`direct_depth_sampling`](crate::Capabilities::direct_depth_sampling)
+    /// (wgpu's GL backend) it is a copy of the scene depth taken at this
+    /// scope, a separate texture from the one
+    /// [`scene_stencil_only`](Self::scene_stencil_only) views.
     pub scene_depth_only: &'a crate::gpu::TextureView,
     /// The frame's effects settings (`EffectsFrame`), read-only. An item type
     /// with quality or mode knobs that live on the frame rather than on its
@@ -559,13 +570,18 @@ pub struct EncoderScopeContext<'a> {
     /// `texture_2d<u32>`. It holds the surface mask: for each pixel, the
     /// layers of the item that owns it.
     ///
-    /// A projection effect that lands only on some surfaces loads this at the
+    /// A projection effect that lands only on some surfaces reads this at the
     /// pixel and skips it when the value shares no bit with the effect's own
     /// mask, cut down with [`surface_mask_bits`]. The type has to name that mask
     /// in [`surface_mask_readers`](ItemTypePlugin::surface_mask_readers), or
     /// the items it would refuse are never stamped. Paired with
     /// [`scene_depth_only`](Self::scene_depth_only), which reconstructs the
     /// receiving surface's position.
+    ///
+    /// Read it with `stencil_texel` from
+    /// [`SHARED_DEPTH_TEXEL_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_TEXEL_WGSL)
+    /// and a non-filtering sampler, not `textureLoad`: on GL the stencil is an
+    /// integer texture that reads 0 unless a `NEAREST` sampler is bound.
     pub scene_stencil_only: &'a crate::gpu::TextureView,
     /// The frame's effects settings (`EffectsFrame`), read-only. An item type
     /// with quality or mode knobs that live on the frame rather than on its
@@ -750,28 +766,6 @@ pub struct PickPassContext<'a> {
     pub meshes: crate::resources::MeshDraw<'a>,
 }
 
-/// A new scene item category supplied by a plugin.
-///
-/// Implementations are stored on the renderer via
-/// [`ViewportRenderer::with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin)
-/// keyed by [`type_name`](Self::type_name). The lib invokes
-/// [`init_gpu`](Self::init_gpu) once on registration, then
-/// [`prepare`](Self::prepare) and [`paint`](Self::paint) every frame
-/// against the collection submitted under the same name on
-/// [`SceneFrame`](crate::renderer::SceneFrame).
-///
-/// Beyond `init_gpu`, `prepare`, and `paint`, the trait exposes
-/// `paint_transparent`, `paint_depth_read`, `paint_foreground`,
-/// `outline_mask`, `cull`, `cast_shadow_pass`, and `pick` as default-empty
-/// hooks; implement the ones an item type needs.
-///
-/// Registration model: item-type plugins are singleton-by-type. The
-/// `type_name` is the identity scene items reference to route themselves to a
-/// renderer, so two plugins under the same name would be ambiguous and the
-/// second registration replaces the first. This behavior is frozen. Runtime
-/// and GPU plugins differ deliberately: they carry no external identity and
-/// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
-/// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 /// Upcast to [`Any`] so a host can downcast a registered
 /// [`ItemTypePlugin`] back to its concrete type.
 ///
@@ -815,20 +809,39 @@ impl<T: Any> AsAnyItemTypePlugin for T {
 /// `&Device` its hooks are given. Content shared with other item types
 /// (meshes, textures, volumes, colourmaps) stays with the library and is read
 /// through [`ItemFrameContext::resources`].
+///
+/// Registration model: item-type plugins are singleton-by-type. The
+/// `type_name` is the identity scene items reference to route themselves to a
+/// renderer, so two plugins under the same name would be ambiguous and the
+/// second registration replaces the first. This behaviour is frozen. Runtime
+/// and GPU plugins differ deliberately: they carry no external identity and
+/// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
+/// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a
     /// second plugin with the same name replaces the first.
     fn type_name(&self) -> &'static str;
 
+    /// What the plugin needs from the device. Checked at registration: a
+    /// plugin whose requirements the renderer's
+    /// [`Capabilities`](crate::Capabilities) do not meet is declined with
+    /// [`ViewportError::PluginUnsupported`](crate::ViewportError::PluginUnsupported).
+    /// Defaults to the full tier, so a plugin that binds more storage buffers
+    /// than [`Requirements::full_tier`](crate::Requirements::full_tier) names,
+    /// or more bind groups, should say so.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// Build pipelines, persistent buffers, and bind group layouts. Called
     /// once when the plugin is registered with a renderer that has a
     /// device.
     ///
-    /// The plugin reuses `shared.group0_layout` as group 0 of its pipeline
-    /// layouts. See [`SharedBindings`](crate::plugin_api::SharedBindings)
-    /// for the binding inventory.
-    fn init_gpu(&mut self, _device: &crate::gpu::Device, _shared: &SharedBindings<'_>) {}
+    /// Build pipelines through `resources` (`build_opaque_pipeline` and the
+    /// rest), or list [`group0_layout`](PluginResources::group0_layout) as
+    /// group 0 of a pipeline layout built by hand. See [`PluginResources`].
+    fn init_gpu(&mut self, _device: &crate::gpu::Device, _resources: &dyn PluginResources) {}
 
     /// Build, or ask for, every pipeline this type can draw with. Called by
     /// `ViewportRenderer::warm_pipelines` when the type is named in the
@@ -1360,11 +1373,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// spells them out, and
     /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL)'s
     /// `viewport_pick_fs` writes the item's `pick_id` at `@location(0)` and the
-    /// other two channels. A plugin with access to
-    /// [`DeviceResources`](crate::resources::DeviceResources) can build the
-    /// pipeline with `build_pick_pipeline`; one that only has `SharedBindings`
-    /// (as at [`init_gpu`](Self::init_gpu)) hand-rolls it against those formats,
-    /// the way the built-in pick pipelines do.
+    /// other two channels. Build the pipeline with
+    /// [`build_pick_pipeline`](PluginResources::build_pick_pipeline) in
+    /// [`init_gpu`](Self::init_gpu).
     ///
     /// Implementations skip hidden items and items whose
     /// [`pick_id`](PluginItemCollection::pick_id) is [`PickId::NONE`] (the clear

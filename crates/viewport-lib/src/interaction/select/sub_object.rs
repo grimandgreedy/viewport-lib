@@ -9,6 +9,9 @@
 //! [`crate::interaction::select::selection::Selection`]. Typically an app holds both:
 //! `Selection` for which objects are selected, `SubSelection` for which faces
 //! or points within those objects are selected.
+//!
+//! [`SubObjectRef`]: crate::SubObjectRef
+//! [`SubSelection`]: crate::SubSelection
 
 use std::collections::HashSet;
 
@@ -335,7 +338,7 @@ impl SubSelection {
 ///
 /// Pass one entry per volume object via [`SubSelectionRef::with_voxels`].
 pub struct VolumeSelectionInfo {
-    /// Grid dimensions `[nx, ny, nz]`: same as [`VolumeData::dims`].
+    /// Grid dimensions `[nx, ny, nz]`: same as [`VolumeData::dims`](crate::VolumeData::dims).
     pub dims: [u32; 3],
     /// Local-space bounding-box minimum corner (matches `VolumeItem::bbox_min`).
     pub bbox_min: [f32; 3],
@@ -352,7 +355,7 @@ pub struct VolumeSelectionInfo {
 pub struct PolylineSelectionInfo {
     /// World-space vertex positions. Each entry is one polyline node.
     pub positions: Vec<[f32; 3]>,
-    /// Strip lengths. Same encoding as [`PolylineItem::strip_lengths`](crate::renderer::types::items::PolylineItem::strip_lengths):
+    /// Strip lengths. Same encoding as [`PolylineItem::strip_lengths`](crate::PolylineItem::strip_lengths):
     /// each entry is the number of nodes in that strip. If empty, all positions
     /// belong to a single strip.
     pub strip_lengths: Vec<u32>,

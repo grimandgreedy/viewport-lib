@@ -4,11 +4,13 @@
 //! `SceneFrame::polyline_refs` to draw a polyline uploaded once through
 //! `Uploads::upload`; the renderer routes both forms to this plugin.
 //!
-//! The pipelines this draws with belong to `resources`, not to the plugin: they
-//! are the shared line substrate that scatter-volume bounds, volume
-//! bounding boxes, clip-object outlines and the splat and sprite wireframe
-//! overlays also render through. See [`pipeline`] for why.
+//! It also draws the wireframe overlays other item types return from
+//! `wireframe_polylines` (splat rings, volume and scatter bounds, sprite
+//! outlines): the renderer hands them to this type each frame, and they draw
+//! through the same pipelines as overlays, never picked or outlined. See
+//! [`lines`].
 
+pub(crate) mod lines;
 mod pipeline;
 mod store;
 pub(crate) mod types;
@@ -20,7 +22,8 @@ use crate::plugin_api::{
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PolylineItem, PolylineRefItem, SubObjectRef,
 };
-use crate::resources::{HDR_COLOR_FORMAT, PolylineKey};
+use crate::resources::HDR_COLOR_FORMAT;
+use lines::{PolylineGpuData, PolylineKey};
 
 pub(crate) const TYPE_NAME: &str = "vpl.polyline";
 
@@ -42,9 +45,7 @@ impl PluginItem for PolylineRefItem {
 
 #[derive(Default)]
 pub(crate) struct PolylinePlugin {
-    /// The pre-uploaded polylines, owned by the type that draws them. The
-    /// pipelines and the per-frame upload they go through stay with the shared
-    /// line substrate; only the store is this type's.
+    /// The pre-uploaded polylines, owned by the type that draws them.
     stored: store::PolylineStore,
     gpu: Option<pipeline::PolylineGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
@@ -54,11 +55,19 @@ pub(crate) struct PolylinePlugin {
     /// matching what the CPU pick cache used to retain. Reference items are not
     /// here: their segments live on the GPU, so they answer the GPU pick only.
     pick_items: Vec<PolylineItem>,
+    /// Other item types' wireframe overlays for this frame, handed over by
+    /// the renderer after they are collected. Drawn before this type's own
+    /// items and never picked or outlined.
+    overlays: Vec<PolylineGpuData>,
 }
 
 impl ItemTypePlugin for PolylinePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::compatibility_tier()
     }
 
     fn resident_bytes(&self) -> u64 {
@@ -102,9 +111,9 @@ impl ItemTypePlugin for PolylinePlugin {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
-            let mut gpu_data = ctx
-                .resources
-                .upload_polyline_per_frame(device, queue, item, vp_size);
+            let mut gpu_data = gpu
+                .lines
+                .upload(ctx.resources, device, queue, item, vp_size);
             gpu_data.wireframe = ctx.wireframe_mode || item.settings.wireframe;
             gpu_data.skip_clip = item.settings.ignore_clip;
             let pick_bind_group = (gpu_data.pick_id != PickId::NONE)
@@ -155,12 +164,15 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &ItemCollections<'_>,
+        items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
-        for entry in &self.frame {
-            let gd = &entry.gpu;
+        // Painted for the overlays alone when the frame submitted no polyline
+        // items, and then `frame` still holds the last prepared frame's.
+        let own: &[pipeline::PolylineFrame] = if items.is_empty() { &[] } else { &self.frame };
+        let lines = self.overlays.iter().chain(own.iter().map(|e| &e.gpu));
+        for gd in lines {
             if gd.segment_count == 0 {
                 continue;
             }
@@ -169,19 +181,15 @@ impl ItemTypePlugin for PolylinePlugin {
                 wireframe: gd.wireframe,
             };
             // Still compiling: this line draws next frame.
-            let Some(pipeline) = gpu.pipelines.get(key, is_hdr) else {
+            let Some(pipeline) = gpu.lines.pipelines.get(key, is_hdr) else {
                 continue;
             };
             pass.set_pipeline(pipeline);
+            pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
             if gd.wireframe {
-                let Some(wf_bg) = gd.wireframe_bind_group.as_ref() else {
-                    continue;
-                };
-                pass.set_bind_group(1, wf_bg, &[]);
                 pass.draw(0..2, 0..gd.segment_count);
             } else {
                 pass.set_bind_group(1, &gd.bind_group, &[]);
-                pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
                 pass.draw(0..6, 0..gd.segment_count);
             }
         }
@@ -506,7 +514,7 @@ impl PolylinePlugin {
         resources: &crate::resources::DeviceResources,
         item: &crate::renderer::PolylineItem,
     ) -> types::PolylineId {
-        let gpu = build(device, queue, resources, item);
+        let gpu = self.build(device, queue, resources, item);
         self.stored.insert_sized(gpu)
     }
 
@@ -527,20 +535,71 @@ impl PolylinePlugin {
         if !self.stored.contains(id) {
             return Err(self.stored.stale(id));
         }
-        let gpu = build(device, queue, resources, item);
+        let gpu = self.build(device, queue, resources, item);
         self.stored.replace_sized(id, gpu);
         Ok(())
+    }
+
+    /// Build one stored polyline. The viewport size used for screen-space
+    /// miter calculations is set from the most recent reference draw of the
+    /// polyline, so a stationary caller can rely on it being correct after
+    /// the first frame.
+    fn build(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &PolylineItem,
+    ) -> PolylineGpuData {
+        self.gpu
+            .get_or_insert_with(|| pipeline::PolylineGpu::new(device, resources))
+            .lines
+            .upload(resources, device, queue, item, [1.0, 1.0])
+    }
+
+    /// Replace this frame's wireframe overlays: the polylines other item
+    /// types returned from `wireframe_polylines`, uploaded for this
+    /// viewport size.
+    pub(crate) fn set_overlays(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        items: &[PolylineItem],
+        viewport_size: [f32; 2],
+    ) {
+        self.overlays.clear();
+        if items.is_empty() {
+            return;
+        }
+        let gpu = self
+            .gpu
+            .get_or_insert_with(|| pipeline::PolylineGpu::new(device, resources));
+        for item in items.iter().filter(|i| !i.positions.is_empty()) {
+            let mut overlay = gpu
+                .lines
+                .upload(resources, device, queue, item, viewport_size);
+            // An item type asks for the thin single-pixel line by setting the
+            // flag on the item it returns.
+            overlay.wireframe = item.settings.wireframe;
+            self.overlays.push(overlay);
+        }
+    }
+
+    /// Whether this frame has wireframe overlays to draw, which the renderer
+    /// paints even when no polyline item was submitted.
+    pub(crate) fn has_overlays(&self) -> bool {
+        !self.overlays.is_empty()
     }
 
     /// Hand a built polyline to the job runner so the handle is minted by the
     /// call that collects it.
     ///
     /// Unlike the other stored types, the segment buffer is built here rather
-    /// than on the worker: a polyline goes through the shared line substrate,
-    /// whose pipelines and layouts belong to the renderer rather than to this
-    /// plugin, so the build cannot travel to a thread with no `DeviceResources`
-    /// borrow. A polyline is a vertex buffer and a uniform, so this is a small
-    /// amount of work to keep on the calling thread.
+    /// than on the worker: the build reads the colourmap views and sampler
+    /// from `DeviceResources`, which a worker has no borrow of. A polyline is
+    /// a vertex buffer and a uniform, so this is a small amount of work to
+    /// keep on the calling thread.
     pub(crate) fn begin_upload(
         &mut self,
         jobs: &crate::resources::Jobs<'_>,
@@ -549,7 +608,7 @@ impl PolylinePlugin {
         resources: &crate::resources::DeviceResources,
         item: crate::renderer::PolylineItem,
     ) -> crate::resources::JobId {
-        let gpu = build(device, queue, resources, &item);
+        let gpu = self.build(device, queue, resources, &item);
         jobs.submit_cpu(move || gpu)
     }
 
@@ -564,7 +623,7 @@ impl PolylinePlugin {
                 Err(crate::error::ViewportError::JobNotReady)
             }
             crate::resources::UploadStatus::Failed(e) => Err(e),
-            _ => match jobs.take::<crate::resources::PolylineGpuData>(id) {
+            _ => match jobs.take::<PolylineGpuData>(id) {
                 Some(gpu) => Ok(self.stored.insert_sized(gpu)),
                 None => Err(crate::error::ViewportError::JobResultMissing {
                     reason: "unknown id or wrong upload type",
@@ -572,19 +631,4 @@ impl PolylinePlugin {
             },
         }
     }
-}
-
-/// Build one stored polyline through the shared line substrate.
-///
-/// The viewport size used for screen-space miter calculations is set from the
-/// most recent reference draw of the polyline, so a stationary caller can rely
-/// on it being correct after the first frame.
-fn build(
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-    resources: &crate::resources::DeviceResources,
-    item: &crate::renderer::PolylineItem,
-) -> crate::resources::PolylineGpuData {
-    resources.ensure_polyline_pipeline(device);
-    resources.upload_polyline_per_frame(device, queue, item, [1.0, 1.0])
 }

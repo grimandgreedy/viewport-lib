@@ -200,6 +200,15 @@ pub trait GpuPlugin: Send + 'static {
         std::any::type_name::<Self>()
     }
 
+    /// What the plugin needs from the device. Checked before the first
+    /// `init_gpu`: a plugin whose requirements the device does not meet is
+    /// removed and reported by
+    /// [`ViewportRuntime::declined_gpu_plugins`](super::ViewportRuntime::declined_gpu_plugins).
+    /// Defaults to the full tier.
+    fn requires(&self) -> crate::capabilities::Requirements {
+        crate::capabilities::Requirements::full_tier()
+    }
+
     /// Build pipelines, persistent buffers, and bind group layouts.
     ///
     /// Called once before the plugin's first `pre_prepare`. If a new GPU
@@ -260,7 +269,7 @@ pub trait GpuPlugin: Send + 'static {
 
 /// Lets a plugin behind an `Arc<Mutex<P>>` register as a GPU plugin.
 ///
-/// The GPU-side counterpart to the same impl on [`RuntimePlugin`]. A feature
+/// The GPU-side counterpart to the same impl on [`RuntimePlugin`](crate::RuntimePlugin). A feature
 /// that implements both traits on one struct wraps it in `Arc<Mutex<..>>` and
 /// registers the same object into the runtime and GPU lists by cloning the
 /// `Arc`. `type_name` forwards to the inner plugin so `RuntimeStats` keys stay
@@ -424,7 +433,7 @@ mod tests {
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

@@ -30,6 +30,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         data: TextureData,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_lit_group0()?;
         // Sync wrapper around the async path: build the job, drive it to
         // completion on the calling thread, and take the typed result. The
         // worker performs the same texture creation, sampler setup, and
@@ -52,6 +53,7 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_lit_group0()?;
         self.upload_texture(
             device,
             queue,
@@ -72,6 +74,7 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_lit_group0()?;
         self.upload_texture(
             device,
             queue,
@@ -92,6 +95,7 @@ impl DeviceResources {
         height: u32,
         rgba: &[f32],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_lit_group0()?;
         self.upload_texture(
             device,
             queue,
@@ -125,6 +129,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         data: TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_lit_group0()?;
         data.validate()?;
         let width = data.width();
         let height = data.height();
@@ -157,6 +162,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, TextureData::normal_map(width, height, rgba))
     }
 
@@ -173,6 +179,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, TextureData::linear(width, height, rgba))
     }
 
@@ -189,6 +196,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<f32>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, TextureData::hdr(width, height, rgba))
     }
 
@@ -221,6 +229,7 @@ impl DeviceResources {
         layers: u32,
         rgba: &[f32],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_scene_tier()?;
         let expected = (width as usize) * (height as usize) * 4 * (layers as usize);
         if layers == 0 || rgba.len() != expected {
             return Err(crate::error::ViewportError::InvalidTextureData {
@@ -286,7 +295,7 @@ impl DeviceResources {
         );
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("lightmap_array_bg"),
-            layout: &self.material.texture_bgl,
+            layout: &self.scene_tier.material.texture_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -299,12 +308,14 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &self.material.normal_map_view,
+                        &self.scene_tier.material.normal_map_view,
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: crate::gpu::BindingResource::TextureView(&self.material.ao_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.scene_tier.material.ao_map_view,
+                    ),
                 },
             ],
         });
@@ -332,6 +343,7 @@ impl DeviceResources {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_lit_group0()?;
         let mut map = self
             .job_results
             .texture
@@ -372,6 +384,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_lit_group0()?;
         self.upload_texture(device, queue, desc.into_texture_data()?)
     }
 
@@ -394,6 +407,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.require_lit_group0()?;
         self.begin_upload_texture(device, queue, desc.into_texture_data()?)
     }
 
@@ -416,10 +430,21 @@ impl DeviceResources {
         // Clone the fallback views and the bind-group layout into the job
         // so its stages can build the GpuTexture and bind group without
         // touching `self`.
-        let bgl = self.material.texture_bgl.clone();
-        let fallback_albedo_view = self.material.texture.view.clone();
-        let fallback_normal_view = self.material.normal_map_view.clone();
-        let fallback_ao_view = self.material.ao_map_view.clone();
+        let (bgl, fallback_albedo_view, fallback_normal_view, fallback_ao_view) =
+            match self.compatibility_tier.as_deref() {
+                Some(compat) => (
+                    compat.texture_bgl.clone(),
+                    compat.fallback_albedo_view.clone(),
+                    compat.fallback_normal_view.clone(),
+                    compat.fallback_ao_view.clone(),
+                ),
+                None => (
+                    self.scene_tier.material.texture_bgl.clone(),
+                    self.scene_tier.material.texture.view.clone(),
+                    self.scene_tier.material.normal_map_view.clone(),
+                    self.scene_tier.material.ao_map_view.clone(),
+                ),
+            };
         let TextureUploadSpec {
             width,
             height,
@@ -712,6 +737,7 @@ impl DeviceResources {
         id: crate::resources::TextureId,
         data: TextureData,
     ) -> crate::error::ViewportResult<()> {
+        self.require_scene_tier()?;
         data.validate()?;
         let (width, height) = (data.width(), data.height());
         let is_normal_map = data.role() == TextureRole::NormalMap;
@@ -725,10 +751,10 @@ impl DeviceResources {
             format,
             is_normal_map,
             &levels,
-            &self.material.texture_bgl,
-            &self.material.texture.view,
-            &self.material.normal_map_view,
-            &self.material.ao_map_view,
+            &self.scene_tier.material.texture_bgl,
+            &self.scene_tier.material.texture.view,
+            &self.scene_tier.material.normal_map_view,
+            &self.scene_tier.material.ao_map_view,
         );
         let bytes = levels.iter().map(|l| l.len() as u64).sum();
         if self
@@ -773,23 +799,27 @@ impl DeviceResources {
     /// in place with [`update_texture_view`](Self::update_texture_view); call
     /// [`free_texture`](Self::free_texture) when the source stops. The entry holds a
     /// clone of the view, which keeps the underlying texture alive until then.
+    ///
+    /// Returns [`ViewportError::TierUnsupported`](crate::error::ViewportError::TierUnsupported)
+    /// on an overlay-only renderer, which has no material path to sample it.
     pub fn register_texture_view(
         &mut self,
         device: &crate::gpu::Device,
         view: &crate::gpu::TextureView,
         _width: u32,
         _height: u32,
-    ) -> crate::resources::TextureId {
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        self.require_scene_tier()?;
         let entry = build_external_gpu_texture(
             device,
             view,
-            &self.material.texture_bgl,
-            &self.material.normal_map_view,
-            &self.material.ao_map_view,
+            &self.scene_tier.material.texture_bgl,
+            &self.scene_tier.material.normal_map_view,
+            &self.scene_tier.material.ao_map_view,
         );
         // External entries borrow the caller's texture, so they carry no resident
         // GPU-memory charge of their own.
-        self.content.textures.insert(entry, 0)
+        Ok(self.content.textures.insert(entry, 0))
     }
 
     /// Re-point an external texture id at a new `TextureView`, keeping the id stable
@@ -808,6 +838,9 @@ impl DeviceResources {
         _width: u32,
         _height: u32,
     ) -> bool {
+        if !self.scene_tier.is_built() {
+            return false;
+        }
         match self.content.textures.get(id) {
             Some(entry) if entry.texture.is_none() => {}
             _ => return false,
@@ -815,9 +848,9 @@ impl DeviceResources {
         let entry = build_external_gpu_texture(
             device,
             view,
-            &self.material.texture_bgl,
-            &self.material.normal_map_view,
-            &self.material.ao_map_view,
+            &self.scene_tier.material.texture_bgl,
+            &self.scene_tier.material.normal_map_view,
+            &self.scene_tier.material.ao_map_view,
         );
         if self.content.textures.replace(id, entry, 0).is_none() {
             return false;
@@ -1270,22 +1303,26 @@ impl DeviceResources {
             let albedo_view = self
                 .content
                 .textures
-                .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+                .resolve_slot(&self.scene_tier.material, MaterialSlot::Albedo, albedo_id)
                 .view;
             let normal_view = self
                 .content
                 .textures
-                .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+                .resolve_slot(
+                    &self.scene_tier.material,
+                    MaterialSlot::Normal,
+                    normal_map_id,
+                )
                 .view;
             let ao_view = self
                 .content
                 .textures
-                .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+                .resolve_slot(&self.scene_tier.material, MaterialSlot::Ao, ao_map_id)
                 .view;
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("material_bg"),
-                layout: &self.material.texture_bgl,
+                layout: &self.scene_tier.material.texture_bgl,
                 entries: &[
                     crate::gpu::BindGroupEntry {
                         binding: 0,
@@ -1293,7 +1330,9 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material.mesh_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(
+                            &self.scene_tier.material.mesh_sampler,
+                        ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
@@ -1398,17 +1437,21 @@ impl DeviceResources {
         let albedo_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+            .resolve_slot(&self.scene_tier.material, MaterialSlot::Albedo, albedo_id)
             .view;
         let normal_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+            .resolve_slot(
+                &self.scene_tier.material,
+                MaterialSlot::Normal,
+                normal_map_id,
+            )
             .view;
         let ao_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+            .resolve_slot(&self.scene_tier.material, MaterialSlot::Ao, ao_map_id)
             .view;
         let lut_view = match lut_id {
             Some(id) if id.0 < self.content.colourmap_views.len() => {
@@ -1436,7 +1479,7 @@ impl DeviceResources {
             });
         let lightmap_view: &crate::gpu::TextureView = lightmap_owned
             .as_ref()
-            .unwrap_or(&self.material.texture_array_view);
+            .unwrap_or(&self.scene_tier.material.texture_array_view);
         let lightmap_dir_owned = lightmap_dir_tex_id
             .and_then(|id| self.content.textures.get(id))
             .and_then(|t| {
@@ -1446,7 +1489,7 @@ impl DeviceResources {
             });
         let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
             .as_ref()
-            .unwrap_or(&self.material.texture_array_view);
+            .unwrap_or(&self.scene_tier.material.texture_array_view);
 
         let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
             return;
@@ -1465,7 +1508,7 @@ impl DeviceResources {
                 .content
                 .fallback_matcap_view
                 .as_ref()
-                .unwrap_or(&self.material.texture.view),
+                .unwrap_or(&self.scene_tier.material.texture.view),
         };
 
         let position_override_buf: &crate::gpu::Buffer = mesh
@@ -1481,7 +1524,7 @@ impl DeviceResources {
             .content
             .textures
             .resolve_slot(
-                &self.material,
+                &self.scene_tier.material,
                 MaterialSlot::MetallicRoughness,
                 metallic_roughness_id,
             )
@@ -1489,7 +1532,11 @@ impl DeviceResources {
         let emissive_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_texture_id)
+            .resolve_slot(
+                &self.scene_tier.material,
+                MaterialSlot::Emissive,
+                emissive_texture_id,
+            )
             .view;
 
         // Second UV set (binding 19): swap in the mesh's per-chunk uv1 buffer when
@@ -1506,7 +1553,7 @@ impl DeviceResources {
 
         mesh.object_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
-            layout: &self.binds.object_bgl,
+            layout: &self.scene_tier.binds.object_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -1518,7 +1565,9 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.mesh_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(
+                        &self.scene_tier.material.mesh_sampler,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -1542,7 +1591,9 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(
+                        &self.scene_tier.material.lut_sampler,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 11,
@@ -1712,6 +1763,7 @@ impl DeviceResources {
         // palette; a material that set no `SamplerKey` binds the default key's.
         // Bound at binding 2 below.
         let keyed_sampler = self
+            .scene_tier
             .material
             .resolve_sampler(device, sampler.unwrap_or_default());
         let bound_sampler = &keyed_sampler;
@@ -1727,17 +1779,21 @@ impl DeviceResources {
         let albedo_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+            .resolve_slot(&self.scene_tier.material, MaterialSlot::Albedo, albedo_id)
             .view;
         let normal_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+            .resolve_slot(
+                &self.scene_tier.material,
+                MaterialSlot::Normal,
+                normal_map_id,
+            )
             .view;
         let ao_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+            .resolve_slot(&self.scene_tier.material, MaterialSlot::Ao, ao_map_id)
             .view;
         let lut_view = match lut_id {
             Some(id) if id.0 < self.content.colourmap_views.len() => {
@@ -1756,7 +1812,7 @@ impl DeviceResources {
                 .content
                 .fallback_matcap_view
                 .as_ref()
-                .unwrap_or(&self.material.texture.view),
+                .unwrap_or(&self.scene_tier.material.texture.view),
         };
 
         let position_override_buf: &crate::gpu::Buffer = mesh
@@ -1787,7 +1843,7 @@ impl DeviceResources {
             });
         let lightmap_view: &crate::gpu::TextureView = lightmap_owned
             .as_ref()
-            .unwrap_or(&self.material.texture_array_view);
+            .unwrap_or(&self.scene_tier.material.texture_array_view);
         let lightmap_dir_owned = mesh
             .lightmap
             .as_ref()
@@ -1800,13 +1856,13 @@ impl DeviceResources {
             });
         let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
             .as_ref()
-            .unwrap_or(&self.material.texture_array_view);
+            .unwrap_or(&self.scene_tier.material.texture_array_view);
 
         let metallic_roughness_view = self
             .content
             .textures
             .resolve_slot(
-                &self.material,
+                &self.scene_tier.material,
                 MaterialSlot::MetallicRoughness,
                 metallic_roughness_id,
             )
@@ -1814,7 +1870,11 @@ impl DeviceResources {
         let emissive_view = self
             .content
             .textures
-            .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_texture_id)
+            .resolve_slot(
+                &self.scene_tier.material,
+                MaterialSlot::Emissive,
+                emissive_texture_id,
+            )
             .view;
 
         // Second UV set (binding 19): the slab chunk's uv1 stream, or the zero
@@ -1852,7 +1912,9 @@ impl DeviceResources {
             },
             crate::gpu::BindGroupEntry {
                 binding: 10,
-                resource: crate::gpu::BindingResource::Sampler(&self.material.lut_sampler),
+                resource: crate::gpu::BindingResource::Sampler(
+                    &self.scene_tier.material.lut_sampler,
+                ),
             },
             crate::gpu::BindGroupEntry {
                 binding: 13,
@@ -1901,9 +1963,9 @@ impl DeviceResources {
             }
         }
         let layout = if bindless {
-            self.binds.object_bindless_bgl.as_ref()?
+            self.scene_tier.binds.object_bindless_bgl.as_ref()?
         } else {
-            &self.binds.object_bgl
+            &self.scene_tier.binds.object_bgl
         };
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("per_item_object_bind_group"),
@@ -2011,6 +2073,7 @@ impl DeviceResources {
         data: TextureData,
         blendable: bool,
     ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
+        self.require_scene_tier()?;
         data.validate()?;
         let reject = |reason| {
             Err(crate::error::ViewportError::UnsupportedTextureData {
@@ -2109,7 +2172,8 @@ impl DeviceResources {
         // first uploaded texture (a plain white 1x1 is fine as fallback).
         if self.content.fallback_matcap_view.is_none() {
             self.content.fallback_matcap_view = Some(
-                self.material
+                self.scene_tier
+                    .material
                     .texture
                     .texture
                     .as_ref()
@@ -2138,14 +2202,14 @@ impl DeviceResources {
     /// Upload the eight built-in matcaps to the GPU if not already done.
     ///
     /// Called by `ViewportRenderer::prepare()` on the first frame whose scene
-    /// uses a matcap. Safe to call multiple times : no-op after first
-    /// invocation.
+    /// uses a matcap. Safe to call multiple times: a no-op after the first
+    /// call, and on a renderer below the full tier, which draws no matcaps.
     pub fn ensure_matcaps_initialized(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
-        if self.content.matcaps_initialized {
+        if self.content.matcaps_initialized || !self.scene_tier.is_built() {
             return;
         }
         self.content.matcaps_initialized = true;
@@ -2179,7 +2243,7 @@ mod async_texture_tests {
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,
@@ -2197,7 +2261,7 @@ mod async_texture_tests {
     /// does not support BC (e.g. a software / mobile adapter) so the caller can
     /// skip the test.
     fn try_make_bc_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
+        let instance = crate::gpu::instance_from_env();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

@@ -24,6 +24,7 @@
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
+use viewport_lib::input::adapters::modifiers_from_egui;
 pub use viewport_lib_examples_eframe::eframe;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
@@ -721,11 +722,9 @@ impl eframe::App for App {
 
             ui.input(|i| {
                 self.input
-                    .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    }));
+                    .push_event(ViewportEvent::ModifiersChanged(modifiers_from_egui(
+                        &i.modifiers,
+                    )));
                 if let Some(p) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
                     self.last_cursor = local;

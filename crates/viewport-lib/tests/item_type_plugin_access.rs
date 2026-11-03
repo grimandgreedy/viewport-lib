@@ -52,8 +52,12 @@ fn a_registered_plugin_can_be_reached_and_uploaded_into() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    renderer.with_item_type_plugin(&device, Box::new(StoringPlugin::default()));
-    renderer.with_item_type_plugin(&device, Box::new(OtherPlugin));
+    renderer
+        .with_item_type_plugin(&device, Box::new(StoringPlugin::default()))
+        .unwrap();
+    renderer
+        .with_item_type_plugin(&device, Box::new(OtherPlugin))
+        .unwrap();
 
     // Upload into content the plugin owns itself.
     let plugin = renderer
@@ -80,7 +84,9 @@ fn the_lookup_checks_both_the_name_and_the_type() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    renderer.with_item_type_plugin(&device, Box::new(StoringPlugin::default()));
+    renderer
+        .with_item_type_plugin(&device, Box::new(StoringPlugin::default()))
+        .unwrap();
 
     assert!(
         renderer

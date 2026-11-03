@@ -1,6 +1,6 @@
 //! Slotted store with generational handles.
 //!
-//! The handle primitives themselves ([`ContentHandle`] and the [`slot_handle!`]
+//! The handle primitives themselves ([`ContentHandle`] and the `slot_handle!`
 //! generator) live in `viewport-lib-types` so CPU-side tools can name a
 //! resource without the renderer. They are re-exported here so
 //! the renderer's `crate::resources::handle::*` paths keep resolving. This

@@ -79,7 +79,7 @@ impl AnimationTrack {
 
 /// A plugin that drives node transforms from keyframed animation tracks.
 ///
-/// Runs in the [`RuntimePhase::Animate`] phase. Each frame it advances the
+/// Runs in the [`RuntimePhase::Animate`](crate::RuntimePhase::Animate) phase. Each frame it advances the
 /// playhead by `dt * speed` and writes the interpolated transform for each
 /// track via [`crate::TransformWriteback`].
 ///

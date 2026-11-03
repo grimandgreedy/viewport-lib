@@ -308,8 +308,9 @@ pub fn normal() -> Vec<u8> {
 pub use viewport_lib_types::ids::MatcapId;
 /// Built-in matcap presets bundled with viewport-lib.
 ///
-/// Pass to [`DeviceResources::builtin_matcap_id`] after the renderer
-/// has been prepared for at least one frame.
+/// Pass to
+/// [`DeviceResources::builtin_matcap_id`](crate::DeviceResources::builtin_matcap_id)
+/// after the renderer has been prepared for at least one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMatcap {
     /// Warm orange-brown with soft top-left lighting.  Blendable.
