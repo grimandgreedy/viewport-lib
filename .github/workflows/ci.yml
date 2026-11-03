@@ -7,14 +7,12 @@ name: CI
 # (WARP, llvmpipe GL) and the web and mobile checks run from the manual and
 # nightly workflow in software-adapters.yml.
 #
-# Started by hand, the workflow runs `bless-lavapipe` instead: it renders a
-# fresh lavapipe reference set and uploads it as an artifact. Review the
-# images, then commit them under
+# It runs on pull requests, not on pushes. Started by hand, the workflow runs
+# `bless-lavapipe` instead: it renders a fresh lavapipe reference set and
+# uploads it as an artifact. Review the images, then commit them under
 # crates/viewport-lib-testkit/tests/snapshots/vulkan-lavapipe/ (and
 # vulkan-lavapipe-compatibility/).
 on:
-  push:
-    branches: [develop, master]
   pull_request:
   workflow_dispatch:
 

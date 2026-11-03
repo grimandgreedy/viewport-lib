@@ -137,7 +137,14 @@ wasm_leg() {
     wasm-bindgen --target web --no-typescript --out-name winit-web \
         --out-dir "$work/pkg" "$wasm_in" >&2
     local raw="$work/pkg/winit-web_bg.wasm"
-    wasm-opt -O3 -o "$work/opt.wasm" "$raw" >&2
+    # The wasm features rustc emits for wasm32-unknown-unknown by default
+    # (`rustc --print cfg --target wasm32-unknown-unknown`). Named here
+    # because binaryen's default set varies by release, and an older one
+    # rejects the module as using features it did not enable.
+    wasm-opt -O3 \
+        --enable-bulk-memory --enable-multivalue --enable-mutable-globals \
+        --enable-nontrapping-float-to-int --enable-reference-types --enable-sign-ext \
+        -o "$work/opt.wasm" "$raw" >&2
     gzip -9 -c "$work/opt.wasm" > "$work/opt.wasm.gz"
 
     put wasm_rustc "$("$tc_rustc" -V)"
