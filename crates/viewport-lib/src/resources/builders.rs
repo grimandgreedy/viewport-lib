@@ -355,6 +355,44 @@ fn fs_main() -> @location(0) vec4<f32> {
         None
     }
 
+    /// The first helper function of `module` that reads a `vertex_index` or
+    /// `instance_index` builtin out of a struct it was passed, as
+    /// `` `function`: `member` ``. naga's HLSL writer adds the draw's base vertex
+    /// and first instance only where an entry point reads its own argument, so
+    /// on DX12 the same read in a helper misses them. Read the builtin in the
+    /// entry point and pass the value instead.
+    #[cfg(wgpu27)]
+    fn draw_builtin_read_in_helper(module: &naga::Module) -> Option<String> {
+        for (_, function) in module.functions.iter() {
+            for (_, expr) in function.expressions.iter() {
+                let naga::Expression::AccessIndex { base, index } = *expr else {
+                    continue;
+                };
+                let naga::Expression::FunctionArgument(arg) = function.expressions[base] else {
+                    continue;
+                };
+                let ty = function.arguments[arg as usize].ty;
+                let naga::TypeInner::Struct { ref members, .. } = module.types[ty].inner else {
+                    continue;
+                };
+                let member = &members[index as usize];
+                if matches!(
+                    member.binding,
+                    Some(naga::Binding::BuiltIn(
+                        naga::BuiltIn::VertexIndex | naga::BuiltIn::InstanceIndex
+                    ))
+                ) {
+                    return Some(format!(
+                        "`{}`: `{}`",
+                        function.name.as_deref().unwrap_or("?"),
+                        member.name.as_deref().unwrap_or("?")
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// The first function of `module` that samples or gathers a depth texture
     /// without a depth reference, as `` `function`: `texture` ``. naga declares
     /// every depth texture a `sampler2DShadow` in GLSL and emits the lookup with no
@@ -583,6 +621,31 @@ fn fs_main() -> @location(0) vec4<f32> {
                 panic!("{name}: {e}");
             }
         }
+    }
+
+    /// No shader reads `vertex_index` or `instance_index` from a struct inside a
+    /// helper function, where naga's DX12 output leaves out the draw's base
+    /// vertex and first instance.
+    #[cfg(wgpu27)]
+    #[test]
+    fn draw_builtins_are_read_in_entry_points() {
+        let full = caps(crate::gpu::Backend::Vulkan);
+        let mut hits = Vec::new();
+        for s in crate::renderer::shader_hashes::SHADERS {
+            let src = adapt_wgsl(s.source, &full);
+            let module = match naga::front::wgsl::parse_str(&src) {
+                Ok(module) => module,
+                Err(e) => panic!("{}: {}", s.name, e.emit_to_string(&src)),
+            };
+            if let Some(at) = draw_builtin_read_in_helper(&module) {
+                hits.push(format!("{}: {at}", s.name));
+            }
+        }
+        assert!(
+            hits.is_empty(),
+            "draw builtins read in a helper function:\n{}",
+            hits.join("\n")
+        );
     }
 
     /// Shader entry points the GLSL writer cannot translate yet, as

@@ -473,7 +473,8 @@ struct VertexInLean {
     @builtin(vertex_index) vertex_index: u32,
 };
 
-// `VertexIn` for the shared vertex body, every record word zero.
+// `VertexIn` for the shared vertex body, every record word zero. The vertex
+// index is left out: the entry point passes it to `vs_body` itself.
 fn from_lean_in(p: VertexInLean) -> VertexIn {
     var v: VertexIn;
     v.position = p.position;
@@ -481,7 +482,6 @@ fn from_lean_in(p: VertexInLean) -> VertexIn {
     v.colour = p.colour;
     v.uv = p.uv;
     v.tangent = p.tangent;
-    v.vertex_index = p.vertex_index;
     return v;
 }
 
@@ -572,45 +572,49 @@ fn from_plain(p: VertexOutPlain) -> VertexOut {
 // A direct draw: the instance index is the record.
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
-    return vs_body(in, instance_index);
+    return vs_body(in, in.vertex_index, instance_index);
 }
 
 // A GPU-culled draw: the instance index is a slot in the visible list, which
 // names the record. Slot 1 holds the cull's copy of the survivor's words.
 @vertex
 fn vs_main_cull(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOut {
-    return vs_body(in, visibility_indices[slot]);
+    return vs_body(in, in.vertex_index, visibility_indices[slot]);
 }
 
 // `vs_main` and `vs_main_cull` for a pipeline drawing through `VertexOutPlain`.
 @vertex
 fn vs_main_plain(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOutPlain {
-    return to_plain(vs_body(in, instance_index));
+    return to_plain(vs_body(in, in.vertex_index, instance_index));
 }
 
 @vertex
 fn vs_main_cull_plain(in: VertexIn, @builtin(instance_index) slot: u32) -> VertexOutPlain {
-    return to_plain(vs_body(in, visibility_indices[slot]));
+    return to_plain(vs_body(in, in.vertex_index, visibility_indices[slot]));
 }
 
 // The plain entries for a pipeline that also reads no record word, through
 // `VertexInLean`.
 @vertex
 fn vs_main_lean(in: VertexInLean, @builtin(instance_index) instance_index: u32) -> VertexOutPlain {
-    return to_plain(vs_body(from_lean_in(in), instance_index));
+    return to_plain(vs_body(from_lean_in(in), in.vertex_index, instance_index));
 }
 
 @vertex
 fn vs_main_cull_lean(in: VertexInLean, @builtin(instance_index) slot: u32) -> VertexOutPlain {
-    return to_plain(vs_body(from_lean_in(in), visibility_indices[slot]));
+    return to_plain(vs_body(from_lean_in(in), in.vertex_index, visibility_indices[slot]));
 }
 
-fn vs_body(in: VertexIn, record: u32) -> VertexOut {
+// `vertex_index` is read in the entry point and passed in, not read from `in`
+// here: naga's HLSL output adds the draw's base vertex to `vertex_index` only
+// where an entry point reads its own argument, so on DX12 a read in this
+// function would miss it and land on another mesh's vertices.
+fn vs_body(in: VertexIn, vertex_index: u32, record: u32) -> VertexOut {
     var out: VertexOut;
     out.obj_idx = record;
     // The vertex index within the mesh: the draw binds the whole slab chunk,
     // so `vertex_index` counts from the chunk's first vertex.
-    let vi = in.vertex_index - in.w_vertex_base;
+    let vi = vertex_index - in.w_vertex_base;
     // The record fields every draw reads. The rest are read only inside the
     // feature that needs them, so a plain draw loads what a lean one would.
     let model = instances[record].model;
@@ -694,7 +698,7 @@ fn vs_body(in: VertexIn, record: u32) -> VertexOut {
     out.uv1 = vec2<f32>(0.0);
     if FEAT_UV1 && (flags & INST_HAS_UV1) != 0u {
         let uv1_len = arrayLength(&uv1_buf);
-        out.uv1 = uv1_buf[min(in.vertex_index, max(uv1_len, 1u) - 1u)];
+        out.uv1 = uv1_buf[min(vertex_index, max(uv1_len, 1u) - 1u)];
     }
     // The outputs below are read only by fragment code behind the same
     // feature, so a pipeline without it leaves them at zero.
