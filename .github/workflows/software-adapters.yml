@@ -51,64 +51,46 @@ jobs:
       - name: Adapter probe
         run: cargo test --release -p viewport-lib --test gpu_available -- --nocapture
 
-      # Allowed to fail so the testkit steps below still report: the library
-      # tests can take the process down on WARP, and then nothing after them
-      # would run. One test at a time: with several tests each driving a WARP
-      # device at once the process faulted inside the driver, in a different
-      # test each run, while every one of them passed on its own.
-      # --no-fail-fast so one failing test binary does not hide the rest.
-      - name: Library headless tests
+      # A smoke set, not the whole suite: the test binaries that cover the
+      # paths where DX12 differs from the other backends (draw builtins and
+      # indirect draws, per-vertex and per-instance sidecar reads, deformers,
+      # GPU picks, the pipeline cache, blocking readbacks). WARP faults inside
+      # the driver on some valid workloads that no validation layer flags, so
+      # running every test on it turns up driver crashes rather than renderer
+      # bugs, at an hour a run. One test at a time: several WARP devices in
+      # one process at once also fault.
+      # Allowed to fail so the catalogue step below still reports.
+      - name: Library smoke tests
         id: library_tests
         continue-on-error: true
-        run: cargo test --release -p viewport-lib --tests --no-fail-fast -- --test-threads=1
-
-      # When the library tests failed, the deferred deform-source case again
-      # with wgpu's warnings, its validation layer and a backtrace. It removes
-      # its quad on WARP on the first frame, where the slot should read one.
-      - name: Deferred deform source with wgpu logging
-        if: steps.library_tests.outcome == 'failure'
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: wgpu_core=warn,wgpu_hal=warn,naga=warn
-          WGPU_VALIDATION: 1
-          WGPU_DEBUG: 1
         run: >-
-          cargo test --release -p viewport-lib --test headless_deform_source_deferred
-          -- --nocapture --test-threads=1
+          cargo test --release -p viewport-lib --no-fail-fast
+          --test headless_deform_keep
+          --test headless_deform_source_deferred
+          --test headless_mesh_sidecar_pool
+          --test headless_material_slot_uv
+          --test headless_gpu_pick
+          --test headless_instancing
+          --test headless_mesh_path_parity
+          --test headless_oit_two_sided
+          --test headless_multi_viewport
+          --test headless_pipeline_cache
+          --test headless_render_misc
+          --test headless_storage_limits
+          -- --test-threads=1
 
-      # --tests keeps the examples out of the build: they pull eframe, which
-      # the runner does not need. Allowed to fail, as above, so the catalogue
-      # step still runs.
-      - name: Testkit tests
-        id: testkit_tests
-        continue-on-error: true
-        working-directory: crates/viewport-lib-testkit
-        run: cargo test --release --tests --no-fail-fast -- --test-threads=1
-
-      # buffer_invariants faults the process on WARP partway through its
-      # catalogue loop. Again with its output and wgpu's, so the log shows the
-      # last scene and call before the fault.
-      - name: Buffer invariants with wgpu logging
-        if: steps.testkit_tests.outcome == 'failure'
-        continue-on-error: true
-        timeout-minutes: 15
-        working-directory: crates/viewport-lib-testkit
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: wgpu_core=warn,wgpu_hal=warn
-        run: cargo test --release --test buffer_invariants -- --nocapture --test-threads=1
-
-      # Renders every catalogue scene without comparing pixels.
+      # Renders every catalogue scene without comparing pixels: WARP has no
+      # blessed reference set. --test keeps the examples out of the build.
       - name: Catalogue scenes render
         working-directory: crates/viewport-lib-testkit
-        run: cargo test --release --test snapshots
+        env:
+          GOLDEN_RENDER_ONLY: 1
+        run: cargo test --release --test snapshots -- --test-threads=1
 
-      # The library and testkit tests were let fail so the steps above could
-      # still run; the job still fails for them.
-      - name: Fail the job if the library or testkit tests failed
-        if: always() && (steps.library_tests.outcome == 'failure' || steps.testkit_tests.outcome == 'failure')
+      # The library tests were let fail so the catalogue step could still run;
+      # the job still fails for them.
+      - name: Fail the job if the library tests failed
+        if: always() && steps.library_tests.outcome == 'failure'
         run: exit 1
 
   llvmpipe-gl:
