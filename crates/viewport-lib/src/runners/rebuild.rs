@@ -240,12 +240,41 @@ impl ViewportInstance {
     ///
     /// The scene graph, selection, camera, input bindings and frame settings
     /// stay. What does not carry over: every mesh, texture, material and
-    /// environment the old renderer held, the item-type plugins and post
-    /// effects registered on it, and the retained items added with
-    /// [`add_item`](Self::add_item), which are cleared. Register the plugins
-    /// again, upload the content again and rebind the nodes to the returned
-    /// [`StaleHandles`]. An attached runtime runs its GPU plugins' `init_gpu`
-    /// again on the new device before their next `pre_prepare`.
+    /// environment the old renderer held, every plugin registered on it
+    /// (deformers, material plugins, shading hooks, item types, post-effect
+    /// producers and stages), and the retained items added with
+    /// [`add_item`](Self::add_item), which are cleared. The returned
+    /// [`StaleHandles`] lists the handles the scene still names and each
+    /// plugin with the id and name it was registered under. Register the
+    /// plugins again, upload the content again and rebind the nodes. An
+    /// attached runtime runs its GPU plugins' `init_gpu` again on the new
+    /// device before their next `pre_prepare`.
+    ///
+    /// A material that selects a material plugin carries the old plugin id in
+    /// [`shading_plugin`](crate::Material::shading_plugin); swap it for the new
+    /// one before uploading the material again:
+    ///
+    /// ```rust,ignore
+    /// let stale = instance.rebuild(&device)?;
+    /// let mut plugin_ids = HashMap::new();
+    /// for old in stale.material_plugins() {
+    ///     let plugin = my_plugins.by_name(&old.name);
+    ///     let new = instance.resources_mut().register_material_plugin(&device, plugin)?;
+    ///     plugin_ids.insert(old.id, new);
+    /// }
+    /// for &old in stale.materials() {
+    ///     let mut material = my_materials[&old].clone();
+    ///     material.shading_plugin = material
+    ///         .shading_plugin
+    ///         .and_then(|id| plugin_ids.get(&id).copied());
+    ///     let new = instance.resources_mut().upload_material(material)?;
+    ///     // point the nodes that named `old` at `new`
+    /// }
+    /// ```
+    ///
+    /// Renderer-side plugin handles such as
+    /// [`SkinningPlugin`](crate::plugins::skinning::SkinningPlugin) are not
+    /// listed: install them again to get a new handle.
     ///
     /// A device-lost watcher or shared pipeline cache in the original config
     /// belongs to the old device, so the new renderer installs its own watcher
