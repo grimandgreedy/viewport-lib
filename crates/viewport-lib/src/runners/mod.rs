@@ -19,6 +19,14 @@
 //! [`renderer_mut`](ViewportInstance::renderer_mut)), so a program can start small
 //! and grow into plugins and custom passes without a rewrite.
 //!
+//! A [`ViewportRuntime`] attached with
+//! [`set_runtime`](ViewportInstance::set_runtime) (or the builder
+//! [`with_runtime`](ViewportInstance::with_runtime)) is driven by the instance:
+//! [`step_runtime`](ViewportInstance::step_runtime) steps it and returns the
+//! step's output for the app to apply, and the render calls run its GPU
+//! plugins' `pre_prepare` and `post_paint`. Features that span the runtime and
+//! the renderer install with [`install_plugin`](ViewportInstance::install_plugin).
+//!
 //! An instance does not own the `device`/`queue` (your application creates those,
 //! and the wgpu version must match it), and it does not weld in a camera-motion
 //! policy: [`update_orbit`](ViewportInstance::update_orbit) is the
@@ -505,9 +513,15 @@ impl ViewportInstance {
         self.renderer.resources_mut()
     }
 
-    /// The runtime, when one is attached: register physics/animation/GPU plugins
-    /// with its `add_*` methods. Per-frame driving is
-    /// [`step_runtime`](Self::step_runtime), not this accessor.
+    /// The runtime, when one is attached: register physics, animation and GPU
+    /// plugins with its `add_*` methods, before the first frame or between
+    /// frames. A feature that also registers on the renderer goes through
+    /// [`install_plugin`](Self::install_plugin) instead.
+    ///
+    /// The instance drives it: [`step_runtime`](Self::step_runtime) steps it,
+    /// and [`render`](Self::render) and [`prepare`](Self::prepare) run its GPU
+    /// plugins. Do not call `step`, `pre_prepare` or `post_paint` on it
+    /// through this accessor as well.
     pub fn runtime_mut(&mut self) -> Option<&mut ViewportRuntime> {
         self.runtime.as_mut()
     }
