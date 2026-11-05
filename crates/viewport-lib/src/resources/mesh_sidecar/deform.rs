@@ -1554,6 +1554,21 @@ impl DeviceResources {
             .map(|r| self.scene_tier.deform.id_for_slot(r.slot))
     }
 
+    /// The deformers a host registered with [`Self::register_deformer`], in
+    /// registration order. The in-crate deformers on the reserved slots
+    /// (skinning) are left out: renderer construction registers no deformer,
+    /// and those come back through their own plugin's install.
+    pub(crate) fn host_deformers(&self) -> impl Iterator<Item = (DeformerId, &str)> + '_ {
+        let deform = self.scene_tier.is_built().then(|| &self.scene_tier.deform);
+        deform.into_iter().flat_map(|deform| {
+            deform
+                .registrations
+                .iter()
+                .filter(|r| r.slot < DEFORM_INTERNAL_SLOT_START)
+                .map(move |r| (deform.id_for_slot(r.slot), r.desc.name.as_ref()))
+        })
+    }
+
     /// Build a [`DeformSlotHandle`] for the given deformer. Plugins stash
     /// the handle at registration time and use it to write that slot's
     /// `slot_params` block from contexts (e.g. a `GpuPlugin::pre_prepare`)

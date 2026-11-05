@@ -2439,6 +2439,43 @@ impl ViewportRenderer {
         self.post_effect_stages.retain(|s| s.id != id);
     }
 
+    /// The item types a host registered, with their ids, in registration
+    /// order. The types the renderer installed itself are left out.
+    pub(crate) fn host_item_types(
+        &self,
+    ) -> impl Iterator<Item = (crate::plugin_api::ItemTypeId, &'static str)> + '_ {
+        self.item_type_plugins
+            .ids()
+            .filter(|(_, name)| !self.renderer_owned_type_names.contains(name))
+            .map(|(id, name)| (crate::plugin_api::ItemTypeId(id), name))
+    }
+
+    /// The registered post-effect producers: id, type name and slot, in
+    /// registration order.
+    pub(crate) fn post_effect_producer_registrations(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            crate::plugin_api::PostEffectProducerId,
+            &'static str,
+            crate::plugin_api::PostEffectSlot,
+        ),
+    > + '_ {
+        self.post_effect_producers
+            .iter()
+            .map(|p| (p.id, p.producer.type_name(), p.producer.slot()))
+    }
+
+    /// The registered post-effect stages: id, type name and order key, in
+    /// registration order.
+    pub(crate) fn post_effect_stage_registrations(
+        &self,
+    ) -> impl Iterator<Item = (crate::plugin_api::PostEffectStageId, &'static str, i32)> + '_ {
+        self.post_effect_stages
+            .iter()
+            .map(|s| (s.id, s.stage.type_name(), s.order))
+    }
+
     /// Run deferred GPU init for post-effect producers and stages registered
     /// since the last render: `init_gpu`, then `on_viewport_resized` for
     /// each viewport that already has render targets.

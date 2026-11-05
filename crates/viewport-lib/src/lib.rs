@@ -340,7 +340,11 @@ pub use renderer::{
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 pub use resources::PipelineCompilation;
 
-pub use runners::{ExtraId, OffscreenViewportTarget, StaleHandles, ViewportInstance};
+pub use runners::{
+    ExtraId, OffscreenViewportTarget, StaleDeformer, StaleHandles, StaleItemType,
+    StaleMaterialPlugin, StalePostEffectProducer, StalePostEffectStage, StaleShadingHook,
+    ViewportInstance,
+};
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{
