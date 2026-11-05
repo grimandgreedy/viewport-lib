@@ -70,7 +70,8 @@ fn handle_open_close(ctx: &mut FrameCtx) {
             WindowConfig::default()
                 .with_title("viewport-lib : opened at runtime")
                 .with_window_size(700, 600),
-            |vp, device| {
+            |vp| {
+                let device = &vp.device().clone();
                 let sphere = vp
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::sphere(0.7, 24, 12))
@@ -103,7 +104,8 @@ fn main() {
                 .with_title("viewport-lib : left (animated)")
                 .with_window_size(900, 700)
                 .with_redraw_mode(RedrawMode::Continuous),
-            move |vp, device| {
+            move |vp| {
+                let device = &vp.device().clone();
                 let cube = vp
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::cube(1.0))
@@ -132,7 +134,8 @@ fn main() {
                 .with_title("viewport-lib : right (on demand)")
                 .with_window_size(900, 700)
                 .with_redraw_mode(RedrawMode::OnDemand),
-            |vp, device| {
+            |vp| {
+                let device = &vp.device().clone();
                 let torus = vp
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::torus(0.6, 0.22, 32, 16))

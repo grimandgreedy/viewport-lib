@@ -28,6 +28,48 @@
 //! back where it was. Anything else the app built on the old device (offscreen
 //! targets, its own textures) has to be rebuilt by the app: build it from the
 //! setup callback, or check [`FrameCtx::device_rebuilt`] in the frame callback.
+//! A runtime attached in the setup callback is attached anew on the new
+//! instance, so its plugins start from scratch.
+//!
+//! # A runtime under the runner
+//!
+//! Attach a runtime in the setup callback. Each frame the runner steps it
+//! before the frame callback and runs its GPU plugins when it renders. The
+//! step's events are the app's to apply: read them from
+//! [`FrameCtx::runtime_output_mut`]. Skinned meshes and camera follow both
+//! need this:
+//!
+//! ```rust,ignore
+//! use std::{cell::RefCell, rc::Rc};
+//! use viewport_lib::runtime::{CameraFollowTarget, apply_camera_commands};
+//!
+//! let skinning: Rc<RefCell<Option<SkinnedMeshHandle>>> = Rc::default();
+//! let setup_skinning = skinning.clone();
+//! ViewportApp::new(AppConfig::default())
+//!     .window(
+//!         WindowConfig::default(),
+//!         move |setup| {
+//!             let (device, queue) = (setup.device().clone(), setup.queue().clone());
+//!             // ... upload the mesh, build `feature` and `follow` ...
+//!             setup.set_runtime(ViewportRuntime::new().with_camera_follow(follow));
+//!             *setup_skinning.borrow_mut() = setup.install_plugin(feature, &device, &queue).ok();
+//!         },
+//!         move |ctx| {
+//!             let mut output = std::mem::take(ctx.runtime_output_mut());
+//!             if let Some(handle) = skinning.borrow_mut().as_mut() {
+//!                 let (device, queue) = (ctx.device().clone(), ctx.queue().clone());
+//!                 handle.apply(ctx.resources_mut(), &device, &queue, &mut output);
+//!             }
+//!             if let Some(target) = output.events.read::<CameraFollowTarget>().last() {
+//!                 let mut orbit = ctx.camera().orbit_target();
+//!                 orbit.centre = target.0.as_dvec3();
+//!                 ctx.camera_mut().set_orbit_target(orbit);
+//!             }
+//!             apply_camera_commands(&mut output.events, ctx.camera_mut());
+//!         },
+//!     )
+//!     .run();
+//! ```
 //!
 //! # The winit boundary
 //!
@@ -284,10 +326,10 @@ impl AppConfig {
     }
 }
 
-/// The per-window setup callback: build this window's scene with the shared device
-/// in hand, one per window. Runs again on a fresh instance after the device is
-/// lost and recreated.
-type WindowFactory = Box<dyn FnMut(&mut ViewportInstance, &crate::gpu::Device)>;
+/// The per-window setup callback: build this window's scene through its
+/// [`SetupCtx`], one per window. Runs again on a fresh instance after the
+/// device is lost and recreated.
+type WindowFactory = Box<dyn FnMut(&mut SetupCtx)>;
 
 /// The per-window per-frame callback.
 type WindowCallback = Box<dyn FnMut(&mut FrameCtx)>;
@@ -321,6 +363,64 @@ enum WindowCommand {
     Close(WindowId),
 }
 
+/// What a window's setup callback receives: the window's new
+/// [`ViewportInstance`] (via deref) and the shared device and queue.
+///
+/// The runner builds it, once when the window is created and again on a new
+/// instance after the device is lost and recreated
+/// ([`device_rebuilt`](Self::device_rebuilt) tells the two apart). Build
+/// everything the window draws here: upload meshes, fill the scene, attach a
+/// runtime with [`set_runtime`](ViewportInstance::set_runtime) and install
+/// features with [`install_plugin`](ViewportInstance::install_plugin).
+///
+/// ```rust,ignore
+/// |setup| {
+///     let device = setup.device().clone();
+///     let mesh = setup.upload_mesh(&device, &primitives::cube(1.0)).unwrap();
+///     setup.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, MaterialId::DEFAULT);
+///     setup.set_runtime(ViewportRuntime::new().with_gpu_plugin(MyGpuPlugin::default()));
+/// }
+/// ```
+pub struct SetupCtx<'a> {
+    session: &'a mut ViewportInstance,
+    device: &'a crate::gpu::Device,
+    queue: &'a crate::gpu::Queue,
+    device_rebuilt: bool,
+}
+
+impl SetupCtx<'_> {
+    /// The shared wgpu device.
+    pub fn device(&self) -> &crate::gpu::Device {
+        self.device
+    }
+
+    /// The shared wgpu queue.
+    pub fn queue(&self) -> &crate::gpu::Queue {
+        self.queue
+    }
+
+    /// True when this is the rerun after the runner replaced a lost device.
+    /// The instance is new either way: the old one, its runtime and
+    /// everything built on the old device are gone.
+    pub fn device_rebuilt(&self) -> bool {
+        self.device_rebuilt
+    }
+}
+
+impl std::ops::Deref for SetupCtx<'_> {
+    type Target = ViewportInstance;
+
+    fn deref(&self) -> &ViewportInstance {
+        self.session
+    }
+}
+
+impl std::ops::DerefMut for SetupCtx<'_> {
+    fn deref_mut(&mut self) -> &mut ViewportInstance {
+        self.session
+    }
+}
+
 /// What a window's per-frame callback receives: that window's [`ViewportInstance`]
 /// (via deref) plus timing, the window's identity, and the app controls (open/close
 /// windows, current-window control).
@@ -330,6 +430,7 @@ enum WindowCommand {
 /// window count does not belong here.
 pub struct FrameCtx<'a> {
     session: &'a mut ViewportInstance,
+    runtime_output: crate::runtime::RuntimeOutput,
     device_rebuilt: bool,
     window: &'a Window,
     window_id: WindowId,
@@ -404,6 +505,19 @@ impl FrameCtx<'_> {
         self.queue
     }
 
+    /// This frame's runtime output: what
+    /// [`step_runtime`](ViewportInstance::step_runtime) returned when the runner
+    /// stepped the window's runtime, just before this callback. Read or drain
+    /// its events here (skinned pose updates, the camera follow target and
+    /// commands); the runner applies none of them itself. Empty when no
+    /// runtime is attached.
+    ///
+    /// The runtime steps before the callback, so scene edits made here reach
+    /// it on the next frame.
+    pub fn runtime_output_mut(&mut self) -> &mut crate::runtime::RuntimeOutput {
+        &mut self.runtime_output
+    }
+
     /// Ask the runner to end the event loop after this frame.
     pub fn request_exit(&mut self) {
         self.request_exit = true;
@@ -427,11 +541,11 @@ impl FrameCtx<'_> {
 
     /// Open a new window at runtime. Returns its [`WindowId`] immediately; the window
     /// is realised after this frame. Takes the same setup and per-frame callbacks as
-    /// [`ViewportApp::window`].
+    /// [`ViewportApp::window`]; the setup callback gets a [`SetupCtx`].
     pub fn open_window(
         &mut self,
         config: WindowConfig,
-        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        setup: impl FnMut(&mut SetupCtx) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
     ) -> WindowId {
         let id = alloc_window_id(&mut self.next_id);
@@ -439,7 +553,7 @@ impl FrameCtx<'_> {
             id,
             builder: WindowBuilder {
                 config,
-                factory: Box::new(factory),
+                factory: Box::new(setup),
                 input: None,
                 callback: Box::new(callback),
                 paint: None,
@@ -697,19 +811,20 @@ impl<'rp> PaintCtx<'_, 'rp> {
 /// ViewportApp::new(AppConfig::default())
 ///     .window(
 ///         WindowConfig::default().with_title("left"),
-///         |vp, device| {
-///             let mesh = vp.resources_mut()
-///                 .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-///             let red = vp.resources_mut()
+///         |setup| {
+///             let device = setup.device().clone();
+///             let mesh = setup.resources_mut()
+///                 .upload_mesh_data(&device, &primitives::cube(1.0)).unwrap();
+///             let red = setup.resources_mut()
 ///                 .upload_material(Material::from_colour(Colour::linear_rgb(0.85, 0.25, 0.2))).unwrap();
-///             vp.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
-///             vp.camera_mut().set_orbit_distance(6.0);
+///             setup.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
+///             setup.camera_mut().set_orbit_distance(6.0);
 ///         },
 ///         |_ctx| {},
 ///     )
 ///     .window(
 ///         WindowConfig::default().with_title("right"),
-///         |vp, device| { /* a different scene */ },
+///         |setup| { /* a different scene */ },
 ///         |_ctx| {},
 ///     )
 ///     .run();
@@ -728,23 +843,35 @@ impl ViewportApp {
         }
     }
 
-    /// Declare a window: its configuration, a one-time setup callback run with the
-    /// shared device to build its scene, and a per-frame callback that drives it.
+    /// Declare a window: its configuration, a setup callback that builds its
+    /// scene, and a per-frame callback that drives it.
     ///
     /// Call once per window before [`run`](Self::run). The setup callback runs
-    /// after the window's instance is created: upload meshes, build the initial
-    /// scene, attach a runtime. It runs again on a new instance after the device
-    /// is lost and recreated, so build everything the window draws from it. The frame callback runs once per frame for that
-    /// window, before rendering. The
-    /// runner drives a built-in orbit controller for this window; take input over
-    /// with [`window_with_input`](Self::window_with_input).
+    /// with a [`SetupCtx`] after the window's instance is created: upload
+    /// meshes, build the initial scene, attach a runtime with
+    /// [`set_runtime`](ViewportInstance::set_runtime), install features with
+    /// [`install_plugin`](ViewportInstance::install_plugin).
+    ///
+    /// After a device loss the runner builds a new instance and runs the setup
+    /// callback again on it, with [`SetupCtx::device_rebuilt`] true. The old
+    /// instance goes with everything on it, the runtime included, so a setup
+    /// callback that attaches a runtime attaches a new one there, and runtime
+    /// plugin state (animation clocks, simulation) starts again. Only the
+    /// camera is carried over. Keep anything that must survive a device loss
+    /// outside the instance.
+    ///
+    /// Each frame the runner steps the window's runtime, then runs the frame
+    /// callback (its output is on [`FrameCtx::runtime_output_mut`]), then
+    /// renders, which runs the runtime's GPU plugins. The runner drives a
+    /// built-in orbit controller for this window; take input over with
+    /// [`window_with_input`](Self::window_with_input).
     pub fn window(
         self,
         config: WindowConfig,
-        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        setup: impl FnMut(&mut SetupCtx) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
     ) -> Self {
-        self.push_window(config, factory, None, Box::new(callback), None)
+        self.push_window(config, setup, None, Box::new(callback), None)
     }
 
     /// Like [`window`](Self::window), but installs a per-window input handler. The
@@ -755,13 +882,13 @@ impl ViewportApp {
     pub fn window_with_input(
         self,
         config: WindowConfig,
-        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        setup: impl FnMut(&mut SetupCtx) + 'static,
         input: impl FnMut(&mut InputCtx) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
     ) -> Self {
         self.push_window(
             config,
-            factory,
+            setup,
             Some(Box::new(input)),
             Box::new(callback),
             None,
@@ -777,13 +904,13 @@ impl ViewportApp {
     pub fn window_with_paint(
         self,
         config: WindowConfig,
-        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        setup: impl FnMut(&mut SetupCtx) + 'static,
         callback: impl FnMut(&mut FrameCtx) + 'static,
         paint: impl FnMut(&mut PaintCtx) + 'static,
     ) -> Self {
         self.push_window(
             config,
-            factory,
+            setup,
             None,
             Box::new(callback),
             Some(Box::new(paint)),
@@ -793,14 +920,14 @@ impl ViewportApp {
     fn push_window(
         mut self,
         config: WindowConfig,
-        factory: impl FnMut(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        setup: impl FnMut(&mut SetupCtx) + 'static,
         input: Option<WindowInputHandler>,
         callback: WindowCallback,
         paint: Option<WindowPaint>,
     ) -> Self {
         self.windows.push(WindowBuilder {
             config,
-            factory: Box::new(factory),
+            factory: Box::new(setup),
             input,
             callback,
             paint,
@@ -1091,7 +1218,12 @@ impl AppHandler {
         };
         marks.mark("renderer");
         let mut factory = factory;
-        factory(&mut session, &gpu.device);
+        factory(&mut SetupCtx {
+            session: &mut session,
+            device: &gpu.device,
+            queue: &gpu.queue,
+            device_rebuilt: false,
+        });
         marks.mark("setup");
 
         let focused = true;
@@ -1181,7 +1313,12 @@ impl AppHandler {
             if failed.is_none() {
                 match gpu.build_session(&self.config, state.surface_config.format) {
                     Ok(mut session) => {
-                        (state.factory)(&mut session, &gpu.device);
+                        (state.factory)(&mut SetupCtx {
+                            session: &mut session,
+                            device: &gpu.device,
+                            queue: &gpu.queue,
+                            device_rebuilt: true,
+                        });
                         *session.camera_mut() = state.session.camera().clone();
                         let scale = state.window.scale_factor() as f32;
                         session.set_pixels_per_point(scale);
@@ -1254,9 +1391,13 @@ impl AppHandler {
                 handler(&mut ictx);
             }
             state.session.resolve();
+            // Step before the callback, so it can read this frame's runtime
+            // output. Scene edits the callback makes reach the runtime next frame.
+            let runtime_output = state.session.step_runtime(dt);
 
             let mut ctx = FrameCtx {
                 session: &mut state.session,
+                runtime_output,
                 device_rebuilt: std::mem::take(&mut state.device_rebuilt),
                 window: &state.window,
                 window_id: id,
@@ -1290,7 +1431,6 @@ impl AppHandler {
             next_id = advanced;
             do_exit = request_exit;
 
-            state.session.step_runtime(dt);
             // With an input handler the app already drove the camera, so assemble
             // without touching it; otherwise drive the built-in orbit.
             let assembled = if state.input.is_some() {
