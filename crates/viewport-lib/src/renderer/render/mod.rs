@@ -1003,7 +1003,9 @@ impl ViewportRenderer {
                 "post_paint_skipped",
                 [crate::notice::name_id(reason), 0],
             ),
-            crate::Severity::Warning,
+            // A plugin that only uses `pre_prepare` lands here too: the runner
+            // cannot tell whether a plugin implements `post_paint`.
+            crate::Severity::Info,
             || crate::NoticeDetail::PostPaintSkipped { reason },
         );
     }

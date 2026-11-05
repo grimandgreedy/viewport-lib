@@ -38,9 +38,9 @@
 //! - Not called on an LDR frame painted into a host's render pass, rendered
 //!   into a window surface or another target without `TEXTURE_BINDING`, or
 //!   drawn at a reduced render scale or with backdrop-blur overlays (the
-//!   scene then lands in an intermediate target). The renderer raises a
-//!   `NoticeDetail::PostPaintSkipped` notice instead. Under `ViewportApp`
-//!   this means LDR windows.
+//!   scene then lands in an intermediate target). The renderer raises an
+//!   info-level `NoticeDetail::PostPaintSkipped` notice instead. Under
+//!   `ViewportApp` this means LDR windows.
 //!
 //! While GPU plugins are attached the renderer keeps the scene depth to the
 //! end of the frame, which it otherwise discards. A host that renders
