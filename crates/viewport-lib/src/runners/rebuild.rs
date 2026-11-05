@@ -79,8 +79,10 @@ impl ViewportInstance {
     /// effects registered on it, and the retained items added with
     /// [`add_item`](Self::add_item), which are cleared. Register the plugins
     /// again, upload the content again and rebind the nodes to the returned
-    /// [`StaleHandles`]. An attached runtime runs its GPU plugins' `init_gpu`
-    /// again on the new device before their next `pre_prepare`.
+    /// [`StaleHandles`]. An attached runtime stays attached, and its GPU
+    /// plugins run `init_gpu` again on the new device in the next
+    /// [`render`](Self::render) or [`prepare`](Self::prepare), before their
+    /// `pre_prepare`.
     ///
     /// A device-lost watcher or shared pipeline cache in the original config
     /// belongs to the old device, so the new renderer installs its own watcher

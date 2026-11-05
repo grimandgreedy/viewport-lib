@@ -292,8 +292,66 @@ impl ViewportInstance {
     /// `post_paint` run from [`render`](Self::render) and
     /// [`prepare`](Self::prepare); do not call them yourself as well.
     pub fn with_runtime(mut self, runtime: ViewportRuntime) -> Self {
-        self.runtime = Some(runtime);
+        self.set_runtime(runtime);
         self
+    }
+
+    /// Attach `runtime`, replacing and returning any runtime already attached.
+    ///
+    /// The builder form is [`with_runtime`](Self::with_runtime). The new
+    /// runtime's GPU plugins run `init_gpu` on the next render, even if they
+    /// already ran it on another instance.
+    pub fn set_runtime(&mut self, mut runtime: ViewportRuntime) -> Option<ViewportRuntime> {
+        runtime.reset_gpu_init();
+        self.runtime.replace(runtime)
+    }
+
+    /// Detach the runtime and hand it back, or `None` when none is attached.
+    /// Until another is attached, [`step_runtime`](Self::step_runtime) does
+    /// nothing and no GPU plugin runs.
+    pub fn take_runtime(&mut self) -> Option<ViewportRuntime> {
+        self.runtime.take()
+    }
+
+    /// Install a feature that wires itself into the renderer and, if it uses
+    /// one, the attached runtime, and return its handle.
+    ///
+    /// The instance-side form of [`install_plugin`](crate::install_plugin):
+    /// it passes this instance's renderer and its runtime (`None` when none is
+    /// attached, in which case a feature that needs one fails with
+    /// [`ViewportError::PluginInstallMissing`](crate::ViewportError::PluginInstallMissing)).
+    /// Attach the runtime first.
+    pub fn install_plugin<P: crate::PluginInstaller>(
+        &mut self,
+        feature: P,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::error::ViewportResult<P::Handle> {
+        crate::install_plugin(
+            feature,
+            device,
+            queue,
+            self.runtime.as_mut(),
+            &mut self.renderer,
+        )
+    }
+
+    /// Remove a feature installed with [`install_plugin`](Self::install_plugin),
+    /// consuming its handle. See
+    /// [`PluginInstaller::uninstall`](crate::PluginInstaller::uninstall).
+    pub fn uninstall_plugin<P: crate::PluginInstaller>(
+        &mut self,
+        handle: P::Handle,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::error::ViewportResult<()> {
+        crate::uninstall_plugin::<P>(
+            handle,
+            device,
+            queue,
+            self.runtime.as_mut(),
+            &mut self.renderer,
+        )
     }
 
     // ---- per-frame input (universal, all setups) --------------------------------
