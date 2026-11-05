@@ -31,7 +31,8 @@ fn main() {
             WindowConfig::default()
                 .with_title("viewport-lib : minimal")
                 .with_window_size(1280, 720),
-            move |session, device| {
+            move |session| {
+                let device = &session.device().clone();
                 // Upload the meshes once, with the device in hand.
                 let sphere = session
                     .resources_mut()

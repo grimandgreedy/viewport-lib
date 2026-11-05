@@ -51,7 +51,8 @@ fn main() {
             WindowConfig::default()
                 .with_title("viewport-lib : app features")
                 .with_window_size(1280, 720),
-            |session, device| {
+            |session| {
+                let device = &session.device().clone();
                 let cube = session
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::cube(1.0))
