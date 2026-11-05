@@ -14,26 +14,41 @@ use crate::{PickBackend, PickHit, PickMask, PickPoll, PickRectResult};
 impl ViewportInstance {
     /// Render the assembled frame into `view` and return the command buffer for
     /// the host to submit. For a host that owns the swapchain texture view.
+    ///
+    /// With a runtime attached, its GPU plugins' `pre_prepare` runs first and
+    /// its command buffers are submitted on `queue` before the renderer's own
+    /// work, so anything they write is visible to this frame's passes.
     pub fn render(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         view: &crate::gpu::TextureView,
     ) -> crate::gpu::CommandBuffer {
-        self.renderer
+        self.run_gpu_pre_prepare(device, queue);
+        let cmd = self
+            .renderer
             .owned()
-            .render(device, queue, view, &self.frame)
+            .render(device, queue, view, &self.frame);
+        self.end_gpu_frame();
+        cmd
     }
 
     /// Encode any pre-pass work (HDR chain, dynamic resolution) and return the
     /// command buffers to submit before the surface render pass. Pair with
     /// [`paint`](Self::paint). For a render-pass host such as eframe.
+    ///
+    /// With a runtime attached, its GPU plugins' `pre_prepare` runs first and
+    /// its command buffers are submitted on `queue`, as in
+    /// [`render`](Self::render).
     pub fn prepare(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        self.renderer.pass().prepare(device, queue, &self.frame)
+        self.run_gpu_pre_prepare(device, queue);
+        let buffers = self.renderer.pass().prepare(device, queue, &self.frame);
+        self.end_gpu_frame();
+        buffers
     }
 
     /// Issue draw calls into a render pass the host provides. Call after

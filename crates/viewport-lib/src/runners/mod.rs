@@ -72,6 +72,12 @@ pub struct ViewportInstance {
     camera: Camera,
     input: ViewportInput,
     runtime: Option<ViewportRuntime>,
+    /// The `dt` of the last [`step_runtime`](Self::step_runtime), passed to GPU
+    /// plugins.
+    runtime_dt: f32,
+    /// Frames rendered with GPU plugins attached, passed to them as
+    /// `frame_index`.
+    gpu_frame_index: u64,
 
     /// Retained frame. Its `effects` and `viewport` sub-frames hold persistent
     /// settings (never overwritten by assembly); `camera`, `scene`, `interaction`,
@@ -237,6 +243,8 @@ impl ViewportInstance {
             // gizmo's own bindings through `set_bindings`.
             input: ViewportInput::from_preset(BindingPreset::Default),
             runtime: None,
+            runtime_dt: 0.0,
+            gpu_frame_index: 0,
             frame: FrameData::default(),
             action: ActionFrame::default(),
             viewport_size: [1.0, 1.0],
@@ -280,7 +288,9 @@ impl ViewportInstance {
     ///
     /// Drive it each frame with [`step_runtime`](Self::step_runtime). Register
     /// plugins after construction through [`runtime_mut`](Self::runtime_mut)
-    /// using the `add_*` methods.
+    /// using the `add_*` methods. Its GPU plugins' `pre_prepare` runs from
+    /// [`render`](Self::render) and [`prepare`](Self::prepare); do not call it
+    /// yourself as well.
     pub fn with_runtime(mut self, runtime: ViewportRuntime) -> Self {
         self.runtime = Some(runtime);
         self

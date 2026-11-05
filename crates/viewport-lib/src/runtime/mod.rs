@@ -1817,6 +1817,12 @@ impl ViewportRuntime {
     /// `viewport_id`. Single-viewport hosts that never set `viewport_id`
     /// effectively disable scoped plugins; use [`with_gpu_plugin`](Self::with_gpu_plugin)
     /// instead.
+    ///
+    /// A [`ViewportInstance`](crate::ViewportInstance) calls the hooks with
+    /// its own [`viewport_id`](crate::ViewportInstance::viewport_id), so a
+    /// plugin scoped to that id runs when the instance renders. A plugin
+    /// scoped to another viewport runs only when the host calls the hooks for
+    /// that viewport itself.
     pub fn with_gpu_plugin_for_viewport(
         mut self,
         viewport: crate::renderer::ViewportId,
@@ -1835,8 +1841,10 @@ impl ViewportRuntime {
     /// Run every registered GPU plugin's `pre_prepare` in ascending priority
     /// order and return the concatenated command buffers.
     ///
-    /// Call after [`step`](Self::step) and before `renderer.prepare()`. The
-    /// returned buffers should be submitted ahead of the renderer's own:
+    /// Call after [`step`](Self::step) and before `renderer.prepare()`, unless
+    /// the runtime is attached to a [`ViewportInstance`](crate::ViewportInstance),
+    /// which calls it from `render` and `prepare`. The returned buffers should
+    /// be submitted ahead of the renderer's own:
     ///
     /// ```text
     /// let plugin_bufs  = runtime.pre_prepare(device, queue, &gpu_ctx);
@@ -1884,15 +1892,15 @@ impl ViewportRuntime {
         // contract as the CPU plugin list.
         self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
-        let mut timings: std::collections::HashMap<&'static str, f32> =
-            std::collections::HashMap::new();
+        // Refilled in place so a settled frame does not allocate.
+        let timings = &mut self.stats.pre_prepare_ms;
+        timings.clear();
         let mut out = Vec::new();
         for (_, p) in self.gpu_plugins.iter_mut() {
             let t = web_time::Instant::now();
             out.extend(p.pre_prepare(device, queue, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
-        self.stats.pre_prepare_ms = timings;
         out
     }
 
@@ -1927,15 +1935,14 @@ impl ViewportRuntime {
         // again is cheap and keeps `post_paint` safe to call standalone.
         self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
-        let mut timings: std::collections::HashMap<&'static str, f32> =
-            std::collections::HashMap::new();
+        let timings = &mut self.stats.post_paint_ms;
+        timings.clear();
         let mut out = Vec::new();
         for (_, p) in self.gpu_plugins.iter_mut() {
             let t = web_time::Instant::now();
             out.extend(p.post_paint(device, queue, targets, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
-        self.stats.post_paint_ms = timings;
         out
     }
 

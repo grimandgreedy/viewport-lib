@@ -22,6 +22,14 @@
 //! wgpu submit ordering guarantees plugin command buffers complete before
 //! `prepare()`'s, so a storage buffer written by a plugin is observable by
 //! the standard render passes in the same frame.
+//!
+//! [`ViewportInstance`](crate::ViewportInstance) (and so `ViewportApp`) does
+//! this for an attached runtime: its `render` and `prepare` run `pre_prepare`
+//! and submit the plugins' buffers on the queue they are given before the
+//! renderer's prepare, with the `dt` of the last `step_runtime`, a frame
+//! counter, and the instance's [`viewport_id`](crate::ViewportInstance::viewport_id).
+//! A host that renders through the instance must not also call
+//! `pre_prepare` itself, or every plugin runs twice.
 
 use crate::camera::Camera;
 use crate::renderer::ViewportId;
@@ -141,10 +149,13 @@ impl<'a> GpuFrameContext<'a> {
 /// A plugin that encodes GPU work into the per-frame command stream.
 ///
 /// Register with [`ViewportRuntime::with_gpu_plugin`](super::ViewportRuntime::with_gpu_plugin).
-/// Each frame, after `runtime.step()` and before `renderer.prepare()`, the
-/// host calls [`ViewportRuntime::pre_prepare`](super::ViewportRuntime::pre_prepare),
-/// which invokes every registered plugin's `pre_prepare` in ascending priority
-/// order and returns the concatenated command buffers for submission.
+/// Each frame, after `runtime.step()` and before `renderer.prepare()`,
+/// [`ViewportRuntime::pre_prepare`](super::ViewportRuntime::pre_prepare)
+/// invokes every registered plugin's `pre_prepare` in ascending priority
+/// order and returns the concatenated command buffers for submission. A
+/// [`ViewportInstance`](crate::ViewportInstance) with the runtime attached
+/// makes that call itself; a host driving a `ViewportRenderer` directly makes
+/// it.
 ///
 /// Registration model: GPU plugins are multi-instance, like
 /// [`RuntimePlugin`](crate::runtime::RuntimePlugin) and unlike item-type

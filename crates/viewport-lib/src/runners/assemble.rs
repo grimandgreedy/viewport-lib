@@ -74,7 +74,9 @@ impl ViewportInstance {
 
     /// Step the attached runtime by `dt` seconds, writing simulated transforms
     /// back into the scene. No-op when no runtime is attached. Call before the
-    /// per-frame camera update so assembly reads the stepped scene.
+    /// per-frame camera update so assembly reads the stepped scene. `dt` is
+    /// also what the runtime's GPU plugins get as `GpuFrameContext::dt` on
+    /// the next render (0 until this is first called).
     ///
     /// The per-frame drive lives here rather than on
     /// [`runtime_mut`](Self::runtime_mut) because `step` needs the scene and
@@ -84,6 +86,7 @@ impl ViewportInstance {
         let Some(runtime) = self.runtime.as_mut() else {
             return;
         };
+        self.runtime_dt = dt;
         let pointer = self.action.pointer;
         let mut ctx = RuntimeFrameContext {
             dt,
