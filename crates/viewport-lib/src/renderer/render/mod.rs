@@ -982,6 +982,53 @@ impl ViewportRenderer {
         frame.effects.display.is_hdr() && self.resources.scene_tier.is_built()
     }
 
+    /// Views of the scene colour and depth `frame` was last rendered into, for
+    /// sampling after the frame (a GPU plugin's `post_paint`).
+    ///
+    /// On an HDR frame these are the viewport's HDR colour target and its
+    /// depth, the pair post effects read. On an LDR frame the colour is
+    /// `output_view` and the depth is the viewport's LDR depth target. `None`
+    /// when the viewport has not drawn; on an LDR frame also when
+    /// `output_view` is missing or its texture lacks `TEXTURE_BINDING`, and
+    /// when the frame drew into an intermediate target (dynamic resolution,
+    /// backdrop blur) instead of `output_view`.
+    pub(crate) fn scene_target_views<'a>(
+        &'a self,
+        frame: &FrameData,
+        output_view: Option<&'a crate::gpu::TextureView>,
+    ) -> Option<crate::runtime::PostPaintTargets<'a>> {
+        let vp_idx = frame.camera.viewport_index;
+        let slot = self.viewport_slots.get(vp_idx)?;
+        if self.renders_hdr(frame) {
+            let hdr = slot.hdr.as_ref()?;
+            return Some(crate::runtime::PostPaintTargets::new(
+                &hdr.hdr_view,
+                &hdr.hdr_depth_only_view,
+                hdr.hdr_texture.format(),
+            ));
+        }
+        let colour = output_view?;
+        if !colour
+            .texture()
+            .usage()
+            .contains(crate::gpu::TextureUsages::TEXTURE_BINDING)
+        {
+            return None;
+        }
+        if self.current_render_scale < 1.0 - 0.001 || self.has_backdrop_blur_shapes(vp_idx) {
+            return None;
+        }
+        let depth = match &slot.hdr {
+            Some(hdr) => &hdr.outline_depth_only_view,
+            None => &slot.overlay_depth.as_ref()?.depth_only_view,
+        };
+        Some(crate::runtime::PostPaintTargets::new(
+            colour,
+            depth,
+            self.resources.target_format,
+        ))
+    }
+
     /// Panic, naming both formats, when `output_view`'s texture cannot be drawn
     /// by pipelines compiled for the renderer's format. Without this the first
     /// pass to bind a pipeline fails wgpu validation with a message about that

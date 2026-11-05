@@ -28,6 +28,7 @@
 
 mod assemble;
 mod extras;
+mod gpu_plugins;
 mod offscreen;
 mod rebuild;
 mod render;
