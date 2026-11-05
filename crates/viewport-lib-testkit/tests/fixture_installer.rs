@@ -305,3 +305,108 @@ fn installer_fixture_reattaches_to_a_new_renderer() {
     .expect("uninstall after reattach");
     assert_eq!(runtime.plugin_count(), 0);
 }
+
+/// Upload the probe quad on `instance`, move it with the fixture's
+/// constant-offset deformer and render it.
+fn render_offset_quad(
+    instance: &mut viewport_lib::ViewportInstance,
+    device: &viewport_lib::wgpu::Device,
+    queue: &viewport_lib::wgpu::Queue,
+    deformer: Option<viewport_lib::DeformerId>,
+) -> Vec<u8> {
+    use viewport_lib::{Colour, Material, SceneRenderItem, SurfaceSubmission};
+    use viewport_lib_testkit::fixtures::{ConstantOffsetDeformer, probe_frame, probe_quad};
+
+    let resources = instance.resources_mut();
+    let mesh_id = resources
+        .upload_mesh_data(device, &probe_quad())
+        .expect("upload probe quad");
+    if let Some(deformer) = deformer {
+        ConstantOffsetDeformer::attach(
+            resources,
+            device,
+            mesh_id,
+            deformer.slot(),
+            probe_quad().positions.len(),
+        );
+        ConstantOffsetDeformer::set_offset(
+            resources,
+            queue,
+            deformer.slot(),
+            glam::Vec3::new(0.25, 0.0, 0.0),
+        );
+    }
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = resources
+        .upload_material(Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9)))
+        .expect("material upload");
+    item.settings.unlit = true;
+    let mut frame = probe_frame(64, [0.0, 0.0, 0.0, 1.0]);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    instance
+        .renderer_mut()
+        .render_offscreen(device, queue, &frame, 64, 64)
+}
+
+/// Through a `ViewportInstance`: install, `rebuild`, `reattach_plugin`. The
+/// deformed mesh draws as before the rebuild and the runtime still holds one
+/// copy of the feature's runtime plugin.
+#[test]
+fn installer_fixture_reattaches_after_instance_rebuild() {
+    use viewport_lib::{RendererConfig, ViewportInstance};
+
+    let Some(harness) =
+        Harness::with_profile(&DeviceProfile::low_power("fixture-installer-rebuild"))
+    else {
+        eprintln!("skipping: no GPU adapter with recommended limits available");
+        return;
+    };
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let mut instance = ViewportInstance::try_with_config(
+        &device,
+        &RendererConfig::new(Harness::DEFAULT_TARGET_FORMAT),
+    )
+    .expect("instance");
+    instance.set_runtime(ViewportRuntime::new());
+    let log = CallLog::new();
+    let mut handle =
+        match instance.install_plugin(DeformAndStepInstaller::new(log.clone()), &device, &queue) {
+            Ok(handle) => handle,
+            Err(err) => {
+                eprintln!("skipping: this device cannot register the feature: {err}");
+                return;
+            }
+        };
+    let plugins = instance
+        .runtime_mut()
+        .map(|r| r.plugin_ids().collect::<Vec<_>>());
+    let before = render_offset_quad(&mut instance, &device, &queue, Some(handle.deformer));
+    let undeformed = render_offset_quad(&mut instance, &device, &queue, None);
+    assert_ne!(
+        before, undeformed,
+        "test premise: the deformer moves the quad"
+    );
+
+    instance.rebuild(&device).expect("rebuild");
+    instance
+        .reattach_plugin::<DeformAndStepInstaller>(&mut handle, &device, &queue)
+        .expect("reattach");
+    assert_eq!(
+        instance
+            .runtime_mut()
+            .map(|r| r.plugin_ids().collect::<Vec<_>>()),
+        plugins,
+        "reattach adds no runtime plugin"
+    );
+    let after = render_offset_quad(&mut instance, &device, &queue, Some(handle.deformer));
+    assert!(
+        before == after,
+        "the deformed mesh draws as before the rebuild"
+    );
+
+    instance
+        .uninstall_plugin::<DeformAndStepInstaller>(handle, &device, &queue)
+        .expect("uninstall after reattach");
+    assert_eq!(instance.runtime_mut().map(|r| r.plugin_count()), Some(0));
+}

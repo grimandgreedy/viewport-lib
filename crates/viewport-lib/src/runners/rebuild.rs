@@ -84,6 +84,11 @@ impl ViewportInstance {
     /// [`render`](Self::render) or [`prepare`](Self::prepare), before their
     /// `pre_prepare`.
     ///
+    /// A feature installed with [`install_plugin`](Self::install_plugin) comes
+    /// back with [`reattach_plugin`](Self::reattach_plugin), not another
+    /// `install_plugin`: its runtime pieces are still on the attached runtime,
+    /// and installing again would run them twice.
+    ///
     /// A device-lost watcher or shared pipeline cache in the original config
     /// belongs to the old device, so the new renderer installs its own watcher
     /// and makes its own cache from the config's `pipeline_cache_data`; pass
