@@ -1918,7 +1918,10 @@ impl ViewportRuntime {
     /// supplies views of the just-rendered color and depth targets (and
     /// optionally a pick-id view), and is responsible for compositing any
     /// plugin overlay output into the final image: the lib does not loop
-    /// plugin output back into the rendered color.
+    /// plugin output back into the rendered color. A
+    /// [`ViewportInstance`](crate::ViewportInstance) with the runtime attached
+    /// makes this call itself, on the frames the [`gpu_plugin`] module docs
+    /// list.
     ///
     /// Plugins registered after the first frame still go through `init_gpu`
     /// on the next `pre_prepare`; this method does not trigger init on its

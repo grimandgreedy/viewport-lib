@@ -58,6 +58,44 @@ impl ViewportInstance {
         }
     }
 
+    /// Run the attached runtime's GPU plugins' `post_paint` with the scene
+    /// colour and depth the frame just drew, and return their command buffers
+    /// for submission after the frame's. `output_view` is the view an owned
+    /// render drew into, `None` on the pass path. Where the frame left nothing
+    /// readable the hook is not called and the renderer raises a notice.
+    pub(super) fn run_gpu_post_paint(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: Option<&crate::gpu::TextureView>,
+    ) -> Vec<crate::gpu::CommandBuffer> {
+        if !self.has_gpu_plugins() || self.renderer.is_device_lost() {
+            return Vec::new();
+        }
+        if let Some(reason) = self
+            .renderer
+            .post_paint_skip_reason(&self.frame, output_view)
+        {
+            self.renderer.report_post_paint_skipped(reason);
+            return Vec::new();
+        }
+        let Some(targets) = self.renderer.scene_target_views(&self.frame, output_view) else {
+            return Vec::new();
+        };
+        let Some(runtime) = self.runtime.as_mut() else {
+            return Vec::new();
+        };
+        let camera = &self.frame.camera;
+        let ctx = crate::GpuFrameContext::new(
+            &self.camera,
+            physical_size(camera),
+            self.runtime_dt,
+            self.gpu_frame_index,
+        )
+        .with_viewport(ViewportId(camera.viewport_index));
+        runtime.post_paint(device, queue, &targets, &ctx)
+    }
+
     /// Count a rendered frame for the GPU plugins' `frame_index`.
     pub(super) fn end_gpu_frame(&mut self) {
         if self.has_gpu_plugins() {

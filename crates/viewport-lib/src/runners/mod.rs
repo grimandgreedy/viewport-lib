@@ -288,9 +288,9 @@ impl ViewportInstance {
     ///
     /// Drive it each frame with [`step_runtime`](Self::step_runtime). Register
     /// plugins after construction through [`runtime_mut`](Self::runtime_mut)
-    /// using the `add_*` methods. Its GPU plugins' `pre_prepare` runs from
-    /// [`render`](Self::render) and [`prepare`](Self::prepare); do not call it
-    /// yourself as well.
+    /// using the `add_*` methods. Its GPU plugins' `pre_prepare` and
+    /// `post_paint` run from [`render`](Self::render) and
+    /// [`prepare`](Self::prepare); do not call them yourself as well.
     pub fn with_runtime(mut self, runtime: ViewportRuntime) -> Self {
         self.runtime = Some(runtime);
         self

@@ -28,8 +28,24 @@
 //! and submit the plugins' buffers on the queue they are given before the
 //! renderer's prepare, with the `dt` of the last `step_runtime`, a frame
 //! counter, and the instance's [`viewport_id`](crate::ViewportInstance::viewport_id).
-//! A host that renders through the instance must not also call
-//! `pre_prepare` itself, or every plugin runs twice.
+//! After the frame they run `post_paint` with the scene colour and depth:
+//!
+//! - HDR frames, owned or through a host's pass: the HDR scene colour and its
+//!   depth. On the pass path the buffers come last in what `prepare` returns.
+//! - LDR frames rendered into a target with `TEXTURE_BINDING` (an
+//!   [`OffscreenViewportTarget`](crate::OffscreenViewportTarget)): that
+//!   target and the LDR depth.
+//! - Not called on an LDR frame painted into a host's render pass, rendered
+//!   into a window surface or another target without `TEXTURE_BINDING`, or
+//!   drawn at a reduced render scale or with backdrop-blur overlays (the
+//!   scene then lands in an intermediate target). The renderer raises a
+//!   `NoticeDetail::PostPaintSkipped` notice instead. Under `ViewportApp`
+//!   this means LDR windows.
+//!
+//! While GPU plugins are attached the renderer keeps the scene depth to the
+//! end of the frame, which it otherwise discards. A host that renders
+//! through the instance must not also call `pre_prepare` or `post_paint`
+//! itself, or every plugin runs twice.
 
 use crate::camera::Camera;
 use crate::renderer::ViewportId;
@@ -250,7 +266,7 @@ pub trait GpuPlugin: Send + 'static {
         Vec::new()
     }
 
-    /// Encode work that runs after `renderer.paint_to()`.
+    /// Encode work that runs after the frame is drawn.
     ///
     /// The plugin receives views of the just-rendered color, depth, and
     /// (optionally) pick-id targets and may sample them in a compute or
@@ -260,6 +276,10 @@ pub trait GpuPlugin: Send + 'static {
     /// To *modify* the color target, write to a sibling texture the plugin
     /// owns and let the host composite it during the final blit. The lib
     /// does not loop a plugin's output back into the rendered color.
+    ///
+    /// Under a [`ViewportInstance`](crate::ViewportInstance) this is not
+    /// called on frames that leave nothing readable; the
+    /// [module docs](self) list them.
     fn post_paint(
         &mut self,
         _device: &crate::gpu::Device,

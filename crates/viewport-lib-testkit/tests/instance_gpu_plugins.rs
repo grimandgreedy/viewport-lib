@@ -5,7 +5,7 @@
 use viewport_lib::plugin_api::depth::DEPTH_CLEAR;
 use viewport_lib::runtime::gpu_plugin::gpu_phase;
 use viewport_lib::wgpu;
-use viewport_lib::{GpuFrameContext, GpuPlugin, ViewportRuntime};
+use viewport_lib::{GpuFrameContext, GpuPlugin, NoticeDetail, PostPaintTargets, ViewportRuntime};
 use viewport_lib::{
     InputOwnership, Material, OffscreenViewportTarget, PipelineMode, RendererConfig,
     ViewportContext, ViewportInstance, primitives,
@@ -72,13 +72,20 @@ fn render(
     }
 }
 
-/// The depth at the centre of `view` (a depth-aspect view) and the largest
-/// depth anywhere in it, read with a compute pass the way a plugin would.
-fn probe_depth(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) -> [f32; 2] {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("depth_probe"),
-        source: wgpu::ShaderSource::Wgsl(
-            r#"
+/// A compute pass reading the depth at the centre of a depth-aspect view and
+/// the largest depth anywhere in it, the way a plugin would sample it.
+struct DepthProbe {
+    pipeline: wgpu::ComputePipeline,
+    storage: wgpu::Buffer,
+    staging: wgpu::Buffer,
+}
+
+impl DepthProbe {
+    fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("depth_probe"),
+            source: wgpu::ShaderSource::Wgsl(
+                r#"
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<storage, read_write> out: array<f32, 2>;
 @compute @workgroup_size(1)
@@ -94,62 +101,91 @@ fn main() {
     out[1] = m;
 }
 "#
-            .into(),
-        ),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("depth_probe"),
-        layout: None,
-        module: &module,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let storage = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("depth_probe_out"),
-        size: 8,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("depth_probe_staging"),
-        size: 8,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("depth_probe"),
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: storage.as_entire_binding(),
-            },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
+                .into(),
+            ),
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("depth_probe"),
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let storage = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("depth_probe_out"),
+            size: 8,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("depth_probe_staging"),
+            size: 8,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            pipeline,
+            storage,
+            staging,
+        }
     }
-    encoder.copy_buffer_to_buffer(&storage, 0, &staging, 0, 8);
-    queue.submit(std::iter::once(encoder.finish()));
-    staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(5)),
-        })
-        .expect("probe poll");
-    let mapped = viewport_lib::gpu::mapped_range(staging.slice(..));
-    let read = |i: usize| f32::from_le_bytes(mapped[i * 4..i * 4 + 4].try_into().unwrap());
-    [read(0), read(1)]
+
+    fn encode(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::CommandBuffer {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("depth_probe"),
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.storage.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.clear_buffer(&self.storage, 0, None);
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&self.storage, 0, &self.staging, 0, 8);
+        encoder.finish()
+    }
+
+    /// The last encoded probe's result, once the GPU has run it.
+    fn read(&self, device: &wgpu::Device) -> [f32; 2] {
+        self.staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |_| {});
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .expect("probe poll");
+        let values = {
+            let mapped = viewport_lib::gpu::mapped_range(self.staging.slice(..));
+            let read = |i: usize| f32::from_le_bytes(mapped[i * 4..i * 4 + 4].try_into().unwrap());
+            [read(0), read(1)]
+        };
+        self.staging.unmap();
+        values
+    }
+}
+
+/// Probe `view` now.
+fn probe_depth(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) -> [f32; 2] {
+    let probe = DepthProbe::new(device);
+    queue.submit(std::iter::once(probe.encode(device, view)));
+    probe.read(device)
 }
 
 /// After an HDR frame, and after an LDR frame into a sampleable offscreen
@@ -192,7 +228,16 @@ fn ldr_frame_into_an_unsampleable_target_has_no_scene_targets() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = surface_like_texture(&device);
+    let view = texture.create_view(&Default::default());
+    let mut instance = instance(&device);
+    render(&mut instance, &device, &queue, &view, PipelineMode::Direct);
+    assert!(instance.scene_target_views(Some(&view)).is_none());
+}
+
+/// A colour target without `TEXTURE_BINDING`, like a window surface.
+fn surface_like_texture(device: &wgpu::Device) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some("surface_like_target"),
         size: wgpu::Extent3d {
             width: SIZE,
@@ -205,41 +250,7 @@ fn ldr_frame_into_an_unsampleable_target_has_no_scene_targets() {
         format: OffscreenViewportTarget::render_format(SURFACE_FORMAT),
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
-    });
-    let view = texture.create_view(&Default::default());
-    let mut instance = instance(&device);
-    render(&mut instance, &device, &queue, &view, PipelineMode::Direct);
-    assert!(instance.scene_target_views(Some(&view)).is_none());
-}
-
-/// The depth a frame leaves behind holds the frame's geometry, with default
-/// settings, on HDR and on LDR.
-///
-/// Fails today: at render scale 1 the HDR overlay pass attaches the scene
-/// depth (as the output depth) and discards it, and the axes indicator puts
-/// that pass in every default frame; the LDR scene pass discards its depth
-/// unless occlusion culling is on. With the axes indicator off (HDR) or
-/// occlusion culling on (LDR) the depth survives.
-#[test]
-#[ignore = "the scene depth is discarded at the end of the frame"]
-fn scene_depth_holds_the_frame_after_render() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let target = OffscreenViewportTarget::new(&device, SURFACE_FORMAT, [SIZE, SIZE]);
-    for mode in [PipelineMode::Hdr, PipelineMode::Direct] {
-        let mut instance = instance(&device);
-        render(&mut instance, &device, &queue, target.render_view(), mode);
-        let targets = instance
-            .scene_target_views(Some(target.render_view()))
-            .unwrap_or_else(|| panic!("{mode:?}: no scene targets"));
-        let [centre, max] = probe_depth(&device, &queue, targets.depth_view);
-        assert!(
-            centre > DEPTH_CLEAR && max > DEPTH_CLEAR,
-            "{mode:?}: the depth should hold the cube, got centre {centre}, max {max}"
-        );
-    }
+    })
 }
 
 /// How a test drives one frame through the instance.
@@ -286,16 +297,24 @@ impl Path {
     }
 }
 
-/// On every path, the instance initialises an attached runtime's GPU plugin
-/// once and then runs its `pre_prepare` once per render, counting frames.
+/// On the owned HDR, owned LDR (into an offscreen target) and pass HDR paths,
+/// the instance initialises an attached runtime's GPU plugin once, then runs
+/// `pre_prepare` before each frame and `post_paint` after it, with the format
+/// of the scene colour it hands over.
 #[test]
-fn instance_runs_pre_prepare_on_every_path() {
+fn instance_runs_both_hooks_where_the_frame_is_readable() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let target = OffscreenViewportTarget::new(&device, SURFACE_FORMAT, [SIZE, SIZE]);
-    for path in [Path::OwnedHdr, Path::OwnedLdr, Path::PassHdr, Path::PassLdr] {
+    let hdr = format!("{:?}", wgpu::TextureFormat::Rgba16Float);
+    let ldr = format!("{:?}", target.format());
+    for (path, format) in [
+        (Path::OwnedHdr, &hdr),
+        (Path::OwnedLdr, &ldr),
+        (Path::PassHdr, &hdr),
+    ] {
         let log = CallLog::new();
         let runtime = ViewportRuntime::new()
             .with_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
@@ -303,16 +322,142 @@ fn instance_runs_pre_prepare_on_every_path() {
         for _ in 0..2 {
             path.frame(&mut instance, &device, &queue, &target);
         }
-        let pre: Vec<String> = log
-            .entries()
-            .into_iter()
-            .filter(|e| !e.starts_with("post_paint"))
-            .collect();
+        let entries = log.entries();
         assert_eq!(
-            pre,
-            ["init_gpu", "pre_prepare:0", "pre_prepare:1"],
+            entries,
+            [
+                "init_gpu".to_string(),
+                "pre_prepare:0".to_string(),
+                format!("post_paint:0:{format}:pick=false"),
+                "pre_prepare:1".to_string(),
+                format!("post_paint:1:{format}:pick=false"),
+            ],
             "{path:?}"
         );
+    }
+}
+
+/// Where the frame leaves nothing a plugin can read, `pre_prepare` still runs
+/// but `post_paint` is not called, and the renderer says why in a notice: an
+/// LDR frame painted into the host's pass, and an LDR frame rendered into a
+/// target without `TEXTURE_BINDING` (a window surface).
+#[test]
+fn post_paint_is_skipped_with_a_notice_where_the_frame_is_unreadable() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let target = OffscreenViewportTarget::new(&device, SURFACE_FORMAT, [SIZE, SIZE]);
+    let surface = surface_like_texture(&device);
+    let surface_view = surface.create_view(&Default::default());
+    for path in ["pass", "surface"] {
+        let log = CallLog::new();
+        let runtime = ViewportRuntime::new()
+            .with_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
+        let mut instance = instance(&device).with_runtime(runtime);
+        for _ in 0..2 {
+            if path == "pass" {
+                Path::PassLdr.frame(&mut instance, &device, &queue, &target);
+            } else {
+                assemble(&mut instance, PipelineMode::Direct);
+                let cmd = instance.render(&device, &queue, &surface_view);
+                queue.submit(std::iter::once(cmd));
+            }
+        }
+        log.assert_take(&["init_gpu", "pre_prepare:0", "pre_prepare:1"]);
+        let skipped: Vec<_> = instance
+            .renderer_mut()
+            .take_notices()
+            .into_iter()
+            .filter(|n| matches!(n.detail, NoticeDetail::PostPaintSkipped { .. }))
+            .collect();
+        assert_eq!(skipped.len(), 1, "{path}: one coalesced notice");
+        assert_eq!(skipped[0].count, 2, "{path}: reported on both frames");
+    }
+}
+
+/// Probes the scene depth it is handed in `post_paint`.
+struct DepthProbePlugin {
+    probe: std::sync::Arc<DepthProbe>,
+}
+
+impl GpuPlugin for DepthProbePlugin {
+    fn post_paint(
+        &mut self,
+        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        targets: &PostPaintTargets<'_>,
+        _ctx: &GpuFrameContext<'_>,
+    ) -> Vec<wgpu::CommandBuffer> {
+        vec![self.probe.encode(device, targets.depth_view)]
+    }
+}
+
+/// With GPU plugins attached, the scene depth a plugin samples in
+/// `post_paint` holds the frame's geometry, on default settings: on HDR with
+/// the axes indicator on (its overlay pass ends the frame on the scene
+/// depth), and on LDR without occlusion culling.
+#[test]
+fn post_paint_sees_the_frames_depth() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let target = OffscreenViewportTarget::new(&device, SURFACE_FORMAT, [SIZE, SIZE]);
+    for path in [Path::OwnedHdr, Path::OwnedLdr, Path::PassHdr] {
+        let probe = std::sync::Arc::new(DepthProbe::new(&device));
+        let runtime = ViewportRuntime::new().with_gpu_plugin(DepthProbePlugin {
+            probe: probe.clone(),
+        });
+        let mut instance = instance(&device).with_runtime(runtime);
+        assert!(instance.viewport_frame_mut().show_axes_indicator);
+        assert!(!instance.renderer_mut().occlusion_culling_enabled());
+        for _ in 0..2 {
+            path.frame(&mut instance, &device, &queue, &target);
+        }
+        assert!(instance.renderer_mut().debug_last_frame_kept_scene_depth());
+        let [centre, max] = probe.read(&device);
+        assert!(
+            centre > DEPTH_CLEAR && max > DEPTH_CLEAR,
+            "{path:?}: the depth should hold the cube, got centre {centre}, max {max}"
+        );
+    }
+}
+
+/// The renderer keeps the scene depth only while a runtime with GPU plugins
+/// is attached: with no runtime, or an empty one, the frame ends on the
+/// usual discard.
+#[test]
+fn scene_depth_is_kept_only_with_gpu_plugins() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let target = OffscreenViewportTarget::new(&device, SURFACE_FORMAT, [SIZE, SIZE]);
+    for path in [Path::OwnedHdr, Path::OwnedLdr, Path::PassHdr] {
+        for (label, runtime, kept) in [
+            ("no runtime", None, false),
+            ("empty runtime", Some(ViewportRuntime::new()), false),
+            (
+                "GPU plugin",
+                Some(
+                    ViewportRuntime::new()
+                        .with_gpu_plugin(LoggingGpuPlugin::new(CallLog::new(), 0)),
+                ),
+                true,
+            ),
+        ] {
+            let mut instance = instance(&device);
+            if let Some(runtime) = runtime {
+                instance = instance.with_runtime(runtime);
+            }
+            path.frame(&mut instance, &device, &queue, &target);
+            assert_eq!(
+                instance.renderer_mut().debug_last_frame_kept_scene_depth(),
+                kept,
+                "{path:?}, {label}"
+            );
+        }
     }
 }
 

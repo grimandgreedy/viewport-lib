@@ -17,20 +17,39 @@ impl ViewportInstance {
     ///
     /// With a runtime attached, its GPU plugins' `pre_prepare` runs first and
     /// its command buffers are submitted on `queue` before the renderer's own
-    /// work, so anything they write is visible to this frame's passes.
+    /// work, so anything they write is visible to this frame's passes. Their
+    /// `post_paint` runs after the frame, with the scene colour and depth: on
+    /// an HDR frame, and on an LDR frame when `view`'s texture has
+    /// `TEXTURE_BINDING` (an [`OffscreenViewportTarget`](crate::OffscreenViewportTarget),
+    /// not a window surface) and the frame was drawn straight into it. When
+    /// `post_paint` returns command buffers, the frame's buffer is submitted
+    /// on `queue` ahead of them and the buffer returned here is empty.
     pub fn render(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         view: &crate::gpu::TextureView,
     ) -> crate::gpu::CommandBuffer {
+        if !self.has_gpu_plugins() {
+            return self
+                .renderer
+                .owned()
+                .render(device, queue, view, &self.frame);
+        }
+        self.renderer.keep_scene_depth = true;
         self.run_gpu_pre_prepare(device, queue);
         let cmd = self
             .renderer
             .owned()
             .render(device, queue, view, &self.frame);
+        self.renderer.keep_scene_depth = false;
+        let post = self.run_gpu_post_paint(device, queue, Some(view));
         self.end_gpu_frame();
-        cmd
+        if post.is_empty() {
+            return cmd;
+        }
+        queue.submit(std::iter::once(cmd).chain(post));
+        crate::renderer::empty_command_buffer(device)
     }
 
     /// Encode any pre-pass work (HDR chain, dynamic resolution) and return the
@@ -39,14 +58,24 @@ impl ViewportInstance {
     ///
     /// With a runtime attached, its GPU plugins' `pre_prepare` runs first and
     /// its command buffers are submitted on `queue`, as in
-    /// [`render`](Self::render).
+    /// [`render`](Self::render). On an HDR frame, `prepare` draws the whole
+    /// scene and `paint` only copies it out, so the plugins' `post_paint`
+    /// runs here and its buffers come last in the returned list. An LDR frame
+    /// is drawn into the host's pass in `paint`, which leaves nothing a
+    /// plugin can read, so `post_paint` is not called.
     pub fn prepare(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        if !self.has_gpu_plugins() {
+            return self.renderer.pass().prepare(device, queue, &self.frame);
+        }
+        self.renderer.keep_scene_depth = true;
         self.run_gpu_pre_prepare(device, queue);
-        let buffers = self.renderer.pass().prepare(device, queue, &self.frame);
+        let mut buffers = self.renderer.pass().prepare(device, queue, &self.frame);
+        self.renderer.keep_scene_depth = false;
+        buffers.extend(self.run_gpu_post_paint(device, queue, None));
         self.end_gpu_frame();
         buffers
     }
