@@ -225,3 +225,83 @@ fn installer_fixture_uninstall_restores_the_registries() {
     );
     assert!(again.is_ok(), "reinstall failed: {:?}", again.err());
 }
+
+/// After the renderer is replaced and the runtime kept, `reattach_plugin`
+/// registers the deformer on the new renderer and updates the handle, and the
+/// runtime still holds one copy of the feature's runtime plugin.
+#[test]
+fn installer_fixture_reattaches_to_a_new_renderer() {
+    use viewport_lib::{ViewportRenderer, reattach_plugin, uninstall_plugin};
+    use viewport_lib_testkit::fixtures::ConstantOffsetDeformer;
+
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::low_power("fixture-installer-reattach"))
+    else {
+        eprintln!("skipping: no GPU adapter with recommended limits available");
+        return;
+    };
+    let mut runtime = ViewportRuntime::new();
+    let log = CallLog::new();
+    let mut handle = match install_plugin(
+        DeformAndStepInstaller::new(log.clone()),
+        &harness.device,
+        &harness.queue,
+        Some(&mut runtime),
+        &mut harness.renderer,
+    ) {
+        Ok(handle) => handle,
+        Err(err) => {
+            eprintln!("skipping: this device cannot register the feature: {err}");
+            return;
+        }
+    };
+    let plugins = runtime.plugin_ids().collect::<Vec<_>>();
+
+    harness.renderer = ViewportRenderer::new(&harness.device, Harness::DEFAULT_TARGET_FORMAT);
+    assert_eq!(
+        harness
+            .renderer
+            .resources()
+            .deformer_id_by_name(ConstantOffsetDeformer::NAME),
+        None
+    );
+    reattach_plugin::<DeformAndStepInstaller>(
+        &mut handle,
+        &harness.device,
+        &harness.queue,
+        Some(&mut runtime),
+        &mut harness.renderer,
+    )
+    .expect("reattach");
+    assert_eq!(
+        harness
+            .renderer
+            .resources()
+            .deformer_id_by_name(ConstantOffsetDeformer::NAME),
+        Some(handle.deformer)
+    );
+    assert_eq!(runtime.plugin_ids().collect::<Vec<_>>(), plugins);
+
+    let mut scene = Scene::new();
+    let mut selection = Selection::new();
+    let mut step_frame = RuntimeFrameContext::default();
+    step_frame.dt = 1.0 / 60.0;
+    log.clear();
+    runtime.step(&mut scene, &mut selection, &step_frame);
+    assert_eq!(
+        log.count("installed_step:step"),
+        1,
+        "one runtime plugin stepped: {:?}",
+        log.entries()
+    );
+
+    uninstall_plugin::<DeformAndStepInstaller>(
+        handle,
+        &harness.device,
+        &harness.queue,
+        Some(&mut runtime),
+        &mut harness.renderer,
+    )
+    .expect("uninstall after reattach");
+    assert_eq!(runtime.plugin_count(), 0);
+}

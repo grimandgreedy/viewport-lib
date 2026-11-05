@@ -533,6 +533,15 @@ pub enum ViewportError {
         needed: &'static str,
     },
 
+    /// A feature's `uninstall` cannot take out what it installed. Returned in
+    /// place of `Ok(())` so a removal that did nothing does not read as one
+    /// that worked.
+    #[error("{feature} cannot be uninstalled")]
+    PluginUninstallUnsupported {
+        /// Name of the feature.
+        feature: &'static str,
+    },
+
     /// Content was uploaded for, or freed from, an item type whose plugin is
     /// not registered with the renderer. The item type that owns a store is
     /// the only thing that can hold its content, so the call had nowhere to
