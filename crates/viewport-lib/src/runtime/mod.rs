@@ -1604,16 +1604,12 @@ mod tests {
 /// 5. `[POST_SIM, i32::MAX]` -- PostSim (700), Writeback (800): once at wall dt
 pub struct ViewportRuntime {
     plugins: Vec<(RuntimePluginId, Box<dyn RuntimePlugin>)>,
-    gpu_plugins: Vec<(GpuPluginId, Box<dyn GpuPlugin>)>,
+    gpu_plugins: Vec<GpuPluginEntry>,
     /// Last id handed out to a runtime or GPU plugin; one counter for both.
     last_plugin_id: u64,
     /// GPU plugins removed because the device did not meet their
     /// requirements, as `ViewportError::PluginUnsupported`.
     declined_gpu_plugins: Vec<crate::ViewportError>,
-    /// False until every registered GPU plugin has had `init_gpu` called.
-    /// Cleared again when a new GPU plugin is registered; removing one leaves
-    /// it as it is.
-    gpu_initialized: bool,
     fixed_timestep: Option<FixedTimestep>,
     snapshots: TransformSnapshotTable,
     step_index: u64,
@@ -1627,6 +1623,14 @@ pub struct ViewportRuntime {
     scene_initialized: bool,
     /// Per-plugin timing from the most recent step / pre_prepare / post_paint.
     stats: RuntimeStats,
+}
+
+/// A registered GPU plugin and whether it has been through `init_gpu` on the
+/// current device.
+struct GpuPluginEntry {
+    id: GpuPluginId,
+    plugin: Box<dyn GpuPlugin>,
+    initialised: bool,
 }
 
 impl Default for ViewportRuntime {
@@ -1643,7 +1647,6 @@ impl ViewportRuntime {
             gpu_plugins: Vec::new(),
             last_plugin_id: 0,
             declined_gpu_plugins: Vec::new(),
-            gpu_initialized: false,
             fixed_timestep: None,
             snapshots: TransformSnapshotTable::new(),
             step_index: 0,
@@ -1730,9 +1733,9 @@ impl ViewportRuntime {
     /// `step` and before `renderer.prepare()`. Plugins run in ascending
     /// priority order; equal priorities preserve registration order.
     ///
-    /// Registering a plugin after the runtime has already run a frame re-runs
-    /// every GPU plugin's `init_gpu` on the next `pre_prepare`. Implementations
-    /// should be idempotent or guard their own one-time setup.
+    /// The plugin's `init_gpu` runs on the next `pre_prepare`, whether or not
+    /// the runtime has already run frames. Plugins that are already
+    /// initialised are not initialised again.
     ///
     /// [`gpu_plugin_ids`](Self::gpu_plugin_ids) lists the id this plugin was
     /// given.
@@ -1768,8 +1771,11 @@ impl ViewportRuntime {
 
     fn push_gpu_plugin(&mut self, plugin: Box<dyn GpuPlugin>) -> GpuPluginId {
         let id = GpuPluginId(self.next_plugin_id());
-        self.gpu_plugins.push((id, plugin));
-        self.gpu_initialized = false;
+        self.gpu_plugins.push(GpuPluginEntry {
+            id,
+            plugin,
+            initialised: false,
+        });
         id
     }
 
@@ -1779,10 +1785,14 @@ impl ViewportRuntime {
     /// Returns `None` for an id that is not registered (already removed,
     /// declined by the device, or from another runtime).
     pub fn remove_gpu_plugin(&mut self, id: GpuPluginId) -> Option<Box<dyn GpuPlugin>> {
-        let index = self.gpu_plugins.iter().position(|(i, _)| *i == id)?;
-        let (_, plugin) = self.gpu_plugins.remove(index);
+        let index = self.gpu_plugins.iter().position(|e| e.id == id)?;
+        let plugin = self.gpu_plugins.remove(index).plugin;
         let name = plugin.type_name();
-        if !self.gpu_plugins.iter().any(|(_, p)| p.type_name() == name) {
+        if !self
+            .gpu_plugins
+            .iter()
+            .any(|e| e.plugin.type_name() == name)
+        {
             self.stats.pre_prepare_ms.remove(name);
             self.stats.post_paint_ms.remove(name);
         }
@@ -1792,7 +1802,7 @@ impl ViewportRuntime {
     /// Ids of the registered GPU plugins, in the order they run (ascending
     /// priority, registration order within a priority, as of the last frame).
     pub fn gpu_plugin_ids(&self) -> impl Iterator<Item = GpuPluginId> + '_ {
-        self.gpu_plugins.iter().map(|(id, _)| *id)
+        self.gpu_plugins.iter().map(|e| e.id)
     }
 
     /// Number of registered GPU plugins.
@@ -1800,10 +1810,11 @@ impl ViewportRuntime {
         self.gpu_plugins.len()
     }
 
-    /// True once every registered GPU plugin has had `init_gpu` called.
-    /// Registering a GPU plugin clears it until the next `pre_prepare`.
+    /// True when every registered GPU plugin has had `init_gpu` called on the
+    /// current device. Registering a GPU plugin makes it false until the next
+    /// `pre_prepare`.
     pub fn gpu_initialized(&self) -> bool {
-        self.gpu_initialized
+        self.gpu_plugins.iter().all(|e| e.initialised)
     }
 
     /// Register a GPU plugin scoped to a single viewport.
@@ -1829,7 +1840,9 @@ impl ViewportRuntime {
     /// Run every GPU plugin's `init_gpu` again before the next `pre_prepare`,
     /// for an instance that moved to a new device.
     pub(crate) fn reset_gpu_init(&mut self) {
-        self.gpu_initialized = false;
+        for entry in &mut self.gpu_plugins {
+            entry.initialised = false;
+        }
     }
 
     /// Run every registered GPU plugin's `pre_prepare` in ascending priority
@@ -1848,18 +1861,28 @@ impl ViewportRuntime {
     /// `prepare()`'s, so any storage buffer written by a plugin is observable
     /// by the standard render passes in the same frame.
     ///
-    /// On the first call (or after a new plugin is registered), every plugin's
-    /// `init_gpu` is invoked once before any `pre_prepare`.
+    /// Before any plugin's `pre_prepare`, each plugin not yet initialised on
+    /// this device has its requirements checked and its `init_gpu` called, in
+    /// priority order. That is every plugin on the first call and after a
+    /// device change, and only the newly registered ones otherwise.
     pub fn pre_prepare(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &GpuFrameContext<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        if !self.gpu_initialized {
+        // Stable sort: equal priorities preserve registration order. Same
+        // contract as the CPU plugin list.
+        self.gpu_plugins.sort_by_key(|e| e.plugin.priority());
+
+        if !self.gpu_initialized() {
             let caps = crate::capabilities::Capabilities::from_device(device, None);
             let declined = &mut self.declined_gpu_plugins;
-            self.gpu_plugins.retain(|(_, p)| {
+            self.gpu_plugins.retain(|e| {
+                if e.initialised {
+                    return true;
+                }
+                let p = &e.plugin;
                 let missing = caps.missing_requirements(&p.requires());
                 if missing.is_empty() {
                     return true;
@@ -1875,19 +1898,17 @@ impl ViewportRuntime {
                 });
                 false
             });
-            for (_, p) in self.gpu_plugins.iter_mut() {
-                p.init_gpu(device);
+            for entry in self.gpu_plugins.iter_mut().filter(|e| !e.initialised) {
+                entry.plugin.init_gpu(device);
+                entry.initialised = true;
             }
-            self.gpu_initialized = true;
         }
-        // Stable sort: equal priorities preserve registration order. Same
-        // contract as the CPU plugin list.
-        self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
 
         let mut timings: std::collections::HashMap<&'static str, f32> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        for (_, p) in self.gpu_plugins.iter_mut() {
+        for entry in self.gpu_plugins.iter_mut().filter(|e| e.initialised) {
+            let p = &mut entry.plugin;
             let t = web_time::Instant::now();
             out.extend(p.pre_prepare(device, queue, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
@@ -1912,9 +1933,10 @@ impl ViewportRuntime {
     /// plugin overlay output into the final image: the lib does not loop
     /// plugin output back into the rendered color.
     ///
-    /// Plugins registered after the first frame still go through `init_gpu`
-    /// on the next `pre_prepare`; this method does not trigger init on its
-    /// own to keep the post-paint path deterministic.
+    /// A plugin that has not been through `init_gpu` yet (registered since the
+    /// last `pre_prepare`, or waiting on one after a device change) is
+    /// skipped: this method never initialises, so a plugin's first
+    /// `post_paint` always follows its first `pre_prepare`.
     pub fn post_paint(
         &mut self,
         device: &crate::gpu::Device,
@@ -1925,12 +1947,13 @@ impl ViewportRuntime {
         // Stable sort: equal priorities preserve registration order. The list
         // is already sorted if `pre_prepare` ran first this frame; sorting
         // again is cheap and keeps `post_paint` safe to call standalone.
-        self.gpu_plugins.sort_by_key(|(_, p)| p.priority());
+        self.gpu_plugins.sort_by_key(|e| e.plugin.priority());
 
         let mut timings: std::collections::HashMap<&'static str, f32> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        for (_, p) in self.gpu_plugins.iter_mut() {
+        for entry in self.gpu_plugins.iter_mut().filter(|e| e.initialised) {
+            let p = &mut entry.plugin;
             let t = web_time::Instant::now();
             out.extend(p.post_paint(device, queue, targets, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
