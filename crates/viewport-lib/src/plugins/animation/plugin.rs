@@ -186,16 +186,35 @@ impl RuntimePlugin for AnimationPlugin {
 }
 
 impl crate::plugin_api::PluginInstaller for AnimationPlugin {
-    type Handle = ();
+    /// The id the plugin was registered under on the runtime.
+    type Handle = crate::runtime::RuntimePluginId;
 
     /// Register the configured plugin on the runtime. Build the tracks first,
     /// then install.
     fn install(
         self,
         ctx: &mut crate::plugin_api::PluginInstallCtx<'_>,
+    ) -> crate::error::ViewportResult<crate::runtime::RuntimePluginId> {
+        Ok(ctx
+            .require_runtime("a ViewportRuntime for the animation plugin")?
+            .add_plugin(self))
+    }
+
+    /// Remove the plugin from the runtime.
+    fn uninstall(
+        handle: crate::runtime::RuntimePluginId,
+        ctx: &mut crate::plugin_api::PluginInstallCtx<'_>,
     ) -> crate::error::ViewportResult<()> {
         ctx.require_runtime("a ViewportRuntime for the animation plugin")?
-            .add_plugin(self);
+            .remove_plugin(handle);
+        Ok(())
+    }
+
+    /// Nothing to do: the plugin lives on the runtime only.
+    fn reattach_renderer(
+        _handle: &mut crate::runtime::RuntimePluginId,
+        _ctx: &mut crate::plugin_api::PluginInstallCtx<'_>,
+    ) -> crate::error::ViewportResult<()> {
         Ok(())
     }
 }

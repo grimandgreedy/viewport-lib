@@ -1,7 +1,7 @@
 //! An installer that registers a deformer and a runtime plugin in one call.
 
 use crate::fixtures::CallLog;
-use crate::fixtures::deformer::constant_offset_deformer;
+use crate::fixtures::deformer::{ConstantOffsetDeformer, constant_offset_deformer};
 use crate::fixtures::runtime_plugin::LoggingRuntimePlugin;
 use viewport_lib::plugin_api::{PluginInstallCtx, PluginInstaller};
 use viewport_lib::runtime::plugin::phase;
@@ -26,7 +26,9 @@ pub struct DeformAndStepInstallerHandle {
 /// against a host with no runtime fails with
 /// [`ViewportError::PluginInstallMissing`](viewport_lib::ViewportError::PluginInstallMissing)
 /// before anything is registered. [`PluginInstaller::uninstall`] removes the
-/// deformer and the runtime plugin again.
+/// deformer and the runtime plugin again, and
+/// [`PluginInstaller::reattach_renderer`] registers the deformer on a new
+/// renderer without touching the runtime plugin.
 pub struct DeformAndStepInstaller {
     log: CallLog,
 }
@@ -74,16 +76,35 @@ impl PluginInstaller for DeformAndStepInstaller {
         })
     }
 
-    /// Removes the runtime plugin and the deformer.
+    /// Removes the runtime plugin and the deformer, attempting both and
+    /// returning the first error.
     fn uninstall(
         handle: DeformAndStepInstallerHandle,
         ctx: &mut PluginInstallCtx<'_>,
     ) -> ViewportResult<()> {
-        if let Some(runtime) = ctx.runtime.as_deref_mut() {
-            runtime.remove_plugin(handle.step_plugin);
-        }
-        ctx.renderer
+        let runtime = ctx
+            .require_runtime("a ViewportRuntime for the deform-and-step fixture")
+            .map(|runtime| {
+                runtime.remove_plugin(handle.step_plugin);
+            });
+        let deformer = ctx
+            .renderer
             .resources_mut()
-            .remove_deformer(ctx.device, handle.deformer)
+            .remove_deformer(ctx.device, handle.deformer);
+        runtime.and(deformer)
+    }
+
+    /// Registers the deformer on the new renderer, reusing it if it is there
+    /// already, and updates the handle. The runtime plugin stays.
+    fn reattach_renderer(
+        handle: &mut DeformAndStepInstallerHandle,
+        ctx: &mut PluginInstallCtx<'_>,
+    ) -> ViewportResult<()> {
+        let resources = ctx.renderer.resources_mut();
+        handle.deformer = match resources.deformer_id_by_name(ConstantOffsetDeformer::NAME) {
+            Some(id) => id,
+            None => resources.register_deformer(ctx.device, constant_offset_deformer())?,
+        };
+        Ok(())
     }
 }

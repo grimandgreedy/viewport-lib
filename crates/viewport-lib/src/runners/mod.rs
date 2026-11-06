@@ -362,6 +362,26 @@ impl ViewportInstance {
         )
     }
 
+    /// Register a feature's renderer-side pieces again after
+    /// [`rebuild`](Self::rebuild), updating the ids in its handle. The
+    /// attached runtime keeps the feature's runtime pieces, so this does not
+    /// add them a second time, as installing again would. See
+    /// [`PluginInstaller::reattach_renderer`](crate::PluginInstaller::reattach_renderer).
+    pub fn reattach_plugin<P: crate::PluginInstaller>(
+        &mut self,
+        handle: &mut P::Handle,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::error::ViewportResult<()> {
+        crate::reattach_plugin::<P>(
+            handle,
+            device,
+            queue,
+            self.runtime.as_mut(),
+            &mut self.renderer,
+        )
+    }
+
     // ---- per-frame input (universal, all setups) --------------------------------
 
     /// Begin a frame: record the viewport context and reset the input

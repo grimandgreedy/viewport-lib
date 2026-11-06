@@ -227,7 +227,8 @@ pub use notice::{Notice, NoticeCategory, NoticeCounts, NoticeDetail, Severity};
 pub use plugin_api::{
     Handles, PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer,
     PostEffectProducerId, PostEffectResizeContext, PostEffectSlot, PostEffectStage,
-    PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin, uninstall_plugin,
+    PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin, reattach_plugin,
+    uninstall_plugin,
 };
 
 pub use camera::LookAngles;
