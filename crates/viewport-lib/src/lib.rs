@@ -344,7 +344,8 @@ pub use runners::{ExtraId, OffscreenViewportTarget, StaleHandles, ViewportInstan
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{
-    AppConfig, FrameCtx, InputCtx, PaintCtx, RedrawMode, ViewportApp, WindowConfig, WindowId,
+    AppConfig, FrameCtx, InputCtx, PaintCtx, RedrawMode, SetupCtx, ViewportApp, WindowConfig,
+    WindowId,
 };
 
 pub use resources::PolylineId;

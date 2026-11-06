@@ -2704,7 +2704,7 @@ impl ViewportRenderer {
                                 view: &slot_hdr.output_depth_view,
                                 depth_ops: Some(crate::gpu::Operations {
                                     load: crate::gpu::LoadOp::Load,
-                                    store: crate::gpu::StoreOp::Discard,
+                                    store: self.scene_depth_store_op(),
                                 }),
                                 stencil_ops: None,
                             },
@@ -2825,7 +2825,7 @@ impl ViewportRenderer {
                     view: hdr_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Discard,
+                        store: self.scene_depth_store_op(),
                     }),
                     stencil_ops: None,
                 }),

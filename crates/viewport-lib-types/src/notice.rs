@@ -66,6 +66,13 @@ pub enum NoticeDetail {
     /// Transparent volume meshes were skipped because the LDR pipeline has no
     /// order-independent transparency pass.
     VolumeTransparencyOnLdr,
+    /// A runtime's GPU plugins have a `post_paint` hook, but this frame left
+    /// no scene colour and depth they can read, so the hook was not called.
+    PostPaintSkipped {
+        /// Why the frame has no readable targets, for example
+        /// `"the LDR frame was drawn into the host's render pass"`.
+        reason: &'static str,
+    },
     /// The frame asked for `ExposureMode::Automatic` on the LDR pipeline, which
     /// has no HDR target to meter, so it was drawn at the passthrough exposure.
     AutoExposureOnLdr,
@@ -182,6 +189,11 @@ impl fmt::Display for NoticeDetail {
                 "transparent volume meshes are not drawn on the LDR pipeline \
                  (PipelineMode::Direct): they require the OIT pass, which only exists in the HDR \
                  pipeline. Set effects.display.mode = PipelineMode::Hdr.",
+            ),
+            Self::PostPaintSkipped { reason } => write!(
+                f,
+                "GPU plugin post_paint was not called: {reason}. It runs on HDR frames and on \
+                 LDR frames drawn into a target with TEXTURE_BINDING."
             ),
             Self::AutoExposureOnLdr => f.write_str(
                 "ExposureMode::Automatic has no meter on the LDR pipeline \

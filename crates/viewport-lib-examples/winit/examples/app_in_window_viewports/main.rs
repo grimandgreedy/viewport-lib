@@ -122,7 +122,7 @@ fn main() {
                 .with_title("viewport-lib : two viewports in one window")
                 .with_window_size(1200, 700),
             // The window's own instance is an empty compositor (clears the backdrop).
-            |_vp, _device| {},
+            |_setup| {},
             move |ctx| {
                 let device = ctx.device().clone();
                 let queue = ctx.queue().clone();

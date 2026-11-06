@@ -812,6 +812,7 @@ impl ViewportRenderer {
         scene_items: &[SceneRenderItem],
     ) -> crate::gpu::CommandBuffer {
         let paint_start = web_time::Instant::now();
+        self.last_frame_kept_scene_depth = self.keep_scene_depth;
         // Reset the per-frame main-pass draw counters; the instanced draw loops
         // bump them through `&self` during encode and they are latched into
         // `FrameStats` after paint.
@@ -980,6 +981,114 @@ impl ViewportRenderer {
     /// all the overlay family needs.
     pub(crate) fn renders_hdr(&self, frame: &FrameData) -> bool {
         frame.effects.display.is_hdr() && self.resources.scene_tier.is_built()
+    }
+
+    /// The depth store op for a pass that ends the frame on the scene depth
+    /// (at render scale 1 the output depth is a view of it): kept when
+    /// `keep_scene_depth` is set, discarded otherwise.
+    pub(crate) fn scene_depth_store_op(&self) -> crate::gpu::StoreOp {
+        if self.keep_scene_depth {
+            crate::gpu::StoreOp::Store
+        } else {
+            crate::gpu::StoreOp::Discard
+        }
+    }
+
+    /// Report that GPU plugins' `post_paint` was skipped this frame, once per
+    /// reason (repeats are counted on the same notice).
+    pub(crate) fn report_post_paint_skipped(&self, reason: &'static str) {
+        self.resources.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::Pipeline,
+                "post_paint_skipped",
+                [crate::notice::name_id(reason), 0],
+            ),
+            // A plugin that only uses `pre_prepare` lands here too: the runner
+            // cannot tell whether a plugin implements `post_paint`.
+            crate::Severity::Info,
+            || crate::NoticeDetail::PostPaintSkipped { reason },
+        );
+    }
+
+    /// Why `frame`, rendered into `output_view`, leaves no scene targets a
+    /// GPU plugin can read, or `None` when it does.
+    pub(crate) fn post_paint_skip_reason(
+        &self,
+        frame: &FrameData,
+        output_view: Option<&crate::gpu::TextureView>,
+    ) -> Option<&'static str> {
+        if self.renders_hdr(frame) {
+            return None;
+        }
+        let Some(output_view) = output_view else {
+            return Some("the LDR frame was drawn into the host's render pass");
+        };
+        if !output_view
+            .texture()
+            .usage()
+            .contains(crate::gpu::TextureUsages::TEXTURE_BINDING)
+        {
+            return Some("the LDR frame's output texture lacks TEXTURE_BINDING");
+        }
+        if self.current_render_scale < 1.0 - 0.001 {
+            return Some("the LDR frame was drawn at a reduced render scale");
+        }
+        if self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .is_some()
+            && self.has_backdrop_blur_shapes(frame.camera.viewport_index)
+        {
+            return Some("the LDR frame drew backdrop-blur overlays");
+        }
+        None
+    }
+
+    /// Views of the scene colour and depth `frame` was last rendered into, for
+    /// sampling after the frame (a GPU plugin's `post_paint`).
+    ///
+    /// On an HDR frame these are the viewport's HDR colour target and its
+    /// depth, the pair post effects read. On an LDR frame the colour is
+    /// `output_view` and the depth is the viewport's LDR depth target. `None`
+    /// when the viewport has not drawn; on an LDR frame also when
+    /// `output_view` is missing or its texture lacks `TEXTURE_BINDING`, and
+    /// when the frame drew into an intermediate target (dynamic resolution,
+    /// backdrop blur) instead of `output_view`.
+    pub(crate) fn scene_target_views<'a>(
+        &'a self,
+        frame: &FrameData,
+        output_view: Option<&'a crate::gpu::TextureView>,
+    ) -> Option<crate::runtime::PostPaintTargets<'a>> {
+        let vp_idx = frame.camera.viewport_index;
+        let slot = self.viewport_slots.get(vp_idx)?;
+        if self.renders_hdr(frame) {
+            let hdr = slot.hdr.as_ref()?;
+            return Some(crate::runtime::PostPaintTargets::new(
+                &hdr.hdr_view,
+                &hdr.hdr_depth_only_view,
+                hdr.hdr_texture.format(),
+            ));
+        }
+        let colour = output_view?;
+        if !colour
+            .texture()
+            .usage()
+            .contains(crate::gpu::TextureUsages::TEXTURE_BINDING)
+        {
+            return None;
+        }
+        if self.current_render_scale < 1.0 - 0.001 || self.has_backdrop_blur_shapes(vp_idx) {
+            return None;
+        }
+        let depth = match &slot.hdr {
+            Some(hdr) => &hdr.outline_depth_only_view,
+            None => &slot.overlay_depth.as_ref()?.depth_only_view,
+        };
+        Some(crate::runtime::PostPaintTargets::new(
+            colour,
+            depth,
+            self.resources.target_format,
+        ))
     }
 
     /// Panic, naming both formats, when `output_view`'s texture cannot be drawn

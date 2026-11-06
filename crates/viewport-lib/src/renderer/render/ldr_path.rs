@@ -145,7 +145,7 @@ impl ViewportRenderer {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
-                        store: if store_scene_depth {
+                        store: if store_scene_depth || self.keep_scene_depth {
                             crate::gpu::StoreOp::Store
                         } else {
                             crate::gpu::StoreOp::Discard
