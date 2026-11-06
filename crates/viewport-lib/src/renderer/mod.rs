@@ -542,6 +542,12 @@ pub struct ViewportRenderer {
     /// mode the frame asks for. Set by each entry point before it prepares;
     /// starts `true`, the choice that is right for either path.
     pub(crate) direct_paint: bool,
+    /// Keep the scene depth to the end of the frame, for work that samples it
+    /// after the frame (GPU plugins' `post_paint`). Without it the passes
+    /// that end the frame discard the depth. Set per frame by the runner.
+    pub(crate) keep_scene_depth: bool,
+    /// Whether the last rendered frame kept its scene depth.
+    last_frame_kept_scene_depth: bool,
     /// Which items need stamping into the surface mask this frame, and the
     /// mesh family's pipeline and buffer for doing it.
     surface_mask: surface_mask::SurfaceMaskState,
@@ -1136,6 +1142,8 @@ impl ViewportRenderer {
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             mesh_instance_gpu_data: Vec::new(),
             direct_paint: true,
+            keep_scene_depth: false,
+            last_frame_kept_scene_depth: false,
             surface_mask: surface_mask::SurfaceMaskState::new(),
             overlay_retained_counters: OverlayRetainedCounters::default(),
             backdrop_blur_state: None,
@@ -4256,6 +4264,14 @@ impl ViewportRenderer {
                 entry.stage.on_viewport_resized(device, &ctx);
             }
         }
+    }
+
+    /// Whether the last rendered frame stored its scene depth at the end of the
+    /// frame instead of discarding it, because a runner asked to keep it for
+    /// GPU plugins.
+    #[doc(hidden)]
+    pub fn debug_last_frame_kept_scene_depth(&self) -> bool {
+        self.last_frame_kept_scene_depth
     }
 
     /// The target groups viewport `viewport_index` holds at full size, by

@@ -247,8 +247,14 @@ impl ViewportInstance {
     /// [`StaleHandles`] lists the handles the scene still names and each
     /// plugin with the id and name it was registered under. Register the
     /// plugins again, upload the content again and rebind the nodes. An
-    /// attached runtime runs its GPU plugins' `init_gpu` again on the new
-    /// device before their next `pre_prepare`.
+    /// attached runtime stays attached, and its GPU plugins run `init_gpu`
+    /// again on the new device in the next [`render`](Self::render) or
+    /// [`prepare`](Self::prepare), before their `pre_prepare`.
+    ///
+    /// A feature installed with [`install_plugin`](Self::install_plugin) comes
+    /// back with [`reattach_plugin`](Self::reattach_plugin), not another
+    /// `install_plugin`: its runtime pieces are still on the attached runtime,
+    /// and installing again would run them twice.
     ///
     /// A material that selects a material plugin carries the old plugin id in
     /// [`shading_plugin`](crate::Material::shading_plugin); swap it for the new

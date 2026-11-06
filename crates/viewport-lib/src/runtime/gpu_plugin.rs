@@ -22,6 +22,30 @@
 //! wgpu submit ordering guarantees plugin command buffers complete before
 //! `prepare()`'s, so a storage buffer written by a plugin is observable by
 //! the standard render passes in the same frame.
+//!
+//! [`ViewportInstance`](crate::ViewportInstance) (and so `ViewportApp`) does
+//! this for an attached runtime: its `render` and `prepare` run `pre_prepare`
+//! and submit the plugins' buffers on the queue they are given before the
+//! renderer's prepare, with the `dt` of the last `step_runtime`, a frame
+//! counter, and the instance's [`viewport_id`](crate::ViewportInstance::viewport_id).
+//! After the frame they run `post_paint` with the scene colour and depth:
+//!
+//! - HDR frames, owned or through a host's pass: the HDR scene colour and its
+//!   depth. On the pass path the buffers come last in what `prepare` returns.
+//! - LDR frames rendered into a target with `TEXTURE_BINDING` (an
+//!   [`OffscreenViewportTarget`](crate::OffscreenViewportTarget)): that
+//!   target and the LDR depth.
+//! - Not called on an LDR frame painted into a host's render pass, rendered
+//!   into a window surface or another target without `TEXTURE_BINDING`, or
+//!   drawn at a reduced render scale or with backdrop-blur overlays (the
+//!   scene then lands in an intermediate target). The renderer raises an
+//!   info-level `NoticeDetail::PostPaintSkipped` notice instead. Under
+//!   `ViewportApp` this means LDR windows.
+//!
+//! While GPU plugins are attached the renderer keeps the scene depth to the
+//! end of the frame, which it otherwise discards. A host that renders
+//! through the instance must not also call `pre_prepare` or `post_paint`
+//! itself, or every plugin runs twice.
 
 use crate::camera::Camera;
 use crate::renderer::ViewportId;
@@ -141,10 +165,13 @@ impl<'a> GpuFrameContext<'a> {
 /// A plugin that encodes GPU work into the per-frame command stream.
 ///
 /// Register with [`ViewportRuntime::with_gpu_plugin`](super::ViewportRuntime::with_gpu_plugin).
-/// Each frame, after `runtime.step()` and before `renderer.prepare()`, the
-/// host calls [`ViewportRuntime::pre_prepare`](super::ViewportRuntime::pre_prepare),
-/// which invokes every registered plugin's `pre_prepare` in ascending priority
-/// order and returns the concatenated command buffers for submission.
+/// Each frame, after `runtime.step()` and before `renderer.prepare()`,
+/// [`ViewportRuntime::pre_prepare`](super::ViewportRuntime::pre_prepare)
+/// invokes every registered plugin's `pre_prepare` in ascending priority
+/// order and returns the concatenated command buffers for submission. A
+/// [`ViewportInstance`](crate::ViewportInstance) with the runtime attached
+/// makes that call itself; a host driving a `ViewportRenderer` directly makes
+/// it.
 ///
 /// Registration model: GPU plugins are multi-instance, like
 /// [`RuntimePlugin`](crate::runtime::RuntimePlugin) and unlike item-type
@@ -215,10 +242,9 @@ pub trait GpuPlugin: Send + 'static {
 
     /// Build pipelines, persistent buffers, and bind group layouts.
     ///
-    /// Called once before the plugin's first `pre_prepare`. If a new GPU
-    /// plugin is registered after the runtime has already run, every plugin's
-    /// `init_gpu` is invoked again on the next frame; implementations should
-    /// either be idempotent or guard their own one-time setup. After
+    /// Called once per device, at the first `pre_prepare` after the plugin is
+    /// registered and before any other hook. Registering another plugin does
+    /// not call it again. After
     /// [`ViewportInstance::rebuild`](crate::ViewportInstance::rebuild) it runs
     /// again with the new device, and everything built on the old one has to
     /// be rebuilt here.
@@ -239,7 +265,7 @@ pub trait GpuPlugin: Send + 'static {
         Vec::new()
     }
 
-    /// Encode work that runs after `renderer.paint_to()`.
+    /// Encode work that runs after the frame is drawn.
     ///
     /// The plugin receives views of the just-rendered color, depth, and
     /// (optionally) pick-id targets and may sample them in a compute or
@@ -249,6 +275,10 @@ pub trait GpuPlugin: Send + 'static {
     /// To *modify* the color target, write to a sibling texture the plugin
     /// owns and let the host composite it during the final blit. The lib
     /// does not loop a plugin's output back into the rendered color.
+    ///
+    /// Under a [`ViewportInstance`](crate::ViewportInstance) this is not
+    /// called on frames that leave nothing readable; the
+    /// [module docs](self) list them.
     fn post_paint(
         &mut self,
         _device: &crate::gpu::Device,
@@ -657,5 +687,126 @@ mod tests {
                 .contains_key("hybrid_test_plugin"),
             "gpu stats keyed by the inner type_name"
         );
+    }
+
+    fn recording(
+        prio: i32,
+        log: &Arc<Mutex<Vec<i32>>>,
+        post_log: &Arc<Mutex<Vec<i32>>>,
+    ) -> (RecordingPlugin, Arc<Mutex<u32>>) {
+        let init_count = Arc::new(Mutex::new(0));
+        let plugin = RecordingPlugin {
+            prio,
+            log: log.clone(),
+            post_log: post_log.clone(),
+            init_count: init_count.clone(),
+        };
+        (plugin, init_count)
+    }
+
+    #[test]
+    fn plugin_added_mid_session_is_initialised_alone() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let (first, init_first) = recording(100, &log, &post_log);
+        let (second, init_second) = recording(50, &log, &post_log);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin(first);
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::ONE, 0.0, 0);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert!(runtime.gpu_initialized());
+
+        runtime.add_gpu_plugin(second);
+        assert!(!runtime.gpu_initialized());
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert!(runtime.gpu_initialized());
+        assert_eq!(
+            *init_first.lock().unwrap(),
+            1,
+            "earlier plugin re-initialised"
+        );
+        assert_eq!(*init_second.lock().unwrap(), 1);
+        assert_eq!(*log.lock().unwrap(), vec![100, 50, 100]);
+    }
+
+    #[test]
+    fn plugin_registered_before_post_paint_waits_for_pre_prepare() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let (first, _) = recording(100, &log, &post_log);
+        let (late, init_late) = recording(200, &log, &post_log);
+
+        let (_colour_tex, colour_view) = make_dummy_view(
+            &device,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let (_depth_tex, depth_view) = make_dummy_view(
+            &device,
+            crate::gpu::TextureFormat::Depth32Float,
+            crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let targets = PostPaintTargets::new(
+            &colour_view,
+            &depth_view,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::ONE, 0.0, 0);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin(first);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        runtime.add_gpu_plugin(late);
+        let _ = runtime.post_paint(&device, &queue, &targets, &ctx);
+        assert_eq!(
+            *post_log.lock().unwrap(),
+            vec![100],
+            "uninitialised plugin painted"
+        );
+        assert_eq!(*init_late.lock().unwrap(), 0);
+
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        let _ = runtime.post_paint(&device, &queue, &targets, &ctx);
+        assert_eq!(*init_late.lock().unwrap(), 1);
+        assert_eq!(*post_log.lock().unwrap(), vec![100, 100, 200]);
+    }
+
+    #[test]
+    fn reset_gpu_init_initialises_every_plugin_again() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let (a, init_a) = recording(100, &log, &post_log);
+        let (b, init_b) = recording(200, &log, &post_log);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new()
+            .with_gpu_plugin(a)
+            .with_gpu_plugin(b);
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::ONE, 0.0, 0);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+
+        runtime.reset_gpu_init();
+        assert!(!runtime.gpu_initialized());
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert!(runtime.gpu_initialized());
+        assert_eq!(*init_a.lock().unwrap(), 2);
+        assert_eq!(*init_b.lock().unwrap(), 2);
+
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert_eq!(*init_a.lock().unwrap(), 2);
+        assert_eq!(*init_b.lock().unwrap(), 2);
     }
 }

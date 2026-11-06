@@ -22,13 +22,26 @@
 //! `runtime.add_gpu_plugin`) and returns whatever handle it wants the host to
 //! keep. The context is a bundle of borrows, not a new registration surface.
 //!
-//! A feature that can be taken out again implements
-//! [`PluginInstaller::uninstall`], which takes the handle back and calls the
-//! matching `remove_*` / `unregister_*` methods:
+//! A feature implements three calls:
+//!
+//! - [`install`](PluginInstaller::install) registers every piece and returns
+//!   the handle.
+//! - [`uninstall`](PluginInstaller::uninstall) takes the handle back and calls
+//!   the matching `remove_*` / `unregister_*` methods, so the renderer and
+//!   runtime read as if the feature had never been installed.
+//! - [`reattach_renderer`](PluginInstaller::reattach_renderer) registers the
+//!   renderer-side pieces again on a new renderer, for a host that rebuilt
+//!   its renderer after a device loss and kept its runtime. The runtime-side
+//!   pieces are still registered, so installing again would run them twice.
 //!
 //! ```rust,ignore
 //! viewport_lib::uninstall_plugin::<MyFeature>(
 //!     handle, &device, &queue, Some(&mut runtime), &mut renderer,
+//! )?;
+//!
+//! // After building a new renderer, with the runtime kept:
+//! viewport_lib::reattach_plugin::<MyFeature>(
+//!     &mut handle, &device, &queue, Some(&mut runtime), &mut new_renderer,
 //! )?;
 //! ```
 
@@ -109,7 +122,8 @@ impl<'a> PluginInstallCtx<'a> {
 /// convention: if a deformer with the feature's name is already registered,
 /// reuse its id instead of erroring. Runtime and GPU plugins are multi-instance
 /// by contract, so `install` is a once-per-feature call, not a deduplicating
-/// one.
+/// one: after a renderer rebuild, bring the feature back with
+/// [`reattach_renderer`](Self::reattach_renderer), not `install`.
 pub trait PluginInstaller {
     /// What the host gets back and keeps: an upload handle, a query handle, or
     /// `()`.
@@ -121,17 +135,34 @@ pub trait PluginInstaller {
     /// Remove what [`install`](Self::install) registered, consuming the
     /// handle it returned.
     ///
-    /// The default does nothing, for a feature with nothing to take out or
-    /// whose pieces stay for the renderer's lifetime. An implementation calls
-    /// the `remove_*` / `unregister_*` method of each piece it registered, so
-    /// the renderer reads as if the feature had never been installed.
+    /// Call the `remove_*` / `unregister_*` method of each piece the feature
+    /// registered, so the renderer and runtime read as if the feature had
+    /// never been installed. Attempt every piece even when one fails, and
+    /// return the first error, so one failure does not leave the rest
+    /// registered. A feature whose pieces cannot be removed returns
+    /// [`ViewportError::PluginUninstallUnsupported`] rather than `Ok(())`.
     fn uninstall(handle: Self::Handle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()>
     where
-        Self: Sized,
-    {
-        let _ = (handle, ctx);
-        Ok(())
-    }
+        Self: Sized;
+
+    /// Register the feature's renderer-side pieces again on `ctx.renderer`
+    /// and update the ids in `handle` to the new ones.
+    ///
+    /// Called after the host replaced its renderer (for example with
+    /// [`ViewportInstance::rebuild`](crate::ViewportInstance::rebuild) after a
+    /// device loss) and kept its runtime. The runtime-side pieces are still
+    /// registered: leave the runtime alone. This restores registrations, not
+    /// per-mesh data such as deformer slot data or skin weights, which the
+    /// host attaches again to the meshes it uploads again, as it did after
+    /// `install`. A feature with nothing on the renderer returns `Ok(())`.
+    ///
+    /// Attempt every piece even when one fails, and return the first error.
+    fn reattach_renderer(
+        handle: &mut Self::Handle,
+        ctx: &mut PluginInstallCtx<'_>,
+    ) -> ViewportResult<()>
+    where
+        Self: Sized;
 }
 
 /// Install a feature without writing out the [`PluginInstallCtx`] by hand.
@@ -173,6 +204,26 @@ pub fn uninstall_plugin<P: PluginInstaller>(
 ) -> ViewportResult<()> {
     let mut ctx = PluginInstallCtx::new(device, queue, runtime, renderer);
     P::uninstall(handle, &mut ctx)
+}
+
+/// Reattach a feature to a new renderer without writing out the
+/// [`PluginInstallCtx`] by hand: [`PluginInstaller::reattach_renderer`] for the
+/// feature type `P`.
+///
+/// ```rust,ignore
+/// viewport_lib::reattach_plugin::<MyFeature>(
+///     &mut handle, &device, &queue, Some(&mut runtime), &mut renderer,
+/// )?;
+/// ```
+pub fn reattach_plugin<P: PluginInstaller>(
+    handle: &mut P::Handle,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    runtime: Option<&mut ViewportRuntime>,
+    renderer: &mut ViewportRenderer,
+) -> ViewportResult<()> {
+    let mut ctx = PluginInstallCtx::new(device, queue, runtime, renderer);
+    P::reattach_renderer(handle, &mut ctx)
 }
 
 #[cfg(test)]
@@ -229,6 +280,17 @@ mod tests {
     #[derive(Debug)]
     struct TestHandle {
         deformer_id: crate::resources::mesh_sidecar::registry::DeformerId,
+        step_plugin: crate::runtime::RuntimePluginId,
+    }
+
+    fn test_deformer() -> DeformerDesc {
+        DeformerDesc {
+            name: "test_feature".into(),
+            stage: DeformStage::ObjectSpace,
+            priority: 0,
+            wgsl_body: IDENTITY_BODY.to_string(),
+            per_vertex_stride: 4,
+        }
     }
 
     impl PluginInstaller for TestFeature {
@@ -237,24 +299,48 @@ mod tests {
         fn install(self, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<TestHandle> {
             // Validate the runtime is present before touching the renderer, so
             // a missing runtime leaves nothing half-registered.
-            ctx.require_runtime("a ViewportRuntime for the test feature")?
+            let step_plugin = ctx
+                .require_runtime("a ViewportRuntime for the test feature")?
                 .add_plugin(CounterPlugin {
                     count: self.count.clone(),
                 });
 
             let device = ctx.device;
-            let deformer_id = ctx.renderer.resources_mut().register_deformer(
-                device,
-                DeformerDesc {
-                    name: "test_feature".into(),
-                    stage: DeformStage::ObjectSpace,
-                    priority: 0,
-                    wgsl_body: IDENTITY_BODY.to_string(),
-                    per_vertex_stride: 4,
-                },
-            )?;
+            let deformer_id = ctx
+                .renderer
+                .resources_mut()
+                .register_deformer(device, test_deformer())?;
 
-            Ok(TestHandle { deformer_id })
+            Ok(TestHandle {
+                deformer_id,
+                step_plugin,
+            })
+        }
+
+        // The deformer first, then the runtime plugin; each is attempted
+        // whatever happened to the other.
+        fn uninstall(handle: TestHandle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()> {
+            let deformer = ctx
+                .renderer
+                .resources_mut()
+                .remove_deformer(ctx.device, handle.deformer_id);
+            let runtime = ctx
+                .require_runtime("a ViewportRuntime for the test feature")
+                .map(|runtime| {
+                    runtime.remove_plugin(handle.step_plugin);
+                });
+            deformer.and(runtime)
+        }
+
+        fn reattach_renderer(
+            handle: &mut TestHandle,
+            ctx: &mut PluginInstallCtx<'_>,
+        ) -> ViewportResult<()> {
+            handle.deformer_id = ctx
+                .renderer
+                .resources_mut()
+                .register_deformer(ctx.device, test_deformer())?;
+            Ok(())
         }
     }
 
@@ -333,5 +419,147 @@ mod tests {
             None,
             "a missing runtime leaves the renderer untouched"
         );
+    }
+
+    fn renderer(device: &crate::gpu::Device) -> ViewportRenderer {
+        ViewportRenderer::new(device, crate::gpu::TextureFormat::Bgra8UnormSrgb)
+    }
+
+    fn install_test_feature(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        runtime: &mut ViewportRuntime,
+        renderer: &mut ViewportRenderer,
+    ) -> TestHandle {
+        install_plugin(
+            TestFeature {
+                count: Arc::new(Mutex::new(0)),
+            },
+            device,
+            queue,
+            Some(runtime),
+            renderer,
+        )
+        .expect("install")
+    }
+
+    #[test]
+    fn built_in_runtime_features_uninstall_to_the_state_before_install() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut renderer = renderer(&device);
+        let mut runtime = ViewportRuntime::new();
+        let deformers = renderer.resources().registered_deformer_count();
+
+        fn round_trip<P: PluginInstaller<Handle = crate::runtime::RuntimePluginId>>(
+            feature: P,
+            device: &crate::gpu::Device,
+            queue: &crate::gpu::Queue,
+            runtime: &mut ViewportRuntime,
+            renderer: &mut ViewportRenderer,
+        ) {
+            let id = install_plugin(feature, device, queue, Some(&mut *runtime), renderer)
+                .expect("install");
+            assert_eq!(runtime.plugin_ids().collect::<Vec<_>>(), vec![id]);
+            uninstall_plugin::<P>(id, device, queue, Some(&mut *runtime), renderer)
+                .expect("uninstall");
+            assert_eq!(runtime.plugin_count(), 0);
+        }
+        round_trip(
+            crate::plugins::physics_lite::PhysicsLitePlugin::new(),
+            &device,
+            &queue,
+            &mut runtime,
+            &mut renderer,
+        );
+        round_trip(
+            crate::plugins::animation::AnimationPlugin::new(),
+            &device,
+            &queue,
+            &mut runtime,
+            &mut renderer,
+        );
+        round_trip(
+            crate::plugins::constraint::ConstraintPlugin::new(),
+            &device,
+            &queue,
+            &mut runtime,
+            &mut renderer,
+        );
+        assert_eq!(renderer.resources().registered_deformer_count(), deformers);
+    }
+
+    #[test]
+    fn uninstall_removes_every_piece_it_can() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        // The runtime piece cannot be reached: the deformer still goes.
+        let mut renderer = renderer(&device);
+        let mut runtime = ViewportRuntime::new();
+        let handle = install_test_feature(&device, &queue, &mut runtime, &mut renderer);
+        let result = uninstall_plugin::<TestFeature>(handle, &device, &queue, None, &mut renderer);
+        assert!(
+            matches!(result, Err(ViewportError::PluginInstallMissing { .. })),
+            "{result:?}"
+        );
+        assert_eq!(
+            renderer.resources().deformer_id_by_name("test_feature"),
+            None
+        );
+
+        // The deformer was already removed by hand: the runtime plugin still
+        // goes.
+        let mut renderer = self::renderer(&device);
+        let mut runtime = ViewportRuntime::new();
+        let handle = install_test_feature(&device, &queue, &mut runtime, &mut renderer);
+        renderer
+            .resources_mut()
+            .remove_deformer(&device, handle.deformer_id)
+            .expect("remove by hand");
+        let result = uninstall_plugin::<TestFeature>(
+            handle,
+            &device,
+            &queue,
+            Some(&mut runtime),
+            &mut renderer,
+        );
+        assert!(
+            matches!(result, Err(ViewportError::StaleHandle { .. })),
+            "{result:?}"
+        );
+        assert_eq!(runtime.plugin_count(), 0);
+    }
+
+    #[test]
+    fn reattach_registers_the_renderer_pieces_without_a_second_runtime_plugin() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut old = renderer(&device);
+        let mut runtime = ViewportRuntime::new();
+        let mut handle = install_test_feature(&device, &queue, &mut runtime, &mut old);
+        let plugins = runtime.plugin_ids().collect::<Vec<_>>();
+        drop(old);
+
+        let mut new = renderer(&device);
+        reattach_plugin::<TestFeature>(&mut handle, &device, &queue, Some(&mut runtime), &mut new)
+            .expect("reattach");
+        assert_eq!(
+            new.resources().deformer_id_by_name("test_feature"),
+            Some(handle.deformer_id),
+            "the handle names the deformer on the new renderer"
+        );
+        assert_eq!(runtime.plugin_ids().collect::<Vec<_>>(), plugins);
+
+        uninstall_plugin::<TestFeature>(handle, &device, &queue, Some(&mut runtime), &mut new)
+            .expect("uninstall after reattach");
+        assert_eq!(runtime.plugin_count(), 0);
+        assert_eq!(new.resources().deformer_id_by_name("test_feature"), None);
     }
 }

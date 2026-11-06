@@ -49,6 +49,7 @@
 //! | [`post_effect_stage`] | [`PostEffectStage`](viewport_lib::PostEffectStage) | the renderer |
 //! | [`deformer`] | [`DeformerDesc`](viewport_lib::DeformerDesc) | the renderer's resources |
 //! | [`material_plugin`] | [`MaterialPlugin`](viewport_lib::MaterialPlugin) | the renderer's resources |
+//! | [`shading_hook`] | [`ShadingHookDesc`](viewport_lib::ShadingHookDesc) | the renderer's resources |
 //! | [`installer`] | [`PluginInstaller`](viewport_lib::PluginInstaller) | spans the above |
 
 pub mod call_log;
@@ -62,6 +63,7 @@ pub mod material_plugin;
 pub mod post_effect_producer;
 pub mod post_effect_stage;
 pub mod runtime_plugin;
+pub mod shading_hook;
 
 pub use call_log::CallLog;
 pub use frame::{probe_frame, probe_quad, probe_targets};
@@ -83,3 +85,4 @@ pub use material_plugin::{
 pub use post_effect_producer::LoggingPostEffectProducer;
 pub use post_effect_stage::PassthroughPostEffectStage;
 pub use runtime_plugin::{LoggingRuntimePlugin, ProbeEvent};
+pub use shading_hook::flat_colour_shading_hook;

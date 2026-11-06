@@ -2,12 +2,30 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- **`ViewportApp` setup callbacks take a `SetupCtx`** - `window`, `window_with_input`, `window_with_paint` and `FrameCtx::open_window` take `FnMut(&mut SetupCtx)` instead of `FnMut(&mut ViewportInstance, &Device)`. `SetupCtx` derefs to the window's `ViewportInstance` and has `device()`, `queue()` and `device_rebuilt()`, so a setup callback can attach a runtime and install features.
+- **`ViewportApp` steps the runtime before the frame callback** - the callback reads this frame's output from `FrameCtx::runtime_output_mut`, and scene edits it makes reach the runtime on the next frame instead of the current one.
+- **`ViewportInstance` runs an attached runtime's GPU plugins** - `render` and `prepare` call `pre_prepare` before the frame, submitting its buffers on the queue they are given, and `post_paint` after it with the scene colour and depth. Remove any `pre_prepare` or `post_paint` calls a host makes itself on a runtime attached to an instance, or every plugin runs twice. When `post_paint` returns work, `render` submits the frame itself and returns an empty command buffer.
+- **`PluginInstaller::uninstall` is required** - the default body that did nothing is gone. Every feature implements removal: attempt every piece, return the first error, and return `ViewportError::PluginUninstallUnsupported` for a feature that cannot be removed instead of `Ok(())`.
+- **`PluginInstaller::reattach_renderer` is required** - a new trait method that registers a feature's renderer-side pieces again on a new renderer and updates its handle, leaving the runtime alone. A feature with nothing on the renderer returns `Ok(())`.
+- **`PhysicsLitePlugin`, `AnimationPlugin` and `ConstraintPlugin` installers return a `RuntimePluginId`** - the handle is the id they registered on the runtime instead of `()`, so they can be uninstalled. Call sites that ignore the handle compile unchanged.
+
 ### Features
+
+- **`ViewportInstance::set_runtime`, `take_runtime`, `install_plugin` and `uninstall_plugin`** - attach, swap or detach a runtime after construction, and install a `PluginInstaller` feature with the instance's renderer and attached runtime in one call.
+- **`ViewportInstance::step_runtime` returns the step's `RuntimeOutput`** - read or drain its events (skinned pose updates for a `SkinnedMeshHandle`, the camera follow target and commands) as after `ViewportRuntime::step`. Calls that ignore the result compile unchanged.
+- **`FrameCtx::runtime_output_mut`** - a `ViewportApp` frame callback drains the window's runtime events there; the runner applies none of them itself.
+- **`ViewportInstance::viewport_id`** - the viewport an instance renders, to pass to `add_gpu_plugin_for_viewport`. GPU plugins scoped to it run when the instance renders.
+- **Where GPU plugin `post_paint` runs under `ViewportInstance`** - on HDR frames and on LDR frames rendered into a target with `TEXTURE_BINDING`, with the scene depth kept to the end of the frame while GPU plugins are attached. Elsewhere (LDR into a host's pass or a window surface, LDR at a reduced render scale or with backdrop blur) the hook is skipped and `NoticeDetail::PostPaintSkipped` says why.
+- **`reattach_plugin` and `ViewportInstance::reattach_plugin`** - bring an installed feature back after `ViewportInstance::rebuild` by registering its renderer-side pieces on the new renderer; its runtime pieces are still registered, so installing it again would run them twice.
+- **`ViewportError::PluginUninstallUnsupported`** - returned by a feature's `uninstall` when its pieces cannot be removed.
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
 
 ### Fixes
 
+- **GPU plugin timings allocated every frame** - `ViewportRuntime::pre_prepare` and `post_paint` now refill their timing maps in place, so an attached runtime adds no allocations to a settled frame.
 - **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
 - **GPU picks before their pipelines have compiled** - under `PipelineCompilation::Background`, the default everywhere but the web and Apple platforms on wgpu 27, a pick, rect pick or snap query that ran before its pipelines finished compiling drew nothing and reported no hit; it now builds the pipelines it needs first, so a click in the first frames hits what is under the cursor.
 - **Pipelines built against another wgpu instance's pipeline cache** - a pipeline found its renderer's cache by device, and wgpu tells devices apart only within one instance, so with two instances in one process a pipeline could be created against the other's cache and wgpu panicked; each renderer now makes its own cache current while it builds, and a pipeline built outside any renderer is built uncached.

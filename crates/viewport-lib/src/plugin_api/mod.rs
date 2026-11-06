@@ -166,7 +166,9 @@ pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;
 pub use crate::resources::pipeline_slot::LazyModule;
 pub use crate::resources::{PipelineBuilder, PluginPipelineOpts, ShadowCaster};
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
-pub use install::{PluginInstallCtx, PluginInstaller, install_plugin, uninstall_plugin};
+pub use install::{
+    PluginInstallCtx, PluginInstaller, install_plugin, reattach_plugin, uninstall_plugin,
+};
 pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
     ItemFrameContext, ItemTypeHost, ItemTypeId, ItemTypePlugin, LightContext, OutlineMaskContext,

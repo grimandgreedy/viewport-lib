@@ -3,7 +3,7 @@
 use super::ViewportInstance;
 use crate::Colour;
 use crate::interaction::input::ViewportContext;
-use crate::runtime::RuntimeFrameContext;
+use crate::runtime::{RuntimeFrameContext, RuntimeOutput};
 use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,
 };
@@ -73,17 +73,29 @@ impl ViewportInstance {
     }
 
     /// Step the attached runtime by `dt` seconds, writing simulated transforms
-    /// back into the scene. No-op when no runtime is attached. Call before the
-    /// per-frame camera update so assembly reads the stepped scene.
+    /// back into the scene, and return the step's output. Call before the
+    /// per-frame camera update so assembly reads the stepped scene. `dt` is
+    /// also what the runtime's GPU plugins get as `GpuFrameContext::dt` on
+    /// the next render (0 until this is first called). With no runtime
+    /// attached this does nothing and returns an empty output.
+    ///
+    /// Transform and selection ops are already applied. The events are this
+    /// step's only and are for the host to read or drain, as after
+    /// [`ViewportRuntime::step`](crate::ViewportRuntime::step): for example
+    /// `SkinnedPoseUpdate`s for a skinned actor feature's handle to upload,
+    /// and the camera follow target and commands for
+    /// [`apply_camera_commands`](crate::runtime::apply_camera_commands).
+    /// Ignoring the output is fine for a runtime with neither.
     ///
     /// The per-frame drive lives here rather than on
     /// [`runtime_mut`](Self::runtime_mut) because `step` needs the scene and
     /// selection at the same time as the runtime, which only works as disjoint
     /// borrows of the session's own fields.
-    pub fn step_runtime(&mut self, dt: f32) {
+    pub fn step_runtime(&mut self, dt: f32) -> RuntimeOutput {
         let Some(runtime) = self.runtime.as_mut() else {
-            return;
+            return RuntimeOutput::default();
         };
+        self.runtime_dt = dt;
         let pointer = self.action.pointer;
         let mut ctx = RuntimeFrameContext {
             dt,
@@ -99,7 +111,7 @@ impl ViewportInstance {
             ..Default::default()
         };
         ctx.pick_hit = None;
-        let _output = runtime.step(&mut self.scene, &mut self.selection, &ctx);
+        runtime.step(&mut self.scene, &mut self.selection, &ctx)
     }
 
     /// Rebuild the per-frame sub-frames of the retained [`FrameData`].
