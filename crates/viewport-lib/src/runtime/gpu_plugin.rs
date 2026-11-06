@@ -242,10 +242,9 @@ pub trait GpuPlugin: Send + 'static {
 
     /// Build pipelines, persistent buffers, and bind group layouts.
     ///
-    /// Called once before the plugin's first `pre_prepare`. If a new GPU
-    /// plugin is registered after the runtime has already run, every plugin's
-    /// `init_gpu` is invoked again on the next frame; implementations should
-    /// either be idempotent or guard their own one-time setup. After
+    /// Called once per device, at the first `pre_prepare` after the plugin is
+    /// registered and before any other hook. Registering another plugin does
+    /// not call it again. After
     /// [`ViewportInstance::rebuild`](crate::ViewportInstance::rebuild) it runs
     /// again with the new device, and everything built on the old one has to
     /// be rebuilt here.
@@ -688,5 +687,126 @@ mod tests {
                 .contains_key("hybrid_test_plugin"),
             "gpu stats keyed by the inner type_name"
         );
+    }
+
+    fn recording(
+        prio: i32,
+        log: &Arc<Mutex<Vec<i32>>>,
+        post_log: &Arc<Mutex<Vec<i32>>>,
+    ) -> (RecordingPlugin, Arc<Mutex<u32>>) {
+        let init_count = Arc::new(Mutex::new(0));
+        let plugin = RecordingPlugin {
+            prio,
+            log: log.clone(),
+            post_log: post_log.clone(),
+            init_count: init_count.clone(),
+        };
+        (plugin, init_count)
+    }
+
+    #[test]
+    fn plugin_added_mid_session_is_initialised_alone() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let (first, init_first) = recording(100, &log, &post_log);
+        let (second, init_second) = recording(50, &log, &post_log);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin(first);
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::ONE, 0.0, 0);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert!(runtime.gpu_initialized());
+
+        runtime.add_gpu_plugin(second);
+        assert!(!runtime.gpu_initialized());
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert!(runtime.gpu_initialized());
+        assert_eq!(
+            *init_first.lock().unwrap(),
+            1,
+            "earlier plugin re-initialised"
+        );
+        assert_eq!(*init_second.lock().unwrap(), 1);
+        assert_eq!(*log.lock().unwrap(), vec![100, 50, 100]);
+    }
+
+    #[test]
+    fn plugin_registered_before_post_paint_waits_for_pre_prepare() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let (first, _) = recording(100, &log, &post_log);
+        let (late, init_late) = recording(200, &log, &post_log);
+
+        let (_colour_tex, colour_view) = make_dummy_view(
+            &device,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let (_depth_tex, depth_view) = make_dummy_view(
+            &device,
+            crate::gpu::TextureFormat::Depth32Float,
+            crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let targets = PostPaintTargets::new(
+            &colour_view,
+            &depth_view,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::ONE, 0.0, 0);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin(first);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        runtime.add_gpu_plugin(late);
+        let _ = runtime.post_paint(&device, &queue, &targets, &ctx);
+        assert_eq!(
+            *post_log.lock().unwrap(),
+            vec![100],
+            "uninitialised plugin painted"
+        );
+        assert_eq!(*init_late.lock().unwrap(), 0);
+
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        let _ = runtime.post_paint(&device, &queue, &targets, &ctx);
+        assert_eq!(*init_late.lock().unwrap(), 1);
+        assert_eq!(*post_log.lock().unwrap(), vec![100, 100, 200]);
+    }
+
+    #[test]
+    fn reset_gpu_init_initialises_every_plugin_again() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let (a, init_a) = recording(100, &log, &post_log);
+        let (b, init_b) = recording(200, &log, &post_log);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new()
+            .with_gpu_plugin(a)
+            .with_gpu_plugin(b);
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::ONE, 0.0, 0);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+
+        runtime.reset_gpu_init();
+        assert!(!runtime.gpu_initialized());
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert!(runtime.gpu_initialized());
+        assert_eq!(*init_a.lock().unwrap(), 2);
+        assert_eq!(*init_b.lock().unwrap(), 2);
+
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert_eq!(*init_a.lock().unwrap(), 2);
+        assert_eq!(*init_b.lock().unwrap(), 2);
     }
 }
