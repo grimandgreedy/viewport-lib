@@ -44,7 +44,10 @@ mod settings;
 
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
-pub use rebuild::StaleHandles;
+pub use rebuild::{
+    StaleDeformer, StaleHandles, StaleItemType, StaleMaterialPlugin, StalePostEffectProducer,
+    StalePostEffectStage, StaleShadingHook,
+};
 
 /// The winit runner: `ViewportApp` owns one or more OS windows, one
 /// `ViewportInstance` each (feature-gated behind `app`).

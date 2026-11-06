@@ -96,6 +96,14 @@ impl ItemPluginRegistry {
         self.entries.is_empty()
     }
 
+    /// Each entry's id and name, in registration order.
+    pub(crate) fn ids(&self) -> impl Iterator<Item = (u64, &'static str)> + '_ {
+        self.ids
+            .iter()
+            .zip(&self.entries)
+            .map(|(&id, (name, _))| (id, *name))
+    }
+
     pub(crate) fn keys(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.entries.iter().map(|(name, _)| *name)
     }

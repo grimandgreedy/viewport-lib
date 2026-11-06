@@ -735,6 +735,39 @@ impl crate::resources::DeviceResources {
             })
     }
 
+    /// The shading hooks registered with [`Self::register_shading_hook`], in
+    /// slot order. The hooks behind material plugins are left out: those are
+    /// listed by [`Self::material_plugin_registrations`].
+    pub(crate) fn raw_shading_hooks(&self) -> impl Iterator<Item = (ShadingHookId, &str)> + '_ {
+        self.shade_hooks
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.material_plugins.contains_key(&(*index as u32)))
+            .filter_map(|(index, slot)| {
+                let hook = slot.hook.as_ref()?;
+                let id = ShadingHookId {
+                    index,
+                    generation: slot.generation,
+                };
+                Some((id, hook.desc.name.as_ref()))
+            })
+    }
+
+    /// The registered material plugins and their names, in slot order.
+    pub(crate) fn material_plugin_registrations(
+        &self,
+    ) -> impl Iterator<Item = (MaterialPluginId, &str)> + '_ {
+        self.shade_hooks
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.material_plugins.contains_key(&(*index as u32)))
+            .filter_map(|(index, slot)| {
+                let hook = slot.hook.as_ref()?;
+                let id = MaterialPluginId::from_parts(index as u32, slot.generation);
+                Some((id, hook.desc.name.as_ref()))
+            })
+    }
+
     /// The hook `id` names, when it is still registered.
     pub(crate) fn live_shading_hook(&self, id: ShadingHookId) -> Option<&StoredShadingHook> {
         let slot = self.shade_hooks.get(id.index)?;
