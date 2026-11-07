@@ -83,7 +83,19 @@ pub const SHARED_BINDINGS_WGSL: &str =
 ///
 /// Provides `apply_scene_lighting(normal, base_colour, two_sided, world_pos,
 /// lights)`, the per-light `eval_light`, the cluster lookup, and the
-/// environment-zone and probe-volume declarations they read. Unlike
+/// environment-zone and probe-volume declarations they read. A body with its
+/// own light loop walks the lights reaching a fragment with the cluster
+/// cursor:
+///
+/// ```wgsl
+/// var lights = cluster_lights(world_pos, lights_uniform.count);
+/// loop {
+///     let i = cluster_next_light(&lights);
+///     if i == CLUSTER_LIGHTS_END { break; }
+///     let ev = eval_light(lights_storage[i], world_pos);
+///     // ...
+/// }
+/// ``` Unlike
 /// [`SHARED_PBR_WGSL`]'s `viewport_apply_scene_lighting`, which is a
 /// self-contained Lambert loop over every entry of `lights_storage`, this is
 /// the same code path the renderer's own mesh and item shaders take:

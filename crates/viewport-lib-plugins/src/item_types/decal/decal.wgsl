@@ -322,9 +322,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let F0       = mix(vec3<f32>(0.04), albedo, metallic);
 
         var lo = vec3<f32>(0.0);
-        let range = cluster_light_range(world, lights_uniform.count);
-        for (var j = 0u; j < range.count; j = j + 1u) {
-            let idx = cluster_light_global(range, j);
+        var range = cluster_lights(world, lights_uniform.count);
+        loop {
+            let idx = cluster_next_light(&range);
+            if idx == CLUSTER_LIGHTS_END { break; }
             let light = lights_storage[idx];
             let ev = eval_light(light, world);
             if !ev.in_range { continue; }

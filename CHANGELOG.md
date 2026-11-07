@@ -4,6 +4,7 @@
 
 ### Breaking
 
+- **Cluster light loop: a cursor replaces `cluster_light_range` and `cluster_light_global`** - shaders that walk the lights reaching a fragment take `var lights = cluster_lights(world_pos, count);` and call `cluster_next_light(&lights)` until it returns `CLUSTER_LIGHTS_END`. `clustered::MAX_LIGHT_INDICES` is gone (`CLUSTER_MASK_WORDS` and `CLUSTER_MASK_LEN` describe the per-cell light masks) and `MAX_LIGHTS_PER_CLUSTER` is now every light in the scene.
 - **`ViewportApp` setup callbacks take a `SetupCtx`** - `window`, `window_with_input`, `window_with_paint` and `FrameCtx::open_window` take `FnMut(&mut SetupCtx)` instead of `FnMut(&mut ViewportInstance, &Device)`. `SetupCtx` derefs to the window's `ViewportInstance` and has `device()`, `queue()` and `device_rebuilt()`, so a setup callback can attach a runtime and install features.
 - **`ViewportApp` steps the runtime before the frame callback** - the callback reads this frame's output from `FrameCtx::runtime_output_mut`, and scene edits it makes reach the runtime on the next frame instead of the current one.
 - **`ViewportInstance` runs an attached runtime's GPU plugins** - `render` and `prepare` call `pre_prepare` before the frame, submitting its buffers on the queue they are given, and `post_paint` after it with the scene colour and depth. Remove any `pre_prepare` or `post_paint` calls a host makes itself on a runtime attached to an instance, or every plugin runs twice. When `post_paint` returns work, `render` submits the frame itself and returns an empty command buffer.
@@ -25,6 +26,7 @@
 
 ### Fixes
 
+- **Crowded light clusters** - a cluster cell reached by more than 64 lights shades with the lights that reach it instead of every light in the scene.
 - **GPU plugin timings allocated every frame** - `ViewportRuntime::pre_prepare` and `post_paint` now refill their timing maps in place, so an attached runtime adds no allocations to a settled frame.
 - **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
 - **GPU picks before their pipelines have compiled** - under `PipelineCompilation::Background`, the default everywhere but the web and Apple platforms on wgpu 27, a pick, rect pick or snap query that ran before its pipelines finished compiling drew nothing and reported no hit; it now builds the pipelines it needs first, so a click in the first frames hits what is under the cursor.
