@@ -453,7 +453,8 @@ impl ViewportRenderer {
         self.instancing.last_origin_epoch = self.origin.epoch();
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
         // The cascades are fit after the instanced batches are built: only the
-        // shadow pass reads them.
+        // shadow pass reads them, so the fit counts as shadow prepare time.
+        let fit_start = web_time::Instant::now();
         Self::fit_cascades(
             resources,
             &mut self.shadow,
@@ -467,6 +468,7 @@ impl ViewportRenderer {
             &mut lighting_frame,
             &mut self.last_stats,
         );
+        let fit_ms = fit_start.elapsed().as_secs_f32() * 1000.0;
         #[cfg(debug_assertions)]
         {
             let wrong = instanced::feature_set_violations(resources, &self.instancing);
@@ -476,7 +478,7 @@ impl ViewportRenderer {
                 wrong.join("\n  ")
             );
         }
-        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
+        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0 - fit_ms;
         drop(instancing_span);
 
         let geometry_start = web_time::Instant::now();
@@ -765,7 +767,7 @@ impl ViewportRenderer {
             colour_hdr,
             sink,
         );
-        let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
+        let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0 + fit_ms;
         drop(shadow_span);
 
         // Hand the LOD-resolved items to the paint pass. `scene_items_owned`
