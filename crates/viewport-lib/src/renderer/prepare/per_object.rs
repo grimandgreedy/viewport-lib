@@ -428,6 +428,7 @@ impl ViewportRenderer {
             self.resources.material_plugin_epoch.hash(&mut h);
             self.resources.force_po_discard.hash(&mut h);
             self.resources.mesh_universal.hash(&mut h);
+            self.resources.frame_features.hash(&mut h);
             Some(h.finish())
         };
 

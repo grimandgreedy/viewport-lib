@@ -286,6 +286,9 @@ override FEAT_CLEARCOAT: bool = true;
 override FEAT_SHEEN: bool = true;
 override FEAT_ANISOTROPY: bool = true;
 override FEAT_TRANSMISSION: bool = true;
+// Declared for the family's pipeline constants; this shader samples no point
+// or spot light shadows.
+override FEAT_PUNCTUAL_SHADOWS: bool = true;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;

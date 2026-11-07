@@ -17,6 +17,7 @@ pub struct PipelineSet {
     transparency: bool,
     outlines: bool,
     shadows: bool,
+    shadow_pcss: bool,
     bloom: bool,
     ssao: bool,
     contact_shadows: bool,
@@ -46,6 +47,10 @@ impl PipelineSet {
             hdr: effects.display.is_hdr(),
             direct: !effects.display.is_hdr(),
             shadows: effects.lighting.shadows.enabled,
+            shadow_pcss: matches!(
+                effects.lighting.shadows.filter,
+                crate::ShadowFilter::Pcss | crate::ShadowFilter::PcssFast
+            ),
             bloom: pp.bloom.enabled,
             ssao: pp.ssao,
             contact_shadows: pp.contact_shadows.enabled,
@@ -59,6 +64,26 @@ impl PipelineSet {
         }
     }
 
+    /// The feature sets a plain lit scene's mesh draws take: no record
+    /// feature, with each shadow feature the frame's settings may add (the
+    /// punctual sampling when shadows are on, the PCSS paths under a PCSS
+    /// filter).
+    fn plain_feature_sets(&self) -> Vec<crate::renderer::pipeline_key::FeatureSet> {
+        use crate::renderer::pipeline_key::FeatureSet;
+        let mut sets = vec![FeatureSet::NONE];
+        if self.shadows {
+            sets.push(FeatureSet::NONE.with(FeatureSet::PUNCTUAL_SHADOWS, true));
+            if self.shadow_pcss {
+                let pcss: Vec<_> = sets
+                    .iter()
+                    .map(|s| s.with(FeatureSet::SHADOW_PCSS, true))
+                    .collect();
+                sets.extend(pcss);
+            }
+        }
+        sets
+    }
+
     /// Everything the renderer can draw with, every registered material
     /// plugin, and every registered item type.
     pub fn all() -> Self {
@@ -68,6 +93,7 @@ impl PipelineSet {
             transparency: true,
             outlines: true,
             shadows: true,
+            shadow_pcss: true,
             bloom: true,
             ssao: true,
             contact_shadows: true,
@@ -192,6 +218,8 @@ impl ViewportRenderer {
         let cull = self.instancing.gpu_culling_enabled;
         self.resources.flush_mesh_pipeline_rebuild(device);
         let r = &mut self.resources;
+        let plain = set.plain_feature_sets();
+        let plain = plain.as_slice();
 
         if set.direct || set.hdr {
             if cull {
@@ -207,13 +235,13 @@ impl ViewportRenderer {
         }
         if set.direct {
             r.ensure_ldr_mesh_pipelines(device);
-            r.scene.request_plain_ldr();
+            r.scene.request_plain_ldr(plain);
         }
         if set.hdr {
             r.ensure_hdr_infra(device, queue);
             r.ensure_tone_map_pipeline(device, format);
             r.ensure_hdr_mesh_pipelines(device);
-            r.scene.request_plain_hdr();
+            r.scene.request_plain_hdr(plain);
             if cull {
                 r.ensure_hdr_cull_pipelines(device);
             }
@@ -223,13 +251,13 @@ impl ViewportRenderer {
                 if let Some(f) = &r.oit.composite_pipeline {
                     f.request_all();
                 }
-                r.oit.request_plain();
+                r.oit.request_plain(plain);
                 if cull {
                     r.ensure_oit_cull_pipelines(device);
                 }
             }
             if cull {
-                r.cull.request_plain();
+                r.cull.request_plain(plain);
             }
             // The effects need the HDR infrastructure above.
             if set.bloom {
@@ -350,5 +378,24 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PipelineSet;
+    use crate::renderer::pipeline_key::FeatureSet;
+
+    #[test]
+    fn warming_covers_the_shadow_features_a_frame_can_add() {
+        let punctual = FeatureSet::NONE.with(FeatureSet::PUNCTUAL_SHADOWS, true);
+        let pcss = FeatureSet::NONE.with(FeatureSet::SHADOW_PCSS, true);
+        assert_eq!(PipelineSet::default().plain_feature_sets(), vec![FeatureSet::NONE]);
+        let all = PipelineSet::all().plain_feature_sets();
+        for set in [FeatureSet::NONE, punctual, pcss, punctual.union(pcss)] {
+            assert!(all.contains(&set), "{set:?}");
+        }
+        let shadows = PipelineSet::default().with_shadows().plain_feature_sets();
+        assert_eq!(shadows, vec![FeatureSet::NONE, punctual]);
     }
 }

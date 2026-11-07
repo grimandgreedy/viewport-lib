@@ -148,6 +148,7 @@ fn build_and_upload_draw_groups(
             batch.bind_key.hash(&mut h);
         }
         resources.mesh_universal.hash(&mut h);
+        resources.frame_features.hash(&mut h);
         h.finish()
     };
     let want = (instancing.batches_gen, clipping_active, bind_hash);
@@ -432,7 +433,7 @@ pub(crate) fn feature_set_violations(
                 );
                 if needs.union(batch.features) != batch.features {
                     out.push(format!(
-                        "batch {bi} (mesh {:?}): set {:02x}, record needs {:02x}",
+                        "batch {bi} (mesh {:?}): set {:05x}, record needs {:05x}",
                         batch.mesh_id,
                         batch.features.bits(),
                         needs.bits()

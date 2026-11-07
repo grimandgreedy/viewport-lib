@@ -101,7 +101,9 @@ async function main() {
       }
       continue;
     }
-    if (code.includes("override FEAT_")) {
+    // The mesh family declares FEAT_RECORD; other shaders may include a
+    // helper that declares a feature constant of its own and keep its default.
+    if (code.includes("override FEAT_RECORD")) {
       await checkFeaturePipelines(device, module, name, code);
     }
   }

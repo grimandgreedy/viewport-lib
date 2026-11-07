@@ -624,3 +624,97 @@ fn material_transforms_past_the_initial_capacity_draw_on_the_frame_that_grows_it
         "the transforms changed nothing, so the case cannot tell which buffer was read"
     );
 }
+
+/// A cube over a floor, lit by a shadowing sun under `filter`, and with
+/// `point` a shadowing point light above it too.
+fn shadow_frame(meshes: &Meshes, filter: crate::ShadowFilter, point: bool) -> FrameData {
+    let mut frame = base_frame(meshes);
+    let mut floor = cube_item(meshes, 0.0, [0.7, 0.7, 0.7]);
+    floor.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.6))
+        * glam::Mat4::from_scale(glam::Vec3::new(6.0, 6.0, 0.1)))
+    .into();
+    frame.scene.surfaces = SurfaceSubmission::Flat(
+        vec![floor, cube_item(meshes, 0.0, [0.8, 0.5, 0.3])].into(),
+    );
+    let mut sun = crate::LightSource::default();
+    sun.kind = crate::LightKind::Directional {
+        direction: [0.6, 0.3, 1.0],
+    };
+    sun.cast_shadows = true;
+    let mut lights = vec![sun];
+    if point {
+        let mut bulb = crate::LightSource::default();
+        bulb.kind = crate::LightKind::Point {
+            position: [-0.8, 0.6, 1.4].into(),
+            range: 8.0,
+            radius: 0.2,
+        };
+        bulb.intensity = 20.0;
+        bulb.cast_shadows = true;
+        lights.push(bulb);
+    }
+    frame.effects.lighting.lights = lights;
+    frame.effects.lighting.shadows.enabled = true;
+    frame.effects.lighting.shadows.filter = filter;
+    frame
+}
+
+/// Draw `frames` in turn on a renderer that compiles each pipeline before the
+/// frame that needs it, so every draw binds the pipeline built for its own
+/// feature set, and on one pinned to the universal pipelines (every feature
+/// compiled in). Each frame has to match: a feature set left stale by an
+/// earlier frame shows as a difference.
+fn check_against_universal(name: &str, frames: &[Setup]) {
+    for recommended in [true, false] {
+        let Some((device, queue)) = device(recommended) else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut images = Vec::new();
+        for universal in [false, true] {
+            let mut renderer = ViewportRenderer::new(&device, FORMAT);
+            renderer.set_pipeline_compilation(crate::PipelineCompilation::Blocking);
+            renderer.set_mesh_universal(universal);
+            let meshes = upload(&mut renderer, &device);
+            let mut drawn = Vec::new();
+            for (i, setup) in frames.iter().enumerate() {
+                let mut frame = setup(&meshes, &mut renderer);
+                frame.scene.generation = i as u64 + 1;
+                drawn.push(renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE));
+            }
+            images.push(drawn);
+        }
+        for (i, (built, universal)) in images[0].iter().zip(&images[1]).enumerate() {
+            assert!(
+                built == universal,
+                "{name} (recommended device: {recommended}): frame {i} drawn with the pipelines \
+                 built for its features differs from the universal pipelines"
+            );
+        }
+    }
+}
+
+fn sun_pcf(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
+    shadow_frame(meshes, crate::ShadowFilter::Pcf, false)
+}
+fn sun_pcss(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
+    shadow_frame(meshes, crate::ShadowFilter::Pcss, false)
+}
+fn point_pcf(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
+    shadow_frame(meshes, crate::ShadowFilter::Pcf, true)
+}
+fn point_pcss(meshes: &Meshes, _: &mut ViewportRenderer) -> FrameData {
+    shadow_frame(meshes, crate::ShadowFilter::Pcss, true)
+}
+
+/// The PCSS filter and a shadowing point light, each switched on and off
+/// part-way through a session, draw what the universal pipelines draw.
+#[test]
+fn shadow_features_follow_the_frame() {
+    check("pcss shadows", sun_pcss, sun_pcf);
+    check("punctual shadow", point_pcf, sun_pcf);
+    check_against_universal(
+        "shadow features",
+        &[sun_pcf, sun_pcss, sun_pcf, point_pcf, point_pcss, sun_pcf, point_pcss],
+    );
+}

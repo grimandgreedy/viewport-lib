@@ -265,7 +265,7 @@ impl SceneCorePipelines {
     /// transparent member, so a plain lit scene draws no stand-in after
     /// warm-up. Asks for no universal member: see
     /// [`request_members_hdr`](Self::request_members_hdr).
-    pub(crate) fn request_plain_hdr(&self) {
+    pub(crate) fn request_plain_hdr(&self, sets: &[FeatureSet]) {
         for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
             for key in [false, true].into_iter().flat_map(|two_sided| {
                 [false, true].map(|no_discard_eligible| PipelineKey {
@@ -274,9 +274,13 @@ impl SceneCorePipelines {
                     ..PipelineKey::default()
                 })
             }) {
-                f.request_features(hdr_opaque_slot(key), FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(hdr_opaque_slot(key), s);
+                }
             }
-            f.request_features(HDR_TRANSPARENT, FeatureSet::NONE);
+            for &s in sets {
+                f.request_features(HDR_TRANSPARENT, s);
+            }
         }
     }
 
@@ -290,7 +294,7 @@ impl SceneCorePipelines {
     }
 
     /// [`request_plain_hdr`](Self::request_plain_hdr) for the LDR families.
-    pub(crate) fn request_plain_ldr(&self) {
+    pub(crate) fn request_plain_ldr(&self, sets: &[FeatureSet]) {
         for f in [&self.ldr, &self.ldr_bindless].into_iter().flatten() {
             for slot in [
                 LDR_SOLID,
@@ -299,7 +303,9 @@ impl SceneCorePipelines {
                 LDR_SOLID_TWO_SIDED_NODISCARD,
                 LDR_TRANSPARENT,
             ] {
-                f.request_features(slot, FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(slot, s);
+                }
             }
         }
     }

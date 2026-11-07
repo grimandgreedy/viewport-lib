@@ -13,6 +13,11 @@
 // `sample_shadow_csm`), with `punctual_shadow_tex`, `shadow_sampler`,
 // `shadow_atlas`, `lights_uniform` and `SingleLight` declared.
 
+// Whether point and spot light shadows are sampled at all. A mesh pipeline
+// built for a frame that places no punctual shadow layer sets it false; other
+// shaders keep the default.
+override FEAT_PUNCTUAL_SHADOWS: bool = true;
+
 // One compare tap of layer `layer` at `uv` against the normalised distance
 // `reference`.
 fn punctual_tap(layer: i32, uv: vec2<f32>, reference: f32) -> f32 {
@@ -260,7 +265,7 @@ fn sample_punctual_shadow(light: SingleLight, world_pos: vec3<f32>, geo_normal: 
     let sin_r = sin(rot);
     let cos_r = cos(rot);
     let taps = select(8u, 32u, tier == 3u);
-    let pcss = tier == 1u || tier == 4u;
+    let pcss = FEAT_SHADOW_PCSS && (tier == 1u || tier == 4u);
 
     if spot {
         let clip = vp * vec4<f32>(offset_pos, 1.0);
@@ -333,7 +338,7 @@ fn shadow_for_light(
         return sample_shadow_csm(world_pos, eye_pos, shadow_normal, light_dir, receiver_two_sided);
     }
     var s = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
-    if light.shadow_kind == 2u || light.shadow_kind == 3u {
+    if FEAT_PUNCTUAL_SHADOWS && (light.shadow_kind == 2u || light.shadow_kind == 3u) {
         s.factor = sample_punctual_shadow(light, world_pos, geo_normal);
     }
     return s;

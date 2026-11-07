@@ -346,6 +346,28 @@ impl ViewportRenderer {
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
         drop(lighting_span);
 
+        // The shadow code a mesh pipeline compiles in follows the frame's
+        // settings: the PCSS paths only under a PCSS filter, the punctual
+        // sampling only when a point or spot light holds a shadow layer. A set
+        // that changes swaps the draws to pipelines built for it.
+        {
+            use crate::renderer::pipeline_key::FeatureSet;
+            let shadows = &scene_fx.lighting.shadows;
+            resources.frame_features = FeatureSet::NONE
+                .with(
+                    FeatureSet::SHADOW_PCSS,
+                    shadows.enabled
+                        && matches!(
+                            shadows.filter,
+                            crate::ShadowFilter::Pcss | crate::ShadowFilter::PcssFast
+                        ),
+                )
+                .with(
+                    FeatureSet::PUNCTUAL_SHADOWS,
+                    lighting_frame.punctual_layers_in_use > 0,
+                );
+        }
+
         // Every mesh draw is an instanced draw; a one-item scene is one batch.
         self.instancing.use_instancing = true;
 

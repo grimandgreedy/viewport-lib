@@ -17,6 +17,12 @@
 // so on GL the PCSS block is removed (`adapt_wgsl`) and tiers 1 and 4 run
 // the 8-tap PCF.
 
+// Whether the PCSS blocker search and filter are compiled in, for the
+// cascades here and the point and spot lights in punctual_shadow.wgsl. A mesh
+// pipeline built for a frame without a PCSS filter sets it false; other
+// shaders keep the default and select the tier at run time.
+override FEAT_SHADOW_PCSS: bool = true;
+
 const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
     vec2<f32>(-0.09418410, -0.92938870), vec2<f32>( 0.34495938,  0.29387760),
@@ -317,7 +323,7 @@ fn sample_shadow_csm_at(
     let contact_rule = receiver_two_sided == 0u;
     let texel_depth = texel_world * length(vp_row2);
     // BEGIN_PCSS_BLOCKER_SEARCH
-    if tier == 1u || tier == 4u {
+    if FEAT_SHADOW_PCSS && (tier == 1u || tier == 4u) {
         // PCSS: the blocker search estimates the occluder distance per
         // fragment and widens the filter with it (contact hardening). The
         // fast tier halves both loops; its penumbras get noisier at the

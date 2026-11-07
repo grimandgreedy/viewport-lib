@@ -92,11 +92,7 @@ impl DeviceResources {
             return true;
         }
         if batch.is_transmissive {
-            let feats = if self.mesh_universal {
-                crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
-            } else {
-                batch.features
-            };
+            let feats = crate::renderer::types::draw_features(self, batch);
             return self
                 .transmission
                 .mesh_ready(batch.two_sided, feats, batch.bindless);
@@ -137,11 +133,7 @@ impl DeviceResources {
                 ..PipelineKey::default()
             },
         ];
-        let feats = if self.mesh_universal {
-            crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
-        } else {
-            batch.features
-        };
+        let feats = crate::renderer::types::draw_features(self, batch);
         // A batch the GPU cull draws binds the culled family instead, so
         // either counts.
         let culled = hdr && batch.draws_culled();
