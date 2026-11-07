@@ -350,6 +350,15 @@ impl LightSource {
 /// on the spot's map for a spot. The PCSS tiers size a directional penumbra by
 /// [`ShadowSettings::sun_angular_radius`] and a point or spot penumbra by the
 /// light's `radius`.
+///
+/// Point and spot light shadows are filtered for every receiving fragment of
+/// every shadowing light, so their cost grows with the number of shadowing
+/// lights in view: roughly in the order `Hard`, `Pcf`, `PcssFast`, `PcfHigh`,
+/// `Pcss`, with `Pcss` several times `Pcf`.
+///
+/// The PCSS code is compiled into the lit pipelines only while a PCSS tier is
+/// selected, so a frame that first selects one builds its pipelines then, and
+/// the other tiers carry none of its cost.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

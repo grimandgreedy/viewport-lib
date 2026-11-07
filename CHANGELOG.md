@@ -26,6 +26,8 @@
 
 ### Fixes
 
+- **Lit shading cost with the PCF filter and without point or spot shadows** - the PCSS code and the point and spot shadow sampling are compiled into the lit mesh pipelines only when a frame uses them, so scenes that do not pay nothing for them. Switching to a PCSS filter, or adding the first shadowing point or spot light, builds the pipelines for that on first use.
+- **Shadow cascade fit per frame** - the scene-fitted cascade range is cached between frames and reused while the scene, the light and the camera hold still, and is reported under the shadow prepare time instead of instancing.
 - **Blended item types and the AO split** - blended draws (Gaussian splats, GPU particles, sprites and other alpha-blended item types) no longer write the scene pass's indirect-fraction target, so they draw at their earlier cost. Ambient occlusion and contact shadows darken a blended item the way they darken the surface behind it; opaque surfaces keep the split.
 - **Crowded light clusters** - a cluster cell reached by more than 64 lights shades with the lights that reach it instead of every light in the scene.
 - **GPU plugin timings allocated every frame** - `ViewportRuntime::pre_prepare` and `post_paint` now refill their timing maps in place, so an attached runtime adds no allocations to a settled frame.
