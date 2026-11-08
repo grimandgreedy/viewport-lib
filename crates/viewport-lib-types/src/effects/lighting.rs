@@ -510,6 +510,13 @@ pub struct ShadowSettings {
     /// can throw a visible shadow; `Some(d)` ends them `d` world units in
     /// front of the camera, clamped to its far plane, whatever the scene.
     /// Default: `None`.
+    ///
+    /// Fitted cascades spend all their resolution on that range, which
+    /// sharpens shadows most when the camera views the scene from a
+    /// distance. Each cascade then holds more casters, so the shadow pass
+    /// costs more in that view than cascades starting at the camera would; a
+    /// camera inside the scene sees no difference. A set distance or a lower
+    /// [`cascade_count`](Self::cascade_count) trades the resolution back.
     #[cfg_attr(feature = "serde", serde(default))]
     pub shadow_distance: Option<f32>,
     /// Where the cascade boundaries fall inside that range. Default:
