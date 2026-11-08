@@ -26,6 +26,7 @@
 
 ### Fixes
 
+- **Blended item types and the AO split** - blended draws (Gaussian splats, GPU particles, sprites and other alpha-blended item types) no longer write the scene pass's indirect-fraction target, so they draw at their earlier cost. Ambient occlusion and contact shadows darken a blended item the way they darken the surface behind it; opaque surfaces keep the split.
 - **Crowded light clusters** - a cluster cell reached by more than 64 lights shades with the lights that reach it instead of every light in the scene.
 - **GPU plugin timings allocated every frame** - `ViewportRuntime::pre_prepare` and `post_paint` now refill their timing maps in place, so an attached runtime adds no allocations to a settled frame.
 - **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
