@@ -30,7 +30,7 @@ fn bake_clip_rect(
 
 /// `bake_clip_rect` for the shape stream.
 fn bake_shape_clip_rect(
-    verts: &mut [crate::resources::OverlayShapeVertex],
+    verts: &mut [crate::resources::OverlayShapeInstance],
     clip: &crate::renderer::types::OverlayClip,
     start: usize,
     ppp: f32,
@@ -149,8 +149,7 @@ fn emit_base(
         // `anchor`, so `translate` is a plain offset in group-local pixels.
         if let Some((pmin, pmax)) = super::projection::polyline_bounds(&poly.points) {
             let rot = overlay_geometry::OverlayRotation::new(
-                poly.transform.rotation,
-                poly.transform.scale,
+                &poly.transform,
                 overlay_geometry::OverlayRotation::pivot_point(
                     pmin,
                     [pmax[0] - pmin[0], pmax[1] - pmin[1]],
@@ -208,8 +207,7 @@ fn emit_glyph_run(
     let opacity = run.style.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
     let rot = overlay_geometry::OverlayRotation::new(
-        run.transform.rotation,
-        run.transform.scale,
+        &run.transform,
         overlay_geometry::OverlayRotation::pivot_point(
             [run_x + min_x, run_y + min_y],
             [ext_w, ext_h],
@@ -376,8 +374,7 @@ fn emit_label(
     let text_y = align_offset_y + label.transform.translate[1];
 
     let rot = overlay_geometry::OverlayRotation::new(
-        label.transform.rotation,
-        label.transform.scale,
+        &label.transform,
         overlay_geometry::OverlayRotation::pivot_point(
             [text_x, text_y],
             [layout.total_width, layout.height],
@@ -558,8 +555,8 @@ pub(super) fn emit_group_verts(
     }
 }
 
-/// Emit one analytic SDF shape (Rect, RoundedRect, Circle, Ring, ...) as solid
-/// `OverlayShapeVertex` geometry plus its stacked shadow layers, for the retained
+/// Emit one analytic SDF shape (Rect, RoundedRect, Circle, Ring, ...) as one
+/// `OverlayShapeInstance` plus its stacked shadow layers, for the retained
 /// path. Mirrors the solid branch of the immediate shape emission
 /// (`prepare_viewport_internal`) for the static case: no animation sampling, no
 /// anchor resolution, and no internal clip mask (a retained group's outer clip is
@@ -567,7 +564,7 @@ pub(super) fn emit_group_verts(
 /// pipeline and are skipped.
 fn emit_sdf_shape(
     shape: &crate::renderer::types::OverlayShapeItem,
-    out_verts: &mut Vec<crate::resources::OverlayShapeVertex>,
+    out_verts: &mut Vec<crate::resources::OverlayShapeInstance>,
     out_shadows: &mut Vec<crate::resources::OverlayShadowLayerGpu>,
     ppp: f32,
 ) {
@@ -596,27 +593,14 @@ fn emit_sdf_shape(
         OverlayShape::Line { thickness, .. } => thickness * 0.5,
         _ => 0.0,
     };
-    let bx = hw + extra_expand;
-    let by = hh + extra_expand;
-    let (rx, ry) = if shape.transform.rotation != 0.0 {
-        let c = shape.transform.rotation.cos();
-        let s = shape.transform.rotation.sin();
-        let piv = shape.transform.pivot;
-        let (mut mx, mut my) = (0.0f32, 0.0f32);
-        for cxp in [-bx, bx] {
-            for cyp in [-by, by] {
-                let dx = cxp - piv[0];
-                let dy = cyp - piv[1];
-                mx = mx.max((c * dx - s * dy + piv[0]).abs());
-                my = my.max((s * dx + c * dy + piv[1]).abs());
-            }
-        }
-        (mx, my)
-    } else {
-        (bx, by)
+    let Some(frame) = overlay_geometry::shape_frame(
+        &shape.transform,
+        [cx, cy],
+        [hw + extra_expand, hh + extra_expand],
+        shadow_pad + 1.0,
+    ) else {
+        return;
     };
-    let ex = rx + shadow_pad + 1.0;
-    let ey = ry + shadow_pad + 1.0;
 
     let (shape_type, radii) = match &shape.shape {
         OverlayShape::Rect { corner_radius } => {
@@ -795,56 +779,27 @@ fn emit_sdf_shape(
             inner_count += 1;
         }
     }
-    let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
-    let rotation_pivot = [
-        shape.transform.rotation,
-        shape.transform.pivot[0],
-        shape.transform.pivot[1],
-    ];
-    let half_size = [hw, hh];
-    // Scale the quad about the pivot and leave `local_pos` in the shape's own
-    // frame, the same split the shader uses for a group transform.
-    let item_scale = shape.transform.scale;
-    let pivot_px = [cx + shape.transform.pivot[0], cy + shape.transform.pivot[1]];
-    let corner = |x: f32, y: f32, lx: f32, ly: f32| {
-        if item_scale == 1.0 {
-            (x, y, lx, ly)
-        } else {
-            (
-                pivot_px[0] + (x - pivot_px[0]) * item_scale,
-                pivot_px[1] + (y - pivot_px[1]) * item_scale,
-                lx,
-                ly,
-            )
-        }
-    };
-    let corners = [
-        corner(cx - ex, cy - ey, -ex, -ey),
-        corner(cx + ex, cy - ey, ex, -ey),
-        corner(cx + ex, cy + ey, ex, ey),
-        corner(cx - ex, cy - ey, -ex, -ey),
-        corner(cx + ex, cy + ey, ex, ey),
-        corner(cx - ex, cy + ey, -ex, ey),
-    ];
-    for (px, py, lx, ly) in corners {
-        out_verts.push(crate::resources::OverlayShapeVertex {
-            position: [px, py],
-            local_pos: [lx, ly],
-            fill_colour: fc,
-            half_size,
-            radii,
+    let pivot_local = shape.transform.pivot;
+    out_verts.push(crate::resources::OverlayShapeInstance {
+        quad: frame.quad,
+        pivot_half: [frame.pivot_px[0], frame.pivot_px[1], hw, hh],
+        linv: frame.linv,
+        fill_colour: fc,
+        fill_colour2: fc2,
+        radii,
+        gradient_params: gp4,
+        shadow_meta: [
+            base_index as f32,
+            outer_count as f32,
+            inner_count as f32,
             shape_type,
-            fill_colour2: fc2,
-            gradient_params: gp4,
-            shadow_index,
-            rotation_pivot,
-            clip_rect: [0.0; 4],
-            clip_index: -1.0,
-            stop_colour_c: stop_colours[2],
-            stop_colour_d: stop_colours[3],
-            stop_positions,
-        });
-    }
+        ],
+        clip_rect: [0.0; 4],
+        stop_colour_c: stop_colours[2],
+        stop_colour_d: stop_colours[3],
+        stop_positions,
+        misc: [-1.0, pivot_local[0], pivot_local[1], frame.item_scale],
+    });
     bake_shape_clip_rect(out_verts, &shape.clip, item_start, ppp);
 }
 
@@ -856,16 +811,17 @@ fn emit_sdf_shape(
 /// at compile rather than per frame: the geometry is fixed by definition.
 fn group_bounds(
     text: &[crate::resources::OverlayTextVertex],
-    shapes: &[crate::resources::OverlayShapeVertex],
+    shapes: &[crate::resources::OverlayShapeInstance],
 ) -> Option<([f32; 2], [f32; 2])> {
     let mut min = [f32::MAX, f32::MAX];
     let mut max = [f32::MIN, f32::MIN];
     let mut any = false;
-    for p in text
-        .iter()
-        .map(|v| v.position)
-        .chain(shapes.iter().map(|v| v.position))
-    {
+    // A shape's quad contributes its two extreme corners.
+    let shape_corners = shapes.iter().flat_map(|s| {
+        let [cx, cy, hx, hy] = s.quad;
+        [[cx - hx, cy - hy], [cx + hx, cy + hy]]
+    });
+    for p in text.iter().map(|v| v.position).chain(shape_corners) {
         any = true;
         min[0] = min[0].min(p[0]);
         min[1] = min[1].min(p[1]);
@@ -963,7 +919,7 @@ impl ViewportRenderer {
 
         // Analytic SDF shapes (the non-Vector entries of `vector_shapes`) go to the
         // shape-pipeline stream. Vector entries were already handled above.
-        let mut shape_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
+        let mut shape_verts: Vec<crate::resources::OverlayShapeInstance> = Vec::new();
         let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
         for shape in vector_shapes {
             if !matches!(
@@ -978,7 +934,7 @@ impl ViewportRenderer {
                 );
             }
         }
-        let (shape_vertex_buf, shadow_tex, shape_bytes) = if shape_verts.is_empty() {
+        let (shape_instance_buf, shadow_tex, shape_bytes) = if shape_verts.is_empty() {
             (None, None, 0)
         } else {
             // The shape pipeline layout always expects a shadow-layer texture;
@@ -992,7 +948,7 @@ impl ViewportRenderer {
             }
             let sv_bytes = std::mem::size_of_val(&shape_verts[..]) as u64;
             let sv = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("compiled_overlay_shape_vbuf"),
+                label: Some("compiled_overlay_shape_ibuf"),
                 size: sv_bytes,
                 usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -1023,8 +979,8 @@ impl ViewportRenderer {
                 vertex_buf,
                 vertex_count: verts.len() as u32,
                 shape_bytes,
-                shape_vertex_buf,
-                shape_vertex_count: shape_verts.len() as u32,
+                shape_instance_buf,
+                shape_instance_count: shape_verts.len() as u32,
                 shadow_tex,
                 source,
                 anchor: None,
@@ -1108,8 +1064,8 @@ impl ViewportRenderer {
                 vertex_buf,
                 vertex_count: verts.len() as u32,
                 shape_bytes: 0,
-                shape_vertex_buf: None,
-                shape_vertex_count: 0,
+                shape_instance_buf: None,
+                shape_instance_count: 0,
                 shadow_tex: None,
                 source: Some(source),
                 anchor: Some(label.anchoring.origin),
@@ -1190,7 +1146,7 @@ impl ViewportRenderer {
         c.vertex_buf = vertex_buf;
         c.vertex_count = verts.len() as u32;
         // A re-emit re-lays out the glyphs, so the extent can move.
-        if c.shape_vertex_count == 0 {
+        if c.shape_instance_count == 0 {
             c.bounds = bounds;
         }
         if let Some(s) = &mut c.source {

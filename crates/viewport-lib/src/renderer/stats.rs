@@ -637,6 +637,15 @@ pub struct FrameStats {
     /// A level, not a per-frame count, and independent of what was submitted
     /// this frame.
     pub overlay_retained_bytes: u64,
+    /// Draw calls the overlay pass issues for the most recently prepared
+    /// viewport: one per run of shapes, textured shapes or text that shares a
+    /// pipeline and texture at one `z_order`, plus one per retained group
+    /// stream. Not included in [`Self::draw_calls`], which counts the scene.
+    ///
+    /// A consumer that gives every item its own `z_order` to keep painter's
+    /// order pays one draw per change of family; this is the counter that
+    /// shows it.
+    pub overlay_draw_calls: u32,
     /// Section cap meshes generated this frame, for the most recently
     /// prepared viewport.
     ///

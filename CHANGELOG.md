@@ -21,6 +21,10 @@
 - **`reattach_plugin` and `ViewportInstance::reattach_plugin`** - bring an installed feature back after `ViewportInstance::rebuild` by registering its renderer-side pieces on the new renderer; its runtime pieces are still registered, so installing it again would run them twice.
 - **`ViewportError::PluginUninstallUnsupported`** - returned by a feature's `uninstall` when its pieces cannot be removed.
 
+- **`OverlayTransform` is a full 2D affine map** - `stretch` (a per-axis scale in the item's own frame) and `skew` (a shear of x by y) join `translate`, `rotation`, `pivot` and `scale`, with `with_stretch`, `with_skew`, `with_linear`, `from_linear`, `linear`, `inverse_linear` and `linear_is_identity`. `compose` is exact for any pair. Every overlay family and retained group honours the new fields; a consumer that decomposed its own matrix into a box and a rotation can hand the matrix over whole.
+- **Analytic overlay shapes draw as one instance each** - the solid shape pipeline takes one record per shape and expands the quad on the GPU, in place of six vertices carrying the whole description, so a frame of many markers writes and uploads a fraction of the bytes. The textured shape pipeline, which also draws tessellated image fills, keeps its vertex form; a textured shape now follows its item rotation, stretch and skew like a solid one.
+- **`FrameStats::overlay_draw_calls`** - the draw calls the overlay pass issues for the most recently prepared viewport, so a consumer can see what its `z_order` assignments cost in batching.
+
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
 
 ### Fixes

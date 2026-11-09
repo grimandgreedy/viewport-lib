@@ -187,11 +187,9 @@ impl ViewportRenderer {
 
         // The time this frame renders at, for the camera uniform and the
         // deform header.
-        let time = self.frame_clock.resolve(
-            frame.time,
-            self.render_advances_state(),
-            self.frame_counter,
-        );
+        let time =
+            self.frame_clock
+                .resolve(frame.time, self.render_advances_state(), self.frame_counter);
         self.resources.feed_deform_time(queue, time.seconds as f32);
 
         // A glyph atlas that filled up last frame is cleared here, before any
@@ -1073,6 +1071,7 @@ impl ViewportRenderer {
         self.prepare_overlay_labels(device, queue, frame, &mut ov);
         self.prepare_overlay_shapes(device, queue, frame, &mut ov);
         Self::finalize_overlay_draw_order(&mut ov);
+        let overlay_draw_calls = ov.draw_call_count();
         self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
         drop(overlay_span);
@@ -1087,6 +1086,7 @@ impl ViewportRenderer {
         self.last_stats.overlay_retained_reemitted = overlay_counters.reemitted;
         self.last_stats.overlay_retained_bytes =
             self.resources.content.overlay_geometry.allocated_bytes();
+        self.last_stats.overlay_draw_calls = overlay_draw_calls;
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

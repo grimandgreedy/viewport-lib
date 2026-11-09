@@ -92,28 +92,27 @@ mod prepare_timing_tests;
 pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
-    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, ClipObject,
-    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
-    DofSettings,
-    EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
-    ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
-    FrameTime, GlyphRunItem, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode,
-    IndirectLightSource,
+    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure,
+    BackdropEffects, BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit,
+    ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
+    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
+    EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureSettings, FillRule,
+    ForegroundPass, ForegroundProjection, FrameData, FrameTime, GenericToneCurve, GlyphRunItem,
+    GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OperatorCurve, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
-    TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER,
-    ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency,
-    WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode,
+    OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing,
+    OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
+    OverlayTransform, PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
+    SurfaceSubmission, TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection,
+    VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem,
+    VolumeTransparency, WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -323,6 +322,23 @@ pub(crate) struct ViewportOverlay {
 }
 
 impl ViewportOverlay {
+    /// Draw calls the overlay emit will issue for this viewport: the sorted
+    /// segments when any item sets a `z_order` or a retained group is present,
+    /// otherwise one per family batch with content.
+    pub(crate) fn draw_call_count(&self) -> u32 {
+        if self.overlay_uses_zorder {
+            return self.overlay_draw_segments.len() as u32;
+        }
+        let mut n = 0;
+        if let Some(sd) = &self.overlay_shape_gpu_data {
+            n += u32::from(sd.instance_count > 0) + sd.tex_batches.len() as u32;
+        }
+        if let Some(ld) = &self.label_gpu_data {
+            n += u32::from(ld.vertex_count > 0);
+        }
+        n
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             label_gpu_data: None,

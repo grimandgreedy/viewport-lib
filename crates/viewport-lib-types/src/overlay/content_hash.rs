@@ -240,11 +240,15 @@ impl OverlayContentHash for OverlayTransform {
             rotation,
             pivot,
             scale,
+            stretch,
+            skew,
         } = self;
         hash_point(state, *translate, origin);
         hash_f32(state, *rotation);
         hash_floats(state, pivot);
         hash_f32(state, *scale);
+        hash_floats(state, stretch);
+        hash_f32(state, *skew);
     }
 }
 

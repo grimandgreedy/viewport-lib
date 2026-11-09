@@ -1475,42 +1475,31 @@ pub(super) fn emit_polyline_inner_shadow(
     }
 }
 
-/// A screen-space rotation applied to already-emitted overlay vertices.
-///
-/// Text has no signed distance field to turn in a shader the way an analytic
-/// shape does, so a rotated run is rotated here. Vertex positions are logical
-/// screen pixels at this point, so rotating them in place is the whole job, and
-/// it turns a label's background plate and its shadows along with the glyphs
-/// rather than only the letterforms.
-///
-/// The glyph cells stay axis-aligned in the atlas and are sampled through the
-/// clamp/linear sampler, so a rotated run is very slightly softer than an
-/// upright one.
+/// An item transform baked into vertex positions: the linear part of an
+/// `OverlayTransform` (rotation, scale, stretch and skew) about a centre in
+/// the same pixel space as the vertices.
 #[derive(Clone, Copy)]
 pub(super) struct OverlayRotation {
-    sin: f32,
-    cos: f32,
-    scale: f32,
-    /// Absolute screen-pixel point the vertices turn and scale about.
+    linear: [[f32; 2]; 2],
     centre: [f32; 2],
 }
 
 impl OverlayRotation {
-    /// An item transform baked into vertex positions: scale about `centre`,
-    /// then rotate about it. `None` when neither would move anything, so
-    /// callers can pass one through unconditionally.
+    /// The linear part of `transform` about `centre`. `None` when it would
+    /// move nothing, so callers can pass one through unconditionally.
     ///
     /// This is the inner half of the composition contract. The outer half (the
     /// group transform) rides the GPU instance; an immediate item has no
     /// instance slot of its own, so its half is folded in here.
-    pub(super) fn new(radians: f32, scale: f32, centre: [f32; 2]) -> Option<Self> {
-        if radians == 0.0 && scale == 1.0 {
+    pub(super) fn new(
+        transform: &crate::renderer::types::OverlayTransform,
+        centre: [f32; 2],
+    ) -> Option<Self> {
+        if transform.linear_is_identity() {
             return None;
         }
         Some(Self {
-            sin: radians.sin(),
-            cos: radians.cos(),
-            scale,
+            linear: transform.linear(),
             centre,
         })
     }
@@ -1525,13 +1514,93 @@ impl OverlayRotation {
     }
 
     fn apply(&self, p: [f32; 2]) -> [f32; 2] {
-        let dx = (p[0] - self.centre[0]) * self.scale;
-        let dy = (p[1] - self.centre[1]) * self.scale;
+        let dx = p[0] - self.centre[0];
+        let dy = p[1] - self.centre[1];
+        let m = self.linear;
         [
-            self.centre[0] + self.cos * dx - self.sin * dy,
-            self.centre[1] + self.sin * dx + self.cos * dy,
+            self.centre[0] + m[0][0] * dx + m[0][1] * dy,
+            self.centre[1] + m[1][0] * dx + m[1][1] * dy,
         ]
     }
+}
+
+/// Where an analytic shape lands under its item transform, in the item's
+/// pixel space before any group transform.
+pub(super) struct ShapeFrame {
+    /// The axis-aligned quad covering the transformed shape plus its padding:
+    /// centre `xy`, half-extents `zw`.
+    pub quad: [f32; 4],
+    /// The pivot in the same pixel space.
+    pub pivot_px: [f32; 2],
+    /// The inverse of the item's linear map, row-major `[a, b, c, d]`.
+    pub linv: [f32; 4],
+    /// The item's uniform scale, which its shadow offsets are given in.
+    pub item_scale: f32,
+}
+
+impl ShapeFrame {
+    /// The quad's six corners (two triangles) as `(position, offset from the
+    /// pivot)`, for a pipeline that still takes the quad as vertices.
+    pub(super) fn corners(&self) -> [([f32; 2], [f32; 2]); 6] {
+        let [cx, cy, hx, hy] = self.quad;
+        let corner = |sx: f32, sy: f32| {
+            let p = [cx + sx * hx, cy + sy * hy];
+            (p, [p[0] - self.pivot_px[0], p[1] - self.pivot_px[1]])
+        };
+        [
+            corner(-1.0, -1.0),
+            corner(1.0, -1.0),
+            corner(1.0, 1.0),
+            corner(-1.0, -1.0),
+            corner(1.0, 1.0),
+            corner(-1.0, 1.0),
+        ]
+    }
+}
+
+/// The frame of a shape whose box is `half` either side of `centre` (shape
+/// units) under `transform`, with `pad` shape units of shadow and
+/// anti-aliasing room around it, scaled to pixels by the map's largest
+/// stretch so the padding still covers under a non-uniform scale. `None` when
+/// the map has no inverse (a zero stretch), which draws nothing.
+pub(super) fn shape_frame(
+    transform: &crate::renderer::types::OverlayTransform,
+    centre: [f32; 2],
+    half: [f32; 2],
+    pad: f32,
+) -> Option<ShapeFrame> {
+    let m = transform.linear();
+    let inv = transform.inverse_linear()?;
+    let piv = transform.pivot;
+    let (mut min, mut max) = ([f32::MAX; 2], [f32::MIN; 2]);
+    for sx in [-1.0, 1.0] {
+        for sy in [-1.0, 1.0] {
+            let dx = sx * half[0] - piv[0];
+            let dy = sy * half[1] - piv[1];
+            let x = m[0][0] * dx + m[0][1] * dy + piv[0];
+            let y = m[1][0] * dx + m[1][1] * dy + piv[1];
+            min = [min[0].min(x), min[1].min(y)];
+            max = [max[0].max(x), max[1].max(y)];
+        }
+    }
+    // The spectral norm of a 2x2: the largest factor by which it stretches any
+    // direction, so a pad in shape units covers in pixels.
+    let a = m[0][0] * m[0][0] + m[1][0] * m[1][0];
+    let b = m[0][1] * m[0][1] + m[1][1] * m[1][1];
+    let c = m[0][0] * m[0][1] + m[1][0] * m[1][1];
+    let norm = ((a + b) * 0.5 + (((a - b) * 0.5).powi(2) + c * c).sqrt()).sqrt();
+    let pad_px = pad * norm;
+    Some(ShapeFrame {
+        quad: [
+            centre[0] + (min[0] + max[0]) * 0.5,
+            centre[1] + (min[1] + max[1]) * 0.5,
+            (max[0] - min[0]) * 0.5 + pad_px,
+            (max[1] - min[1]) * 0.5 + pad_px,
+        ],
+        pivot_px: [centre[0] + piv[0], centre[1] + piv[1]],
+        linv: [inv[0][0], inv[0][1], inv[1][0], inv[1][1]],
+        item_scale: transform.scale,
+    })
 }
 
 /// Apply an item transform to the positions of `verts[from..]` in place. A

@@ -8,21 +8,24 @@
 @group(0) @binding(0) var t_fill: texture_2d<f32>;
 @group(0) @binding(1) var s_fill: sampler;
 
+// Sixteen attributes, the most WebGL2 allows.
 struct VertexInput {
-    @location(0) position:      vec2<f32>,  // NDC xy
-    @location(1) local_pos:     vec2<f32>,  // pixels from shape centre
+    @location(0) position:      vec2<f32>,  // logical pixels
+    @location(1) local_pos:     vec2<f32>,  // pixels from the shape pivot (or its centre for a tessellated fill)
     @location(2) fill_colour:   vec4<f32>,  // tint (multiplied with texture sample)
     @location(3) half_size:     vec2<f32>,  // shape half-extents in pixels
     @location(4) radii:         vec4<f32>,  // shape-specific params
-    @location(5) shape_meta:    vec2<f32>,  // x=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), y=clip_index (or -1)
+    @location(5) shape_meta:    vec4<f32>,  // x=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), y=clip_index (or -1), zw=pivot in the shape frame
     @location(6) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(7) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
+    @location(7) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right (uv_mode 0)
     @location(8) shadow_index:  vec3<f32>,  // base_index, outer_count, inner_count
     @location(9) extras:         vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
     @location(10) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
     @location(11) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
     @location(12) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
     @location(13) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
+    @location(14) linv:         vec4<f32>,  // inverse item linear map, row-major a b c d
+    @location(15) item_params:  vec4<f32>,  // x=item scale (shadow offsets), y=uv_mode (0 attribute, 1 shape frame, 2 screen)
 }
 
 // One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
@@ -109,16 +112,19 @@ struct VertexOutput {
     @location(1) fill_colour:   vec4<f32>,
     @location(2) half_size:     vec2<f32>,
     @location(3) radii:         vec4<f32>,
-    @location(4) shape_type:    f32,
-    @location(5) uv:            vec2<f32>,
-    @location(6) @interpolate(flat) shadow_index: vec3<f32>,
-    @location(7) extras:       vec4<f32>,
-    @location(8) @interpolate(flat) nine_slice_uv:   vec4<f32>,
-    @location(9) @interpolate(flat) nine_slice_frac: vec4<f32>,
-    @location(10) @interpolate(flat) texture_transform_a: vec4<f32>,
-    @location(11) @interpolate(flat) texture_transform_b: vec4<f32>,
-    @location(12) @interpolate(flat) clip_rect:  vec4<f32>,
-    @location(13) @interpolate(flat) clip_index: f32,
+    @location(4) uv:            vec2<f32>,
+    @location(5) @interpolate(flat) shadow_index: vec3<f32>,
+    @location(6) extras:       vec4<f32>,
+    @location(7) @interpolate(flat) nine_slice_uv:   vec4<f32>,
+    @location(8) @interpolate(flat) nine_slice_frac: vec4<f32>,
+    @location(9) @interpolate(flat) texture_transform_a: vec4<f32>,
+    @location(10) @interpolate(flat) texture_transform_b: vec4<f32>,
+    @location(11) @interpolate(flat) clip_rect:  vec4<f32>,
+    // shape_type, clip_index, pivot in the shape frame xy
+    @location(12) @interpolate(flat) shape_meta: vec4<f32>,
+    @location(13) @interpolate(flat) linv:       vec4<f32>,
+    // item scale, uv_mode
+    @location(14) @interpolate(flat) item_params: vec4<f32>,
 };
 
 @vertex
@@ -129,8 +135,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.fill_colour   = in.fill_colour;
     out.half_size     = in.half_size;
     out.radii         = in.radii;
-    out.shape_type    = in.shape_meta.x;
-    out.uv            = in.uv;
+    // A backdrop blur samples the blurred scene at the screen position.
+    out.uv            = select(in.uv, in.position / viewport.size, in.item_params.y > 1.5);
     out.shadow_index = in.shadow_index;
     out.extras        = in.extras;
     out.nine_slice_uv   = in.nine_slice_uv;
@@ -138,8 +144,16 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.texture_transform_a = in.texture_transform_a;
     out.texture_transform_b = in.texture_transform_b;
     out.clip_rect  = in.clip_rect;
-    out.clip_index = in.shape_meta.y;
+    out.shape_meta = in.shape_meta;
+    out.linv       = in.linv;
+    out.item_params = in.item_params;
     return out;
+}
+
+// Map a pixel offset from the pivot into the shape's own frame: the inverse
+// linear map, then the pivot's place in that frame.
+fn to_shape_frame(local: vec2<f32>, linv: vec4<f32>, pivot: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(linv.x * local.x + linv.y * local.y, linv.z * local.x + linv.w * local.y) + pivot;
 }
 
 // Remap one component of the shape UV through the 9-slice piecewise function.
@@ -377,14 +391,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
     }
-    if (in.clip_index >= 0.0 && clip_outside(in.clip_position.xy, in.clip_index)) {
+    let clip_index = in.shape_meta.y;
+    if (clip_index >= 0.0 && clip_outside(in.clip_position.xy, clip_index)) {
         discard;
     }
 
-    let p = in.local_pos;
+    // Into the shape's own frame, as the solid path does; a tessellated fill
+    // carries the identity and its triangles are already placed.
+    let pivot = in.shape_meta.zw;
+    let p = to_shape_frame(in.local_pos, in.linv, pivot);
     let hs = in.half_size;
+    let shape_type = in.shape_meta.x;
+    let item_scale = in.item_params.x;
 
-    let d = eval_sdf(p, hs, in.shape_type, in.radii);
+    let d = eval_sdf(p, hs, shape_type, in.radii);
 
     let aa = 1.0;
 
@@ -402,7 +422,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let sspread = layer.params2.x;
         let sfall = layer.params2.y;
         if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
-            let sd = eval_sdf(p - soff, hs, in.shape_type, in.radii);
+            let sp = to_shape_frame(in.local_pos - soff * item_scale, in.linv, pivot);
+            let sd = eval_sdf(sp, hs, shape_type, in.radii);
             let a = layer.colour.a * shadow_coverage(sd, sspread, sr, sfall, aa);
             let src = vec4<f32>(layer.colour.rgb, a);
             shadow_col = vec4<f32>(
@@ -436,10 +457,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 9-slice remap when enabled: rebuild the sample UV by remapping
     // each axis through the piecewise function so corners stay at
     // their authored size and edges/centre tile or stretch per mode.
+    // An analytic shape's sample coordinate comes from the shape frame, so the
+    // image turns and scales with it; a tessellated fill carries its own.
     var sample_uv = in.uv;
+    if (in.item_params.y > 0.5 && in.item_params.y < 1.5) {
+        sample_uv = (p + hs) / (2.0 * max(hs, vec2<f32>(0.5, 0.5)));
+    }
+    let shape_uv = sample_uv;
     if (in.extras.w > 0.5) {
         let u = ninepatch_axis(
-            in.uv.x,
+            shape_uv.x,
             in.nine_slice_frac.w,   // left frac
             in.nine_slice_frac.y,   // right frac
             in.nine_slice_uv.w,     // left uv
@@ -448,7 +475,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             in.extras.y,            // centre mode
         );
         let v = ninepatch_axis(
-            in.uv.y,
+            shape_uv.y,
             in.nine_slice_frac.x,   // top frac
             in.nine_slice_frac.z,   // bottom frac
             in.nine_slice_uv.x,     // top uv
@@ -467,7 +494,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let tile = i32(in.texture_transform_b.y + 0.5);
         let flip_x = in.texture_transform_b.z > 0.5;
         let flip_y = in.texture_transform_b.w > 0.5;
-        var uvc = in.uv - vec2<f32>(0.5, 0.5);
+        var uvc = shape_uv - vec2<f32>(0.5, 0.5);
         // Scale: multiply the UV by `scale`. `scale = 1.0` is 1:1.
         // Larger scale widens the sampled range (more tiles with Tile
         // mode, or sees more of the texture with Stretch/Mirror).
@@ -541,7 +568,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let sspread = layer.params2.x;
             let sfall = layer.params2.y;
             if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
-                let inner_sd = eval_sdf(p - soff, hs, in.shape_type, in.radii);
+                let sp = to_shape_frame(in.local_pos - soff * item_scale, in.linv, pivot);
+                let inner_sd = eval_sdf(sp, hs, shape_type, in.radii);
                 let inner_alpha =
                     layer.colour.a * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
                 if (inner_alpha > 0.0) {

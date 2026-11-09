@@ -104,10 +104,8 @@ fn transform_vector_positions(
     let cx = shape.transform.translate[0] + hw;
     let cy = shape.transform.translate[1] + hh;
     let piv = shape.transform.pivot;
-    let sc = shape.transform.scale;
-    let c = shape.transform.rotation.cos();
-    let s = shape.transform.rotation.sin();
-    let identity = shape.transform.rotation == 0.0 && sc == 1.0;
+    let identity = shape.transform.linear_is_identity();
+    let m = shape.transform.linear();
     local
         .iter()
         .map(|lp| {
@@ -117,14 +115,15 @@ fn transform_vector_positions(
             if identity {
                 return [cx + cpx, cy + cpy];
             }
-            // Scale about the pivot, then rotate about it: the inner half of
-            // the composition contract, baked in because an immediate item has
-            // no instance slot of its own.
-            let ax = (cpx - piv[0]) * sc;
-            let ay = (cpy - piv[1]) * sc;
-            let rx = c * ax - s * ay + piv[0];
-            let ry = s * ax + c * ay + piv[1];
-            [cx + rx, cy + ry]
+            // The item's linear map about its pivot: the inner half of the
+            // composition contract, baked in because an immediate item has no
+            // instance slot of its own.
+            let ax = cpx - piv[0];
+            let ay = cpy - piv[1];
+            [
+                cx + m[0][0] * ax + m[0][1] * ay + piv[0],
+                cy + m[1][0] * ax + m[1][1] * ay + piv[1],
+            ]
         })
         .collect()
 }
@@ -238,7 +237,7 @@ fn push_tessellated_tex_verts(
             fill_colour,
             half_size,
             radii: [0.0; 4],
-            shape_type: 0.0,
+            shape_meta: [0.0, clip_index, 0.0, 0.0],
             uv: uv(i),
             shadow_index: [0.0; 3],
             extras,
@@ -246,8 +245,9 @@ fn push_tessellated_tex_verts(
             nine_slice_frac: [0.0; 4],
             texture_transform_a: texture_transform.0,
             texture_transform_b: texture_transform.1,
-            clip_index,
             clip_rect,
+            linv: [1.0, 0.0, 0.0, 1.0],
+            item_params: [1.0, 0.0, 0.0, 0.0],
         });
     }
 }
@@ -630,6 +630,11 @@ impl ViewportRenderer {
         ov.overlay_bindings
             .instances
             .write_changed(device, queue, &data);
+        ov.overlay_bindings.instances_uniform.write_changed(
+            device,
+            queue,
+            &crate::resources::OverlayInstance::padded_uniform_bytes(&data),
+        );
         ov.overlay_instances_ready = true;
     }
 
@@ -847,8 +852,7 @@ impl ViewportRenderer {
                     // shadows included, after every part of it has been emitted.
                     if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
                         let rot = OverlayRotation::new(
-                            poly.transform.rotation,
-                            poly.transform.scale,
+                            &poly.transform,
                             OverlayRotation::pivot_point(
                                 pmin,
                                 [pmax[0] - pmin[0], pmax[1] - pmin[1]],
@@ -999,8 +1003,7 @@ impl ViewportRenderer {
                     // A label is one range: its glyphs and their shadow layers,
                     // turned together about the laid-out box.
                     let rot = OverlayRotation::new(
-                        label.transform.rotation,
-                        label.transform.scale,
+                        &label.transform,
                         OverlayRotation::pivot_point(
                             [text_x, text_y],
                             [layout.total_width, layout.height],
@@ -1218,8 +1221,7 @@ impl ViewportRenderer {
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     // The run turns about its glyph-extent box, shadows included.
                     let rot = OverlayRotation::new(
-                        run.transform.rotation,
-                        run.transform.scale,
+                        &run.transform,
                         OverlayRotation::pivot_point(
                             [run_x + min_x, run_y + min_y],
                             [ext_w, ext_h],
@@ -1381,9 +1383,9 @@ impl ViewportRenderer {
                             Some(c) => {
                                 let text = (c.vertex_count > 0)
                                     .then(|| (c.vertex_buf.clone(), c.vertex_count));
-                                let shape = match (&c.shape_vertex_buf, &c.shadow_tex) {
-                                    (Some(sv), Some(sh)) if c.shape_vertex_count > 0 => {
-                                        Some((sv.clone(), c.shape_vertex_count, sh.clone()))
+                                let shape = match (&c.shape_instance_buf, &c.shadow_tex) {
+                                    (Some(sv), Some(sh)) if c.shape_instance_count > 0 => {
+                                        Some((sv.clone(), c.shape_instance_count, sh.clone()))
                                     }
                                     _ => None,
                                 };
@@ -1454,20 +1456,20 @@ impl ViewportRenderer {
                         [0.0, 0.0, 0.0, 0.0]
                     };
                     let instance_index = instances.len() as u32;
-                    instances.push(crate::resources::OverlayInstance {
+                    let mut instance = crate::resources::OverlayInstance {
                         translate,
                         opacity: r.opacity,
                         clip_index,
                         clip_rect,
                         tint: r.tint,
-                        scale: r.transform.scale,
-                        rotation: r.transform.rotation,
-                        // Logical pixels, like `translate`: the instance's
-                        // transform is applied to vertex positions, which are
-                        // logical. Only `clip_rect` is in framebuffer pixels,
-                        // because it is compared against @builtin(position).
-                        pivot: r.transform.pivot,
-                    });
+                        ..crate::resources::OverlayInstance::IDENTITY
+                    };
+                    // Logical pixels, like `translate`: the instance's transform
+                    // is applied to vertex positions, which are logical. Only
+                    // `clip_rect` is in framebuffer pixels, because it is
+                    // compared against @builtin(position).
+                    instance.set_transform(&r.transform);
+                    instances.push(instance);
                     // Past every skip: the group has an instance slot and at
                     // least one of the two streams below records a draw.
                     self.overlay_retained_counters.drawn += 1;
@@ -1507,6 +1509,11 @@ impl ViewportRenderer {
                     ov.overlay_bindings
                         .instances
                         .write_changed(device, queue, &instances);
+                    ov.overlay_bindings.instances_uniform.write_changed(
+                        device,
+                        queue,
+                        &crate::resources::OverlayInstance::padded_uniform_bytes(&instances),
+                    );
                     ov.overlay_instances_ready = true;
 
                     // Finish retained shape-stream draws: build each group's shape
@@ -1517,6 +1524,12 @@ impl ViewportRenderer {
                     } else {
                         self.resources.ensure_overlay_shape_pipeline(device);
                         let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                        let inst_buf = ov
+                            .overlay_bindings
+                            .instances_uniform
+                            .buffer()
+                            .expect("written just above")
+                            .clone();
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
                             let mut previous =
                                 std::mem::take(&mut ov.overlay_bindings.retained_shape_bgs);
@@ -1526,7 +1539,7 @@ impl ViewportRenderer {
                                 let mut cached = previous.remove(&shbuf).unwrap_or_else(
                                     crate::resources::cached_bind_group::CachedBindGroup::new,
                                 );
-                                let key = [clip_buf.clone(), vp_buf.clone()];
+                                let key = [clip_buf.clone(), vp_buf.clone(), inst_buf.clone()];
                                 let bind_group = cached.get(key, || {
                                     device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                         label: Some("overlay_retained_shape_bg"),
@@ -1548,6 +1561,12 @@ impl ViewportRenderer {
                                                 binding: 2,
                                                 resource: vp_buf.as_entire_binding(),
                                             },
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 3,
+                                                resource: crate::resources::overlay::overlay_shape::group_instance_binding(
+                                                    &inst_buf,
+                                                ),
+                                            },
                                         ],
                                     })
                                 });
@@ -1555,8 +1574,8 @@ impl ViewportRenderer {
                                 let draw_index = ov.overlay_retained_shape_draws.len() as u32;
                                 ov.overlay_retained_shape_draws.push(
                                     crate::renderer::overlay_buffers::RetainedShapeDraw {
-                                        vertex_buf: svbuf,
-                                        vertex_count: svcount,
+                                        instance_buf: svbuf,
+                                        instance_count: svcount,
                                         bind_group,
                                         instance_index,
                                     },
@@ -1669,7 +1688,7 @@ impl ViewportRenderer {
                     self.resources.ensure_dyn_res_pipeline(device);
                 }
 
-                let mut solid_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
+                let mut solid_instances: Vec<crate::resources::OverlayShapeInstance> = Vec::new();
                 // Stacked shadow layers for solid shapes, shared across the
                 // whole frame. Each solid shape references a contiguous run
                 // (outer layers first, then inner) via its `shadow_index`.
@@ -1926,40 +1945,17 @@ impl ViewportRenderer {
                         _ => 0.0,
                     };
 
-                    // Base half-extents before rotation.
-                    let bx = hw + extra_expand;
-                    let by = hh + extra_expand;
-
-                    // Rotation about the pivot moves the shape's corners out of
-                    // the axis-aligned box, so grow the quad to the AABB of the
-                    // rotated bounding box (matching how the fragment shader maps
-                    // the rotated shape into the quad). Without this a rotated
-                    // rect, capsule, or off-centre pivot clips against its own
-                    // quad. A zero rotation with a zero pivot leaves bx/by
-                    // unchanged.
-                    let (rx, ry) = if shape.transform.rotation != 0.0 {
-                        let c = shape.transform.rotation.cos();
-                        let s = shape.transform.rotation.sin();
-                        let piv = shape.transform.pivot;
-                        let mut mx = 0.0_f32;
-                        let mut my = 0.0_f32;
-                        for cxp in [-bx, bx] {
-                            for cyp in [-by, by] {
-                                let dx = cxp - piv[0];
-                                let dy = cyp - piv[1];
-                                let rxp = c * dx - s * dy + piv[0];
-                                let ryp = s * dx + c * dy + piv[1];
-                                mx = mx.max(rxp.abs());
-                                my = my.max(ryp.abs());
-                            }
-                        }
-                        (mx, my)
-                    } else {
-                        (bx, by)
+                    // Where the shape lands under its transform, with room for
+                    // its outer shadows and a pixel of anti-aliasing. A map with
+                    // no inverse (a zero stretch) draws nothing.
+                    let Some(shape_frame) = overlay_geometry::shape_frame(
+                        &shape.transform,
+                        [cx, cy],
+                        [hw + extra_expand, hh + extra_expand],
+                        shadow_pad + 1.0,
+                    ) else {
+                        continue;
                     };
-
-                    let ex = rx + shadow_pad + 1.0; // +1 for AA
-                    let ey = ry + shadow_pad + 1.0;
 
                     // Encode shape type and radii.
                     let (shape_type, radii) = match &shape.shape {
@@ -2162,38 +2158,10 @@ impl ViewportRenderer {
                     }
                     let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
 
-                    // Emit 6 vertices (two triangles) for the bounding quad.
-                    // Scale the quad about the pivot while `local_pos`,
-                    // `half_size` and `radii` stay in the shape's own frame, so
-                    // the SDF is evaluated unscaled and the quad carries the
-                    // scaling, the same way the group transform does in the
-                    // shader. Rotation is not folded in here: it rides the
-                    // `rotation_pivot` vertex attribute and turns the sample
-                    // point instead.
-                    let item_scale = shape.transform.scale;
-                    let pivot_px = [cx + shape.transform.pivot[0], cy + shape.transform.pivot[1]];
-                    let scaled = |x: f32, y: f32| {
-                        if item_scale == 1.0 {
-                            (x, y)
-                        } else {
-                            (
-                                pivot_px[0] + (x - pivot_px[0]) * item_scale,
-                                pivot_px[1] + (y - pivot_px[1]) * item_scale,
-                            )
-                        }
-                    };
-                    let corner = |x: f32, y: f32, lx: f32, ly: f32| {
-                        let (px, py) = scaled(x, y);
-                        (px, py, lx, ly)
-                    };
-                    let corners_px = [
-                        corner(cx - ex, cy - ey, -ex, -ey),
-                        corner(cx + ex, cy - ey, ex, -ey),
-                        corner(cx + ex, cy + ey, ex, ey),
-                        corner(cx - ex, cy - ey, -ex, -ey),
-                        corner(cx + ex, cy + ey, ex, ey),
-                        corner(cx - ex, cy + ey, -ex, ey),
-                    ];
+                    // The textured and backdrop pipelines still take the quad as
+                    // six vertices; the solid pipeline takes one instance.
+                    let corners_px = shape_frame.corners();
+                    let pivot_local = shape.transform.pivot;
 
                     // Resolve the clip mask for this shape (shared by the solid,
                     // textured, and blur branches). Missing or unmatched ids fall
@@ -2278,15 +2246,23 @@ impl ViewportRenderer {
                             };
 
                         let (tt_a, tt_b) = texture_transform_gpu(tex_transform);
-                        for (px, py, lx, ly) in corners_px {
+                        let _ = (hw_s, hh_s);
+                        for (pos, local) in corners_px {
                             group_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: overlay_local_px(px, py, vp_w, vp_h),
-                                local_pos: [lx, ly],
+                                position: overlay_local_px(pos[0], pos[1], vp_w, vp_h),
+                                local_pos: local,
                                 fill_colour: fc,
                                 half_size,
                                 radii,
-                                shape_type,
-                                uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
+                                shape_meta: [
+                                    shape_type,
+                                    clip_index,
+                                    pivot_local[0],
+                                    pivot_local[1],
+                                ],
+                                // The sample coordinate comes from the shape frame
+                                // (uv_mode 1), so the image follows the transform.
+                                uv: [0.0, 0.0],
                                 shadow_index,
                                 extras: [
                                     0.0,
@@ -2298,8 +2274,9 @@ impl ViewportRenderer {
                                 nine_slice_frac: nine_frac,
                                 texture_transform_a: tt_a,
                                 texture_transform_b: tt_b,
-                                clip_index,
                                 clip_rect,
+                                linv: shape_frame.linv,
+                                item_params: [shape_frame.item_scale, 1.0, 0.0, 0.0],
                             });
                         }
                         tex_shape_segs.push((
@@ -2311,15 +2288,17 @@ impl ViewportRenderer {
                     } else if shape.style.backdrop.blur > 0.0 {
                         max_blur_radius = max_blur_radius.max(shape.style.backdrop.blur);
                         // Blur backdrop: same tex vertex layout but UV is screen-space.
-                        for (px, py, lx, ly) in corners_px {
+                        for (pos, local) in corners_px {
                             blur_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: overlay_local_px(px, py, vp_w, vp_h),
-                                local_pos: [lx, ly],
+                                position: overlay_local_px(pos[0], pos[1], vp_w, vp_h),
+                                local_pos: local,
                                 fill_colour: fc,
                                 half_size,
                                 radii,
-                                shape_type,
-                                uv: [px / vp_w, py / vp_h],
+                                shape_meta: [shape_type, -1.0, pivot_local[0], pivot_local[1]],
+                                // Screen-space sampling (uv_mode 2) of the blurred
+                                // scene; the vertex stage derives it.
+                                uv: [0.0, 0.0],
                                 shadow_index,
                                 // extras.x = 1.0 flags the blur path; yzw carry
                                 // the backdrop colour filters (saturation,
@@ -2336,45 +2315,45 @@ impl ViewportRenderer {
                                 texture_transform_b: [0.0, 0.0, 0.0, 0.0],
                                 // Backdrop blur is composited separately and is
                                 // not clipped by a mask.
-                                clip_index: -1.0,
                                 clip_rect: [0.0; 4],
+                                linv: shape_frame.linv,
+                                item_params: [shape_frame.item_scale, 2.0, 0.0, 0.0],
                             });
                         }
                     } else {
-                        // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
-
-                        let rotation_pivot = [
-                            shape.transform.rotation,
-                            shape.transform.pivot[0],
-                            shape.transform.pivot[1],
-                        ];
-                        let solid_seg_start = solid_verts.len() as u32;
-                        for (px, py, lx, ly) in corners_px {
-                            solid_verts.push(crate::resources::OverlayShapeVertex {
-                                position: overlay_local_px(px, py, vp_w, vp_h),
-                                local_pos: [lx, ly],
-                                fill_colour: fc,
-                                half_size,
-                                radii,
+                        let instance_start = solid_instances.len() as u32;
+                        solid_instances.push(crate::resources::OverlayShapeInstance {
+                            quad: shape_frame.quad,
+                            pivot_half: [shape_frame.pivot_px[0], shape_frame.pivot_px[1], hw, hh],
+                            linv: shape_frame.linv,
+                            fill_colour: fc,
+                            fill_colour2: fc2,
+                            radii,
+                            gradient_params: gp4,
+                            shadow_meta: [
+                                shadow_index[0],
+                                shadow_index[1],
+                                shadow_index[2],
                                 shape_type,
-                                fill_colour2: fc2,
-                                gradient_params: gp4,
-                                shadow_index,
-                                rotation_pivot,
-                                clip_rect,
+                            ],
+                            clip_rect,
+                            stop_colour_c: stop_colours[2],
+                            stop_colour_d: stop_colours[3],
+                            stop_positions,
+                            misc: [
                                 clip_index,
-                                stop_colour_c: stop_colours[2],
-                                stop_colour_d: stop_colours[3],
-                                stop_positions,
-                            });
-                        }
+                                pivot_local[0],
+                                pivot_local[1],
+                                shape_frame.item_scale,
+                            ],
+                        });
                         if ov.overlay_uses_zorder {
                             crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
                                 &mut ov.overlay_draw_segments,
                                 shape.z_order,
-                                solid_seg_start,
-                                solid_verts.len() as u32 - solid_seg_start,
+                                instance_start,
+                                1,
                             );
                         }
                     }
@@ -2488,8 +2467,8 @@ impl ViewportRenderer {
                     ));
                 }
 
-                let solid_vbuf = if !solid_verts.is_empty() {
-                    Some(ov.overlay_shape_vbuf.write(device, queue, &solid_verts))
+                let solid_ibuf = if !solid_instances.is_empty() {
+                    Some(ov.overlay_shape_vbuf.write(device, queue, &solid_instances))
                 } else {
                     None
                 };
@@ -2497,7 +2476,7 @@ impl ViewportRenderer {
                 // One shadow-layer texture per frame, read by all three shape
                 // pipelines. A layer is always present, even when no shape has
                 // shadows, so the binding has something to point at.
-                let shadow_tex = if solid_vbuf.is_some() || has_tex || has_blur {
+                let shadow_tex = if solid_ibuf.is_some() || has_tex || has_blur {
                     if shadow_layers.is_empty() {
                         shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                             colour: [0.0; 4],
@@ -2514,17 +2493,29 @@ impl ViewportRenderer {
                     None
                 };
 
-                let (shadow_bind_group, shape_clip_buf) =
-                    if let (true, Some(shadow)) = (solid_vbuf.is_some(), shadow_tex.as_ref()) {
-                        let clip_buf = ov.overlay_bindings.clip.write_changed(
-                            device,
-                            queue,
-                            clip_data(&clip_shapes),
-                        );
-                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                        let key = (shadow.clone(), clip_buf.clone(), vp_buf.clone());
-                        let cache = &mut ov.overlay_bindings.shape_shadow_bg;
-                        let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                let (shadow_bind_group, shape_clip_buf) = if let (true, Some(shadow)) =
+                    (solid_ibuf.is_some(), shadow_tex.as_ref())
+                {
+                    let clip_buf = ov.overlay_bindings.clip.write_changed(
+                        device,
+                        queue,
+                        clip_data(&clip_shapes),
+                    );
+                    let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                    let inst_buf = ov
+                        .overlay_bindings
+                        .instances_uniform
+                        .buffer()
+                        .expect("the identity instance is written before the shapes")
+                        .clone();
+                    let key = (
+                        shadow.clone(),
+                        clip_buf.clone(),
+                        vp_buf.clone(),
+                        inst_buf.clone(),
+                    );
+                    let cache = &mut ov.overlay_bindings.shape_shadow_bg;
+                    let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
                             cache.get(key, || {
                                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                 label: Some("overlay_shape_shadow_bg"),
@@ -2545,14 +2536,21 @@ impl ViewportRenderer {
                                         binding: 2,
                                         resource: vp_buf.as_entire_binding(),
                                     },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 3,
+                                        resource:
+                                            crate::resources::overlay::overlay_shape::group_instance_binding(
+                                                &inst_buf,
+                                            ),
+                                    },
                                 ],
                             })
                             })
                         });
-                        (bg, Some(clip_buf))
-                    } else {
-                        (None, None)
-                    };
+                    (bg, Some(clip_buf))
+                } else {
+                    (None, None)
+                };
 
                 let mut tex_batches = Vec::new();
                 // Maps a texture group index to its batch index in `tex_batches`
@@ -2695,10 +2693,10 @@ impl ViewportRenderer {
                     None
                 };
 
-                if solid_vbuf.is_some() || !tex_batches.is_empty() || blur_vbuf.is_some() {
+                if solid_ibuf.is_some() || !tex_batches.is_empty() || blur_vbuf.is_some() {
                     ov.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
-                        vertex_buf: solid_vbuf,
-                        vertex_count: solid_verts.len() as u32,
+                        instance_buf: solid_ibuf,
+                        instance_count: solid_instances.len() as u32,
                         shadow_bind_group,
                         _shadow_tex: shadow_tex,
                         _clip_buf: shape_clip_buf,

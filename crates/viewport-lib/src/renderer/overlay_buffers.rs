@@ -245,8 +245,11 @@ pub(crate) struct OverlayBindings {
     /// a uniform array of `MAX_OVERLAY_CLIP_SHAPES`.
     pub clip: GrowBuffer,
     /// Slot 0 identity plus one instance per retained group, bound as the
-    /// per-instance vertex stream of the text and shape pipelines.
+    /// per-instance vertex stream of the text pipeline.
     pub instances: GrowBuffer,
+    /// The same instances, one per `INSTANCE_UNIFORM_STRIDE` bytes, bound by
+    /// the shape pipeline as a uniform at a dynamic offset.
+    pub instances_uniform: GrowBuffer,
     /// Shape shadow layers, read by all three shape pipelines.
     pub shape_shadow: ShadowLayerTexture,
     pub label_bg: crate::resources::cached_bind_group::CachedBindGroup<(
@@ -258,6 +261,7 @@ pub(crate) struct OverlayBindings {
         crate::gpu::TextureView,
         crate::gpu::Buffer,
         crate::gpu::Buffer,
+        crate::gpu::Buffer,
     )>,
     pub tex_clip_bg: crate::resources::cached_bind_group::CachedBindGroup<(
         crate::gpu::Buffer,
@@ -267,7 +271,7 @@ pub(crate) struct OverlayBindings {
     /// Per retained group, keyed by the group's own shadow-layer texture.
     pub retained_shape_bgs: std::collections::HashMap<
         crate::gpu::TextureView,
-        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 2]>,
+        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 3]>,
     >,
     /// Per overlay texture.
     pub tex_bgs: std::collections::HashMap<crate::gpu::TextureView, crate::gpu::BindGroup>,
@@ -281,6 +285,10 @@ impl OverlayBindings {
                 crate::resources::overlay::overlay_shape::CLIP_UNIFORM_BYTES,
             ),
             instances: GrowBuffer::vertex("overlay_instances_buf"),
+            instances_uniform: GrowBuffer::uniform(
+                "overlay_instances_uniform",
+                crate::resources::overlay::geometry::INSTANCE_UNIFORM_STRIDE,
+            ),
             shape_shadow: ShadowLayerTexture::new(),
             label_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             shape_shadow_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
@@ -302,13 +310,14 @@ pub(crate) struct RetainedDraw {
     pub instance_index: u32,
 }
 
-/// One retained group's SDF shape-stream draw: the group's cached shape vertex
-/// buffer, its count, a bind group (the group's shadow-layer texture plus the
-/// shared clip and viewport), and the per-draw instance index. Drawn through the
-/// overlay shape pipeline.
+/// One retained group's SDF shape-stream draw: the group's cached shape
+/// instance buffer, its count, a bind group (the group's shadow-layer texture
+/// plus the shared clip, viewport and group-instance uniform), and the index of
+/// its group instance, which the draw binds at a dynamic offset. Drawn through
+/// the overlay shape pipeline.
 pub(crate) struct RetainedShapeDraw {
-    pub vertex_buf: crate::gpu::Buffer,
-    pub vertex_count: u32,
+    pub instance_buf: crate::gpu::Buffer,
+    pub instance_count: u32,
     pub bind_group: crate::gpu::BindGroup,
     pub instance_index: u32,
 }

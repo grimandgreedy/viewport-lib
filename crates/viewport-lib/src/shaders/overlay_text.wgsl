@@ -35,35 +35,34 @@ struct Viewport {
 };
 @group(0) @binding(3) var<uniform> viewport: Viewport;
 
-// Per-draw instance: a group's per-frame translate, opacity, and outer clip,
-// from the instance stream; slot 0 is the identity immediate draws use.
+// Per-draw instance: a group's per-frame transform, opacity, tint and outer
+// clip, from the instance stream; slot 0 is the identity immediate draws use.
 struct OverlayInstance {
     translate:  vec2<f32>,
     opacity:    f32,
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
     tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
-    scale:      f32,        // per-frame uniform scale about the pivot
-    rotation:   f32,        // per-frame rotation in radians about the pivot
-    pivot_x:    f32,        // two scalars, not a vec2: a vec2 would align to 8
-    pivot_y:    f32,
+    linear:     vec4<f32>,  // the linear map about the pivot, row-major a b c d
+    pivot:      vec2<f32>,
+    aa_scale:   f32,        // mean scale of `linear`, for the shape shader
+    pad:        f32,
 };
 
-// One level of the composition contract: scale about the pivot, then rotate
-// about it, then translate. With the identity instance this returns `p`.
+// One level of the composition contract: the linear map about the pivot, then
+// the translation. With the identity instance this returns `p`.
 fn group_apply(p: vec2<f32>, inst: OverlayInstance) -> vec2<f32> {
-    let piv = vec2<f32>(inst.pivot_x, inst.pivot_y);
-    let d = (p - piv) * inst.scale;
-    let s = sin(inst.rotation);
-    let c = cos(inst.rotation);
-    return piv + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c) + inst.translate;
+    let d = p - inst.pivot;
+    let m = inst.linear;
+    return inst.pivot + vec2<f32>(m.x * d.x + m.y * d.y, m.z * d.x + m.w * d.y) + inst.translate;
 }
 // The per-draw instance as a per-instance vertex stream (see `OverlayInstance`).
 struct InstanceInput {
     @location(7) translate_opacity_clip: vec4<f32>,
     @location(8) clip_rect: vec4<f32>,
     @location(9) tint: vec4<f32>,
-    @location(10) scale_rotation_pivot: vec4<f32>,
+    @location(10) linear: vec4<f32>,
+    @location(11) pivot_aa: vec4<f32>,
 };
 
 fn read_instance(i: InstanceInput) -> OverlayInstance {
@@ -73,10 +72,10 @@ fn read_instance(i: InstanceInput) -> OverlayInstance {
         i.translate_opacity_clip.w,
         i.clip_rect,
         i.tint,
-        i.scale_rotation_pivot.x,
-        i.scale_rotation_pivot.y,
-        i.scale_rotation_pivot.z,
-        i.scale_rotation_pivot.w,
+        i.linear,
+        i.pivot_aa.xy,
+        i.pivot_aa.z,
+        i.pivot_aa.w,
     );
 }
 

@@ -28,10 +28,11 @@ pub(crate) mod family_rank {
 /// per-family buffers built by the overlay prepare passes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum OverlayDrawSource {
-    /// A sub-range of the solid (untextured) shape vertex buffer.
+    /// A sub-range of the solid (untextured) shape instance buffer, one
+    /// instance per shape.
     Shape {
-        vertex_start: u32,
-        vertex_count: u32,
+        instance_start: u32,
+        instance_count: u32,
     },
     /// A sub-range of one textured-shape batch's vertex buffer. `batch_index`
     /// selects the batch (and its texture bind group); `vertex_start` /
@@ -116,21 +117,21 @@ impl OverlayDrawSegment {
     pub fn push_shape(
         segments: &mut Vec<OverlayDrawSegment>,
         z_order: i32,
-        vertex_start: u32,
-        vertex_count: u32,
+        instance_start: u32,
+        instance_count: u32,
     ) {
-        if vertex_count == 0 {
+        if instance_count == 0 {
             return;
         }
         if let Some(last) = segments.last_mut() {
             if last.z_order == z_order && last.family_rank == family_rank::SHAPE {
                 if let OverlayDrawSource::Shape {
-                    vertex_start: ls,
-                    vertex_count: lc,
+                    instance_start: ls,
+                    instance_count: lc,
                 } = &mut last.source
                 {
-                    if *ls + *lc == vertex_start {
-                        *lc += vertex_count;
+                    if *ls + *lc == instance_start {
+                        *lc += instance_count;
                         return;
                     }
                 }
@@ -140,8 +141,8 @@ impl OverlayDrawSegment {
             z_order,
             family_rank: family_rank::SHAPE,
             source: OverlayDrawSource::Shape {
-                vertex_start,
-                vertex_count,
+                instance_start,
+                instance_count,
             },
         });
     }
@@ -235,8 +236,8 @@ mod tests {
             z_order: z,
             family_rank: rank,
             source: OverlayDrawSource::Shape {
-                vertex_start: 0,
-                vertex_count: 0,
+                instance_start: 0,
+                instance_count: 0,
             },
         }
     }
@@ -271,16 +272,16 @@ mod tests {
             z_order: 5,
             family_rank: family_rank::SHAPE,
             source: OverlayDrawSource::Shape {
-                vertex_start: 0,
-                vertex_count: 6,
+                instance_start: 0,
+                instance_count: 6,
             },
         };
         let b = OverlayDrawSegment {
             z_order: 5,
             family_rank: family_rank::SHAPE,
             source: OverlayDrawSource::Shape {
-                vertex_start: 6,
-                vertex_count: 6,
+                instance_start: 6,
+                instance_count: 6,
             },
         };
         let mut segs = vec![a, b];
@@ -321,8 +322,8 @@ mod tests {
         assert_eq!(
             segs[0].source,
             OverlayDrawSource::Shape {
-                vertex_start: 0,
-                vertex_count: 12,
+                instance_start: 0,
+                instance_count: 12
             }
         );
     }

@@ -983,7 +983,14 @@ impl OverlayShapeItem {
     /// whose `position` is that value, so the test frame matches where the shape
     /// draws.
     pub fn distance(&self, point: [f32; 2]) -> f32 {
-        let scale = self.transform.scale;
+        let uniform = self.transform.scale;
+        if !(uniform.is_finite() && uniform > 0.0) {
+            return f32::INFINITY;
+        }
+        let scale = self.transform.uniform_scale_factor();
+        let Some(inv) = self.transform.inverse_linear() else {
+            return f32::INFINITY;
+        };
         if !(scale.is_finite() && scale > 0.0) {
             return f32::INFINITY;
         }
@@ -994,19 +1001,18 @@ impl OverlayShapeItem {
         let dx = point[0] - cx;
         let dy = point[1] - cy;
         // Undo the item transform around the pivot (an offset from the shape
-        // centre): rotate by -rotation, then divide out the scale, so the SDF
-        // evaluates in the shape's own frame, matching the renderer.
-        let c = (-self.transform.rotation).cos();
-        let s = (-self.transform.rotation).sin();
+        // centre) with the inverse of its linear part, so the SDF evaluates in
+        // the shape's own frame, matching the renderer.
         let piv = self.transform.pivot;
         let rx = dx - piv[0];
         let ry = dy - piv[1];
-        let inv = 1.0 / scale;
         let p = [
-            (c * rx - s * ry) * inv + piv[0],
-            (s * rx + c * ry) * inv + piv[1],
+            inv[0][0] * rx + inv[0][1] * ry + piv[0],
+            inv[1][0] * rx + inv[1][1] * ry + piv[1],
         ];
         // The SDF is in the shape's own pixels; scale it back to screen pixels.
+        // Under a stretch or skew the factor is the map's mean scale, so the
+        // distance is approximate there and exact for a uniform scale.
         self.local_distance(p) * scale
     }
 
@@ -1357,6 +1363,7 @@ mod tests {
             rotation: 0.6,
             pivot: [15.0, -10.0],
             scale: 1.7,
+            ..OverlayTransform::IDENTITY
         };
         let s = shape_at(
             0.0,
