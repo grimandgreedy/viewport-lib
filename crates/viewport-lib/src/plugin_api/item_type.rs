@@ -1092,6 +1092,18 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ) {
     }
 
+    /// `false` when this frame's items have nothing for
+    /// [`paint_transparent`](Self::paint_transparent).
+    ///
+    /// Read after [`prepare`](Self::prepare). The renderer runs the OIT pass
+    /// when any plugin with items says `true`, so the default keeps a plugin
+    /// that never overrides this drawing there; a plugin that knows its frame
+    /// has no OIT draws returns `false` and, when nothing else is transparent,
+    /// the frame skips the pass and its composite.
+    fn draws_transparent(&self) -> bool {
+        true
+    }
+
     /// `true` when this plugin draws in the read-only-depth pass.
     ///
     /// The renderer opens that pass only when some plugin opts in;

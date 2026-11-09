@@ -11,11 +11,14 @@
 //! - writes depth: the opaque scene pass, through `paint`.
 //! - refractive: its own pass over a copy of the scene colour, through
 //!   `encode` at [`EncoderScope::AfterOpaque`].
-//! - blended with no soft fade and no refraction: the OIT pass, through
-//!   `paint_transparent`.
-//! - anything else transparent: the read-only-depth pass, through
-//!   `paint_depth_read`, which is the only one of the four that can sample
-//!   scene depth for the soft fade.
+//! - alpha or premultiplied blend in depth order, with no soft fade and no
+//!   refraction: the OIT pass, through `paint_transparent`.
+//! - anything else transparent, and every batch in painter's order: the
+//!   read-only-depth pass, through `paint_depth_read`, which is the only one
+//!   of the four that can sample scene depth for the soft fade. Painter
+//!   batches draw there last, sorted by layer and then by sort key; on the
+//!   LDR path, which has no such pass, they draw in `paint` after the
+//!   depth-writing batches.
 //!
 //! The data types here build without the `gpu` feature; the plugin and its
 //! upload calls need it.
@@ -26,12 +29,18 @@
 mod types;
 
 pub use types::{
-    SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
-    SpriteOrientation, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
+    SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrder, SpriteOrientation, SpriteSetId, SpriteSetRefItem,
+    SpriteSizeMode,
 };
 
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.sprite";
+
+/// The structs and helpers every sprite shader shares, spliced in front of
+/// each body.
+#[cfg(feature = "gpu")]
+const SPRITE_COMMON: &str = crate::item_types::shader::wgsl_source!("sprite_common");
 
 #[cfg(feature = "gpu")]
 pub mod channels;

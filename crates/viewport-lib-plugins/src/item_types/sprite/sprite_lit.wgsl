@@ -61,36 +61,7 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-struct SpriteUniform {
-    model:                  mat4x4<f32>,
-    world_space:            u32,
-    has_texture:            u32,
-    soft_particle_distance: f32,
-    orientation:            u32,
-    axis:                   vec3<f32>,
-    refraction_strength:    f32,
-    lit:                    u32,
-    normal_mode:            u32,   // 0=Spherical, 1=Flat, 2=NormalMap
-    has_normal_map:         u32,
-    ambient_scale:          f32,
-    roughness:              f32,
-    receive_shadows:        u32,
-    _pad_lit_b:             u32,
-    _pad_lit_c:             u32,
-};
-
 // `ShadowAtlas` comes from the shared shadow atlas section.
-
-struct SpriteInstance {
-    colour:        vec4<f32>,
-    size:          f32,
-    rotation:      f32,
-    soft_distance: f32,
-    _pad1:         f32,
-    uv_rect:       vec4<f32>,
-    velocity:      vec3<f32>,
-    _pad2:         f32,
-};
 
 @group(0) @binding(0) var<uniform>       camera:        Camera;
 @group(0) @binding(1) var                shadow_map:    texture_depth_2d;
@@ -129,17 +100,6 @@ struct VertexOut {
     @location(7)       facing_world:   vec3<f32>,
 };
 
-fn quad_corner(vi: u32) -> vec2<f32> {
-    switch vi {
-        case 0u: { return vec2<f32>(-1.0, -1.0); }
-        case 1u: { return vec2<f32>( 1.0, -1.0); }
-        case 2u: { return vec2<f32>(-1.0,  1.0); }
-        case 3u: { return vec2<f32>(-1.0,  1.0); }
-        case 4u: { return vec2<f32>( 1.0, -1.0); }
-        default: { return vec2<f32>( 1.0,  1.0); }
-    }
-}
-
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
@@ -154,6 +114,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
         c * corner.x - s * corner.y,
         s * corner.x + c * corner.y,
     );
+    let offset = sprite_offset(corner, inst);
 
     let cam_right_default = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
     let cam_up_default    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
@@ -189,18 +150,16 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     var quad_world_pos = world_pos;
     if sprite_ub.world_space != 0u {
-        let half = inst.size * 0.5;
         quad_world_pos = world_pos
-                       + local_right * (rotated.x * half * stretch_x)
-                       + local_up    * (rotated.y * half);
+                       + local_right * (offset.x * stretch_x)
+                       + local_up    * offset.y;
         out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
         let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let half_px = inst.size * 0.5;
         let inv_vp  = vec2<f32>(1.0, 1.0)
                     / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         if sprite_ub.orientation == 0u {
-            let ndc_off = rotated * half_px * inv_vp;
+            let ndc_off = offset * inv_vp;
             out.clip_pos = vec4<f32>(
                 centre.x + ndc_off.x * centre.w,
                 centre.y + ndc_off.y * centre.w,
@@ -210,8 +169,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
         } else {
             let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
             let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
-            let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
-                            + up_clip    * (rotated.y * half_px * inv_vp.y);
+            let offset_clip = right_clip * (offset.x * stretch_x * inv_vp.x)
+                            + up_clip    * (offset.y * inv_vp.y);
             out.clip_pos = centre + offset_clip * centre.w;
         }
         // Approximate world position on the screen-space quad for lighting.
@@ -220,6 +179,14 @@ fn vs_main(in: VertexIn) -> VertexOut {
         quad_world_pos = world_pos
                        + local_right * (rotated.x * stretch_x)
                        + local_up    *  rotated.y;
+    }
+
+    if (sprite_ub.flags & 1u) != 0u {
+        out.clip_pos = sprite_pixel_snap(
+            out.clip_pos,
+            camera.view_proj * vec4<f32>(world_pos, 1.0),
+            vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height),
+        );
     }
 
     out.world_pos = quad_world_pos;
@@ -356,7 +323,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     }
 
     if colour.a <= 0.001 { discard; }
-    return colour;
+    return sprite_blend_output(colour, sprite_ub.flags);
 }
 
 @fragment

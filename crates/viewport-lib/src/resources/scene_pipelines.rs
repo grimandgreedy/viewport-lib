@@ -331,9 +331,12 @@ impl SceneCorePipelines {
     ) -> Option<&crate::gpu::RenderPipeline> {
         use crate::renderer::SpriteBlend;
         self.hdr.as_ref()?.get(match blend {
-            SpriteBlend::AlphaBlend => HDR_TRANSPARENT,
             SpriteBlend::Additive => HDR_ADDITIVE,
             SpriteBlend::Premultiplied => HDR_PREMULTIPLIED,
+            // Mesh instances have no multiply or screen member; those draw as alpha.
+            SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => {
+                HDR_TRANSPARENT
+            }
         })
     }
 

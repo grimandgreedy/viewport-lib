@@ -2812,6 +2812,20 @@ impl ViewportRenderer {
             })
     }
 
+    /// `true` when a registered plugin with a non-empty collection this frame
+    /// says it has OIT draws. Gates the OIT pass and its composite for the
+    /// plugin side; a plugin that does not override
+    /// [`draws_transparent`](crate::plugin_api::ItemTypePlugin::draws_transparent)
+    /// counts whenever it has items.
+    pub(crate) fn any_plugin_draws_transparent(&self, frame: &FrameData) -> bool {
+        !self.item_type_plugins.is_empty()
+            && self.item_type_plugins.iter().any(|(name, plugin)| {
+                plugin.draws_transparent()
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
+            })
+    }
+
     /// `true` when the foreground pass has work this frame: submitted
     /// foreground items, or a registered foreground-drawing plugin with a
     /// non-empty collection.

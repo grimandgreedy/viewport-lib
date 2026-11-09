@@ -1,5 +1,5 @@
-//! GPU state for the sprite item type: the twelve blend/depth/lit render
-//! pipeline variants in each pass, the refractive pipeline and its scene-colour layout, the
+//! GPU state for the sprite item type: the blend/depth/lit render pipeline
+//! variants in each pass, the refractive pipeline and its scene-colour layout, the
 //! soft-particle depth layout and its fallback, the weighted-blended OIT
 //! pipelines, the pick pipeline, and the selection-outline mask pipeline. Each
 //! pipeline is built the first time a draw needs it.
@@ -12,62 +12,90 @@ use viewport_lib::plugin_api::builders::DualPipelineDesc;
 use viewport_lib::plugin_api::shared_wgsl;
 use viewport_lib::resources::DeviceResources;
 
-/// Sprite pipeline variant axes: depth-write, blend mode, and unlit vs
+/// How a sprite colour pipeline uses the depth buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SpriteDepth {
+    /// Tests and writes depth: the opaque scene pass.
+    Write,
+    /// Tests depth without writing it.
+    Test,
+    /// Neither tests nor writes: a painter batch drawn over everything.
+    Off,
+}
+
+impl SpriteDepth {
+    const ALL: [Self; 3] = [Self::Write, Self::Test, Self::Off];
+}
+
+/// Sprite pipeline variant axes: depth use, blend mode, and unlit vs
 /// `apply_scene_lighting`-lit shading. Kept separate from the mesh family's
 /// `PipelineKey` -- sprite's axes don't map onto `two_sided` / `cutout` /
-/// `no_discard_eligible`, and `blend` is three-valued, not boolean, so
+/// `no_discard_eligible`, and `blend` is five-valued, not boolean, so
 /// reusing that type would just be confusing field names for an unrelated
 /// set of axes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SpriteKey {
-    pub depth_write: bool,
+    pub depth: SpriteDepth,
     pub blend: viewport_lib::renderer::SpriteBlend,
     pub lit: bool,
 }
 
+/// Every blend a sprite pipeline is built for, in slot order.
+const BLENDS: [viewport_lib::renderer::SpriteBlend; 5] = [
+    viewport_lib::renderer::SpriteBlend::AlphaBlend,
+    viewport_lib::renderer::SpriteBlend::Additive,
+    viewport_lib::renderer::SpriteBlend::Premultiplied,
+    viewport_lib::renderer::SpriteBlend::Multiply,
+    viewport_lib::renderer::SpriteBlend::Screen,
+];
+
+/// Number of [`SpriteKey`] slots.
+const KEY_COUNT: usize = 3 * BLENDS.len() * 2;
+
 impl SpriteKey {
-    fn blend_index(self) -> usize {
-        match self.blend {
-            viewport_lib::renderer::SpriteBlend::AlphaBlend => 0,
-            viewport_lib::renderer::SpriteBlend::Additive => 1,
-            viewport_lib::renderer::SpriteBlend::Premultiplied => 2,
+    /// The key one batch's draw data selects.
+    pub fn of(sprite: &super::store::SpriteGpuData) -> Self {
+        let depth = match sprite.painter {
+            Some(p) if !p.depth_test => SpriteDepth::Off,
+            _ if sprite.depth_write => SpriteDepth::Write,
+            _ => SpriteDepth::Test,
+        };
+        Self {
+            depth,
+            blend: sprite.blend,
+            lit: sprite.lit,
         }
+    }
+
+    fn blend_index(self) -> usize {
+        BLENDS
+            .iter()
+            .position(|b| *b == self.blend)
+            .expect("every blend has a slot")
     }
 
     /// Every axis combination.
     pub fn all() -> impl Iterator<Item = SpriteKey> {
-        [
-            viewport_lib::renderer::SpriteBlend::AlphaBlend,
-            viewport_lib::renderer::SpriteBlend::Additive,
-            viewport_lib::renderer::SpriteBlend::Premultiplied,
-        ]
-        .into_iter()
-        .flat_map(|blend| {
+        BLENDS.into_iter().flat_map(|blend| {
             [false, true].into_iter().flat_map(move |lit| {
-                [false, true].into_iter().map(move |depth_write| SpriteKey {
-                    depth_write,
-                    blend,
-                    lit,
-                })
+                SpriteDepth::ALL
+                    .into_iter()
+                    .map(move |depth| SpriteKey { depth, blend, lit })
             })
         })
     }
 
-    /// Dense index in `0..12`, stable across calls.
+    /// Dense index in `0..KEY_COUNT`, stable across calls.
     fn slot(self) -> usize {
-        self.depth_write as usize + 2 * self.blend_index() + 6 * (self.lit as usize)
+        self.depth as usize + 3 * self.blend_index() + 3 * BLENDS.len() * (self.lit as usize)
     }
 
     /// The key at `slot`; the inverse of [`slot`](Self::slot).
     fn from_slot(slot: usize) -> Self {
         Self {
-            depth_write: slot & 1 != 0,
-            blend: match (slot / 2) % 3 {
-                0 => viewport_lib::renderer::SpriteBlend::AlphaBlend,
-                1 => viewport_lib::renderer::SpriteBlend::Additive,
-                _ => viewport_lib::renderer::SpriteBlend::Premultiplied,
-            },
-            lit: slot >= 6,
+            depth: SpriteDepth::ALL[slot % 3],
+            blend: BLENDS[(slot / 3) % BLENDS.len()],
+            lit: slot >= 3 * BLENDS.len(),
         }
     }
 }
@@ -116,9 +144,10 @@ impl SpritePass {
     const ALL: [Self; 3] = [Self::Ldr, Self::Scene, Self::DepthRead];
 }
 
-/// The 36 sprite colour pipelines: each [`SpriteKey`] for each
-/// [`SpritePass`], built the first time a draw selects it.
-pub(super) type SpritePipelines = viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, 36>;
+/// The sprite colour pipelines: each [`SpriteKey`] for each [`SpritePass`],
+/// built the first time a draw selects it.
+pub(super) type SpritePipelines =
+    viewport_lib::plugin_api::LazyPipelines<SpriteRecipe, { KEY_COUNT * 3 }>;
 
 /// Member index of `key` in `pass`.
 pub(super) fn sprite_index(key: SpriteKey, pass: SpritePass) -> usize {
@@ -139,6 +168,10 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
         viewport_lib::renderer::SpriteBlend::Premultiplied => {
             viewport_lib::plugin_api::builders::PREMULTIPLIED_BLEND
         }
+        // The fragment shapes its output for these two (see `sprite_blend_output`),
+        // so each is one fixed-function state.
+        viewport_lib::renderer::SpriteBlend::Multiply => MULTIPLY_BLEND,
+        viewport_lib::renderer::SpriteBlend::Screen => SCREEN_BLEND,
     };
     let (layout, shader, label) = if key.lit {
         (
@@ -161,8 +194,12 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
             blend: Some(blend),
             topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
-            depth_write: key.depth_write,
-            depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
+            depth_write: key.depth == SpriteDepth::Write,
+            depth_compare: if key.depth == SpriteDepth::Off {
+                viewport_lib::gpu::CompareFunction::Always
+            } else {
+                viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT
+            },
             sample_count: r.sample_count,
             // The depth-read pass's one target is the HDR colour.
             ldr_format: if pass == SpritePass::DepthRead {
@@ -177,6 +214,36 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
     )
 }
 
+/// `dst * src`: the fragment has already mixed its colour towards white by
+/// `1 - alpha`, so a transparent texel leaves the destination unchanged.
+const MULTIPLY_BLEND: viewport_lib::gpu::BlendState = viewport_lib::gpu::BlendState {
+    color: viewport_lib::gpu::BlendComponent {
+        src_factor: viewport_lib::gpu::BlendFactor::Zero,
+        dst_factor: viewport_lib::gpu::BlendFactor::Src,
+        operation: viewport_lib::gpu::BlendOperation::Add,
+    },
+    alpha: viewport_lib::gpu::BlendComponent {
+        src_factor: viewport_lib::gpu::BlendFactor::Zero,
+        dst_factor: viewport_lib::gpu::BlendFactor::One,
+        operation: viewport_lib::gpu::BlendOperation::Add,
+    },
+};
+
+/// `src + dst * (1 - src)`: the fragment has already premultiplied its colour
+/// by alpha.
+const SCREEN_BLEND: viewport_lib::gpu::BlendState = viewport_lib::gpu::BlendState {
+    color: viewport_lib::gpu::BlendComponent {
+        src_factor: viewport_lib::gpu::BlendFactor::One,
+        dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrc,
+        operation: viewport_lib::gpu::BlendOperation::Add,
+    },
+    alpha: viewport_lib::gpu::BlendComponent {
+        src_factor: viewport_lib::gpu::BlendFactor::Zero,
+        dst_factor: viewport_lib::gpu::BlendFactor::One,
+        operation: viewport_lib::gpu::BlendOperation::Add,
+    },
+};
+
 /// Members of [`SpritePassPipelines`].
 pub(super) const REFRACTION: usize = 0;
 pub(super) const PICK: usize = 1;
@@ -186,6 +253,11 @@ pub(super) const OIT: usize = 4;
 pub(super) const OIT_PREMULTIPLIED: usize = 5;
 pub(super) const OIT_LIT: usize = 6;
 pub(super) const OIT_LIT_PREMULTIPLIED: usize = 7;
+/// Pick for painter batches: drawn in painter order with `LessEqual`, so of
+/// two sprites at one depth the later (the one drawn on top) wins.
+pub(super) const PICK_PAINTER: usize = 8;
+/// Pick for painter batches that ignore scene depth.
+pub(super) const PICK_PAINTER_NO_TEST: usize = 9;
 
 /// The OIT member a sprite with these fields draws through.
 pub(super) fn oit_index(lit: bool, blend: viewport_lib::renderer::SpriteBlend) -> usize {
@@ -217,9 +289,9 @@ pub(super) struct SpritePassRecipe {
     depth_format: viewport_lib::gpu::TextureFormat,
 }
 
-/// The refractive, pick, outline mask, surface mask and four OIT pipelines,
-/// each built the first time a draw needs it.
-pub(super) type SpritePassPipelines = viewport_lib::plugin_api::LazyPipelines<SpritePassRecipe, 8>;
+/// The refractive, three pick, outline mask, surface mask and four OIT
+/// pipelines, each built the first time a draw needs it.
+pub(super) type SpritePassPipelines = viewport_lib::plugin_api::LazyPipelines<SpritePassRecipe, 10>;
 
 fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     let vertex_buffers = [position_layout()];
@@ -261,53 +333,64 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                 cache: None,
             },
         ),
-        PICK => viewport_lib::plugin_api::builders::render_pipeline(
-            &r.device,
-            viewport_lib::plugin_api::builders::RenderPipelineDesc {
-                label: "sprite_pick_pipeline",
-                layout: &r.pick_layout,
-                vertex_module: r.pick_shader.get(),
-                vertex_entry: "vs_main",
-                vertex_buffers: &vertex_buffers,
-                fragment: Some(viewport_lib::gpu::FragmentState {
-                    module: r.pick_shader.get(),
-                    entry_point: Some("fs_main"),
-                    targets: &[
-                        Some(viewport_lib::gpu::ColorTargetState {
-                            format: viewport_lib::gpu::TextureFormat::R32Uint,
-                            blend: None,
-                            write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                        }),
-                        Some(viewport_lib::gpu::ColorTargetState {
-                            format: viewport_lib::gpu::TextureFormat::R32Uint,
-                            blend: None,
-                            write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                        }),
-                        Some(viewport_lib::gpu::ColorTargetState {
-                            format: viewport_lib::gpu::TextureFormat::R32Uint,
-                            blend: None,
-                            write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                        }),
-                    ],
-                    compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: viewport_lib::gpu::PrimitiveState {
-                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
+        PICK | PICK_PAINTER | PICK_PAINTER_NO_TEST => {
+            viewport_lib::plugin_api::builders::render_pipeline(
+                &r.device,
+                viewport_lib::plugin_api::builders::RenderPipelineDesc {
+                    label: match i {
+                        PICK => "sprite_pick_pipeline",
+                        PICK_PAINTER => "sprite_pick_painter_pipeline",
+                        _ => "sprite_pick_painter_no_test_pipeline",
+                    },
+                    layout: &r.pick_layout,
+                    vertex_module: r.pick_shader.get(),
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &vertex_buffers,
+                    fragment: Some(viewport_lib::gpu::FragmentState {
+                        module: r.pick_shader.get(),
+                        entry_point: Some("fs_main"),
+                        targets: &[
+                            Some(viewport_lib::gpu::ColorTargetState {
+                                format: viewport_lib::gpu::TextureFormat::R32Uint,
+                                blend: None,
+                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                            }),
+                            Some(viewport_lib::gpu::ColorTargetState {
+                                format: viewport_lib::gpu::TextureFormat::R32Uint,
+                                blend: None,
+                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                            }),
+                            Some(viewport_lib::gpu::ColorTargetState {
+                                format: viewport_lib::gpu::TextureFormat::R32Uint,
+                                blend: None,
+                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
+                            }),
+                        ],
+                        compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(
+                        ),
+                    }),
+                    primitive: viewport_lib::gpu::PrimitiveState {
+                        topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                        r.depth_format,
+                        true,
+                        match i {
+                            PICK => viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
+                            PICK_PAINTER => viewport_lib::plugin_api::depth::DEPTH_COMPARE,
+                            _ => viewport_lib::gpu::CompareFunction::Always,
+                        },
+                    )),
+                    multisample: viewport_lib::gpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    cache: None,
                 },
-                depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
-                    r.depth_format,
-                    true,
-                    viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
-                )),
-                multisample: viewport_lib::gpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        ),
+            )
+        }
         OUTLINE_MASK => viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
             &r.device,
             "sprite_outline_mask_pipeline",
@@ -486,7 +569,7 @@ impl SpriteGpu {
             device,
             "sprite_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[super::SPRITE_COMMON],
                 crate::item_types::shader::wgsl_source!("sprite"),
             ),
         );
@@ -510,7 +593,7 @@ impl SpriteGpu {
             device,
             "sprite_refraction_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[super::SPRITE_COMMON],
                 crate::item_types::shader::wgsl_source!("sprite_refraction"),
             ),
         );
@@ -531,6 +614,7 @@ impl SpriteGpu {
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
                     shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+                    super::SPRITE_COMMON,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit"),
             ),
@@ -571,7 +655,7 @@ impl SpriteGpu {
             device,
             "sprite_oit_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[super::SPRITE_COMMON],
                 crate::item_types::shader::wgsl_source!("sprite_oit"),
             ),
         );
@@ -583,6 +667,7 @@ impl SpriteGpu {
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
                     shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+                    super::SPRITE_COMMON,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit_oit"),
             ),
@@ -602,7 +687,7 @@ impl SpriteGpu {
             device,
             "sprite_outline_mask_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[super::SPRITE_COMMON],
                 crate::item_types::shader::wgsl_source!("sprite_outline_mask"),
             ),
         );
@@ -631,7 +716,7 @@ impl SpriteGpu {
             device,
             "sprite_pick_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[super::SPRITE_COMMON],
                 crate::item_types::shader::wgsl_source!("sprite_pick"),
             ),
         );
@@ -643,9 +728,10 @@ impl SpriteGpu {
 
         let sample_count = resources.sample_count();
 
-        // The 12 (depth_write x blend x lit) keys in both formats. Sprites are
-        // billboards drawn with a `Less` depth test and no culling; each is
-        // built the first time a draw selects it.
+        // The (depth x blend x lit) keys in each pass. Sprites are billboards
+        // drawn with a `Less` depth test (or none, for a painter batch that
+        // asks for none) and no culling; each is built the first time a draw
+        // selects it.
         let pipelines: SpritePipelines = resources.lazy_pipelines(
             SpriteRecipe {
                 device: device.clone(),
@@ -696,11 +782,7 @@ impl SpriteGpu {
     /// either format. The outline, surface mask and pick passes wait for it,
     /// so a batch is never outlined, stamped or picked before it is drawn.
     pub(super) fn drawn(&self, sprite: &super::store::SpriteGpuData) -> bool {
-        let key = SpriteKey {
-            depth_write: sprite.depth_write,
-            blend: sprite.blend,
-            lit: sprite.lit,
-        };
+        let key = SpriteKey::of(sprite);
         let colour = SpritePass::ALL
             .into_iter()
             .any(|pass| self.pipelines.available(sprite_index(key, pass)));
@@ -768,11 +850,11 @@ mod tests {
         }
     }
 
-    /// `slot()` has to be a bijection onto `0..12`, or two keys collide and a
-    /// third slot is never written.
+    /// `slot()` has to be a bijection onto `0..KEY_COUNT`, or two keys
+    /// collide and a third slot is never written.
     #[test]
     fn slots_are_dense_and_unique() {
-        let mut seen = [false; 12];
+        let mut seen = [false; KEY_COUNT];
         let mut count = 0;
         for key in SpriteKey::all() {
             let slot = key.slot();
@@ -780,7 +862,7 @@ mod tests {
             seen[slot] = true;
             count += 1;
         }
-        assert_eq!(count, 12, "all() must yield exactly 12 keys");
+        assert_eq!(count, KEY_COUNT, "all() must yield exactly KEY_COUNT keys");
         assert!(seen.iter().all(|s| *s), "every slot must be claimed");
     }
 }

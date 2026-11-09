@@ -1338,7 +1338,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
                 item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-                item.sizes = sizes;
+                item.sizes = SpriteItem::square_sizes(sizes);
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
                 items.push(item);
@@ -1482,7 +1482,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
                 item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-                item.sizes = sizes;
+                item.sizes = SpriteItem::square_sizes(sizes);
                 item.default_size = 1.5;
                 item.size_mode = SpriteSizeMode::WorldSpace;
                 item.blend = SpriteBlend::AlphaBlend;
@@ -1523,7 +1523,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 .into_iter()
                 .map(Colour::from_linear_array)
                 .collect();
-            item.sizes = vec![radius * 2.0];
+            item.sizes = vec![[radius * 2.0; 2]];
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = false;
             item.refraction_strength = Some(app.sprite_state.distortion_strength);
@@ -2039,7 +2039,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.flame_tex);
             item.positions = positions;
-            item.sizes = sizes;
+            item.sizes = SpriteItem::square_sizes(sizes);
             item.default_colour = Colour::linear(1.0, 0.85, 0.55, 1.0);
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.blend = SpriteBlend::Additive;

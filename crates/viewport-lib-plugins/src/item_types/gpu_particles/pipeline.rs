@@ -20,9 +20,10 @@ pub(super) const MESH: usize = 2;
 /// The member of [`ParticlePipelines`] for a route, blend mode and format.
 pub(super) fn draw_index(route: usize, blend: SpriteBlend, hdr: bool) -> usize {
     let blend = match blend {
-        SpriteBlend::AlphaBlend => 0,
         SpriteBlend::Additive => 1,
         SpriteBlend::Premultiplied => 2,
+        // Particles have no multiply or screen pipeline; those draw as alpha.
+        SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => 0,
     };
     (route * 3 + blend) * 2 + hdr as usize
 }

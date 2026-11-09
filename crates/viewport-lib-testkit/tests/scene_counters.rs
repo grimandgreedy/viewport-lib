@@ -218,6 +218,9 @@ fn expected(name: &str) -> Option<Expected> {
         "pcss_sun" => e(7, 7, 7, 7, 84),
         // Ground, tube and cube; the section caps are not batch draws.
         "section_caps" => e(3, 3, 3, 3, 408),
+        // Three unlit quads under the sprites: two for the multiply and screen
+        // sprites to blend over, one nearer the camera than two painter sprites.
+        "sprites_2d" => e(3, 3, 3, 3, 6),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),

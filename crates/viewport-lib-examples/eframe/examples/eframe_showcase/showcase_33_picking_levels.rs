@@ -2105,7 +2105,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.sprite_positions.is_empty() {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.sprite_positions.clone();
-        s.sizes = app.pl_state.sprite_sizes.clone();
+        s.sizes = SpriteItem::square_sizes(app.pl_state.sprite_sizes.iter().copied());
         s.colours = app
             .pl_state
             .sprite_colours
@@ -2127,7 +2127,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.xo_sprite_positions.is_empty() {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.xo_sprite_positions.clone();
-        s.sizes = app.pl_state.xo_sprite_sizes.clone();
+        s.sizes = SpriteItem::square_sizes(app.pl_state.xo_sprite_sizes.iter().copied());
         s.colours = app
             .pl_state
             .xo_sprite_colours

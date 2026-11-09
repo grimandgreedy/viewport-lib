@@ -24,24 +24,28 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
         shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
         shared_wgsl::SHARED_CSM_WGSL,
         shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+        super::SPRITE_COMMON,
     ];
     vec![
-        ("sprite.wgsl", scene_shader(&[], wgsl_source!("sprite"))),
+        (
+            "sprite.wgsl",
+            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite")),
+        ),
         (
             "sprite_oit.wgsl",
-            scene_shader(&[], wgsl_source!("sprite_oit")),
+            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_oit")),
         ),
         (
             "sprite_pick.wgsl",
-            scene_shader(&[], wgsl_source!("sprite_pick")),
+            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_pick")),
         ),
         (
             "sprite_outline_mask.wgsl",
-            scene_shader(&[], wgsl_source!("sprite_outline_mask")),
+            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_outline_mask")),
         ),
         (
             "sprite_refraction.wgsl",
-            scene_shader(&[], wgsl_source!("sprite_refraction")),
+            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_refraction")),
         ),
         (
             "sprite_lit.wgsl",
@@ -108,6 +112,8 @@ pub struct SpritePlugin {
     pick_items: Vec<SpriteItem>,
     /// Selection-outline coverage for this frame.
     outlines: Vec<SpriteOutline>,
+    /// Indices into `frame` of the painter batches, in the order they draw.
+    painter_sequence: Vec<usize>,
     /// Each batch's item settings, parallel to `frame`, for the surface mask.
     frame_settings: Vec<viewport_lib::ItemSettings>,
     /// Per-batch group-2 pick-id bind groups, parallel to `frame`.
@@ -142,7 +148,7 @@ impl SpritePlugin {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
-        let binds = resolve_bindings(resources, layouts, item);
+        let binds = resolve_bindings(device, resources, layouts, item);
         build_sprite(device, queue, &binds, item, capacity)
     }
 
@@ -300,7 +306,7 @@ impl SpritePlugin {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
-        let binds = resolve_bindings(resources, layouts, &item);
+        let binds = resolve_bindings(device, resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();
         jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item, 0))
@@ -342,10 +348,12 @@ impl SpritePlugin {
                 continue;
             }
             let binds = store::resolve_bindings_for(
+                device,
                 resources,
                 layouts,
                 stored.draw.texture_id,
                 stored.draw.normal_texture_id,
+                stored.draw.filter,
                 false,
             );
             store::rebind_sprite(device, queue, &binds, stored);
@@ -400,10 +408,7 @@ impl SpritePlugin {
         for key in pipeline::SpriteKey::all() {
             let mut bound = false;
             for sprite in self.frame.iter().filter(|s| wanted(s)) {
-                if sprite.depth_write != key.depth_write
-                    || sprite.blend != key.blend
-                    || sprite.lit != key.lit
-                {
+                if pipeline::SpriteKey::of(sprite) != key {
                     continue;
                 }
                 if !bound {
@@ -426,6 +431,45 @@ impl SpritePlugin {
                 pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                 pass.draw(0..6, 0..sprite.sprite_count);
             }
+        }
+    }
+
+    /// Draw the painter batches in painter order, switching pipeline only
+    /// where consecutive batches differ.
+    fn draw_painter(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        target: pipeline::SpritePass,
+        group2: &viewport_lib::gpu::BindGroup,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = None;
+        for &i in &self.painter_sequence {
+            let sprite = &self.frame[i];
+            if !is_painter(sprite) {
+                continue;
+            }
+            let key = pipeline::SpriteKey::of(sprite);
+            let member = pipeline::sprite_index(key, target);
+            if bound != Some(member) {
+                // Still compiling: this batch draws next frame.
+                let Some(pl) = gpu.pipelines.get(member) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
+                pass.set_bind_group(2, group2, &[]);
+                bound = Some(member);
+            }
+            pass.set_bind_group(1, &sprite.bind_group, &[]);
+            if key.lit {
+                let normal_bg = sprite
+                    .lit_normal_bg
+                    .as_ref()
+                    .unwrap_or(&gpu.lit_fallback_bg);
+                pass.set_bind_group(3, normal_bg, &[]);
+            }
+            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+            pass.draw(0..6, 0..sprite.sprite_count);
         }
     }
 }
@@ -491,6 +535,7 @@ impl ItemTypePlugin for SpritePlugin {
         self.frame.clear();
         self.frame_settings.clear();
         self.outlines.clear();
+        self.painter_sequence.clear();
         self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
         let origin = ctx.world_origin();
@@ -521,7 +566,7 @@ impl ItemTypePlugin for SpritePlugin {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
-            let binds = resolve_bindings(ctx.resources, layouts, item);
+            let binds = resolve_bindings(device, ctx.resources, layouts, item);
             let mut stored = build_sprite(device, queue, &binds, item, 0);
             stored.rebase(queue, ctx.world_origin());
             let mut gd = stored.draw;
@@ -546,6 +591,7 @@ impl ItemTypePlugin for SpritePlugin {
                             }
                             _ => None,
                         })
+                        .filter_map(|idx| self.frame[frame_index].drawn_index(idx))
                         .collect();
                     if !instances.is_empty() {
                         self.outlines.push(SpriteOutline {
@@ -586,6 +632,17 @@ impl ItemTypePlugin for SpritePlugin {
             self.frame_settings.push(ref_item.settings);
         }
 
+        let painters: Vec<(usize, u32)> = self
+            .frame
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.painter.map(|p| (i, p.layer)))
+            .collect();
+        self.painter_sequence = store::painter_batch_order(painters.iter().map(|&(_, l)| l))
+            .into_iter()
+            .map(|k| painters[k].0)
+            .collect();
+
         // Group-2 pick-id bind groups, one per pickable batch.
         self.pick_bind_groups = self
             .frame
@@ -606,18 +663,31 @@ impl ItemTypePlugin for SpritePlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        if !self.frame.iter().any(is_opaque) {
-            return;
-        }
         // The depth attachment is writable in this pass and is the same buffer
         // the soft fade would sample, so group 2 gets the 1x1 fallback. A
         // depth-writing batch has no soft fade to lose by it.
-        let target = if ctx.is_hdr_pass() {
-            pipeline::SpritePass::Scene
-        } else {
-            pipeline::SpritePass::Ldr
-        };
-        self.draw_bucket(pass, target, &gpu.soft_fallback_bg, is_opaque);
+        if ctx.is_hdr_pass() {
+            if self.frame.iter().any(is_opaque) {
+                self.draw_bucket(
+                    pass,
+                    pipeline::SpritePass::Scene,
+                    &gpu.soft_fallback_bg,
+                    is_opaque,
+                );
+            }
+            return;
+        }
+        if self.frame.iter().any(is_opaque) {
+            self.draw_bucket(
+                pass,
+                pipeline::SpritePass::Ldr,
+                &gpu.soft_fallback_bg,
+                is_opaque,
+            );
+        }
+        // The LDR path has no later pass, so painter batches draw here, after
+        // the opaque ones, without the soft fade.
+        self.draw_painter(pass, pipeline::SpritePass::Ldr, &gpu.soft_fallback_bg);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -625,7 +695,11 @@ impl ItemTypePlugin for SpritePlugin {
     }
 
     fn draws_depth_read(&self) -> bool {
-        self.frame.iter().any(is_soft)
+        self.frame.iter().any(|s| is_soft(s) || is_painter(s))
+    }
+
+    fn draws_transparent(&self) -> bool {
+        self.frame.iter().any(|s| s.oit_eligible && !s.wireframe)
     }
 
     fn paint_depth_read(
@@ -645,6 +719,13 @@ impl ItemTypePlugin for SpritePlugin {
             pipeline::SpritePass::DepthRead,
             ctx.scene_depth_bind_group,
             is_soft,
+        );
+        // Painter batches last, in their own order: after every opaque draw and
+        // before transparency and post effects.
+        self.draw_painter(
+            pass,
+            pipeline::SpritePass::DepthRead,
+            ctx.scene_depth_bind_group,
         );
     }
 
@@ -953,18 +1034,31 @@ impl ItemTypePlugin for SpritePlugin {
             return;
         }
         let Some(gpu) = &self.gpu else { return };
-        let mut bound = false;
-        for (sprite, pick_bg) in self.frame.iter().zip(self.pick_bind_groups.iter()) {
-            let Some(pick_bg) = pick_bg else { continue };
+        // Depth-ordered batches first, then the painter batches in the order
+        // they were drawn, each through a pipeline that lets the later of two
+        // sprites at one depth win, as it did on screen.
+        let depth_ordered = (0..self.frame.len()).filter(|&i| self.frame[i].painter.is_none());
+        let order = depth_ordered.chain(self.painter_sequence.iter().copied());
+        let mut bound = None;
+        for i in order {
+            let sprite = &self.frame[i];
+            let Some(pick_bg) = &self.pick_bind_groups[i] else {
+                continue;
+            };
             if !gpu.drawn(sprite) {
                 continue;
             }
-            if !bound {
-                let Some(pl) = gpu.passes.get(pipeline::PICK) else {
-                    return;
+            let member = match sprite.painter {
+                None => pipeline::PICK,
+                Some(p) if p.depth_test => pipeline::PICK_PAINTER,
+                Some(_) => pipeline::PICK_PAINTER_NO_TEST,
+            };
+            if bound != Some(member) {
+                let Some(pl) = gpu.passes.get(member) else {
+                    continue;
                 };
                 pass.set_pipeline(pl);
-                bound = true;
+                bound = Some(member);
             }
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             pass.set_bind_group(2, pick_bg, &[]);
@@ -1006,15 +1100,21 @@ impl ItemTypePlugin for SpritePlugin {
 
     fn resolve_sub_object(
         &self,
-        _pick_id: PickId,
+        pick_id: PickId,
         primitive_index: u32,
         _world_pos: glam::Vec3,
         mask: PickMask,
     ) -> Option<SubObjectRef> {
-        // The pick fragment writes the sprite's instance index into the
-        // primitive channel; no device feature involved.
+        // The pick fragment writes the drawn instance index into the primitive
+        // channel; no device feature involved. A painter batch sorted by key
+        // draws its sprites out of the caller's order, so map back.
+        let index = self
+            .frame
+            .iter()
+            .find(|s| s.pick_id == pick_id)
+            .map_or(primitive_index, |s| s.source_index(primitive_index));
         mask.intersects(PickMask::INSTANCE)
-            .then_some(SubObjectRef::Instance(primitive_index))
+            .then_some(SubObjectRef::Instance(index))
     }
 }
 
@@ -1023,10 +1123,20 @@ fn is_opaque(s: &SpriteGpuData) -> bool {
     !s.wireframe && s.depth_write && s.refraction_strength <= 0.0
 }
 
-/// Batches that draw in the read-only-depth pass: transparent, needing the
-/// live scene depth for the soft fade, so neither OIT nor refraction.
+/// Batches that draw in the read-only-depth pass in submission order:
+/// transparent and neither OIT, refractive nor in painter's order.
 fn is_soft(s: &SpriteGpuData) -> bool {
-    !s.wireframe && !s.depth_write && s.refraction_strength <= 0.0 && !s.oit_eligible
+    !s.wireframe
+        && !s.depth_write
+        && s.refraction_strength <= 0.0
+        && !s.oit_eligible
+        && s.painter.is_none()
+}
+
+/// Batches that draw in painter's order: in the read-only-depth pass on the
+/// HDR path, after the opaque sprites in the scene pass on the LDR path.
+fn is_painter(s: &SpriteGpuData) -> bool {
+    !s.wireframe && s.refraction_strength <= 0.0 && s.painter.is_some()
 }
 
 /// Screen-space pick radius for one batch, matching how the vertex shader
@@ -1129,11 +1239,9 @@ fn sprite_quad_outlines_polyline(
 
     for i in 0..item.positions.len() {
         let world_pos = model.transform_point3(glam::Vec3::from(item.positions[i]));
-        let size = if i < item.sizes.len() {
-            item.sizes[i]
-        } else {
-            item.default_size
-        };
+        let size = item.sizes.get(i).copied().unwrap_or([item.default_size; 2]);
+        let pivot = item.pivots.get(i).copied().unwrap_or(item.default_pivot);
+        let pivot = [pivot[0] * 2.0 - 1.0, pivot[1] * 2.0 - 1.0];
         let rotation = if i < item.rotations.len() {
             item.rotations[i]
         } else {
@@ -1141,16 +1249,21 @@ fn sprite_quad_outlines_polyline(
         };
         let cos_r = rotation.cos();
         let sin_r = rotation.sin();
-        let half = size * 0.5;
+        let half = [size[0] * 0.5, size[1] * 0.5];
+        // The quad corner `(cx, cy)` relative to the pivot, scaled then rotated
+        // as the vertex shader does.
+        let offset = |cx: f32, cy: f32| {
+            let (qx, qy) = ((cx - pivot[0]) * half[0], (cy - pivot[1]) * half[1]);
+            (cos_r * qx - sin_r * qy, sin_r * qx + cos_r * qy)
+        };
 
         let mut pts: Vec<[f32; 3]> = Vec::with_capacity(5);
         let mut ok = true;
 
         if is_world_space {
             for (cx, cy) in CORNERS {
-                let rx = cos_r * cx - sin_r * cy;
-                let ry = sin_r * cx + cos_r * cy;
-                let p = world_pos + cam_right * (rx * half) + cam_up * (ry * half);
+                let (rx, ry) = offset(cx, cy);
+                let p = world_pos + cam_right * rx + cam_up * ry;
                 pts.push(p.to_array());
             }
         } else {
@@ -1162,11 +1275,10 @@ fn sprite_quad_outlines_polyline(
                 let ndc_centre =
                     glam::Vec3::new(clip_centre.x, clip_centre.y, clip_centre.z) / clip_centre.w;
                 for (cx, cy) in CORNERS {
-                    let rx = cos_r * cx - sin_r * cy;
-                    let ry = sin_r * cx + cos_r * cy;
+                    let (rx, ry) = offset(cx, cy);
                     let ndc = glam::Vec3::new(
-                        ndc_centre.x + rx * half / vw,
-                        ndc_centre.y + ry * half / vh,
+                        ndc_centre.x + rx / vw,
+                        ndc_centre.y + ry / vh,
                         ndc_centre.z,
                     );
                     let world_h = inv_view_proj * ndc.extend(1.0);

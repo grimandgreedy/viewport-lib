@@ -14,7 +14,7 @@
 //! These cover the batch a `SpriteSetId` names. The instance-set store keeps its
 //! own handle type and is not writable this way.
 
-use super::types::SpriteSetId;
+use super::types::{SpriteFlip, SpriteSetId};
 use viewport_lib::Colour;
 use viewport_lib::plugin_api::Channel;
 
@@ -28,10 +28,15 @@ use viewport_lib::plugin_api::Channel;
 pub struct Sprite {
     /// Final colour, multiplied into the texture sample.
     pub colour: Colour,
-    /// Size in the unit the batch's size mode measures in.
-    pub size: f32,
-    /// Rotation about the view axis, in radians.
+    /// Size as `[width, height]` in the unit the batch's size mode measures in.
+    pub size: [f32; 2],
+    /// Rotation about the view axis, in radians, about the pivot.
     pub rotation: f32,
+    /// The point of the quad at the sprite's position, in `0..=1` of the quad
+    /// from its bottom-left corner. `[0.5, 0.5]` is the centre.
+    pub pivot: [f32; 2],
+    /// Mirrors the UV rect horizontally and/or vertically.
+    pub flip: SpriteFlip,
     /// Soft-particle fade distance. `0.0` disables the fade for this sprite.
     pub soft_distance: f32,
     /// Sub-rectangle of the batch's texture as `[u0, v0, u1, v1]`. Use
@@ -42,12 +47,15 @@ pub struct Sprite {
 }
 
 impl Default for Sprite {
-    /// A white sprite of unit size, unrotated, covering its whole texture.
+    /// A white sprite of unit size, unrotated and unflipped, pivoted at its
+    /// centre, covering its whole texture.
     fn default() -> Self {
         Self {
             colour: Colour::WHITE,
-            size: 1.0,
+            size: [1.0, 1.0],
             rotation: 0.0,
+            pivot: [0.5, 0.5],
+            flip: SpriteFlip::NONE,
             soft_distance: 0.0,
             uv_rect: [0.0, 0.0, 1.0, 1.0],
             velocity: [0.0; 3],
@@ -60,8 +68,8 @@ impl Default for Sprite {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Positions;
 
-/// The interleaved per-sprite records: colour, size, rotation, soft-particle
-/// distance, uv rect and velocity.
+/// The interleaved per-sprite records: colour, size, rotation, pivot, flip,
+/// soft-particle distance, uv rect and velocity.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Sprites;
 

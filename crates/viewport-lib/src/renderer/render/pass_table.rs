@@ -237,7 +237,7 @@ impl ViewportRenderer {
             .any(|i| !i.settings.hidden && i.transparency.is_some())
             // Item-type plugins draw into the OIT pass through
             // `paint_transparent`.
-            || self.any_plugin_items_submitted(frame)
+            || self.any_plugin_draws_transparent(frame)
     }
 
     /// Whether any item-type plugin encodes at `scope`.

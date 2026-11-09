@@ -70,9 +70,10 @@ impl RibbonKey {
 
     fn blend_index(self) -> usize {
         match self.blend {
-            SpriteBlend::AlphaBlend => 0,
             SpriteBlend::Additive => 1,
             SpriteBlend::Premultiplied => 2,
+            // The store maps the overlay blends to alpha before keying.
+            SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => 0,
         }
     }
 
@@ -172,9 +173,11 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
     };
 
     let blend = match key.blend {
-        SpriteBlend::AlphaBlend => viewport_lib::gpu::BlendState::ALPHA_BLENDING,
         SpriteBlend::Additive => additive_blend,
         SpriteBlend::Premultiplied => premultiplied_blend,
+        SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => {
+            viewport_lib::gpu::BlendState::ALPHA_BLENDING
+        }
     };
     // Additive never writes depth: successive segments accumulate rather than
     // clipping each other where they overlap.

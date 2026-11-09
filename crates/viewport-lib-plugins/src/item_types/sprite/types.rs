@@ -1,5 +1,5 @@
 use viewport_lib_types::colour::Colour;
-use viewport_lib_types::material::ItemSettings;
+use viewport_lib_types::material::{ItemSettings, TextureFilter};
 use viewport_lib_types::render_item::SpriteBlend;
 
 viewport_lib_types::slot_handle! {
@@ -57,18 +57,32 @@ pub struct SpriteItem {
     /// Per-instance RGBA colour tints. Empty = use `default_colour` for all.
     /// Multiplied with the texture sample (or used directly when `texture_id` is `None`).
     pub colours: Vec<viewport_lib_types::colour::Colour>,
-    /// Per-instance sizes. Empty = use `default_size` for all.
-    /// Interpretation depends on `size_mode`.
-    pub sizes: Vec<f32>,
+    /// Per-instance sizes as `[width, height]` along the quad's right and up
+    /// axes. Empty = use `default_size` for all. Interpretation depends on
+    /// `size_mode`. [`SpriteItem::square_sizes`] builds the list from one edge
+    /// length per sprite.
+    pub sizes: Vec<[f32; 2]>,
     /// Per-instance rotation angles in radians, CCW around the camera-forward axis.
-    /// Empty = no rotation applied.
+    /// Empty = no rotation applied. The quad rotates about its pivot.
     pub rotations: Vec<f32>,
     /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions.
     /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
     pub uv_rects: Vec<[f32; 4]>,
+    /// Per-instance pivots: the point of the quad that sits at the sprite's
+    /// position, as `[x, y]` in `0..=1` of the quad (`[0, 0]` the bottom-left
+    /// corner, `[1, 1]` the top-right, along the quad's right and up axes).
+    /// Rotation and size act about it. Empty = `default_pivot` for all.
+    pub pivots: Vec<[f32; 2]>,
+    /// Pivot used when `pivots` is empty or shorter than `positions`.
+    /// Default `[0.5, 0.5]`, the quad's centre.
+    pub default_pivot: [f32; 2],
+    /// Per-instance flips, mirroring the sprite's UV rect horizontally and/or
+    /// vertically. Empty = no flip for all.
+    pub flips: Vec<SpriteFlip>,
     /// Fallback RGBA colour tint used when `colours` is empty. Default: opaque white.
     pub default_colour: viewport_lib_types::colour::Colour,
-    /// Default size when `sizes` is empty. Pixels (ScreenSpace) or world units (WorldSpace).
+    /// Default edge length when `sizes` is empty or shorter than `positions`:
+    /// a square sprite. Pixels (ScreenSpace) or world units (WorldSpace).
     pub default_size: f32,
     /// Whether sizes are in screen-space pixels or world-space units.
     pub size_mode: SpriteSizeMode,
@@ -135,8 +149,106 @@ pub struct SpriteItem {
     /// Directions, not colour, so upload it linear
     /// ([`TextureData::normal_map`](viewport_lib_types::data::texture::TextureData::normal_map)).
     pub normal_texture_id: Option<viewport_lib_types::ids::TextureId>,
+    /// How the batch's texture is filtered. Default [`TextureFilter::Linear`];
+    /// [`TextureFilter::Nearest`] keeps pixel art crisp under magnification.
+    pub filter: TextureFilter,
+    /// When `true`, each sprite's position is snapped to a whole device pixel
+    /// after projection, so pixel art drawn at an integer scale keeps every
+    /// texel on the pixel grid. Sprites whose size covers an odd number of
+    /// pixels need a pivot on a pixel boundary (a corner, say) to stay aligned.
+    /// Default `false`.
+    pub pixel_snap: bool,
+    /// How blended sprites in this batch are ordered against other blended
+    /// content. Default [`SpriteOrder::Depth`].
+    pub order: SpriteOrder,
+    /// Per-instance sort keys for [`SpriteOrder::Painter`]: within the batch,
+    /// lower keys draw first and higher keys draw on top. A top-down game
+    /// passes `-y` so sprites further down the screen cover the ones behind
+    /// them. Empty keeps submission order. Ignored by `SpriteOrder::Depth`.
+    ///
+    /// The batch is sorted when it is built: an uploaded set is sorted once,
+    /// and later ranged writes into it are not re-sorted.
+    pub sort_keys: Vec<f32>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
+}
+
+impl SpriteItem {
+    /// `sizes` for square sprites, from one edge length per sprite.
+    pub fn square_sizes(sizes: impl IntoIterator<Item = f32>) -> Vec<[f32; 2]> {
+        sizes.into_iter().map(|s| [s, s]).collect()
+    }
+}
+
+/// Which of a sprite's axes are mirrored. Flipping swaps the matching edges
+/// of the sprite's UV rect, so the quad, its pivot and its rotation are
+/// unchanged and only the image is mirrored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct SpriteFlip {
+    /// Mirror left to right.
+    pub horizontal: bool,
+    /// Mirror top to bottom.
+    pub vertical: bool,
+}
+
+impl SpriteFlip {
+    /// No flip.
+    pub const NONE: Self = Self {
+        horizontal: false,
+        vertical: false,
+    };
+    /// Mirrored left to right.
+    pub const HORIZONTAL: Self = Self {
+        horizontal: true,
+        vertical: false,
+    };
+    /// Mirrored top to bottom.
+    pub const VERTICAL: Self = Self {
+        horizontal: false,
+        vertical: true,
+    };
+    /// Mirrored on both axes.
+    pub const BOTH: Self = Self {
+        horizontal: true,
+        vertical: true,
+    };
+
+    /// `uv_rect` with the flipped edges swapped.
+    pub fn apply(self, uv_rect: [f32; 4]) -> [f32; 4] {
+        let [mut u0, mut v0, mut u1, mut v1] = uv_rect;
+        if self.horizontal {
+            std::mem::swap(&mut u0, &mut u1);
+        }
+        if self.vertical {
+            std::mem::swap(&mut v0, &mut v1);
+        }
+        [u0, v0, u1, v1]
+    }
+}
+
+/// How a batch's blended sprites are ordered against other blended content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpriteOrder {
+    /// The scene's usual rules: a depth-writing batch is ordered by the depth
+    /// buffer, and a blended one composites through order-independent
+    /// transparency (or, with a soft fade or a blend mode transparency cannot
+    /// carry, draws after the opaque scene in submission order).
+    #[default]
+    Depth,
+    /// Drawn in an exact order after the opaque scene, never through
+    /// order-independent transparency: batches by `layer` (lower first, then
+    /// submission order), and each batch's sprites by
+    /// [`SpriteItem::sort_keys`]. Depth writes are off whatever
+    /// `depth_write` says. Use for 2D scenes that stack cutouts.
+    Painter {
+        /// Layer order, for example the `order` of the scene layer the batch
+        /// belongs to. Lower layers draw first.
+        layer: u32,
+        /// When `true` the sprites still test against scene depth, so nearer
+        /// 3D geometry covers them; when `false` they draw over everything
+        /// already in the scene.
+        depth_test: bool,
+    },
 }
 
 /// How a lit sprite recovers a per-fragment normal for shading.
@@ -215,6 +327,9 @@ impl Default for SpriteItem {
             sizes: Vec::new(),
             rotations: Vec::new(),
             uv_rects: Vec::new(),
+            pivots: Vec::new(),
+            default_pivot: [0.5, 0.5],
+            flips: Vec::new(),
             default_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             default_size: 32.0,
             size_mode: SpriteSizeMode::ScreenSpace,
@@ -230,6 +345,10 @@ impl Default for SpriteItem {
             lit: false,
             lit_params: SpriteLitParams::default(),
             normal_texture_id: None,
+            filter: TextureFilter::Linear,
+            pixel_snap: false,
+            order: SpriteOrder::Depth,
+            sort_keys: Vec::new(),
             settings: ItemSettings::default(),
         }
     }

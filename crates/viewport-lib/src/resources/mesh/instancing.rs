@@ -612,7 +612,13 @@ impl DeviceResources {
             mesh_id,
             instance_count,
             bind_group,
-            blend: item.blend,
+            // Mesh instances have no multiply or screen member; those draw as alpha.
+            blend: match item.blend {
+                crate::renderer::SpriteBlend::Multiply | crate::renderer::SpriteBlend::Screen => {
+                    crate::renderer::SpriteBlend::AlphaBlend
+                }
+                other => other,
+            },
             instance_buf,
         })
     }

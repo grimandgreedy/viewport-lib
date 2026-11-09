@@ -31,6 +31,7 @@ pub mod rigs;
 pub mod section_caps;
 pub mod shadows;
 pub mod skinning;
+pub mod sprites_2d;
 pub mod textures;
 pub mod tone_mapping;
 
@@ -1102,6 +1103,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(grading::scenes());
     scenes.extend(tone_mapping::scenes());
     scenes.extend(occlusion::scenes());
+    scenes.extend(sprites_2d::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

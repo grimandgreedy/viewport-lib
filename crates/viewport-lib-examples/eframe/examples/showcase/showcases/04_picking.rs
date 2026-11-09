@@ -599,7 +599,7 @@ impl Showcase for PickingShowcase {
                 colours.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
             }
             self.sprites.positions = positions.clone();
-            self.sprites.sizes = sizes;
+            self.sprites.sizes = SpriteItem::square_sizes(sizes);
             self.sprites.colours = colours.into_iter().map(Colour::from_linear_array).collect();
             self.sprites.default_size = 24.0;
             self.sprites.depth_write = true;

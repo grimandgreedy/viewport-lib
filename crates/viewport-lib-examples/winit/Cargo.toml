@@ -64,6 +64,10 @@ name = "winit-camera2d"
 path = "examples/winit_camera2d/main.rs"
 
 [[example]]
+name = "winit-sprites-2d"
+path = "examples/winit_sprites_2d/main.rs"
+
+[[example]]
 name = "winit-basic-interaction"
 path = "examples/winit_basic_interaction/main.rs"
 

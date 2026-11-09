@@ -293,6 +293,20 @@ impl DeviceResources {
         self.scene_tier.material.slot_view(slot)
     }
 
+    /// A sampler with the wrap, filter and anisotropy `key` names, shared
+    /// with every other caller that asks for the same state.
+    ///
+    /// Use this when a plugin samples user textures with state other than
+    /// [`material_sampler`](Self::material_sampler)'s, such as nearest
+    /// filtering for pixel art. `key.lod_bias` is not applied.
+    pub fn sampler_for(
+        &self,
+        device: &crate::gpu::Device,
+        key: crate::scene::material::SamplerKey,
+    ) -> crate::gpu::Sampler {
+        self.scene_tier.material.resolve_sampler(device, key)
+    }
+
     /// Shared linear-repeat sampler used by the lib's material pipelines.
     ///
     /// Use this when building a plugin bind group that samples user

@@ -7,29 +7,6 @@
 // Group 1: SpriteUniform + texture + sampler + instance storage buffer
 //          (texture/sampler unused, but layout must match).
 
-struct SpriteUniform {
-    model:       mat4x4<f32>,
-    world_space: u32,
-    has_texture: u32,
-    _pad0:       u32,
-    _pad1:       u32,
-};
-
-// Must match the record the sprite store writes exactly: this is a storage
-// array, so a short struct changes the stride and every instance after the
-// first reads the wrong sprite's size.
-struct SpriteInstance {
-    colour:        vec4<f32>,
-    size:          f32,
-    rotation:      f32,
-    soft_distance: f32,
-    _pad1:         f32,
-    uv_rect:       vec4<f32>,
-    velocity:      vec3<f32>,
-    _pad2:         f32,
-};
-
-
 @group(1) @binding(0) var<uniform>       sprite_ub:     SpriteUniform;
 @group(1) @binding(1) var               sprite_texture: texture_2d<f32>;
 @group(1) @binding(2) var               sprite_sampler: sampler;
@@ -41,17 +18,6 @@ struct VertexIn {
     @builtin(instance_index) instance_index: u32,
 };
 
-fn quad_corner(vi: u32) -> vec2<f32> {
-    switch vi {
-        case 0u: { return vec2<f32>(-1.0, -1.0); }
-        case 1u: { return vec2<f32>( 1.0, -1.0); }
-        case 2u: { return vec2<f32>(-1.0,  1.0); }
-        case 3u: { return vec2<f32>(-1.0,  1.0); }
-        case 4u: { return vec2<f32>( 1.0, -1.0); }
-        default: { return vec2<f32>( 1.0,  1.0); }
-    }
-}
-
 @vertex
 fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     let inst = instance_buf[in.instance_index];
@@ -59,33 +25,35 @@ fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     let world_pos = (sprite_ub.model * vec4<f32>(in.position, 1.0)).xyz;
     let corner    = quad_corner(in.vertex_index);
 
-    let c = cos(inst.rotation);
-    let s = sin(inst.rotation);
-    let rotated = vec2<f32>(
-        c * corner.x - s * corner.y,
-        s * corner.x + c * corner.y,
-    );
+    let offset = sprite_offset(corner, inst);
 
+    var clip: vec4<f32>;
     if sprite_ub.world_space != 0u {
         let cam_right = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
         let cam_up    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
-        let half      = inst.size * 0.5;
         let ws_pos    = world_pos
-                      + cam_right * (rotated.x * half)
-                      + cam_up    * (rotated.y * half);
-        return camera.view_proj * vec4<f32>(ws_pos, 1.0);
+                      + cam_right * offset.x
+                      + cam_up    * offset.y;
+        clip = camera.view_proj * vec4<f32>(ws_pos, 1.0);
     } else {
         let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let half_px   = inst.size * 0.5;
-        let ndc_off   = rotated * half_px
+        let ndc_off   = offset
                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        return vec4<f32>(
+        clip = vec4<f32>(
             centre.x + ndc_off.x * centre.w,
             centre.y + ndc_off.y * centre.w,
             centre.z,
             centre.w,
         );
     }
+    if (sprite_ub.flags & 1u) != 0u {
+        clip = sprite_pixel_snap(
+            clip,
+            camera.view_proj * vec4<f32>(world_pos, 1.0),
+            vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height),
+        );
+    }
+    return clip;
 }
 
 @fragment

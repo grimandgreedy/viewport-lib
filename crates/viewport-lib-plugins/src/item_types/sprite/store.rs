@@ -116,15 +116,18 @@ pub(super) struct SpriteBindings {
 /// colour space. A missing or stale id binds the neutral fallback for the slot
 /// and clears the shader's `has_*` flag.
 pub(super) fn resolve_bindings(
+    device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     layouts: &SpriteLayouts,
     item: &super::types::SpriteItem,
 ) -> SpriteBindings {
     resolve_bindings_for(
+        device,
         resources,
         layouts,
         item.texture_id,
         item.normal_texture_id,
+        item.filter,
         true,
     )
 }
@@ -137,10 +140,12 @@ pub(super) fn resolve_bindings(
 /// reported when the batch was uploaded, and repeating it on every
 /// revalidation would spam the log.
 pub(super) fn resolve_bindings_for(
+    device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     layouts: &SpriteLayouts,
     texture_id: Option<viewport_lib::resources::TextureId>,
     normal_texture_id: Option<viewport_lib::resources::TextureId>,
+    filter: viewport_lib::TextureFilter,
     report: bool,
 ) -> SpriteBindings {
     use viewport_lib::resources::TextureRequirement;
@@ -174,7 +179,16 @@ pub(super) fn resolve_bindings_for(
         has_texture,
         normal_view,
         has_normal_map,
-        sampler: resources.material_sampler().clone(),
+        sampler: match filter {
+            viewport_lib::TextureFilter::Linear => resources.material_sampler().clone(),
+            viewport_lib::TextureFilter::Nearest => resources.sampler_for(
+                device,
+                viewport_lib::SamplerKey {
+                    filter: viewport_lib::TextureFilter::Nearest,
+                    ..Default::default()
+                },
+            ),
+        },
         bgl: layouts.bgl.clone(),
         lit_bgl: layouts.lit_bgl.clone(),
     }
@@ -204,23 +218,68 @@ pub(super) struct SpriteUniformData {
     ambient_scale: f32,
     roughness: f32,
     receive_shadows: u32,
-    _pad_lit_b: u32,
+    /// Bit 0: pixel snap. Bits 1-2: how the fragment shapes its output for the
+    /// fixed-function blend, [`BLEND_OUT_MULTIPLY`] or [`BLEND_OUT_SCREEN`].
+    flags: u32,
     _pad_lit_c: u32,
 }
 
+/// [`SpriteUniformData::flags`] bit: snap each sprite to whole device pixels.
+const FLAG_PIXEL_SNAP: u32 = 1;
+/// [`SpriteUniformData::flags`] blend output for `SpriteBlend::Multiply`.
+const BLEND_OUT_MULTIPLY: u32 = 1 << 1;
+/// [`SpriteUniformData::flags`] blend output for `SpriteBlend::Screen`.
+const BLEND_OUT_SCREEN: u32 = 2 << 1;
+
 /// The per-sprite record the shader reads, matching `SpriteInstance` in
-/// `sprite.wgsl`. 64 bytes each.
+/// `sprite_common.wgsl`. 64 bytes each.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GpuSpriteInstance {
     colour: [f32; 4],
-    size: f32,
+    size: [f32; 2],
     rotation: f32,
     soft_distance: f32,
-    _pad1: f32,
+    /// Already flipped: a flip swaps the rect's edges.
     uv_rect: [f32; 4],
     velocity: [f32; 3],
-    _pad2: f32,
+    /// The pivot as an offset from the quad centre in `-1..=1` of the half
+    /// size, two snorm16 values (x low, y high). Zero is the centre.
+    pivot: u32,
+}
+
+impl GpuSpriteInstance {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        colour: [f32; 4],
+        size: [f32; 2],
+        rotation: f32,
+        soft_distance: f32,
+        uv_rect: [f32; 4],
+        flip: super::types::SpriteFlip,
+        velocity: [f32; 3],
+        pivot: [f32; 2],
+    ) -> Self {
+        Self {
+            colour,
+            size,
+            rotation,
+            soft_distance: soft_distance.max(0.0),
+            uv_rect: flip.apply(uv_rect),
+            velocity,
+            pivot: pack_pivot(pivot),
+        }
+    }
+}
+
+/// Pack a `0..=1` pivot as two snorm16 offsets from the quad centre, so the
+/// default centre pivot packs to zero and the corners are exact.
+fn pack_pivot(pivot: [f32; 2]) -> u32 {
+    let snorm = |p: f32| {
+        let offset = (p * 2.0 - 1.0).clamp(-1.0, 1.0);
+        ((offset * 32767.0).round() as i16) as u16 as u32
+    };
+    snorm(pivot[0]) | (snorm(pivot[1]) << 16)
 }
 
 /// Bytes per element of the two writable sprite channels.
@@ -231,16 +290,16 @@ const SPRITE_STRIDE: u32 = std::mem::size_of::<GpuSpriteInstance>() as u32;
 pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(sprites.len() * SPRITE_STRIDE as usize);
     for s in sprites {
-        let record = GpuSpriteInstance {
-            colour: s.colour.to_linear_rgba(),
-            size: s.size,
-            rotation: s.rotation,
-            soft_distance: s.soft_distance.max(0.0),
-            _pad1: 0.0,
-            uv_rect: s.uv_rect,
-            velocity: s.velocity,
-            _pad2: 0.0,
-        };
+        let record = GpuSpriteInstance::new(
+            s.colour.to_linear_rgba(),
+            s.size,
+            s.rotation,
+            s.soft_distance,
+            s.uv_rect,
+            s.flip,
+            s.velocity,
+            s.pivot,
+        );
         bytes.extend_from_slice(bytemuck::bytes_of(&record));
     }
     bytes
@@ -260,6 +319,21 @@ pub(super) fn build_sprite(
     {
         let count = item.positions.len() as u32;
         let capacity = capacity.max(count);
+        let painter = match item.order {
+            super::types::SpriteOrder::Painter { layer, depth_test } => {
+                Some(PainterOrder { layer, depth_test })
+            }
+            super::types::SpriteOrder::Depth => None,
+        };
+        // A painter batch is drawn in sort-key order, so its records are
+        // written in that order; `order` maps a drawn index back to the
+        // caller's.
+        let order = if painter.is_some() {
+            painter_instance_order(&item.sort_keys, item.positions.len())
+        } else {
+            None
+        };
+        let source = |drawn: usize| order.as_ref().map_or(drawn, |o| o[drawn] as usize);
 
         // Position vertex buffer (one vec3 per sprite, instance-stepped).
         let mut positions = ContentBuffer::new(
@@ -269,42 +343,34 @@ pub(super) fn build_sprite(
             POSITION_STRIDE,
             capacity,
         );
-        let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&item.positions));
+        if order.is_some() {
+            let sorted: Vec<[f32; 3]> = (0..item.positions.len())
+                .map(|i| item.positions[source(i)])
+                .collect();
+            let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&sorted));
+        } else {
+            let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&item.positions));
+        }
 
         let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
-            .map(|i| GpuSpriteInstance {
-                colour: if i < item.colours.len() {
-                    item.colours[i].to_linear_rgba()
-                } else {
-                    item.default_colour.to_linear_rgba()
-                },
-                size: if i < item.sizes.len() {
-                    item.sizes[i]
-                } else {
-                    item.default_size
-                },
-                rotation: if i < item.rotations.len() {
-                    item.rotations[i]
-                } else {
-                    0.0
-                },
-                soft_distance: if i < item.soft_particle_distances.len() {
-                    item.soft_particle_distances[i].max(0.0)
-                } else {
-                    0.0
-                },
-                _pad1: 0.0,
-                uv_rect: if i < item.uv_rects.len() {
-                    item.uv_rects[i]
-                } else {
-                    [0.0, 0.0, 1.0, 1.0]
-                },
-                velocity: if i < item.velocities.len() {
-                    item.velocities[i]
-                } else {
-                    [0.0, 0.0, 0.0]
-                },
-                _pad2: 0.0,
+            .map(|drawn| {
+                let i = source(drawn);
+                GpuSpriteInstance::new(
+                    item.colours
+                        .get(i)
+                        .unwrap_or(&item.default_colour)
+                        .to_linear_rgba(),
+                    item.sizes.get(i).copied().unwrap_or([item.default_size; 2]),
+                    item.rotations.get(i).copied().unwrap_or(0.0),
+                    item.soft_particle_distances.get(i).copied().unwrap_or(0.0),
+                    item.uv_rects
+                        .get(i)
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 1.0, 1.0]),
+                    item.flips.get(i).copied().unwrap_or_default(),
+                    item.velocities.get(i).copied().unwrap_or([0.0; 3]),
+                    item.pivots.get(i).copied().unwrap_or(item.default_pivot),
+                )
             })
             .collect();
 
@@ -354,7 +420,12 @@ pub(super) fn build_sprite(
             ambient_scale: item.lit_params.ambient_scale,
             roughness: item.lit_params.roughness,
             receive_shadows: item.lit_params.receive_shadows as u32,
-            _pad_lit_b: 0,
+            flags: if item.pixel_snap { FLAG_PIXEL_SNAP } else { 0 }
+                | match item.blend {
+                    viewport_lib::renderer::SpriteBlend::Multiply => BLEND_OUT_MULTIPLY,
+                    viewport_lib::renderer::SpriteBlend::Screen => BLEND_OUT_SCREEN,
+                    _ => 0,
+                },
             _pad_lit_c: 0,
         };
         let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
@@ -418,6 +489,7 @@ pub(super) fn build_sprite(
             viewport_lib::renderer::SpriteBlend::AlphaBlend
                 | viewport_lib::renderer::SpriteBlend::Premultiplied
         ) && !item.depth_write
+            && painter.is_none()
             && item.soft_particle_distance.is_none_or(|d| d <= 0.0)
             && item.soft_particle_distances.is_empty()
             && item.refraction_strength.is_none_or(|s| s <= 0.0);
@@ -430,7 +502,11 @@ pub(super) fn build_sprite(
             texture_id: item.texture_id,
             normal_texture_id: item.normal_texture_id,
             uniform: uniform_data,
-            depth_write: item.depth_write,
+            // Painter's order never writes depth.
+            depth_write: item.depth_write && painter.is_none(),
+            painter,
+            instance_order: order.map(std::sync::Arc::from),
+            filter: item.filter,
             blend: item.blend,
             wireframe: false,
             refraction_strength: item.refraction_strength.filter(|s| *s > 0.0).unwrap_or(0.0),
@@ -627,8 +703,16 @@ pub(crate) struct SpriteGpuData {
     /// The uniform block as written, so a rebind can flip the `has_*` flags
     /// without rebuilding the batch from an item it no longer has.
     pub(crate) uniform: SpriteUniformData,
-    /// Whether this batch was submitted with `depth_write: true`.
+    /// Whether this batch writes depth: `depth_write: true` and not in
+    /// painter's order.
     pub(crate) depth_write: bool,
+    /// Set when the batch draws in painter's order.
+    pub(crate) painter: Option<PainterOrder>,
+    /// For a painter batch whose sort keys reordered it: the caller's index
+    /// of each drawn sprite. `None` when drawn and caller order agree.
+    pub(crate) instance_order: Option<std::sync::Arc<[u32]>>,
+    /// The filter the batch's sampler was resolved for, kept for rebinds.
+    pub(crate) filter: viewport_lib::TextureFilter,
     /// Blend mode requested by the host for this batch.
     pub(crate) blend: viewport_lib::renderer::SpriteBlend,
     /// When true, skip the billboard draw; the wireframe overlay polyline is rendered instead.
@@ -657,6 +741,60 @@ pub(crate) struct SpriteGpuData {
     pub(crate) oit_eligible: bool,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
+}
+
+/// Where a painter batch sits in the painter sequence and how it tests depth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PainterOrder {
+    pub(crate) layer: u32,
+    pub(crate) depth_test: bool,
+}
+
+impl SpriteGpuData {
+    /// The drawn index of the caller's sprite `index`.
+    pub(crate) fn drawn_index(&self, index: u32) -> Option<u32> {
+        match &self.instance_order {
+            None => (index < self.sprite_count).then_some(index),
+            Some(order) => order.iter().position(|&i| i == index).map(|d| d as u32),
+        }
+    }
+
+    /// The caller's index of drawn sprite `drawn`.
+    pub(crate) fn source_index(&self, drawn: u32) -> u32 {
+        match &self.instance_order {
+            None => drawn,
+            Some(order) => order.get(drawn as usize).copied().unwrap_or(drawn),
+        }
+    }
+}
+
+/// The order a painter batch draws its `count` sprites in: ascending sort key,
+/// ties and sprites past the end of `keys` (which sort as `0.0`) in caller
+/// order. `None` when that is the caller's order already.
+pub(crate) fn painter_instance_order(keys: &[f32], count: usize) -> Option<Vec<u32>> {
+    if keys.is_empty() {
+        return None;
+    }
+    let key = |i: u32| keys.get(i as usize).copied().unwrap_or(0.0);
+    let mut order: Vec<u32> = (0..count as u32).collect();
+    order.sort_by(|&a, &b| key(a).total_cmp(&key(b)));
+    order
+        .iter()
+        .enumerate()
+        .any(|(d, &i)| d as u32 != i)
+        .then_some(order)
+}
+
+/// The order painter batches draw in, from each batch's layer in submission
+/// order: ascending layer, submission order within a layer.
+pub(crate) fn painter_batch_order(layers: impl IntoIterator<Item = u32>) -> Vec<usize> {
+    let mut order: Vec<(u32, usize)> = layers
+        .into_iter()
+        .enumerate()
+        .map(|(i, l)| (l, i))
+        .collect();
+    order.sort_by_key(|&(layer, i)| (layer, i));
+    order.into_iter().map(|(_, i)| i).collect()
 }
 
 /// Whether every texture one stored batch's bind groups name is still
@@ -718,5 +856,47 @@ pub(super) fn rebind_sprite(
                 ],
             },
         ));
+    }
+}
+
+#[cfg(test)]
+mod painter_tests {
+    use super::*;
+
+    #[test]
+    fn instances_sort_by_key_and_keep_ties_in_caller_order() {
+        let keys = [3.0, -1.0, 3.0, 0.5];
+        assert_eq!(painter_instance_order(&keys, 4), Some(vec![1, 3, 0, 2]));
+        // Missing keys sort as zero.
+        assert_eq!(painter_instance_order(&[1.0], 3), Some(vec![1, 2, 0]));
+    }
+
+    #[test]
+    fn instances_already_in_order_need_no_permutation() {
+        assert_eq!(painter_instance_order(&[], 5), None);
+        assert_eq!(painter_instance_order(&[0.0, 1.0, 2.0], 3), None);
+    }
+
+    #[test]
+    fn batches_sort_by_layer_then_submission() {
+        assert_eq!(painter_batch_order([2, 0, 1, 0, 2]), vec![1, 3, 2, 0, 4]);
+    }
+
+    #[test]
+    fn layer_wins_over_key() {
+        // A batch on a lower layer draws first whatever its sprites' keys:
+        // the key orders sprites within a batch only.
+        let batches = painter_batch_order([1, 0]);
+        assert_eq!(batches, vec![1, 0]);
+        let back = painter_instance_order(&[9.0, 8.0], 2).unwrap();
+        let front = painter_instance_order(&[-9.0, -8.0], 2);
+        assert_eq!(back, vec![1, 0]);
+        assert_eq!(front, None);
+    }
+
+    #[test]
+    fn pivot_packs_centre_to_zero_and_corners_exactly() {
+        assert_eq!(pack_pivot([0.5, 0.5]), 0);
+        assert_eq!(pack_pivot([0.0, 1.0]), (0x8001u32) | (0x7fff << 16));
     }
 }

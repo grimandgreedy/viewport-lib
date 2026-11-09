@@ -612,7 +612,7 @@ impl ViewportRenderer {
                     .any(|i| !i.settings.hidden && i.transparency.is_some());
             // Item-type plugins may draw into the OIT pass through
             // `paint_transparent`.
-            let needs_oit = mesh_transparency || self.any_plugin_items_submitted(frame);
+            let needs_oit = mesh_transparency || self.any_plugin_draws_transparent(frame);
             if needs_oit {
                 if mesh_transparency {
                     self.resources.ensure_oit_mesh_pipelines(device);
@@ -1632,8 +1632,9 @@ impl ViewportRenderer {
                 .any(|i| !i.settings.hidden && i.transparency.is_some())
                 // Item-type plugins draw into the OIT pass through
                 // `paint_transparent` for any registered plugin with a
-                // non-empty submitted collection (mirrors `needs_oit` above).
-                || self.any_plugin_items_submitted(frame);
+                // non-empty submitted collection that has OIT draws (mirrors
+                // `needs_oit` above).
+                || self.any_plugin_draws_transparent(frame);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.

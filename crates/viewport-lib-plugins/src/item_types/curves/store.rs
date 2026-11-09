@@ -760,10 +760,18 @@ pub(super) fn build_ribbon(
         // pass, which writes no depth, so an opaque ribbon was invisible to
         // decals, soft particles and everything else that reads scene depth.
         // Mirrors the sprite rule, which gates on `depth_write` the same way.
+        // Ribbons have no multiply or screen pipeline; those draw as alpha.
+        let blend = match item.blend {
+            viewport_lib::renderer::SpriteBlend::Multiply
+            | viewport_lib::renderer::SpriteBlend::Screen => {
+                viewport_lib::renderer::SpriteBlend::AlphaBlend
+            }
+            other => other,
+        };
         let oit_eligible = !wireframe
             && !item.depth_write
             && matches!(
-                item.blend,
+                blend,
                 viewport_lib::renderer::SpriteBlend::AlphaBlend
                     | viewport_lib::renderer::SpriteBlend::Premultiplied
             );
@@ -776,7 +784,7 @@ pub(super) fn build_ribbon(
             edge_index_count,
             wireframe,
             uniform_bind_group,
-            blend: item.blend,
+            blend,
             pick_id: viewport_lib::renderer::PickId::NONE,
             model: [
                 [1.0, 0.0, 0.0, 0.0],
