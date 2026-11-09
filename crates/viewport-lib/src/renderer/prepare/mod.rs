@@ -198,6 +198,7 @@ impl ViewportRenderer {
         // alone: the presented frame it runs beside may still draw the old cells.
         if self.render_advances_state() {
             self.resources.content.glyph_atlas.evict_if_full();
+            self.resources.content.coverage_atlas.evict_if_full();
         }
 
         // Drain the upload-job runner. Worker results received since the last
@@ -1066,6 +1067,7 @@ impl ViewportRenderer {
         ov.overlay_retained_shape_draws.clear();
         ov.overlay_instances_ready = false;
         self.overlay_retained_counters = Default::default();
+        let vector_rasters_before = self.resources.content.coverage_atlas.rasters();
         self.prepare_overlay_labels(device, queue, frame, &mut ov);
         self.prepare_overlay_shapes(device, queue, frame, &mut ov);
         self.finalize_overlay_draw_order(device, queue, &mut ov);
@@ -1085,6 +1087,8 @@ impl ViewportRenderer {
         self.last_stats.overlay_retained_bytes =
             self.resources.content.overlay_geometry.allocated_bytes();
         self.last_stats.overlay_draw_calls = overlay_draw_calls;
+        self.last_stats.overlay_vector_rasters =
+            (self.resources.content.coverage_atlas.rasters() - vector_rasters_before) as u32;
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

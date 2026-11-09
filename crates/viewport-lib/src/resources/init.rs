@@ -266,6 +266,7 @@ impl DeviceResources {
             crate::resources::mesh::geometry_slab::GeometrySlab::new(device, geometry_chunk_bytes);
 
         let glyph_atlas = crate::resources::overlay::font::GlyphAtlas::new(device);
+        let coverage_atlas = crate::resources::overlay::coverage_atlas::CoverageAtlas::new(device);
         mark("glyph_atlas");
 
         // The scene tier: the layouts, bind groups and textures the scene
@@ -1682,6 +1683,7 @@ impl DeviceResources {
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas,
+                coverage_atlas,
                 overlay_textures: crate::resources::handle::SlotStore::default(),
                 overlay_geometry: crate::resources::handle::SlotStore::default(),
                 matcap_textures: Vec::new(),

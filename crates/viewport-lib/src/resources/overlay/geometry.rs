@@ -68,6 +68,9 @@ pub(crate) struct CompiledSource {
     pub labels: Vec<viewport_lib_types::overlay::LabelItem>,
     /// The atlas growth version the current geometry baked UVs against.
     pub baked_atlas_version: u64,
+    /// The coverage atlas's version the current geometry baked vector-shape
+    /// cell UVs against.
+    pub baked_coverage_version: u64,
     /// The `pixels_per_point` the current geometry baked glyphs at.
     pub baked_ppp: f32,
 }

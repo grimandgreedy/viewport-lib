@@ -64,16 +64,16 @@ fn names_unusable_mask(clip: &crate::renderer::types::OverlayClip, item: &str) -
     true
 }
 
-/// Emit a group's polyline and vector-shape fills into `verts` (local logical
-/// pixels), recording their gradient fills in `fills`. These are viewport- and
-/// DPI-independent, so they are emitted once and never need re-emission.
+/// Emit a group's polylines into `verts` (local logical pixels), recording
+/// their gradient fills in `fills`. These are viewport- and DPI-independent
+/// (their fringes are sized in the vertex shader), so they are emitted once and
+/// never need re-emission.
 ///
 /// A compiled group draws with no image bound, so an image fill on a polyline
 /// or a vector path is not drawn.
 fn emit_base(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     polylines: &[crate::renderer::types::OverlayPolylineItem],
-    vector_shapes: &[crate::renderer::types::OverlayShapeItem],
     ppp: f32,
     fills: &mut super::overlay_fill::FillTable,
 ) {
@@ -173,6 +173,22 @@ fn emit_base(
         }
         bake_clip_rect(verts, &poly.clip, item_start, ppp);
     }
+}
+
+/// Emit a group's vector shapes into `verts`, after its polylines. With an
+/// atlas, a shape small enough draws its fill from the coverage atlas (and the
+/// group then re-emits with the atlas, as glyphs do); without one every fill is
+/// tessellated.
+fn emit_vector_shapes(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    vector_shapes: &[crate::renderer::types::OverlayShapeItem],
+    ppp: f32,
+    fills: &mut super::overlay_fill::FillTable,
+    mut atlas: Option<(
+        &mut crate::resources::overlay::coverage_atlas::CoverageAtlas,
+        &crate::gpu::Device,
+    )>,
+) {
     for shape in vector_shapes {
         if shape.style.opacity <= 0.0 || names_unusable_mask(&shape.clip, "vector shape") {
             continue;
@@ -183,8 +199,16 @@ fn emit_base(
         } = &shape.shape
         {
             let item_start = verts.len();
+            let va = atlas
+                .as_mut()
+                .map(|(atlas, device)| viewport_overlays::VectorAtlas {
+                    atlas,
+                    device,
+                    ppp,
+                    max_px: viewport_overlays::VECTOR_ATLAS_MAX_RETAINED_PX,
+                });
             viewport_overlays::emit_vector_shape(
-                verts, shape, subpaths, *fill_rule, 0.0, 0.0, fills, None,
+                verts, shape, subpaths, *fill_rule, 0.0, 0.0, fills, None, va,
             );
             bake_clip_rect(verts, &shape.clip, item_start, ppp);
         }
@@ -517,19 +541,22 @@ fn emit_label(
 }
 
 /// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh
-/// vertex list, returning it with its fill records and the atlas version it
-/// baked glyph UVs against.
+/// vertex list, returning it with its fill records and the versions of the
+/// glyph and coverage atlases it baked UVs against.
 ///
-/// Glyph UVs divide by the atlas size, so if rasterizing this group's glyphs grows
-/// the atlas, glyphs emitted before the grow carry a stale divisor. The loop
-/// re-emits the glyph portion once the atlas has stopped growing (all this group's
-/// glyphs are then resident), so the returned geometry always uses a single,
-/// final atlas size. The base (polyline/vector) portion is emitted once.
+/// Glyph and coverage-cell UVs divide by the atlas size, so if rasterizing this
+/// group's glyphs or cells grows an atlas, what was emitted before the grow
+/// carries a stale divisor. The loop re-emits the atlas-backed portion once
+/// both atlases have stopped growing (all this group's glyphs and cells are
+/// then resident), so the returned geometry always uses a single, final atlas
+/// size. The polylines are emitted once, and so are the vector shapes when
+/// none of them draws from the coverage atlas.
 ///
 /// `label_leaders` is passed through to each label's `emit_label`: true for a
 /// self-anchoring label group, false for fixed-local labels in a mixed group.
 pub(super) fn emit_group_verts(
     atlas: &mut crate::resources::overlay::font::GlyphAtlas,
+    coverage: &mut crate::resources::overlay::coverage_atlas::CoverageAtlas,
     device: &crate::gpu::Device,
     polylines: &[crate::renderer::types::OverlayPolylineItem],
     vector_shapes: &[crate::renderer::types::OverlayShapeItem],
@@ -540,29 +567,32 @@ pub(super) fn emit_group_verts(
 ) -> (
     Vec<crate::resources::OverlayTextVertex>,
     super::overlay_fill::FillTable,
-    u64,
+    (u64, u64),
 ) {
     let mut base = Vec::new();
     let mut base_fills = super::overlay_fill::FillTable::without_textures();
-    emit_base(&mut base, polylines, vector_shapes, ppp, &mut base_fills);
+    emit_base(&mut base, polylines, ppp, &mut base_fills);
 
-    // Fast path: no glyph-bearing content (runs or labels), nothing grows the atlas.
-    let has_glyphs = glyph_runs
-        .iter()
-        .any(|r| !r.glyphs.is_empty() && r.style.opacity > 0.0)
-        || labels
-            .iter()
-            .any(|l| !l.text.is_empty() && l.style.opacity > 0.0);
-    if !has_glyphs {
-        return (base, base_fills, atlas.version());
+    // Fast path: nothing draws from the atlas, so nothing grows it and the
+    // vector shapes are as fixed as the polylines.
+    if !group_uses_atlas(vector_shapes, glyph_runs, labels, ppp) {
+        emit_vector_shapes(&mut base, vector_shapes, ppp, &mut base_fills, None);
+        return (base, base_fills, (atlas.version(), coverage.version()));
     }
 
     // A doubling atlas stabilises in a few iterations; the guard bounds it.
     let mut guard = 0;
     loop {
-        let v0 = atlas.version();
+        let v0 = (atlas.version(), coverage.version());
         let mut verts = base.clone();
         let mut fills = base_fills.clone();
+        emit_vector_shapes(
+            &mut verts,
+            vector_shapes,
+            ppp,
+            &mut fills,
+            Some((&mut *coverage, device)),
+        );
         for run in glyph_runs {
             emit_glyph_run(&mut verts, atlas, device, run, ppp, &mut fills);
         }
@@ -578,8 +608,8 @@ pub(super) fn emit_group_verts(
             );
         }
         guard += 1;
-        if atlas.version() == v0 || guard >= 8 {
-            let v1 = atlas.version();
+        let v1 = (atlas.version(), coverage.version());
+        if v1 == v0 || guard >= 8 {
             return (verts, fills, v1);
         }
     }
@@ -808,6 +838,27 @@ fn group_bounds(
     any.then_some((min, max))
 }
 
+/// Whether a group draws anything from the glyph atlas: glyphs, or a vector
+/// shape small enough to draw its fill from a coverage cell. Such a group bakes
+/// atlas UVs at `ppp`, so it keeps its source and re-emits when the atlas grows
+/// or is cleared, or the pixels per point change.
+fn group_uses_atlas(
+    vector_shapes: &[crate::renderer::types::OverlayShapeItem],
+    glyph_runs: &[crate::renderer::types::GlyphRunItem],
+    labels: &[crate::renderer::types::LabelItem],
+    ppp: f32,
+) -> bool {
+    glyph_runs
+        .iter()
+        .any(|r| !r.glyphs.is_empty() && r.style.opacity > 0.0)
+        || labels
+            .iter()
+            .any(|l| !l.text.is_empty() && l.style.opacity > 0.0)
+        || vector_shapes
+            .iter()
+            .any(|s| viewport_overlays::retained_vector_uses_atlas(s, ppp))
+}
+
 impl ViewportRenderer {
     /// Compile a group of polylines, vector shapes, glyph runs, and labels into a
     /// retained overlay-geometry handle.
@@ -822,8 +873,10 @@ impl ViewportRenderer {
     /// [`free_overlay_geometry`](Self::free_overlay_geometry).
     ///
     /// `pixels_per_point` must match the frame's; glyphs rasterize at
-    /// `font_size * pixels_per_point`. A group that carries glyphs (in a run or a
-    /// label) is re-emitted automatically when the atlas grows or the frame's
+    /// `font_size * pixels_per_point`, and so does the coverage of a vector
+    /// shape small enough (512 device pixels a side) to draw its fill from a
+    /// coverage cell rather than as triangles. A group that carries either is
+    /// re-emitted automatically when an atlas grows or the frame's
     /// `pixels_per_point` changes, so callers only re-compile when their own text,
     /// style, or width changes.
     ///
@@ -870,15 +923,11 @@ impl ViewportRenderer {
         labels: &[crate::renderer::types::LabelItem],
         pixels_per_point: f32,
     ) -> crate::renderer::OverlayGeometryId {
-        let has_glyphs = glyph_runs
-            .iter()
-            .any(|r| !r.glyphs.is_empty() && r.style.opacity > 0.0)
-            || labels
-                .iter()
-                .any(|l| !l.text.is_empty() && l.style.opacity > 0.0);
+        let has_glyphs = group_uses_atlas(vector_shapes, glyph_runs, labels, pixels_per_point);
 
         let (verts, text_fills, baked_version) = emit_group_verts(
             &mut self.resources.content.glyph_atlas,
+            &mut self.resources.content.coverage_atlas,
             device,
             polylines,
             vector_shapes,
@@ -891,6 +940,7 @@ impl ViewportRenderer {
         let (text_fill_tex, text_fill_bytes) = compiled_fill_records(device, queue, &text_fills);
         // Upload any newly rasterized glyphs so the atlas texture has them.
         self.resources.content.glyph_atlas.upload_if_dirty(queue);
+        self.resources.content.coverage_atlas.upload_if_dirty(queue);
 
         let bytes = std::mem::size_of_val(&verts[..]) as u64;
         let vertex_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -963,7 +1013,8 @@ impl ViewportRenderer {
             vector_shapes: vector_shapes.to_vec(),
             glyph_runs: glyph_runs.to_vec(),
             labels: labels.to_vec(),
-            baked_atlas_version: baked_version,
+            baked_atlas_version: baked_version.0,
+            baked_coverage_version: baked_version.1,
             baked_ppp: pixels_per_point,
         });
 
@@ -1024,6 +1075,7 @@ impl ViewportRenderer {
     ) -> crate::renderer::OverlayGeometryId {
         let (verts, text_fills, baked_version) = emit_group_verts(
             &mut self.resources.content.glyph_atlas,
+            &mut self.resources.content.coverage_atlas,
             device,
             &[],
             &[],
@@ -1035,6 +1087,7 @@ impl ViewportRenderer {
             pixels_per_point,
         );
         self.resources.content.glyph_atlas.upload_if_dirty(queue);
+        self.resources.content.coverage_atlas.upload_if_dirty(queue);
         let (text_fill_tex, text_fill_bytes) = compiled_fill_records(device, queue, &text_fills);
 
         let bytes = std::mem::size_of_val(&verts[..]) as u64;
@@ -1053,7 +1106,8 @@ impl ViewportRenderer {
             vector_shapes: Vec::new(),
             glyph_runs: Vec::new(),
             labels: vec![label.clone()],
-            baked_atlas_version: baked_version,
+            baked_atlas_version: baked_version.0,
+            baked_coverage_version: baked_version.1,
             baked_ppp: pixels_per_point,
         };
 
@@ -1097,9 +1151,14 @@ impl ViewportRenderer {
         ppp: f32,
     ) -> bool {
         let current_version = self.resources.content.glyph_atlas.version();
+        let current_coverage = self.resources.content.coverage_atlas.version();
         let stale = match self.resources.content.overlay_geometry.get(id) {
             Some(c) => match &c.source {
-                Some(src) => src.baked_atlas_version != current_version || src.baked_ppp != ppp,
+                Some(src) => {
+                    src.baked_atlas_version != current_version
+                        || src.baked_coverage_version != current_coverage
+                        || src.baked_ppp != ppp
+                }
                 None => false,
             },
             None => false,
@@ -1119,6 +1178,7 @@ impl ViewportRenderer {
             .unwrap();
         let (verts, text_fills, baked_version) = emit_group_verts(
             &mut self.resources.content.glyph_atlas,
+            &mut self.resources.content.coverage_atlas,
             device,
             &src.polylines,
             &src.vector_shapes,
@@ -1128,6 +1188,7 @@ impl ViewportRenderer {
             ppp,
         );
         self.resources.content.glyph_atlas.upload_if_dirty(queue);
+        self.resources.content.coverage_atlas.upload_if_dirty(queue);
         let (text_fill_tex, text_fill_bytes) = compiled_fill_records(device, queue, &text_fills);
 
         let bytes = std::mem::size_of_val(&verts[..]) as u64;
@@ -1155,7 +1216,8 @@ impl ViewportRenderer {
             c.bounds = bounds;
         }
         if let Some(s) = &mut c.source {
-            s.baked_atlas_version = baked_version;
+            s.baked_atlas_version = baked_version.0;
+            s.baked_coverage_version = baked_version.1;
             s.baked_ppp = ppp;
         }
         // The new text buffer replaces the old one, so the slot's charge has to

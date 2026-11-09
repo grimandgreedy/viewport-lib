@@ -316,6 +316,9 @@ pub struct ContentResources {
         crate::resources::handle::SlotStore<GpuProjectedTetMesh, crate::resources::ProjectedTetId>,
     /// Glyph atlas for overlay text rendering (labels and glyph runs).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
+    /// Coverage cells that small and retained vector overlay shapes draw
+    /// their fills from.
+    pub(crate) coverage_atlas: crate::resources::overlay::coverage_atlas::CoverageAtlas,
     /// Textures for overlay shape fills: one-shot uploads (`upload_overlay_texture`)
     /// and reusable streaming textures (`create_streaming_overlay_texture`). Slotted
     /// with generational ids so a freed slot cannot alias a later upload, and the

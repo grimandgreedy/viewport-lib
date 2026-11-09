@@ -11,6 +11,9 @@
 @group(0) @binding(0) var t_backdrop: texture_2d<f32>;
 @group(0) @binding(1) var s_backdrop: sampler;
 
+// Soft clip coverage over `clip_shapes` and `eval_sdf` below.
+// #include "helpers/overlay_clip.wgsl"
+
 struct VertexInput {
     @location(0) position:     vec2<f32>,  // logical pixels
     @location(1) local_pos:    vec2<f32>,  // pixels from the shape pivot (or the path's centre)
@@ -283,31 +286,6 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
     }
 }
 
-// True if the framebuffer point `fp` is outside the clip mask at `idx0` or any of
-// its ancestors (masks intersect down the parent chain). Each mask is evaluated by
-// its SDF in its own rotated frame. A short guard bounds the chain length. Mirrors
-// the solid overlay_shape.wgsl clip test.
-fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
-    var idx = i32(idx0);
-    var guard = 0;
-    loop {
-        if (idx < 0 || guard >= 8) {
-            break;
-        }
-        let c = clip_shapes[idx];
-        let rc = cos(-c.params.y);
-        let rs = sin(-c.params.y);
-        let pd = (fp - c.centre) - c.pivot;
-        let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
-        if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
-            return true;
-        }
-        idx = i32(c.params.z);
-        guard = guard + 1;
-    }
-    return false;
-}
-
 // Apply saturation, brightness, and hue-rotation to a backdrop colour.
 // sat/bright are multipliers (1.0 = unchanged); hue is in radians. Hue
 // rotation uses Rodrigues rotation around the grey axis (1,1,1)/sqrt(3).
@@ -327,18 +305,16 @@ fn apply_backdrop_filters(rgb: vec3<f32>, sat: f32, bright: f32, hue: f32) -> ve
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Clip: cheap bounding-box reject first (exact for rectangular masks), then
-    // the mask SDF and its parent chain. `clip_rect`/`clip_position.xy` are in
-    // framebuffer pixels (top-left origin), same as the solid shape path.
-    let cr = in.clip_rect;
-    if (cr.z > cr.x && cr.w > cr.y) {
-        let fp = in.clip_position.xy;
-        if (fp.x < cr.x || fp.x > cr.z || fp.y < cr.y || fp.y > cr.w) {
-            discard;
-        }
-    }
+    // Clip: the bounding box (exact for rectangular masks), then the mask SDF
+    // and its parent chain, each as a coverage. `clip_rect`/`clip_position.xy`
+    // are in framebuffer pixels (top-left origin), same as the solid shape path.
+    let fp = in.clip_position.xy;
+    var clip = overlay_rect_coverage(fp, in.clip_rect);
     let clip_index = in.shape_meta.y;
-    if (clip_index >= 0.0 && clip_outside(in.clip_position.xy, clip_index)) {
+    if (clip_index >= 0.0 && clip > 0.0) {
+        clip = clip * overlay_mask_coverage(fp, clip_index);
+    }
+    if (clip <= 0.0) {
         discard;
     }
 
@@ -439,5 +415,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    return colour;
+    return vec4<f32>(colour.rgb, colour.a * clip);
 }

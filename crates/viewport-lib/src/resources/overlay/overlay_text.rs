@@ -77,6 +77,17 @@ impl crate::resources::DeviceResources {
                     },
                     count: None,
                 },
+                // binding 4: the coverage atlas vector-shape cells sample.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -199,7 +210,8 @@ pub(crate) struct OverlayTextVertex {
     pub uv: [f32; 2],
     /// RGBA tint colour.
     pub colour: [f32; 4],
-    /// 1.0 = sample glyph atlas alpha, 0.0 = solid colour.
+    /// 0.0 = solid colour, 1.0 = tint the glyph atlas's coverage, 2.0 = the
+    /// glyph atlas's colour as-is, 3.0 = tint the coverage atlas's cell.
     pub use_texture: f32,
     /// Index into the frame's clip-shape array, or `-1.0` for no clip.
     /// Selects the mask whose SDF (and parent chain) clips this vertex.
@@ -221,11 +233,25 @@ pub(crate) struct OverlayTextVertex {
     /// of the box its item's fill spans, in the item's own frame, and the first
     /// texel of that fill's record, or `-1` when the colour alone is the fill.
     pub fill: [f32; 4],
+    /// `[dir_x, dir_y, side, max_inset]`: the vertex's place in an
+    /// anti-aliasing fringe, which the vertex shader resolves in device pixels.
+    ///
+    /// `side` is `0` for a vertex outside any fringe (glyphs, quads), which
+    /// draws at full coverage where it is. `-1` is the inner row of a fringe:
+    /// the vertex moves half a device pixel against `dir` (never further than
+    /// `max_inset`, in the same units as `position`) and draws at full
+    /// coverage, scaled down when `max_inset` is under half a pixel so a
+    /// hairline keeps its weight. `+1` is the outer row: half a device pixel
+    /// along `dir`, at zero coverage. `dir` is the edge's outward normal, with
+    /// a mitre's length at a join.
+    pub aa: [f32; 4],
 }
 
 impl OverlayTextVertex {
     /// The `fill` of a vertex that reads no fill record.
     pub const NO_FILL: [f32; 4] = [0.0, 0.0, -1.0, 0.0];
+    /// The `aa` of a vertex outside any fringe.
+    pub const NO_AA: [f32; 4] = [0.0; 4];
 }
 
 impl OverlayTextVertex {
@@ -281,6 +307,12 @@ impl OverlayTextVertex {
                 crate::gpu::VertexAttribute {
                     offset: std::mem::offset_of!(OverlayTextVertex, fill) as u64,
                     shader_location: 12,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 13: aa vec4f (fringe direction, side, max inset)
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayTextVertex, aa) as u64,
+                    shader_location: 13,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],

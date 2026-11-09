@@ -13,8 +13,8 @@ pub(super) fn polygon_area(points: &[[f32; 2]]) -> f32 {
     area * 0.5
 }
 
-/// Emit a closed polyline's fill as a triangle list, recording a gradient or
-/// texture fill in `fills`.
+/// Emit a closed polyline's fill as a triangle list with an anti-aliased
+/// edge, recording a gradient or texture fill in `fills`.
 ///
 /// The fill spans the points' bounding box. `uvs`, when given (one per input
 /// point), place a texture fill's image instead: each vertex samples the UV its
@@ -35,18 +35,26 @@ pub(super) fn emit_filled_polyline(
     let Some((min, max)) = polyline_bounds(points) else {
         return;
     };
-    let mesh = super::overlay_vector::tessellate_polygon(points);
+    if points.iter().flatten().any(|v| !v.is_finite()) {
+        return;
+    }
+    let mesh = super::overlay_vector::tessellate_fringed(
+        std::slice::from_ref(&points.to_vec()),
+        crate::renderer::types::FillRule::NonZero,
+    );
     let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
     let centre = [min[0] + half[0], min[1] + half[1]];
     let (base_colour, index) = fill_record(fill, opacity, half, fills, image_size);
     // The local coordinate that lands an explicit UV where the fill module's
     // box mapping reads it back.
     let uv_half = [half[0].max(0.5), half[1].max(0.5)];
+    let uvs = uvs.filter(|u| u.len() == points.len());
     for &i in &mesh.indices {
-        let p = mesh.positions[i as usize];
-        let local = match uvs.filter(|u| u.len() == points.len()) {
+        let i = i as usize;
+        let p = mesh.positions[i];
+        let local = match uvs {
             Some(uvs) => {
-                let (from, to, t) = mesh.sources[i as usize];
+                let (from, to, t) = mesh.sources[i];
                 let (a, b) = (uvs[from], uvs[to]);
                 let uv = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
                 [
@@ -56,23 +64,20 @@ pub(super) fn emit_filled_polyline(
             }
             None => [p[0] - centre[0], p[1] - centre[1]],
         };
-        verts.push(crate::resources::OverlayTextVertex {
-            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-            uv: [0.0, 0.0],
-            colour: base_colour,
-            use_texture: 0.0,
-            clip_index: -1.0,
-            clip_rect: [0.0; 4],
-            group_tint: 0.0,
-            fill: [local[0], local[1], index, 0.0],
-        });
+        let mut v = solid_vertex(
+            overlay_local_px(p[0], p[1], vp_w, vp_h),
+            base_colour,
+            mesh.aa[i],
+        );
+        v.fill = [local[0], local[1], index, 0.0];
+        verts.push(v);
     }
 }
 
 /// The vertex colour and fill-record index a tessellated fill draws with: a
 /// solid fill is the vertex colour alone, any other fill a record in `fills`
 /// over a box of half-extents `half` with the opacity on the vertex.
-fn fill_record(
+pub(super) fn fill_record(
     fill: &crate::renderer::types::OverlayFill,
     opacity: f32,
     half: [f32; 2],
@@ -88,18 +93,19 @@ fn fill_record(
     ([1.0, 1.0, 1.0, opacity], index)
 }
 
-/// Emit a pre-tessellated triangle list as a fill, for an
-/// [`OverlayShape::Vector`](crate::renderer::types::OverlayShape). `positions`
-/// are screen-space logical pixels (already transformed for the shape's
-/// position and rotation) and `local_positions` the same points in the path's
-/// own frame; `indices` reference them in triples. The fill spans the path's
-/// own bounding box, so it turns and scales with the shape.
+/// Emit a fringed fill (see [`tessellate_fringed`]) as a vector shape's fill,
+/// for an [`OverlayShape::Vector`](crate::renderer::types::OverlayShape).
+/// `mesh` is in screen-space logical pixels (already transformed for the
+/// shape's position and rotation) and `local_points` are its input contours'
+/// points in the path's own frame, which `mesh.sources` index. The fill spans
+/// the path's own bounding box, so it turns and scales with the shape.
+///
+/// [`tessellate_fringed`]: super::overlay_vector::tessellate_fringed
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_vector_fill(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    positions: &[[f32; 2]],
-    local_positions: &[[f32; 2]],
-    indices: &[u32],
+    mesh: &super::overlay_vector::FringedFill,
+    local_points: &[[f32; 2]],
     fill: &crate::renderer::types::OverlayFill,
     opacity: f32,
     vp_w: f32,
@@ -107,35 +113,155 @@ pub(super) fn emit_vector_fill(
     fills: &mut super::overlay_fill::FillTable,
     image_size: [u32; 2],
 ) {
-    let Some((min, max)) = polyline_bounds(local_positions) else {
+    let Some((min, max)) = polyline_bounds(local_points) else {
         return;
     };
     let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
     let centre = [min[0] + half[0], min[1] + half[1]];
     let (base_colour, index) = fill_record(fill, opacity, half, fills, image_size);
-    for &idx in indices {
-        let p = positions[idx as usize];
-        let l = local_positions[idx as usize];
-        verts.push(crate::resources::OverlayTextVertex {
-            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-            uv: [0.0, 0.0],
-            colour: base_colour,
-            use_texture: 0.0,
-            clip_index: -1.0,
-            clip_rect: [0.0; 4],
-            group_tint: 0.0,
-            fill: [l[0] - centre[0], l[1] - centre[1], index, 0.0],
-        });
+    for &idx in &mesh.indices {
+        let idx = idx as usize;
+        let p = mesh.positions[idx];
+        let (from, to, t) = mesh.sources[idx];
+        let (a, b) = (local_points[from], local_points[to]);
+        let l = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        let mut v = solid_vertex(
+            overlay_local_px(p[0], p[1], vp_w, vp_h),
+            base_colour,
+            mesh.aa[idx],
+        );
+        v.fill = [l[0] - centre[0], l[1] - centre[1], index, 0.0];
+        verts.push(v);
     }
 }
 
-/// Tessellate a polyline into a triangle list of `OverlayTextVertex`s.
+/// How one edge of a ribbon is anti-aliased.
+///
+/// A fringe is a one-device-pixel band whose coverage ramps from 1 to 0. The
+/// vertex shader places it in device pixels, so it stays one pixel wide
+/// whatever transform or `pixels_per_point` the ribbon is drawn with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EdgeAa {
+    /// A hard edge.
+    None,
+    /// A fringe straddling the edge, half a pixel either side, so the visual
+    /// width is the geometric one. For an edge with nothing drawn against it.
+    Centred,
+    /// A fringe running one pixel out from the edge. For a shadow band's edge
+    /// on the item it belongs to: the item's own fringe straddles that line,
+    /// and a band whose coverage stays full up to it lays no seam of
+    /// background or fill colour between the two.
+    Outset,
+}
+
+impl EdgeAa {
+    fn is_some(self) -> bool {
+        self != EdgeAa::None
+    }
+}
+
+/// Which parts of a ribbon get an anti-aliasing fringe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Fringe {
+    /// The edge at `d_lo`.
+    pub lo: EdgeAa,
+    /// The edge at `d_hi`.
+    pub hi: EdgeAa,
+    /// Across each end of an open path (butt and square caps) and around a
+    /// round cap. Off for a band whose ends abut other geometry, which would
+    /// otherwise overlap it there.
+    pub ends: bool,
+}
+
+impl Fringe {
+    /// Both edges and both ends: a stroke.
+    pub(super) const ALL: Self = Self {
+        lo: EdgeAa::Centred,
+        hi: EdgeAa::Centred,
+        ends: true,
+    };
+
+    /// A shadow band running outward from the item, or inward from a
+    /// contour: the edge nearer the path lies on the item and is outset, the
+    /// far edge is centred.
+    pub(super) fn band(d_lo: f32, d_hi: f32, ends: bool) -> Self {
+        let lo_near = d_lo.abs() <= d_hi.abs();
+        Self {
+            lo: if lo_near {
+                EdgeAa::Outset
+            } else {
+                EdgeAa::Centred
+            },
+            hi: if lo_near {
+                EdgeAa::Centred
+            } else {
+                EdgeAa::Outset
+            },
+            ends,
+        }
+    }
+}
+
+/// A solid text-stream vertex at `p` (logical pixels) in `colour`, with its
+/// place in a fringe (see [`OverlayTextVertex::aa`]).
+///
+/// [`OverlayTextVertex::aa`]: crate::resources::OverlayTextVertex
+pub(super) fn solid_vertex(
+    p: [f32; 2],
+    colour: [f32; 4],
+    aa: [f32; 4],
+) -> crate::resources::OverlayTextVertex {
+    crate::resources::OverlayTextVertex {
+        position: p,
+        uv: [0.0, 0.0],
+        colour,
+        use_texture: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
+        group_tint: 0.0,
+        fill: crate::resources::OverlayTextVertex::NO_FILL,
+        aa,
+    }
+}
+
+/// The `aa` of a fringe's inner row: full coverage, half a device pixel in
+/// from the edge against `dir`, never more than `max_inset`.
+#[inline]
+pub(super) fn aa_inner(dir: [f32; 2], max_inset: f32) -> [f32; 4] {
+    [dir[0], dir[1], -1.0, max_inset]
+}
+
+/// The `aa` of a fringe's outer row: zero coverage, half a device pixel out
+/// along `dir`.
+#[inline]
+pub(super) fn aa_outer(dir: [f32; 2], max_inset: f32) -> [f32; 4] {
+    [dir[0], dir[1], 1.0, max_inset]
+}
+
+/// The `max_inset` of a fill's edge, which has no opposite edge to meet.
+pub(super) const FILL_MAX_INSET: f32 = 1.0e6;
+
+/// Push the quad `a0 a1 b1 b0` (two rows, `a` and `b`, each from `0` to `1`)
+/// as two triangles.
+#[inline]
+fn push_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    a0: crate::resources::OverlayTextVertex,
+    a1: crate::resources::OverlayTextVertex,
+    b0: crate::resources::OverlayTextVertex,
+    b1: crate::resources::OverlayTextVertex,
+) {
+    verts.extend_from_slice(&[a0, a1, b0, a1, b1, b0]);
+}
+
+/// Tessellate a polyline into a triangle list of `OverlayTextVertex`s, with
+/// an anti-aliasing fringe along both edges and across both ends.
 ///
 /// At each interior point the stroke is extruded along the bisector of the
 /// two adjacent segment normals, scaled by `1 / cos(half_angle)` so the
 /// outer edge stays at constant `thickness / 2` from the centreline. When
-/// that scale exceeds `mitre_limit`, or when `join` is `Bevel`, the joint
-/// emits two separate ribs and a connecting triangle.
+/// that scale exceeds `mitre_limit`, or when `join` is `Bevel`, the outside
+/// of the turn is cut by a bevel and the inside keeps the mitred point.
 ///
 /// Open polylines end with the requested cap style (butt, square, or round).
 /// Closed polylines wrap the last point back to the first and ignore `cap`.
@@ -161,10 +287,29 @@ pub(super) fn tessellate_polyline(
         join,
         mitre_limit,
         cap,
+        Fringe::ALL,
         colour,
         vp_w,
         vp_h,
     )
+}
+
+/// One edge of a rib: the point on it, and the fringe directions its inner
+/// and outer rows move along (zero for an edge without a fringe).
+#[derive(Clone, Copy)]
+struct RibEdge {
+    p: [f32; 2],
+    inner: [f32; 2],
+    outer: [f32; 2],
+}
+
+/// A cross-section of a ribbon: its two edges, and how far a fringe may
+/// inset either of them before the two meet.
+#[derive(Clone, Copy)]
+struct Rib {
+    hi: RibEdge,
+    lo: RibEdge,
+    inset: f32,
 }
 
 /// Tessellate a band running alongside a path, between two signed offsets from
@@ -186,6 +331,11 @@ pub(super) fn tessellate_polyline(
 /// Caps are a half-disc about the centreline, which only reads correctly for a
 /// band that straddles it. A one-sided band is meant for closed paths, where
 /// there are no ends to cap.
+///
+/// `fringe` says which edges and ends carry an anti-aliasing fringe. Each
+/// segment is a core quad between the edges' inner rows plus one quad per
+/// fringed edge, and consecutive segments share their ribs, so no two
+/// triangles of the band cover the same point.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn tessellate_ribbon(
     points: &[[f32; 2]],
@@ -196,9 +346,10 @@ pub(super) fn tessellate_ribbon(
     join: crate::renderer::types::LineJoin,
     mitre_limit: f32,
     cap: crate::renderer::types::PolylineCap,
+    fringe: Fringe,
     colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
+    _vp_w: f32,
+    _vp_h: f32,
 ) -> Vec<crate::resources::OverlayTextVertex> {
     // A point that repeats the one before it is a segment of no length, and its
     // normal is zero. At a corner that turns the joint into two square ends with
@@ -231,17 +382,6 @@ pub(super) fn tessellate_ribbon(
     // Reach of the band from the centreline, used to place caps.
     let half_t = d_lo.abs().max(d_hi.abs());
 
-    let get = |i: i32| -> Option<[f32; 2]> {
-        if closed {
-            let idx = i.rem_euclid(n as i32);
-            Some(points[idx as usize])
-        } else if i >= 0 && (i as usize) < n {
-            Some(points[i as usize])
-        } else {
-            None
-        }
-    };
-
     let normalize = |v: [f32; 2]| -> [f32; 2] {
         let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
         if len < 1e-6 {
@@ -255,6 +395,7 @@ pub(super) fn tessellate_ribbon(
     let scale = |a: [f32; 2], k: f32| -> [f32; 2] { [a[0] * k, a[1] * k] };
     let perp_left = |t: [f32; 2]| -> [f32; 2] { [-t[1], t[0]] };
     let dot = |a: [f32; 2], b: [f32; 2]| -> f32 { a[0] * b[0] + a[1] * b[1] };
+    let length = |v: [f32; 2]| -> f32 { (v[0] * v[0] + v[1] * v[1]).sqrt() };
 
     // The band's two edges at a rib whose outward direction is `nrm`. A
     // one-sided band keeps its near edge on the path and moves the far one by
@@ -271,15 +412,58 @@ pub(super) fn tessellate_ribbon(
             (d_hi, (d_lo + m).min(d_hi))
         }
     };
+    // How far an edge's fringe may move in before it meets the other edge (or
+    // the other edge's fringe), in the same units as the offsets.
+    let inset_of = |hi: f32, lo: f32| -> f32 {
+        let w = (hi - lo).max(0.0);
+        if fringe.hi == EdgeAa::Centred && fringe.lo == EdgeAa::Centred {
+            w * 0.5
+        } else {
+            w
+        }
+    };
+    // An edge at `p` whose outward direction is `dir`, anti-aliased as `aa`
+    // says. An outset fringe's inner row stays on the edge and its outer row
+    // goes a whole pixel out.
+    let edge = |p: [f32; 2], dir: [f32; 2], aa: EdgeAa| match aa {
+        EdgeAa::None => RibEdge {
+            p,
+            inner: [0.0, 0.0],
+            outer: [0.0, 0.0],
+        },
+        EdgeAa::Centred => RibEdge {
+            p,
+            inner: dir,
+            outer: dir,
+        },
+        EdgeAa::Outset => RibEdge {
+            p,
+            inner: [0.0, 0.0],
+            outer: scale(dir, 2.0),
+        },
+    };
+    // A rib across the band at `cur` along `dir` (a unit normal, or a bisector
+    // scaled to the mitre length), with its edges `hi` and `lo` from the path.
+    let rib_along = |cur: [f32; 2], dir: [f32; 2], hi: f32, lo: f32| Rib {
+        hi: edge(add(cur, scale(dir, hi)), dir, fringe.hi),
+        lo: edge(add(cur, scale(dir, lo)), scale(dir, -1.0), fringe.lo),
+        inset: inset_of(hi, lo),
+    };
 
-    // Build "ribs": for each logical join, one or two (left, right) pairs.
-    let mut ribs: Vec<([f32; 2], [f32; 2])> = Vec::with_capacity(n + 4);
+    // Build "ribs": for each logical join, one or two cross-sections.
+    let mut ribs: Vec<Rib> = Vec::with_capacity(n + 4);
 
     let iter_count = if closed { n + 1 } else { n };
     for i in 0..iter_count {
         let cur_idx = if closed { i % n } else { i };
         let cur = points[cur_idx];
-        let prev = get(cur_idx as i32 - 1);
+        let prev = if closed {
+            Some(points[(cur_idx + n - 1) % n])
+        } else if cur_idx > 0 {
+            Some(points[cur_idx - 1])
+        } else {
+            None
+        };
         let next = if closed {
             Some(points[(cur_idx + 1) % n])
         } else if cur_idx + 1 < n {
@@ -291,6 +475,10 @@ pub(super) fn tessellate_ribbon(
         let in_t = prev.map(|p| normalize(sub(cur, p)));
         let out_t = next.map(|q| normalize(sub(q, cur)));
 
+        // On a closed path the joint at the first point is built twice, at the
+        // start and again at the wrap. The wrap keeps only the rib the closing
+        // segment arrives at, so a bevel there is drawn once.
+        let wrap = closed && i == n;
         match (in_t, out_t) {
             (Some(t1), Some(t2)) => {
                 let n1 = perp_left(t1);
@@ -303,29 +491,61 @@ pub(super) fn tessellate_ribbon(
                     crate::renderer::types::LineJoin::Bevel => false,
                 };
                 if use_mitre {
-                    let k = mitre_scale;
                     let (hi, lo) = edges(bisect);
-                    ribs.push((
-                        add(cur, scale(bisect, hi * k)),
-                        add(cur, scale(bisect, lo * k)),
-                    ));
+                    ribs.push(rib_along(cur, scale(bisect, mitre_scale), hi, lo));
+                    continue;
+                }
+                // Bevel: the outside of the turn gets one edge point per
+                // adjacent segment. The inside keeps the mitred point, where
+                // the two inner edges cross, so the segments meet without
+                // overlapping; two separate points there would lay one
+                // segment's corner (and its fringe) over the other's. A turn
+                // so sharp that the crossing falls beyond a segment's far end
+                // keeps the two points.
+                let (h1, l1) = edges(n1);
+                let (h2, l2) = edges(n2);
+                let hi_inside = dot(t2, n1) > 0.0;
+                let (hm, lm) = edges(bisect);
+                let d_in = if hi_inside { hm } else { lm };
+                let reach = d_in.abs() * mitre_scale;
+                let shortest = prev
+                    .map(|p| length(sub(cur, p)))
+                    .unwrap_or(0.0)
+                    .min(next.map(|q| length(sub(q, cur))).unwrap_or(0.0));
+                let rib1 = rib_along(cur, n1, h1, l1);
+                let rib2 = rib_along(cur, n2, h2, l2);
+                if bisect != [0.0, 0.0] && reach <= shortest {
+                    let mdir = scale(bisect, mitre_scale);
+                    let inner = rib_along(cur, mdir, hm, lm);
+                    let joined = |mut r: Rib| {
+                        if hi_inside {
+                            r.hi = inner.hi;
+                        } else {
+                            r.lo = inner.lo;
+                        }
+                        r.inset = r.inset.min(inner.inset);
+                        r
+                    };
+                    ribs.push(joined(rib1));
+                    if !wrap {
+                        ribs.push(joined(rib2));
+                    }
                 } else {
-                    // Bevel: two ribs at this point, one per adjacent segment.
-                    let (h1, l1) = edges(n1);
-                    let (h2, l2) = edges(n2);
-                    ribs.push((add(cur, scale(n1, h1)), add(cur, scale(n1, l1))));
-                    ribs.push((add(cur, scale(n2, h2)), add(cur, scale(n2, l2))));
+                    ribs.push(rib1);
+                    if !wrap {
+                        ribs.push(rib2);
+                    }
                 }
             }
             (Some(t1), None) => {
                 let n1 = perp_left(t1);
                 let (hi, lo) = edges(n1);
-                ribs.push((add(cur, scale(n1, hi)), add(cur, scale(n1, lo))));
+                ribs.push(rib_along(cur, n1, hi, lo));
             }
             (None, Some(t2)) => {
                 let n2 = perp_left(t2);
                 let (hi, lo) = edges(n2);
-                ribs.push((add(cur, scale(n2, hi)), add(cur, scale(n2, lo))));
+                ribs.push(rib_along(cur, n2, hi, lo));
             }
             (None, None) => {}
         }
@@ -338,64 +558,142 @@ pub(super) fn tessellate_ribbon(
     // End tangents for cap placement (zero when the end segment is degenerate).
     let t_start = normalize(sub(points[1], points[0]));
     let t_end = normalize(sub(points[n - 1], points[n - 2]));
+    let round = cap == crate::renderer::types::PolylineCap::Round;
 
-    // Square caps: push the endpoint ribs out along the tangent so the
-    // stroke rectangle extends `thickness / 2` beyond each endpoint.
-    if !closed && cap == crate::renderer::types::PolylineCap::Square {
-        if let Some(first) = ribs.first_mut() {
-            first.0 = sub(first.0, scale(t_start, half_t));
-            first.1 = sub(first.1, scale(t_start, half_t));
+    if !closed {
+        // Square caps: push the endpoint ribs out along the tangent so the
+        // stroke rectangle extends `thickness / 2` beyond each endpoint.
+        if cap == crate::renderer::types::PolylineCap::Square {
+            let first = &mut ribs[0];
+            first.hi.p = sub(first.hi.p, scale(t_start, half_t));
+            first.lo.p = sub(first.lo.p, scale(t_start, half_t));
+            let last = ribs.last_mut().unwrap();
+            last.hi.p = add(last.hi.p, scale(t_end, half_t));
+            last.lo.p = add(last.lo.p, scale(t_end, half_t));
         }
-        if let Some(last) = ribs.last_mut() {
-            last.0 = add(last.0, scale(t_end, half_t));
-            last.1 = add(last.1, scale(t_end, half_t));
+        // A flat end's fringe: both end corners also move out along the end's
+        // tangent, so the side fringes meet the one across the end on the
+        // corner's diagonal.
+        if fringe.ends && !round {
+            for (rib, out) in [(0, scale(t_start, -1.0)), (ribs.len() - 1, t_end)] {
+                let r = &mut ribs[rib];
+                for e in [&mut r.hi, &mut r.lo] {
+                    e.inner = add(e.inner, out);
+                    e.outer = add(e.outer, out);
+                }
+            }
         }
     }
 
-    // Convert rib pairs to triangle list. Each pair of consecutive ribs
-    // forms a quad split into two triangles.
+    let inner = |e: RibEdge, inset: f32| solid_vertex(e.p, colour, aa_inner(e.inner, inset));
+    let outer = |e: RibEdge, inset: f32| solid_vertex(e.p, colour, aa_outer(e.outer, inset));
+
+    // Each pair of consecutive ribs is a core quad between the inner rows,
+    // plus a fringe quad on each fringed edge.
+    let per_seg = 6 * (1 + fringe.hi.is_some() as usize + fringe.lo.is_some() as usize);
     let mut verts: Vec<crate::resources::OverlayTextVertex> =
-        Vec::with_capacity((ribs.len() - 1) * 6);
-    let mut emit = |px: [f32; 2]| {
-        verts.push(crate::resources::OverlayTextVertex {
-            position: overlay_local_px(px[0], px[1], vp_w, vp_h),
-            uv: [0.0, 0.0],
-            colour,
-            use_texture: 0.0,
-            clip_index: -1.0,
-            clip_rect: [0.0; 4],
-            group_tint: 0.0,
-            fill: crate::resources::OverlayTextVertex::NO_FILL,
-        });
-    };
+        Vec::with_capacity((ribs.len() - 1) * per_seg + 64);
     for w in ribs.windows(2) {
-        let (l0, r0) = w[0];
-        let (l1, r1) = w[1];
-        emit(l0);
-        emit(r0);
-        emit(l1);
-        emit(r0);
-        emit(r1);
-        emit(l1);
+        let (a, b) = (w[0], w[1]);
+        push_quad(
+            &mut verts,
+            inner(a.hi, a.inset),
+            inner(a.lo, a.inset),
+            inner(b.hi, b.inset),
+            inner(b.lo, b.inset),
+        );
+        if fringe.hi.is_some() {
+            push_quad(
+                &mut verts,
+                inner(a.hi, a.inset),
+                outer(a.hi, a.inset),
+                inner(b.hi, b.inset),
+                outer(b.hi, b.inset),
+            );
+        }
+        if fringe.lo.is_some() {
+            push_quad(
+                &mut verts,
+                inner(a.lo, a.inset),
+                outer(a.lo, a.inset),
+                inner(b.lo, b.inset),
+                outer(b.lo, b.inset),
+            );
+        }
     }
 
-    // Round caps: a semicircle fan on the outside half of each endpoint.
-    if !closed && cap == crate::renderer::types::PolylineCap::Round {
+    if closed {
+        return verts;
+    }
+    let ends = [
+        (ribs[0], points[0], scale(t_start, -1.0)),
+        (*ribs.last().unwrap(), points[n - 1], t_end),
+    ];
+    if round {
+        // Round caps: a semicircle fan on the outside half of each endpoint,
+        // from one edge of the end rib round to the other, so the fan's rim
+        // starts and ends exactly on the rib.
         let segs = 8;
-        for (centre, outward) in [(points[0], scale(t_start, -1.0)), (points[n - 1], t_end)] {
+        for (rib, centre, outward) in ends {
             if outward == [0.0, 0.0] {
                 continue;
             }
             let normal = perp_left(outward);
-            for i in 0..segs {
-                let a0 = std::f32::consts::PI * i as f32 / segs as f32;
-                let a1 = std::f32::consts::PI * (i + 1) as f32 / segs as f32;
-                let d0 = add(scale(normal, a0.cos()), scale(outward, a0.sin()));
-                let d1 = add(scale(normal, a1.cos()), scale(outward, a1.sin()));
-                emit(centre);
-                emit(add(centre, scale(d0, half_t)));
-                emit(add(centre, scale(d1, half_t)));
+            // Which rib edge the sweep starts from: the one on `normal`'s side.
+            let (first, last) = if dot(sub(rib.hi.p, centre), normal) >= 0.0 {
+                (rib.hi, rib.lo)
+            } else {
+                (rib.lo, rib.hi)
+            };
+            let rim = |k: usize| -> RibEdge {
+                if k == 0 {
+                    return first;
+                }
+                if k == segs {
+                    return last;
+                }
+                let a = std::f32::consts::PI * k as f32 / segs as f32;
+                let d = add(scale(normal, a.cos()), scale(outward, a.sin()));
+                let aa = if fringe.ends {
+                    EdgeAa::Centred
+                } else {
+                    EdgeAa::None
+                };
+                edge(add(centre, scale(d, half_t)), d, aa)
+            };
+            let hub = inner(
+                RibEdge {
+                    p: centre,
+                    inner: [0.0, 0.0],
+                    outer: [0.0, 0.0],
+                },
+                rib.inset,
+            );
+            for k in 0..segs {
+                let (r0, r1) = (rim(k), rim(k + 1));
+                verts.extend_from_slice(&[hub, inner(r0, rib.inset), inner(r1, rib.inset)]);
+                if fringe.ends {
+                    push_quad(
+                        &mut verts,
+                        inner(r0, rib.inset),
+                        outer(r0, rib.inset),
+                        inner(r1, rib.inset),
+                        outer(r1, rib.inset),
+                    );
+                }
             }
+        }
+    } else if fringe.ends {
+        // The fringe across each flat end, between the end rib's inner and
+        // outer rows.
+        for (rib, _, _) in ends {
+            push_quad(
+                &mut verts,
+                inner(rib.hi, rib.inset),
+                outer(rib.hi, rib.inset),
+                inner(rib.lo, rib.inset),
+                outer(rib.lo, rib.inset),
+            );
         }
     }
     verts
@@ -501,39 +799,111 @@ pub(super) fn dash_subpaths(
     subs
 }
 
-/// Emit a filled disc (triangle fan) in screen pixel coordinates.
+/// Emit a filled disc in screen pixel coordinates, with a fringe round its
+/// rim.
 pub(super) fn emit_disc(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     centre: [f32; 2],
     radius: f32,
     colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
+    _vp_w: f32,
+    _vp_h: f32,
 ) {
-    let segs = 10;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: overlay_local_px(pos[0], pos[1], vp_w, vp_h),
-        uv: [0.0, 0.0],
+    emit_arc_band(
+        verts,
+        centre,
+        0.0,
+        radius,
+        0.0,
+        std::f32::consts::TAU,
+        10,
+        [EdgeAa::None, EdgeAa::Centred],
         colour,
-        use_texture: 0.0,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-        group_tint: 0.0,
-        fill: crate::resources::OverlayTextVertex::NO_FILL,
-    };
-    for i in 0..segs {
-        let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
-        let a1 = std::f32::consts::TAU * (i + 1) as f32 / segs as f32;
-        verts.push(v(centre));
-        verts.push(v([
-            centre[0] + a0.cos() * radius,
-            centre[1] + a0.sin() * radius,
-        ]));
-        verts.push(v([
-            centre[0] + a1.cos() * radius,
-            centre[1] + a1.sin() * radius,
-        ]));
+    );
+}
+
+/// Emit a band about `centre` from radius `r_in` to `r_out`, sweeping `sweep`
+/// radians from angle `a0` in `segs` steps. `fringe` is `[inner rim, outer
+/// rim]`: how each rim is anti-aliased. An `r_in` of zero is a fan
+/// (a disc or a wedge), whose inner rim is its hub.
+#[allow(clippy::too_many_arguments)]
+fn emit_arc_band(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    r_in: f32,
+    r_out: f32,
+    a0: f32,
+    sweep: f32,
+    segs: usize,
+    fringe: [EdgeAa; 2],
+    colour: [f32; 4],
+) {
+    if r_out <= r_in || segs == 0 {
+        return;
     }
+    let width = r_out - r_in;
+    let inset = if fringe == [EdgeAa::Centred; 2] {
+        width * 0.5
+    } else {
+        width
+    };
+    // (point, inner-row direction, outer-row direction) on each rim.
+    let rim = |p: [f32; 2], d: [f32; 2], aa: EdgeAa| match aa {
+        EdgeAa::None => (p, [0.0, 0.0], [0.0, 0.0]),
+        EdgeAa::Centred => (p, d, d),
+        EdgeAa::Outset => (p, [0.0, 0.0], [d[0] * 2.0, d[1] * 2.0]),
+    };
+    let rims = |k: usize| {
+        let a = a0 + sweep * k as f32 / segs as f32;
+        let d = [a.cos(), a.sin()];
+        let at = |r: f32| [centre[0] + d[0] * r, centre[1] + d[1] * r];
+        (
+            rim(at(r_in), [-d[0], -d[1]], fringe[0]),
+            rim(at(r_out), d, fringe[1]),
+        )
+    };
+    type Rim = ([f32; 2], [f32; 2], [f32; 2]);
+    let inner = |(p, d, _): Rim| solid_vertex(p, colour, aa_inner(d, inset));
+    let outer = |(p, _, d): Rim| solid_vertex(p, colour, aa_outer(d, inset));
+    for k in 0..segs {
+        let (i0, o0) = rims(k);
+        let (i1, o1) = rims(k + 1);
+        push_quad(verts, inner(o0), inner(i0), inner(o1), inner(i1));
+        if fringe[1].is_some() {
+            push_quad(verts, inner(o0), outer(o0), inner(o1), outer(o1));
+        }
+        if fringe[0].is_some() {
+            push_quad(verts, inner(i0), outer(i0), inner(i1), outer(i1));
+        }
+    }
+}
+
+/// Emit a straight band from the edge `a b` out along `out` by `width`: a
+/// shadow wrapped round a stroke's flat end, so the edge `a b` lies on the
+/// stroke and its fringe is outset, the far edge's centred, and its ends are
+/// hard.
+#[allow(clippy::too_many_arguments)]
+fn emit_straight_band(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    a: [f32; 2],
+    b: [f32; 2],
+    out: [f32; 2],
+    width: f32,
+    colour: [f32; 4],
+) {
+    if width <= 0.0 {
+        return;
+    }
+    let inset = width;
+    let push = |p: [f32; 2]| [p[0] + out[0] * width, p[1] + out[1] * width];
+    let back = [-out[0] * 2.0, -out[1] * 2.0];
+    let near = |p: [f32; 2]| solid_vertex(p, colour, aa_inner([0.0, 0.0], inset));
+    let near_out = |p: [f32; 2]| solid_vertex(p, colour, aa_outer(back, inset));
+    let far = |p: [f32; 2]| solid_vertex(push(p), colour, aa_inner(out, inset));
+    let far_out = |p: [f32; 2]| solid_vertex(push(p), colour, aa_outer(out, inset));
+    push_quad(verts, near(a), far(a), near(b), far(b));
+    push_quad(verts, far(a), far_out(a), far(b), far_out(b));
+    push_quad(verts, near(a), near_out(a), near(b), near_out(b));
 }
 
 /// The stroke a polyline draws with, standing an absent one in as a stroke of
@@ -664,6 +1034,7 @@ pub(super) fn emit_textured_quad(
         clip_rect: [0.0; 4],
         group_tint: 0.0,
         fill: crate::resources::OverlayTextVertex::NO_FILL,
+        aa: crate::resources::OverlayTextVertex::NO_AA,
     };
     // UV layout: top-left = uv_min, bottom-right = uv_max.
     verts.extend_from_slice(&[
@@ -824,10 +1195,13 @@ mod stroke_tests {
         let butt = tess(PolylineCap::Butt);
         let square = tess(PolylineCap::Square);
         let round = tess(PolylineCap::Round);
-        assert_eq!(butt.len(), 6);
-        assert_eq!(square.len(), 6);
-        // Round caps add two 8-segment fans.
-        assert_eq!(round.len(), 6 + 2 * 8 * 3);
+        // One segment: a core quad and a fringe quad per edge, plus a fringe
+        // quad across each flat end.
+        assert_eq!(butt.len(), 18 + 2 * 6);
+        assert_eq!(square.len(), 18 + 2 * 6);
+        // Round caps add two 8-segment fans, each a hub triangle and a fringe
+        // quad per step.
+        assert_eq!(round.len(), 18 + 2 * 8 * (3 + 6));
         let min_x = |v: &[crate::resources::OverlayTextVertex]| {
             v.iter().map(|v| v.position[0]).fold(f32::MAX, f32::min)
         };
@@ -863,6 +1237,152 @@ mod stroke_tests {
         );
     }
 
+    /// Where the vertex shader puts a text-stream vertex and the coverage it
+    /// gives it, at `s` device pixels per local unit (`place_fringe` in
+    /// `overlay_text.wgsl`).
+    fn place(v: &crate::resources::OverlayTextVertex, s: f32) -> ([f32; 2], f32) {
+        let [dx, dy, side, max_inset] = v.aa;
+        let p = v.position;
+        if side < -0.5 {
+            let m = max_inset * s;
+            let inset = m.min(0.5);
+            let c = if m < 0.5 { 2.0 * m / (m + 0.5) } else { 1.0 };
+            ([p[0] - dx * inset / s, p[1] - dy * inset / s], c)
+        } else if side > 0.5 {
+            ([p[0] + dx * 0.5 / s, p[1] + dy * 0.5 / s], 0.0)
+        } else {
+            (p, 1.0)
+        }
+    }
+
+    /// The integral of coverage across a horizontal stroke at its middle rib
+    /// (`x = 50`), and the coverage at each row there, at `s` device pixels
+    /// per unit.
+    fn cross_section(width: f32, s: f32) -> (f32, Vec<(f32, f32)>) {
+        let verts = tessellate_polyline(
+            &[[10.0, 50.0], [50.0, 50.0], [90.0, 50.0]],
+            width,
+            false,
+            LineJoin::Mitre,
+            4.0,
+            PolylineCap::Butt,
+            WHITE,
+            100.0,
+            100.0,
+        );
+        let mut rows: Vec<(f32, f32)> = verts
+            .iter()
+            .filter(|v| (v.position[0] - 50.0).abs() < 1e-4)
+            .map(|v| {
+                let (p, c) = place(v, s);
+                (p[1], c)
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+        rows.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-5 && (a.1 - b.1).abs() < 1e-5);
+        let integral = rows
+            .windows(2)
+            .map(|w| (w[1].0 - w[0].0) * (w[0].1 + w[1].1) * 0.5)
+            .sum::<f32>()
+            * s;
+        (integral, rows)
+    }
+
+    #[test]
+    fn fringe_rows_ramp_from_full_to_none_and_keep_the_width() {
+        for s in [1.0, 2.0] {
+            // A 4-unit stroke: inner rows at full coverage half a device pixel
+            // inside each edge, outer rows at none half a pixel outside, and
+            // the coverage integrates to the stroke's width.
+            let (integral, rows) = cross_section(4.0, s);
+            let half_px = 0.5 / s;
+            let expect = [
+                (48.0 - half_px, 0.0),
+                (48.0 + half_px, 1.0),
+                (52.0 - half_px, 1.0),
+                (52.0 + half_px, 0.0),
+            ];
+            assert_eq!(rows.len(), 4, "{rows:?}");
+            for (r, e) in rows.iter().zip(expect) {
+                assert!(
+                    (r.0 - e.0).abs() < 1e-4 && (r.1 - e.1).abs() < 1e-6,
+                    "{rows:?}"
+                );
+            }
+            assert!((integral - 4.0 * s).abs() < 1e-3, "width {integral} at {s}");
+        }
+        // A hairline under a device pixel keeps its weight: the inner rows meet
+        // at the centreline below full coverage, and the integral is still the
+        // width.
+        let (integral, rows) = cross_section(0.5, 1.0);
+        assert!(rows.iter().all(|r| r.1 < 1.0), "{rows:?}");
+        assert!((integral - 0.5).abs() < 1e-3, "hairline weight {integral}");
+    }
+
+    #[test]
+    fn a_fringed_segment_triples_the_ribbon() {
+        // An interior segment was one quad (6 vertices); it is now a core quad
+        // and a fringe quad per edge (18). Two segments and two flat ends:
+        let verts = tessellate_polyline(
+            &[[10.0, 50.0], [50.0, 50.0], [90.0, 50.0]],
+            4.0,
+            false,
+            LineJoin::Mitre,
+            4.0,
+            PolylineCap::Butt,
+            WHITE,
+            100.0,
+            100.0,
+        );
+        assert_eq!(verts.len(), 2 * 18 + 2 * 6);
+    }
+
+    #[test]
+    fn a_sharp_bevel_shares_its_inner_point() {
+        // A tight V with a bevel join: the inside of the turn is one mitred
+        // point, so the two segments' inner edges (and fringes) meet rather
+        // than cross, and no core triangle is folded over.
+        let verts = tessellate_polyline(
+            &[[10.0, 10.0], [50.0, 80.0], [90.0, 10.0]],
+            6.0,
+            false,
+            LineJoin::Bevel,
+            4.0,
+            PolylineCap::Butt,
+            WHITE,
+            100.0,
+            100.0,
+        );
+        // Every core triangle (all three vertices inner rows) keeps one
+        // orientation after placement, and together they cover the stroke's
+        // area once: no overlap at the joint.
+        let mut area = 0.0;
+        let mut signs = (0, 0);
+        for tri in verts.chunks_exact(3) {
+            if tri.iter().any(|v| v.aa[2] > 0.5) {
+                continue;
+            }
+            let p: Vec<[f32; 2]> = tri.iter().map(|v| place(v, 1.0).0).collect();
+            let a = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1])
+                - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
+            if a.abs() < 1e-6 {
+                continue;
+            }
+            if a > 0.0 {
+                signs.0 += 1
+            } else {
+                signs.1 += 1
+            }
+            area += a.abs() * 0.5;
+        }
+        assert!(signs.0 == 0 || signs.1 == 0, "folded triangles {signs:?}");
+        // Each arm is ~80.6 long and the core is 5 wide (one pixel of fringe
+        // taken off): the shared inner point means the core is no more than
+        // the two arms' rectangles plus the outer bevel wedge.
+        let arm = (40.0f32 * 40.0 + 70.0 * 70.0).sqrt();
+        assert!(area < 2.0 * arm * 5.0 + 20.0, "core area {area}");
+    }
+
     #[test]
     fn dotted_stroke_emits_discs() {
         let mut verts = Vec::new();
@@ -875,8 +1395,9 @@ mod stroke_tests {
         );
         let stroke = item.stroke.clone().unwrap();
         emit_polyline_stroke(&mut verts, &item, &stroke, WHITE, 100.0, 100.0);
-        // Dots at 0, 10, .., 100 = 11 discs of 10 fan triangles each.
-        assert_eq!(verts.len(), 11 * 10 * 3);
+        // Dots at 0, 10, .., 100 = 11 discs of 10 steps, each a core quad (one
+        // of its triangles empty at the hub) and a rim fringe quad.
+        assert_eq!(verts.len(), 11 * 10 * 12);
     }
 
     #[test]
@@ -1012,6 +1533,7 @@ pub(super) fn emit_contour_band(
         crate::renderer::types::LineJoin::Mitre,
         CONTOUR_BAND_MITRE_LIMIT,
         crate::renderer::types::PolylineCap::Butt,
+        Fringe::band(lo, hi, false),
         colour,
         vp_w,
         vp_h,
@@ -1090,6 +1612,8 @@ fn emit_stroke_outer_shadow(
                 stroke.join,
                 stroke.mitre_limit,
                 crate::renderer::types::PolylineCap::Butt,
+                // The ends meet the wrap `emit_stroke_end_shadow` draws.
+                Fringe::band(lo, hi, false),
                 colour,
                 vp_w,
                 vp_h,
@@ -1205,8 +1729,7 @@ fn emit_stroke_end_shadow(
                 };
                 let corner = |s: f32| [e[0] + nrm[0] * half * s, e[1] + nrm[1] * half * s];
                 let (c0, c1) = (corner(1.0), corner(-1.0));
-                let push = |q: [f32; 2]| [q[0] + out[0] * width, q[1] + out[1] * width];
-                emit_quad(verts, c0, c1, push(c1), push(c0), colour, vp_w, vp_h);
+                emit_straight_band(verts, c0, c1, out, width, colour);
                 for (c, from) in [(c0, nrm), (c1, [-nrm[0], -nrm[1]])] {
                     emit_fan(verts, c, from, out, width, colour, vp_w, vp_h);
                 }
@@ -1215,33 +1738,8 @@ fn emit_stroke_end_shadow(
     }
 }
 
-/// Emit a flat quad as two triangles, in screen pixel coordinates.
-#[allow(clippy::too_many_arguments)]
-fn emit_quad(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    a: [f32; 2],
-    b: [f32; 2],
-    c: [f32; 2],
-    d: [f32; 2],
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-        uv: [0.0, 0.0],
-        colour,
-        use_texture: 0.0,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-        group_tint: 0.0,
-        fill: crate::resources::OverlayTextVertex::NO_FILL,
-    };
-    verts.extend_from_slice(&[v(a), v(b), v(c), v(a), v(c), v(d)]);
-}
-
 /// Emit a fan sweeping from direction `from` to direction `to` (the short way),
-/// at `radius` about `centre`.
+/// at `radius` about `centre`, with a fringe round its rim.
 #[allow(clippy::too_many_arguments)]
 fn emit_fan(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
@@ -1250,8 +1748,8 @@ fn emit_fan(
     to: [f32; 2],
     radius: f32,
     colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
+    _vp_w: f32,
+    _vp_h: f32,
 ) {
     let a0 = from[1].atan2(from[0]);
     let mut sweep = to[1].atan2(to[0]) - a0;
@@ -1261,16 +1759,21 @@ fn emit_fan(
     while sweep < -std::f32::consts::PI {
         sweep += std::f32::consts::TAU;
     }
-    let segs = 4;
-    let at = |a: f32| [centre[0] + a.cos() * radius, centre[1] + a.sin() * radius];
-    for i in 0..segs {
-        let t0 = a0 + sweep * i as f32 / segs as f32;
-        let t1 = a0 + sweep * (i + 1) as f32 / segs as f32;
-        emit_quad(verts, centre, at(t0), at(t1), centre, colour, vp_w, vp_h);
-    }
+    emit_arc_band(
+        verts,
+        centre,
+        0.0,
+        radius,
+        a0,
+        sweep,
+        4,
+        [EdgeAa::None, EdgeAa::Centred],
+        colour,
+    );
 }
 
-/// Emit an annulus between two radii about `centre`.
+/// Emit an annulus between two radii about `centre`, with a fringe on both
+/// rims.
 #[allow(clippy::too_many_arguments)]
 fn emit_ring(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
@@ -1278,28 +1781,25 @@ fn emit_ring(
     r_inner: f32,
     r_outer: f32,
     colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
+    _vp_w: f32,
+    _vp_h: f32,
 ) {
-    let segs = 16;
-    let at = |a: f32, r: f32| [centre[0] + a.cos() * r, centre[1] + a.sin() * r];
-    for i in 0..segs {
-        let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
-        let a1 = std::f32::consts::TAU * (i + 1) as f32 / segs as f32;
-        emit_quad(
-            verts,
-            at(a0, r_inner),
-            at(a0, r_outer),
-            at(a1, r_outer),
-            at(a1, r_inner),
-            colour,
-            vp_w,
-            vp_h,
-        );
-    }
+    emit_arc_band(
+        verts,
+        centre,
+        r_inner,
+        r_outer,
+        0.0,
+        std::f32::consts::TAU,
+        16,
+        // The inner rim lies on the dot or cap the shadow belongs to.
+        [EdgeAa::Outset, EdgeAa::Centred],
+        colour,
+    );
 }
 
-/// Emit half an annulus about `centre`, on the side `outward` points to.
+/// Emit half an annulus about `centre`, on the side `outward` points to, with
+/// a fringe on both rims.
 #[allow(clippy::too_many_arguments)]
 fn emit_half_ring(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
@@ -1308,26 +1808,22 @@ fn emit_half_ring(
     r_inner: f32,
     r_outer: f32,
     colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
+    _vp_w: f32,
+    _vp_h: f32,
 ) {
-    let segs = 8;
     let base = outward[1].atan2(outward[0]) - std::f32::consts::FRAC_PI_2;
-    let at = |a: f32, r: f32| [centre[0] + a.cos() * r, centre[1] + a.sin() * r];
-    for i in 0..segs {
-        let a0 = base + std::f32::consts::PI * i as f32 / segs as f32;
-        let a1 = base + std::f32::consts::PI * (i + 1) as f32 / segs as f32;
-        emit_quad(
-            verts,
-            at(a0, r_inner),
-            at(a0, r_outer),
-            at(a1, r_outer),
-            at(a1, r_inner),
-            colour,
-            vp_w,
-            vp_h,
-        );
-    }
+    emit_arc_band(
+        verts,
+        centre,
+        r_inner,
+        r_outer,
+        base,
+        std::f32::consts::PI,
+        8,
+        // The inner rim lies on the dot or cap the shadow belongs to.
+        [EdgeAa::Outset, EdgeAa::Centred],
+        colour,
+    );
 }
 
 /// Emit one inner shadow layer of a polyline: a band running inward from the
@@ -1370,7 +1866,18 @@ pub(super) fn emit_polyline_inner_shadow(
         } else if stroke_width > 0.0 {
             let half = stroke_width * 0.5;
             let w = width.min(half);
-            for (lo, hi) in [(half - w, half), (-half, w - half)] {
+            // Each band's edge on the stroke's edge is the outset one.
+            let on_hi = Fringe {
+                lo: EdgeAa::Centred,
+                hi: EdgeAa::Outset,
+                ends: true,
+            };
+            let on_lo = Fringe {
+                lo: EdgeAa::Outset,
+                hi: EdgeAa::Centred,
+                ends: true,
+            };
+            for (lo, hi, fringe) in [(half - w, half, on_hi), (-half, w - half, on_lo)] {
                 verts.extend(tessellate_ribbon(
                     &poly.points,
                     lo,
@@ -1380,6 +1887,7 @@ pub(super) fn emit_polyline_inner_shadow(
                     crate::renderer::types::LineJoin::Mitre,
                     CONTOUR_BAND_MITRE_LIMIT,
                     crate::renderer::types::PolylineCap::Butt,
+                    fringe,
                     colour,
                     vp_w,
                     vp_h,
@@ -1528,7 +2036,22 @@ pub(super) fn rotate_vertices_from(
     let Some(r) = rot else {
         return;
     };
+    let m = r.linear;
+    // A fringe is measured in device pixels, so its direction turns with the
+    // item but keeps its length, and the inset limit (in the item's units)
+    // scales with it.
+    let sigma = (m[0][0] * m[1][1] - m[0][1] * m[1][0]).abs().sqrt();
+    let inv_sigma = if sigma > 1e-6 { 1.0 / sigma } else { 0.0 };
     for v in &mut verts[from..] {
         v.position = r.apply(v.position);
+        if v.aa[2] != 0.0 {
+            let [dx, dy, side, inset] = v.aa;
+            v.aa = [
+                (m[0][0] * dx + m[0][1] * dy) * inv_sigma,
+                (m[1][0] * dx + m[1][1] * dy) * inv_sigma,
+                side,
+                inset * sigma,
+            ];
+        }
     }
 }

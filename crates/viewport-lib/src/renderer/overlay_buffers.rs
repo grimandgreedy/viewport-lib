@@ -283,6 +283,7 @@ pub(crate) struct OverlayBindings {
         crate::gpu::TextureView,
         crate::gpu::Buffer,
         crate::gpu::Buffer,
+        crate::gpu::TextureView,
     )>,
     pub shape_shadow_bg: crate::resources::cached_bind_group::CachedBindGroup<(
         crate::gpu::TextureView,

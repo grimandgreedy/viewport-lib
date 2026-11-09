@@ -647,6 +647,17 @@ pub struct FrameStats {
     /// draw only where overlapping items alternate between families, images
     /// or blend modes; this is the counter that shows it.
     pub overlay_draw_calls: u32,
+    /// Vector overlay shapes whose coverage was rasterised into the overlay
+    /// atlas this frame, for the most recently prepared viewport.
+    ///
+    /// A small vector shape (and one in a retained group) draws its fill from
+    /// a cached coverage cell keyed by its path, scale, rotation and sub-pixel
+    /// position, so a static shape reads zero after its first frame, and a
+    /// retained one from the frame after it was compiled. A value that tracks
+    /// the shape count every frame means the shapes are moving in ways that
+    /// miss the cache. Cells rasterised by `compile_overlay_geometry` are not
+    /// counted.
+    pub overlay_vector_rasters: u32,
     /// Section cap meshes generated this frame, for the most recently
     /// prepared viewport.
     ///

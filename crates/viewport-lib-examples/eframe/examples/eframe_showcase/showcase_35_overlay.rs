@@ -1107,7 +1107,8 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
 }
 
 /// Row 5: border modes plus the animation channels (position, size, fill,
-/// rotation) and a dot following a Bezier path traced by a polyline.
+/// rotation), a dot following a Bezier path traced by a polyline, and a pair of
+/// thin strokes beside the same strokes drawn at four times the size.
 fn row_anim(
     app: &App,
     shapes: &mut Vec<OverlayShapeItem>,
@@ -1330,9 +1331,8 @@ fn row_anim(
     );
     x5 += row5_h + gap;
 
-    // A small circle following a closed cubic Bezier
-    // figure-eight, with the path itself traced underneath using
-    // the new OverlayPolylineItem primitive.
+    // A small circle following a closed cubic Bezier figure-eight, with the
+    // path itself traced underneath by an anti-aliased OverlayPolylineItem.
     {
         let cx = x5 + 130.0;
         let cy = y5_mid;
@@ -1365,6 +1365,37 @@ fn row_anim(
             .with_position([dot[0] - dot_size * 0.5, dot[1] - dot_size * 0.5]),
         );
         x5 += 260.0 + gap;
+    }
+
+    // Thin strokes: a 1 px and a 1.5 px zigzag, each beside a quarter-size copy
+    // drawn under a 4x scale transform. The edge fringe is one device pixel
+    // whatever the transform, so a hairline keeps its weight and the scaled
+    // copy shows the same corners and caps at a size that is easy to inspect.
+    // Compare at pixels-per-point 1, where a logical pixel is a device pixel.
+    {
+        let zigzag = |x: f32, y: f32, w: f32, h: f32| -> Vec<[f32; 2]> {
+            (0..5)
+                .map(|i| [x + w * i as f32 / 4.0, if i % 2 == 0 { y } else { y + h }])
+                .collect()
+        };
+        let colour = Colour::srgb(0.9, 0.95, 1.0, 1.0);
+        for (k, width) in [1.0_f32, 1.5].into_iter().enumerate() {
+            let x = x5 + k as f32 * 128.0;
+            polylines.push(
+                vpl::OverlayPolylineItem::new(zigzag(x, y5_mid - 20.0, 48.0, 40.0))
+                    .with_thickness(width)
+                    .with_colour(colour),
+            );
+            // Scaled about its own bounding box, so it lands centred on
+            // `x + 88`.
+            polylines.push(
+                vpl::OverlayPolylineItem::new(zigzag(x + 82.0, y5_mid - 5.0, 12.0, 10.0))
+                    .with_thickness(width)
+                    .with_colour(colour)
+                    .with_scale(4.0),
+            );
+        }
+        x5 += 256.0 + gap;
     }
     let _ = x5;
 }

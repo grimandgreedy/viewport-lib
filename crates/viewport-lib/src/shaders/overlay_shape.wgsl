@@ -12,6 +12,9 @@
 // `overlay_fill`.
 // #include "helpers/overlay_fill.wgsl"
 
+// Soft clip coverage over `clip_shapes` and `eval_sdf` below.
+// #include "helpers/overlay_clip.wgsl"
+
 // Nine instance attributes and no vertex stream, inside the 16 WebGL2 allows.
 struct ShapeInstance {
     @location(0) quad:        vec4<f32>,  // xy = quad centre (logical px), zw = quad half-extents
@@ -494,30 +497,6 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
     }
 }
 
-// True if the framebuffer point `fp` is outside the clip mask at `idx0` or any of
-// its ancestors (masks intersect down the parent chain). Each mask is evaluated by
-// its SDF in its own rotated frame. A short guard bounds the chain length.
-fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
-    var idx = i32(idx0);
-    var guard = 0;
-    loop {
-        if (idx < 0 || guard >= 8) {
-            break;
-        }
-        let c = clip_shapes[idx];
-        let rc = cos(-c.params.y);
-        let rs = sin(-c.params.y);
-        let pd = (fp - c.centre) - c.pivot;
-        let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
-        if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
-            return true;
-        }
-        idx = i32(c.params.z);
-        guard = guard + 1;
-    }
-    return false;
-}
-
 // Map a pixel offset from the pivot (item pixel space) into the shape's own
 // frame: the inverse linear map, then the pivot's place in that frame.
 fn to_shape_frame(local: vec2<f32>, linv: vec4<f32>, pivot: vec2<f32>) -> vec2<f32> {
@@ -526,18 +505,17 @@ fn to_shape_frame(local: vec2<f32>, linv: vec4<f32>, pivot: vec2<f32>) -> vec2<f
 
 // The fragment colour in straight alpha.
 fn shade(in: VertexOutput) -> vec4<f32> {
-    // Clip: first a cheap bounding-box reject (exact for rectangular masks), then
-    // the mask's SDF and its parent chain for shape-accurate and nested clipping.
-    // `clip_rect`/`clip_position.xy` are in framebuffer pixels (top-left origin).
-    let cr = in.clip_rect;
-    if (cr.z > cr.x && cr.w > cr.y) {
-        let fp = in.clip_position.xy;
-        if (fp.x < cr.x || fp.x > cr.z || fp.y < cr.y || fp.y > cr.w) {
-            discard;
-        }
-    }
+    // Clip: the bounding box (exact for rectangular masks), then the mask's SDF
+    // and its parent chain for shape-accurate and nested clipping, each as a
+    // coverage so the clip edge is anti-aliased. `clip_rect`/`clip_position.xy`
+    // are in framebuffer pixels (top-left origin).
+    let fp = in.clip_position.xy;
+    var clip = overlay_rect_coverage(fp, in.clip_rect);
     let clip_index = in.misc.x;
-    if (clip_index >= 0.0 && clip_outside(in.clip_position.xy, clip_index)) {
+    if (clip_index >= 0.0 && clip > 0.0) {
+        clip = clip * overlay_mask_coverage(fp, clip_index);
+    }
+    if (clip <= 0.0) {
         discard;
     }
     // Into the shape's own frame: the SDF evaluates unrotated, unscaled and
@@ -665,7 +643,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         }
     }
 
-    return colour;
+    return vec4<f32>(colour.rgb, colour.a * clip);
 }
 
 // Straight alpha, for the source-over blend state.

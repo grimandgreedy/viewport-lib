@@ -1,7 +1,9 @@
 // Screen-space overlay text and solid quad shader.
 //
-// Renders glyph quads (textured from the glyph atlas) and solid-colour quads
-// (background boxes, leader lines) in a single batched draw call.
+// Renders glyph quads (textured from the glyph atlas), vector-shape quads
+// (textured from the coverage atlas) and solid-colour triangles (background
+// boxes, polylines, tessellated fills) in a single batched draw call. Solid
+// edges are anti-aliased by a one-device-pixel fringe the vertex stage places.
 //
 // Vertex attributes carry NDC position, atlas UV, RGBA tint, a flag distinguishing
 // textured vs solid fragments, and an optional clip: a framebuffer-pixel bounding
@@ -15,8 +17,13 @@
 // `overlay_fill`.
 // #include "helpers/overlay_fill.wgsl"
 
+// Soft clip coverage over `clip_shapes` and `eval_sdf` below.
+// #include "helpers/overlay_clip.wgsl"
+
 @group(0) @binding(0) var glyph_atlas: texture_2d<f32>;
 @group(0) @binding(1) var atlas_sampler: sampler;
+// Vector-shape coverage cells, one channel.
+@group(0) @binding(4) var coverage_atlas: texture_2d<f32>;
 
 // One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
 // parent_index, invert). Matches ClipShapeGpu on the CPU and overlay_shape.wgsl.
@@ -33,11 +40,13 @@ struct ClipShape {
 // fills a 16 KiB uniform binding); a frame's later masks are dropped.
 @group(0) @binding(2) var<uniform> clip_shapes: array<ClipShape, 256>;
 
-// Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
-// positions to NDC so overlay geometry is independent of the viewport size.
+// Viewport size in logical pixels and the frame's pixels per point. The size
+// maps local-pixel vertex positions to NDC so overlay geometry is independent
+// of the viewport size; `ppp` sizes anti-aliasing fringes in device pixels.
 struct Viewport {
     size: vec2<f32>,
-    pad:  vec2<f32>,
+    ppp:  f32,
+    pad:  f32,
 };
 @group(0) @binding(3) var<uniform> viewport: Viewport;
 
@@ -89,11 +98,12 @@ struct VertexInput {
     @location(0) position:    vec2<f32>,  // local logical pixels
     @location(1) uv:          vec2<f32>,  // atlas UV (ignored for solid quads)
     @location(2) colour:      vec4<f32>,  // RGBA tint
-    @location(3) use_texture: f32,        // 1.0 = sample atlas, 0.0 = solid
+    @location(3) use_texture: f32,        // 0 = solid, 1 = glyph coverage, 2 = colour glyph, 3 = coverage cell
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
     @location(6) group_tint:  f32,        // 1 = the group tint applies here, 0 = shadow geometry
     @location(12) fill:       vec4<f32>,  // xy = pixels from the fill box centre, z = fill record or -1
+    @location(13) aa:         vec4<f32>,  // fringe: xy = outward direction, z = side (-1 inner, 0 none, 1 outer), w = max inset
 };
 
 struct VertexOutput {
@@ -108,11 +118,36 @@ struct VertexOutput {
     @location(7) @interpolate(flat) tint:        vec4<f32>,
     @location(8)                    fill_local:  vec2<f32>,
     @location(9) @interpolate(flat) fill_index:  f32,
+    // Edge coverage from an anti-aliasing fringe: 1 inside, ramping to 0
+    // across the outer device pixel.
+    @location(10)                   coverage:    f32,
 };
 
 // Map a local logical-pixel position to NDC using the viewport size.
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
+}
+
+// Place a fringe vertex. One device pixel is `1 / s` local units, `s` being
+// the frame's pixels per point times the group's mean scale, so the fringe is
+// one device pixel wide whatever the transform. An inner-row vertex moves half
+// a pixel in (no further than its max inset, where the opposite edge's fringe
+// starts) at full coverage; a hairline narrower than a pixel keeps its
+// integrated weight by scaling that coverage down. An outer-row vertex moves
+// half a pixel out at zero coverage. Returns the position and coverage.
+fn place_fringe(p: vec2<f32>, aa: vec4<f32>, inst: OverlayInstance) -> vec3<f32> {
+    let ppp = select(1.0, viewport.ppp, viewport.ppp > 0.0);
+    let s = max(ppp * inst.aa_scale, 1.0e-6);
+    if (aa.z < -0.5) {
+        let m = aa.w * s;
+        let inset = min(0.5, m);
+        let c = select(1.0, 2.0 * m / (m + 0.5), m < 0.5);
+        return vec3<f32>(p - aa.xy * (inset / s), c);
+    }
+    if (aa.z > 0.5) {
+        return vec3<f32>(p + aa.xy * (0.5 / s), 0.0);
+    }
+    return vec3<f32>(p, 1.0);
 }
 
 @vertex
@@ -122,7 +157,9 @@ fn vs_main(in: VertexInput, instance: InstanceInput) -> VertexOutput {
     // Apply the group transform (identity for immediate draws). Text-stream
     // geometry is the vertex position itself, so this moves glyphs, polylines,
     // and vector fills together.
-    out.clip_position = vec4<f32>(px_to_ndc(group_apply(in.position, inst)), 0.0, 1.0);
+    let placed = place_fringe(in.position, in.aa, inst);
+    out.coverage      = placed.z;
+    out.clip_position = vec4<f32>(px_to_ndc(group_apply(placed.xy, inst)), 0.0, 1.0);
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;
@@ -345,50 +382,20 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
     }
 }
 
-// True if `fp` is outside the clip mask at `idx0` or any ancestor (chain intersect).
-fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
-    var idx = i32(idx0);
-    var guard = 0;
-    loop {
-        if (idx < 0 || guard >= 8) {
-            break;
-        }
-        let c = clip_shapes[idx];
-        let rc = cos(-c.params.y);
-        let rs = sin(-c.params.y);
-        let pd = (fp - c.centre) - c.pivot;
-        let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
-        if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
-            return true;
-        }
-        idx = i32(c.params.z);
-        guard = guard + 1;
-    }
-    return false;
-}
-
 // The fragment colour in straight alpha.
 fn shade(in: VertexOutput) -> vec4<f32> {
-    // Clip: cheap bounding-box reject (exact for rectangular masks) then the mask's
-    // SDF and parent chain. `clip_rect`/`clip_position.xy` are framebuffer pixels.
-    let cr = in.clip_rect;
-    if (cr.z > cr.x && cr.w > cr.y) {
-        let fp = in.clip_position.xy;
-        if (fp.x < cr.x || fp.x > cr.z || fp.y < cr.y || fp.y > cr.w) {
-            discard;
-        }
+    // Clip: the item's box (exact for rectangular masks), the mask's SDF and
+    // parent chain, and a retained group's per-frame outer box (the scroll
+    // viewport; zero for immediate draws, which is no clip). Each is a
+    // coverage, so a clip edge is anti-aliased; a pixel none of it keeps is
+    // dropped. `clip_rect`/`clip_position.xy` are framebuffer pixels.
+    let fp = in.clip_position.xy;
+    var clip = overlay_rect_coverage(fp, in.clip_rect) * overlay_rect_coverage(fp, in.outer_clip);
+    if (in.clip_index >= 0.0 && clip > 0.0) {
+        clip = clip * overlay_mask_coverage(fp, in.clip_index);
     }
-    if (in.clip_index >= 0.0 && clip_outside(in.clip_position.xy, in.clip_index)) {
+    if (clip <= 0.0) {
         discard;
-    }
-    // Outer clip: a retained group's per-frame clip rect (the scroll viewport).
-    // Zero rect means no clip, so immediate draws (identity instance) skip it.
-    let oc = in.outer_clip;
-    if (oc.z > oc.x && oc.w > oc.y) {
-        let fp = in.clip_position.xy;
-        if (fp.x < oc.x || fp.x > oc.z || fp.y < oc.y || fp.y > oc.w) {
-            discard;
-        }
     }
 
     // Sampled with an explicit level rather than `textureSample`, which computes
@@ -399,13 +406,17 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // Firefox. The atlas has one mip level, so level zero is what an implicit
     // lookup would have chosen anyway.
     let atlas = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0);
+    let cell = textureSampleLevel(coverage_atlas, atlas_sampler, in.uv, 0.0).r;
     // The item's fill multiplies into the vertex colour; with no record it is
     // white and the vertex colour passes through. Evaluated outside any
     // branch, because an image fill samples a texture.
     let colour = in.colour * overlay_fill(in.fill_local, i32(in.fill_index));
 
     var result: vec4<f32>;
-    if (in.use_texture > 1.5) {
+    if (in.use_texture > 2.5) {
+        // Vector-shape coverage cell: tint its coverage by the fill.
+        result = vec4<f32>(colour.rgb, colour.a * cell);
+    } else if (in.use_texture > 1.5) {
         // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
         // carries opacity through its alpha; the tint RGB is ignored.
         result = vec4<f32>(atlas.rgb, atlas.a * colour.a);
@@ -415,8 +426,10 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     } else {
         result = colour;
     }
-    // Per-draw tint and opacity (identity for immediate draws).
-    return vec4<f32>(result.rgb * in.tint.rgb, result.a * in.opacity * in.tint.a);
+    // Per-draw tint and opacity (identity for immediate draws), then the
+    // fringe and clip coverage.
+    let coverage = clamp(in.coverage, 0.0, 1.0) * clip;
+    return vec4<f32>(result.rgb * in.tint.rgb, result.a * in.opacity * in.tint.a * coverage);
 }
 
 // Straight alpha, for the source-over blend state.

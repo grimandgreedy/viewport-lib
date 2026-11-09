@@ -84,33 +84,76 @@ pub(crate) fn tessellate(subpaths: &[SubPath], fill_rule: FillRule, tolerance: f
     }
 }
 
-/// A filled closed polyline: positions, a triangle index list, and for each
-/// position the outline point it came from, as `(from, to, t)` indices into the
-/// input: `points[from]` moved toward `points[to]` by `t`. A position that is an
-/// input point has `from == to`.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PolygonMesh {
-    pub positions: Vec<[f32; 2]>,
-    pub indices: Vec<u32>,
-    pub sources: Vec<(usize, usize, f32)>,
+/// Flatten `subpaths` into closed polygons, in path-local logical pixels, no
+/// further than `tolerance` from the true curves. Every subpath is closed, as a
+/// fill closes it.
+pub(crate) fn flatten_path(subpaths: &[SubPath], tolerance: f32) -> Vec<Vec<[f32; 2]>> {
+    use lyon_path::PathEvent;
+    use lyon_path::iterator::PathIterator;
+    let path = build_path(subpaths);
+    let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
+    for event in path.iter().flattened(tolerance.max(1e-3)) {
+        match event {
+            PathEvent::Begin { at } => contours.push(vec![[at.x, at.y]]),
+            PathEvent::Line { to, .. } => {
+                if let Some(c) = contours.last_mut() {
+                    c.push([to.x, to.y]);
+                }
+            }
+            PathEvent::End { first, .. } => {
+                if let Some(c) = contours.last_mut() {
+                    if c.len() > 1 && c.last() == Some(&[first.x, first.y]) {
+                        c.pop();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    contours
 }
 
-/// Tessellate the closed outline through `points` under the non-zero fill rule.
+/// A filled outline with an anti-aliasing fringe along its boundary.
 ///
-/// Takes any outline: one that touches itself, doubles back along a spur or
-/// crosses itself fills like the same path in SVG. Positions do not map one to
-/// one to `points` (coincident points merge and crossings add vertices), so
-/// anything carried per input point is looked up through `sources`. Empty when
-/// there are fewer than three points, a point is not finite, or tessellation
-/// fails.
-pub(crate) fn tessellate_polygon(points: &[[f32; 2]]) -> PolygonMesh {
-    if points.len() < 3 || points.iter().flatten().any(|v| !v.is_finite()) {
-        return PolygonMesh::default();
-    }
+/// `positions`, `aa` (an `OverlayTextVertex::aa` each) and `sources` are per
+/// vertex, and `indices` a triangle list over them: the fill's triangles, then
+/// the fringe's. A fill vertex on the boundary is also the fringe's inner row,
+/// so the fill insets by half a device pixel exactly where the fringe starts,
+/// and its copy after the fill vertices is the outer row. `sources` gives for
+/// each vertex the outline point it came from, as `(from, to, t)` indices into
+/// the concatenated input contours: `points[from]` moved toward `points[to]`
+/// by `t`. A vertex that is an input point has `from == to`. Vertices do not
+/// map one to one to the input (coincident points merge and crossings add
+/// vertices), so anything carried per input point is looked up through it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FringedFill {
+    pub positions: Vec<[f32; 2]>,
+    pub aa: Vec<[f32; 4]>,
+    pub sources: Vec<(usize, usize, f32)>,
+    pub indices: Vec<u32>,
+}
+
+/// Longest a fill's fringe direction grows at a sharp corner, as a multiple
+/// of the edge offset. Past it the corner's fringe is shortened rather than
+/// reaching far past the tip.
+const FILL_MITRE_LIMIT: f32 = 4.0;
+
+/// Tessellate the closed `contours` under `fill_rule`, with a fringe along the
+/// boundary of what fills.
+///
+/// The boundary is read off the triangulation (the edges only one triangle
+/// uses, facing away from it), not off the contours, so it is the edge of the
+/// filled area under either fill rule: a hole's edge faces into the hole, an
+/// edge inside the filled area (a self-crossing, or a contour another one
+/// covers) gets no fringe, and a spur or a doubled-back stretch, which fills
+/// nothing, gets none either. A point where two filled regions touch keeps its
+/// place and the fringe narrows to nothing there. Contours with fewer than
+/// three points, or with a point that is not finite, are skipped.
+pub(crate) fn tessellate_fringed(contours: &[Vec<[f32; 2]>], fill_rule: FillRule) -> FringedFill {
     let mut builder = Path::builder();
     // Endpoint ids are assigned by the builder, so keep the map back to the
     // input index rather than assuming they count from zero.
-    let mut input_of = Vec::with_capacity(points.len());
+    let mut input_of: Vec<usize> = Vec::new();
     let mut push = |id: lyon_path::EndpointId, i: usize| {
         let slot = id.to_usize();
         if input_of.len() <= slot {
@@ -118,22 +161,36 @@ pub(crate) fn tessellate_polygon(points: &[[f32; 2]]) -> PolygonMesh {
         }
         input_of[slot] = i;
     };
-    push(builder.begin(point(points[0][0], points[0][1])), 0);
-    for (i, p) in points.iter().enumerate().skip(1) {
-        push(builder.line_to(point(p[0], p[1])), i);
+    let mut offset = 0;
+    let mut any = false;
+    for c in contours {
+        let start = offset;
+        offset += c.len();
+        if c.len() < 3 || c.iter().flatten().any(|v| !v.is_finite()) {
+            continue;
+        }
+        any = true;
+        push(builder.begin(point(c[0][0], c[0][1])), start);
+        for (i, p) in c.iter().enumerate().skip(1) {
+            push(builder.line_to(point(p[0], p[1])), start + i);
+        }
+        builder.end(true);
     }
-    builder.end(true);
+    if !any {
+        return FringedFill::default();
+    }
     let path = builder.build();
 
     let mut buffers: VertexBuffers<([f32; 2], (usize, usize, f32)), u32> = VertexBuffers::new();
-    // `tessellate_with_ids` rather than `tessellate_path`: only it reports which
-    // endpoints each output vertex came from.
     let input = |id: lyon_path::EndpointId| input_of.get(id.to_usize()).copied().unwrap_or(0);
     let result = FillTessellator::new().tessellate_with_ids(
         path.id_iter(),
         &path,
         None,
-        &FillOptions::default().with_fill_rule(LyonFillRule::NonZero),
+        &FillOptions::default().with_fill_rule(match fill_rule {
+            FillRule::NonZero => LyonFillRule::NonZero,
+            FillRule::EvenOdd => LyonFillRule::EvenOdd,
+        }),
         &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| {
             let p = v.position();
             let source = match v.sources().next() {
@@ -150,18 +207,114 @@ pub(crate) fn tessellate_polygon(points: &[[f32; 2]]) -> PolygonMesh {
         }),
     );
     if let Err(e) = result {
-        tracing::debug!(
-            ?e,
-            points = points.len(),
-            "polygon fill tessellation failed"
-        );
-        return PolygonMesh::default();
+        tracing::debug!(?e, "fringed fill tessellation failed");
+        return FringedFill::default();
     }
-    let (positions, sources) = buffers.vertices.into_iter().unzip();
-    PolygonMesh {
+    let (mut positions, mut sources): (Vec<[f32; 2]>, Vec<(usize, usize, f32)>) =
+        buffers.vertices.into_iter().unzip();
+    let mut indices = buffers.indices;
+    let n = positions.len();
+
+    // Boundary edges: used by exactly one triangle. Each keeps the triangle's
+    // third vertex, which says which side the fill is on. Degenerate
+    // triangles cover nothing and say nothing about the boundary.
+    let mut edge_use: std::collections::HashMap<(u32, u32), (u32, u32)> =
+        std::collections::HashMap::with_capacity(indices.len());
+    for tri in indices.chunks_exact(3) {
+        let [a, b, c] = [tri[0], tri[1], tri[2]];
+        let (pa, pb, pc) = (
+            positions[a as usize],
+            positions[b as usize],
+            positions[c as usize],
+        );
+        let area = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pc[0] - pa[0]) * (pb[1] - pa[1]);
+        if area.abs() < 1e-9 {
+            continue;
+        }
+        for (u, v, w) in [(a, b, c), (b, c, a), (c, a, b)] {
+            let e = edge_use.entry((u.min(v), u.max(v))).or_insert((0, w));
+            e.0 += 1;
+        }
+    }
+    // Per vertex: the sum of its boundary edges' outward normals, the first
+    // of them, and how many there are.
+    let mut normals: Vec<([f32; 2], [f32; 2], u32)> = vec![([0.0; 2], [0.0; 2], 0); n];
+    let mut boundary: Vec<(u32, u32)> = Vec::new();
+    for (&(u, v), &(count, third)) in &edge_use {
+        if count != 1 {
+            continue;
+        }
+        let (pu, pv, pt) = (
+            positions[u as usize],
+            positions[v as usize],
+            positions[third as usize],
+        );
+        let d = [pv[0] - pu[0], pv[1] - pu[1]];
+        let len = (d[0] * d[0] + d[1] * d[1]).sqrt();
+        if len < 1e-9 {
+            continue;
+        }
+        let mut nrm = [-d[1] / len, d[0] / len];
+        if nrm[0] * (pt[0] - pu[0]) + nrm[1] * (pt[1] - pu[1]) > 0.0 {
+            nrm = [-nrm[0], -nrm[1]];
+        }
+        for w in [u, v] {
+            let e = &mut normals[w as usize];
+            if e.2 == 0 {
+                e.1 = nrm;
+            }
+            e.0 = [e.0[0] + nrm[0], e.0[1] + nrm[1]];
+            e.2 += 1;
+        }
+        boundary.push((u, v));
+    }
+    // Hash-map order is not stable, and the fringe's triangles should come
+    // out the same every time.
+    boundary.sort_unstable();
+
+    // Each boundary vertex's fringe direction: the mitre of its two edges'
+    // normals. Anything else (a point two regions touch at) stays put.
+    let mut aa = vec![[0.0f32; 4]; n];
+    let mut outer_of = vec![u32::MAX; n];
+    for (i, &(sum, first, count)) in normals.iter().enumerate() {
+        if count == 0 {
+            continue;
+        }
+        let dir = if count == 2 {
+            let len = (sum[0] * sum[0] + sum[1] * sum[1]).sqrt();
+            if len < 1e-4 {
+                [0.0, 0.0]
+            } else {
+                let bis = [sum[0] / len, sum[1] / len];
+                let cos = (bis[0] * first[0] + bis[1] * first[1]).max(1e-4);
+                let k = (1.0 / cos).min(FILL_MITRE_LIMIT);
+                [bis[0] * k, bis[1] * k]
+            }
+        } else if count == 1 {
+            first
+        } else {
+            [0.0, 0.0]
+        };
+        aa[i] = [
+            dir[0],
+            dir[1],
+            -1.0,
+            super::overlay_geometry::FILL_MAX_INSET,
+        ];
+        outer_of[i] = positions.len() as u32;
+        positions.push(positions[i]);
+        sources.push(sources[i]);
+        aa.push([dir[0], dir[1], 1.0, super::overlay_geometry::FILL_MAX_INSET]);
+    }
+    for (u, v) in boundary {
+        let (uo, vo) = (outer_of[u as usize], outer_of[v as usize]);
+        indices.extend_from_slice(&[u, uo, v, uo, vo, v]);
+    }
+    FringedFill {
         positions,
-        indices: buffers.indices,
+        aa,
         sources,
+        indices,
     }
 }
 
@@ -251,8 +404,13 @@ mod tests {
             * 0.5
     }
 
-    /// Fraction of the outline's area the mesh's triangles cover.
-    fn coverage(mesh: &PolygonMesh, outline: &[[f32; 2]]) -> f32 {
+    fn tessellate_polygon(outline: &[[f32; 2]]) -> FringedFill {
+        tessellate_fringed(&[outline.to_vec()], FillRule::NonZero)
+    }
+
+    /// Fraction of the outline's area the mesh's triangles cover. A fringe
+    /// quad has no area until the vertex shader moves its rows apart.
+    fn coverage(mesh: &FringedFill, outline: &[[f32; 2]]) -> f32 {
         let filled: f32 = mesh
             .indices
             .chunks_exact(3)
@@ -323,6 +481,34 @@ mod tests {
         outline.push([0.0, 100.0]);
         let c = coverage(&tessellate_polygon(&outline), &outline);
         assert!((c - 1.0).abs() < 1e-3, "covered {c}");
+    }
+
+    #[test]
+    fn a_fill_fringes_its_boundary_outward() {
+        // A square with an even-odd hole: every boundary vertex's fringe points
+        // away from the filled ring (out of the square, or into the hole), and
+        // each has an outer-row copy.
+        let outer = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let hole = vec![[3.0, 3.0], [7.0, 3.0], [7.0, 7.0], [3.0, 7.0]];
+        let mesh = tessellate_fringed(&[outer, hole], FillRule::EvenOdd);
+        let inner: Vec<usize> = (0..mesh.positions.len())
+            .filter(|&i| mesh.aa[i][2] < -0.5)
+            .collect();
+        let outer_rows = mesh.aa.iter().filter(|a| a[2] > 0.5).count();
+        assert_eq!(inner.len(), 8);
+        assert_eq!(outer_rows, 8);
+        for i in inner {
+            let p = mesh.positions[i];
+            let d = [mesh.aa[i][0], mesh.aa[i][1]];
+            let from_centre = [p[0] - 5.0, p[1] - 5.0];
+            let in_hole = p[0] > 1.0 && p[0] < 9.0;
+            let dot = d[0] * from_centre[0] + d[1] * from_centre[1];
+            // Out of the square at its corners, into the hole at the hole's.
+            assert!(if in_hole { dot < 0.0 } else { dot > 0.0 }, "{p:?} {d:?}");
+            // A right-angle corner's mitre is sqrt(2) long.
+            let len = (d[0] * d[0] + d[1] * d[1]).sqrt();
+            assert!((len - std::f32::consts::SQRT_2).abs() < 1e-3, "{len}");
+        }
     }
 
     #[test]
