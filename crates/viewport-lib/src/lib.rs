@@ -322,7 +322,7 @@ pub use renderer::{
     GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY,
     LabelItem, LerpAnim, LightKind, LightSource, LightingPosture, LightingSettings, LineCap,
     LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_SHADOW_LAYERS,
-    OperatorCurve, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OperatorCurve, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayBlend, OverlayClip,
     OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
     OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PASSTHROUGH_EV100,

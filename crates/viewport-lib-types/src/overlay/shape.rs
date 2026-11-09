@@ -756,6 +756,12 @@ impl OverlayShapeItem {
         self
     }
 
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: crate::overlay::OverlayBlend) -> Self {
+        self.style.blend = blend;
+        self
+    }
+
     /// Add an outline: a band of `width` logical pixels on the item's edge,
     /// placed by `mode`. A width of `0.0` adds nothing.
     ///

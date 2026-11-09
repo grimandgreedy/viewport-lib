@@ -524,8 +524,8 @@ fn to_shape_frame(local: vec2<f32>, linv: vec4<f32>, pivot: vec2<f32>) -> vec2<f
     return vec2<f32>(linv.x * local.x + linv.y * local.y, linv.z * local.x + linv.w * local.y) + pivot;
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+// The fragment colour in straight alpha.
+fn shade(in: VertexOutput) -> vec4<f32> {
     // Clip: first a cheap bounding-box reject (exact for rectangular masks), then
     // the mask's SDF and its parent chain for shape-accurate and nested clipping.
     // `clip_rect`/`clip_position.xy` are in framebuffer pixels (top-left origin).
@@ -666,4 +666,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return colour;
+}
+
+// Straight alpha, for the source-over blend state.
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return shade(in);
+}
+
+// Premultiplied alpha, for the blend states whose factors expect a
+// premultiplied source.
+@fragment
+fn fs_premul(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = shade(in);
+    return vec4<f32>(c.rgb * c.a, c.a);
 }

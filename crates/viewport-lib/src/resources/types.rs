@@ -39,7 +39,6 @@ pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::ClipShapeGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayBackdropVertex;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShadowLayerGpu;
-pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeBatch;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeInstance;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeTextureEntry;

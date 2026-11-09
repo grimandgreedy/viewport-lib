@@ -6,10 +6,30 @@
 pub(crate) struct OverlayTextResources {
     /// Render pipeline for screen-space text and solid overlay quads.
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    /// The text pipeline for each blend mode other than source-over that a
+    /// frame has used.
+    pub(crate) variants: crate::resources::overlay::overlay_shape::OverlayBlendVariants,
+    /// The text pipeline's layout and shader, kept to build blend variants.
+    pub(crate) layout: Option<crate::gpu::PipelineLayout>,
+    pub(crate) shader: Option<crate::gpu::ShaderModule>,
     /// Bind group layout (group 0: atlas texture + sampler).
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear sampler for the glyph atlas texture.
     pub(crate) sampler: Option<crate::gpu::Sampler>,
+}
+
+impl OverlayTextResources {
+    /// The text pipeline that draws with `blend`, if it has been built.
+    pub(crate) fn pipeline_for(
+        &self,
+        blend: crate::renderer::OverlayBlend,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        if blend == crate::renderer::OverlayBlend::SourceOver {
+            self.pipeline.as_ref()
+        } else {
+            self.variants.get(blend)
+        }
+    }
 }
 
 impl crate::resources::DeviceResources {
@@ -77,12 +97,59 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::wgsl_source!("overlay_text"),
         );
 
-        let pipeline = crate::resources::builders::render_pipeline(
+        let pipeline = self.overlay_text_variant(
+            device,
+            &layout,
+            &shader,
+            crate::renderer::OverlayBlend::SourceOver,
+        );
+
+        self.overlay_text.bgl = Some(bgl);
+        self.overlay_text.sampler = Some(sampler);
+        self.overlay_text.pipeline = Some(pipeline);
+        self.overlay_text.layout = Some(layout);
+        self.overlay_text.shader = Some(shader);
+    }
+
+    /// The text pipeline for `blend`, built on first use, as for the shape
+    /// pipeline.
+    pub(crate) fn ensure_overlay_text_blend(
+        &mut self,
+        device: &crate::gpu::Device,
+        blend: crate::renderer::OverlayBlend,
+    ) {
+        self.ensure_overlay_text_pipeline(device);
+        if self.overlay_text.variants.get(blend).is_some()
+            || blend == crate::renderer::OverlayBlend::SourceOver
+        {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let (Some(layout), Some(shader)) = (
+            self.overlay_text.layout.clone(),
+            self.overlay_text.shader.clone(),
+        ) else {
+            return;
+        };
+        let pipeline = self.overlay_text_variant(device, &layout, &shader, blend);
+        self.overlay_text.variants.insert(blend, pipeline);
+    }
+
+    fn overlay_text_variant(
+        &self,
+        device: &crate::gpu::Device,
+        layout: &crate::gpu::PipelineLayout,
+        shader: &crate::gpu::ShaderModule,
+        blend: crate::renderer::OverlayBlend,
+    ) -> crate::gpu::RenderPipeline {
+        let (blend_state, fs_entry) =
+            crate::resources::overlay::overlay_shape::overlay_blend_target(blend);
+        crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_text_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
+                layout,
+                vertex_module: shader,
                 vertex_entry: "vs_main",
                 // The per-draw instance is a second, per-instance stream: slot 0
                 // is the identity immediate draws use, retained groups draw over
@@ -104,33 +171,18 @@ impl crate::resources::DeviceResources {
                 )),
                 multisample: crate::gpu::MultisampleState::default(),
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
+                    module: shader,
+                    entry_point: Some(fs_entry),
                     targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
-                        blend: Some(crate::gpu::BlendState {
-                            color: crate::gpu::BlendComponent {
-                                src_factor: crate::gpu::BlendFactor::SrcAlpha,
-                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: crate::gpu::BlendOperation::Add,
-                            },
-                            alpha: crate::gpu::BlendComponent {
-                                src_factor: crate::gpu::BlendFactor::One,
-                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: crate::gpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(blend_state),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
                     compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 cache: None,
             },
-        );
-
-        self.overlay_text.bgl = Some(bgl);
-        self.overlay_text.sampler = Some(sampler);
-        self.overlay_text.pipeline = Some(pipeline);
+        )
     }
 }
 
@@ -236,22 +288,11 @@ impl OverlayTextVertex {
     }
 }
 
-/// A run of the merged text buffer that draws with one fill bind group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct OverlayTextRun {
-    pub vertex_start: u32,
-    pub vertex_count: u32,
-    /// Index into `LabelGpuData::fill_bind_groups`.
-    pub fill: u32,
-}
-
 /// Per-frame GPU data for batched overlay label rendering.
 pub(crate) struct LabelGpuData {
-    /// Vertex buffer containing all label geometry for this frame.
-    pub vertex_buf: crate::gpu::Buffer,
-    /// The buffer's draws in the fixed family order: one run per stretch that
-    /// samples the same fill image.
-    pub runs: Vec<OverlayTextRun>,
+    /// The frame's text-stream vertices in draw order, written once the draw
+    /// list is built.
+    pub vertex_buf: Option<crate::gpu::Buffer>,
     /// Group 1 bind groups: the frame's fill records with the blank image at
     /// index 0, then one per image a text-stream item is filled from.
     pub fill_bind_groups: Vec<crate::gpu::BindGroup>,

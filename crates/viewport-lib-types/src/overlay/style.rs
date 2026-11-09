@@ -56,6 +56,74 @@ impl BackdropEffects {
     }
 }
 
+/// How an overlay item's colour combines with what is already drawn under it.
+///
+/// Every mode is a fixed-function blend state, so changing modes costs a
+/// pipeline switch and nothing more. The Porter-Duff modes treat the item and
+/// the destination as premultiplied-alpha colour.
+///
+/// [`SourceOver`](Self::SourceOver), [`Additive`](Self::Additive),
+/// [`Multiply`](Self::Multiply), [`Screen`](Self::Screen),
+/// [`DestinationOver`](Self::DestinationOver),
+/// [`DestinationOut`](Self::DestinationOut), [`SourceAtop`](Self::SourceAtop),
+/// [`Xor`](Self::Xor), [`Plus`](Self::Plus) and
+/// [`Destination`](Self::Destination) leave the destination alone wherever the
+/// item has no coverage. The rest ([`Clear`](Self::Clear),
+/// [`Source`](Self::Source), [`SourceIn`](Self::SourceIn),
+/// [`DestinationIn`](Self::DestinationIn), [`SourceOut`](Self::SourceOut) and
+/// [`DestinationAtop`](Self::DestinationAtop)) change the destination where the
+/// item is transparent too, so they act over the whole area the item's geometry
+/// covers: for an analytic shape that is its quad, anti-aliasing and shadow
+/// margin included, not just its outline.
+///
+/// A compiled overlay group draws every item [`SourceOver`](Self::SourceOver).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum OverlayBlend {
+    /// The item over the destination: ordinary alpha compositing.
+    #[default]
+    SourceOver,
+    /// Adds the item's colour, weighted by its alpha, to the destination and
+    /// leaves the destination's alpha unchanged. Brightens; never darkens.
+    Additive,
+    /// Multiplies the destination by the item's colour where the item covers
+    /// it. Darkens; white leaves the destination unchanged. Exact over an
+    /// opaque destination.
+    Multiply,
+    /// The inverse of multiplying the inverses: brightens, black leaves the
+    /// destination unchanged.
+    Screen,
+    /// Clears the destination to transparent.
+    Clear,
+    /// Replaces the destination with the item.
+    Source,
+    /// Leaves the destination as it is: the item draws nothing.
+    Destination,
+    /// The destination over the item: the item shows only where the
+    /// destination is transparent.
+    DestinationOver,
+    /// The item, kept only where the destination has coverage.
+    SourceIn,
+    /// The destination, kept only where the item has coverage.
+    DestinationIn,
+    /// The item, kept only where the destination is transparent.
+    SourceOut,
+    /// The destination, removed where the item has coverage: the item punches
+    /// a hole.
+    DestinationOut,
+    /// The item over the destination, kept only where the destination has
+    /// coverage.
+    SourceAtop,
+    /// The destination over the item, kept only where the item has coverage.
+    DestinationAtop,
+    /// The item and the destination, each kept only where the other is
+    /// transparent.
+    Xor,
+    /// The item and the destination added, colour and alpha both.
+    Plus,
+}
+
 /// Baked appearance shared by the four overlay item types: what the item is
 /// filled and layered with, as opposed to where it sits.
 ///
@@ -112,6 +180,9 @@ pub struct OverlayStyle {
     /// Unlike `tint`, this does reach the shadow layers: fading an item out has
     /// to take its shadow with it or the shadow outlives the thing casting it.
     pub opacity: f32,
+    /// How the item combines with what is drawn under it. Defaults to
+    /// [`OverlayBlend::SourceOver`].
+    pub blend: OverlayBlend,
 }
 
 impl Default for OverlayStyle {
@@ -123,6 +194,7 @@ impl Default for OverlayStyle {
             backdrop: BackdropEffects::default(),
             tint: [1.0, 1.0, 1.0, 1.0],
             opacity: 1.0,
+            blend: OverlayBlend::SourceOver,
         }
     }
 }
@@ -169,6 +241,12 @@ impl OverlayStyle {
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
         self.opacity = opacity;
+        self
+    }
+
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: OverlayBlend) -> Self {
+        self.blend = blend;
         self
     }
 }

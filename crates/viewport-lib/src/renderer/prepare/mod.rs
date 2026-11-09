@@ -1045,14 +1045,10 @@ impl ViewportRenderer {
     ) {
         let vp_idx = frame.camera.viewport_index;
 
-        // Overlay families each build a per-family vertex buffer. When any item
-        // carries a non-zero `z_order`, they also record their draw segments into
-        // `overlay_draw_segments`, which `finalize_overlay_draw_order` sorts into
-        // a single cross-family paint order; otherwise the emit path keeps its
-        // fixed family order and the list stays empty.
-        // Retained groups always draw through the sorted segment list (they carry
-        // their own z_order and are separate draws), so force the ordered path
-        // whenever any are present, even if no immediate item sets a z_order.
+        // Overlay families each record their items, with bounds, into
+        // `overlay_order_items`; `finalize_overlay_draw_order` then puts them in
+        // paint order, batching items that do not overlap, and uploads the
+        // shape instances and text vertices in that order.
         let overlay_start = web_time::Instant::now();
         let overlay_span = tracing::debug_span!(target: "viewport_lib::frame", "overlay").entered();
         // Each viewport keeps its own overlay buffers: the split API prepares
@@ -1062,16 +1058,17 @@ impl ViewportRenderer {
             &mut self.viewport_slots[vp_idx].overlay,
             crate::renderer::ViewportOverlay::new(),
         );
-        ov.overlay_uses_zorder =
-            frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
         ov.overlay_draw_segments.clear();
+        ov.overlay_order_items.clear();
+        ov.overlay_shape_instances.clear();
+        ov.overlay_text_verts.clear();
         ov.overlay_retained_draws.clear();
         ov.overlay_retained_shape_draws.clear();
         ov.overlay_instances_ready = false;
         self.overlay_retained_counters = Default::default();
         self.prepare_overlay_labels(device, queue, frame, &mut ov);
         self.prepare_overlay_shapes(device, queue, frame, &mut ov);
-        Self::finalize_overlay_draw_order(&mut ov);
+        self.finalize_overlay_draw_order(device, queue, &mut ov);
         let overlay_draw_calls = ov.draw_call_count();
         self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;

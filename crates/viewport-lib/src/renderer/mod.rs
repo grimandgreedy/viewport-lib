@@ -102,17 +102,17 @@ pub use self::types::{
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
     NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
-    TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER,
-    ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency,
-    WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    OverlayAnimations, OverlayBlend, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill,
+    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
+    OverlayTransform, PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
+    SurfaceSubmission, TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection,
+    VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem,
+    VolumeTransparency, WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -282,15 +282,22 @@ pub(crate) struct ViewportOverlay {
     pub label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
     pub overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
-    /// Per-frame ordered overlay draw list. The overlay prepare passes record one
-    /// segment per contiguous draw, tagged with `z_order` and family rank; the
-    /// emit path walks them in sorted order so `z_order` composes across overlay
-    /// families. Rebuilt each frame, allocation reused.
+    /// Per-frame overlay draw list in paint order, built from
+    /// `overlay_order_items` once every family has recorded its items. Rebuilt
+    /// each frame, allocation reused.
     pub overlay_draw_segments: Vec<overlay_draw_order::OverlayDrawSegment>,
-    /// Set when any overlay item this frame carries a non-zero `z_order`. When
-    /// false, the segment list is left empty and the emit path uses its fixed
-    /// family order, so scenes that never touch `z_order` pay nothing.
-    pub overlay_uses_zorder: bool,
+    /// The frame's overlay items with their bounds and draw data, in the order
+    /// the families recorded them.
+    pub overlay_order_items: Vec<overlay_draw_order::OverlayOrderItem>,
+    /// Shape instances and text-stream vertices as the families emitted them,
+    /// before the draw list puts them in draw order.
+    pub overlay_shape_instances: Vec<crate::resources::OverlayShapeInstance>,
+    pub overlay_text_verts: Vec<crate::resources::OverlayTextVertex>,
+    /// The same in draw order, as uploaded. Kept to reuse the allocations.
+    pub overlay_sorted_shapes: Vec<crate::resources::OverlayShapeInstance>,
+    pub overlay_sorted_text: Vec<crate::resources::OverlayTextVertex>,
+    /// Scratch for ranking and sorting the overlay items.
+    pub overlay_order_scratch: overlay_draw_order::OverlayOrderScratch,
     /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
     /// passes write their per-frame geometry into these in place instead of
     /// allocating a fresh buffer every frame; each grows only when a frame needs
@@ -320,21 +327,10 @@ pub(crate) struct ViewportOverlay {
 }
 
 impl ViewportOverlay {
-    /// Draw calls the overlay emit will issue for this viewport: the sorted
-    /// segments when any item sets a `z_order` or a retained group is present,
-    /// otherwise one per family batch with content.
+    /// Draw calls the overlay emit will issue for this viewport: one per
+    /// segment of the draw list.
     pub(crate) fn draw_call_count(&self) -> u32 {
-        if self.overlay_uses_zorder {
-            return self.overlay_draw_segments.len() as u32;
-        }
-        let mut n = 0;
-        if let Some(sd) = &self.overlay_shape_gpu_data {
-            n += sd.batches.len() as u32;
-        }
-        if let Some(ld) = &self.label_gpu_data {
-            n += ld.runs.len() as u32;
-        }
-        n
+        self.overlay_draw_segments.len() as u32
     }
 
     pub(crate) fn new() -> Self {
@@ -350,7 +346,12 @@ impl ViewportOverlay {
             overlay_bindings: overlay_buffers::OverlayBindings::new(),
             overlay_instances_ready: false,
             overlay_draw_segments: Vec::new(),
-            overlay_uses_zorder: false,
+            overlay_order_items: Vec::new(),
+            overlay_shape_instances: Vec::new(),
+            overlay_text_verts: Vec::new(),
+            overlay_sorted_shapes: Vec::new(),
+            overlay_sorted_text: Vec::new(),
+            overlay_order_scratch: Default::default(),
         }
     }
 }

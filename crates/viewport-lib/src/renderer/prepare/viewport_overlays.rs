@@ -684,14 +684,10 @@ impl ViewportRenderer {
                 let view = &self.origin.camera(&frame.camera.render_camera).view();
                 let proj = &frame.camera.render_camera.projection();
 
-                // Each item (label, glyph run, or polyline) contributes a
-                // (z_order, fill image, verts) batch. A stable sort keeps
-                // submission order within an equal z_order.
-                let mut batches: Vec<(
-                    i32,
-                    Option<crate::renderer::types::OverlayTextureId>,
-                    Vec<crate::resources::OverlayTextVertex>,
-                )> = Vec::new();
+                // Each item (label, glyph run, polyline or vector shape)
+                // contributes a batch: its z_order, fill image, blend, the
+                // clip box it cannot draw outside, and its vertices.
+                let mut batches: Vec<TextBatch> = Vec::new();
                 // The fill records the text stream's gradient and texture
                 // fills read, uploaded once for the frame.
                 let mut text_fills = super::overlay_fill::FillTable::new();
@@ -729,24 +725,27 @@ impl ViewportRenderer {
                 // item's own `clip_rect`. Both are framebuffer-pixel boxes, and
                 // they compose by intersection, so naming both clips to the
                 // overlap.
-                let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
-                                  clip_id: Option<u32>,
-                                  clip_rect: Option<[f32; 4]>| {
-                    let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
-                    let rect = clip_rect.map(|r| clip_rect_to_framebuffer(r, ppp));
-                    if mask.is_none() && rect.is_none() {
-                        return;
-                    }
-                    let mask_rect = mask.map_or([0.0; 4], |ci| clip_bboxes[ci as usize]);
-                    let cr = combine_clip_rects(mask_rect, rect.unwrap_or([0.0; 4]));
-                    let ci = mask.map_or(-1.0, |ci| ci as f32);
-                    for v in batch.iter_mut() {
-                        v.clip_rect = cr;
-                        if ci >= 0.0 {
-                            v.clip_index = ci;
+                let stamp_clip =
+                    |batch: &mut [crate::resources::OverlayTextVertex],
+                     clip_id: Option<u32>,
+                     clip_rect: Option<[f32; 4]>|
+                     -> Option<crate::renderer::overlay_draw_order::Bounds> {
+                        let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
+                        let rect = clip_rect.map(|r| clip_rect_to_framebuffer(r, ppp));
+                        if mask.is_none() && rect.is_none() {
+                            return None;
                         }
-                    }
-                };
+                        let mask_rect = mask.map_or([0.0; 4], |ci| clip_bboxes[ci as usize]);
+                        let cr = combine_clip_rects(mask_rect, rect.unwrap_or([0.0; 4]));
+                        let ci = mask.map_or(-1.0, |ci| ci as f32);
+                        for v in batch.iter_mut() {
+                            v.clip_rect = cr;
+                            if ci >= 0.0 {
+                                v.clip_index = ci;
+                            }
+                        }
+                        clip_bounds(cr, ppp)
+                    };
 
                 // --- Polylines (between shapes and labels in z order) ---
                 for poly in frame.overlays.polylines.iter() {
@@ -892,9 +891,15 @@ impl ViewportRenderer {
                         );
                         rotate_vertices_from(&mut batch, 0, rot);
                     }
-                    stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
+                    let clip = stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
                     if !batch.is_empty() {
-                        batches.push((poly.z_order, fill_texture, batch));
+                        batches.push(TextBatch {
+                            z_order: poly.z_order,
+                            texture: fill_texture,
+                            blend: poly.style.blend,
+                            clip,
+                            verts: batch,
+                        });
                     }
                 }
 
@@ -959,9 +964,15 @@ impl ViewportRenderer {
                         &mut text_fills,
                         image.flatten(),
                     );
-                    stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
+                    let clip = stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
                     if !batch.is_empty() {
-                        batches.push((shape.z_order, fill_texture, batch));
+                        batches.push(TextBatch {
+                            z_order: shape.z_order,
+                            texture: fill_texture,
+                            blend: owned.style.blend,
+                            clip,
+                            verts: batch,
+                        });
                     }
                 }
 
@@ -1194,8 +1205,14 @@ impl ViewportRenderer {
 
                     rotate_vertices_from(&mut batch, text_start, rot);
 
-                    stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
-                    batches.push((label.z_order, label.style.fill.texture_id(), batch));
+                    let clip = stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
+                    batches.push(TextBatch {
+                        z_order: label.z_order,
+                        texture: label.style.fill.texture_id(),
+                        blend: label.style.blend,
+                        clip,
+                        verts: batch,
+                    });
                 }
 
                 // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
@@ -1372,30 +1389,32 @@ impl ViewportRenderer {
 
                     rotate_vertices_from(&mut batch, 0, rot);
 
-                    stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
-                    batches.push((run.z_order, run.style.fill.texture_id(), batch));
+                    let clip = stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
+                    batches.push(TextBatch {
+                        z_order: run.z_order,
+                        texture: run.style.fill.texture_id(),
+                        blend: run.style.blend,
+                        clip,
+                        verts: batch,
+                    });
                 }
 
                 // Upload atlas if new glyphs were rasterized.
                 self.resources.content.glyph_atlas.upload_if_dirty(queue);
 
-                // Stable sort preserves submission order for equal z_order values.
-                batches.sort_by_key(|(z, _, _)| *z);
-                // Flatten into one buffer, recording a draw segment per distinct
-                // z_order run so this batch can interleave with other families,
-                // and a run per stretch that samples the same fill image: the
-                // image is bound per draw, as the shape pass binds it.
-                use crate::renderer::overlay_draw_order::OverlayDrawSegment;
-                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                // Record each batch as one item: its vertices go on the
+                // frame's text stream as emitted, and the draw list puts them
+                // in draw order once every family has recorded its items.
+                use crate::renderer::overlay_draw_order::{
+                    OverlayItemSource, OverlayOrderItem, family_rank, intersect, points_bounds,
+                };
                 // The images text-stream items are filled from; an item's fill
                 // bind group is its image's index plus one, zero being the
                 // blank image.
                 let mut text_images: Vec<crate::renderer::types::OverlayTextureId> = Vec::new();
-                let mut text_runs: Vec<crate::resources::overlay::overlay_text::OverlayTextRun> =
-                    Vec::new();
-                for (z, texture, v) in batches {
+                for batch in batches {
                     let fill =
-                        match texture {
+                        match batch.texture {
                             None => 0,
                             Some(id) => {
                                 let i = text_images.iter().position(|t| *t == id).unwrap_or_else(
@@ -1407,33 +1426,26 @@ impl ViewportRenderer {
                                 i as u32 + 1
                             }
                         };
-                    let start = verts.len() as u32;
-                    verts.extend(v);
-                    let count = verts.len() as u32 - start;
-                    if count == 0 {
+                    if batch.verts.is_empty() {
                         continue;
                     }
-                    match text_runs.last_mut() {
-                        Some(r) if r.fill == fill && r.vertex_start + r.vertex_count == start => {
-                            r.vertex_count += count;
-                        }
-                        _ => text_runs.push(
-                            crate::resources::overlay::overlay_text::OverlayTextRun {
-                                vertex_start: start,
-                                vertex_count: count,
-                                fill,
-                            },
-                        ),
+                    let mut bounds = points_bounds(batch.verts.iter().map(|v| v.position));
+                    if let Some(clip) = batch.clip {
+                        bounds = intersect(bounds, clip);
                     }
-                    if ov.overlay_uses_zorder {
-                        OverlayDrawSegment::push_text(
-                            &mut ov.overlay_draw_segments,
-                            z,
+                    let start = ov.overlay_text_verts.len() as u32;
+                    ov.overlay_text_verts.extend_from_slice(&batch.verts);
+                    ov.overlay_order_items.push(OverlayOrderItem {
+                        z_order: batch.z_order,
+                        family_rank: family_rank::TEXT_MERGED,
+                        bounds,
+                        blend: batch.blend,
+                        source: OverlayItemSource::Text {
                             start,
-                            count,
+                            count: batch.verts.len() as u32,
                             fill,
-                        );
-                    }
+                        },
+                    });
                 }
 
                 // Retained overlay groups: resolve each submitted group to its
@@ -1444,17 +1456,18 @@ impl ViewportRenderer {
                 let mut instances = vec![crate::resources::OverlayInstance::IDENTITY];
                 // Collected text-stream draws, finished once the frame's fill
                 // records exist: (vbuf, count, the group's fill records,
-                // instance_index, z_order).
+                // instance_index, z_order, screen bounds).
                 let mut pending_text: Vec<(
                     crate::gpu::Buffer,
                     u32,
                     Option<crate::gpu::TextureView>,
                     u32,
                     i32,
+                    crate::renderer::overlay_draw_order::Bounds,
                 )> = Vec::new();
                 // Collected shape-stream draws, finished after the instance buffer
                 // exists: (shape_vbuf, count, shadow_tex, fill_tex,
-                // instance_index, z_order).
+                // instance_index, z_order, screen bounds).
                 let mut pending_shapes: Vec<(
                     crate::gpu::Buffer,
                     u32,
@@ -1462,6 +1475,7 @@ impl ViewportRenderer {
                     crate::gpu::TextureView,
                     u32,
                     i32,
+                    crate::renderer::overlay_draw_order::Bounds,
                 )> = Vec::new();
                 for r in &frame.overlays.retained {
                     // Re-emit the group first if its baked glyph UVs went stale
@@ -1594,11 +1608,21 @@ impl ViewportRenderer {
                     // compared against @builtin(position).
                     instance.set_transform(&r.transform);
                     instances.push(instance);
+                    // The group is one item for ordering: both streams share
+                    // its compiled extent under this frame's instance.
+                    let group_bounds = retained_bounds(bounds, &instance, ppp);
                     // Past every skip: the group has an instance slot and at
                     // least one of the two streams below records a draw.
                     self.overlay_retained_counters.drawn += 1;
                     if let Some((vbuf, vcount, fill_tex)) = text {
-                        pending_text.push((vbuf, vcount, fill_tex, instance_index, r.z_order));
+                        pending_text.push((
+                            vbuf,
+                            vcount,
+                            fill_tex,
+                            instance_index,
+                            r.z_order,
+                            group_bounds,
+                        ));
                     }
                     if let Some((svbuf, svcount, shbuf, fill_tex)) = shape {
                         pending_shapes.push((
@@ -1608,12 +1632,15 @@ impl ViewportRenderer {
                             fill_tex,
                             instance_index,
                             r.z_order,
+                            group_bounds,
                         ));
                     }
                 }
 
-                if !verts.is_empty() || !pending_text.is_empty() || !pending_shapes.is_empty() {
-                    let vertex_buf = ov.overlay_text_vbuf.write(device, queue, &verts);
+                if !ov.overlay_text_verts.is_empty()
+                    || !pending_text.is_empty()
+                    || !pending_shapes.is_empty()
+                {
                     Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h);
                     let clip_buf = ov.overlay_bindings.clip.write_changed(
                         device,
@@ -1668,7 +1695,9 @@ impl ViewportRenderer {
 
                     // Finish retained text-stream draws: each reads its own
                     // group's fill records, or the frame's when it has none.
-                    for (vbuf, vcount, fill_tex, instance_index, z) in pending_text.drain(..) {
+                    for (vbuf, vcount, fill_tex, instance_index, z, bounds) in
+                        pending_text.drain(..)
+                    {
                         let records = fill_tex.as_ref().unwrap_or(&text_records);
                         let fill_bind_group = self.resources.overlay_fill_bind_group(
                             device,
@@ -1686,11 +1715,13 @@ impl ViewportRenderer {
                                 fill_bind_group,
                             },
                         );
-                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
-                            &mut ov.overlay_draw_segments,
-                            z,
-                            draw_index,
-                        );
+                        ov.overlay_order_items.push(OverlayOrderItem {
+                            z_order: z,
+                            family_rank: family_rank::TEXT_MERGED,
+                            bounds,
+                            blend: crate::renderer::types::OverlayBlend::SourceOver,
+                            source: OverlayItemSource::Retained { draw_index },
+                        });
                     }
 
                     // Finish retained shape-stream draws: build each group's shape
@@ -1710,7 +1741,7 @@ impl ViewportRenderer {
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
                             let mut previous =
                                 std::mem::take(&mut ov.overlay_bindings.retained_shape_bgs);
-                            for (svbuf, svcount, shbuf, fill_tex, instance_index, z) in
+                            for (svbuf, svcount, shbuf, fill_tex, instance_index, z, bounds) in
                                 pending_shapes.drain(..)
                             {
                                 let fill_bind_group = self.resources.overlay_fill_bind_group(
@@ -1765,11 +1796,13 @@ impl ViewportRenderer {
                                         fill_bind_group,
                                     },
                                 );
-                                crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained_shape(
-                                    &mut ov.overlay_draw_segments,
-                                    z,
-                                    draw_index,
-                                );
+                                ov.overlay_order_items.push(OverlayOrderItem {
+                                    z_order: z,
+                                    family_rank: family_rank::SHAPE,
+                                    bounds,
+                                    blend: crate::renderer::types::OverlayBlend::SourceOver,
+                                    source: OverlayItemSource::RetainedShape { draw_index },
+                                });
                             }
                         }
                     }
@@ -1807,8 +1840,7 @@ impl ViewportRenderer {
                     });
                     ov.overlay_bindings.text_fill_bgs = fill_used;
                     ov.label_gpu_data = Some(crate::resources::LabelGpuData {
-                        vertex_buf,
-                        runs: text_runs,
+                        vertex_buf: None,
                         fill_bind_groups,
                         bind_group,
                         _clip_buf: clip_buf,
@@ -1841,6 +1873,9 @@ impl ViewportRenderer {
         }
         Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h);
         Self::ensure_overlay_instances_default(ov, device, queue);
+        // In z order, so backdrop-blur shapes, which draw in one pass of
+        // their own, stack by `z_order`. The other shapes are ordered by the
+        // draw list.
         let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
             .overlays
             .shapes
@@ -1868,18 +1903,11 @@ impl ViewportRenderer {
             self.resources.ensure_dyn_res_pipeline(device);
         }
 
-        // Untextured shapes, in z-sorted order, then one list per image in
-        // order of first appearance; they share one instance buffer.
-        let mut solid_instances: Vec<crate::resources::OverlayShapeInstance> = Vec::new();
-        let mut tex_groups: Vec<(
-            crate::renderer::types::OverlayTextureId,
-            Vec<crate::resources::OverlayShapeInstance>,
-        )> = Vec::new();
-        // One entry per drawn textured shape, in z-sorted emission order:
-        // `(z_order, group_idx, instance_in_group)`. Each becomes its own draw
-        // segment so a solid shape can layer between two shapes sharing an
-        // image, instead of the whole image group collapsing to its lowest z.
-        let mut tex_shape_segs: Vec<(i32, usize, u32)> = Vec::new();
+        // The images textured shapes sample, in order of first appearance; a
+        // shape's fill bind group is its image's index plus one, zero being
+        // the blank image. Each shape is one instance and one item for the
+        // draw list, which puts the instances in draw order.
+        let mut tex_images: Vec<crate::renderer::types::OverlayTextureId> = Vec::new();
         // Stacked shadow layers for every shape, shared across the whole
         // frame. Each shape references a contiguous run (outer layers first,
         // then inner) via its `shadow_meta`.
@@ -2178,78 +2206,46 @@ impl ViewportRenderer {
                 ],
                 fill: [fill_index, 0.0, 0.0, 0.0],
             };
-            match image {
+            let fill = match image {
                 Some((tex_id, _)) => {
-                    let group_idx = tex_groups
+                    let i = tex_images
                         .iter()
-                        .position(|(id, _)| *id == tex_id)
+                        .position(|id| *id == tex_id)
                         .unwrap_or_else(|| {
-                            tex_groups.push((tex_id, Vec::new()));
-                            tex_groups.len() - 1
+                            tex_images.push(tex_id);
+                            tex_images.len() - 1
                         });
-                    let group = &mut tex_groups[group_idx].1;
-                    tex_shape_segs.push((shape.z_order, group_idx, group.len() as u32));
-                    group.push(instance);
+                    i as u32 + 1
                 }
-                None => {
-                    let instance_start = solid_instances.len() as u32;
-                    solid_instances.push(instance);
-                    if ov.overlay_uses_zorder {
-                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
-                            &mut ov.overlay_draw_segments,
-                            shape.z_order,
-                            instance_start,
-                            1,
-                            0,
-                        );
-                    }
-                }
+                None => 0,
+            };
+            let [qx, qy, qhx, qhy] = shape_frame.quad;
+            let mut bounds = [qx - qhx, qy - qhy, qx + qhx, qy + qhy];
+            if let Some(clip) = clip_bounds(clip_rect, ppp) {
+                bounds = crate::renderer::overlay_draw_order::intersect(bounds, clip);
             }
+            ov.overlay_order_items
+                .push(crate::renderer::overlay_draw_order::OverlayOrderItem {
+                    z_order: shape.z_order,
+                    family_rank: crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                    bounds,
+                    blend: shape.style.blend,
+                    source: crate::renderer::overlay_draw_order::OverlayItemSource::Shape {
+                        index: ov.overlay_shape_instances.len() as u32,
+                        fill,
+                    },
+                });
+            ov.overlay_shape_instances.push(instance);
         }
 
-        // One instance buffer: the untextured run, then each image's run.
-        let solid_count = solid_instances.len() as u32;
-        let mut batches: Vec<crate::resources::OverlayShapeBatch> = Vec::new();
-        if solid_count > 0 {
-            batches.push(crate::resources::OverlayShapeBatch {
-                instance_start: 0,
-                instance_count: solid_count,
-                fill: 0,
-            });
-        }
-        let mut group_start = Vec::with_capacity(tex_groups.len());
-        let mut instances = solid_instances;
-        for (i, (_, group)) in tex_groups.iter().enumerate() {
-            group_start.push(instances.len() as u32);
-            batches.push(crate::resources::OverlayShapeBatch {
-                instance_start: instances.len() as u32,
-                instance_count: group.len() as u32,
-                fill: i as u32 + 1,
-            });
-            instances.extend_from_slice(group);
-        }
-        if ov.overlay_uses_zorder {
-            // One draw segment per textured shape at its own z_order
-            // (coalescing contiguous same-image, same-z runs), so a solid
-            // shape can layer between two shapes that share an image.
-            for &(z, group_idx, k) in &tex_shape_segs {
-                crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
-                    &mut ov.overlay_draw_segments,
-                    z,
-                    group_start[group_idx] + k,
-                    1,
-                    group_idx as u32 + 1,
-                );
-            }
-        }
-
-        let instance_buf =
-            (!instances.is_empty()).then(|| ov.overlay_shape_vbuf.write(device, queue, &instances));
+        // The instance buffer is written in draw order once the draw list is
+        // built.
+        let has_instances = !ov.overlay_shape_instances.is_empty();
 
         // One shadow-layer texture per frame, read by the shape and backdrop
         // pipelines. A layer is always present, even when no shape has
         // shadows, so the binding has something to point at.
-        let shadow_tex = if instance_buf.is_some() || has_blur {
+        let shadow_tex = if has_instances || has_blur {
             if shadow_layers.is_empty() {
                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                     colour: [0.0; 4],
@@ -2267,7 +2263,7 @@ impl ViewportRenderer {
         };
 
         let (shadow_bind_group, shape_clip_buf, fill_bind_groups) = if let (true, Some(shadow)) =
-            (instance_buf.is_some(), shadow_tex.as_ref())
+            (has_instances, shadow_tex.as_ref())
         {
             let clip_buf =
                 ov.overlay_bindings
@@ -2331,7 +2327,7 @@ impl ViewportRenderer {
                 self.resources
                     .overlay_fill_bind_group(device, &mut cache, &mut used, &records, None),
             ];
-            for (tex_id, _) in &tex_groups {
+            for tex_id in &tex_images {
                 let view = self
                     .resources
                     .content
@@ -2395,10 +2391,9 @@ impl ViewportRenderer {
         let blur_vbuf = (!blur_verts.is_empty())
             .then(|| ov.overlay_shape_blur_vbuf.write(device, queue, &blur_verts));
 
-        if instance_buf.is_some() || blur_vbuf.is_some() {
+        if has_instances || blur_vbuf.is_some() {
             ov.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
-                instance_buf,
-                batches,
+                instance_buf: None,
                 fill_bind_groups,
                 shadow_bind_group,
                 _shadow_tex: shadow_tex,
@@ -2412,17 +2407,111 @@ impl ViewportRenderer {
         }
     }
 
-    /// Sort the overlay draw list into paint order. The family passes have
-    /// already recorded their own segments; this orders them by
-    /// `(z_order, family_rank)` for the ordered emit path.
-    pub(super) fn finalize_overlay_draw_order(ov: &mut crate::renderer::ViewportOverlay) {
-        // When no overlay uses z_order, the family passes recorded nothing and
-        // the emit path keeps its fixed order; there is nothing to finalize.
-        if !ov.overlay_uses_zorder {
-            return;
+    /// Build the overlay draw list from the items the family passes recorded,
+    /// upload the shape instances and text vertices in draw order, and build
+    /// the pipeline variant for every blend mode the list draws with.
+    pub(super) fn finalize_overlay_draw_order(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        ov: &mut crate::renderer::ViewportOverlay,
+    ) {
+        let mut shapes = std::mem::take(&mut ov.overlay_sorted_shapes);
+        let mut text = std::mem::take(&mut ov.overlay_sorted_text);
+        crate::renderer::overlay_draw_order::build_draw_list(
+            &mut ov.overlay_order_items,
+            &ov.overlay_shape_instances,
+            &ov.overlay_text_verts,
+            &mut shapes,
+            &mut text,
+            &mut ov.overlay_draw_segments,
+            &mut ov.overlay_order_scratch,
+        );
+        for seg in &ov.overlay_draw_segments {
+            if seg.blend == crate::renderer::types::OverlayBlend::SourceOver {
+                continue;
+            }
+            if seg.is_shape() {
+                self.resources.ensure_overlay_shape_blend(device, seg.blend);
+            } else {
+                self.resources.ensure_overlay_text_blend(device, seg.blend);
+            }
         }
-        use crate::renderer::overlay_draw_order::sort_overlay_segments;
-        sort_overlay_segments(&mut ov.overlay_draw_segments);
+        if let Some(sd) = ov.overlay_shape_gpu_data.as_mut() {
+            sd.instance_buf =
+                (!shapes.is_empty()).then(|| ov.overlay_shape_vbuf.write(device, queue, &shapes));
+        }
+        if let Some(ld) = ov.label_gpu_data.as_mut() {
+            // A frame with only retained groups still binds a buffer here.
+            ld.vertex_buf = Some(ov.overlay_text_vbuf.write(device, queue, &text));
+        }
+        ov.overlay_sorted_shapes = shapes;
+        ov.overlay_sorted_text = text;
+    }
+}
+
+/// One text-stream item before it is recorded for the draw list.
+struct TextBatch {
+    z_order: i32,
+    texture: Option<crate::renderer::types::OverlayTextureId>,
+    blend: crate::renderer::types::OverlayBlend,
+    /// The clip box the item cannot draw outside, in logical pixels.
+    clip: Option<crate::renderer::overlay_draw_order::Bounds>,
+    verts: Vec<crate::resources::OverlayTextVertex>,
+}
+
+/// The logical-pixel box a framebuffer-pixel clip rect lets an item draw in,
+/// or `None` for the no-clip sentinel (a box without area). The shaders keep a
+/// fragment on the clip's far edges, so the box reaches a pixel past them.
+fn clip_bounds(cr: [f32; 4], ppp: f32) -> Option<crate::renderer::overlay_draw_order::Bounds> {
+    if !(cr[2] > cr[0] && cr[3] > cr[1]) || ppp <= 0.0 {
+        return None;
+    }
+    Some([
+        cr[0] / ppp,
+        cr[1] / ppp,
+        (cr[2] + 1.0) / ppp,
+        (cr[3] + 1.0) / ppp,
+    ])
+}
+
+/// A retained group's screen bounds: its compiled extent under the frame's
+/// instance transform, a pixel wider for the edge anti-aliasing the transform
+/// may stretch, cut to the instance's clip rect. Unbounded when the extent is
+/// unknown.
+fn retained_bounds(
+    extent: Option<([f32; 2], [f32; 2])>,
+    instance: &crate::resources::OverlayInstance,
+    ppp: f32,
+) -> crate::renderer::overlay_draw_order::Bounds {
+    use crate::renderer::overlay_draw_order::{UNBOUNDED, intersect, points_bounds};
+    let Some((min, max)) = extent else {
+        return UNBOUNDED;
+    };
+    // The shaders' `group_apply`: the linear map about the pivot, then the
+    // translation.
+    let m = instance.linear;
+    let piv = instance.pivot;
+    let apply = |p: [f32; 2]| {
+        let d = [p[0] - piv[0], p[1] - piv[1]];
+        [
+            piv[0] + m[0] * d[0] + m[1] * d[1] + instance.translate[0],
+            piv[1] + m[2] * d[0] + m[3] * d[1] + instance.translate[1],
+        ]
+    };
+    let b = points_bounds(
+        [
+            [min[0], min[1]],
+            [max[0], min[1]],
+            [min[0], max[1]],
+            [max[0], max[1]],
+        ]
+        .map(apply),
+    );
+    let b = [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0];
+    match clip_bounds(instance.clip_rect, ppp) {
+        Some(clip) => intersect(b, clip),
+        None => b,
     }
 }
 

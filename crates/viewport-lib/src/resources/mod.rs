@@ -125,9 +125,9 @@ pub(crate) use self::types::{
     ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform, GpuProjectedTetMesh,
     GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, MeshInstanceGpuData,
     OutlineObjectBuffers, OutlineUniform, OverlayBackdropVertex, OverlayShadowLayerGpu,
-    OverlayShapeBatch, OverlayShapeGpuData, OverlayShapeInstance, OverlayTextVertex,
-    ProjectedTetUniform, ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData,
-    ToneMapUniform, ViewportCullState, ViewportHdrState,
+    OverlayShapeGpuData, OverlayShapeInstance, OverlayTextVertex, ProjectedTetUniform,
+    ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform,
+    ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

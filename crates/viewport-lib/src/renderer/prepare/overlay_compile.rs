@@ -853,6 +853,9 @@ impl ViewportRenderer {
     /// naming one is skipped rather than drawn unclipped. Clip the group
     /// instead, through `RetainedOverlay`.
     ///
+    /// **A compiled group draws every item source-over.** An item's
+    /// `style.blend` is not kept in the compiled geometry.
+    ///
     /// **A compiled group draws no image fill.** An analytic shape with a
     /// texture fill (or a backdrop blur) is skipped, a textured polyline or
     /// vector path draws without its fill, and textured text draws in the

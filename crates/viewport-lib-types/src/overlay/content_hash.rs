@@ -415,6 +415,7 @@ impl OverlayContentHash for OverlayStyle {
             backdrop,
             tint,
             opacity,
+            blend,
         } = self;
         fill.content_hash_at(origin, state);
         shadows.content_hash_at(origin, state);
@@ -422,6 +423,7 @@ impl OverlayContentHash for OverlayStyle {
         backdrop.content_hash_at(origin, state);
         hash_floats(state, tint);
         hash_f32(state, *opacity);
+        std::hash::Hash::hash(blend, state);
     }
 }
 

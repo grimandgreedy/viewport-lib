@@ -1,16 +1,17 @@
 //! Overlay draw-call counters in `FrameStats`.
 //!
 //! A widget toolkit lowering a panel gives every command its own `z_order` to
-//! keep painter's order, so a panel of alternating shapes and labels asks for a
-//! draw per alternation under the ordering rule the overlay pass uses today:
-//! segments batch only at an equal `z_order`. These assertions pin that count,
-//! and the count the same panel takes when its items share a `z_order`, so a
-//! change to the ordering rule shows up here as a visible diff rather than as a
-//! silent regression or an unnoticed improvement.
+//! keep painter's order. The overlay pass only keeps that order between items
+//! that overlap, so a panel whose rows do not overlap batches to one draw per
+//! family whatever its `z_order` values, and only overlapping items that
+//! alternate between families, images or blend modes split a batch. These
+//! assertions pin those counts, so a change to the ordering rule shows up here
+//! as a visible diff rather than as a silent regression or an unnoticed
+//! improvement.
 
 use viewport_lib::{
-    CameraFrame, Colour, FrameData, LabelItem, OverlayFill, OverlayShape, OverlayShapeItem,
-    SceneFrame,
+    CameraFrame, Colour, FrameData, LabelItem, OverlayBlend, OverlayFill, OverlayShape,
+    OverlayShapeItem, SceneFrame,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -18,10 +19,12 @@ const W: u32 = 320;
 const H: u32 = 240;
 const ROWS: i32 = 12;
 
-/// `ROWS` rows of a backing rect and a label. With `distinct_z` every item
-/// takes the next `z_order`, the way a toolkit lowers a draw list; otherwise
-/// every item sits at zero and the families draw in their fixed order.
-fn frame(distinct_z: bool) -> FrameData {
+/// `ROWS` rows of a backing rect and a label, `pitch` logical pixels apart.
+/// With `distinct_z` every item takes the next `z_order`, the way a toolkit
+/// lowers a draw list; otherwise every item sits at zero. At the default pitch
+/// the rows do not overlap each other; a pitch under the rect height stacks
+/// each row over the one before.
+fn frame_with_pitch(distinct_z: bool, pitch: f32) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 5.0, 0.7, 1.0);
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]).with_pixels_per_point(1.0),
@@ -32,7 +35,7 @@ fn frame(distinct_z: bool) -> FrameData {
     fd.viewport.show_axes_indicator = false;
     let mut z = 0;
     for row in 0..ROWS {
-        let y = 8.0 + row as f32 * 18.0;
+        let y = 8.0 + row as f32 * pitch;
         let rect = OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: 3.0 },
             [8.0, y],
@@ -52,6 +55,10 @@ fn frame(distinct_z: bool) -> FrameData {
     fd
 }
 
+fn frame(distinct_z: bool) -> FrameData {
+    frame_with_pitch(distinct_z, 18.0)
+}
+
 #[test]
 fn alternating_panel_draw_counts() {
     let Some(mut h) = Harness::new() else {
@@ -66,15 +73,41 @@ fn alternating_panel_draw_counts() {
         "two family batches at one z_order"
     );
 
-    // A distinct `z_order` per item: one draw per alternation of family. The
-    // items do not overlap, so an ordering that batched by overlap rather than
-    // by equal `z_order` would bring this back to two; update the literal when
-    // it does.
+    // A distinct `z_order` per item. Each label overlaps its own rect, but no
+    // row overlaps another, so every rect batches with the other rects and
+    // every label with the other labels.
     let stats = h.render_two_frames(&frame(true), W, H);
+    assert_eq!(
+        stats.overlay_draw_calls, 2,
+        "rows that do not overlap batch across z_order"
+    );
+
+    // The same alternation with each row stacked over the one before: every
+    // item overlaps the item before it, so painter's order needs a draw per
+    // change of family.
+    let stats = h.render_two_frames(&frame_with_pitch(true, 4.0), W, H);
     assert_eq!(
         stats.overlay_draw_calls,
         (2 * ROWS) as u32,
-        "one draw per alternation under equal-z batching"
+        "overlapping items that alternate family split per alternation"
+    );
+}
+
+/// A blend mode is pipeline state, so a rect that blends differently from the
+/// others draws on its own even though nothing overlaps it.
+#[test]
+fn blend_mode_splits_a_batch() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mut fd = frame(true);
+    let rect = &mut fd.overlays.shapes[ROWS as usize / 2];
+    *rect = rect.clone().with_blend(OverlayBlend::Additive);
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(
+        stats.overlay_draw_calls, 3,
+        "source-over rects, the additive rect, the labels"
     );
 }
 
@@ -82,7 +115,9 @@ fn alternating_panel_draw_counts() {
 /// pipeline, so items filled from one image batch together and the families
 /// split only where the bound image changes. The rows submit, at one
 /// `z_order`, an untextured shape and two shapes sharing an image, then a
-/// plain label, two labels sharing that image, and another plain label.
+/// plain label, two labels sharing that image, and another plain label. No
+/// item overlaps another, so the two plain labels batch although the
+/// textured ones were submitted between them.
 #[test]
 fn texture_fills_batch_per_image() {
     let Some(mut h) = Harness::new() else {
@@ -133,7 +168,7 @@ fn texture_fills_batch_per_image() {
     let stats = h.render_two_frames(&fd, W, H);
     assert_eq!(
         stats.overlay_draw_calls,
-        2 + 3,
-        "shapes: untextured, then the shared image; text: plain, image, plain"
+        2 + 2,
+        "shapes: untextured, then the shared image; text: plain, then the image"
     );
 }

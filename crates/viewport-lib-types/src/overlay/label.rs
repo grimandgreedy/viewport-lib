@@ -278,6 +278,12 @@ impl LabelItem {
         self
     }
 
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: crate::overlay::OverlayBlend) -> Self {
+        self.style.blend = blend;
+        self
+    }
+
     /// Set the maximum text width in logical pixels. Text wider than this wraps
     /// to multiple lines.
     pub fn with_max_width(mut self, max_width: f32) -> Self {

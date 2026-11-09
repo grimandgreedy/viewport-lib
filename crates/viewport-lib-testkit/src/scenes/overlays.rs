@@ -14,9 +14,9 @@
 use glam::Vec3;
 use viewport_lib::{
     Alignment, AnchorX, AnchorY, Colour, FillRule, GlyphRunItem, LabelItem, LineCap, LineJoin,
-    Material, OutlineMode, OverlayFill, OverlayFrame, OverlayOrigin, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, PolylineCap, PositionedGlyph, RetainedOverlay, ShadowLayer,
-    SubPath, TriangleDirection, primitives,
+    Material, OutlineMode, OverlayBlend, OverlayFill, OverlayFrame, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, PolylineCap, PositionedGlyph,
+    RetainedOverlay, ShadowLayer, SubPath, TriangleDirection, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs};
@@ -60,6 +60,7 @@ pub fn scenes() -> Vec<NamedScene> {
             ],
             build: build_group_anchor,
         },
+        scene("overlay_blend_modes", build_blend_modes),
     ]
 }
 
@@ -903,6 +904,100 @@ fn build_composition(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         let mut ovl = OverlayFrame::default();
         ovl.shapes = shapes;
         ovl.retained = retained;
+        ovl
+    })
+}
+
+// --- blend modes -----------------------------------------------------------
+
+/// One cell per blend mode, each a two-colour plate with a disc drawn over it
+/// in that mode, the disc hanging off the plate's corner onto the backdrop.
+///
+/// Top row: additive brightens, multiply darkens, screen brightens without
+/// clipping to white. Bottom row: destination-out punches a hole through the
+/// plate and the scene; destination-over fills such a hole and nothing else;
+/// source-atop paints a disc only where the plate is left after a hole.
+fn build_blend_modes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let plate = |shapes: &mut Vec<OverlayShapeItem>, at: [f32; 2]| {
+        for (dx, colour) in [
+            (0.0, Colour::srgb(0.95, 0.55, 0.15, 1.0)),
+            (50.0, Colour::srgb(0.1, 0.55, 0.7, 1.0)),
+        ] {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [at[0] + dx, at[1]],
+                    [50.0, 100.0],
+                )
+                .with_fill(OverlayFill::Solid(colour)),
+            );
+        }
+    };
+    let disc = |at: [f32; 2], colour: Colour, blend: OverlayBlend| {
+        OverlayShapeItem::new(
+            OverlayShape::Circle,
+            [at[0] + 40.0, at[1] + 40.0],
+            [76.0, 76.0],
+        )
+        .with_fill(OverlayFill::Solid(colour))
+        .with_blend(blend)
+    };
+    let hole = |at: [f32; 2]| {
+        OverlayShapeItem::new(
+            OverlayShape::Circle,
+            [at[0] + 15.0, at[1] + 15.0],
+            [50.0, 50.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::WHITE))
+        .with_blend(OverlayBlend::DestinationOut)
+    };
+    let mut shapes = Vec::new();
+
+    let grey = Colour::srgb(0.5, 0.5, 0.5, 1.0);
+    for (at, blend, colour) in [
+        ([20.0, 20.0], OverlayBlend::Additive, grey),
+        (
+            [150.0, 20.0],
+            OverlayBlend::Multiply,
+            Colour::srgb(0.7, 0.6, 1.0, 1.0),
+        ),
+        ([280.0, 20.0], OverlayBlend::Screen, grey),
+    ] {
+        plate(&mut shapes, at);
+        shapes.push(disc(at, colour, blend));
+    }
+
+    // Destination-out on its own.
+    let at = [20.0, 160.0];
+    plate(&mut shapes, at);
+    shapes.push(disc(at, Colour::WHITE, OverlayBlend::DestinationOut));
+    // A hole, then a disc that shows only through it.
+    let at = [150.0, 160.0];
+    plate(&mut shapes, at);
+    shapes.push(hole(at));
+    shapes.push(disc(
+        [at[0] - 30.0, at[1] - 30.0],
+        Colour::srgb(0.9, 0.85, 0.2, 1.0),
+        OverlayBlend::DestinationOver,
+    ));
+    // A hole, then a disc kept only where the plate is left.
+    let at = [280.0, 160.0];
+    plate(&mut shapes, at);
+    shapes.push(hole(at));
+    shapes.push(disc(
+        [at[0] - 30.0, at[1] - 30.0],
+        Colour::srgb(0.35, 0.85, 0.35, 1.0),
+        OverlayBlend::SourceAtop,
+    ));
+
+    // A rising z_order per item, the way a toolkit lowers a draw list: the
+    // cells do not overlap, so they still batch.
+    for (z, shape) in shapes.iter_mut().enumerate() {
+        shape.z_order = z as i32;
+    }
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.shapes = shapes;
         ovl
     })
 }

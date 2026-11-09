@@ -10,6 +10,12 @@ pub(crate) struct OverlayShapeResources {
     /// Render pipeline for screen-space SDF shapes (rounded rects, circles,
     /// etc.), whatever their fill: one instance each.
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    /// The shape pipeline for each blend mode other than source-over that a
+    /// frame has used.
+    pub(crate) variants: OverlayBlendVariants,
+    /// The shape pipeline's layout and shader, kept to build blend variants.
+    pub(crate) layout: Option<crate::gpu::PipelineLayout>,
+    pub(crate) shader: Option<crate::gpu::ShaderModule>,
     /// Bind group layout for the shape pipeline's group 0: shadow layers,
     /// clip shapes, viewport and group instance.
     pub(crate) shadow_bgl: Option<crate::gpu::BindGroupLayout>,
@@ -33,6 +39,114 @@ pub(crate) struct OverlayShapeResources {
     /// One white texel, bound as the fill image for every draw that samples
     /// no texture.
     pub(crate) blank_image: Option<crate::gpu::TextureView>,
+}
+
+impl OverlayShapeResources {
+    /// The shape pipeline that draws with `blend`, if it has been built.
+    pub(crate) fn pipeline_for(
+        &self,
+        blend: crate::renderer::OverlayBlend,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        if blend == crate::renderer::OverlayBlend::SourceOver {
+            self.pipeline.as_ref()
+        } else {
+            self.variants.get(blend)
+        }
+    }
+}
+
+/// Overlay pipelines for the blend modes other than source-over, keyed by
+/// mode. A frame builds the ones it uses; there are few enough modes that a
+/// linear lookup is the cheapest.
+#[derive(Default)]
+pub(crate) struct OverlayBlendVariants(
+    Vec<(crate::renderer::OverlayBlend, crate::gpu::RenderPipeline)>,
+);
+
+impl OverlayBlendVariants {
+    pub(crate) fn get(
+        &self,
+        blend: crate::renderer::OverlayBlend,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        self.0.iter().find(|(b, _)| *b == blend).map(|(_, p)| p)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        blend: crate::renderer::OverlayBlend,
+        pipeline: crate::gpu::RenderPipeline,
+    ) {
+        self.0.push((blend, pipeline));
+    }
+}
+
+/// The colour-target blend state and fragment entry point that draw an overlay
+/// pipeline with `blend`.
+///
+/// Source-over keeps the overlay pass's straight-alpha state: the fragment
+/// writes straight colour and the blend multiplies by its alpha. Every other
+/// mode draws through `fs_premul`, which writes premultiplied colour, because
+/// a mode such as source-in needs the source scaled by its own alpha and by
+/// the destination alpha, and one blend factor cannot express both.
+///
+/// The destination is premultiplied in every case.
+pub(crate) fn overlay_blend_target(
+    blend: crate::renderer::OverlayBlend,
+) -> (crate::gpu::BlendState, &'static str) {
+    use crate::gpu::BlendFactor as F;
+    use crate::renderer::OverlayBlend as B;
+    let comp = |src_factor, dst_factor| crate::gpu::BlendComponent {
+        src_factor,
+        dst_factor,
+        operation: crate::gpu::BlendOperation::Add,
+    };
+    // Porter-Duff: the source weighted by `fa` and the destination by `fb`,
+    // the same on colour and alpha.
+    let pd = |fa, fb| crate::gpu::BlendState {
+        color: comp(fa, fb),
+        alpha: comp(fa, fb),
+    };
+    let state = match blend {
+        B::Additive => crate::gpu::BlendState {
+            color: comp(F::One, F::One),
+            alpha: comp(F::Zero, F::One),
+        },
+        // Sc * Dc + Dc * (1 - Sa). Missing the Sc * (1 - Da) term, which is
+        // zero over an opaque destination.
+        B::Multiply => crate::gpu::BlendState {
+            color: comp(F::Dst, F::OneMinusSrcAlpha),
+            alpha: comp(F::One, F::OneMinusSrcAlpha),
+        },
+        // Sc + Dc - Sc * Dc.
+        B::Screen => crate::gpu::BlendState {
+            color: comp(F::One, F::OneMinusSrc),
+            alpha: comp(F::One, F::OneMinusSrcAlpha),
+        },
+        B::Clear => pd(F::Zero, F::Zero),
+        B::Source => pd(F::One, F::Zero),
+        B::Destination => pd(F::Zero, F::One),
+        B::DestinationOver => pd(F::OneMinusDstAlpha, F::One),
+        B::SourceIn => pd(F::DstAlpha, F::Zero),
+        B::DestinationIn => pd(F::Zero, F::SrcAlpha),
+        B::SourceOut => pd(F::OneMinusDstAlpha, F::Zero),
+        B::DestinationOut => pd(F::Zero, F::OneMinusSrcAlpha),
+        B::SourceAtop => pd(F::DstAlpha, F::OneMinusSrcAlpha),
+        B::DestinationAtop => pd(F::OneMinusDstAlpha, F::SrcAlpha),
+        B::Xor => pd(F::OneMinusDstAlpha, F::OneMinusSrcAlpha),
+        B::Plus => pd(F::One, F::One),
+        // Source-over, and any mode added later that this match does not
+        // know, draws as the base pipeline.
+        _ => {
+            return (
+                crate::gpu::BlendState {
+                    color: comp(F::SrcAlpha, F::OneMinusSrcAlpha),
+                    alpha: comp(F::One, F::OneMinusSrcAlpha),
+                },
+                "fs_main",
+            );
+        }
+    };
+    (state, "fs_premul")
 }
 
 /// Fullscreen separable Gaussian blur pipeline used to produce the blurred
@@ -96,12 +210,58 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::wgsl_source!("overlay_shape"),
         );
 
-        let pipeline = crate::resources::builders::render_pipeline(
+        let pipeline = self.overlay_shape_variant(
+            device,
+            &layout,
+            &shader,
+            crate::renderer::OverlayBlend::SourceOver,
+        );
+
+        self.overlay_shape.shadow_bgl = Some(shadow_bgl);
+        self.overlay_shape.pipeline = Some(pipeline);
+        self.overlay_shape.layout = Some(layout);
+        self.overlay_shape.shader = Some(shader);
+    }
+
+    /// The shape pipeline for `blend`, built on first use. Source-over is the
+    /// base pipeline; every other mode is a variant that differs only in its
+    /// blend state and fragment entry point.
+    pub(crate) fn ensure_overlay_shape_blend(
+        &mut self,
+        device: &crate::gpu::Device,
+        blend: crate::renderer::OverlayBlend,
+    ) {
+        self.ensure_overlay_shape_pipeline(device);
+        if self.overlay_shape.variants.get(blend).is_some()
+            || blend == crate::renderer::OverlayBlend::SourceOver
+        {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let (Some(layout), Some(shader)) = (
+            self.overlay_shape.layout.clone(),
+            self.overlay_shape.shader.clone(),
+        ) else {
+            return;
+        };
+        let pipeline = self.overlay_shape_variant(device, &layout, &shader, blend);
+        self.overlay_shape.variants.insert(blend, pipeline);
+    }
+
+    fn overlay_shape_variant(
+        &self,
+        device: &crate::gpu::Device,
+        layout: &crate::gpu::PipelineLayout,
+        shader: &crate::gpu::ShaderModule,
+        blend: crate::renderer::OverlayBlend,
+    ) -> crate::gpu::RenderPipeline {
+        let (blend_state, fs_entry) = overlay_blend_target(blend);
+        crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_shape_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
+                layout,
+                vertex_module: shader,
                 vertex_entry: "vs_main",
                 // One record per shape; the quad is expanded from the vertex
                 // index. The per-draw group instance is a uniform (binding 3),
@@ -118,32 +278,18 @@ impl crate::resources::DeviceResources {
                 )),
                 multisample: crate::gpu::MultisampleState::default(),
                 fragment: Some(crate::gpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
+                    module: shader,
+                    entry_point: Some(fs_entry),
                     targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
-                        blend: Some(crate::gpu::BlendState {
-                            color: crate::gpu::BlendComponent {
-                                src_factor: crate::gpu::BlendFactor::SrcAlpha,
-                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: crate::gpu::BlendOperation::Add,
-                            },
-                            alpha: crate::gpu::BlendComponent {
-                                src_factor: crate::gpu::BlendFactor::One,
-                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: crate::gpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(blend_state),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
                     compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 cache: None,
             },
-        );
-
-        self.overlay_shape.shadow_bgl = Some(shadow_bgl);
-        self.overlay_shape.pipeline = Some(pipeline);
+        )
     }
 
     /// Lazily create the backdrop-blur shape pipeline.
@@ -1354,22 +1500,11 @@ fn build_external_overlay_texture_entry(
     }
 }
 
-/// One run of shape instances that draws with one fill bind group.
-pub(crate) struct OverlayShapeBatch {
-    pub instance_start: u32,
-    pub instance_count: u32,
-    /// Index into `OverlayShapeGpuData::fill_bind_groups`.
-    pub fill: u32,
-}
-
 /// Per-frame GPU data for batched SDF overlay shape rendering.
 pub(crate) struct OverlayShapeGpuData {
-    /// Every analytic shape, one `OverlayShapeInstance` each: the untextured
-    /// ones first, then the textured ones grouped by image.
+    /// Every analytic shape, one `OverlayShapeInstance` each, in draw order.
+    /// Written once the draw list is built.
     pub instance_buf: Option<crate::gpu::Buffer>,
-    /// The draws the fixed family order issues over `instance_buf`, in order:
-    /// the untextured run, then one run per image.
-    pub batches: Vec<OverlayShapeBatch>,
     /// Group 1 bind groups: the frame's fill records with the blank image at
     /// index 0, then one per image a textured shape samples.
     pub fill_bind_groups: Vec<crate::gpu::BindGroup>,

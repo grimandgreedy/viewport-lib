@@ -49,91 +49,25 @@ pub(crate) fn emit_indirect_run(
     }
 }
 
-/// Emit the 2D overlay draw calls in the fixed family order used when no
-/// overlay carries a non-zero `z_order`: SDF shapes, then the merged text batch
-/// (labels, glyph runs, polylines), back to front. Each block is guarded by its
-/// own prepared GPU data, so a path with no data for a given overlay skips it.
-/// Run after all scene content so the overlays sit on top.
-/// The overlay pipelines are format-neutral (no separate LDR/HDR variant), so
-/// this is shared verbatim across paths.
-macro_rules! emit_overlay_2d_hardcoded {
-    ($this:ident, $ov:ident, $render_pass:ident) => {{
-        // The per-draw instance stream the text and shape pipelines read at
-        // vertex slot 1. Immediate draws take slot 0, the identity.
-        let instances = $ov.overlay_bindings.instances.buffer();
-        // SDF overlay shapes (drawn before rects and labels): one instance per
-        // shape, the group instance at dynamic offset 0 (the identity), one
-        // draw per fill image.
-        if let Some(ref sd) = $ov.overlay_shape_gpu_data {
-            if let (Some(pipeline), Some(ibuf), Some(shadow_bg)) = (
-                &$this.resources.overlay_shape.pipeline,
-                &sd.instance_buf,
-                &sd.shadow_bind_group,
-            ) {
-                if !sd.batches.is_empty() {
-                    $render_pass.set_pipeline(pipeline);
-                    $render_pass.set_bind_group(0, shadow_bg, &[0]);
-                }
-                for batch in &sd.batches {
-                    if let Some(fill_bg) = sd.fill_bind_groups.get(batch.fill as usize) {
-                        $render_pass.set_bind_group(1, fill_bg, &[]);
-                        $render_pass.set_vertex_buffer(
-                            0,
-                            ibuf.slice(
-                                crate::resources::OverlayShapeInstance::byte_offset(
-                                    batch.instance_start,
-                                )..,
-                            ),
-                        );
-                        $render_pass.draw(0..6, 0..batch.instance_count);
-                    }
-                }
-            }
-        }
-        // Overlay labels, glyph runs, polylines and vector shapes (merged
-        // text batch), one draw per fill image.
-        if let Some(ref ld) = $ov.label_gpu_data {
-            if let (Some(pipeline), Some(inst)) =
-                (&$this.resources.overlay_text.pipeline, instances)
-            {
-                $render_pass.set_pipeline(pipeline);
-                $render_pass.set_bind_group(0, &ld.bind_group, &[]);
-                $render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
-                $render_pass.set_vertex_buffer(1, inst.slice(..));
-                for run in &ld.runs {
-                    if let Some(fill_bg) = ld.fill_bind_groups.get(run.fill as usize) {
-                        $render_pass.set_bind_group(1, fill_bg, &[]);
-                        $render_pass
-                            .draw(run.vertex_start..run.vertex_start + run.vertex_count, 0..1);
-                    }
-                }
-            }
-        }
-    }};
-}
-
 /// Emit the 2D overlay draw calls by walking `overlay_draw_segments`, the
-/// cross-family draw list sorted by `(z_order, family_rank)`. Used when any
-/// overlay carries a non-zero `z_order`, so a shape can draw above a label or an
-/// image can sit below other chrome. The pipeline is switched only when it
-/// changes between consecutive segments, so runs of the same pipeline (the usual
-/// case) stay batched.
-macro_rules! emit_overlay_2d_ordered {
+/// draw list in paint order. Each segment draws through the shape or text
+/// pipeline variant for its blend mode, and the pipeline is set only when it
+/// changes between consecutive segments. Run after all scene content so the
+/// overlays sit on top. The overlay pipelines are format-neutral (no separate
+/// LDR/HDR variant), so this is shared verbatim across paths.
+macro_rules! emit_overlay_2d {
     ($this:ident, $ov:ident, $render_pass:ident) => {{
         use crate::renderer::overlay_draw_order::OverlayDrawSource;
-        // Which pipeline is currently bound, so same-pipeline segments avoid a
-        // redundant set_pipeline.
-        #[derive(PartialEq)]
-        enum LastPipe {
-            None,
-            Shape,
-            Text,
-        }
-        let mut last_pipe = LastPipe::None;
-        // The per-draw instance stream the text and shape pipelines read at
-        // vertex slot 1: slot 0 is the identity, retained groups their own.
+        // The pipeline currently bound, as (is shape, blend), so consecutive
+        // segments on the same variant skip a redundant set_pipeline.
+        let mut last_pipe: Option<(bool, crate::renderer::types::OverlayBlend)> = None;
+        // The per-draw instance stream the text pipeline reads at vertex slot
+        // 1: slot 0 is the identity, retained groups their own.
         let instances = $ov.overlay_bindings.instances.buffer();
         for seg in &$ov.overlay_draw_segments {
+            let key = Some((seg.is_shape(), seg.blend));
+            let shape_pipeline = $this.resources.overlay_shape.pipeline_for(seg.blend);
+            let text_pipeline = $this.resources.overlay_text.pipeline_for(seg.blend);
             match seg.source {
                 OverlayDrawSource::Shape {
                     instance_start,
@@ -142,14 +76,14 @@ macro_rules! emit_overlay_2d_ordered {
                 } => {
                     if let Some(ref sd) = $ov.overlay_shape_gpu_data {
                         if let (Some(pipeline), Some(ibuf), Some(shadow_bg), Some(fill_bg)) = (
-                            &$this.resources.overlay_shape.pipeline,
+                            shape_pipeline,
                             &sd.instance_buf,
                             &sd.shadow_bind_group,
                             sd.fill_bind_groups.get(fill as usize),
                         ) {
-                            if last_pipe != LastPipe::Shape {
+                            if last_pipe != key {
                                 $render_pass.set_pipeline(pipeline);
-                                last_pipe = LastPipe::Shape;
+                                last_pipe = key;
                             }
                             // The run is bound by its byte offset rather than a
                             // first-instance index, which not every backend
@@ -173,19 +107,19 @@ macro_rules! emit_overlay_2d_ordered {
                     vertex_count,
                     fill,
                 } => {
-                    if let (Some(pipeline), Some(td), Some(inst)) = (
-                        &$this.resources.overlay_text.pipeline,
-                        $ov.label_gpu_data.as_ref(),
-                        instances,
-                    ) {
-                        if let Some(fill_bg) = td.fill_bind_groups.get(fill as usize) {
-                            if last_pipe != LastPipe::Text {
+                    if let (Some(pipeline), Some(td), Some(inst)) =
+                        (text_pipeline, $ov.label_gpu_data.as_ref(), instances)
+                    {
+                        if let (Some(fill_bg), Some(vbuf)) =
+                            (td.fill_bind_groups.get(fill as usize), &td.vertex_buf)
+                        {
+                            if last_pipe != key {
                                 $render_pass.set_pipeline(pipeline);
-                                last_pipe = LastPipe::Text;
+                                last_pipe = key;
                             }
                             $render_pass.set_bind_group(0, &td.bind_group, &[]);
                             $render_pass.set_bind_group(1, fill_bg, &[]);
-                            $render_pass.set_vertex_buffer(0, td.vertex_buf.slice(..));
+                            $render_pass.set_vertex_buffer(0, vbuf.slice(..));
                             $render_pass.set_vertex_buffer(1, inst.slice(..));
                             $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                         }
@@ -197,14 +131,14 @@ macro_rules! emit_overlay_2d_ordered {
                     // batch, from its own cached buffer, fill records and
                     // per-frame instance slot.
                     if let (Some(pipeline), Some(td), Some(rd), Some(inst)) = (
-                        &$this.resources.overlay_text.pipeline,
+                        text_pipeline,
                         $ov.label_gpu_data.as_ref(),
                         $ov.overlay_retained_draws.get(draw_index as usize),
                         instances,
                     ) {
-                        if last_pipe != LastPipe::Text {
+                        if last_pipe != key {
                             $render_pass.set_pipeline(pipeline);
-                            last_pipe = LastPipe::Text;
+                            last_pipe = key;
                         }
                         $render_pass.set_bind_group(0, &td.bind_group, &[]);
                         $render_pass.set_bind_group(1, &rd.fill_bind_group, &[]);
@@ -220,12 +154,12 @@ macro_rules! emit_overlay_2d_ordered {
                     // fill bind groups, with its per-frame group instance
                     // selected by the dynamic offset.
                     if let (Some(pipeline), Some(rd)) = (
-                        &$this.resources.overlay_shape.pipeline,
+                        shape_pipeline,
                         $ov.overlay_retained_shape_draws.get(draw_index as usize),
                     ) {
-                        if last_pipe != LastPipe::Shape {
+                        if last_pipe != key {
                             $render_pass.set_pipeline(pipeline);
-                            last_pipe = LastPipe::Shape;
+                            last_pipe = key;
                         }
                         let offset = rd.instance_index
                             * crate::resources::overlay::geometry::INSTANCE_UNIFORM_STRIDE as u32;
@@ -236,18 +170,6 @@ macro_rules! emit_overlay_2d_ordered {
                     }
                 }
             }
-        }
-    }};
-}
-
-/// Emit the 2D overlay draw calls. Dispatches to the fixed-order fast path when
-/// no overlay uses `z_order`, or the sorted segment walk when one does.
-macro_rules! emit_overlay_2d {
-    ($this:ident, $ov:ident, $render_pass:ident) => {{
-        if $ov.overlay_uses_zorder {
-            emit_overlay_2d_ordered!($this, $ov, $render_pass);
-        } else {
-            emit_overlay_2d_hardcoded!($this, $ov, $render_pass);
         }
     }};
 }

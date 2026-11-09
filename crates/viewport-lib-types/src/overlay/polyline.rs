@@ -434,6 +434,12 @@ impl OverlayPolylineItem {
         self
     }
 
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: crate::overlay::OverlayBlend) -> Self {
+        self.style.blend = blend;
+        self
+    }
+
     /// Set the draw order. Lower values render first (further back).
     pub fn with_z_order(mut self, z_order: i32) -> Self {
         self.z_order = z_order;

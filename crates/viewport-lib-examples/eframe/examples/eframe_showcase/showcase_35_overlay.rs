@@ -348,7 +348,17 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui, frame: &crate::eframe::Frame) {
+    // Items that do not overlap batch whatever their z_order, so this stays
+    // far below the item count.
+    if let Some(rs) = frame.wgpu_render_state() {
+        let guard = rs.renderer.read();
+        if let Some(renderer) = guard.callback_resources.get::<vpl::ViewportRenderer>() {
+            let stats = renderer.last_frame_stats();
+            ui.label(format!("Overlay draw calls: {}", stats.overlay_draw_calls));
+            ui.separator();
+        }
+    }
     ui.label("Colourmap:");
     let selected_name = ALL_COLOURMAPS
         .iter()
@@ -1752,6 +1762,47 @@ fn row_masks_and_polylines(
                 textured.z_order = 1;
                 polylines.push(textured);
             }
+
+            // Blend modes: the same grey disc over a two-colour plate,
+            // additive (brightens) then multiply (darkens).
+            let x_pair = x_blob + 90.0 + 56.0;
+            for (k, (blend, colour)) in [
+                (
+                    vpl::OverlayBlend::Additive,
+                    Colour::srgb(0.5, 0.5, 0.5, 1.0),
+                ),
+                (
+                    vpl::OverlayBlend::Multiply,
+                    Colour::srgb(0.7, 0.6, 1.0, 1.0),
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let x = x_pair + k as f32 * 76.0;
+                for (dx, plate) in [
+                    (0.0, Colour::srgb(0.95, 0.55, 0.15, 1.0)),
+                    (28.0, Colour::srgb(0.1, 0.55, 0.7, 1.0)),
+                ] {
+                    shapes.push(
+                        OverlayShapeItem::new(
+                            OverlayShape::Rect { corner_radius: 0.0 },
+                            [x + dx, y_poly - 28.0],
+                            [28.0, 56.0],
+                        )
+                        .with_fill(OverlayFill::Solid(plate)),
+                    );
+                }
+                shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Circle,
+                        [x + 12.0, y_poly - 12.0],
+                        [44.0, 44.0],
+                    )
+                    .with_fill(OverlayFill::Solid(colour))
+                    .with_blend(blend),
+                );
+            }
         }
     }
 }
@@ -2064,8 +2115,8 @@ impl crate::Showcase for ScOverlay {
         &self,
         app: &mut crate::App,
         ui: &mut crate::eframe::egui::Ui,
-        _frame: &crate::eframe::Frame,
+        frame: &crate::eframe::Frame,
     ) {
-        controls_overlay(app, ui)
+        controls_overlay(app, ui, frame)
     }
 }

@@ -367,8 +367,8 @@ fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
     return false;
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+// The fragment colour in straight alpha.
+fn shade(in: VertexOutput) -> vec4<f32> {
     // Clip: cheap bounding-box reject (exact for rectangular masks) then the mask's
     // SDF and parent chain. `clip_rect`/`clip_position.xy` are framebuffer pixels.
     let cr = in.clip_rect;
@@ -417,4 +417,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     // Per-draw tint and opacity (identity for immediate draws).
     return vec4<f32>(result.rgb * in.tint.rgb, result.a * in.opacity * in.tint.a);
+}
+
+// Straight alpha, for the source-over blend state.
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return shade(in);
+}
+
+// Premultiplied alpha, for the blend states whose factors expect a
+// premultiplied source.
+@fragment
+fn fs_premul(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = shade(in);
+    return vec4<f32>(c.rgb * c.a, c.a);
 }
