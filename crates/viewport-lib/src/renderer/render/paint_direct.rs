@@ -54,13 +54,21 @@ impl ViewportRenderer {
             );
         }
         self.report_auto_exposure_on_ldr(frame);
+        // An overlays-only frame draws its overlays and nothing else: they
+        // ignore depth, so the host's depth needs no reset.
+        let overlays_only = self.draws_overlays_only(frame);
         // The host cleared this pass's depth to a value of its own; reset the
         // viewport rect to the renderer's clear value before drawing.
-        if let Some(reset) = &self.resources.post.host_depth_reset_pipeline {
+        if let (false, Some(reset)) = (
+            overlays_only,
+            &self.resources.post.host_depth_reset_pipeline,
+        ) {
             render_pass.set_pipeline(reset);
             render_pass.draw(0..3, 0..1);
         }
-        if self.resources.scene_tier.is_built() {
+        if overlays_only {
+            // Nothing of the scene to draw.
+        } else if self.resources.scene_tier.is_built() {
             self.paint_slot_scene(render_pass, vp_idx, frame);
         } else if let Some(slot) = self.viewport_slots.get(vp_idx) {
             self.paint_compatibility_scene(render_pass, &slot.camera_bind_group, frame);

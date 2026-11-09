@@ -278,6 +278,7 @@ pub(crate) fn emit_overlay_segments(
 
 mod hdr_path;
 mod ldr_path;
+mod overlay_frame;
 mod paint_direct;
 pub(crate) mod pass_table;
 mod transmission;
@@ -648,7 +649,9 @@ impl ViewportRenderer {
         } else {
             self.direct_paint = true;
             self.prepare(device, queue, frame);
-            if self.current_render_scale < 1.0 - 0.001 {
+            // An overlays-only frame paints straight into the host's pass at
+            // full resolution.
+            if self.current_render_scale < 1.0 - 0.001 && !self.draws_overlays_only(frame) {
                 let mut encoder =
                     device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                         label: Some("ldr_dyn_res_callback_encoder"),
@@ -687,6 +690,7 @@ impl ViewportRenderer {
             }
         }
         if self.current_render_scale < 1.0 - 0.001
+            && !self.draws_overlays_only(frame)
             && self
                 .viewport_slots
                 .get(vp_idx)
@@ -935,7 +939,11 @@ impl ViewportRenderer {
         if frame.effects.display.is_hdr() && !self.renders_hdr(frame) {
             self.last_stats.hdr_drawn_as_ldr = true;
         }
-        let cmd_buf = if !self.renders_hdr(frame) {
+        let path = self.frame_path(frame);
+        self.last_stats.frame_path = path;
+        let cmd_buf = if path == crate::renderer::stats::FramePath::OverlaysOnly {
+            self.render_frame_overlays(device, output_view, vp_idx, frame, bg_colour, w, h)
+        } else if !self.renders_hdr(frame) {
             // The LDR path binds the LDR mesh family. Prepare has normally
             // built it; this covers a frame prepared for the other family.
             if self.resources.scene_tier.is_built()
@@ -1441,6 +1449,9 @@ impl ViewportRenderer {
     /// before the items that read it. Otherwise the list draws in one pass,
     /// layers with their fallback blend, and backdrops over `scene` blurred
     /// (the scene without the overlays) when it is given, or not at all.
+    ///
+    /// With `clear`, the first pass clears `target` to that premultiplied
+    /// colour and `depth` to the clear depth instead of loading them.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_overlay_passes(
         &mut self,
@@ -1451,6 +1462,7 @@ impl ViewportRenderer {
         depth: &crate::gpu::TextureView,
         depth_store: crate::gpu::StoreOp,
         scene: Option<&crate::gpu::TextureView>,
+        clear: Option<[f32; 4]>,
         ppp: f32,
         label: &'static str,
     ) {
@@ -1477,7 +1489,20 @@ impl ViewportRenderer {
             depth: &crate::gpu::TextureView,
             ts: Option<crate::gpu::RenderPassTimestampWrites<'_>>,
             store: crate::gpu::StoreOp,
+            clear: Option<[f32; 4]>,
         ) -> crate::gpu::RenderPass<'e> {
+            let (colour_load, depth_load) = match clear {
+                Some(c) => (
+                    crate::gpu::LoadOp::Clear(crate::gpu::Color {
+                        r: c[0] as f64,
+                        g: c[1] as f64,
+                        b: c[2] as f64,
+                        a: c[3] as f64,
+                    }),
+                    crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
+                ),
+                None => (crate::gpu::LoadOp::Load, crate::gpu::LoadOp::Load),
+            };
             encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
@@ -1486,7 +1511,7 @@ impl ViewportRenderer {
                     view: target,
                     resolve_target: None,
                     ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
+                        load: colour_load,
                         store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1494,7 +1519,7 @@ impl ViewportRenderer {
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
+                        load: depth_load,
                         store,
                     }),
                     stencil_ops: None,
@@ -1505,7 +1530,7 @@ impl ViewportRenderer {
         }
         if !can_copy {
             let ov = &self.viewport_slots[vp_idx].overlay;
-            let mut pass = begin(encoder, label, target, depth, ts.take(), depth_store);
+            let mut pass = begin(encoder, label, target, depth, ts.take(), depth_store, clear);
             emit_overlay_segments(
                 &self.resources,
                 ov,
@@ -1530,16 +1555,27 @@ impl ViewportRenderer {
             backdrop: ov.layer_targets.item_backdrop_bg(),
         };
         let mut start = 0usize;
+        // A clear still owed: the first pass runs even with nothing to draw
+        // before the first break, so the snapshot it takes is of the clear.
+        let mut clear = clear;
         for k in 0..=breaks.len() {
             let end = breaks.get(k).map_or(segs.len(), |b| b.segment as usize);
             let last = k == breaks.len();
-            if end > start || last {
+            if end > start || last || clear.is_some() {
                 let store = if last {
                     depth_store
                 } else {
                     crate::gpu::StoreOp::Store
                 };
-                let mut pass = begin(encoder, label, target, depth, ts.take(), store);
+                let mut pass = begin(
+                    encoder,
+                    label,
+                    target,
+                    depth,
+                    ts.take(),
+                    store,
+                    clear.take(),
+                );
                 emit_overlay_segments(&self.resources, ov, &mut pass, &segs[start..end], &emit);
             }
             if let Some(b) = breaks.get(k) {

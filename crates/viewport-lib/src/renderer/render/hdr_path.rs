@@ -2776,6 +2776,7 @@ impl ViewportRenderer {
             &depth,
             self.scene_depth_store_op(),
             Some(&scene),
+            None,
             ctx.frame.camera.pixels_per_point,
             "overlay_pass",
         );

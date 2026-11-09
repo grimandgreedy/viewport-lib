@@ -579,6 +579,14 @@ impl HizState {
 }
 
 impl crate::resources::ViewportCullState {
+    /// Drop the stored prev-depth, so the next cull runs frustum-only rather
+    /// than reprojecting a depth from before a frame that drew no scene.
+    pub(crate) fn forget_hiz_prev_depth(&mut self) {
+        if let Some(s) = self.hiz.as_mut() {
+            s.has_prev_depth = false;
+        }
+    }
+
     /// Copy this frame's scene depth into this viewport's HiZ prev-depth target
     /// for next frame's reprojection. Called at the end of the scene pass.
     /// Allocates or resizes the HiZ state to match the depth target.

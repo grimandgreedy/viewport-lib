@@ -54,6 +54,7 @@
 - **Custom overlay fills** - `DeviceResources::register_overlay_fill` takes an `OverlayFillDesc` (a WGSL `fill(local, params)` function) and returns a `CustomFillId`; `OverlayFill::Custom` (or `OverlayFill::custom`) fills any overlay item with it and sixteen parameters. A body that does not compose returns `ViewportError::OverlayFillInvalid`.
 - **Tessellation cache for immediate overlays** - vector shapes and polylines keep their tessellated geometry while their content, rotation, scale and pixels per point stay the same, so static and merely moving items are no longer re-tessellated every frame.
 - **`FrameStats::overlay_tessellations`** - the immediate vector shapes and polylines tessellated this frame, which reads zero for static or moving items after their first frame.
+- **Overlays-only frames** - a frame on the LDR path (`PipelineMode::Direct`, or any renderer below the full tier) whose scene submits nothing, with no grid, ground plane, constraint guides or sub-object selection, skips scene prepare and the scene pass and encodes only the overlay pass, cleared to the background, on the owned, host-pass and multi-viewport paths alike. `FrameStats::frame_path` reports which path a frame took (`FramePath::Hdr`, `Ldr` or `OverlaysOnly`).
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
 

@@ -154,12 +154,16 @@ impl ViewportRenderer {
     ///
     /// Reads `scene_fx` for lighting and IBL, `frame.scene` for the items, and
     /// `frame.camera` for shadow cascade computation.
+    ///
+    /// Without `scene_content` only the frame's start runs (timestamps, origin,
+    /// clock, atlases, uploads), for an overlays-only frame.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
+        scene_content: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
         let _cache = self.resources.pipeline_compiler.cache_scope();
@@ -181,11 +185,6 @@ impl ViewportRenderer {
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
         self.resolve_world_origin(frame);
-
-        let scene_tier = self.resources.scene_tier.is_built();
-        if scene_tier {
-            self.ensure_frame_pipelines(device, frame);
-        }
 
         // The time this frame renders at, for the camera uniform and the
         // deform header.
@@ -224,6 +223,13 @@ impl ViewportRenderer {
                 ),
                 None => self.resources.process_uploads(device, queue),
             }
+        }
+        if !scene_content {
+            return;
+        }
+        let scene_tier = self.resources.scene_tier.is_built();
+        if scene_tier {
+            self.ensure_frame_pipelines(device, frame);
         }
         // The rest is the scene's full-tier work. The compatibility tier draws the
         // surfaces through its basic mesh path and lights them and its item
@@ -945,7 +951,9 @@ impl ViewportRenderer {
         )
         .entered();
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
-        if self.resources.scene_tier.is_built() {
+        if self.draws_overlays_only(frame) {
+            // Nothing of the scene draws: the overlays alone are prepared.
+        } else if self.resources.scene_tier.is_built() {
             self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
         } else {
             self.prepare_viewport_compatibility(queue, frame, viewport_fx);
@@ -1463,8 +1471,14 @@ impl ViewportRenderer {
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();
-        self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
-        if self.resources.scene_tier.is_built() {
+        // An overlays-only frame skips scene prepare; the split API's
+        // `prepare_scene` always runs it, since its viewports' frames are not
+        // known yet.
+        let overlays_only = self.draws_overlays_only(frame);
+        self.prepare_scene_internal(device, queue, frame, &scene_fx, !overlays_only, sink);
+        if overlays_only {
+            self.clear_scene_stats();
+        } else if self.resources.scene_tier.is_built() {
             // Rebuild or drop the cached batch render bundle now that this
             // frame's batch list and its bind groups are final.
             self.update_per_object_bundle(device, frame);
@@ -1562,6 +1576,7 @@ impl ViewportRenderer {
                 Self::scene_item_count(frame)
             },
             hdr_drawn_as_ldr: false,
+            frame_path: self.frame_path(frame),
             lights_dropped: self.last_lights_dropped,
             notices: self.resources.notices.counts(),
             ..self.last_stats

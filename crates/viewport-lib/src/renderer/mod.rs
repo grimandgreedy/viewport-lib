@@ -3994,7 +3994,7 @@ impl ViewportRenderer {
         }
         self.begin_notice_frame();
         let mut sink = SubmitSink::inline(queue);
-        self.prepare_scene_internal(device, queue, frame, scene_effects, &mut sink);
+        self.prepare_scene_internal(device, queue, frame, scene_effects, true, &mut sink);
     }
 
     /// Prepare per-viewport GPU state (camera, clip planes, overlays, axes).

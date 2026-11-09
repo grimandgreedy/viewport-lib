@@ -310,6 +310,25 @@ pub struct GpuBreakdown {
     pub overlay_ms: f32,
 }
 
+/// The render path a frame was drawn through, reported in
+/// [`FrameStats::frame_path`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum FramePath {
+    /// The HDR path: the scene pass into the HDR target, then the post chain
+    /// and tone map into the output.
+    Hdr,
+    /// The LDR path: one scene pass straight into the output, with the
+    /// overlays drawn over it.
+    #[default]
+    Ldr,
+    /// The overlay pass alone, cleared to the background. Taken when a frame
+    /// on the LDR path submits nothing the scene pass would draw; scene
+    /// prepare is skipped too.
+    OverlaysOnly,
+}
+
 /// Per-frame rendering statistics for the last prepared frame, read back with
 /// [`ViewportRenderer::last_frame_stats`](crate::ViewportRenderer::last_frame_stats).
 #[derive(Debug, Clone, Copy, Default)]
@@ -741,6 +760,11 @@ pub struct FrameStats {
     /// Set when the frame asked for the HDR path and was drawn through the LDR
     /// path, which is what a renderer below the full tier does.
     pub hdr_drawn_as_ldr: bool,
+    /// The path the frame was drawn through. [`FramePath::OverlaysOnly`] when
+    /// its scene submitted nothing and it drew through the LDR path
+    /// (`PipelineMode::Direct`, or a renderer below the full tier): then only
+    /// the overlay pass ran. Set by `prepare` and again by the render step.
+    pub frame_path: FramePath,
     /// Lights left out of this frame's light list because it was full, after
     /// the frustum cull and ranked lowest first. The list holds 512 on the full
     /// tier and [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) on

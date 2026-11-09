@@ -441,11 +441,53 @@ impl ViewportRenderer {
                 &depth,
                 crate::gpu::StoreOp::Discard,
                 scene.as_ref(),
+                None,
                 frame.camera.pixels_per_point,
                 "ldr_overlay_pass",
             );
         }
 
+        self.resolve_prev_timestamps(&mut encoder);
+
+        // Upscale blit from dyn_res intermediate to output_view.
+        if use_dyn_res {
+            let upscale_bg = &self.viewport_slots[vp_idx]
+                .dyn_res
+                .as_ref()
+                .unwrap()
+                .upscale_bind_group;
+            let mut upscale_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("dyn_res_upscale_pass"),
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
+                upscale_pass.set_pipeline(pipeline);
+                upscale_pass.set_bind_group(0, upscale_bg, &[]);
+                upscale_pass.draw(0..3, 0..1);
+            }
+        } else if needs_blur {
+            self.blit_backdrop_intermediate(&mut encoder, device, output_view);
+        }
+
+        return encoder.finish();
+    }
+
+    /// Resolve last frame's timestamp queries into the staging buffer from
+    /// `encoder`, when the previous readback has finished.
+    pub(crate) fn resolve_prev_timestamps(&mut self, encoder: &mut crate::gpu::CommandEncoder) {
         // Resolve last frame's timestamp queries -> staging buffer, but only
         // when the previous readback has finished. Skipping while a map is in
         // flight or the buffer holds unread data keeps the single staging
@@ -489,88 +531,63 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
 
-        // Upscale blit from dyn_res intermediate to output_view.
-        if use_dyn_res {
-            let upscale_bg = &self.viewport_slots[vp_idx]
-                .dyn_res
-                .as_ref()
-                .unwrap()
-                .upscale_bind_group;
-            let mut upscale_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("dyn_res_upscale_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
-                upscale_pass.set_pipeline(pipeline);
-                upscale_pass.set_bind_group(0, upscale_bg, &[]);
-                upscale_pass.draw(0..3, 0..1);
-            }
-        } else if needs_blur {
-            // Blit backdrop intermediate to the output surface.
-            let bs = self.backdrop_blur_state.as_ref().unwrap();
-            let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
-            let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-            let blit_bg = bs
-                .blit
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_or_insert_with(|| {
-                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("backdrop_blit_bg"),
-                        layout: blit_bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::TextureView(
-                                    &bs.intermediate_view,
-                                ),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                            },
-                        ],
-                    })
+    /// Copy the backdrop intermediate target, which a frame whose overlays
+    /// read the destination drew into, to `output_view`.
+    pub(crate) fn blit_backdrop_intermediate(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        output_view: &crate::gpu::TextureView,
+    ) {
+        let bs = self.backdrop_blur_state.as_ref().unwrap();
+        let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
+        let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
+        let blit_bg = bs
+            .blit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_with(|| {
+                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("backdrop_blit_bg"),
+                    layout: blit_bgl,
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &bs.intermediate_view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(blit_sampler),
+                        },
+                    ],
                 })
-                .clone();
-            let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("backdrop_blit_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
-                blit_pass.set_pipeline(pipeline);
-                blit_pass.set_bind_group(0, &blit_bg, &[]);
-                blit_pass.draw(0..3, 0..1);
-            }
+            })
+            .clone();
+        let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(any(wgpu29, wgpu30))]
+            multiview_mask: None,
+            label: Some("backdrop_blit_pass"),
+            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Load,
+                    store: crate::gpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
+            blit_pass.set_pipeline(pipeline);
+            blit_pass.set_bind_group(0, &blit_bg, &[]);
+            blit_pass.draw(0..3, 0..1);
         }
-
-        return encoder.finish();
     }
 }

@@ -308,7 +308,8 @@ pub use renderer::ShadowDebugStats;
 pub use renderer::WorldOrigin;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
-    FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
+    FramePath, FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset,
+    RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{

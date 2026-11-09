@@ -659,14 +659,23 @@ fn forward_light_list_caps_and_counts_what_it_drops() {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        // Lights and no scene content: the compatibility tier has no meshes to draw
-        // yet, and the cap does not depend on what they light.
+        // Lights over one hidden mesh: the cap does not depend on what they
+        // light, but a frame whose scene submits nothing is drawn as overlays
+        // alone and prepares no lights at all.
+        let mesh = harness
+            .renderer
+            .resources_mut()
+            .upload_mesh_data(&harness.device, &viewport_lib::primitives::cube(1.0))
+            .expect("upload cube");
+        let mut item = viewport_lib::SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.settings.hidden = true;
         let mut frame = viewport_lib::FrameData::new(
             viewport_lib::CameraFrame::from_camera(
                 &viewport_lib::Camera::default(),
                 [W as f32, H as f32],
             ),
-            viewport_lib::SceneFrame::default(),
+            viewport_lib::SceneFrame::from_surface_items(vec![item]),
         );
         // The default lighting carries a light of its own.
         frame.effects.lighting.lights.clear();
