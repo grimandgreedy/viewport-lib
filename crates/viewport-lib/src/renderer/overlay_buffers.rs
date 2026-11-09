@@ -223,6 +223,11 @@ impl DataTexture {
         )
     }
 
+    /// The view last written, if any.
+    pub(crate) fn view(&self) -> Option<crate::gpu::TextureView> {
+        self.texture.as_ref().map(|(_, v)| v.clone())
+    }
+
     /// Upload `data` (whole texels, at least one) and return the view to bind.
     pub(crate) fn write_changed<T: bytemuck::Pod>(
         &mut self,

@@ -693,6 +693,8 @@ pub struct DeviceResources {
     pub(crate) overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources,
     /// Backdrop blur pipeline, layout, and sampler.
     pub(crate) backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources,
+    /// Overlay layer composite pipelines, layouts and sampler.
+    pub(crate) overlay_layer: crate::resources::overlay::overlay_layer::OverlayLayerResources,
 
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.

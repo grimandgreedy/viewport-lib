@@ -590,6 +590,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                 "backdrop_blur",
                 include_str!(concat!(env!("OUT_DIR"), "/backdrop_blur.wgsl")).to_string(),
             ),
+            (
+                "overlay_layer",
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_layer.wgsl")).to_string(),
+            ),
         ] {
             let adapted = adapt_wgsl(src.as_str(), &compatibility_caps());
             if let Err(e) = translate_to_glsl(&adapted, 300, true) {

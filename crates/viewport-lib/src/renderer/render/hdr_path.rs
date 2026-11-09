@@ -17,8 +17,6 @@ struct HdrFrameCtx<'a> {
     scene_items: &'a [SceneRenderItem],
     output_view: &'a crate::gpu::TextureView,
     vp_idx: usize,
-    w: u32,
-    h: u32,
     ssaa_factor: u32,
     hdr_clear_rgb: [f32; 3],
     /// The frame's composite inputs and tone-map uniform as computed in the
@@ -346,8 +344,6 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_items: &[SceneRenderItem],
         bg_colour: [f32; 4],
-        w: u32,
-        h: u32,
         ssaa_factor: u32,
     ) -> crate::gpu::CommandBuffer {
         // HDR path. `bg_colour` is premultiplied linear RGBA; it reaches the
@@ -674,8 +670,6 @@ impl ViewportRenderer {
             scene_items,
             output_view,
             vp_idx,
-            w,
-            h,
             ssaa_factor,
             hdr_clear_rgb,
             composite_inputs,
@@ -2758,86 +2752,32 @@ impl ViewportRenderer {
     fn hdr_final_overlay(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "overlay_pass").entered();
         let device = ctx.device;
-        let queue = ctx.queue;
         let output_view = ctx.output_view;
         let vp_idx = ctx.vp_idx;
-        let w = ctx.w;
-        let h = ctx.h;
         // Overlay shapes and the merged text batch (HDR path): drawn last.
-        let has_overlay = {
-            let ov = &self.viewport_slots[vp_idx].overlay;
-            ov.overlay_shape_gpu_data.is_some() || ov.label_gpu_data.is_some()
-        };
-
-        // HDR backdrop blur: the tonemapped scene is on an intermediate so we
-        // can sample it for the blur. When blur is needed we redirect the
-        // tonemapped output to a managed intermediate, blur it, then draw
-        // overlays there and blit to output_view at the end.
-        let needs_hdr_blur = self.has_backdrop_blur_shapes(vp_idx);
-        let hdr_blur_bg: Option<crate::gpu::BindGroup> = if needs_hdr_blur && has_overlay {
-            self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
-            // Blit output_view content to the intermediate so we have a
-            // samplable copy. We already have the tonemapped result on
-            // output_view. Unfortunately surface textures can't be sampled,
-            // so we blit to our intermediate first.
-            //
-            // Actually for HDR: the tone-map wrote to output_view (or
-            // upscale_view). We need the scene in a samplable texture. The
-            // HDR colour texture (hdr_colour_view) is samplable but it's HDR.
-            // For simplicity, use the HDR colour texture as the blur source;
-            // the blur result will be HDR-ish but clamped by the LDR target
-            // format of the blur textures. This looks acceptable in practice.
-            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-            let source = &slot_hdr.hdr_view;
-            let spread = self.viewport_slots[vp_idx]
-                .overlay
-                .overlay_shape_gpu_data
-                .as_ref()
-                .map(|d| d.max_blur_radius)
-                .unwrap_or(8.0);
-            Some(self.run_backdrop_blur(encoder, device, queue, source, spread))
-        } else {
-            None
-        };
-
-        if has_overlay {
-            self.mark_pass_ran(vp_idx, HdrPass::Overlay);
-            let hdr_depth_view = &self.viewport_slots[vp_idx]
-                .hdr
-                .as_ref()
-                .unwrap()
-                .output_depth_view;
-            let overlay_ts_writes = self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
-            let mut overlay_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("overlay_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                    view: hdr_depth_view,
-                    depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: self.scene_depth_store_op(),
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: overlay_ts_writes,
-                occlusion_query_set: None,
-            });
-            // Blur backdrop shapes drawn first (behind normal shapes).
-            if let Some(ref bg) = hdr_blur_bg {
-                self.draw_blur_shapes(&mut overlay_pass, bg, vp_idx);
-            }
-            let ov = &self.viewport_slots[vp_idx].overlay;
-            emit_overlay_2d!(self, ov, overlay_pass);
+        let ov = &self.viewport_slots[vp_idx].overlay;
+        let has_overlay = ov.overlay_shape_gpu_data.is_some()
+            || ov.label_gpu_data.is_some()
+            || !ov.overlay_draw_segments.is_empty();
+        if !has_overlay {
+            return;
         }
+        self.mark_pass_ran(vp_idx, HdrPass::Overlay);
+        let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+        let depth = hdr.output_depth_view.clone();
+        // Without a copy of the output, a backdrop is the scene alone: the HDR
+        // colour, blurred into the LDR backdrop texture.
+        let scene = hdr.hdr_view.clone();
+        self.draw_overlay_passes(
+            encoder,
+            device,
+            vp_idx,
+            output_view,
+            &depth,
+            self.scene_depth_store_op(),
+            Some(&scene),
+            ctx.frame.camera.pixels_per_point,
+            "overlay_pass",
+        );
     }
 }

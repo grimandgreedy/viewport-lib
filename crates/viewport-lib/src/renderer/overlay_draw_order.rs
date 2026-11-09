@@ -15,8 +15,16 @@
 //! blend), writes the shape instances and text vertices in that order, and a
 //! run that shares draw state becomes one draw whatever its items' `z_order`.
 //!
-//! Backdrop-blur shapes are not represented here: they are composited by a
-//! separate pass, not the ordered overlay draw.
+//! An item that reads what is under it (a backdrop blur, or a layer
+//! composited with the destination as a texture) sorts last within its rank,
+//! and the first such item of a rank is a break: the renderer ends the overlay
+//! pass there, copies what has been drawn so far, and resumes. Everything an
+//! item of that rank can see is drawn by then, because items of equal rank do
+//! not overlap.
+//!
+//! A layer's members are ranked among themselves into a draw list of their
+//! own, drawn into the layer's scratch target; the layer is one item in the
+//! frame's list.
 
 use crate::renderer::types::OverlayBlend;
 
@@ -25,8 +33,23 @@ pub(crate) mod family_rank {
     /// Analytic shapes, immediate or in a retained group (bottom).
     pub(crate) const SHAPE: u8 = 0;
     /// Labels, glyph runs, polylines and vector shapes, immediate or in a
-    /// retained group (top).
+    /// retained group.
     pub(crate) const TEXT_MERGED: u8 = 1;
+    /// Layers composited as one (top).
+    pub(crate) const LAYER: u8 = 2;
+}
+
+/// The layer index of an item drawn straight into the frame.
+pub(crate) const NO_LAYER: u32 = u32::MAX;
+
+/// What an item reads of the destination, as bits.
+pub(crate) mod dst_read {
+    /// Nothing: a blend state does the compositing.
+    pub(crate) const NONE: u8 = 0;
+    /// The destination as a texture, for a blend formula.
+    pub(crate) const BLEND: u8 = 1;
+    /// A blurred copy of the destination.
+    pub(crate) const BACKDROP: u8 = 2;
 }
 
 /// An item's screen bounds in logical pixels, `[min_x, min_y, max_x, max_y]`.
@@ -67,6 +90,16 @@ pub(crate) fn intersect(a: Bounds, b: Bounds) -> Bounds {
     ]
 }
 
+/// The smallest box holding both.
+pub(crate) fn union(a: Bounds, b: Bounds) -> Bounds {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
+}
+
 /// Where an item's draw data lives before the draw list is built.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum OverlayItemSource {
@@ -84,6 +117,10 @@ pub(crate) enum OverlayItemSource {
     /// A retained group's shape stream; `draw_index` selects
     /// `overlay_retained_shape_draws`.
     RetainedShape { draw_index: u32 },
+    /// A backdrop-blur shape: a range of the frame's backdrop vertices.
+    Backdrop { start: u32, count: u32 },
+    /// A layer's composite; `index` selects the frame's layer list.
+    Layer { index: u32 },
 }
 
 /// One item waiting for its place in the paint order.
@@ -99,6 +136,10 @@ pub(crate) struct OverlayOrderItem {
     pub blend: OverlayBlend,
     /// Its draw data.
     pub source: OverlayItemSource,
+    /// The layer it draws into, or [`NO_LAYER`] for the frame.
+    pub layer: u32,
+    /// What it reads of the destination; see [`dst_read`].
+    pub dst: u8,
 }
 
 /// Locates the vertices (or draw) one segment issues. Ranges index into the
@@ -125,6 +166,14 @@ pub(crate) enum OverlayDrawSource {
     Retained { draw_index: u32 },
     /// A retained group's shape stream, drawn through the shape pipeline.
     RetainedShape { draw_index: u32 },
+    /// A range of the backdrop vertex buffer, drawn through the backdrop
+    /// pipeline over the blurred destination.
+    Backdrop {
+        vertex_start: u32,
+        vertex_count: u32,
+    },
+    /// A layer's composite: its backdrop, if it has one, then its content.
+    Layer { index: u32 },
 }
 
 /// One draw within the overlay pass.
@@ -144,6 +193,27 @@ impl OverlayDrawSegment {
             OverlayDrawSource::Shape { .. } | OverlayDrawSource::RetainedShape { .. }
         )
     }
+
+    /// Whether the segment draws through the text pipeline.
+    pub(crate) fn is_text(&self) -> bool {
+        matches!(
+            self.source,
+            OverlayDrawSource::Text { .. } | OverlayDrawSource::Retained { .. }
+        )
+    }
+}
+
+/// A point in the frame's draw list where the overlay pass is ended so the
+/// items after it can read what is drawn: the first destination-reading
+/// segment of a rank.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct OverlayBreak {
+    /// The segment the pass resumes at.
+    pub segment: u32,
+    /// The union of the rank's destination-reading items, in logical pixels.
+    pub bounds: Bounds,
+    /// Whether one of them needs the blurred destination.
+    pub blur: bool,
 }
 
 /// Above this many items the ranking switches from comparing every pair to a
@@ -155,7 +225,7 @@ pub(crate) const RANK_GRID_THRESHOLD: usize = 64;
 pub(crate) struct OverlayOrderScratch {
     ranks: Vec<u32>,
     bounds: Vec<Bounds>,
-    keys: Vec<(u32, u8, u32, usize)>,
+    keys: Vec<(u32, u8, u8, u32, usize)>,
     order: Vec<u32>,
     cells: Vec<Vec<u32>>,
     seen: Vec<u32>,
@@ -266,13 +336,19 @@ fn ranks_grid(bounds: &[Bounds], scratch: &mut OverlayOrderScratch, ranks: &mut 
     }
 }
 
-/// Put `items` in paint order and build the draw list.
+/// Put `items` in paint order and append their draw list.
 ///
-/// Writes the shape instances (`shapes_in`, indexed by each shape item) and
-/// text vertices (`text_in`, ranged by each text item) into `shapes_out` and
+/// Appends the shape instances (`shapes_in`, indexed by each shape item) and
+/// text vertices (`text_in`, ranged by each text item) to `shapes_out` and
 /// `text_out` in draw order, and one segment per run of consecutive items that
-/// draw with the same pipeline, fill image and blend into `segments`.
-/// Retained streams each draw on their own.
+/// draw with the same pipeline, fill image and blend to `segments`. Retained
+/// streams, backdrops and layers each draw on their own. A run never joins a
+/// segment that was in `segments` before the call, so one call's list is a
+/// range of its own.
+///
+/// Each rank's destination-reading items sort after the rest of the rank, and
+/// the first of them is recorded in `breaks`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_draw_list<S: Copy, T: Copy>(
     items: &mut [OverlayOrderItem],
     shapes_in: &[S],
@@ -280,11 +356,10 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
     shapes_out: &mut Vec<S>,
     text_out: &mut Vec<T>,
     segments: &mut Vec<OverlayDrawSegment>,
+    breaks: &mut Vec<OverlayBreak>,
     scratch: &mut OverlayOrderScratch,
 ) {
-    shapes_out.clear();
-    text_out.clear();
-    segments.clear();
+    let seg_start = segments.len();
     // Contract order: `z_order`, then family, then the order the families
     // recorded their items in. The sort is stable.
     items.sort_by_key(|i| (i.z_order, i.family_rank));
@@ -308,6 +383,8 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
             OverlayItemSource::RetainedShape { .. } => (0, u32::MAX),
             OverlayItemSource::Text { fill, .. } => (1, fill),
             OverlayItemSource::Retained { .. } => (1, u32::MAX),
+            OverlayItemSource::Backdrop { .. } => (2, u32::MAX),
+            OverlayItemSource::Layer { .. } => (3, u32::MAX),
         };
         let blend = blends
             .iter()
@@ -316,7 +393,13 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
                 blends.push(item.blend);
                 blends.len() - 1
             });
-        keys.push((rank, pipeline, fill, blend));
+        keys.push((
+            rank,
+            (item.dst != dst_read::NONE) as u8,
+            pipeline,
+            fill,
+            blend,
+        ));
     }
     scratch.ranks = ranks;
     let order = &mut scratch.order;
@@ -324,8 +407,33 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
     order.extend(0..items.len() as u32);
     order.sort_by_key(|&i| keys[i as usize]);
 
+    let mut break_rank = None;
     for &i in order.iter() {
         let item = &items[i as usize];
+        if item.dst != dst_read::NONE {
+            let rank = scratch.keys[i as usize].0;
+            let blur = item.dst & dst_read::BACKDROP != 0;
+            match breaks.last_mut() {
+                Some(b) if break_rank == Some(rank) => {
+                    b.bounds = union(b.bounds, item.bounds);
+                    b.blur |= blur;
+                }
+                _ => {
+                    breaks.push(OverlayBreak {
+                        segment: segments.len() as u32,
+                        bounds: item.bounds,
+                        blur,
+                    });
+                    break_rank = Some(rank);
+                }
+            }
+        }
+        // The last segment this call pushed, which a run may extend.
+        let last = if segments.len() > seg_start {
+            segments.last_mut()
+        } else {
+            None
+        };
         let source = match item.source {
             OverlayItemSource::Shape { index, fill } => {
                 let start = shapes_out.len() as u32;
@@ -338,7 +446,7 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
                             instance_count,
                             fill: last_fill,
                         },
-                }) = segments.last_mut()
+                }) = last
                 {
                     if *blend == item.blend
                         && *last_fill == fill
@@ -365,7 +473,7 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
                             vertex_count,
                             fill: last_fill,
                         },
-                }) = segments.last_mut()
+                }) = last
                 {
                     if *blend == item.blend
                         && *last_fill == fill
@@ -387,6 +495,11 @@ pub(crate) fn build_draw_list<S: Copy, T: Copy>(
             OverlayItemSource::RetainedShape { draw_index } => {
                 OverlayDrawSource::RetainedShape { draw_index }
             }
+            OverlayItemSource::Backdrop { start, count } => OverlayDrawSource::Backdrop {
+                vertex_start: start,
+                vertex_count: count,
+            },
+            OverlayItemSource::Layer { index } => OverlayDrawSource::Layer { index },
         };
         segments.push(OverlayDrawSegment {
             blend: item.blend,
@@ -406,6 +519,8 @@ mod tests {
             bounds: b,
             blend: OverlayBlend::SourceOver,
             source: OverlayItemSource::Shape { index, fill },
+            layer: NO_LAYER,
+            dst: dst_read::NONE,
         }
     }
 
@@ -420,6 +535,8 @@ mod tests {
                 count,
                 fill: 0,
             },
+            layer: NO_LAYER,
+            dst: dst_read::NONE,
         }
     }
 
@@ -436,6 +553,7 @@ mod tests {
             &mut so,
             &mut to,
             &mut segs,
+            &mut Vec::new(),
             &mut OverlayOrderScratch::default(),
         );
         (so, to, segs)
@@ -574,6 +692,8 @@ mod tests {
             bounds: b,
             blend: OverlayBlend::SourceOver,
             source: OverlayItemSource::Retained { draw_index },
+            layer: NO_LAYER,
+            dst: dst_read::NONE,
         };
         let mut items = vec![
             retained(0, [0.0, 0.0, 1.0, 1.0]),
@@ -581,5 +701,72 @@ mod tests {
         ];
         let (_, _, segs) = build(&mut items, &[] as &[u32], &[] as &[u32]);
         assert_eq!(segs.len(), 2);
+    }
+
+    #[test]
+    fn destination_reads_sort_last_in_their_rank_and_break_once() {
+        // Two backdrops and a shape side by side, all rank 0, then a shape over
+        // the first backdrop: one break, before the backdrops, after the
+        // rank-0 shape.
+        let backdrop = |x: f32, start: u32| OverlayOrderItem {
+            z_order: 0,
+            family_rank: family_rank::SHAPE,
+            bounds: [x, 0.0, x + 10.0, 10.0],
+            blend: OverlayBlend::SourceOver,
+            source: OverlayItemSource::Backdrop { start, count: 6 },
+            layer: NO_LAYER,
+            dst: dst_read::BACKDROP,
+        };
+        let mut items = vec![
+            backdrop(0.0, 0),
+            backdrop(20.0, 6),
+            shape(0, [40.0, 0.0, 50.0, 10.0], 0, 0),
+            shape(1, [2.0, 2.0, 8.0, 8.0], 1, 0),
+        ];
+        let mut breaks = Vec::new();
+        let (mut so, mut to, mut segs) = (Vec::new(), Vec::new(), Vec::new());
+        build_draw_list(
+            &mut items,
+            &[0u32, 1],
+            &[] as &[u32],
+            &mut so,
+            &mut to,
+            &mut segs,
+            &mut breaks,
+            &mut OverlayOrderScratch::default(),
+        );
+        assert_eq!(segs.len(), 4);
+        assert!(segs[0].is_shape());
+        assert!(matches!(segs[1].source, OverlayDrawSource::Backdrop { .. }));
+        assert!(matches!(segs[2].source, OverlayDrawSource::Backdrop { .. }));
+        assert!(segs[3].is_shape());
+        assert_eq!(breaks.len(), 1);
+        assert_eq!(breaks[0].segment, 1);
+        assert_eq!(breaks[0].bounds, [0.0, 0.0, 30.0, 10.0]);
+        assert!(breaks[0].blur);
+    }
+
+    #[test]
+    fn a_second_call_starts_a_list_of_its_own() {
+        // The same shape run twice: the second call does not extend the first
+        // call's segment.
+        let mut a = vec![shape(0, [0.0, 0.0, 1.0, 1.0], 0, 0)];
+        let mut b = vec![shape(0, [5.0, 0.0, 6.0, 1.0], 1, 0)];
+        let (mut so, mut to, mut segs) = (Vec::new(), Vec::new(), Vec::new());
+        let mut scratch = OverlayOrderScratch::default();
+        for items in [&mut a, &mut b] {
+            build_draw_list(
+                items,
+                &[0u32, 1],
+                &[] as &[u32],
+                &mut so,
+                &mut to,
+                &mut segs,
+                &mut Vec::new(),
+                &mut scratch,
+            );
+        }
+        assert_eq!(segs.len(), 2);
+        assert_eq!(so, vec![0, 1]);
     }
 }

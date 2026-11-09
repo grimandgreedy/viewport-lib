@@ -869,7 +869,7 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Set the backdrop colour filters applied to the blurred scene behind a
+    /// Set the backdrop colour filters applied to what is blurred behind a
     /// `backdrop_blur` shape: saturation and brightness multipliers (`1.0`
     /// leaves each unchanged) and a hue rotation in radians.
     pub fn with_backdrop_filters(

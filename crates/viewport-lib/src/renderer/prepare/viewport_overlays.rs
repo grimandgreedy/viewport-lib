@@ -2,6 +2,7 @@
 //! shapes.
 
 use super::*;
+use crate::renderer::overlay_layers::Family as LayerFamily;
 use crate::resources::overlay::font::GlyphGrid;
 use crate::resources::overlay::glyph_style::GlyphStyle;
 
@@ -1191,7 +1192,7 @@ impl ViewportRenderer {
                     };
 
                 // --- Polylines (between shapes and labels in z order) ---
-                for poly in frame.overlays.polylines.iter() {
+                for (item_index, poly) in frame.overlays.polylines.iter().enumerate() {
                     if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1216,6 +1217,24 @@ impl ViewportRenderer {
                             animated_storage = owned;
                             &animated_storage
                         };
+                    // A layer can push its opacity, blend and colour matrix
+                    // onto the item, or draw it as source-over into its target.
+                    let layer_storage;
+                    let poly: &crate::renderer::types::OverlayPolylineItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::Polyline, item_index, &poly.style)
+                    {
+                        Some(style) => {
+                            let mut owned = poly.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => poly,
+                    };
+                    let record_layer = ov
+                        .layer_plan
+                        .record_layer(LayerFamily::Polyline, item_index);
                     // Resolve the anchor to a screen-pixel offset and draw the
                     // path there; a culled world anchor skips it. The offset is
                     // baked into a translated copy so the stroke and fill paths
@@ -1335,6 +1354,12 @@ impl ViewportRenderer {
                         rotate_vertices_from(&mut batch, 0, rot);
                     }
                     let clip = stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        poly.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
                     if !batch.is_empty() {
                         batches.push(TextBatch {
                             z_order: poly.z_order,
@@ -1342,6 +1367,7 @@ impl ViewportRenderer {
                             blend: poly.style.blend,
                             clip,
                             verts: batch,
+                            layer: record_layer,
                         });
                     }
                 }
@@ -1352,7 +1378,7 @@ impl ViewportRenderer {
                 // SDF shape pass, image fills included. Only a backdrop blur
                 // goes through the shape pass's backdrop pipeline (see
                 // `prepare_overlay_shapes`).
-                for shape in &frame.overlays.shapes {
+                for (item_index, shape) in frame.overlays.shapes.iter().enumerate() {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
                         fill_rule,
@@ -1381,6 +1407,13 @@ impl ViewportRenderer {
                             &mut owned.style.tint,
                         );
                     }
+                    if let Some(style) =
+                        ov.layer_plan
+                            .adjusted_style(LayerFamily::Shape, item_index, &owned.style)
+                    {
+                        owned.style = style;
+                    }
+                    let record_layer = ov.layer_plan.record_layer(LayerFamily::Shape, item_index);
                     // Resolve the anchor to an absolute top-left so anchored
                     // vector shapes tessellate where they draw; a culled world
                     // anchor skips the shape. Tracks resolve first, because a
@@ -1421,6 +1454,12 @@ impl ViewportRenderer {
                         atlas,
                     );
                     let clip = stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        owned.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
                     if !batch.is_empty() {
                         batches.push(TextBatch {
                             z_order: shape.z_order,
@@ -1428,12 +1467,13 @@ impl ViewportRenderer {
                             blend: owned.style.blend,
                             clip,
                             verts: batch,
+                            layer: record_layer,
                         });
                     }
                 }
 
                 // --- Labels ---
-                for label in &frame.overlays.labels {
+                for (item_index, label) in frame.overlays.labels.iter().enumerate() {
                     if label.text.is_empty() || label.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1466,6 +1506,20 @@ impl ViewportRenderer {
                         animated_storage = owned;
                         &animated_storage
                     };
+                    let layer_storage;
+                    let label: &crate::renderer::types::LabelItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::Label, item_index, &label.style)
+                    {
+                        Some(style) => {
+                            let mut owned = label.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => label,
+                    };
+                    let record_layer = ov.layer_plan.record_layer(LayerFamily::Label, item_index);
                     let opacity = label.style.opacity.clamp(0.0, 1.0);
                     super::overlay_style_check::warn_inert_style(
                         "LabelItem",
@@ -1641,17 +1695,24 @@ impl ViewportRenderer {
                     rotate_vertices_from(&mut batch, text_start, rot);
 
                     let clip = stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        label.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
                     batches.push(TextBatch {
                         z_order: label.z_order,
                         texture: label.style.fill.texture_id(),
                         blend: label.style.blend,
                         clip,
                         verts: batch,
+                        layer: record_layer,
                     });
                 }
 
                 // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
-                for run in &frame.overlays.glyph_runs {
+                for (item_index, run) in frame.overlays.glyph_runs.iter().enumerate() {
                     if run.glyphs.is_empty() || run.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1671,6 +1732,22 @@ impl ViewportRenderer {
                         animated_storage = owned;
                         &animated_storage
                     };
+                    let layer_storage;
+                    let run: &crate::renderer::types::GlyphRunItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::GlyphRun, item_index, &run.style)
+                    {
+                        Some(style) => {
+                            let mut owned = run.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => run,
+                    };
+                    let record_layer = ov
+                        .layer_plan
+                        .record_layer(LayerFamily::GlyphRun, item_index);
                     super::overlay_style_check::warn_inert_style(
                         "GlyphRunItem",
                         crate::renderer::types::OverlayStyleSupport::for_glyphs(),
@@ -1822,12 +1899,19 @@ impl ViewportRenderer {
                     rotate_vertices_from(&mut batch, 0, rot);
 
                     let clip = stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        run.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
                     batches.push(TextBatch {
                         z_order: run.z_order,
                         texture: run.style.fill.texture_id(),
                         blend: run.style.blend,
                         clip,
                         verts: batch,
+                        layer: record_layer,
                     });
                 }
 
@@ -1899,6 +1983,8 @@ impl ViewportRenderer {
                             count: batch.verts.len() as u32,
                             fill,
                         },
+                        layer: batch.layer,
+                        dst: crate::renderer::overlay_draw_order::dst_read::NONE,
                     });
                 }
 
@@ -1918,6 +2004,7 @@ impl ViewportRenderer {
                     u32,
                     i32,
                     crate::renderer::overlay_draw_order::Bounds,
+                    u32,
                 )> = Vec::new();
                 // Collected shape-stream draws, finished after the instance buffer
                 // exists: (shape_vbuf, count, shadow_tex, fill_tex,
@@ -1930,8 +2017,12 @@ impl ViewportRenderer {
                     u32,
                     i32,
                     crate::renderer::overlay_draw_order::Bounds,
+                    u32,
                 )> = Vec::new();
-                for r in &frame.overlays.retained {
+                for (item_index, r) in frame.overlays.retained.iter().enumerate() {
+                    let record_layer = ov
+                        .layer_plan
+                        .record_layer(LayerFamily::Retained, item_index);
                     // Re-emit the group first if its baked glyph UVs went stale
                     // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
                     if self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp) {
@@ -2076,6 +2167,7 @@ impl ViewportRenderer {
                             instance_index,
                             r.z_order,
                             group_bounds,
+                            record_layer,
                         ));
                     }
                     if let Some((svbuf, svcount, shbuf, fill_tex)) = shape {
@@ -2087,6 +2179,7 @@ impl ViewportRenderer {
                             instance_index,
                             r.z_order,
                             group_bounds,
+                            record_layer,
                         ));
                     }
                 }
@@ -2149,7 +2242,7 @@ impl ViewportRenderer {
 
                     // Finish retained text-stream draws: each reads its own
                     // group's fill records, or the frame's when it has none.
-                    for (vbuf, vcount, fill_tex, instance_index, z, bounds) in
+                    for (vbuf, vcount, fill_tex, instance_index, z, bounds, layer) in
                         pending_text.drain(..)
                     {
                         let records = fill_tex.as_ref().unwrap_or(&text_records);
@@ -2175,6 +2268,8 @@ impl ViewportRenderer {
                             bounds,
                             blend: crate::renderer::types::OverlayBlend::SourceOver,
                             source: OverlayItemSource::Retained { draw_index },
+                            layer,
+                            dst: crate::renderer::overlay_draw_order::dst_read::NONE,
                         });
                     }
 
@@ -2195,8 +2290,16 @@ impl ViewportRenderer {
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
                             let mut previous =
                                 std::mem::take(&mut ov.overlay_bindings.retained_shape_bgs);
-                            for (svbuf, svcount, shbuf, fill_tex, instance_index, z, bounds) in
-                                pending_shapes.drain(..)
+                            for (
+                                svbuf,
+                                svcount,
+                                shbuf,
+                                fill_tex,
+                                instance_index,
+                                z,
+                                bounds,
+                                layer,
+                            ) in pending_shapes.drain(..)
                             {
                                 let fill_bind_group = self.resources.overlay_fill_bind_group(
                                     device,
@@ -2256,6 +2359,8 @@ impl ViewportRenderer {
                                     bounds,
                                     blend: crate::renderer::types::OverlayBlend::SourceOver,
                                     source: OverlayItemSource::RetainedShape { draw_index },
+                                    layer,
+                                    dst: crate::renderer::overlay_draw_order::dst_read::NONE,
                                 });
                             }
                         }
@@ -2346,26 +2451,24 @@ impl ViewportRenderer {
         let ppp = frame.camera.pixels_per_point;
         Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h, ppp);
         Self::ensure_overlay_instances_default(ov, device, queue);
-        // In z order, so backdrop-blur shapes, which draw in one pass of
-        // their own, stack by `z_order`. The other shapes are ordered by the
-        // draw list.
-        let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
+        // Each with its index in the frame's list, which names its layer; the
+        // axes indicator's shapes belong to none. The draw list orders them.
+        let mut sorted: Vec<(usize, &crate::renderer::types::OverlayShapeItem)> = frame
             .overlays
             .shapes
             .iter()
-            .chain(axes_shapes.iter())
+            .enumerate()
+            .chain(axes_shapes.iter().map(|s| (usize::MAX, s)))
             .collect();
-        sorted.sort_by_key(|s| s.z_order);
+        sorted.sort_by_key(|(_, s)| s.z_order);
 
         let is_vector = |s: &crate::renderer::types::OverlayShapeItem| {
             matches!(s.shape, crate::renderer::types::OverlayShape::Vector { .. })
         };
-        let has_instances = sorted.iter().any(|s| {
-            !is_vector(s) && (s.style.fill.texture_id().is_some() || s.style.backdrop.blur <= 0.0)
-        });
+        let has_instances = sorted.iter().any(|(_, s)| !is_vector(s));
         let has_blur = sorted
             .iter()
-            .any(|s| s.style.backdrop.blur > 0.0 && s.style.fill.texture_id().is_none());
+            .any(|(_, s)| s.style.backdrop.blur > 0.0 && s.style.fill.texture_id().is_none());
         if has_instances {
             self.resources.ensure_overlay_fill_resources(device, queue);
             self.resources.ensure_overlay_shape_pipeline(device);
@@ -2413,12 +2516,16 @@ impl ViewportRenderer {
         );
         self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
 
-        for shape_orig in &sorted {
+        for &(item_index, shape_orig) in &sorted {
             // Mask-only shapes contribute a clip rectangle but are
             // not drawn themselves.
             if shape_orig.provides_mask.is_some() {
                 continue;
             }
+            let adjusted =
+                ov.layer_plan
+                    .adjusted_style(LayerFamily::Shape, item_index, &shape_orig.style);
+            let record_layer = ov.layer_plan.record_layer(LayerFamily::Shape, item_index);
             // A vector shape has no distance field, so its fill (an image
             // fill included) and shadows draw as triangles in the label pass.
             // Only a backdrop blur comes here, as the tessellated triangles
@@ -2431,12 +2538,14 @@ impl ViewportRenderer {
                 ..
             } = &shape_orig.shape
             {
-                if shape_orig.style.fill.texture_id().is_some()
-                    || shape_orig.style.backdrop.blur <= 0.0
-                {
+                let style = adjusted.as_ref().unwrap_or(&shape_orig.style);
+                if style.fill.texture_id().is_some() || style.backdrop.blur <= 0.0 {
                     continue;
                 }
                 let mut owned = (*shape_orig).clone();
+                if let Some(style) = adjusted {
+                    owned.style = style;
+                }
                 if let Some(anims) = owned.animations.take() {
                     anims.apply(
                         overlay_time,
@@ -2479,6 +2588,7 @@ impl ViewportRenderer {
                 let positions = transform_vector_positions(&mesh.positions, &owned);
                 let backdrop = &owned.style.backdrop;
                 max_blur_radius = max_blur_radius.max(backdrop.blur);
+                let start = blur_verts.len() as u32;
                 // Like an analytic backdrop, it is not clipped by a mask.
                 push_tessellated_backdrop_verts(
                     &mut blur_verts,
@@ -2493,6 +2603,22 @@ impl ViewportRenderer {
                     vp_w,
                     vp_h,
                 );
+                ov.overlay_order_items.push(
+                    crate::renderer::overlay_draw_order::OverlayOrderItem {
+                        z_order: owned.z_order,
+                        family_rank: crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                        bounds: crate::renderer::overlay_draw_order::points_bounds(
+                            positions.iter().copied(),
+                        ),
+                        blend: crate::renderer::types::OverlayBlend::SourceOver,
+                        source: crate::renderer::overlay_draw_order::OverlayItemSource::Backdrop {
+                            start,
+                            count: blur_verts.len() as u32 - start,
+                        },
+                        layer: crate::renderer::overlay_draw_order::NO_LAYER,
+                        dst: crate::renderer::overlay_draw_order::dst_read::BACKDROP,
+                    },
+                );
                 continue;
             }
             super::overlay_style_check::warn_inert_style(
@@ -2503,6 +2629,9 @@ impl ViewportRenderer {
             // Clone so per-frame animation overrides are local and
             // the input frame data stays untouched.
             let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
+            if let Some(style) = adjusted {
+                owned.style = style;
+            }
             if let Some(anims) = owned.animations.take() {
                 anims.apply(
                     overlay_time,
@@ -2642,8 +2771,24 @@ impl ViewportRenderer {
             if image.is_none() && shape.style.backdrop.blur > 0.0 {
                 max_blur_radius = max_blur_radius.max(shape.style.backdrop.blur);
                 // A backdrop blur draws through the backdrop pipeline, as the
-                // shape's quad in six vertices; it is composited separately
-                // and is not clipped by a mask.
+                // shape's quad in six vertices, at its place in the draw
+                // order; it is not clipped by a mask.
+                let start = blur_verts.len() as u32;
+                let [qx, qy, qhx, qhy] = shape_frame.quad;
+                ov.overlay_order_items.push(
+                    crate::renderer::overlay_draw_order::OverlayOrderItem {
+                        z_order: shape.z_order,
+                        family_rank: crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                        bounds: [qx - qhx, qy - qhy, qx + qhx, qy + qhy],
+                        blend: crate::renderer::types::OverlayBlend::SourceOver,
+                        source: crate::renderer::overlay_draw_order::OverlayItemSource::Backdrop {
+                            start,
+                            count: 6,
+                        },
+                        layer: crate::renderer::overlay_draw_order::NO_LAYER,
+                        dst: crate::renderer::overlay_draw_order::dst_read::BACKDROP,
+                    },
+                );
                 for (pos, local) in shape_frame.corners() {
                     blur_verts.push(crate::resources::OverlayBackdropVertex {
                         position: overlay_local_px(pos[0], pos[1], vp_w, vp_h),
@@ -2669,16 +2814,13 @@ impl ViewportRenderer {
 
             // A gradient or an image is a fill record, evaluated in the
             // shape's own frame; a solid fill is the flat colour alone.
-            let fill_index = match &shape.style.fill {
-                crate::renderer::types::OverlayFill::Solid(_) => super::overlay_fill::NO_FILL,
-                fill => fills.push(
-                    fill,
-                    [hw, hh],
-                    resolved_opacity,
-                    tint,
-                    image.map_or([1, 1], |(_, size)| size),
-                ),
-            };
+            let fill_index = super::overlay_fill::shape_fill_index(
+                &shape.style,
+                [hw, hh],
+                resolved_opacity,
+                image.map_or([1, 1], |(_, size)| size),
+                &mut fills,
+            );
             let instance = crate::resources::OverlayShapeInstance {
                 quad: shape_frame.quad,
                 pivot_half: [shape_frame.pivot_px[0], shape_frame.pivot_px[1], hw, hh],
@@ -2728,6 +2870,8 @@ impl ViewportRenderer {
                         index: ov.overlay_shape_instances.len() as u32,
                         fill,
                     },
+                    layer: record_layer,
+                    dst: crate::renderer::overlay_draw_order::dst_read::NONE,
                 });
             ov.overlay_shape_instances.push(instance);
         }
@@ -2895,7 +3039,6 @@ impl ViewportRenderer {
                 tex_clip_bind_group,
                 _tex_clip_buf: tex_clip_buf,
                 blur_vertex_buf: blur_vbuf,
-                blur_vertex_count: blur_verts.len() as u32,
                 max_blur_radius,
             });
         }
@@ -2904,30 +3047,154 @@ impl ViewportRenderer {
     /// Build the overlay draw list from the items the family passes recorded,
     /// upload the shape instances and text vertices in draw order, and build
     /// the pipeline variant for every blend mode the list draws with.
+    ///
+    /// Items recorded into a layer that draws through a scratch target are
+    /// ranked among themselves into a list of their own, and the layer joins
+    /// the frame's list as one composite. Returns the command buffer that
+    /// draws the layers' members into their targets, which has to be
+    /// submitted before the overlay pass.
     pub(super) fn finalize_overlay_draw_order(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
+        frame: &FrameData,
         ov: &mut crate::renderer::ViewportOverlay,
-    ) {
+    ) -> Option<crate::gpu::CommandBuffer> {
+        use crate::renderer::overlay_draw_order::{
+            NO_LAYER, OverlayItemSource, OverlayOrderItem, build_draw_list, family_rank, union,
+        };
         let mut shapes = std::mem::take(&mut ov.overlay_sorted_shapes);
         let mut text = std::mem::take(&mut ov.overlay_sorted_text);
-        crate::renderer::overlay_draw_order::build_draw_list(
-            &mut ov.overlay_order_items,
+        let mut items = std::mem::take(&mut ov.overlay_order_items);
+        shapes.clear();
+        text.clear();
+        ov.overlay_draw_segments.clear();
+        ov.overlay_breaks.clear();
+        ov.layer_targets.draws.clear();
+        let vp = frame.camera.viewport_size;
+        let ppp = frame.camera.pixels_per_point;
+
+        // Group the items by the layer they record into, the frame's own last.
+        // The sort is stable, so each group keeps its recording order.
+        let mut member_ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        let main_start = if ov.layer_plan.has_targets() {
+            items.sort_by_key(|i| i.layer);
+            let main_start = items
+                .iter()
+                .position(|i| i.layer == NO_LAYER)
+                .unwrap_or(items.len());
+            let needs_masks = ov.layer_plan.layers.iter().any(|l| l.clip.mask.is_some());
+            let registry = needs_masks.then(|| {
+                let world_origin = self.origin.origin();
+                let view = self.origin.camera(&frame.camera.render_camera).view();
+                let proj = frame.camera.render_camera.projection();
+                let (_, index_of, bboxes, _) =
+                    build_clip_shapes(&frame.overlays.shapes, ppp, vp, &view, &proj, world_origin);
+                (index_of, bboxes)
+            });
+            let mut k = 0;
+            while k < main_start {
+                let l = items[k].layer;
+                let end = k + items[k..main_start]
+                    .iter()
+                    .take_while(|i| i.layer == l)
+                    .count();
+                let range = k..end;
+                k = end;
+                let Some(layer) = ov.layer_plan.layers.get(l as usize) else {
+                    continue;
+                };
+                let Some(content) = items[range.clone()]
+                    .iter()
+                    .map(|i| i.bounds)
+                    .filter(|b| b[0] < b[2] && b[1] < b[3])
+                    .reduce(union)
+                else {
+                    continue;
+                };
+                // The composite's clip: the mask's box and index, cut to the
+                // clip rect, as an item's clip is resolved.
+                let mask = layer.clip.mask.and_then(|id| {
+                    registry.as_ref().and_then(|(index_of, bboxes)| {
+                        index_of.get(&id).map(|i| (*i, bboxes[*i as usize]))
+                    })
+                });
+                let mask_rect = mask.map_or([0.0; 4], |(_, b)| b);
+                let clip_rect = match layer.clip.rect {
+                    Some(r) => combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp)),
+                    None => mask_rect,
+                };
+                let bounds = crate::renderer::overlay_layers::composite_bounds(
+                    content,
+                    &layer.style,
+                    clip_bounds(clip_rect, ppp),
+                    vp,
+                    ppp,
+                );
+                if !(bounds[0] < bounds[2] && bounds[1] < bounds[3]) {
+                    continue;
+                }
+                let draw = crate::renderer::overlay_layers::LayerDraw {
+                    segments: 0..0,
+                    scratch: 0,
+                    bounds,
+                    style: layer.style.clone(),
+                    clip_rect,
+                    clip_index: mask.map_or(-1.0, |(i, _)| i as f32),
+                };
+                let index = ov.layer_targets.draws.len() as u32;
+                items.push(OverlayOrderItem {
+                    z_order: layer.z_order,
+                    family_rank: family_rank::LAYER,
+                    bounds,
+                    blend: layer.style.blend,
+                    source: OverlayItemSource::Layer { index },
+                    layer: NO_LAYER,
+                    dst: draw.dst_read(),
+                });
+                ov.layer_targets.draws.push(draw);
+                member_ranges.push(range);
+            }
+            main_start
+        } else {
+            0
+        };
+
+        build_draw_list(
+            &mut items[main_start..],
             &ov.overlay_shape_instances,
             &ov.overlay_text_verts,
             &mut shapes,
             &mut text,
             &mut ov.overlay_draw_segments,
+            &mut ov.overlay_breaks,
             &mut ov.overlay_order_scratch,
         );
+        ov.overlay_main_segments = ov.overlay_draw_segments.len() as u32;
+        let mut no_breaks = Vec::new();
+        for (d, range) in ov.layer_targets.draws.iter_mut().zip(member_ranges) {
+            let start = ov.overlay_draw_segments.len() as u32;
+            build_draw_list(
+                &mut items[range],
+                &ov.overlay_shape_instances,
+                &ov.overlay_text_verts,
+                &mut shapes,
+                &mut text,
+                &mut ov.overlay_draw_segments,
+                &mut no_breaks,
+                &mut ov.overlay_order_scratch,
+            );
+            d.segments = start..ov.overlay_draw_segments.len() as u32;
+        }
+        ov.overlay_order_items = items;
+
         for seg in &ov.overlay_draw_segments {
             if seg.blend == crate::renderer::types::OverlayBlend::SourceOver {
                 continue;
             }
             if seg.is_shape() {
                 self.resources.ensure_overlay_shape_blend(device, seg.blend);
-            } else {
+            } else if seg.is_text() {
                 self.resources.ensure_overlay_text_blend(device, seg.blend);
             }
         }
@@ -2941,6 +3208,35 @@ impl ViewportRenderer {
         }
         ov.overlay_sorted_shapes = shapes;
         ov.overlay_sorted_text = text;
+
+        let max_backdrop_radius = ov
+            .overlay_shape_gpu_data
+            .as_ref()
+            .map_or(0.0, |d| d.max_blur_radius);
+        ov.layer_targets.backdrop_radius = ov
+            .layer_targets
+            .draws
+            .iter()
+            .filter(|d| d.style.backdrop.is_active())
+            .map(|d| d.style.backdrop.blur)
+            .fold(max_backdrop_radius, f32::max);
+        let size = [
+            ((vp[0] * ppp).round() as u32).max(1),
+            ((vp[1] * ppp).round() as u32).max(1),
+        ];
+        let needs_backdrop = ov.has_backdrops();
+        let needs_snapshot = ov.has_breaks();
+        self.prepare_layer_targets(
+            device,
+            queue,
+            ov,
+            crate::renderer::overlay_layers::LayerFrame {
+                size,
+                ppp,
+                needs_backdrop,
+                needs_snapshot,
+            },
+        )
     }
 }
 
@@ -2952,6 +3248,8 @@ struct TextBatch {
     /// The clip box the item cannot draw outside, in logical pixels.
     clip: Option<crate::renderer::overlay_draw_order::Bounds>,
     verts: Vec<crate::resources::OverlayTextVertex>,
+    /// The layer it records into, or `NO_LAYER`.
+    layer: u32,
 }
 
 /// The logical-pixel box a framebuffer-pixel clip rect lets an item draw in,

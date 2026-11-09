@@ -67,8 +67,17 @@ impl ViewportRenderer {
             emit_outline_composite!(&self.resources, &mut *render_pass, Some(slot));
             self.paint_ldr_sub_highlight(render_pass, vp_idx, &slot.camera_bind_group);
         }
+        // A pass the host owns cannot be ended at a break: no destination
+        // reads, so layers draw with their fallback blend and backdrops are
+        // skipped.
         let ov = &self.viewport_slots[vp_idx].overlay;
-        emit_overlay_2d!(self, ov, render_pass);
+        emit_overlay_segments(
+            &self.resources,
+            ov,
+            render_pass,
+            ov.main_segments(),
+            &OverlayEmit::NO_DESTINATION,
+        );
         // Shadow atlas viewer overlay.
         if let (true, true, Some(pipeline)) = (
             self.resources.scene_tier.is_built(),

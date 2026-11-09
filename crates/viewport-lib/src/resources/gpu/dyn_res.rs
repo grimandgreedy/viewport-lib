@@ -304,8 +304,11 @@ impl DeviceResources {
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
             format: self.target_format,
+            // COPY_SRC so overlays that read the destination can copy what
+            // the overlay pass has drawn.
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
+                | crate::gpu::TextureUsages::TEXTURE_BINDING
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 

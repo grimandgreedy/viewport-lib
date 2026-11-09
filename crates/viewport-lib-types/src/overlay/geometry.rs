@@ -87,6 +87,14 @@ pub struct RetainedOverlay {
     /// animated group re-draws from its compiled buffers with no
     /// re-tessellation. Boxed and `None` for a static group.
     pub animations: Option<Box<crate::overlay::OverlayAnimations>>,
+    /// Draw the group as a layer: its members into a scratch target, then the
+    /// result composited once with this style, at the group's `z_order` and
+    /// inside its clip. `opacity` above still multiplies each member; the
+    /// layer's own opacity fades the group as a whole, so overlapping members
+    /// do not show through each other.
+    ///
+    /// `None` (the default) draws the members straight into the frame.
+    pub layer: Option<crate::overlay::OverlayLayerStyle>,
 }
 
 impl RetainedOverlay {
@@ -102,6 +110,7 @@ impl RetainedOverlay {
             tint: [1.0, 1.0, 1.0, 1.0],
             anchoring: None,
             animations: None,
+            layer: None,
         }
     }
 
@@ -189,6 +198,12 @@ impl RetainedOverlay {
     /// so an animated group never re-compiles.
     pub fn with_animations(mut self, animations: crate::overlay::OverlayAnimations) -> Self {
         self.animations = Some(Box::new(animations));
+        self
+    }
+
+    /// Draw the group as a layer composited with `style`.
+    pub fn with_layer(mut self, style: crate::overlay::OverlayLayerStyle) -> Self {
+        self.layer = Some(style);
         self
     }
 

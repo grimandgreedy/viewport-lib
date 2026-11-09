@@ -42,6 +42,7 @@ pub(crate) mod origin;
 pub use origin::WorldOrigin;
 mod overlay_buffers;
 mod overlay_draw_order;
+mod overlay_layers;
 mod readback;
 mod section_caps;
 pub use readback::ExposureReadback;
@@ -94,8 +95,8 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 pub use self::types::{
     AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure,
     BackdropEffects, BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit,
-    ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
-    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
+    ClipObject, ClipShape, ColourMatrix, ContactShadowSettings, DebugOutputMode, DebugQuantity,
+    DebugVis, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
     EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureSettings, FillRule,
     ForegroundPass, ForegroundProjection, FrameData, FrameTime, GenericToneCurve, GlyphRunItem,
     GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
@@ -103,15 +104,16 @@ pub use self::types::{
     LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
     NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
     OverlayAnimations, OverlayBlend, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
-    OverlayTransform, PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
-    TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER,
-    ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency,
-    WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
+    OverlayFrame, OverlayGeometryId, OverlayLayer, OverlayLayerMark, OverlayLayerMembers,
+    OverlayLayerStyle, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
+    PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineItem, PolylineRefItem, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
+    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
+    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
+    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace,
+    aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
     sphere_wireframe_polyline,
 };
 
@@ -324,13 +326,44 @@ pub(crate) struct ViewportOverlay {
     /// Set once the label prepare has written the overlay instances this frame,
     /// so the shape prepare reuses it instead of building an identity-only fallback.
     pub overlay_instances_ready: bool,
+    /// The frame's layers and the layer each item belongs to.
+    pub layer_plan: overlay_layers::LayerPlan,
+    /// The viewport's layer scratch targets and this frame's composites.
+    pub layer_targets: overlay_layers::OverlayLayerTargets,
+    /// How many of `overlay_draw_segments`, from the start, are the frame's
+    /// own list; the rest are layers' members.
+    pub overlay_main_segments: u32,
+    /// Where the frame's list reads the destination.
+    pub overlay_breaks: Vec<overlay_draw_order::OverlayBreak>,
 }
 
 impl ViewportOverlay {
     /// Draw calls the overlay emit will issue for this viewport: one per
     /// segment of the draw list.
     pub(crate) fn draw_call_count(&self) -> u32 {
-        self.overlay_draw_segments.len() as u32
+        // A layer with a backdrop draws it before its content.
+        let backdrops = self
+            .layer_targets
+            .draws
+            .iter()
+            .filter(|d| d.style.backdrop.is_active())
+            .count();
+        (self.overlay_draw_segments.len() + backdrops) as u32
+    }
+
+    /// The frame's own draw list, without the layers' members.
+    pub(crate) fn main_segments(&self) -> &[overlay_draw_order::OverlayDrawSegment] {
+        &self.overlay_draw_segments[..self.overlay_main_segments as usize]
+    }
+
+    /// Whether the frame's list reads the destination anywhere.
+    pub(crate) fn has_breaks(&self) -> bool {
+        !self.overlay_breaks.is_empty()
+    }
+
+    /// Whether a break blurs the destination.
+    pub(crate) fn has_backdrops(&self) -> bool {
+        self.overlay_breaks.iter().any(|b| b.blur)
     }
 
     pub(crate) fn new() -> Self {
@@ -352,6 +385,10 @@ impl ViewportOverlay {
             overlay_sorted_shapes: Vec::new(),
             overlay_sorted_text: Vec::new(),
             overlay_order_scratch: Default::default(),
+            layer_plan: Default::default(),
+            layer_targets: overlay_layers::OverlayLayerTargets::new(),
+            overlay_main_segments: 0,
+            overlay_breaks: Vec::new(),
         }
     }
 }

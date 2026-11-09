@@ -8,7 +8,7 @@
 // colour passes through unchanged.
 //
 // Header texels:
-//   0: kind, stop count, colour-matrix index (reserved, -1), nine-slice flag
+//   0: kind, stop count, colour-matrix index (or -1), nine-slice flag
 //   1: box half-extents xy; z = angle (linear), seam (conical) or arc start
 //      (sweep); w = arc span (sweep)
 //   2: sweep centre xy in pixels from the box centre; nine-slice centre and
@@ -19,7 +19,9 @@
 //   6: nine-slice insets in texture UV (top, right, bottom, left)
 //   7: nine-slice insets as box fractions (top, right, bottom, left)
 // then `count` stop colours, then the stop positions four to a texel. The
-// renderer's `overlay_fill` module writes the same layout.
+// renderer's `overlay_fill` module writes the same layout. A colour matrix is
+// five texels anywhere in the table, its columns: the weights of red, green,
+// blue and alpha, then the offsets.
 //
 // The including shader binds group 1 as the fill records, the image a texture
 // fill samples (a blank texel for any other draw) and its sampler, and calls
@@ -202,4 +204,24 @@ fn overlay_fill(local: vec2<f32>, fill: i32) -> vec4<f32> {
         t = clamp(fract(a / two_pi + 1.0) * two_pi / max(params.w, 0.000001), 0.0, 1.0);
     }
     return fill_gradient(base, i32(head.y + 0.5), t);
+}
+
+// The colour filter the record at `fill` names, applied to the straight-alpha
+// `colour` the item draws: a 4x5 matrix over `[r, g, b, a, 1]`, clamped. With
+// no record or no matrix the colour passes through untouched.
+fn overlay_colour_matrix(colour: vec4<f32>, fill: i32) -> vec4<f32> {
+    if (fill < 0) {
+        return colour;
+    }
+    let m = fill_texel(fill).z;
+    if (m < 0.0) {
+        return colour;
+    }
+    let k = i32(m + 0.5);
+    let out = fill_texel(k) * colour.r
+        + fill_texel(k + 1) * colour.g
+        + fill_texel(k + 2) * colour.b
+        + fill_texel(k + 3) * colour.a
+        + fill_texel(k + 4);
+    return clamp(out, vec4<f32>(0.0), vec4<f32>(1.0));
 }

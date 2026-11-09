@@ -594,6 +594,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     if (record >= 0) {
         let gt = in.group_tint;
         fill_col = vec4<f32>(fill_sample.rgb * gt.rgb, fill_sample.a * group_opacity * gt.a);
+        fill_col = overlay_colour_matrix(fill_col, record);
     }
 
     // Start with the accumulated outer shadow layers.

@@ -225,6 +225,91 @@ impl FillTable {
     }
 }
 
+impl FillTable {
+    /// Attach `matrix` to the record at `index`: the matrix's five columns are
+    /// appended and the record's header names them. The fill module applies it
+    /// to the colour the item draws, after its fill.
+    pub(crate) fn set_matrix(&mut self, index: f32, matrix: &crate::renderer::types::ColourMatrix) {
+        if index < 0.0 || matrix.is_identity() {
+            return;
+        }
+        let at = self.texels.len() as f32;
+        self.texels.extend_from_slice(&matrix.columns());
+        if let Some(head) = self.texels.get_mut(index as usize) {
+            head[2] = at;
+        }
+    }
+
+    /// A record that leaves the colour as it is and carries `matrix`, for an
+    /// item whose fill needs no record of its own (a solid colour on the
+    /// vertex).
+    pub(crate) fn push_matrix_only(
+        &mut self,
+        matrix: &crate::renderer::types::ColourMatrix,
+    ) -> f32 {
+        let index = self.push(
+            &OverlayFill::Solid(crate::Colour::WHITE),
+            [0.5, 0.5],
+            1.0,
+            [1.0; 4],
+            [1, 1],
+        );
+        self.set_matrix(index, matrix);
+        index
+    }
+}
+
+/// The fill record an analytic shape reads: none for a solid fill (the flat
+/// colour draws), a record for a gradient or an image, folded with the item's
+/// `opacity` and tint. An item with a colour matrix always gets a record, a
+/// solid one included, to carry it.
+pub(crate) fn shape_fill_index(
+    style: &crate::renderer::types::OverlayStyle,
+    half: [f32; 2],
+    opacity: f32,
+    image_size: [u32; 2],
+    fills: &mut FillTable,
+) -> f32 {
+    let matrix = style.colour_matrix.as_ref().filter(|m| !m.is_identity());
+    let index = match (&style.fill, matrix) {
+        (OverlayFill::Solid(_), None) => return NO_FILL,
+        (fill, _) => fills.push(fill, half, opacity, style.tint, image_size),
+    };
+    if let Some(m) = matrix {
+        fills.set_matrix(index, m);
+    }
+    index
+}
+
+/// Give the content vertices of `batch[from..]` (those marked by
+/// `tint_vertices_from`) the colour filter `matrix`: each fill record they read
+/// carries it, and vertices with a plain colour read a pass-through record that
+/// does. Shadow vertices are left alone.
+pub(crate) fn matrix_vertices_from(
+    batch: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    matrix: Option<&crate::renderer::types::ColourMatrix>,
+    fills: &mut FillTable,
+) {
+    let Some(matrix) = matrix.filter(|m| !m.is_identity()) else {
+        return;
+    };
+    let mut done: Vec<f32> = Vec::new();
+    let mut plain: Option<f32> = None;
+    for v in batch[from..].iter_mut().filter(|v| v.group_tint > 0.5) {
+        let index = v.fill[2];
+        if index >= 0.0 {
+            if !done.contains(&index) {
+                fills.set_matrix(index, matrix);
+                done.push(index);
+            }
+        } else {
+            let index = *plain.get_or_insert_with(|| fills.push_matrix_only(matrix));
+            v.fill[2] = index;
+        }
+    }
+}
+
 /// The colour a gradient-free consumer of `fill` uses: the solid colour, the
 /// first stop of a gradient, or a texture fill's tint.
 pub(crate) fn leading_colour(fill: &OverlayFill) -> [f32; 4] {

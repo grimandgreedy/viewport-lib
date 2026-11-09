@@ -40,4 +40,9 @@ pub struct OverlayFrame {
     /// costs nothing when unused; this is the opt-in path for a UI that draws many
     /// mostly-static overlays without re-tessellating them every frame.
     pub retained: Vec<RetainedOverlay>,
+    /// Layers: runs of the items above composited as one, with an opacity,
+    /// blend, colour filter, blur, drop shadow or backdrop applied to the
+    /// whole. Empty by default. Build one with [`layer_mark`](Self::layer_mark)
+    /// and [`push_layer`](Self::push_layer).
+    pub layers: Vec<OverlayLayer>,
 }

@@ -5,12 +5,13 @@ use std::hash::Hasher;
 use crate::colour::Colour;
 use crate::overlay::Alignment;
 use crate::overlay::{
-    AnchorX, AnchorY, AnimTrack, BackdropEffects, FillRule, FontHandle, GlyphRunItem, GradientStop,
-    LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring, OverlayAnimations,
-    OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
-    OverlayTransform, PathSegment, PositionedGlyph, RepeatMode, RetainedOverlay, ShadowLayer,
-    StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
+    AnchorX, AnchorY, AnimTrack, BackdropEffects, ColourMatrix, FillRule, FontHandle, GlyphRunItem,
+    GradientStop, LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring,
+    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId,
+    OverlayLayerStyle, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, OverlayStyle, OverlayTextureId, OverlayTransform, PathSegment, PositionedGlyph,
+    RepeatMode, RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TextStyle, TextureTransform,
+    TileMode, TriangleDirection,
 };
 
 /// Feeds everything that affects how an overlay value draws into a hasher, so
@@ -416,6 +417,7 @@ impl OverlayContentHash for OverlayStyle {
             tint,
             opacity,
             blend,
+            colour_matrix,
         } = self;
         fill.content_hash_at(origin, state);
         shadows.content_hash_at(origin, state);
@@ -424,6 +426,34 @@ impl OverlayContentHash for OverlayStyle {
         hash_floats(state, tint);
         hash_f32(state, *opacity);
         std::hash::Hash::hash(blend, state);
+        colour_matrix.content_hash_at(origin, state);
+    }
+}
+
+impl OverlayContentHash for ColourMatrix {
+    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
+        for row in &self.0 {
+            hash_floats(state, row);
+        }
+    }
+}
+
+impl OverlayContentHash for OverlayLayerStyle {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            opacity,
+            blend,
+            colour_matrix,
+            blur,
+            shadow,
+            backdrop,
+        } = self;
+        hash_f32(state, *opacity);
+        std::hash::Hash::hash(blend, state);
+        colour_matrix.content_hash_at(origin, state);
+        hash_f32(state, *blur);
+        shadow.content_hash_at(origin, state);
+        backdrop.content_hash_at(origin, state);
     }
 }
 
@@ -852,6 +882,7 @@ impl OverlayContentHash for RetainedOverlay {
             tint,
             anchoring,
             animations,
+            layer,
         } = self;
         id.content_hash_at(origin, state);
         transform.content_hash_at(origin, state);
@@ -861,6 +892,7 @@ impl OverlayContentHash for RetainedOverlay {
         hash_floats(state, tint);
         anchoring.content_hash_at(origin, state);
         animations.content_hash_at(origin, state);
+        layer.content_hash_at(origin, state);
     }
 }
 

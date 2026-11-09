@@ -1719,6 +1719,7 @@ impl DeviceResources {
             ),
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
+            overlay_layer: Default::default(),
             material_gpu_buf,
             material_gpu_capacity: crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
             material_gpu_limit: (device.limits().max_storage_buffer_binding_size as usize

@@ -1528,8 +1528,6 @@ pub(crate) struct OverlayShapeGpuData {
     /// The bind group is created at render time once the blurred scene texture
     /// is available.
     pub blur_vertex_buf: Option<crate::gpu::Buffer>,
-    /// Number of blur backdrop vertices.
-    pub blur_vertex_count: u32,
     /// Maximum `backdrop_blur` value across all blur shapes this frame.
     /// Used as the spread parameter for the Gaussian blur passes.
     pub max_blur_radius: f32,

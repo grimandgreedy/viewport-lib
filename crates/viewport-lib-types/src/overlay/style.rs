@@ -3,11 +3,19 @@
 
 use crate::overlay::{OverlayFill, OverlayFillKind, ShadowLayer};
 
-/// Colour filters applied to the blurred scene behind a shape.
+/// A blur and colour filters applied to what is drawn behind a shape or a
+/// layer: the scene and every overlay item under it in paint order.
 ///
-/// Only active where the renderer owns the command encoder (`render`,
-/// `render_viewport`); in the `paint` / `paint_to` paths a blurred item falls
-/// back to a regular solid fill.
+/// The backdrop is read at the item's place in the overlay draw order, so a
+/// frosted card over a page background drawn as an overlay rect blurs that
+/// background. Reading what the overlay pass has drawn so far needs the
+/// renderer to own the command encoder (`render`, `render_viewport`) and to be
+/// able to copy the target (`COPY_SRC`, which the offscreen and LDR
+/// intermediate targets have). Where it cannot copy, the backdrop is the scene
+/// alone; in the `paint` / `paint_to` paths, which draw into a pass the host
+/// owns, there is nothing to blur and a shape with a backdrop is not drawn.
+/// Inside a layer, a shape's backdrop is dropped and the shape draws its fill;
+/// give the layer the backdrop instead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -58,9 +66,23 @@ impl BackdropEffects {
 
 /// How an overlay item's colour combines with what is already drawn under it.
 ///
-/// Every mode is a fixed-function blend state, so changing modes costs a
-/// pipeline switch and nothing more. The Porter-Duff modes treat the item and
-/// the destination as premultiplied-alpha colour.
+/// The Porter-Duff modes and [`Additive`](Self::Additive),
+/// [`Multiply`](Self::Multiply) and [`Screen`](Self::Screen) are fixed-function
+/// blend states, so changing between them costs a pipeline switch and nothing
+/// more. The Porter-Duff modes treat the item and the destination as
+/// premultiplied-alpha colour.
+///
+/// The separable and non-separable blend modes from [`Overlay`](Self::Overlay)
+/// to [`Luminosity`](Self::Luminosity) read the destination
+/// ([`reads_destination`](Self::reads_destination)), which a blend state
+/// cannot. They draw through a layer: the item, or the layer's members, are
+/// drawn into a scratch target and composited with the destination as a
+/// texture, using the W3C compositing formulas on linear colour. A layer with
+/// [`Multiply`](Self::Multiply) that needs a scratch target anyway composites
+/// the same way, which makes it exact over a non-opaque destination. Where the
+/// destination cannot be read (a pass the host owns, or a target without
+/// `COPY_SRC`), a destination-reading mode draws as
+/// [`SourceOver`](Self::SourceOver).
 ///
 /// [`SourceOver`](Self::SourceOver), [`Additive`](Self::Additive),
 /// [`Multiply`](Self::Multiply), [`Screen`](Self::Screen),
@@ -122,6 +144,65 @@ pub enum OverlayBlend {
     Xor,
     /// The item and the destination added, colour and alpha both.
     Plus,
+    /// Multiply or screen depending on the destination: darks darken, lights
+    /// lighten, contrast rises. Reads the destination.
+    Overlay,
+    /// The darker of the item and the destination, per channel. Reads the
+    /// destination.
+    Darken,
+    /// The lighter of the item and the destination, per channel. Reads the
+    /// destination.
+    Lighten,
+    /// Brightens the destination to reflect the item. Reads the destination.
+    ColourDodge,
+    /// Darkens the destination to reflect the item. Reads the destination.
+    ColourBurn,
+    /// Multiply or screen depending on the item: [`Overlay`](Self::Overlay)
+    /// with the two swapped. Reads the destination.
+    HardLight,
+    /// A softer [`HardLight`](Self::HardLight). Reads the destination.
+    SoftLight,
+    /// The absolute difference of the item and the destination. Reads the
+    /// destination.
+    Difference,
+    /// Like [`Difference`](Self::Difference) with lower contrast. Reads the
+    /// destination.
+    Exclusion,
+    /// The item's hue with the destination's saturation and luminosity. Reads
+    /// the destination.
+    Hue,
+    /// The item's saturation with the destination's hue and luminosity. Reads
+    /// the destination.
+    Saturation,
+    /// The item's hue and saturation with the destination's luminosity. Reads
+    /// the destination.
+    Colour,
+    /// The item's luminosity with the destination's hue and saturation. Reads
+    /// the destination.
+    Luminosity,
+}
+
+impl OverlayBlend {
+    /// Whether the mode needs the destination as a texture rather than a
+    /// blend state: the modes from [`Overlay`](Self::Overlay) on.
+    pub fn reads_destination(&self) -> bool {
+        matches!(
+            self,
+            Self::Overlay
+                | Self::Darken
+                | Self::Lighten
+                | Self::ColourDodge
+                | Self::ColourBurn
+                | Self::HardLight
+                | Self::SoftLight
+                | Self::Difference
+                | Self::Exclusion
+                | Self::Hue
+                | Self::Saturation
+                | Self::Colour
+                | Self::Luminosity
+        )
+    }
 }
 
 /// Baked appearance shared by the four overlay item types: what the item is
@@ -181,8 +262,12 @@ pub struct OverlayStyle {
     /// to take its shadow with it or the shadow outlives the thing casting it.
     pub opacity: f32,
     /// How the item combines with what is drawn under it. Defaults to
-    /// [`OverlayBlend::SourceOver`].
+    /// [`OverlayBlend::SourceOver`]. A mode that reads the destination draws
+    /// the item as a layer of its own.
     pub blend: OverlayBlend,
+    /// A colour filter applied to the item's fill colour, after its tint and
+    /// opacity. Like `tint`, it does not reach the shadow layers.
+    pub colour_matrix: Option<crate::overlay::ColourMatrix>,
 }
 
 impl Default for OverlayStyle {
@@ -195,6 +280,7 @@ impl Default for OverlayStyle {
             tint: [1.0, 1.0, 1.0, 1.0],
             opacity: 1.0,
             blend: OverlayBlend::SourceOver,
+            colour_matrix: None,
         }
     }
 }
@@ -247,6 +333,12 @@ impl OverlayStyle {
     /// Set how the item combines with what is drawn under it.
     pub fn with_blend(mut self, blend: OverlayBlend) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// Set the colour filter applied to the item's fill.
+    pub fn with_colour_matrix(mut self, matrix: crate::overlay::ColourMatrix) -> Self {
+        self.colour_matrix = Some(matrix);
         self
     }
 }

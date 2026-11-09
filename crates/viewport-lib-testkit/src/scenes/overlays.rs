@@ -13,10 +13,11 @@
 
 use glam::Vec3;
 use viewport_lib::{
-    Alignment, AnchorX, AnchorY, Colour, FillRule, GlyphRunItem, LabelItem, LineCap, LineJoin,
-    Material, OutlineMode, OverlayBlend, OverlayFill, OverlayFrame, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, PositionedGlyph,
-    RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TriangleDirection, primitives,
+    Alignment, AnchorX, AnchorY, BackdropEffects, Colour, ColourMatrix, FillRule, GlyphRunItem,
+    LabelItem, LineCap, LineJoin, Material, OutlineMode, OverlayBlend, OverlayClip, OverlayFill,
+    OverlayFrame, OverlayLayerStyle, OverlayOrigin, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, PositionedGlyph, RetainedOverlay, ShadowLayer, StrokePattern,
+    SubPath, TriangleDirection, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs};
@@ -63,6 +64,7 @@ pub fn scenes() -> Vec<NamedScene> {
         scene("overlay_blend_modes", build_blend_modes),
         scene("overlay_strokes", build_strokes),
         scene("overlay_text_subpixel", build_text_subpixel),
+        scene("overlay_layers", build_layers),
     ]
 }
 
@@ -1203,4 +1205,156 @@ fn build_text_subpixel(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         ovl.labels = labels;
         ovl
     })
+}
+
+/// Layers: overlay items drawn into a scratch target and composited as one.
+///
+/// Top left, a faded layer of overlapping discs beside the same discs faded
+/// one by one: the layer shows only the top disc where they overlap, the twin
+/// shows the lower one through it. Top right, a row of bars with a frosted
+/// card over it, the card a layer with a backdrop blur clipped to a rounded
+/// mask, so the bars blur under it, and a plain item with a backdrop blur over
+/// the bars' feet. Bottom left, a group of overlapping shapes
+/// casting one drop shadow from their union. Bottom middle, a layer composited
+/// with `Difference` over coloured stripes. Bottom right, a gradient rect
+/// beside its twin filtered to greyscale by a colour matrix.
+fn build_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let rect = |at: [f32; 2], size: [f32; 2], r: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: r }, at, size)
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let disc = |at: [f32; 2], d: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Circle, at, [d, d])
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let red = Colour::srgb(0.9, 0.2, 0.2, 1.0);
+    let green = Colour::srgb(0.2, 0.75, 0.3, 1.0);
+    let blue = Colour::srgb(0.2, 0.4, 0.95, 1.0);
+    let yellow = Colour::srgb(0.95, 0.85, 0.2, 1.0);
+    let mut ovl = OverlayFrame::default();
+
+    // A faded layer of overlapping discs, and the same discs faded one by one.
+    let discs = |x: f32| {
+        [
+            disc([x, 20.0], 56.0, red),
+            disc([x + 26.0, 34.0], 56.0, green),
+            disc([x + 8.0, 60.0], 56.0, blue),
+        ]
+    };
+    let mark = ovl.layer_mark();
+    ovl.shapes.extend(discs(14.0));
+    ovl.push_layer(mark, OverlayLayerStyle::default().with_opacity(0.5));
+    for d in discs(100.0) {
+        ovl.shapes.push(d.with_opacity(0.5));
+    }
+
+    // A row of bars, then a frosted card over them: a layer with a backdrop
+    // blur clipped to the card's rounded mask.
+    for (i, colour) in [red, yellow, green, blue, red, yellow]
+        .into_iter()
+        .enumerate()
+    {
+        ovl.shapes.push(rect(
+            [200.0 + i as f32 * 30.0, 20.0],
+            [18.0, 100.0],
+            0.0,
+            colour,
+        ));
+    }
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect {
+                corner_radius: 14.0,
+            },
+            [230.0, 40.0],
+            [120.0, 60.0],
+        )
+        .provides_mask(41),
+    );
+    let mark = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [230.0, 40.0],
+        [120.0, 60.0],
+        14.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.25),
+    ));
+    ovl.shapes.push(rect(
+        [246.0, 62.0],
+        [88.0, 16.0],
+        8.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.6),
+    ));
+    let card = ovl.push_layer(
+        mark,
+        OverlayLayerStyle::default().with_backdrop(BackdropEffects::default().with_blur(6.0)),
+    );
+    card.clip = OverlayClip::mask(41);
+
+    // A plain item with a backdrop blur over the bars' feet: the bars blur
+    // under it too.
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 7.0 },
+            [196.0, 104.0],
+            [52.0, 14.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.15, 0.3)))
+        .with_backdrop_blur(4.0),
+    );
+
+    // A group casting one drop shadow from the union of its members.
+    let mark = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [24.0, 170.0],
+        [70.0, 50.0],
+        10.0,
+        Colour::srgb(0.95, 0.95, 0.98, 1.0),
+    ));
+    ovl.shapes.push(disc([70.0, 196.0], 54.0, yellow));
+    ovl.push_layer(
+        mark,
+        OverlayLayerStyle::default().with_shadow(ShadowLayer::new(
+            Colour::srgb(0.0, 0.0, 0.0, 0.7),
+            6.0,
+            [8.0, 8.0],
+        )),
+    );
+
+    // Coloured stripes under a layer composited by difference.
+    for (i, colour) in [red, green, blue, yellow].into_iter().enumerate() {
+        ovl.shapes.push(rect(
+            [160.0 + i as f32 * 25.0, 160.0],
+            [25.0, 110.0],
+            0.0,
+            colour,
+        ));
+    }
+    let mark = ovl.layer_mark();
+    ovl.shapes.push(disc([170.0, 175.0], 80.0, Colour::WHITE));
+    ovl.shapes.push(rect(
+        [150.0, 240.0],
+        [120.0, 20.0],
+        0.0,
+        Colour::srgb(0.5, 0.5, 0.5, 1.0),
+    ));
+    ovl.push_layer(
+        mark,
+        OverlayLayerStyle::default().with_blend(OverlayBlend::Difference),
+    );
+
+    // A gradient rect and its greyscale twin.
+    let gradient = OverlayFill::linear_gradient(red, blue, 0.0);
+    let coloured = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 6.0 },
+        [290.0, 160.0],
+        [44.0, 110.0],
+    )
+    .with_fill(gradient.clone());
+    let mut grey = coloured.clone();
+    grey.transform.translate = [342.0, 160.0];
+    grey.style.colour_matrix = Some(ColourMatrix::greyscale());
+    ovl.shapes.push(coloured);
+    ovl.shapes.push(grey);
+
+    backdrop(ctx, ovl)
 }

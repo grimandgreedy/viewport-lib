@@ -49,129 +49,231 @@ pub(crate) fn emit_indirect_run(
     }
 }
 
-/// Emit the 2D overlay draw calls by walking `overlay_draw_segments`, the
-/// draw list in paint order. Each segment draws through the shape or text
-/// pipeline variant for its blend mode, and the pipeline is set only when it
-/// changes between consecutive segments. Run after all scene content so the
-/// overlays sit on top. The overlay pipelines are format-neutral (no separate
-/// LDR/HDR variant), so this is shared verbatim across paths.
+/// Emit the frame's 2D overlay draw list (the main segments, not a layer's
+/// members) into `$render_pass`. A pass the renderer cannot interrupt reads no
+/// destination: layer composites draw with their fallback blend and backdrops
+/// are skipped. Run after all scene content so the overlays sit on top. The
+/// overlay pipelines are format-neutral (no separate LDR/HDR variant), so this
+/// is shared verbatim across paths.
 macro_rules! emit_overlay_2d {
     ($this:ident, $ov:ident, $render_pass:ident) => {{
-        use crate::renderer::overlay_draw_order::OverlayDrawSource;
-        // The pipeline currently bound, as (is shape, blend), so consecutive
-        // segments on the same variant skip a redundant set_pipeline.
-        let mut last_pipe: Option<(bool, crate::renderer::types::OverlayBlend)> = None;
-        // The per-draw instance stream the text pipeline reads at vertex slot
-        // 1: slot 0 is the identity, retained groups their own.
-        let instances = $ov.overlay_bindings.instances.buffer();
-        for seg in &$ov.overlay_draw_segments {
-            let key = Some((seg.is_shape(), seg.blend));
-            let shape_pipeline = $this.resources.overlay_shape.pipeline_for(seg.blend);
-            let text_pipeline = $this.resources.overlay_text.pipeline_for(seg.blend);
-            match seg.source {
-                OverlayDrawSource::Shape {
-                    instance_start,
-                    instance_count,
-                    fill,
-                } => {
-                    if let Some(ref sd) = $ov.overlay_shape_gpu_data {
-                        if let (Some(pipeline), Some(ibuf), Some(shadow_bg), Some(fill_bg)) = (
-                            shape_pipeline,
-                            &sd.instance_buf,
-                            &sd.shadow_bind_group,
-                            sd.fill_bind_groups.get(fill as usize),
-                        ) {
-                            if last_pipe != key {
-                                $render_pass.set_pipeline(pipeline);
-                                last_pipe = key;
-                            }
-                            // The run is bound by its byte offset rather than a
-                            // first-instance index, which not every backend
-                            // carries into `instance_index`.
-                            $render_pass.set_bind_group(0, shadow_bg, &[0]);
-                            $render_pass.set_bind_group(1, fill_bg, &[]);
-                            $render_pass.set_vertex_buffer(
-                                0,
-                                ibuf.slice(
-                                    crate::resources::OverlayShapeInstance::byte_offset(
-                                        instance_start,
-                                    )..,
-                                ),
-                            );
-                            $render_pass.draw(0..6, 0..instance_count);
-                        }
-                    }
-                }
-                OverlayDrawSource::Text {
-                    vertex_start,
-                    vertex_count,
-                    fill,
-                } => {
-                    if let (Some(pipeline), Some(td), Some(inst)) =
-                        (text_pipeline, $ov.label_gpu_data.as_ref(), instances)
-                    {
-                        if let (Some(fill_bg), Some(vbuf)) =
-                            (td.fill_bind_groups.get(fill as usize), &td.vertex_buf)
-                        {
-                            if last_pipe != key {
-                                $render_pass.set_pipeline(pipeline);
-                                last_pipe = key;
-                            }
-                            $render_pass.set_bind_group(0, &td.bind_group, &[]);
-                            $render_pass.set_bind_group(1, fill_bg, &[]);
-                            $render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                            $render_pass.set_vertex_buffer(1, inst.slice(..));
-                            $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
-                        }
-                    }
-                }
-                OverlayDrawSource::Retained { draw_index } => {
-                    // A retained group draws through the text pipeline, sharing its
-                    // bind group (atlas, clip, viewport) with the immediate text
-                    // batch, from its own cached buffer, fill records and
-                    // per-frame instance slot.
-                    if let (Some(pipeline), Some(td), Some(rd), Some(inst)) = (
-                        text_pipeline,
-                        $ov.label_gpu_data.as_ref(),
-                        $ov.overlay_retained_draws.get(draw_index as usize),
-                        instances,
-                    ) {
-                        if last_pipe != key {
-                            $render_pass.set_pipeline(pipeline);
-                            last_pipe = key;
-                        }
-                        $render_pass.set_bind_group(0, &td.bind_group, &[]);
-                        $render_pass.set_bind_group(1, &rd.fill_bind_group, &[]);
-                        $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
-                        $render_pass.set_vertex_buffer(1, inst.slice(..));
-                        $render_pass
-                            .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
-                    }
-                }
-                OverlayDrawSource::RetainedShape { draw_index } => {
-                    // A retained group's SDF shape stream, through the shape
-                    // pipeline, from its cached instance buffer, shadow and
-                    // fill bind groups, with its per-frame group instance
-                    // selected by the dynamic offset.
-                    if let (Some(pipeline), Some(rd)) = (
+        let segs = $ov.main_segments();
+        let pass: &mut crate::gpu::RenderPass<'_> = &mut $render_pass;
+        crate::renderer::render::emit_overlay_segments(
+            &$this.resources,
+            $ov,
+            pass,
+            segs,
+            &crate::renderer::render::OverlayEmit::NO_DESTINATION,
+        );
+    }};
+}
+
+/// What an overlay draw can read of the destination.
+pub(crate) struct OverlayEmit<'a> {
+    /// Layer composites can blend by formula against the snapshot.
+    pub dst: bool,
+    /// The backdrop pipeline's group 0 over the blurred destination; `None`
+    /// skips every backdrop draw.
+    pub backdrop: Option<&'a crate::gpu::BindGroup>,
+}
+
+impl OverlayEmit<'_> {
+    /// A pass that cannot be interrupted, or a layer's members.
+    pub(crate) const NO_DESTINATION: OverlayEmit<'static> = OverlayEmit {
+        dst: false,
+        backdrop: None,
+    };
+    /// A layer's members, drawn into its scratch target.
+    pub(crate) const MEMBERS: OverlayEmit<'static> = Self::NO_DESTINATION;
+}
+
+/// The pipeline a segment draws with, to skip redundant `set_pipeline` calls.
+#[derive(Clone, Copy, PartialEq)]
+enum OverlayPipe {
+    Shape(crate::renderer::types::OverlayBlend),
+    Text(crate::renderer::types::OverlayBlend),
+    Backdrop,
+    Layer(crate::resources::overlay::overlay_layer::LayerPipelineKey),
+}
+
+/// Emit `segs` of `ov`'s draw list. Each segment draws through the shape,
+/// text, backdrop or layer pipeline for its blend mode, and the pipeline is
+/// set only when it changes between consecutive segments.
+pub(crate) fn emit_overlay_segments(
+    resources: &crate::resources::DeviceResources,
+    ov: &crate::renderer::ViewportOverlay,
+    render_pass: &mut crate::gpu::RenderPass<'_>,
+    segs: &[crate::renderer::overlay_draw_order::OverlayDrawSegment],
+    emit: &OverlayEmit<'_>,
+) {
+    use crate::renderer::overlay_draw_order::OverlayDrawSource;
+    let mut last_pipe: Option<OverlayPipe> = None;
+    let mut set = |pass: &mut crate::gpu::RenderPass<'_>,
+                   key: OverlayPipe,
+                   pipeline: &crate::gpu::RenderPipeline| {
+        if last_pipe != Some(key) {
+            pass.set_pipeline(pipeline);
+            last_pipe = Some(key);
+        }
+    };
+    // The per-draw instance stream the text pipeline reads at vertex slot
+    // 1: slot 0 is the identity, retained groups their own.
+    let instances = ov.overlay_bindings.instances.buffer();
+    for seg in segs {
+        let shape_pipeline = resources.overlay_shape.pipeline_for(seg.blend);
+        let text_pipeline = resources.overlay_text.pipeline_for(seg.blend);
+        match seg.source {
+            OverlayDrawSource::Shape {
+                instance_start,
+                instance_count,
+                fill,
+            } => {
+                if let Some(ref sd) = ov.overlay_shape_gpu_data {
+                    if let (Some(pipeline), Some(ibuf), Some(shadow_bg), Some(fill_bg)) = (
                         shape_pipeline,
-                        $ov.overlay_retained_shape_draws.get(draw_index as usize),
+                        &sd.instance_buf,
+                        &sd.shadow_bind_group,
+                        sd.fill_bind_groups.get(fill as usize),
                     ) {
-                        if last_pipe != key {
-                            $render_pass.set_pipeline(pipeline);
-                            last_pipe = key;
-                        }
-                        let offset = rd.instance_index
-                            * crate::resources::overlay::geometry::INSTANCE_UNIFORM_STRIDE as u32;
-                        $render_pass.set_bind_group(0, &rd.bind_group, &[offset]);
-                        $render_pass.set_bind_group(1, &rd.fill_bind_group, &[]);
-                        $render_pass.set_vertex_buffer(0, rd.instance_buf.slice(..));
-                        $render_pass.draw(0..6, 0..rd.instance_count);
+                        set(render_pass, OverlayPipe::Shape(seg.blend), pipeline);
+                        // The run is bound by its byte offset rather than a
+                        // first-instance index, which not every backend
+                        // carries into `instance_index`.
+                        render_pass.set_bind_group(0, shadow_bg, &[0]);
+                        render_pass.set_bind_group(1, fill_bg, &[]);
+                        render_pass.set_vertex_buffer(
+                            0,
+                            ibuf.slice(
+                                crate::resources::OverlayShapeInstance::byte_offset(
+                                    instance_start,
+                                )..,
+                            ),
+                        );
+                        render_pass.draw(0..6, 0..instance_count);
                     }
                 }
             }
+            OverlayDrawSource::Text {
+                vertex_start,
+                vertex_count,
+                fill,
+            } => {
+                if let (Some(pipeline), Some(td), Some(inst)) =
+                    (text_pipeline, ov.label_gpu_data.as_ref(), instances)
+                {
+                    if let (Some(fill_bg), Some(vbuf)) =
+                        (td.fill_bind_groups.get(fill as usize), &td.vertex_buf)
+                    {
+                        set(render_pass, OverlayPipe::Text(seg.blend), pipeline);
+                        render_pass.set_bind_group(0, &td.bind_group, &[]);
+                        render_pass.set_bind_group(1, fill_bg, &[]);
+                        render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        render_pass.set_vertex_buffer(1, inst.slice(..));
+                        render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
+                    }
+                }
+            }
+            OverlayDrawSource::Retained { draw_index } => {
+                // A retained group draws through the text pipeline, sharing its
+                // bind group (atlas, clip, viewport) with the immediate text
+                // batch, from its own cached buffer, fill records and
+                // per-frame instance slot.
+                if let (Some(pipeline), Some(td), Some(rd), Some(inst)) = (
+                    text_pipeline,
+                    ov.label_gpu_data.as_ref(),
+                    ov.overlay_retained_draws.get(draw_index as usize),
+                    instances,
+                ) {
+                    set(render_pass, OverlayPipe::Text(seg.blend), pipeline);
+                    render_pass.set_bind_group(0, &td.bind_group, &[]);
+                    render_pass.set_bind_group(1, &rd.fill_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                    render_pass.set_vertex_buffer(1, inst.slice(..));
+                    render_pass.draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
+                }
+            }
+            OverlayDrawSource::RetainedShape { draw_index } => {
+                // A retained group's SDF shape stream, through the shape
+                // pipeline, from its cached instance buffer, shadow and
+                // fill bind groups, with its per-frame group instance
+                // selected by the dynamic offset.
+                if let (Some(pipeline), Some(rd)) = (
+                    shape_pipeline,
+                    ov.overlay_retained_shape_draws.get(draw_index as usize),
+                ) {
+                    set(render_pass, OverlayPipe::Shape(seg.blend), pipeline);
+                    let offset = rd.instance_index
+                        * crate::resources::overlay::geometry::INSTANCE_UNIFORM_STRIDE as u32;
+                    render_pass.set_bind_group(0, &rd.bind_group, &[offset]);
+                    render_pass.set_bind_group(1, &rd.fill_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, rd.instance_buf.slice(..));
+                    render_pass.draw(0..6, 0..rd.instance_count);
+                }
+            }
+            OverlayDrawSource::Backdrop {
+                vertex_start,
+                vertex_count,
+            } => {
+                // A backdrop-blur shape over the blurred destination. Without
+                // a blurred destination there is nothing to draw it over.
+                if let (Some(bg), Some(sd), Some(pipeline)) = (
+                    emit.backdrop,
+                    ov.overlay_shape_gpu_data.as_ref(),
+                    resources.overlay_shape.tex_pipeline.as_ref(),
+                ) {
+                    if let (Some(clip_bg), Some(vbuf)) =
+                        (sd.tex_clip_bind_group.as_ref(), sd.blur_vertex_buf.as_ref())
+                    {
+                        set(render_pass, OverlayPipe::Backdrop, pipeline);
+                        render_pass.set_bind_group(0, bg, &[]);
+                        render_pass.set_bind_group(1, clip_bg, &[]);
+                        render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
+                    }
+                }
+            }
+            OverlayDrawSource::Layer { index } => {
+                let lt = &ov.layer_targets;
+                let (Some(d), Some(ibuf), Some(clip_bg)) = (
+                    lt.draws.get(index as usize),
+                    lt.instance_buf.as_ref(),
+                    lt.composite_clip_bg.as_ref(),
+                ) else {
+                    continue;
+                };
+                let Some(bg) = lt.composite_bg(d.scratch) else {
+                    continue;
+                };
+                let layer = &resources.overlay_layer;
+                let slice = ibuf.slice(
+                    crate::resources::overlay::overlay_layer::OverlayLayerInstance::byte_offset(
+                        index,
+                    )..,
+                );
+                use crate::resources::overlay::overlay_layer::LayerPipelineKey as K;
+                // The backdrop under the content, when the destination has
+                // been blurred.
+                if d.style.backdrop.is_active() && emit.backdrop.is_some() {
+                    if let Some(pipeline) = layer.pipeline(K::Backdrop) {
+                        set(render_pass, OverlayPipe::Layer(K::Backdrop), pipeline);
+                        render_pass.set_bind_group(0, bg, &[]);
+                        render_pass.set_bind_group(1, clip_bg, &[]);
+                        render_pass.set_vertex_buffer(0, slice);
+                        render_pass.draw(0..6, 0..1);
+                    }
+                }
+                let key = if emit.dst { d.key() } else { d.fallback_key() };
+                if let Some(pipeline) = layer.pipeline(key) {
+                    set(render_pass, OverlayPipe::Layer(key), pipeline);
+                    render_pass.set_bind_group(0, bg, &[]);
+                    render_pass.set_bind_group(1, clip_bg, &[]);
+                    render_pass.set_vertex_buffer(0, slice);
+                    render_pass.draw(0..6, 0..1);
+                }
+            }
         }
-    }};
+    }
 }
 
 mod hdr_path;
@@ -863,8 +965,6 @@ impl ViewportRenderer {
                 frame,
                 scene_items,
                 bg_colour,
-                w,
-                h,
                 ssaa_factor,
             )
         };
@@ -956,13 +1056,8 @@ impl ViewportRenderer {
         if self.current_render_scale < 1.0 - 0.001 {
             return Some("the LDR frame was drawn at a reduced render scale");
         }
-        if self
-            .viewport_slots
-            .get(frame.camera.viewport_index)
-            .is_some()
-            && self.has_backdrop_blur_shapes(frame.camera.viewport_index)
-        {
-            return Some("the LDR frame drew backdrop-blur overlays");
+        if self.ldr_overlay_intermediate(frame.camera.viewport_index, Some(output_view)) {
+            return Some("the LDR frame drew its overlays into an intermediate target");
         }
         None
     }
@@ -976,7 +1071,8 @@ impl ViewportRenderer {
     /// when the viewport has not drawn; on an LDR frame also when
     /// `output_view` is missing or its texture lacks `TEXTURE_BINDING`, and
     /// when the frame drew into an intermediate target (dynamic resolution,
-    /// backdrop blur) instead of `output_view`.
+    /// or overlays that read the destination of an output that cannot be
+    /// copied) instead of `output_view`.
     pub(crate) fn scene_target_views<'a>(
         &'a self,
         frame: &FrameData,
@@ -1000,7 +1096,9 @@ impl ViewportRenderer {
         {
             return None;
         }
-        if self.current_render_scale < 1.0 - 0.001 || self.has_backdrop_blur_shapes(vp_idx) {
+        if self.current_render_scale < 1.0 - 0.001
+            || self.ldr_overlay_intermediate(vp_idx, Some(colour))
+        {
             return None;
         }
         let depth = match &slot.hdr {
@@ -1280,10 +1378,10 @@ impl ViewportRenderer {
     }
 
     // ------------------------------------------------------------------
-    // Backdrop blur helpers
+    // Overlay destination reads
     // ------------------------------------------------------------------
 
-    /// Ensure the backdrop blur state textures exist at the right size.
+    /// Ensure the LDR intermediate target exists at the right size.
     fn ensure_backdrop_blur_state(&mut self, device: &crate::gpu::Device, w: u32, h: u32) {
         let need_recreate = match &self.backdrop_blur_state {
             Some(s) => s.size != [w, h] || s.format != self.resources.target_format,
@@ -1292,11 +1390,7 @@ impl ViewportRenderer {
         if !need_recreate {
             return;
         }
-
         let format = self.resources.target_format;
-        let blur_w = (w / 2).max(1);
-        let blur_h = (h / 2).max(1);
-
         let intermediate_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("backdrop_intermediate"),
             size: crate::gpu::Extent3d {
@@ -1309,244 +1403,156 @@ impl ViewportRenderer {
             dimension: crate::gpu::TextureDimension::D2,
             format,
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
+                | crate::gpu::TextureUsages::TEXTURE_BINDING
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let intermediate_view = intermediate_texture.create_view(&Default::default());
-
-        let make_blur_tex = |label: &str| {
-            let t = device.create_texture(&crate::gpu::TextureDescriptor {
-                label: Some(label),
-                size: crate::gpu::Extent3d {
-                    width: blur_w,
-                    height: blur_h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: crate::gpu::TextureDimension::D2,
-                format,
-                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let v = t.create_view(&Default::default());
-            (t, v)
-        };
-        let (blur_a_texture, blur_a_view) = make_blur_tex("backdrop_blur_a");
-        let (blur_b_texture, blur_b_view) = make_blur_tex("backdrop_blur_b");
-
         self.backdrop_blur_state = Some(crate::resources::BackdropBlurState {
             intermediate_texture,
             intermediate_view,
-            blur_a_texture,
-            blur_a_view,
-            blur_b_texture,
-            blur_b_view,
             size: [w, h],
             format,
-            binds: Default::default(),
+            blit: Default::default(),
         });
     }
 
-    /// Run the backdrop blur pipeline: blit scene to half-res, then H blur, then V blur.
-    /// Returns the bind group that can be used to draw blur overlay shapes with the
-    /// texture pipeline.
-    fn run_backdrop_blur(
+    /// Whether the LDR path draws `vp_idx`'s frame into its intermediate
+    /// target: its overlays read the destination, and `output` cannot be
+    /// copied from at a break.
+    fn ldr_overlay_intermediate(
         &self,
+        vp_idx: usize,
+        output: Option<&crate::gpu::TextureView>,
+    ) -> bool {
+        let Some(slot) = self.viewport_slots.get(vp_idx) else {
+            return false;
+        };
+        let ov = &slot.overlay;
+        ov.has_breaks()
+            && self.current_render_scale >= 1.0 - 0.001
+            && !output.is_some_and(|o| ov.layer_targets.can_snapshot(&o.texture()))
+    }
+
+    /// Draw `vp_idx`'s overlay list into `target` in passes of its own.
+    ///
+    /// When the target can be copied, the pass ends at each break: what is
+    /// drawn so far is copied to the snapshot (and blurred for backdrops)
+    /// before the items that read it. Otherwise the list draws in one pass,
+    /// layers with their fallback blend, and backdrops over `scene` blurred
+    /// (the scene without the overlays) when it is given, or not at all.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn draw_overlay_passes(
+        &mut self,
         encoder: &mut crate::gpu::CommandEncoder,
         device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        source_view: &crate::gpu::TextureView,
-        spread: f32,
-    ) -> crate::gpu::BindGroup {
-        let bs = self.backdrop_blur_state.as_ref().unwrap();
-        let blur_bgl = self.resources.backdrop_blur.bgl.as_ref().unwrap();
-        let blur_sampler = self.resources.backdrop_blur.sampler.as_ref().unwrap();
-        let blur_pipeline = self.resources.backdrop_blur.pipeline.as_ref().unwrap();
-        // Reuse dyn_res blit pipeline and BGL for the downsample pass.
-        let blit_pipeline = self
-            .resources
-            .post
-            .dyn_res_upscale_pipeline
-            .as_ref()
-            .unwrap();
-        let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
-        let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-
-        let mut binds = bs.binds.lock().unwrap_or_else(|e| e.into_inner());
-        if binds.downsample.as_ref().map(|(v, _)| v) != Some(source_view) {
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("backdrop_downsample_bg"),
-                layout: blit_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(source_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                    },
-                ],
-            });
-            binds.downsample = Some((source_view.clone(), bg));
-        }
-
-        // Spread scaled for half-res: each texel covers 2 screen pixels.
-        let effective_spread = (spread / 2.0).max(1.0);
-        let fixed = binds.fixed.get_or_insert_with(|| {
-            let uniform = |label| {
-                device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some(label),
-                    size: 16,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
+        vp_idx: usize,
+        target: &crate::gpu::TextureView,
+        depth: &crate::gpu::TextureView,
+        depth_store: crate::gpu::StoreOp,
+        scene: Option<&crate::gpu::TextureView>,
+        ppp: f32,
+        label: &'static str,
+    ) {
+        let target_texture = target.texture();
+        let can_copy = self.viewport_slots[vp_idx]
+            .overlay
+            .layer_targets
+            .can_snapshot(&target_texture);
+        // Without a copy, backdrops draw over the scene blurred on its own.
+        let blurred = !can_copy
+            && match scene {
+                Some(src) if self.viewport_slots[vp_idx].overlay.has_backdrops() => self
+                    .viewport_slots[vp_idx]
+                    .overlay
+                    .layer_targets
+                    .blur_scene(encoder, device, &self.resources, src),
+                _ => false,
             };
-            let blur_bg = |label, view, uniform: &crate::gpu::Buffer| {
-                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some(label),
-                    layout: blur_bgl,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: crate::gpu::BindingResource::TextureView(view),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: crate::gpu::BindingResource::Sampler(blur_sampler),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 2,
-                            resource: uniform.as_entire_binding(),
-                        },
-                    ],
-                })
-            };
-            let h_uniform = uniform("blur_h_uniform");
-            let v_uniform = uniform("blur_v_uniform");
-            // Blur shapes draw with the overlay texture pipeline, so this uses
-            // its layout (texture + sampler).
-            let tex_bgl = self.resources.overlay_shape.tex_bgl.as_ref().unwrap();
-            let tex_sampler = self.resources.overlay_shape.tex_sampler.as_ref().unwrap();
-            let overlay_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("backdrop_blur_overlay_bg"),
-                layout: tex_bgl,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: crate::gpu::BindingResource::TextureView(&bs.blur_a_view),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(tex_sampler),
-                    },
-                ],
-            });
-            crate::resources::overlay::overlays::BackdropBlurFixed {
-                h_bg: blur_bg("blur_h_bg", &bs.blur_a_view, &h_uniform),
-                v_bg: blur_bg("blur_v_bg", &bs.blur_b_view, &v_uniform),
-                h_uniform,
-                v_uniform,
-                overlay_bg,
-                spread: f32::NAN,
-            }
-        });
-        if fixed.spread != effective_spread {
-            let bits = effective_spread.to_bits();
-            queue.write_buffer(
-                &fixed.h_uniform,
-                0,
-                bytemuck::cast_slice(&[1u32, bits, 0, 0]),
-            );
-            queue.write_buffer(
-                &fixed.v_uniform,
-                0,
-                bytemuck::cast_slice(&[0u32, bits, 0, 0]),
-            );
-            fixed.spread = effective_spread;
-        }
-        let fixed = binds.fixed.as_ref().unwrap();
-        let downsample_bg = &binds.downsample.as_ref().unwrap().1;
-
-        // Downsample source -> blur_a (half-res) with a bilinear blit, blur
-        // horizontally into blur_b, then vertically back into blur_a.
-        let passes = [
-            (
-                "backdrop_downsample",
-                &bs.blur_a_view,
-                blit_pipeline,
-                downsample_bg,
-            ),
-            (
-                "backdrop_blur_h",
-                &bs.blur_b_view,
-                blur_pipeline,
-                &fixed.h_bg,
-            ),
-            (
-                "backdrop_blur_v",
-                &bs.blur_a_view,
-                blur_pipeline,
-                &fixed.v_bg,
-            ),
-        ];
-        for (label, view, pipeline, bg) in passes {
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+        let mut ts = self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
+        fn begin<'e>(
+            encoder: &'e mut crate::gpu::CommandEncoder,
+            label: &'static str,
+            target: &crate::gpu::TextureView,
+            depth: &crate::gpu::TextureView,
+            ts: Option<crate::gpu::RenderPassTimestampWrites<'_>>,
+            store: crate::gpu::StoreOp,
+        ) -> crate::gpu::RenderPass<'e> {
+            encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some(label),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view,
+                    view: target,
                     resolve_target: None,
                     ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
+                        load: crate::gpu::LoadOp::Load,
                         store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ts,
                 occlusion_query_set: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bg, &[]);
-            pass.draw(0..3, 0..1);
+            })
         }
-        fixed.overlay_bg.clone()
-    }
-
-    /// Returns true if the current frame has overlay shapes that need backdrop blur.
-    fn has_backdrop_blur_shapes(&self, vp_idx: usize) -> bool {
-        self.viewport_slots[vp_idx]
-            .overlay
-            .overlay_shape_gpu_data
-            .as_ref()
-            .map_or(false, |sd| sd.blur_vertex_count > 0)
-    }
-
-    /// Draw blur overlay shapes into the given render pass using the backdrop pipeline.
-    fn draw_blur_shapes<'rp>(
-        &'rp self,
-        render_pass: &mut crate::gpu::RenderPass<'rp>,
-        blur_bind_group: &'rp crate::gpu::BindGroup,
-        vp_idx: usize,
-    ) {
-        if let Some(ref sd) = self.viewport_slots[vp_idx].overlay.overlay_shape_gpu_data {
-            if sd.blur_vertex_count > 0 {
-                if let (Some(pipeline), Some(clip_bg), Some(vbuf)) = (
-                    &self.resources.overlay_shape.tex_pipeline,
-                    sd.tex_clip_bind_group.as_ref(),
-                    &sd.blur_vertex_buf,
-                ) {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, blur_bind_group, &[]);
-                    render_pass.set_bind_group(1, clip_bg, &[]);
-                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.draw(0..sd.blur_vertex_count, 0..1);
-                }
+        if !can_copy {
+            let ov = &self.viewport_slots[vp_idx].overlay;
+            let mut pass = begin(encoder, label, target, depth, ts.take(), depth_store);
+            emit_overlay_segments(
+                &self.resources,
+                ov,
+                &mut pass,
+                ov.main_segments(),
+                &OverlayEmit {
+                    dst: false,
+                    backdrop: if blurred {
+                        ov.layer_targets.item_backdrop_bg()
+                    } else {
+                        None
+                    },
+                },
+            );
+            return;
+        }
+        let ov = &self.viewport_slots[vp_idx].overlay;
+        let segs = ov.main_segments();
+        let breaks = &ov.overlay_breaks;
+        let emit = OverlayEmit {
+            dst: true,
+            backdrop: ov.layer_targets.item_backdrop_bg(),
+        };
+        let mut start = 0usize;
+        for k in 0..=breaks.len() {
+            let end = breaks.get(k).map_or(segs.len(), |b| b.segment as usize);
+            let last = k == breaks.len();
+            if end > start || last {
+                let store = if last {
+                    depth_store
+                } else {
+                    crate::gpu::StoreOp::Store
+                };
+                let mut pass = begin(encoder, label, target, depth, ts.take(), store);
+                emit_overlay_segments(&self.resources, ov, &mut pass, &segs[start..end], &emit);
             }
+            if let Some(b) = breaks.get(k) {
+                let region = ov.layer_targets.break_region(b.bounds, b.blur, ppp);
+                ov.layer_targets.snapshot(
+                    encoder,
+                    &self.resources,
+                    &target_texture,
+                    region,
+                    b.blur,
+                );
+            }
+            start = end;
         }
     }
 }

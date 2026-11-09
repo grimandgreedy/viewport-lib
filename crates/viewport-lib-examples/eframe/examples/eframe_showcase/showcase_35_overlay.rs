@@ -449,6 +449,7 @@ pub(crate) fn build_overlay_frame(
     Vec<LabelItem>,
     Vec<vpl::OverlayPolylineItem>,
     Vec<vpl::RetainedOverlay>,
+    Vec<vpl::OverlayLayer>,
 ) {
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
@@ -483,6 +484,7 @@ pub(crate) fn build_overlay_frame(
     let mut shapes = Vec::new();
     let mut polylines: Vec<vpl::OverlayPolylineItem> = Vec::new();
     let mut retained: Vec<vpl::RetainedOverlay> = Vec::new();
+    let mut layers: Vec<vpl::OverlayLayer> = Vec::new();
 
     if app.ovl_state.show_shapes {
         // Rows stack top to bottom from a single cursor: reserve each band in
@@ -505,12 +507,12 @@ pub(crate) fn build_overlay_frame(
         row_anim(app, &mut shapes, &mut polylines, anim_top);
         row_new_shapes(app, &mut shapes, new_shapes_top);
         row_masks_and_polylines(app, &mut shapes, &mut polylines, &mut retained, masks_top);
-        row_new_features(app, &mut shapes, features_top);
+        row_layers(app, &mut shapes, &mut layers, features_top, solid_top);
         row_text(app, &mut labels, text_top);
         row_backdrop(app, &mut shapes, solid_right);
     }
 
-    (shapes, labels, polylines, retained)
+    (shapes, labels, polylines, retained, layers)
 }
 
 /// Vertical stacking cursor for the overlay showcase rows. `row(h)` reserves a
@@ -1922,78 +1924,140 @@ fn row_masks_and_polylines(
     }
 }
 
-/// Row 8: stacked shadow layers, a rotation-pivot metronome, and a flipped
-/// texture.
-fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
+/// Row 8: layers, items drawn into a scratch target and composited as one.
+/// A faded card whose overlapping children do not show through each other, a
+/// group casting one drop shadow from its union, and a frosted card that sits
+/// over the row 1 shapes and blurs them. Each layer names the run of `shapes`
+/// pushed for it.
+fn row_layers(
+    app: &App,
+    shapes: &mut Vec<OverlayShapeItem>,
+    layers: &mut Vec<vpl::OverlayLayer>,
+    top: f32,
+    row1_top: f32,
+) {
     let cr = app.ovl_state.shape_corner_radius;
-    let bw = app.ovl_state.shape_border_width;
-    let gap = 16.0_f32;
     let t = app.ovl_state.start_time.elapsed().as_secs_f32();
-    let row7_h = 70.0_f32;
-    let y7_mid = top + row7_h * 0.5;
-    let mut x7 = 20.0_f32;
+    let row_h = 70.0_f32;
+    let gap = 16.0_f32;
+    let mut x = 20.0_f32;
+    let layer = |shapes: &Vec<OverlayShapeItem>,
+                 start: usize,
+                 style: vpl::OverlayLayerStyle|
+     -> vpl::OverlayLayer {
+        vpl::OverlayLayer::new(
+            vpl::OverlayLayerMembers::default().with_shapes(start..shapes.len()),
+            style,
+        )
+    };
 
-    // Stacked shadow layers: two offset coloured outer glows (a red
-    // halo pushed down-right and a blue halo pushed up-left) make the
-    // stacking obvious at a glance, plus a dark inner shadow for a
-    // recessed feel. One item carrying several distinct shadow layers.
+    // A faded card: a panel with two overlapping discs on it, faded as one,
+    // breathing between 35% and 85% opacity. Faded item by item, the panel
+    // would show through the discs and the lower disc through the upper.
+    let start = shapes.len();
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: cr },
-            [x7, y7_mid - row7_h * 0.5],
-            [120.0, row7_h],
+            [x, top],
+            [150.0, row_h],
         )
-        .with_fill(OverlayFill::Solid(Colour::srgb(0.16, 0.17, 0.22, 1.0)))
-        .with_outline(Colour::srgb(0.7, 0.72, 0.8, 0.9), 1.0, OutlineMode::Inset)
-        .with_shadows(vec![
-            vpl::ShadowLayer::new(Colour::linear(0.95, 0.25, 0.2, 0.85), 20.0, [16.0, 14.0]),
-            vpl::ShadowLayer::new(Colour::linear(0.2, 0.5, 1.0, 0.85), 20.0, [-16.0, -14.0]),
-        ])
-        .with_inner_shadows(vec![vpl::ShadowLayer::new(
-            Colour::linear(0.0, 0.0, 0.0, 0.55),
-            14.0,
-            [0.0, 5.0],
-        )]),
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.85, 0.87, 0.92, 1.0))),
     );
-    x7 += 120.0 + gap + 48.0;
+    for (dx, colour) in [
+        (24.0, Colour::srgb(0.9, 0.3, 0.25, 1.0)),
+        (62.0, Colour::srgb(0.25, 0.5, 0.95, 1.0)),
+    ] {
+        shapes.push(
+            OverlayShapeItem::new(OverlayShape::Circle, [x + dx, top + 8.0], [54.0, 54.0])
+                .with_fill(OverlayFill::Solid(colour)),
+        );
+    }
+    let fade = 0.6 + 0.25 * (t * 1.5).sin();
+    layers.push(layer(
+        shapes,
+        start,
+        vpl::OverlayLayerStyle::default().with_opacity(fade),
+    ));
+    x += 150.0 + gap + 32.0;
 
-    // Rotation pivot: a metronome. The capsule pivots about its bottom
-    // end (not its centre) and swings side to side. The bounding quad
-    // grows to contain the swing, so nothing is clipped.
-    let hand_h = 60.0_f32;
+    // A group with one shadow: a card and a badge overlapping it cast a
+    // single drop shadow from their union, not one each.
+    let start = shapes.len();
     shapes.push(
         OverlayShapeItem::new(
-            OverlayShape::Capsule,
-            [x7, y7_mid - hand_h * 0.5],
-            [16.0, hand_h],
+            OverlayShape::Rect { corner_radius: cr },
+            [x, top + 6.0],
+            [110.0, 58.0],
         )
-        .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.75, 0.2, 0.95)))
-        .with_outline(Colour::srgb(1.0, 0.9, 0.5, 0.9), bw, OutlineMode::Inset)
-        .with_rotation((t * 2.0).sin() * 0.7)
-        .with_rotation_pivot([0.0, hand_h * 0.5]),
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.95, 0.97, 1.0))),
     );
-    x7 += 16.0 + gap + 48.0;
+    shapes.push(
+        OverlayShapeItem::new(OverlayShape::Circle, [x + 84.0, top - 4.0], [40.0, 40.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.75, 0.2, 1.0))),
+    );
+    layers.push(layer(
+        shapes,
+        start,
+        vpl::OverlayLayerStyle::default().with_shadow(vpl::ShadowLayer::new(
+            Colour::srgb(0.0, 0.0, 0.0, 0.6),
+            12.0,
+            [6.0, 8.0],
+        )),
+    ));
 
-    // Texture flip / mirror: the Carl Gauss portrait mirrored
-    // vertically via the convenience flip helper, no second upload.
-    if let Some(tid) = app.ovl_state.carlgauss_tex_id {
+    // A frosted card over the row 1 shapes, drifting across them: a layer
+    // with a backdrop blur, clipped to a rounded mask, so the shapes under it
+    // blur. The mask is a mask-only shape the layer's clip names.
+    if app.ovl_state.backdrop_blur_radius > 0.0 {
+        let card_x = 150.0 + 120.0 * (t * 0.4).sin();
+        let card = [card_x, row1_top + 10.0];
+        let size = [170.0, 50.0];
+        const MASK: u32 = 0x4c41_5952;
         shapes.push(
             OverlayShapeItem::new(
-                OverlayShape::Rect { corner_radius: cr },
-                [x7, y7_mid - row7_h * 0.5],
-                [110.0, row7_h],
+                OverlayShape::Rect {
+                    corner_radius: 14.0,
+                },
+                card,
+                size,
             )
-            .with_fill(
-                OverlayFill::texture(tid).with_texture_transform(
-                    vpl::TextureTransform::default().with_flip(false, true),
-                ),
-            )
-            .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, OutlineMode::Inset),
+            .provides_mask(MASK),
         );
+        let start = shapes.len();
+        shapes.push(
+            OverlayShapeItem::new(
+                OverlayShape::Rect {
+                    corner_radius: 14.0,
+                },
+                card,
+                size,
+            )
+            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.18)))
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.35), 1.0, OutlineMode::Inset),
+        );
+        shapes.push(
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 6.0 },
+                [card[0] + 16.0, card[1] + 19.0],
+                [size[0] - 32.0, 12.0],
+            )
+            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.55))),
+        );
+        let frosted = layer(
+            shapes,
+            start,
+            vpl::OverlayLayerStyle::default().with_backdrop(
+                vpl::BackdropEffects::default().with_blur(app.ovl_state.backdrop_blur_radius),
+            ),
+        )
+        .with_clip(vpl::OverlayClip::mask(MASK));
+        layers.push(frosted);
     }
 }
 
-/// Backdrop-blur panels in the top-right area, placed beside row 1.
+/// Backdrop-blur panels in the top-right area, placed beside row 1. Each blurs
+/// what is under it at its place in the draw order: the scene and any overlay
+/// drawn before it.
 fn row_backdrop(app: &App, shapes: &mut Vec<OverlayShapeItem>, row1_right: f32) {
     if !(app.ovl_state.backdrop_blur_radius > 0.0) {
         return;
@@ -2120,18 +2184,22 @@ pub(crate) fn scene(
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     fd.overlays.time = app.ovl_state.start_time.elapsed().as_secs_f64();
-    let (shapes, labels, polylines, retained) = build_overlay_frame(app);
+    let (shapes, labels, polylines, retained, layers) = build_overlay_frame(app);
     fd.overlays.polylines = polylines;
     fd.overlays.retained = retained;
     // The dancing-As glyph run as a row above the emoji row.
     let mut runs = build_glyph_run(app);
     runs.extend(build_emoji_run(app));
     fd.overlays.glyph_runs = runs;
-    // Enable HDR callback path so the renderer owns the encoder and can
-    // run backdrop blur passes.
-    if shapes.iter().any(|s| s.style.backdrop.is_active()) {
+    // A backdrop blur and a destination-reading layer read what the overlay
+    // pass has drawn, which needs the renderer to own the encoder: the HDR
+    // callback path does, the LDR paint path does not.
+    if shapes.iter().any(|s| s.style.backdrop.is_active())
+        || layers.iter().any(|l| l.style.needs_target())
+    {
         fd.effects.display.mode = vpl::PipelineMode::Hdr;
     }
+    fd.overlays.layers = layers;
     fd.overlays.shapes = shapes;
     fd.overlays.labels = labels;
     if app.ovl_state.cloud_built {

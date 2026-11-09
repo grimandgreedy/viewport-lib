@@ -447,7 +447,14 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // The item's fill multiplies into the vertex colour; with no record it is
     // white and the vertex colour passes through. Evaluated outside any
     // branch, because an image fill samples a texture.
-    let colour = in.colour * overlay_fill(in.fill_local, i32(in.fill_index));
+    let raw = in.colour * overlay_fill(in.fill_local, i32(in.fill_index));
+    // The item's colour filter, if its record carries one. A colour glyph
+    // filters the page's colour under the run's alpha.
+    let is_emoji = in.use_texture > 1.5 && in.use_texture <= 2.5;
+    let colour = overlay_colour_matrix(
+        select(raw, vec4<f32>(emoji.rgb, raw.a), is_emoji),
+        i32(in.fill_index),
+    );
 
     var result: vec4<f32>;
     if (in.use_texture > 2.5) {
@@ -457,7 +464,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         // Colour glyph (emoji): draw the colour page's RGBA as-is. The run
         // colour only carries opacity through its alpha; the tint RGB is
         // ignored.
-        result = vec4<f32>(emoji.rgb, emoji.a * colour.a);
+        result = vec4<f32>(colour.rgb, emoji.a * colour.a);
     } else if (in.use_texture > 0.5) {
         // Coverage glyph: tint the coverage page by the run colour.
         result = vec4<f32>(colour.rgb, colour.a * glyph);

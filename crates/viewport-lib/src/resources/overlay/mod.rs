@@ -9,6 +9,7 @@ pub(crate) mod glyph_style;
 /// Scene-overlay scaffolding: floor grid, axes indicator, base overlay, constraint lines.
 pub(crate) mod guides;
 pub(crate) mod highlight;
+pub(crate) mod overlay_layer;
 pub(crate) mod overlay_shape;
 pub(crate) mod overlay_text;
 pub(crate) mod overlays;

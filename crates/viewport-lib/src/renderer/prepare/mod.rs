@@ -951,7 +951,7 @@ impl ViewportRenderer {
             self.prepare_compatibility_outlines(device, queue, frame, sink);
             self.prepare_sub_highlight(device, queue, frame);
         }
-        self.prepare_viewport_overlays(device, queue, frame);
+        self.prepare_viewport_overlays(device, queue, frame, sink);
         self.prepare_debug_buffer(frame);
         if self.resources.scene_tier.is_built() {
             self.prepare_atlas_blit(queue, frame, viewport_fx);
@@ -1045,6 +1045,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         let vp_idx = frame.camera.viewport_index;
 
@@ -1071,10 +1072,20 @@ impl ViewportRenderer {
         self.overlay_retained_counters = Default::default();
         let vector_rasters_before = self.resources.content.coverage_atlas.rasters();
         let glyph_rasters_before = self.resources.content.glyph_atlas.rasters();
+        ov.layer_plan.build(&frame.overlays);
         self.prepare_overlay_labels(device, queue, frame, &mut ov);
         self.prepare_overlay_shapes(device, queue, frame, &mut ov);
-        self.finalize_overlay_draw_order(device, queue, &mut ov);
+        // The layers' members draw into their targets before the overlay
+        // pass, so their command buffer goes out with the prepare passes.
+        if let Some(layers) = self.finalize_overlay_draw_order(device, queue, frame, &mut ov) {
+            sink.push(layers);
+        }
         let overlay_draw_calls = ov.draw_call_count();
+        let layer_stats = (
+            ov.layer_targets.draws.len() as u32,
+            ov.layer_targets.targets_used,
+            ov.layer_targets.allocations,
+        );
         self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
         drop(overlay_span);
@@ -1090,6 +1101,9 @@ impl ViewportRenderer {
         self.last_stats.overlay_retained_bytes =
             self.resources.content.overlay_geometry.allocated_bytes();
         self.last_stats.overlay_draw_calls = overlay_draw_calls;
+        self.last_stats.overlay_layers_composited = layer_stats.0;
+        self.last_stats.overlay_layer_targets = layer_stats.1;
+        self.last_stats.overlay_layer_target_allocations = layer_stats.2;
         self.last_stats.overlay_vector_rasters =
             (self.resources.content.coverage_atlas.rasters() - vector_rasters_before) as u32;
         self.last_stats.overlay_glyph_rasters =

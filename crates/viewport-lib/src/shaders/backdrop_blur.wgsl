@@ -2,12 +2,13 @@
 //
 // Uses a 13-tap kernel on a downsampled scene texture to produce a smooth
 // blur suitable for glassmorphism UI panels. The same shader handles both
-// horizontal and vertical passes via the `horizontal` uniform.
+// horizontal and vertical passes via the `horizontal` uniform. An overlay
+// layer's content blur and drop shadow use it too, keeping alpha.
 
 struct BlurParams {
     horizontal: u32,  // 1 = horizontal pass, 0 = vertical pass
     spread:     f32,  // texel multiplier (controls blur radius)
-    _pad0:      u32,
+    keep_alpha: u32,  // 1 = blur alpha with the colour (premultiplied content)
     _pad1:      u32,
 }
 
@@ -52,8 +53,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour += textureSample(t_source, s_source, in.uv + off) * W[i];
         colour += textureSample(t_source, s_source, in.uv - off) * W[i];
     }
-    // Force alpha to 1.0: the HDR scene clears alpha to 0.0 for OIT
-    // compositing, but the blur result must be opaque so the overlay
-    // shader can detect it as a backdrop blur source.
-    return vec4<f32>(colour.rgb, 1.0);
+    // A backdrop is forced opaque: the HDR scene clears alpha to 0.0 for OIT
+    // compositing, but the blurred backdrop must cover what it is drawn over.
+    // A layer's premultiplied content keeps its blurred alpha.
+    return vec4<f32>(colour.rgb, select(1.0, colour.a, params.keep_alpha != 0u));
 }

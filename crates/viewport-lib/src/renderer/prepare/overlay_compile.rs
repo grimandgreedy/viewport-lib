@@ -173,6 +173,12 @@ fn emit_base(
             }
         }
         bake_clip_rect(verts, &poly.clip, item_start, ppp);
+        super::overlay_fill::matrix_vertices_from(
+            verts,
+            item_start,
+            poly.style.colour_matrix.as_ref(),
+            fills,
+        );
     }
 }
 
@@ -224,6 +230,12 @@ fn emit_vector_shapes(
                 va,
             );
             bake_clip_rect(verts, &shape.clip, item_start, ppp);
+            super::overlay_fill::matrix_vertices_from(
+                verts,
+                item_start,
+                shape.style.colour_matrix.as_ref(),
+                fills,
+            );
         }
     }
 }
@@ -358,6 +370,12 @@ fn emit_glyph_run(
     }
     overlay_geometry::rotate_vertices_from(verts, rot_start, rot);
     bake_clip_rect(verts, &run.clip, item_start, ppp);
+    super::overlay_fill::matrix_vertices_from(
+        verts,
+        item_start,
+        run.style.colour_matrix.as_ref(),
+        fills,
+    );
 }
 
 /// Emit one label's text-stream geometry (background box, leader line, glyph
@@ -499,6 +517,12 @@ fn emit_label(
     }
     overlay_geometry::rotate_vertices_from(verts, text_start, rot);
     bake_clip_rect(verts, &label.clip, item_start, ppp);
+    super::overlay_fill::matrix_vertices_from(
+        verts,
+        item_start,
+        label.style.colour_matrix.as_ref(),
+        fills,
+    );
 }
 
 /// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh
@@ -592,7 +616,7 @@ fn emit_sdf_shape(
     out_fills: &mut super::overlay_fill::FillTable,
     ppp: f32,
 ) {
-    use crate::renderer::types::{LineCap, OverlayFill, OverlayShape, TriangleDirection};
+    use crate::renderer::types::{LineCap, OverlayShape, TriangleDirection};
     if matches!(shape.shape, OverlayShape::Vector { .. })
         || shape.provides_mask.is_some()
         || shape.style.fill.texture_id().is_some()
@@ -703,10 +727,8 @@ fn emit_sdf_shape(
     for (c, t) in fc.iter_mut().zip(shape.style.tint) {
         *c *= t;
     }
-    let fill_index = match &shape.style.fill {
-        OverlayFill::Solid(_) => super::overlay_fill::NO_FILL,
-        fill => out_fills.push(fill, [hw, hh], op, shape.style.tint, [1, 1]),
-    };
+    let fill_index =
+        super::overlay_fill::shape_fill_index(&shape.style, [hw, hh], op, [1, 1], out_fills);
 
     let base_index = out_shadows.len();
     let (mut outer_count, mut inner_count) = (0usize, 0usize);

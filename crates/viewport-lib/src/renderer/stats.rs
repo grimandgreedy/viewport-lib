@@ -668,6 +668,20 @@ pub struct FrameStats {
     /// per glyph per new size. Glyphs rasterised by `compile_overlay_geometry`
     /// are not counted.
     pub overlay_glyph_rasters: u32,
+    /// Overlay layers composited from a scratch target this frame, for the
+    /// most recently prepared viewport: each `OverlayLayer` and retained-group
+    /// layer that could not fold into its members, and each item whose blend
+    /// reads the destination. A layer that folds draws no composite and is
+    /// not counted.
+    pub overlay_layers_composited: u32,
+    /// Scratch targets those layers drew into. Layers whose bounds do not
+    /// overlap share one; a layer that blurs or casts a shadow has its own.
+    pub overlay_layer_targets: u32,
+    /// Textures created for overlay layers this frame: scratch targets, their
+    /// blur textures, and the destination copy and backdrop blur. The targets
+    /// are pooled per viewport, so a frame whose layers fit last frame's pool
+    /// reads zero.
+    pub overlay_layer_target_allocations: u32,
     /// Section cap meshes generated this frame, for the most recently
     /// prepared viewport.
     ///
