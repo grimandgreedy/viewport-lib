@@ -22,6 +22,13 @@ pub(crate) struct VectorMesh {
 }
 
 fn build_path(subpaths: &[SubPath]) -> Path {
+    build_path_closing(subpaths, true)
+}
+
+/// Build a lyon path from `subpaths`. With `close_all`, every subpath is
+/// closed, as a fill closes it; otherwise each keeps its own `closed` flag, as
+/// a stroke needs.
+fn build_path_closing(subpaths: &[SubPath], close_all: bool) -> Path {
     let mut builder = Path::builder();
     for sp in subpaths {
         if sp.segments.is_empty() {
@@ -47,7 +54,7 @@ fn build_path(subpaths: &[SubPath]) -> Path {
         }
         // Fills close every subpath. `end(true)` matches how SVG fills an open
         // subpath (as if a closing segment ran back to the start).
-        builder.end(true);
+        builder.end(close_all || sp.closed);
     }
     builder.build()
 }
@@ -108,6 +115,198 @@ pub(crate) fn flatten_path(subpaths: &[SubPath], tolerance: f32) -> Vec<Vec<[f32
                 }
             }
             _ => {}
+        }
+    }
+    contours
+}
+
+/// Flatten `subpaths` for stroking: one point list per subpath, no further
+/// than `tolerance` from the true curves, paired with whether the subpath is
+/// closed. An open subpath stays open, whatever a fill of it does. A closed
+/// subpath does not repeat its start at the end.
+pub(crate) fn flatten_for_stroke(
+    subpaths: &[SubPath],
+    tolerance: f32,
+) -> Vec<(Vec<[f32; 2]>, bool)> {
+    use lyon_path::PathEvent;
+    use lyon_path::iterator::PathIterator;
+    let path = build_path_closing(subpaths, false);
+    let mut contours: Vec<(Vec<[f32; 2]>, bool)> = Vec::new();
+    for event in path.iter().flattened(tolerance.max(1e-3)) {
+        match event {
+            PathEvent::Begin { at } => contours.push((vec![[at.x, at.y]], false)),
+            PathEvent::Line { to, .. } => {
+                if let Some((c, _)) = contours.last_mut() {
+                    c.push([to.x, to.y]);
+                }
+            }
+            PathEvent::End { first, close, .. } => {
+                if let Some((c, closed)) = contours.last_mut() {
+                    *closed = close;
+                    if close && c.len() > 1 && c.last() == Some(&[first.x, first.y]) {
+                        c.pop();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    contours
+}
+
+/// The boundary of what `contours` fill under `fill_rule`, as closed loops
+/// whose even-odd fill is that same region.
+///
+/// Under the even-odd rule that is the contours themselves. Under the non-zero
+/// rule it is the boundary of the triangulated fill: the edges only one
+/// triangle uses, chained into loops. Any split of those edges into loops has
+/// the same crossing parity, so the even-odd fill of the result is the region
+/// whichever way the chains are drawn.
+pub(crate) fn filled_outline(
+    contours: &[Vec<[f32; 2]>],
+    fill_rule: FillRule,
+) -> Vec<Vec<[f32; 2]>> {
+    let usable: Vec<&Vec<[f32; 2]>> = contours
+        .iter()
+        .filter(|c| c.len() >= 3 && c.iter().flatten().all(|v| v.is_finite()))
+        .collect();
+    if fill_rule == FillRule::EvenOdd {
+        return usable.into_iter().cloned().collect();
+    }
+    let mut builder = Path::builder();
+    for c in &usable {
+        builder.begin(point(c[0][0], c[0][1]));
+        for p in c.iter().skip(1) {
+            builder.line_to(point(p[0], p[1]));
+        }
+        builder.end(true);
+    }
+    let path = builder.build();
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    let result = FillTessellator::new().tessellate_path(
+        &path,
+        &FillOptions::default().with_fill_rule(LyonFillRule::NonZero),
+        &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| {
+            let p = v.position();
+            [p.x, p.y]
+        }),
+    );
+    if result.is_err() {
+        return Vec::new();
+    }
+    let positions = buffers.vertices;
+    let mut edge_use: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    for tri in buffers.indices.chunks_exact(3) {
+        let [a, b, c] = [tri[0], tri[1], tri[2]];
+        let (pa, pb, pc) = (
+            positions[a as usize],
+            positions[b as usize],
+            positions[c as usize],
+        );
+        let area = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pc[0] - pa[0]) * (pb[1] - pa[1]);
+        if area.abs() < 1e-9 {
+            continue;
+        }
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            *edge_use.entry((u.min(v), u.max(v))).or_insert(0) += 1;
+        }
+    }
+    let mut edges: Vec<(u32, u32)> = edge_use
+        .into_iter()
+        .filter(|&(_, count)| count == 1)
+        .map(|(e, _)| e)
+        .collect();
+    // Hash-map order is not stable; the loops should come out the same.
+    edges.sort_unstable();
+    let mut incident: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+    for (i, &(u, v)) in edges.iter().enumerate() {
+        incident.entry(u).or_default().push(i);
+        incident.entry(v).or_default().push(i);
+    }
+    let mut used = vec![false; edges.len()];
+    let mut loops: Vec<Vec<[f32; 2]>> = Vec::new();
+    for start in 0..edges.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let (first, mut at) = edges[start];
+        let mut chain = vec![positions[first as usize]];
+        while at != first {
+            chain.push(positions[at as usize]);
+            let next = incident
+                .get(&at)
+                .and_then(|es| es.iter().copied().find(|&e| !used[e]));
+            let Some(e) = next else {
+                break;
+            };
+            used[e] = true;
+            let (u, v) = edges[e];
+            at = if u == at { v } else { u };
+        }
+        if chain.len() >= 3 {
+            loops.push(chain);
+        }
+    }
+    loops
+}
+
+/// Clip a closed loop to the axis-aligned box `min`..`max`. Inside the box the
+/// clipped loop winds round every point as often as the original does, so the
+/// even-odd fill of clipped loops is the original's fill within the box.
+pub(crate) fn clip_loop_to_box(points: &[[f32; 2]], min: [f32; 2], max: [f32; 2]) -> Vec<[f32; 2]> {
+    let mut out: Vec<[f32; 2]> = points.to_vec();
+    // Each of the four sides as (axis, bound, keep the side below it).
+    for (axis, bound, below) in [
+        (0, min[0], false),
+        (0, max[0], true),
+        (1, min[1], false),
+        (1, max[1], true),
+    ] {
+        if out.is_empty() {
+            break;
+        }
+        let inside = |p: [f32; 2]| {
+            if below {
+                p[axis] <= bound
+            } else {
+                p[axis] >= bound
+            }
+        };
+        let input = std::mem::take(&mut out);
+        for i in 0..input.len() {
+            let a = input[i];
+            let b = input[(i + 1) % input.len()];
+            let (ia, ib) = (inside(a), inside(b));
+            if ia {
+                out.push(a);
+            }
+            if ia != ib {
+                let t = (bound - a[axis]) / (b[axis] - a[axis]);
+                out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+            }
+        }
+    }
+    out
+}
+
+/// The contours of an inverse fill, in path-local pixels: the box from the
+/// origin to `size` with the path's filled region cut out of it, to be filled
+/// under the even-odd rule. The path's own contours are flattened to
+/// `tolerance` and clipped to the box, so the parts of the path outside the
+/// box fill nothing.
+pub(crate) fn inverse_contours(
+    subpaths: &[SubPath],
+    fill_rule: FillRule,
+    size: [f32; 2],
+    tolerance: f32,
+) -> Vec<Vec<[f32; 2]>> {
+    let (min, max) = ([0.0, 0.0], [size[0].max(0.0), size[1].max(0.0)]);
+    let mut contours = vec![vec![min, [max[0], 0.0], max, [0.0, max[1]]]];
+    for outline in filled_outline(&flatten_path(subpaths, tolerance), fill_rule) {
+        let clipped = clip_loop_to_box(&outline, min, max);
+        if clipped.len() >= 3 {
+            contours.push(clipped);
         }
     }
     contours
@@ -509,6 +708,57 @@ mod tests {
             let len = (d[0] * d[0] + d[1] * d[1]).sqrt();
             assert!((len - std::f32::consts::SQRT_2).abs() < 1e-3, "{len}");
         }
+    }
+
+    /// True if `pt` falls inside a triangle of the mesh with area.
+    fn fringed_covers(mesh: &FringedFill, pt: [f32; 2]) -> bool {
+        let m = VectorMesh {
+            positions: mesh.positions.clone(),
+            indices: mesh
+                .indices
+                .chunks_exact(3)
+                .filter(|t| {
+                    let tri = [
+                        mesh.positions[t[0] as usize],
+                        mesh.positions[t[1] as usize],
+                        mesh.positions[t[2] as usize],
+                    ];
+                    signed_area(&tri).abs() > 1e-6
+                })
+                .flatten()
+                .copied()
+                .collect(),
+        };
+        covered(&m, pt)
+    }
+
+    #[test]
+    fn an_inverse_fill_is_the_box_less_the_filled_path() {
+        // Two overlapping squares wound the same way: under the non-zero rule
+        // their overlap is filled once, not cancelled, so the inverse leaves it
+        // empty. A third square hangs off the box and must not fill outside it.
+        let paths = [
+            square(10.0, 30.0),
+            square(20.0, 40.0),
+            SubPath::polygon(&[[45.0, 45.0], [60.0, 45.0], [60.0, 60.0], [45.0, 60.0]]),
+        ];
+        let contours = inverse_contours(&paths, FillRule::NonZero, [50.0, 50.0], 0.1);
+        let mesh = tessellate_fringed(&contours, FillRule::EvenOdd);
+        assert!(fringed_covers(&mesh, [5.0, 5.0]));
+        assert!(!fringed_covers(&mesh, [15.0, 15.0]));
+        assert!(!fringed_covers(&mesh, [25.0, 25.0]), "the overlap filled");
+        assert!(!fringed_covers(&mesh, [35.0, 35.0]));
+        assert!(fringed_covers(&mesh, [35.0, 15.0]));
+        assert!(!fringed_covers(&mesh, [47.0, 47.0]));
+        assert!(
+            !fringed_covers(&mesh, [55.0, 55.0]),
+            "filled outside the box"
+        );
+        // Even-odd makes the overlap a hole in the path, so the inverse fills it.
+        let contours = inverse_contours(&paths, FillRule::EvenOdd, [50.0, 50.0], 0.1);
+        let mesh = tessellate_fringed(&contours, FillRule::EvenOdd);
+        assert!(fringed_covers(&mesh, [25.0, 25.0]));
+        assert!(!fringed_covers(&mesh, [15.0, 15.0]));
     }
 
     #[test]

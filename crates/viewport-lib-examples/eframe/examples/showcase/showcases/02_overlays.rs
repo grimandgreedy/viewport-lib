@@ -17,9 +17,9 @@ use glam::{Mat4, Vec3};
 use vpl::{
     AnimTrack, Colour, FontHandle, GlyphRunItem, GradientStop, LabelAnchor, LabelItem, LineCap,
     Material, NineSlice, OutlineMode, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap,
-    PositionedGlyph, RepeatMode, ShadowLayer, StrokePattern, TextureTransform, TileMode,
-    TriangleDirection, primitives,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PositionedGlyph,
+    RepeatMode, ShadowLayer, StrokePattern, TextureTransform, TileMode, TriangleDirection,
+    primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -869,7 +869,7 @@ impl OverlaysShowcase {
             )
             .with_thickness(5.0)
             .with_colour(Colour::srgb(0.3, 0.9, 0.6, 0.9))
-            .with_cap(PolylineCap::Round)
+            .with_cap(LineCap::Round)
             .with_stroke_pattern(StrokePattern::Dashed {
                 dash_length: 18.0,
                 gap_length: 9.0,

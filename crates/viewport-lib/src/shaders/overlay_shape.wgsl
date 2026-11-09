@@ -356,9 +356,10 @@ fn sd_triangle(p: vec2<f32>, hs: vec2<f32>) -> f32 {
 }
 
 // Signed distance to a line segment from -hs to +hs with stroke radius r.
-// radii.x = stroke radius, radii.y = 0 (round cap) or 1 (square cap).
-fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, square: bool) -> f32 {
-    if (square) {
+// `cap`: 0 round, 1 butt (flush with the end points), 2 square (half the
+// width past them).
+fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, cap: f32) -> f32 {
+    if (cap > 0.5) {
         // Rotate into segment frame, then use a box SDF.
         let seg_len = length(hs);
         if (seg_len < 0.0001) {
@@ -367,7 +368,8 @@ fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, square: bool) -> f32 {
         let d = hs / seg_len;
         let along = dot(p, d);
         let perp  = dot(p, vec2<f32>(-d.y, d.x));
-        let q = abs(vec2<f32>(along, perp)) - vec2<f32>(seg_len, r);
+        let reach = seg_len + select(0.0, r, cap > 1.5);
+        let q = abs(vec2<f32>(along, perp)) - vec2<f32>(reach, r);
         return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
     } else {
         // Capsule: segment from (-hs.x, -hs.y) to (hs.x, hs.y).
@@ -471,10 +473,10 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
             return sd_triangle(tp, ths);
         }
         case 7: {
-            // Line: radii.x = stroke radius, radii.y = 0 (round) or 1 (square).
+            // Line: radii.x = stroke radius, radii.y = cap (0 round, 1 butt,
+            // 2 square).
             let r = radii.x;
-            let square = radii.y > 0.5;
-            return sd_line(p, hs, r, square);
+            return sd_line(p, hs, r, radii.y);
         }
         case 8: {
             // Star: radii.x = n (points), radii.y = inner_radius_frac.

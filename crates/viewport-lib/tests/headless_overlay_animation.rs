@@ -35,7 +35,7 @@ fn frame_at(time: f64) -> FrameData {
 fn red_square() -> OverlayPolylineItem {
     OverlayPolylineItem::new(vec![[16.0, 16.0], [32.0, 16.0], [32.0, 32.0], [16.0, 32.0]])
         .with_closed(true)
-        .with_thickness(0.0)
+        .without_stroke()
         .with_fill(OverlayFill::Solid(Colour::linear(1.0, 0.0, 0.0, 1.0)))
 }
 

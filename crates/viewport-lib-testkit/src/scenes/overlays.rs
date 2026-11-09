@@ -15,8 +15,8 @@ use glam::Vec3;
 use viewport_lib::{
     Alignment, AnchorX, AnchorY, Colour, FillRule, GlyphRunItem, LabelItem, LineCap, LineJoin,
     Material, OutlineMode, OverlayBlend, OverlayFill, OverlayFrame, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, PolylineCap, PositionedGlyph,
-    RetainedOverlay, ShadowLayer, SubPath, TriangleDirection, primitives,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, PositionedGlyph,
+    RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TriangleDirection, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs};
@@ -61,6 +61,7 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_group_anchor,
         },
         scene("overlay_blend_modes", build_blend_modes),
+        scene("overlay_strokes", build_strokes),
     ]
 }
 
@@ -120,6 +121,8 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 [0.0, cell[1]],
             ])],
             fill_rule: FillRule::NonZero,
+            stroke: None,
+            inverse: false,
         },
         [140.0, 24.0],
         cell,
@@ -334,6 +337,8 @@ fn build_vector(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             OverlayShape::Vector {
                 subpaths: vec![star],
                 fill_rule: FillRule::NonZero,
+                stroke: None,
+                inverse: false,
             },
             [60.0, 60.0],
             [90.0, 90.0],
@@ -343,6 +348,8 @@ fn build_vector(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             OverlayShape::Vector {
                 subpaths: vec![blob],
                 fill_rule: FillRule::NonZero,
+                stroke: None,
+                inverse: false,
             },
             [220.0, 60.0],
             [90.0, 70.0],
@@ -366,7 +373,7 @@ fn build_polylines(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             .with_thickness(6.0)
             .with_colour(Colour::srgb(1.0, 0.55, 0.2, 1.0))
             .with_join(LineJoin::Mitre)
-            .with_cap(PolylineCap::Round),
+            .with_cap(LineCap::Round),
         OverlayPolylineItem::new(
             zigzag
                 .iter()
@@ -376,7 +383,7 @@ fn build_polylines(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .with_thickness(6.0)
         .with_colour(Colour::srgb(0.4, 0.85, 1.0, 1.0))
         .with_join(LineJoin::Bevel)
-        .with_cap(PolylineCap::Square),
+        .with_cap(LineCap::Square),
         // Closed and filled: the tessellated fill path, which is the same
         // machinery a vector shape's fill runs through.
         OverlayPolylineItem::new(vec![
@@ -700,7 +707,7 @@ fn build_rotation(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .with_thickness(8.0)
         .with_colour(Colour::srgb(1.0, 0.8, 0.3, 1.0))
         .with_join(LineJoin::Mitre)
-        .with_cap(PolylineCap::Round)
+        .with_cap(LineCap::Round)
         .with_rotation(0.6)
         .with_rotation_pivot(off_centre),
         OverlayPolylineItem::new(vec![
@@ -998,6 +1005,144 @@ fn build_blend_modes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
         ovl.shapes = shapes;
+        ovl
+    })
+}
+
+/// A circle of radius `r` about `c` from four cubic quarters.
+fn circle_path(c: [f32; 2], r: f32) -> SubPath {
+    let k = r * 0.552_284_8;
+    let [x, y] = c;
+    SubPath::new([x + r, y])
+        .cubic_to([x + r, y + k], [x + k, y + r], [x, y + r])
+        .cubic_to([x - k, y + r], [x - r, y + k], [x - r, y])
+        .cubic_to([x - r, y - k], [x - k, y - r], [x, y - r])
+        .cubic_to([x + k, y - r], [x + r, y - k], [x + r, y])
+        .close()
+}
+
+/// Strokes on any path: a dashed open curve with round joins, a closed star
+/// with mitred tips, a hairline grid under a 3x group scale that must stay one
+/// device pixel wide, a polyline whose width varies point by point, and an
+/// inverse-filled ring at two sizes, one drawn from the coverage atlas and one
+/// past its limit tessellated.
+fn build_strokes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut shapes = Vec::new();
+
+    // An open cubic with a zigzag tail: the fill would close it, the stroke
+    // does not. The dashes are cut before stroking, so each dash gets round
+    // caps and round joins at the zigzag's corners.
+    let curve = SubPath::new([0.0, 90.0])
+        .cubic_to([20.0, -10.0], [80.0, 130.0], [110.0, 30.0])
+        .line_to([130.0, 70.0])
+        .line_to([150.0, 20.0])
+        .line_to([170.0, 80.0]);
+    shapes.push(
+        OverlayShapeItem::vector(vec![curve], FillRule::NonZero, [15.0, 20.0], [170.0, 110.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 0.9, 0.25)))
+            .with_stroke(
+                OverlayStroke::new(5.0, Colour::srgb(0.98, 0.85, 0.3, 1.0))
+                    .with_pattern(StrokePattern::Dashed {
+                        dash_length: 18.0,
+                        gap_length: 9.0,
+                        offset: 4.0,
+                    })
+                    .with_join(LineJoin::Round)
+                    .with_cap(LineCap::Round),
+            ),
+    );
+
+    // A closed star, mitred at every tip and notch.
+    let star: Vec<[f32; 2]> = (0..10)
+        .map(|i| {
+            let a = std::f32::consts::PI * i as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+            let r = if i % 2 == 0 { 48.0 } else { 20.0 };
+            [50.0 + r * a.cos(), 52.0 + r * a.sin()]
+        })
+        .collect();
+    shapes.push(
+        OverlayShapeItem::vector(
+            vec![SubPath::polygon(&star)],
+            FillRule::NonZero,
+            [205.0, 20.0],
+            [100.0, 100.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.3, 0.35, 0.6)))
+        .with_stroke(
+            OverlayStroke::new(4.0, Colour::srgb(0.98, 0.95, 0.9, 1.0))
+                .with_join(LineJoin::Mitre)
+                .with_mitre_limit(8.0),
+        ),
+    );
+
+    // An inverse-filled ring: the box less a ring is its corners and the
+    // central disc. Small enough to come from the coverage atlas.
+    let ring = |c: f32, outer: f32, inner: f32| {
+        vec![circle_path([c, c], outer), circle_path([c, c], inner)]
+    };
+    shapes.push(
+        OverlayShapeItem::vector(
+            ring(35.0, 30.0, 18.0),
+            FillRule::EvenOdd,
+            [315.0, 30.0],
+            [70.0, 70.0],
+        )
+        .with_inverse_fill(true)
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.35, 0.85, 0.5, 1.0))),
+    );
+    // The same past the atlas limit, through the tessellated fallback.
+    shapes.push(
+        OverlayShapeItem::vector(
+            ring(68.0, 58.0, 34.0),
+            FillRule::EvenOdd,
+            [262.0, 155.0],
+            [136.0, 136.0],
+        )
+        .with_inverse_fill(true)
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.35, 0.85, 0.5, 1.0))),
+    );
+
+    // A brush stroke: round joins, round caps, and a width that swells and
+    // tapers point by point.
+    let brush_points: Vec<[f32; 2]> = (0..7)
+        .map(|i| {
+            [
+                140.0 + 18.0 * i as f32,
+                if i % 2 == 0 { 250.0 } else { 175.0 },
+            ]
+        })
+        .collect();
+    let brush = OverlayPolylineItem::new(brush_points)
+        .with_colour(Colour::srgb(0.85, 0.45, 0.95, 1.0))
+        .with_join(LineJoin::Round)
+        .with_cap(LineCap::Round)
+        .with_widths(vec![1.0, 5.0, 10.0, 14.0, 10.0, 5.0, 1.0]);
+
+    // A hairline grid compiled once and drawn at three times its size: the
+    // lines stay one device pixel wide. Line centres land on pixel centres.
+    let mut grid = Vec::new();
+    for i in 0..=6 {
+        let t = 6.0 * i as f32;
+        for points in [vec![[t, 0.0], [t, 36.0]], vec![[0.0, t], [36.0, t]]] {
+            grid.push(
+                OverlayPolylineItem::new(points)
+                    .with_stroke(OverlayStroke::hairline(Colour::srgb(0.95, 0.95, 0.95, 1.0))),
+            );
+        }
+    }
+    let id =
+        ctx.renderer
+            .compile_overlay_geometry(ctx.device, ctx.queue, &grid, &[], &[], &[], 1.0);
+
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.shapes = shapes;
+        ovl.polylines = vec![brush];
+        ovl.retained = vec![
+            RetainedOverlay::new(id)
+                .with_position([15.5, 160.5])
+                .with_scale(3.0),
+        ];
         ovl
     })
 }

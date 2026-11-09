@@ -9,8 +9,8 @@ use crate::overlay::{
     LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring, OverlayAnimations,
     OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem,
     OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
-    OverlayTransform, PathSegment, PolylineCap, PositionedGlyph, RepeatMode, RetainedOverlay,
-    ShadowLayer, StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
+    OverlayTransform, PathSegment, PositionedGlyph, RepeatMode, RetainedOverlay, ShadowLayer,
+    StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
 };
 
 /// Feeds everything that affects how an overlay value draws into a hasher, so
@@ -565,8 +565,9 @@ impl OverlayContentHash for TriangleDirection {
 impl OverlayContentHash for LineCap {
     fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
         state.write_u8(match self {
-            LineCap::Round => 0,
+            LineCap::Butt => 0,
             LineCap::Square => 1,
+            LineCap::Round => 2,
         });
     }
 }
@@ -625,10 +626,14 @@ impl OverlayContentHash for OverlayShape {
             OverlayShape::Vector {
                 subpaths,
                 fill_rule,
+                stroke,
+                inverse,
             } => {
                 state.write_u8(12);
                 subpaths.content_hash_at(origin, state);
                 fill_rule.content_hash_at(origin, state);
+                stroke.content_hash_at(origin, state);
+                hash_bool(state, *inverse);
             }
         }
     }
@@ -684,16 +689,7 @@ impl OverlayContentHash for LineJoin {
         state.write_u8(match self {
             LineJoin::Mitre => 0,
             LineJoin::Bevel => 1,
-        });
-    }
-}
-
-impl OverlayContentHash for PolylineCap {
-    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
-        state.write_u8(match self {
-            PolylineCap::Butt => 0,
-            PolylineCap::Square => 1,
-            PolylineCap::Round => 2,
+            LineJoin::Round => 2,
         });
     }
 }
@@ -737,6 +733,7 @@ impl OverlayContentHash for OverlayPolylineItem {
             animations,
             clip,
             stroke,
+            widths,
             closed,
             uvs,
             z_order,
@@ -752,6 +749,14 @@ impl OverlayContentHash for OverlayPolylineItem {
         animations.content_hash_at(origin, state);
         clip.content_hash_at(origin, state);
         stroke.content_hash_at(origin, state);
+        match widths {
+            None => state.write_u8(0),
+            Some(widths) => {
+                state.write_u8(1);
+                hash_len(state, widths.len());
+                hash_floats(state, widths);
+            }
+        }
         hash_bool(state, *closed);
         match uvs {
             None => state.write_u8(0),

@@ -22,6 +22,9 @@ pub(crate) struct OvlState {
     pub emoji_font: Option<FontHandle>,
     /// Glyph ids of the emoji to draw, from the emoji font's cmap.
     pub emoji_glyphs: Vec<u16>,
+    /// A compiled hairline grid, drawn as a retained group at three times its
+    /// size to show the lines stay one device pixel wide.
+    pub hairline_grid: Option<vpl::OverlayGeometryId>,
 }
 
 impl Default for OvlState {
@@ -44,6 +47,7 @@ impl Default for OvlState {
             show_emoji: true,
             emoji_font: None,
             emoji_glyphs: Vec::new(),
+            hairline_grid: None,
         }
     }
 }
@@ -444,6 +448,7 @@ pub(crate) fn build_overlay_frame(
     Vec<OverlayShapeItem>,
     Vec<LabelItem>,
     Vec<vpl::OverlayPolylineItem>,
+    Vec<vpl::RetainedOverlay>,
 ) {
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
@@ -477,6 +482,7 @@ pub(crate) fn build_overlay_frame(
     // common midline with equal spacing between them.
     let mut shapes = Vec::new();
     let mut polylines: Vec<vpl::OverlayPolylineItem> = Vec::new();
+    let mut retained: Vec<vpl::RetainedOverlay> = Vec::new();
 
     if app.ovl_state.show_shapes {
         // Rows stack top to bottom from a single cursor: reserve each band in
@@ -497,12 +503,12 @@ pub(crate) fn build_overlay_frame(
         row_shadows(app, &mut shapes, shadows_top);
         row_anim(app, &mut shapes, &mut polylines, anim_top);
         row_new_shapes(app, &mut shapes, new_shapes_top);
-        row_masks_and_polylines(app, &mut shapes, &mut polylines, masks_top);
+        row_masks_and_polylines(app, &mut shapes, &mut polylines, &mut retained, masks_top);
         row_new_features(app, &mut shapes, features_top);
         row_backdrop(app, &mut shapes, solid_right);
     }
 
-    (shapes, labels, polylines)
+    (shapes, labels, polylines, retained)
 }
 
 /// Vertical stacking cursor for the overlay showcase rows. `row(h)` reserves a
@@ -1423,12 +1429,12 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     );
     x6 += 100.0 + gap;
 
-    // Horizontal line (square cap): thin 3px stroke.
+    // Horizontal line (butt cap, flush with its ends): thin 4px stroke.
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Line {
                 thickness: 4.0,
-                cap: LineCap::Square,
+                cap: LineCap::Butt,
             },
             [x6, y6_mid - 2.0],
             [120.0, 4.0],
@@ -1525,12 +1531,14 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     let _ = x6;
 }
 
-/// Row 7 band: a clip-masked rotating decagon, a 9-slice A/B comparison, and
-/// closed/stroked polyline fills. These three demos share one horizontal band.
+/// Row 7 band: a clip-masked rotating decagon, a 9-slice A/B comparison,
+/// closed/stroked polyline fills, a stroked vector path, and a hairline grid.
+/// These demos share one horizontal band.
 fn row_masks_and_polylines(
     app: &App,
     shapes: &mut Vec<OverlayShapeItem>,
     polylines: &mut Vec<vpl::OverlayPolylineItem>,
+    retained: &mut Vec<vpl::RetainedOverlay>,
     top: f32,
 ) {
     let bw = app.ovl_state.shape_border_width;
@@ -1712,7 +1720,7 @@ fn row_masks_and_polylines(
                 )
                 .with_thickness(5.0)
                 .with_colour(Colour::srgb(0.3, 0.9, 0.6, 0.9))
-                .with_cap(vpl::PolylineCap::Round)
+                .with_cap(vpl::LineCap::Round)
                 .with_stroke_pattern(vpl::StrokePattern::Dashed {
                     dash_length: 18.0,
                     gap_length: 9.0,
@@ -1832,6 +1840,50 @@ fn row_masks_and_polylines(
                     )
                     .with_fill(OverlayFill::Solid(colour))
                     .with_blend(blend),
+                );
+            }
+
+            // A stroked vector path: an open cubic with a zigzag tail, dashed
+            // with marching dashes, round joins and round caps. The fill would
+            // close the path; the stroke leaves it open.
+            let x_path = x_pair + 2.0 * 76.0 + 24.0;
+            let path = vpl::SubPath::new([0.0, 50.0])
+                .cubic_to([15.0, -10.0], [55.0, 70.0], [80.0, 15.0])
+                .line_to([95.0, 45.0])
+                .line_to([110.0, 10.0])
+                .line_to([125.0, 50.0]);
+            shapes.push(
+                OverlayShapeItem::vector(
+                    vec![path],
+                    vpl::FillRule::NonZero,
+                    [x_path, y_poly - 30.0],
+                    [125.0, 60.0],
+                )
+                .with_stroke(
+                    vpl::OverlayStroke::new(4.0, Colour::srgb(0.98, 0.85, 0.3, 1.0))
+                        .with_pattern(vpl::StrokePattern::Dashed {
+                            dash_length: 14.0,
+                            gap_length: 7.0,
+                            offset: -t * 20.0,
+                        })
+                        .with_join(vpl::LineJoin::Round)
+                        .with_cap(LineCap::Round),
+                )
+                .with_z_order(1),
+            );
+
+            // A hairline grid compiled once and drawn as a retained group at
+            // three times its size (this page has no zoom control, so the
+            // group scale stands in for one): its lines stay one device pixel
+            // wide. The half-pixel offset puts the line centres on pixel
+            // centres.
+            if let Some(id) = app.ovl_state.hairline_grid {
+                let x_grid = (x_path + 125.0 + 24.0).round();
+                retained.push(
+                    vpl::RetainedOverlay::new(id)
+                        .with_position([x_grid + 0.5, (y_poly - 36.0).round() + 0.5])
+                        .with_scale(3.0)
+                        .with_z_order(1),
                 );
             }
         }
@@ -1983,6 +2035,21 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
             }
         }
     }
+    // The hairline grid row 7 draws under a 3x group scale: lines every 6
+    // units over a 24-unit square, each a zero-width stroke.
+    let grid: Vec<vpl::OverlayPolylineItem> = (0..=4)
+        .flat_map(|i| {
+            let t = 6.0 * i as f32;
+            [vec![[t, 0.0], [t, 24.0]], vec![[0.0, t], [24.0, t]]]
+        })
+        .map(|points| {
+            vpl::OverlayPolylineItem::new(points).with_stroke(vpl::OverlayStroke::hairline(
+                Colour::srgb(0.9, 0.95, 1.0, 0.9),
+            ))
+        })
+        .collect();
+    app.ovl_state.hairline_grid =
+        Some(renderer.compile_overlay_geometry(&app.device, &app.queue, &grid, &[], &[], &[], 1.0));
     app.camera = vpl::Camera::orbit(
         glam::DVec3::new(0.0, 1.57, 0.0),
         9.0,
@@ -2021,8 +2088,9 @@ pub(crate) fn scene(
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     fd.overlays.time = app.ovl_state.start_time.elapsed().as_secs_f64();
-    let (shapes, labels, polylines) = build_overlay_frame(app);
+    let (shapes, labels, polylines, retained) = build_overlay_frame(app);
     fd.overlays.polylines = polylines;
+    fd.overlays.retained = retained;
     // The dancing-As glyph run as a row above the emoji row.
     let mut runs = build_glyph_run(app);
     runs.extend(build_emoji_run(app));

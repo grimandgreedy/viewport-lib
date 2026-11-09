@@ -376,6 +376,8 @@ mod tests {
         let vector = OverlayStyleSupport::for_shape(&OverlayShape::Vector {
             subpaths: Vec::new(),
             fill_rule: crate::overlay::FillRule::NonZero,
+            stroke: None,
+            inverse: false,
         });
         assert!(vector.inert_fields(&style).is_empty());
         assert!(vector.draws_fill(&OverlayFill::texture(crate::overlay::OverlayTextureId(0))));

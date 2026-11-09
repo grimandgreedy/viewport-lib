@@ -234,6 +234,7 @@ fn expected(name: &str) -> Option<Expected> {
         "overlay_shadow_parity" => e(1, 1, 1, 1, 960),
         "overlay_group_anchor" => e(1, 1, 1, 1, 960),
         "overlay_blend_modes" => e(1, 1, 1, 1, 960),
+        "overlay_strokes" => e(1, 1, 1, 1, 960),
         _ => return None,
     })
 }

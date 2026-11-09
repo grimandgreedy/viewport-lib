@@ -142,7 +142,7 @@ fn emit_base(
             inner(verts);
         }
         let stroke_start = verts.len();
-        if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
+        if let Some(stroke) = poly.stroke.as_ref() {
             let mut colour = stroke.colour.to_linear_rgba();
             colour[3] *= poly.style.opacity;
             overlay_geometry::emit_polyline_stroke(verts, poly, stroke, colour, 0.0, 0.0);
@@ -196,6 +196,8 @@ fn emit_vector_shapes(
         if let crate::renderer::types::OverlayShape::Vector {
             subpaths,
             fill_rule,
+            stroke,
+            inverse,
         } = &shape.shape
         {
             let item_start = verts.len();
@@ -208,7 +210,17 @@ fn emit_vector_shapes(
                     max_px: viewport_overlays::VECTOR_ATLAS_MAX_RETAINED_PX,
                 });
             viewport_overlays::emit_vector_shape(
-                verts, shape, subpaths, *fill_rule, 0.0, 0.0, fills, None, va,
+                verts,
+                shape,
+                subpaths,
+                *fill_rule,
+                stroke.as_ref(),
+                *inverse,
+                0.0,
+                0.0,
+                fills,
+                None,
+                va,
             );
             bake_clip_rect(verts, &shape.clip, item_start, ppp);
         }
@@ -651,7 +663,7 @@ fn emit_sdf_shape(
         shadow_pad = shadow_pad.max(l.extent());
     }
     let extra_expand = match &shape.shape {
-        OverlayShape::Line { thickness, .. } => thickness * 0.5,
+        OverlayShape::Line { thickness, cap } => line_quad_reach(*thickness, *cap),
         _ => 0.0,
     };
     let Some(frame) = overlay_geometry::shape_frame(
@@ -708,7 +720,8 @@ fn emit_sdf_shape(
         OverlayShape::Line { thickness, cap } => {
             let cap_f = match cap {
                 LineCap::Round => 0.0,
-                LineCap::Square => 1.0,
+                LineCap::Butt => 1.0,
+                LineCap::Square => 2.0,
             };
             (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
         }

@@ -62,7 +62,8 @@ pub enum OverlayShape {
     Line {
         /// Stroke width in logical pixels.
         thickness: f32,
-        /// End-cap style: `Round` (default) or `Square`.
+        /// End-cap style: `Butt` stops at the box corners, `Square` runs on
+        /// half the thickness past them, `Round` ends in half-discs.
         cap: LineCap,
     },
     /// N-pointed star inscribed in the bounding box.
@@ -111,12 +112,21 @@ pub enum OverlayShape {
     /// fragment from a distance field, and clipping to the bounding box instead
     /// would silently clip the wrong region.
     ///
+    /// `stroke` draws a line along every subpath over the fill, in the same
+    /// draw. An open subpath strokes as an open line with caps at its ends,
+    /// although the fill closes it. `inverse` fills everything in the item's box
+    /// (path-local `[0, 0]` to `size`) except what the path fills.
+    ///
     /// [`OverlayStyleSupport::for_shape`]: crate::overlay::OverlayStyleSupport::for_shape
     Vector {
         /// The contours that make up the shape.
         subpaths: Vec<SubPath>,
         /// How the subpaths combine into filled area.
         fill_rule: FillRule,
+        /// The line drawn along the subpaths, over the fill. `None` draws none.
+        stroke: Option<crate::overlay::OverlayStroke>,
+        /// Fill the item's box outside the path instead of inside it.
+        inverse: bool,
     },
 }
 
@@ -521,10 +531,11 @@ fn sd_arc(p: [f32; 2], outer_r: f32, inner_frac: f32, sa: f32, ea: f32) -> f32 {
     ds.min(de)
 }
 
-fn sd_line(p: [f32; 2], hs: [f32; 2], radius: f32, square: bool) -> f32 {
+fn sd_line(p: [f32; 2], hs: [f32; 2], radius: f32, cap: LineCap) -> f32 {
     // Segment from (-hs.x, -hs.y) to (hs.x, hs.y).
-    if square {
-        // Rotated box: half-length along segment, half-width = radius.
+    if cap != LineCap::Round {
+        // Rotated box: half-width = radius, half-length the half segment, plus
+        // the radius again for a square cap.
         let seg_len = (hs[0] * hs[0] + hs[1] * hs[1]).sqrt();
         if seg_len < 1e-6 {
             return (p[0] * p[0] + p[1] * p[1]).sqrt() - radius;
@@ -534,7 +545,12 @@ fn sd_line(p: [f32; 2], hs: [f32; 2], radius: f32, square: bool) -> f32 {
         // Rotate p into segment frame.
         let along = p[0] * dx + p[1] * dy;
         let perp = -p[0] * dy + p[1] * dx;
-        let qx = along.abs() - seg_len;
+        let reach = if cap == LineCap::Square {
+            seg_len + radius
+        } else {
+            seg_len
+        };
+        let qx = along.abs() - reach;
         let qy = perp.abs() - radius;
         (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt() + qx.max(qy).min(0.0)
     } else {
@@ -683,6 +699,8 @@ impl OverlayShapeItem {
             OverlayShape::Vector {
                 subpaths,
                 fill_rule,
+                stroke: None,
+                inverse: false,
             },
             position,
             size,
@@ -715,6 +733,25 @@ impl OverlayShapeItem {
             lo,
             [hi[0] - lo[0], hi[1] - lo[1]],
         )
+    }
+
+    /// Stroke an [`OverlayShape::Vector`]'s subpaths with `stroke`, drawn over
+    /// the fill. Analytic shapes have no stroke and ignore this; give one an
+    /// edge band with [`Self::with_outline`].
+    pub fn with_stroke(mut self, stroke: crate::overlay::OverlayStroke) -> Self {
+        if let OverlayShape::Vector { stroke: s, .. } = &mut self.shape {
+            *s = Some(stroke);
+        }
+        self
+    }
+
+    /// Fill an [`OverlayShape::Vector`]'s box (path-local `[0, 0]` to `size`)
+    /// everywhere except what the path fills. Analytic shapes ignore this.
+    pub fn with_inverse_fill(mut self, inverse: bool) -> Self {
+        if let OverlayShape::Vector { inverse: i, .. } = &mut self.shape {
+            *i = inverse;
+        }
+        self
     }
 
     /// Set `size`, and for an [`OverlayShape::Vector`] scale the path with it.
@@ -1067,9 +1104,7 @@ impl OverlayShapeItem {
                 };
                 sd_triangle(tp, ths)
             }
-            OverlayShape::Line { thickness, cap } => {
-                sd_line(p, hs, thickness * 0.5, *cap == LineCap::Square)
-            }
+            OverlayShape::Line { thickness, cap } => sd_line(p, hs, thickness * 0.5, *cap),
             OverlayShape::Star {
                 points,
                 inner_radius_frac,
@@ -1087,18 +1122,23 @@ impl OverlayShapeItem {
             OverlayShape::Vector {
                 subpaths,
                 fill_rule,
+                inverse,
+                ..
             } => {
                 // No closed-form SDF. Return a sign-only pseudo-distance from a
                 // point-in-path test: negative inside, positive outside.
                 // `contains` only reads the sign; the magnitude is not a true
                 // distance. `p` is in the centred, unrotated frame, so shift it
                 // back into path-local space (origin at the item's top-left).
+                // An inverse fill covers its box less the path.
                 let q = [p[0] + hw, p[1] + hh];
-                if path_contains(subpaths, *fill_rule, q) {
-                    -1.0
+                let in_path = path_contains(subpaths, *fill_rule, q);
+                let filled = if *inverse {
+                    p[0].abs() <= hw && p[1].abs() <= hh && !in_path
                 } else {
-                    1.0
-                }
+                    in_path
+                };
+                if filled { -1.0 } else { 1.0 }
             }
         }
     }
@@ -1488,21 +1528,44 @@ mod tests {
     }
 
     #[test]
-    fn line_square_cap_flat_end() {
-        // Horizontal line, square cap. Points just past the endpoint (in the
-        // cap direction) are outside since square caps don't extend.
-        let s = shape_at(
-            0.0,
-            0.0,
-            100.0,
-            4.0,
-            OverlayShape::Line {
-                thickness: 4.0,
-                cap: LineCap::Square,
-            },
-        );
-        assert!(s.contains([50.0, 2.0])); // centre
-        assert!(!s.contains([50.0, 10.0])); // well above
+    fn line_caps_butt_stops_square_extends_by_half_the_width() {
+        // A horizontal segment from (0, 10) to (100, 10), 4 wide.
+        let line = |cap| {
+            shape_at(
+                0.0,
+                10.0,
+                100.0,
+                0.0,
+                OverlayShape::Line {
+                    thickness: 4.0,
+                    cap,
+                },
+            )
+        };
+        let butt = line(LineCap::Butt);
+        assert!(butt.contains([99.5, 10.0]));
+        assert!(!butt.contains([100.5, 10.0]));
+        // Square runs on exactly half the width (2 px) past each end, corners
+        // included.
+        let square = line(LineCap::Square);
+        assert!(square.contains([101.9, 11.9]));
+        assert!(square.contains([-1.9, 8.1]));
+        assert!(!square.contains([102.1, 10.0]));
+        assert!((square.distance([103.0, 10.0]) - 1.0).abs() < 1e-4);
+        // Round reaches as far on the axis but not into the corner.
+        let round = line(LineCap::Round);
+        assert!(round.contains([101.9, 10.0]));
+        assert!(!round.contains([101.9, 11.9]));
+    }
+
+    #[test]
+    fn inverse_vector_fill_contains_its_box_less_the_path() {
+        let hole = SubPath::polygon(&[[10.0, 10.0], [30.0, 10.0], [30.0, 30.0], [10.0, 30.0]]);
+        let s = OverlayShapeItem::vector(vec![hole], FillRule::NonZero, [0.0, 0.0], [40.0, 40.0])
+            .with_inverse_fill(true);
+        assert!(s.contains([5.0, 5.0]));
+        assert!(!s.contains([20.0, 20.0]));
+        assert!(!s.contains([45.0, 5.0]));
     }
 
     #[test]

@@ -116,6 +116,8 @@ fn reported_support_matches_what_the_renderer_draws() {
             [-20.0, 20.0],
         ])],
         fill_rule: viewport_lib::FillRule::NonZero,
+        stroke: None,
+        inverse: false,
     };
 
     // (family name, support, builder taking a style and producing a frame).
@@ -147,6 +149,8 @@ fn reported_support_matches_what_the_renderer_draws() {
                             [0.0, 40.0],
                         ])],
                         fill_rule: viewport_lib::FillRule::NonZero,
+                        stroke: None,
+                        inverse: false,
                     },
                     [28.0, 28.0],
                     [40.0, 40.0],
@@ -182,6 +186,8 @@ fn reported_support_matches_what_the_renderer_draws() {
                             [0.0, 40.0],
                         ])],
                         fill_rule: viewport_lib::FillRule::NonZero,
+                        stroke: None,
+                        inverse: false,
                     },
                     [28.0, 28.0],
                     [40.0, 40.0],

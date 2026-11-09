@@ -135,9 +135,20 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 // starts) at full coverage; a hairline narrower than a pixel keeps its
 // integrated weight by scaling that coverage down. An outer-row vertex moves
 // half a pixel out at zero coverage. Returns the position and coverage.
+//
+// A negative max inset marks a hairline: the inner row stays on the line at
+// full coverage and the outer row moves one device pixel out along the
+// screen-space normal, through the group's full linear map rather than its
+// mean scale, so the line is one pixel of weight under a stretch too.
 fn place_fringe(p: vec2<f32>, aa: vec4<f32>, inst: OverlayInstance) -> vec3<f32> {
     let ppp = select(1.0, viewport.ppp, viewport.ppp > 0.0);
     let s = max(ppp * inst.aa_scale, 1.0e-6);
+    if (aa.w < 0.0) {
+        if (aa.z > 0.5) {
+            return vec3<f32>(p + hairline_offset(aa.xy, inst.linear, ppp), 0.0);
+        }
+        return vec3<f32>(p, 1.0);
+    }
     if (aa.z < -0.5) {
         let m = aa.w * s;
         let inset = min(0.5, m);
@@ -148,6 +159,25 @@ fn place_fringe(p: vec2<f32>, aa: vec4<f32>, inst: OverlayInstance) -> vec3<f32>
         return vec3<f32>(p + aa.xy * (0.5 / s), 0.0);
     }
     return vec3<f32>(p, 1.0);
+}
+
+// The local offset that a hairline's outer row moves by: `dir`'s length in
+// device pixels along the screen normal of `dir` under the linear map `m`
+// (row-major a b c d), taken back into local units. A map with no inverse
+// moves nothing.
+fn hairline_offset(dir: vec2<f32>, m: vec4<f32>, ppp: f32) -> vec2<f32> {
+    let det = m.x * m.w - m.y * m.z;
+    if (abs(det) < 1.0e-12) {
+        return vec2<f32>(0.0);
+    }
+    // Normals map by the inverse transpose.
+    let nt = vec2<f32>(dir.x * m.w - dir.y * m.z, dir.y * m.x - dir.x * m.y) / det;
+    let len = length(nt);
+    if (len < 1.0e-12) {
+        return vec2<f32>(0.0);
+    }
+    let ns = nt * (length(dir) / (len * ppp));
+    return vec2<f32>(m.w * ns.x - m.y * ns.y, m.x * ns.y - m.z * ns.x) / det;
 }
 
 @vertex
@@ -268,8 +298,9 @@ fn sd_triangle(p: vec2<f32>, hs: vec2<f32>) -> f32 {
     return max(d_edge, d_base);
 }
 
-fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, square: bool) -> f32 {
-    if (square) {
+fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, cap: f32) -> f32 {
+    if (cap > 0.5) {
+        // Rotate into segment frame, then use a box SDF.
         let seg_len = length(hs);
         if (seg_len < 0.0001) {
             return length(p) - r;
@@ -277,7 +308,8 @@ fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, square: bool) -> f32 {
         let d = hs / seg_len;
         let along = dot(p, d);
         let perp  = dot(p, vec2<f32>(-d.y, d.x));
-        let q = abs(vec2<f32>(along, perp)) - vec2<f32>(seg_len, r);
+        let reach = seg_len + select(0.0, r, cap > 1.5);
+        let q = abs(vec2<f32>(along, perp)) - vec2<f32>(reach, r);
         return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
     } else {
         let ba = 2.0 * hs;
@@ -365,7 +397,7 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
             return sd_triangle(tp, ths);
         }
         case 7: {
-            return sd_line(p, hs, radii.x, radii.y > 0.5);
+            return sd_line(p, hs, radii.x, radii.y);
         }
         case 8: {
             return sd_star_n(p, min(hs.x, hs.y), radii.x, radii.y);

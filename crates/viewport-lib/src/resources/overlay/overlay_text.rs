@@ -244,6 +244,12 @@ pub(crate) struct OverlayTextVertex {
     /// hairline keeps its weight. `+1` is the outer row: half a device pixel
     /// along `dir`, at zero coverage. `dir` is the edge's outward normal, with
     /// a mitre's length at a join.
+    ///
+    /// A negative `max_inset` marks a hairline, a line of no width whose
+    /// fringe is the whole line: its inner row stays on the line at full
+    /// coverage and its outer row moves one device pixel out along the screen
+    /// normal of `dir`, so the line keeps one pixel of weight under any group
+    /// scale or stretch.
     pub aa: [f32; 4],
 }
 

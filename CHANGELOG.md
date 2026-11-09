@@ -11,6 +11,9 @@
 - **`PluginInstaller::reattach_renderer` is required** - a new trait method that registers a feature's renderer-side pieces again on a new renderer and updates its handle, leaving the runtime alone. A feature with nothing on the renderer returns `Ok(())`.
 - **`PhysicsLitePlugin`, `AnimationPlugin` and `ConstraintPlugin` installers return a `RuntimePluginId`** - the handle is the id they registered on the runtime instead of `()`, so they can be uninstalled. Call sites that ignore the handle compile unchanged.
 - **`OverlayFill` gradients take a stop list** - `LinearGradient`, `RadialGradient` and `ConicalGradient` each hold `stops: Vec<GradientStop>` with any number of stops, and the `*Multi` variants and `OVERLAY_MAX_GRADIENT_STOPS` are gone. Build a two-stop gradient with `OverlayFill::linear_gradient`, `radial_gradient` or `conical_gradient`, or `GradientStop::pair`.
+- **One `LineCap` for every stroke** - `PolylineCap` is gone and `LineCap` is `Butt`, `Square` or `Round` for polylines, vector-path strokes, dash ends and the analytic `OverlayShape::Line`. `Square` now extends half the width past the end point everywhere; an analytic line that used `LineCap::Square` for flush ends uses `LineCap::Butt`.
+- **`OverlayShape::Vector` has `stroke` and `inverse` fields** - build the variant with `stroke: None, inverse: false`, or use `OverlayShapeItem::vector`, and add `..` to patterns that list its fields.
+- **A zero-width polyline stroke is a hairline** - a stroke of width `0.0` draws a line one device pixel wide instead of nothing; use `without_stroke()` for a fill with no line.
 
 ### Features
 
@@ -32,6 +35,11 @@
 - **Anti-aliased polylines and vector shapes** - polyline strokes (with their joins, caps and dots), closed polyline fills, tessellated vector-shape fills and the shadow bands around them draw with a one-device-pixel edge fringe sized in the vertex shader, so edges stay smooth at any transform or `pixels_per_point` and a stroke keeps its width; a bevel join now meets at one point on the inside of the turn.
 - **Coverage atlas for small and retained vector shapes** - a vector `OverlayShapeItem` whose raster fits within 128 device pixels (512 inside a retained group), and that has no animation tracks, draws its fill as one quad from an exactly rasterised coverage cell under either fill rule, cached by path, scale, rotation and quarter-pixel position on a page of its own; larger shapes keep the tessellated fill.
 - **`FrameStats::overlay_vector_rasters`** - the vector shapes whose coverage cell was rasterised this frame, which reads zero for static shapes after their first frame.
+- **Strokes on vector shapes** - `OverlayShapeItem::with_stroke` draws an `OverlayStroke` along a vector path's subpaths over its fill, with caps, joins, mitre limit and dash or dot patterns; open subpaths stay open, and dashes are cut before stroking so each gets its own caps.
+- **Hairlines** - an `OverlayStroke` of width `0.0` (or `OverlayStroke::hairline`) on a polyline or vector path draws one device pixel wide at any item or group scale, stretch or `pixels_per_point`.
+- **Per-point stroke widths on polylines** - `OverlayPolylineItem::with_widths` sets the stroke width at each point, so a brush stroke can swell and taper.
+- **`LineJoin::Round`** - an arc round the outside of each turn, on polylines, vector strokes and the shadow bands that follow them.
+- **Inverse fills on vector shapes** - `OverlayShapeItem::with_inverse_fill` fills the item's box everywhere the path does not, from the coverage atlas when it fits and tessellated otherwise.
 - **Soft overlay clip edges** - `clip.rect` boxes and clip masks multiply in the pixel's coverage instead of discarding at a hard edge, so a mask's curved or rotated edge is anti-aliased; a box edge on a pixel boundary clips as before.
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.

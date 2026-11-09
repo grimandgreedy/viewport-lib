@@ -59,7 +59,8 @@ fn encode_overlay_shape(
         OverlayShape::Line { thickness, cap } => {
             let cap_f = match cap {
                 LineCap::Round => 0.0,
-                LineCap::Square => 1.0,
+                LineCap::Butt => 1.0,
+                LineCap::Square => 2.0,
             };
             (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
         }
@@ -141,9 +142,13 @@ struct VectorCell {
 /// a shape that only moves reuses its cell, and one that moves by part of a
 /// pixel picks from at most sixteen. `None` for a path with no points or a map
 /// that is not finite.
+///
+/// `inverse_box`, the size of the item's box, is set for an inverse fill,
+/// whose cell spans that box as well as the path.
 fn plan_vector_cell(
     subpaths: &[crate::renderer::types::SubPath],
     fill_rule: crate::renderer::types::FillRule,
+    inverse_box: Option<[f32; 2]>,
     a: [[f32; 2]; 2],
     b: [f32; 2],
 ) -> Option<VectorCell> {
@@ -174,6 +179,11 @@ fn plan_vector_cell(
         min = [min[0].min(p[0]), min[1].min(p[1])];
         max = [max[0].max(p[0]), max[1].max(p[1])];
     };
+    if let Some(size) = inverse_box {
+        for q in [[0.0, 0.0], [size[0], 0.0], [0.0, size[1]], size] {
+            grow(q);
+        }
+    }
     for sp in subpaths {
         if sp.segments.is_empty() {
             continue;
@@ -203,8 +213,14 @@ fn plan_vector_cell(
     crate::renderer::types::OverlayShape::Vector {
         subpaths: subpaths.to_vec(),
         fill_rule,
+        stroke: None,
+        inverse: inverse_box.is_some(),
     }
     .content_hash(&mut hasher);
+    if let Some(size) = inverse_box {
+        hasher.write_u32(size[0].to_bits());
+        hasher.write_u32(size[1].to_bits());
+    }
     let q = |v: f32| (v * 1024.0).round() as i32;
     Some(VectorCell {
         key: crate::resources::overlay::coverage_atlas::VectorKey {
@@ -220,9 +236,13 @@ fn plan_vector_cell(
 
 /// Rasterise the coverage of `subpaths` under `fill_rule`, mapped by `a` and
 /// then `shift`, into `out` (`size` pixels, one byte each).
+///
+/// With `inverse_box` (the item's box size) the cell holds the inverse: the
+/// box's coverage less the path's, so the path is a hole in the box.
 pub(super) fn rasterise_vector(
     subpaths: &[crate::renderer::types::SubPath],
     fill_rule: crate::renderer::types::FillRule,
+    inverse_box: Option<[f32; 2]>,
     a: [[f32; 2]; 2],
     shift: [f32; 2],
     size: [u32; 2],
@@ -263,6 +283,24 @@ pub(super) fn rasterise_vector(
         .format(Format::Alpha)
         .size(size[0], size[1])
         .render_into(out, None);
+    if let Some(b) = inverse_box {
+        let rect = [
+            Command::MoveTo(map([0.0, 0.0])),
+            Command::LineTo(map([b[0], 0.0])),
+            Command::LineTo(map(b)),
+            Command::LineTo(map([0.0, b[1]])),
+            Command::Close,
+        ];
+        let mut boxed = vec![0u8; out.len()];
+        Mask::new(&rect[..])
+            .style(Fill::NonZero)
+            .format(Format::Alpha)
+            .size(size[0], size[1])
+            .render_into(&mut boxed, None);
+        for (o, &b) in out.iter_mut().zip(&boxed) {
+            *o = ((b as u32 * (255 - *o as u32) + 127) / 255) as u8;
+        }
+    }
 }
 
 /// Whether a vector shape's fill draws from the coverage atlas rather than
@@ -272,11 +310,12 @@ fn vector_atlas_cell(
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
     fill_rule: crate::renderer::types::FillRule,
+    inverse: bool,
     ppp: f32,
     max_px: u32,
 ) -> Option<(VectorCell, [[f32; 2]; 2])> {
     let (a, b) = vector_device_affine(shape, ppp);
-    let cell = plan_vector_cell(subpaths, fill_rule, a, b)?;
+    let cell = plan_vector_cell(subpaths, fill_rule, inverse.then_some(shape.size), a, b)?;
     (cell.size[0] <= max_px && cell.size[1] <= max_px).then_some((cell, a))
 }
 
@@ -291,12 +330,15 @@ pub(super) fn retained_vector_uses_atlas(
         crate::renderer::types::OverlayShape::Vector {
             subpaths,
             fill_rule,
+            inverse,
+            ..
         } => {
             shape.style.opacity > 0.0
                 && vector_atlas_cell(
                     shape,
                     subpaths,
                     *fill_rule,
+                    *inverse,
                     ppp,
                     VECTOR_ATLAS_MAX_RETAINED_PX,
                 )
@@ -315,6 +357,7 @@ fn emit_vector_atlas_fill(
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
     fill_rule: crate::renderer::types::FillRule,
+    inverse: bool,
     cell: &VectorCell,
     a: [[f32; 2]; 2],
     va: &mut VectorAtlas<'_>,
@@ -328,13 +371,28 @@ fn emit_vector_atlas_fill(
     let Some((uv_min, uv_max)) =
         va.atlas
             .ensure(va.device, cell.key, cell.size[0], cell.size[1], |out| {
-                rasterise_vector(subpaths, fill_rule, a, cell.shift, cell.size, out)
+                let inverse_box = inverse.then_some(shape.size);
+                rasterise_vector(
+                    subpaths,
+                    fill_rule,
+                    inverse_box,
+                    a,
+                    cell.shift,
+                    cell.size,
+                    out,
+                )
             })
     else {
         return false;
     };
-    // The fill spans the path's own bounding box, as on the tessellated path.
-    let Some((min, max)) = crate::renderer::types::path_bounds(subpaths) else {
+    // The fill spans the path's own bounding box, as on the tessellated path,
+    // and an inverse fill the item's box.
+    let bounds = if inverse {
+        Some(([0.0, 0.0], shape.size))
+    } else {
+        crate::renderer::types::path_bounds(subpaths)
+    };
+    let Some((min, max)) = bounds else {
         return false;
     };
     let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
@@ -435,12 +493,19 @@ fn transform_vector_positions(
 /// [`VECTOR_ATLAS_MAX_RETAINED_PX`]. Anything else, or a cell that does not fit
 /// in the atlas this frame, is tessellated with an anti-aliasing fringe. The
 /// shadow layers are tessellated bands either way.
+///
+/// An inverse fill fills the item's box less the path: from the atlas, the
+/// box's coverage less the path's; tessellated, the box with the path's filled
+/// region cut out. `stroke` draws over the fill and the inner shadows, with
+/// each open subpath stroked open.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_vector_shape(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
     fill_rule: crate::renderer::types::FillRule,
+    stroke: Option<&crate::renderer::types::OverlayStroke>,
+    inverse: bool,
     vp_w: f32,
     vp_h: f32,
     fills: &mut super::overlay_fill::FillTable,
@@ -468,13 +533,14 @@ pub(super) fn emit_vector_shape(
     // tessellated with an anti-aliasing fringe otherwise.
     let from_atlas = draws_fill
         && atlas.is_some_and(|mut va| {
-            vector_atlas_cell(shape, subpaths, fill_rule, va.ppp, va.max_px).is_some_and(
+            vector_atlas_cell(shape, subpaths, fill_rule, inverse, va.ppp, va.max_px).is_some_and(
                 |(cell, a)| {
                     emit_vector_atlas_fill(
                         batch,
                         shape,
                         subpaths,
                         fill_rule,
+                        inverse,
                         &cell,
                         a,
                         &mut va,
@@ -485,12 +551,27 @@ pub(super) fn emit_vector_shape(
             )
         });
     if draws_fill && !from_atlas {
-        let local = super::overlay_vector::flatten_path(subpaths, VECTOR_FILL_TOLERANCE);
+        let (local, rule) = if inverse {
+            (
+                super::overlay_vector::inverse_contours(
+                    subpaths,
+                    fill_rule,
+                    shape.size,
+                    VECTOR_FILL_TOLERANCE,
+                ),
+                crate::renderer::types::FillRule::EvenOdd,
+            )
+        } else {
+            (
+                super::overlay_vector::flatten_path(subpaths, VECTOR_FILL_TOLERANCE),
+                fill_rule,
+            )
+        };
         let screen: Vec<Vec<[f32; 2]>> = local
             .iter()
             .map(|c| transform_vector_positions(c, shape))
             .collect();
-        let mesh = super::overlay_vector::tessellate_fringed(&screen, fill_rule);
+        let mesh = super::overlay_vector::tessellate_fringed(&screen, rule);
         emit_vector_fill(
             batch,
             &mesh,
@@ -520,6 +601,42 @@ pub(super) fn emit_vector_shape(
     {
         emit_vector_inner_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
+
+    if let Some(stroke) = stroke {
+        emit_vector_stroke(batch, shape, subpaths, stroke);
+    }
+}
+
+/// Emit a vector shape's stroke along each of its subpaths, open ones left
+/// open. The stroke is built in the path's own frame and then carried through
+/// the item transform, so its width scales with the item the way the path
+/// does, and a hairline stays one device pixel.
+fn emit_vector_stroke(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    stroke: &crate::renderer::types::OverlayStroke,
+) {
+    let start = batch.len();
+    let mut colour = stroke.colour.to_linear_rgba();
+    colour[3] *= shape.style.opacity;
+    // Path-local points land at `local + translate` before the linear map,
+    // which turns about the box centre plus the pivot (see
+    // `transform_vector_positions`).
+    let t = shape.transform.translate;
+    for (contour, closed) in
+        super::overlay_vector::flatten_for_stroke(subpaths, VECTOR_FILL_TOLERANCE)
+    {
+        let placed: Vec<[f32; 2]> = contour.iter().map(|p| [p[0] + t[0], p[1] + t[1]]).collect();
+        overlay_geometry::emit_stroke_path(batch, &placed, closed, None, stroke, colour);
+    }
+    let centre = [
+        t[0] + shape.size[0] * 0.5 + shape.transform.pivot[0],
+        t[1] + shape.size[1] * 0.5 + shape.transform.pivot[1],
+    ];
+    let rot = overlay_geometry::OverlayRotation::new(&shape.transform, centre);
+    overlay_geometry::rotate_vertices_from(batch, start, rot);
+    tint_vertices_from(batch, start, shape.style.tint);
 }
 
 /// Push a tessellated vector path as a triangle list for the backdrop
@@ -1194,7 +1311,7 @@ impl ViewportRenderer {
                         inner(&mut batch);
                     }
                     let stroke_start = batch.len();
-                    if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
+                    if let Some(stroke) = poly.stroke.as_ref() {
                         let mut colour = stroke.colour.to_linear_rgba();
                         colour[3] *= poly.style.opacity;
                         emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
@@ -1238,6 +1355,8 @@ impl ViewportRenderer {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
                         fill_rule,
+                        stroke,
+                        inverse,
                     } = &shape.shape
                     else {
                         continue;
@@ -1292,6 +1411,8 @@ impl ViewportRenderer {
                         &owned,
                         subpaths,
                         *fill_rule,
+                        stroke.as_ref(),
+                        *inverse,
                         vp_w,
                         vp_h,
                         &mut text_fills,
@@ -1766,14 +1887,17 @@ impl ViewportRenderer {
                     }
                     let mut bounds = points_bounds(batch.verts.iter().map(|v| v.position));
                     // A fringe's outer row draws past its vertex position by
-                    // half a device pixel along its direction.
+                    // half a device pixel along its direction, and a
+                    // hairline's by a whole one.
                     let reach = batch
                         .verts
                         .iter()
                         .filter(|v| v.aa[2] > 0.5)
-                        .map(|v| v.aa[0].hypot(v.aa[1]))
+                        .map(|v| {
+                            let px = if v.aa[3] < 0.0 { 1.0 } else { 0.5 };
+                            v.aa[0].hypot(v.aa[1]) * px
+                        })
                         .fold(0.0f32, f32::max)
-                        * 0.5
                         / ppp.max(1e-3);
                     if reach > 0.0 {
                         bounds = [
@@ -2320,6 +2444,8 @@ impl ViewportRenderer {
             if let crate::renderer::types::OverlayShape::Vector {
                 subpaths,
                 fill_rule,
+                inverse,
+                ..
             } = &shape_orig.shape
             {
                 if shape_orig.style.fill.texture_id().is_some()
@@ -2344,8 +2470,26 @@ impl ViewportRenderer {
                 if owned.style.opacity <= 0.0 {
                     continue;
                 }
-                let mesh =
-                    super::overlay_vector::tessellate(subpaths, *fill_rule, VECTOR_FILL_TOLERANCE);
+                // An inverse fill blurs behind the box less the path.
+                let mesh = if *inverse {
+                    let region: Vec<crate::renderer::types::SubPath> =
+                        super::overlay_vector::inverse_contours(
+                            subpaths,
+                            *fill_rule,
+                            owned.size,
+                            VECTOR_FILL_TOLERANCE,
+                        )
+                        .iter()
+                        .map(|c| crate::renderer::types::SubPath::polygon(c))
+                        .collect();
+                    super::overlay_vector::tessellate(
+                        &region,
+                        crate::renderer::types::FillRule::EvenOdd,
+                        VECTOR_FILL_TOLERANCE,
+                    )
+                } else {
+                    super::overlay_vector::tessellate(subpaths, *fill_rule, VECTOR_FILL_TOLERANCE)
+                };
                 if mesh.indices.is_empty() {
                     continue;
                 }
@@ -2429,7 +2573,9 @@ impl ViewportRenderer {
             // Extra quad expansion for shapes whose stroke extends
             // beyond the item's position/size bounding box.
             let extra_expand = match &shape.shape {
-                crate::renderer::types::OverlayShape::Line { thickness, .. } => thickness * 0.5,
+                crate::renderer::types::OverlayShape::Line { thickness, cap } => {
+                    overlay_geometry::line_quad_reach(*thickness, *cap)
+                }
                 _ => 0.0,
             };
 
@@ -3017,6 +3163,8 @@ mod clip_registry_tests {
             OverlayShape::Vector {
                 subpaths: vec![SubPath::default()],
                 fill_rule: FillRule::NonZero,
+                stroke: None,
+                inverse: false,
             },
             [0.0, 0.0],
             [100.0, 100.0],
@@ -3052,12 +3200,46 @@ mod vector_atlas_tests {
     }
 
     fn raster(subpaths: &[SubPath], fill_rule: FillRule, b: [f32; 2]) -> (Vec<u8>, [u32; 2]) {
-        let cell = plan_vector_cell(subpaths, fill_rule, IDENTITY, b).unwrap();
+        raster_box(subpaths, fill_rule, None, b)
+    }
+
+    fn raster_box(
+        subpaths: &[SubPath],
+        fill_rule: FillRule,
+        inverse_box: Option<[f32; 2]>,
+        b: [f32; 2],
+    ) -> (Vec<u8>, [u32; 2]) {
+        let cell = plan_vector_cell(subpaths, fill_rule, inverse_box, IDENTITY, b).unwrap();
         let mut out = vec![0u8; (cell.size[0] * cell.size[1]) as usize];
         rasterise_vector(
-            subpaths, fill_rule, IDENTITY, cell.shift, cell.size, &mut out,
+            subpaths,
+            fill_rule,
+            inverse_box,
+            IDENTITY,
+            cell.shift,
+            cell.size,
+            &mut out,
         );
         (out, cell.size)
+    }
+
+    #[test]
+    fn an_inverse_cell_is_the_box_with_the_path_cut_out() {
+        // A 4..8 square inside a 12 px box: the cell spans the box, the box
+        // is full, and the square is a hole.
+        let (px, size) = raster_box(
+            &[square(4.0, 8.0)],
+            FillRule::NonZero,
+            Some([12.0, 12.0]),
+            [0.0, 0.0],
+        );
+        assert_eq!(size, [14, 14]);
+        let at = |x: u32, y: u32| px[(y * size[0] + x) as usize];
+        assert_eq!(at(0, 0), 0);
+        assert_eq!(at(2, 2), 255);
+        assert_eq!(at(12, 12), 255);
+        assert_eq!(at(7, 7), 0);
+        assert_eq!(at(13, 13), 0);
     }
 
     #[test]
@@ -3100,9 +3282,9 @@ mod vector_atlas_tests {
     #[test]
     fn cells_share_a_key_across_whole_pixel_moves() {
         let paths = [square(0.0, 10.0)];
-        let a = plan_vector_cell(&paths, FillRule::NonZero, IDENTITY, [5.25, 7.0]).unwrap();
-        let b = plan_vector_cell(&paths, FillRule::NonZero, IDENTITY, [105.25, 9.0]).unwrap();
-        let c = plan_vector_cell(&paths, FillRule::NonZero, IDENTITY, [5.5, 7.0]).unwrap();
+        let a = plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.25, 7.0]).unwrap();
+        let b = plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [105.25, 9.0]).unwrap();
+        let c = plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.5, 7.0]).unwrap();
         assert_eq!(a.key, b.key);
         assert_eq!(
             [b.origin[0] - a.origin[0], b.origin[1] - a.origin[1]],
@@ -3110,7 +3292,7 @@ mod vector_atlas_tests {
         );
         assert_ne!(a.key, c.key);
         let turned = [[0.0, -1.0], [1.0, 0.0]];
-        let d = plan_vector_cell(&paths, FillRule::NonZero, turned, [5.25, 7.0]).unwrap();
+        let d = plan_vector_cell(&paths, FillRule::NonZero, None, turned, [5.25, 7.0]).unwrap();
         assert_ne!(a.key, d.key);
     }
 }

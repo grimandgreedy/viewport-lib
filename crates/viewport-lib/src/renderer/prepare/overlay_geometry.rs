@@ -261,10 +261,13 @@ fn push_quad(
 /// two adjacent segment normals, scaled by `1 / cos(half_angle)` so the
 /// outer edge stays at constant `thickness / 2` from the centreline. When
 /// that scale exceeds `mitre_limit`, or when `join` is `Bevel`, the outside
-/// of the turn is cut by a bevel and the inside keeps the mitred point.
+/// of the turn is cut by a bevel and the inside keeps the mitred point. A
+/// `Round` join sweeps an arc round the outside instead.
 ///
 /// Open polylines end with the requested cap style (butt, square, or round).
-/// Closed polylines wrap the last point back to the first and ignore `cap`.
+/// Closed polylines wrap the last point back to the first and ignore `cap`. A
+/// `thickness` of zero is a hairline, one device pixel wide.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn tessellate_polyline(
     points: &[[f32; 2]],
@@ -272,7 +275,7 @@ pub(super) fn tessellate_polyline(
     closed: bool,
     join: crate::renderer::types::LineJoin,
     mitre_limit: f32,
-    cap: crate::renderer::types::PolylineCap,
+    cap: crate::renderer::types::LineCap,
     colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
@@ -312,6 +315,12 @@ struct Rib {
     inset: f32,
 }
 
+/// The `max_inset` that marks a hairline's fringe rows (see
+/// [`OverlayTextVertex::aa`]): any negative value.
+///
+/// [`OverlayTextVertex::aa`]: crate::resources::OverlayTextVertex
+pub(super) const HAIRLINE_INSET: f32 = -1.0;
+
 /// Tessellate a band running alongside a path, between two signed offsets from
 /// its centreline. `d_lo` and `d_hi` are distances along the left-hand normal,
 /// with `d_lo <= d_hi`; a centred stroke of thickness `t` is `(-t/2, t/2)`.
@@ -336,6 +345,9 @@ struct Rib {
 /// segment is a core quad between the edges' inner rows plus one quad per
 /// fringed edge, and consecutive segments share their ribs, so no two
 /// triangles of the band cover the same point.
+///
+/// A band with both offsets zero and both edges fringed is a hairline: the
+/// fringe alone draws it, one device pixel wide.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn tessellate_ribbon(
     points: &[[f32; 2]],
@@ -345,12 +357,47 @@ pub(super) fn tessellate_ribbon(
     closed: bool,
     join: crate::renderer::types::LineJoin,
     mitre_limit: f32,
-    cap: crate::renderer::types::PolylineCap,
+    cap: crate::renderer::types::LineCap,
     fringe: Fringe,
     colour: [f32; 4],
     _vp_w: f32,
     _vp_h: f32,
 ) -> Vec<crate::resources::OverlayTextVertex> {
+    tessellate_ribbon_scaled(
+        points,
+        None,
+        d_lo,
+        d_hi,
+        shift,
+        closed,
+        join,
+        mitre_limit,
+        cap,
+        fringe,
+        colour,
+    )
+}
+
+/// [`tessellate_ribbon`] with the offsets scaled per point: at point `i` the
+/// band runs from `d_lo * scales[i]` to `d_hi * scales[i]`. A stroke whose
+/// width varies along it is `(-0.5, 0.5)` scaled by the widths. `scales` must
+/// have one entry per point; any other length is ignored.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tessellate_ribbon_scaled(
+    points: &[[f32; 2]],
+    scales: Option<&[f32]>,
+    d_lo: f32,
+    d_hi: f32,
+    shift: [f32; 2],
+    closed: bool,
+    join: crate::renderer::types::LineJoin,
+    mitre_limit: f32,
+    cap: crate::renderer::types::LineCap,
+    fringe: Fringe,
+    colour: [f32; 4],
+) -> Vec<crate::resources::OverlayTextVertex> {
+    use crate::renderer::types::{LineCap, LineJoin};
+    let scales = scales.filter(|k| k.len() == points.len());
     // A point that repeats the one before it is a segment of no length, and its
     // normal is zero. At a corner that turns the joint into two square ends with
     // nothing between them, so the outer corner is missing. It says nothing about
@@ -360,27 +407,39 @@ pub(super) fn tessellate_ribbon(
     let repeats = points.windows(2).any(|w| same(w[0], w[1]))
         || (closed && points.len() > 1 && same(points[0], points[points.len() - 1]));
     let deduped: Vec<[f32; 2]>;
-    let points = if repeats {
+    let deduped_scales: Vec<f32>;
+    let (points, scales) = if repeats {
         let mut kept: Vec<[f32; 2]> = Vec::with_capacity(points.len());
-        for &p in points {
+        let mut kept_scales: Vec<f32> = Vec::with_capacity(points.len());
+        for (i, &p) in points.iter().enumerate() {
             if kept.last().is_none_or(|&q| !same(p, q)) {
                 kept.push(p);
+                kept_scales.push(scales.map_or(1.0, |k| k[i]));
             }
         }
         if closed && kept.len() > 1 && same(kept[0], kept[kept.len() - 1]) {
             kept.pop();
+            kept_scales.pop();
         }
         deduped = kept;
-        &deduped[..]
+        deduped_scales = kept_scales;
+        (&deduped[..], scales.map(|_| &deduped_scales[..]))
     } else {
-        points
+        (points, scales)
     };
     let n = points.len();
-    if n < 2 || d_hi <= d_lo {
+    let hairline = scales.is_none()
+        && d_lo == 0.0
+        && d_hi == 0.0
+        && fringe.lo == EdgeAa::Centred
+        && fringe.hi == EdgeAa::Centred;
+    if n < 2 || !(d_hi > d_lo || hairline) {
         return Vec::new();
     }
-    // Reach of the band from the centreline, used to place caps.
-    let half_t = d_lo.abs().max(d_hi.abs());
+    // A point's offset scale, which is never negative.
+    let k_at = |i: usize| scales.map_or(1.0, |k| k[i].max(0.0));
+    // Reach of the band from the centreline at a point, used to place caps.
+    let half_t_at = |i: usize| d_lo.abs().max(d_hi.abs()) * k_at(i);
 
     let normalize = |v: [f32; 2]| -> [f32; 2] {
         let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
@@ -397,11 +456,13 @@ pub(super) fn tessellate_ribbon(
     let dot = |a: [f32; 2], b: [f32; 2]| -> f32 { a[0] * b[0] + a[1] * b[1] };
     let length = |v: [f32; 2]| -> f32 { (v[0] * v[0] + v[1] * v[1]).sqrt() };
 
-    // The band's two edges at a rib whose outward direction is `nrm`. A
-    // one-sided band keeps its near edge on the path and moves the far one by
-    // the shift's component along `nrm`; a straddling band is a plain stroke.
-    let one_sided = d_lo >= 0.0 || d_hi <= 0.0;
-    let edges = |nrm: [f32; 2]| -> (f32, f32) {
+    // The band's two edges at point `i` on a rib whose outward direction is
+    // `nrm`. A one-sided band keeps its near edge on the path and moves the
+    // far one by the shift's component along `nrm`; a straddling band is a
+    // plain stroke.
+    let one_sided = !hairline && (d_lo >= 0.0 || d_hi <= 0.0);
+    let edges = |nrm: [f32; 2], i: usize| -> (f32, f32) {
+        let (d_hi, d_lo) = (d_hi * k_at(i), d_lo * k_at(i));
         if !one_sided || shift == [0.0, 0.0] {
             return (d_hi, d_lo);
         }
@@ -415,6 +476,9 @@ pub(super) fn tessellate_ribbon(
     // How far an edge's fringe may move in before it meets the other edge (or
     // the other edge's fringe), in the same units as the offsets.
     let inset_of = |hi: f32, lo: f32| -> f32 {
+        if hairline {
+            return HAIRLINE_INSET;
+        }
         let w = (hi - lo).max(0.0);
         if fringe.hi == EdgeAa::Centred && fringe.lo == EdgeAa::Centred {
             w * 0.5
@@ -450,7 +514,7 @@ pub(super) fn tessellate_ribbon(
         inset: inset_of(hi, lo),
     };
 
-    // Build "ribs": for each logical join, one or two cross-sections.
+    // Build "ribs": for each logical join, one or more cross-sections.
     let mut ribs: Vec<Rib> = Vec::with_capacity(n + 4);
 
     let iter_count = if closed { n + 1 } else { n };
@@ -477,7 +541,7 @@ pub(super) fn tessellate_ribbon(
 
         // On a closed path the joint at the first point is built twice, at the
         // start and again at the wrap. The wrap keeps only the rib the closing
-        // segment arrives at, so a bevel there is drawn once.
+        // segment arrives at, so a bevel or an arc there is drawn once.
         let wrap = closed && i == n;
         match (in_t, out_t) {
             (Some(t1), Some(t2)) => {
@@ -486,12 +550,14 @@ pub(super) fn tessellate_ribbon(
                 let bisect = normalize(add(n1, n2));
                 let cos_half = dot(n1, bisect).abs().max(1e-4);
                 let mitre_scale = 1.0 / cos_half;
+                // A turn too slight to show an arc is mitred whatever the join.
                 let use_mitre = match join {
-                    crate::renderer::types::LineJoin::Mitre => mitre_scale <= mitre_limit,
-                    crate::renderer::types::LineJoin::Bevel => false,
+                    LineJoin::Mitre => mitre_scale <= mitre_limit,
+                    LineJoin::Bevel => false,
+                    LineJoin::Round => dot(n1, n2) > 0.9999,
                 };
                 if use_mitre {
-                    let (hi, lo) = edges(bisect);
+                    let (hi, lo) = edges(bisect, cur_idx);
                     ribs.push(rib_along(cur, scale(bisect, mitre_scale), hi, lo));
                     continue;
                 }
@@ -501,11 +567,12 @@ pub(super) fn tessellate_ribbon(
                 // overlapping; two separate points there would lay one
                 // segment's corner (and its fringe) over the other's. A turn
                 // so sharp that the crossing falls beyond a segment's far end
-                // keeps the two points.
-                let (h1, l1) = edges(n1);
-                let (h2, l2) = edges(n2);
+                // keeps the two points. A round join adds ribs between the two
+                // that sweep the outside edge round an arc.
+                let (h1, l1) = edges(n1, cur_idx);
+                let (h2, l2) = edges(n2, cur_idx);
                 let hi_inside = dot(t2, n1) > 0.0;
-                let (hm, lm) = edges(bisect);
+                let (hm, lm) = edges(bisect, cur_idx);
                 let d_in = if hi_inside { hm } else { lm };
                 let reach = d_in.abs() * mitre_scale;
                 let shortest = prev
@@ -514,6 +581,19 @@ pub(super) fn tessellate_ribbon(
                     .min(next.map(|q| length(sub(q, cur))).unwrap_or(0.0));
                 let rib1 = rib_along(cur, n1, h1, l1);
                 let rib2 = rib_along(cur, n2, h2, l2);
+                let mut arc: Vec<Rib> = Vec::new();
+                if join == LineJoin::Round && !wrap {
+                    let turn = (n1[0] * n2[1] - n1[1] * n2[0]).atan2(dot(n1, n2));
+                    let radius = if hi_inside { l1.abs() } else { h1.abs() };
+                    let steps = round_steps(turn.abs(), radius);
+                    for k in 1..steps {
+                        let a = turn * k as f32 / steps as f32;
+                        let (sa, ca) = a.sin_cos();
+                        let nk = [n1[0] * ca - n1[1] * sa, n1[0] * sa + n1[1] * ca];
+                        let (hk, lk) = edges(nk, cur_idx);
+                        arc.push(rib_along(cur, nk, hk, lk));
+                    }
+                }
                 if bisect != [0.0, 0.0] && reach <= shortest {
                     let mdir = scale(bisect, mitre_scale);
                     let inner = rib_along(cur, mdir, hm, lm);
@@ -528,23 +608,25 @@ pub(super) fn tessellate_ribbon(
                     };
                     ribs.push(joined(rib1));
                     if !wrap {
+                        ribs.extend(arc.into_iter().map(joined));
                         ribs.push(joined(rib2));
                     }
                 } else {
                     ribs.push(rib1);
                     if !wrap {
+                        ribs.extend(arc);
                         ribs.push(rib2);
                     }
                 }
             }
             (Some(t1), None) => {
                 let n1 = perp_left(t1);
-                let (hi, lo) = edges(n1);
+                let (hi, lo) = edges(n1, cur_idx);
                 ribs.push(rib_along(cur, n1, hi, lo));
             }
             (None, Some(t2)) => {
                 let n2 = perp_left(t2);
-                let (hi, lo) = edges(n2);
+                let (hi, lo) = edges(n2, cur_idx);
                 ribs.push(rib_along(cur, n2, hi, lo));
             }
             (None, None) => {}
@@ -558,18 +640,19 @@ pub(super) fn tessellate_ribbon(
     // End tangents for cap placement (zero when the end segment is degenerate).
     let t_start = normalize(sub(points[1], points[0]));
     let t_end = normalize(sub(points[n - 1], points[n - 2]));
-    let round = cap == crate::renderer::types::PolylineCap::Round;
+    let (half_start, half_end) = (half_t_at(0), half_t_at(n - 1));
+    let round = cap == LineCap::Round;
 
     if !closed {
         // Square caps: push the endpoint ribs out along the tangent so the
-        // stroke rectangle extends `thickness / 2` beyond each endpoint.
-        if cap == crate::renderer::types::PolylineCap::Square {
+        // stroke rectangle extends half its width beyond each endpoint.
+        if cap == LineCap::Square {
             let first = &mut ribs[0];
-            first.hi.p = sub(first.hi.p, scale(t_start, half_t));
-            first.lo.p = sub(first.lo.p, scale(t_start, half_t));
+            first.hi.p = sub(first.hi.p, scale(t_start, half_start));
+            first.lo.p = sub(first.lo.p, scale(t_start, half_start));
             let last = ribs.last_mut().unwrap();
-            last.hi.p = add(last.hi.p, scale(t_end, half_t));
-            last.lo.p = add(last.lo.p, scale(t_end, half_t));
+            last.hi.p = add(last.hi.p, scale(t_end, half_end));
+            last.lo.p = add(last.lo.p, scale(t_end, half_end));
         }
         // A flat end's fringe: both end corners also move out along the end's
         // tangent, so the side fringes meet the one across the end on the
@@ -589,19 +672,22 @@ pub(super) fn tessellate_ribbon(
     let outer = |e: RibEdge, inset: f32| solid_vertex(e.p, colour, aa_outer(e.outer, inset));
 
     // Each pair of consecutive ribs is a core quad between the inner rows,
-    // plus a fringe quad on each fringed edge.
+    // plus a fringe quad on each fringed edge. A hairline's core has no area,
+    // so it is left out.
     let per_seg = 6 * (1 + fringe.hi.is_some() as usize + fringe.lo.is_some() as usize);
     let mut verts: Vec<crate::resources::OverlayTextVertex> =
         Vec::with_capacity((ribs.len() - 1) * per_seg + 64);
     for w in ribs.windows(2) {
         let (a, b) = (w[0], w[1]);
-        push_quad(
-            &mut verts,
-            inner(a.hi, a.inset),
-            inner(a.lo, a.inset),
-            inner(b.hi, b.inset),
-            inner(b.lo, b.inset),
-        );
+        if !hairline {
+            push_quad(
+                &mut verts,
+                inner(a.hi, a.inset),
+                inner(a.lo, a.inset),
+                inner(b.hi, b.inset),
+                inner(b.lo, b.inset),
+            );
+        }
         if fringe.hi.is_some() {
             push_quad(
                 &mut verts,
@@ -626,18 +712,18 @@ pub(super) fn tessellate_ribbon(
         return verts;
     }
     let ends = [
-        (ribs[0], points[0], scale(t_start, -1.0)),
-        (*ribs.last().unwrap(), points[n - 1], t_end),
+        (ribs[0], points[0], scale(t_start, -1.0), half_start),
+        (*ribs.last().unwrap(), points[n - 1], t_end, half_end),
     ];
     if round {
         // Round caps: a semicircle fan on the outside half of each endpoint,
         // from one edge of the end rib round to the other, so the fan's rim
         // starts and ends exactly on the rib.
-        let segs = 8;
-        for (rib, centre, outward) in ends {
+        for (rib, centre, outward, half_t) in ends {
             if outward == [0.0, 0.0] {
                 continue;
             }
+            let segs = 8;
             let normal = perp_left(outward);
             // Which rib edge the sweep starts from: the one on `normal`'s side.
             let (first, last) = if dot(sub(rib.hi.p, centre), normal) >= 0.0 {
@@ -671,7 +757,9 @@ pub(super) fn tessellate_ribbon(
             );
             for k in 0..segs {
                 let (r0, r1) = (rim(k), rim(k + 1));
-                verts.extend_from_slice(&[hub, inner(r0, rib.inset), inner(r1, rib.inset)]);
+                if !hairline {
+                    verts.extend_from_slice(&[hub, inner(r0, rib.inset), inner(r1, rib.inset)]);
+                }
                 if fringe.ends {
                     push_quad(
                         &mut verts,
@@ -686,7 +774,7 @@ pub(super) fn tessellate_ribbon(
     } else if fringe.ends {
         // The fringe across each flat end, between the end rib's inner and
         // outer rows.
-        for (rib, _, _) in ends {
+        for (rib, _, _, _) in ends {
             push_quad(
                 &mut verts,
                 inner(rib.hi, rib.inset),
@@ -697,6 +785,19 @@ pub(super) fn tessellate_ribbon(
         }
     }
     verts
+}
+
+/// How many steps an arc of `angle` radians at `radius` logical pixels is
+/// drawn in: few enough to stay cheap, enough that the chord stays within a
+/// tenth of a pixel of the arc at unit scale.
+fn round_steps(angle: f32, radius: f32) -> usize {
+    let step = if radius > 0.1 {
+        2.0 * (1.0 - 0.1 / radius).clamp(-1.0, 1.0).acos()
+    } else {
+        std::f32::consts::FRAC_PI_4
+    };
+    let step = step.clamp(0.05, std::f32::consts::FRAC_PI_4);
+    ((angle / step).ceil() as usize).clamp(1, 64)
 }
 
 /// Working point list and cumulative arc-length table for a polyline. For
@@ -748,6 +849,23 @@ pub(super) fn dash_subpaths(
     offset: f32,
     closed: bool,
 ) -> Vec<Vec<[f32; 2]>> {
+    dash_pieces(pts, cum, dash, gap, offset, closed)
+        .into_iter()
+        .map(|(points, _)| points)
+        .collect()
+}
+
+/// [`dash_subpaths`], with each sub-path's points paired with their arc
+/// lengths along the whole path, so anything carried per point (a width) can
+/// be read back at them.
+pub(super) fn dash_pieces(
+    pts: &[[f32; 2]],
+    cum: &[f32],
+    dash: f32,
+    gap: f32,
+    offset: f32,
+    closed: bool,
+) -> Vec<(Vec<[f32; 2]>, Vec<f32>)> {
     let total = *cum.last().unwrap_or(&0.0);
     if total <= 1e-4 {
         return Vec::new();
@@ -777,26 +895,52 @@ pub(super) fn dash_subpaths(
         && intervals.first().unwrap().0 <= 1e-4
         && total - intervals.last().unwrap().1 <= 1e-4;
 
-    let extract = |a: f32, b: f32| -> Vec<[f32; 2]> {
-        let mut sub = Vec::new();
-        sub.push(point_at_arc(pts, cum, a));
+    let extract = |a: f32, b: f32| -> (Vec<[f32; 2]>, Vec<f32>) {
+        let mut sub = vec![point_at_arc(pts, cum, a)];
+        let mut arcs = vec![a];
         for (i, &c) in cum.iter().enumerate() {
             if c > a + 1e-4 && c < b - 1e-4 {
                 sub.push(pts[i]);
+                arcs.push(c);
             }
         }
         sub.push(point_at_arc(pts, cum, b));
-        sub
+        arcs.push(b);
+        (sub, arcs)
     };
 
-    let mut subs: Vec<Vec<[f32; 2]>> = intervals.iter().map(|&(a, b)| extract(a, b)).collect();
+    let mut subs: Vec<(Vec<[f32; 2]>, Vec<f32>)> =
+        intervals.iter().map(|&(a, b)| extract(a, b)).collect();
     if merge_seam {
-        let first = subs.remove(0);
-        let last = subs.last_mut().unwrap();
-        last.pop(); // ends at `total`, same point as the first sub-path's start
+        let (first, first_arcs) = subs.remove(0);
+        let (last, last_arcs) = subs.last_mut().unwrap();
+        // It ends at `total`, the same point as the first sub-path's start.
+        last.pop();
+        last_arcs.pop();
         last.extend(first);
+        last_arcs.extend(first_arcs);
     }
     subs
+}
+
+/// The value of a per-point quantity at arc length `s`, interpolated between
+/// the points either side; `values` runs parallel to `cum`.
+pub(super) fn value_at_arc(values: &[f32], cum: &[f32], s: f32) -> f32 {
+    if values.is_empty() || values.len() != cum.len() {
+        return 0.0;
+    }
+    if values.len() == 1 {
+        return values[0];
+    }
+    let total = *cum.last().unwrap_or(&0.0);
+    let s = s.clamp(0.0, total);
+    let i = cum
+        .partition_point(|&c| c < s)
+        .saturating_sub(1)
+        .min(values.len() - 2);
+    let seg = (cum[i + 1] - cum[i]).max(1e-6);
+    let t = ((s - cum[i]) / seg).clamp(0.0, 1.0);
+    values[i] + (values[i + 1] - values[i]) * t
 }
 
 /// Emit a filled disc in screen pixel coordinates, with a fringe round its
@@ -918,31 +1062,80 @@ pub(super) fn resolved_stroke(
     })
 }
 
-/// Emit the stroke geometry for a polyline item, honouring its cap style and
-/// stroke pattern. `colour` must already have opacity applied.
+/// Emit the stroke geometry for a polyline item, honouring its cap style,
+/// stroke pattern, and per-point widths. `colour` must already have opacity
+/// applied.
 pub(super) fn emit_polyline_stroke(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     poly: &crate::renderer::types::OverlayPolylineItem,
     stroke: &crate::renderer::types::OverlayStroke,
     colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
+    _vp_w: f32,
+    _vp_h: f32,
+) {
+    emit_stroke_path(
+        verts,
+        &poly.points,
+        poly.closed,
+        poly.widths.as_deref(),
+        stroke,
+        colour,
+    );
+}
+
+/// Emit `stroke` along one path, honouring its cap, join, and pattern.
+/// `widths`, when given with one entry per point, replaces the stroke's width
+/// point by point. A stroke width of zero is a one-device-pixel hairline, and
+/// a negative one draws nothing. `colour` must already have opacity applied.
+///
+/// A dash pattern cuts the path into dashes first and strokes each dash, so
+/// each dash gets the caps and the joins inside it its own.
+pub(super) fn emit_stroke_path(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    points: &[[f32; 2]],
+    closed: bool,
+    widths: Option<&[f32]>,
+    stroke: &crate::renderer::types::OverlayStroke,
+    colour: [f32; 4],
 ) {
     use crate::renderer::types::StrokePattern;
-    match stroke.pattern {
-        StrokePattern::Solid => {
-            verts.extend(tessellate_polyline(
-                &poly.points,
-                stroke.width,
-                poly.closed,
-                stroke.join,
-                stroke.mitre_limit,
-                stroke.cap,
-                colour,
-                vp_w,
-                vp_h,
-            ));
+    let widths = widths.filter(|w| w.len() == points.len());
+    if widths.is_none() && !(stroke.width >= 0.0) {
+        return;
+    }
+    let piece = |verts: &mut Vec<crate::resources::OverlayTextVertex>,
+                 pts: &[[f32; 2]],
+                 ws: Option<&[f32]>,
+                 closed: bool| {
+        let (d, scales) = match ws {
+            Some(ws) => (0.5, Some(ws)),
+            None => (stroke.width * 0.5, None),
+        };
+        verts.extend(tessellate_ribbon_scaled(
+            pts,
+            scales,
+            -d,
+            d,
+            [0.0, 0.0],
+            closed,
+            stroke.join,
+            stroke.mitre_limit,
+            stroke.cap,
+            Fringe::ALL,
+            colour,
+        ));
+    };
+    // Widths along the arc-length table, which repeats the first point at the
+    // end of a closed path.
+    let arc_widths = |widths: &[f32]| {
+        let mut w = widths.to_vec();
+        if closed && points.len() >= 2 {
+            w.push(widths[0]);
         }
+        w
+    };
+    match stroke.pattern {
+        StrokePattern::Solid => piece(verts, points, widths, closed),
         StrokePattern::Dashed {
             dash_length,
             gap_length,
@@ -952,48 +1145,53 @@ pub(super) fn emit_polyline_stroke(
             // disappearing or looping forever. The 0.25 px floor bounds the
             // sub-path count on long paths.
             if dash_length <= 0.0 || gap_length <= 0.0 {
-                let solid = stroke.clone().with_pattern(StrokePattern::Solid);
-                emit_polyline_stroke(verts, poly, &solid, colour, vp_w, vp_h);
+                piece(verts, points, widths, closed);
                 return;
             }
             let dash = dash_length.max(0.25);
             let gap = gap_length.max(0.25);
-            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
-            for sub in dash_subpaths(&pts, &cum, dash, gap, offset, poly.closed) {
-                verts.extend(tessellate_polyline(
-                    &sub,
-                    stroke.width,
-                    false,
-                    stroke.join,
-                    stroke.mitre_limit,
-                    stroke.cap,
-                    colour,
-                    vp_w,
-                    vp_h,
-                ));
+            let (pts, cum) = polyline_arc_table(points, closed);
+            let along = widths.map(arc_widths);
+            for (sub, arcs) in dash_pieces(&pts, &cum, dash, gap, offset, closed) {
+                let ws: Option<Vec<f32>> = along
+                    .as_ref()
+                    .map(|w| arcs.iter().map(|&s| value_at_arc(w, &cum, s)).collect());
+                piece(verts, &sub, ws.as_deref(), false);
             }
         }
         StrokePattern::Dotted { spacing, offset } => {
-            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            let (pts, cum) = polyline_arc_table(points, closed);
             if pts.len() < 2 {
                 return;
             }
+            let along = widths.map(arc_widths);
             let total = *cum.last().unwrap();
             let spacing = spacing.max(0.5);
             let mut s = offset.rem_euclid(spacing);
             // On closed paths the point at `total` is the point at 0; skip it
             // so the seam doesn't get a doubled dot.
-            let limit = if poly.closed {
-                total - 1e-3
-            } else {
-                total + 1e-3
-            };
+            let limit = if closed { total - 1e-3 } else { total + 1e-3 };
             while s < limit {
                 let c = point_at_arc(&pts, &cum, s);
-                emit_disc(verts, c, stroke.width * 0.5, colour, vp_w, vp_h);
+                let width = along
+                    .as_ref()
+                    .map_or(stroke.width, |w| value_at_arc(w, &cum, s));
+                emit_disc(verts, c, width * 0.5, colour, 0.0, 0.0);
                 s += spacing;
             }
         }
+    }
+}
+
+/// How far an analytic line's quad grows past its box: half the thickness,
+/// which covers a round cap, or half the thickness times root two for a square
+/// cap, whose corners reach that far along the box's axes.
+pub(super) fn line_quad_reach(thickness: f32, cap: crate::renderer::types::LineCap) -> f32 {
+    let half = thickness * 0.5;
+    if cap == crate::renderer::types::LineCap::Square {
+        half * std::f32::consts::SQRT_2
+    } else {
+        half
     }
 }
 
@@ -1127,12 +1325,12 @@ pub(super) fn apply_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
 mod stroke_tests {
     use super::*;
     use crate::renderer::types::{
-        LineJoin, OverlayPolylineItem, OverlayStroke, PolylineCap, StrokePattern,
+        LineCap, LineJoin, OverlayPolylineItem, OverlayStroke, StrokePattern,
     };
 
     const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
-    fn line_item(pattern: StrokePattern, cap: PolylineCap) -> OverlayPolylineItem {
+    fn line_item(pattern: StrokePattern, cap: LineCap) -> OverlayPolylineItem {
         let mut item = OverlayPolylineItem::default();
         item.points = vec![[0.0, 0.0], [100.0, 0.0]];
         item.stroke = Some(
@@ -1192,9 +1390,9 @@ mod stroke_tests {
                 100.0,
             )
         };
-        let butt = tess(PolylineCap::Butt);
-        let square = tess(PolylineCap::Square);
-        let round = tess(PolylineCap::Round);
+        let butt = tess(LineCap::Butt);
+        let square = tess(LineCap::Square);
+        let round = tess(LineCap::Round);
         // One segment: a core quad and a fringe quad per edge, plus a fringe
         // quad across each flat end.
         assert_eq!(butt.len(), 18 + 2 * 6);
@@ -1222,7 +1420,7 @@ mod stroke_tests {
                 false,
                 LineJoin::Mitre,
                 4.0,
-                PolylineCap::Butt,
+                LineCap::Butt,
                 WHITE,
                 100.0,
                 100.0,
@@ -1265,7 +1463,7 @@ mod stroke_tests {
             false,
             LineJoin::Mitre,
             4.0,
-            PolylineCap::Butt,
+            LineCap::Butt,
             WHITE,
             100.0,
             100.0,
@@ -1329,7 +1527,7 @@ mod stroke_tests {
             false,
             LineJoin::Mitre,
             4.0,
-            PolylineCap::Butt,
+            LineCap::Butt,
             WHITE,
             100.0,
             100.0,
@@ -1348,7 +1546,7 @@ mod stroke_tests {
             false,
             LineJoin::Bevel,
             4.0,
-            PolylineCap::Butt,
+            LineCap::Butt,
             WHITE,
             100.0,
             100.0,
@@ -1391,7 +1589,7 @@ mod stroke_tests {
                 spacing: 10.0,
                 offset: 0.0,
             },
-            PolylineCap::Butt,
+            LineCap::Butt,
         );
         let stroke = item.stroke.clone().unwrap();
         emit_polyline_stroke(&mut verts, &item, &stroke, WHITE, 100.0, 100.0);
@@ -1409,7 +1607,7 @@ mod stroke_tests {
                 gap_length: 0.0,
                 offset: 0.0,
             },
-            PolylineCap::Butt,
+            LineCap::Butt,
         );
         let dashed_stroke = dashed_item.stroke.clone().unwrap();
         emit_polyline_stroke(
@@ -1421,10 +1619,294 @@ mod stroke_tests {
             100.0,
         );
         let mut solid = Vec::new();
-        let solid_item = line_item(StrokePattern::Solid, PolylineCap::Butt);
+        let solid_item = line_item(StrokePattern::Solid, LineCap::Butt);
         let solid_stroke = solid_item.stroke.clone().unwrap();
         emit_polyline_stroke(&mut solid, &solid_item, &solid_stroke, WHITE, 100.0, 100.0);
         assert_eq!(dashed.len(), solid.len());
+    }
+
+    #[test]
+    fn dashes_are_cut_at_the_pattern_lengths_with_the_offset() {
+        // dash 10, gap 5, offset 3: the pattern starts 3 into its first dash,
+        // so the dashes run over [0, 7), [12, 22), [27, 37), ...
+        let (pts, cum) = polyline_arc_table(&[[0.0, 0.0], [100.0, 0.0]], false);
+        let pieces = dash_pieces(&pts, &cum, 10.0, 5.0, 3.0, false);
+        let spans: Vec<(f32, f32)> = pieces
+            .iter()
+            .map(|(p, arcs)| {
+                assert!((p.first().unwrap()[0] - arcs[0]).abs() < 1e-4);
+                assert!((p.last().unwrap()[0] - arcs.last().unwrap()).abs() < 1e-4);
+                (arcs[0], *arcs.last().unwrap())
+            })
+            .collect();
+        let expect = [
+            (0.0, 7.0),
+            (12.0, 22.0),
+            (27.0, 37.0),
+            (42.0, 52.0),
+            (57.0, 67.0),
+            (72.0, 82.0),
+            (87.0, 97.0),
+        ];
+        assert_eq!(spans.len(), expect.len(), "{spans:?}");
+        for (s, e) in spans.iter().zip(expect) {
+            assert!(
+                (s.0 - e.0).abs() < 1e-3 && (s.1 - e.1).abs() < 1e-3,
+                "{spans:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_open_vector_subpath_strokes_open() {
+        use crate::renderer::types::SubPath;
+        // A "U" whose fill would close it along the top edge.
+        let u = SubPath::new([0.0, 0.0])
+            .line_to([0.0, 50.0])
+            .line_to([50.0, 50.0])
+            .line_to([50.0, 0.0]);
+        let flat = super::super::overlay_vector::flatten_for_stroke(&[u.clone()], 0.2);
+        assert_eq!(flat.len(), 1);
+        assert!(!flat[0].1, "an open subpath must stay open");
+        assert_eq!(flat[0].0.len(), 4);
+        let closed = super::super::overlay_vector::flatten_for_stroke(&[u.close()], 0.2);
+        assert!(closed[0].1);
+        assert_eq!(closed[0].0.len(), 4);
+
+        let stroke = OverlayStroke::new(4.0, Colour::WHITE);
+        // Whether any triangle covers the middle of the closing edge.
+        let along_top = |verts: &[crate::resources::OverlayTextVertex]| {
+            let q = [25.0f32, 0.0f32];
+            verts.chunks_exact(3).any(|t| {
+                let [a, b, c] = [t[0].position, t[1].position, t[2].position];
+                let side = |p: [f32; 2], r: [f32; 2]| {
+                    (r[0] - p[0]) * (q[1] - p[1]) - (r[1] - p[1]) * (q[0] - p[0])
+                };
+                let area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+                if area.abs() < 1e-6 {
+                    return false;
+                }
+                let (d1, d2, d3) = (side(a, b), side(b, c), side(c, a));
+                let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+                let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+                !(neg && pos)
+            })
+        };
+        let mut open_verts = Vec::new();
+        emit_stroke_path(&mut open_verts, &flat[0].0, false, None, &stroke, WHITE);
+        let mut closed_verts = Vec::new();
+        emit_stroke_path(&mut closed_verts, &closed[0].0, true, None, &stroke, WHITE);
+        assert!(
+            !along_top(&open_verts),
+            "the open stroke drew its closing edge"
+        );
+        assert!(along_top(&closed_verts));
+        assert!(open_verts.len() < closed_verts.len());
+    }
+
+    /// `hairline_offset` in `overlay_text.wgsl`: the local offset of a
+    /// hairline's outer row under the group linear map `m` (row-major).
+    fn hairline_offset(d: [f32; 2], m: [f32; 4], ppp: f32) -> [f32; 2] {
+        let det = m[0] * m[3] - m[1] * m[2];
+        let nt = [
+            (d[0] * m[3] - d[1] * m[2]) / det,
+            (d[1] * m[0] - d[0] * m[1]) / det,
+        ];
+        let len = (nt[0] * nt[0] + nt[1] * nt[1]).sqrt();
+        let k = (d[0] * d[0] + d[1] * d[1]).sqrt() / (len * ppp);
+        let ns = [nt[0] * k, nt[1] * k];
+        [
+            (m[3] * ns[0] - m[1] * ns[1]) / det,
+            (m[0] * ns[1] - m[2] * ns[0]) / det,
+        ]
+    }
+
+    /// A hairline vertex's device position and coverage under the group map
+    /// `m` at `ppp` pixels per point.
+    fn place_hairline(
+        v: &crate::resources::OverlayTextVertex,
+        m: [f32; 4],
+        ppp: f32,
+    ) -> ([f32; 2], f32) {
+        assert!(v.aa[3] < 0.0, "not a hairline vertex");
+        let (p, c) = if v.aa[2] > 0.5 {
+            let o = hairline_offset([v.aa[0], v.aa[1]], m, ppp);
+            ([v.position[0] + o[0], v.position[1] + o[1]], 0.0)
+        } else {
+            (v.position, 1.0)
+        };
+        let g = [m[0] * p[0] + m[1] * p[1], m[2] * p[0] + m[3] * p[1]];
+        ([g[0] * ppp, g[1] * ppp], c)
+    }
+
+    /// The device-pixel cross-section of the middle of a hairline from
+    /// `(10, 50)` to `(90, 50)`, item-transformed by `item`, under the group
+    /// map `m`: the rows' distances along the line's device normal, and the
+    /// coverage integral across it.
+    fn hairline_section(
+        item: Option<OverlayRotation>,
+        m: [f32; 4],
+        ppp: f32,
+    ) -> (Vec<(f32, f32)>, f32) {
+        let mut verts = tessellate_polyline(
+            &[[10.0, 50.0], [50.0, 50.0], [90.0, 50.0]],
+            0.0,
+            false,
+            LineJoin::Mitre,
+            4.0,
+            LineCap::Butt,
+            WHITE,
+            100.0,
+            100.0,
+        );
+        assert!(!verts.is_empty());
+        let mid: Vec<usize> = (0..verts.len())
+            .filter(|&i| (verts[i].position[0] - 50.0).abs() < 1e-4)
+            .collect();
+        rotate_vertices_from(&mut verts, 0, item);
+        let centre = place_hairline(&verts[mid[0]], m, ppp).0;
+        // The device normal of the line, which runs along x before any map.
+        let dir = |p: [f32; 2]| {
+            let q = item.map_or(p, |r| r.apply(p));
+            [m[0] * q[0] + m[1] * q[1], m[2] * q[0] + m[3] * q[1]]
+        };
+        let (a, b) = (dir([10.0, 50.0]), dir([90.0, 50.0]));
+        let t = [b[0] - a[0], b[1] - a[1]];
+        let tl = (t[0] * t[0] + t[1] * t[1]).sqrt();
+        let n = [-t[1] / tl, t[0] / tl];
+        let mut rows: Vec<(f32, f32)> = mid
+            .iter()
+            .map(|&i| {
+                let (p, c) = place_hairline(&verts[i], m, ppp);
+                ((p[0] - centre[0]) * n[0] + (p[1] - centre[1]) * n[1], c)
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+        rows.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
+        let integral = rows
+            .windows(2)
+            .map(|w| (w[1].0 - w[0].0) * (w[0].1 + w[1].1) * 0.5)
+            .sum::<f32>();
+        (rows, integral)
+    }
+
+    #[test]
+    fn a_hairline_is_one_device_pixel_at_any_scale() {
+        let check = |rows: Vec<(f32, f32)>, integral: f32, what: &str| {
+            assert_eq!(rows.len(), 3, "{what}: {rows:?}");
+            for (r, e) in rows.iter().zip([(-1.0, 0.0), (0.0, 1.0), (1.0, 0.0)]) {
+                assert!(
+                    (r.0 - e.0).abs() < 1e-3 && (r.1 - e.1).abs() < 1e-6,
+                    "{what}: {rows:?}"
+                );
+            }
+            assert!((integral - 1.0).abs() < 1e-3, "{what}: weight {integral}");
+        };
+        // Group scale and pixels per point.
+        for k in [1.0, 3.0, 0.5] {
+            for ppp in [1.0, 2.0] {
+                let (rows, w) = hairline_section(None, [k, 0.0, 0.0, k], ppp);
+                check(rows, w, &format!("group scale {k} at ppp {ppp}"));
+            }
+        }
+        // A group stretch and a skew.
+        let (rows, w) = hairline_section(None, [1.0, 0.0, 0.0, 3.0], 1.0);
+        check(rows, w, "stretch");
+        let (rows, w) = hairline_section(None, [2.0, 0.5, 0.3, 1.5], 1.0);
+        check(rows, w, "skew");
+        // An item scale baked into the vertices.
+        for k in [3.0, 0.5] {
+            let mut t = crate::renderer::types::OverlayTransform::IDENTITY;
+            t.scale = k;
+            let (rows, w) = hairline_section(
+                OverlayRotation::new(&t, [50.0, 50.0]),
+                [1.0, 0.0, 0.0, 1.0],
+                1.0,
+            );
+            check(rows, w, &format!("item scale {k}"));
+        }
+    }
+
+    #[test]
+    fn square_caps_extend_by_half_the_width() {
+        let tess = |cap| {
+            tessellate_polyline(
+                &[[10.0, 50.0], [90.0, 50.0]],
+                4.0,
+                false,
+                LineJoin::Mitre,
+                4.0,
+                cap,
+                WHITE,
+                100.0,
+                100.0,
+            )
+        };
+        let span = |v: &[crate::resources::OverlayTextVertex]| {
+            v.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| {
+                (lo.min(v.position[0]), hi.max(v.position[0]))
+            })
+        };
+        assert_eq!(span(&tess(LineCap::Butt)), (10.0, 90.0));
+        assert_eq!(span(&tess(LineCap::Square)), (8.0, 92.0));
+    }
+
+    #[test]
+    fn widths_per_point_set_the_stroke_width_along_the_line() {
+        let item = OverlayPolylineItem::new(vec![[10.0, 50.0], [50.0, 50.0], [90.0, 50.0]])
+            .with_thickness(1.0)
+            .with_widths(vec![2.0, 6.0, 10.0]);
+        let mut verts = Vec::new();
+        emit_polyline_stroke(
+            &mut verts,
+            &item,
+            item.stroke.as_ref().unwrap(),
+            WHITE,
+            100.0,
+            100.0,
+        );
+        let half_at = |x: f32| {
+            verts
+                .iter()
+                .filter(|v| (v.position[0] - x).abs() < 1e-4)
+                .map(|v| (v.position[1] - 50.0).abs())
+                .fold(0.0f32, f32::max)
+        };
+        assert!((half_at(10.0) - 1.0).abs() < 1e-4);
+        assert!((half_at(50.0) - 3.0).abs() < 1e-4);
+        assert!((half_at(90.0) - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_round_join_sweeps_the_outer_corner() {
+        let corner = |join| {
+            tessellate_polyline(
+                &[[50.0, 10.0], [50.0, 50.0], [90.0, 50.0]],
+                4.0,
+                false,
+                join,
+                4.0,
+                LineCap::Butt,
+                WHITE,
+                100.0,
+                100.0,
+            )
+        };
+        let near = |verts: &[crate::resources::OverlayTextVertex], p: [f32; 2]| {
+            verts
+                .iter()
+                .any(|v| (v.position[0] - p[0]).abs() < 1e-3 && (v.position[1] - p[1]).abs() < 1e-3)
+        };
+        // The outer corner is round the point (50, 50) at the half-width, 2:
+        // some vertex sits on that arc strictly between its two ends.
+        let round = corner(LineJoin::Round);
+        let on_arc = round.iter().any(|v| {
+            let d = [v.position[0] - 50.0, v.position[1] - 50.0];
+            ((d[0] * d[0] + d[1] * d[1]).sqrt() - 2.0).abs() < 1e-3 && d[0] < -0.1 && d[1] > 0.1
+        });
+        assert!(on_arc, "no arc at the corner");
+        assert!(!near(&round, [48.0, 52.0]), "a round join drew the mitre");
+        assert!(near(&corner(LineJoin::Mitre), [48.0, 52.0]));
     }
 }
 
@@ -1532,7 +2014,7 @@ pub(super) fn emit_contour_band(
         true,
         crate::renderer::types::LineJoin::Mitre,
         CONTOUR_BAND_MITRE_LIMIT,
-        crate::renderer::types::PolylineCap::Butt,
+        crate::renderer::types::LineCap::Butt,
         Fringe::band(lo, hi, false),
         colour,
         vp_w,
@@ -1611,7 +2093,7 @@ fn emit_stroke_outer_shadow(
                 closed,
                 stroke.join,
                 stroke.mitre_limit,
-                crate::renderer::types::PolylineCap::Butt,
+                crate::renderer::types::LineCap::Butt,
                 // The ends meet the wrap `emit_stroke_end_shadow` draws.
                 Fringe::band(lo, hi, false),
                 colour,
@@ -1680,12 +2162,12 @@ fn emit_stroke_end_shadow(
     points: &[[f32; 2]],
     half: f32,
     width: f32,
-    cap: crate::renderer::types::PolylineCap,
+    cap: crate::renderer::types::LineCap,
     colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
-    use crate::renderer::types::PolylineCap;
+    use crate::renderer::types::LineCap;
     let n = points.len();
     if n < 2 {
         return;
@@ -1717,12 +2199,12 @@ fn emit_stroke_end_shadow(
         }
         let nrm = [-out[1], out[0]];
         match cap {
-            PolylineCap::Round => {
+            LineCap::Round => {
                 emit_half_ring(verts, p, out, half, half + width, colour, vp_w, vp_h);
             }
-            PolylineCap::Butt | PolylineCap::Square => {
+            LineCap::Butt | LineCap::Square => {
                 // A square cap puts the flat end half a thickness further on.
-                let e = if cap == PolylineCap::Square {
+                let e = if cap == LineCap::Square {
                     [p[0] + out[0] * half, p[1] + out[1] * half]
                 } else {
                     p
@@ -1886,7 +2368,7 @@ pub(super) fn emit_polyline_inner_shadow(
                     poly.closed,
                     crate::renderer::types::LineJoin::Mitre,
                     CONTOUR_BAND_MITRE_LIMIT,
-                    crate::renderer::types::PolylineCap::Butt,
+                    crate::renderer::types::LineCap::Butt,
                     fringe,
                     colour,
                     vp_w,
@@ -2040,11 +2522,28 @@ pub(super) fn rotate_vertices_from(
     // A fringe is measured in device pixels, so its direction turns with the
     // item but keeps its length, and the inset limit (in the item's units)
     // scales with it.
-    let sigma = (m[0][0] * m[1][1] - m[0][1] * m[1][0]).abs().sqrt();
+    let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    let sigma = det.abs().sqrt();
     let inv_sigma = if sigma > 1e-6 { 1.0 / sigma } else { 0.0 };
     for v in &mut verts[from..] {
         v.position = r.apply(v.position);
-        if v.aa[2] != 0.0 {
+        if v.aa[2] != 0.0 && v.aa[3] < 0.0 {
+            // A hairline's direction is a normal, which maps by the inverse
+            // transpose; it keeps its length so it still moves one pixel.
+            let [dx, dy, side, inset] = v.aa;
+            let len = (dx * dx + dy * dy).sqrt();
+            let t = if det.abs() > 1e-12 {
+                [
+                    (m[1][1] * dx - m[1][0] * dy) / det,
+                    (m[0][0] * dy - m[0][1] * dx) / det,
+                ]
+            } else {
+                [0.0, 0.0]
+            };
+            let tl = (t[0] * t[0] + t[1] * t[1]).sqrt();
+            let k = if tl > 1e-12 { len / tl } else { 0.0 };
+            v.aa = [t[0] * k, t[1] * k, side, inset];
+        } else if v.aa[2] != 0.0 {
             let [dx, dy, side, inset] = v.aa;
             v.aa = [
                 (m[0][0] * dx + m[0][1] * dy) * inv_sigma,
