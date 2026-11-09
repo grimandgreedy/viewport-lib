@@ -270,15 +270,16 @@ pub use interaction::input::{
 };
 // New input pipeline : re-exported at crate root for convenience.
 pub use camera::controllers::{
-    FirstPersonCameraController, OrbitCameraController, ThirdPersonCameraController,
-    wish_xy_from_actions,
+    Camera2d, Camera2dController, FirstPersonCameraController, OrbitCameraController, Plane2d,
+    Rect2d, ThirdPersonCameraController, wish_xy_from_actions,
 };
 pub use interaction::input::{
     ActionFrame, BindingPreset, ButtonState, CursorShape, ImeEvent, InputOwnership,
     KeyboardOwnership, ModifiersMatch, NavigationActions, PointerFrame, PointerOwnership,
     ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase, TouchSettings, ViewportBinding,
     ViewportContext, ViewportEvent, ViewportGesture, ViewportInput, forward_to_viewport,
-    viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+    planar_bindings, planar_camera_bindings, preset_bindings, viewer_bindings,
+    viewport_camera_bindings, viewport_default_bindings,
 };
 
 pub use interaction::widgets::{

@@ -10,7 +10,7 @@ use super::action_frame::{ActionFrame, NavigationActions, PointerFrame, Resolved
 use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::{KeyboardOwnership, ViewportContext, forward_to_viewport};
 use super::event::{ButtonState, ScrollUnits, TouchId, TouchPhase, ViewportEvent};
-use super::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
+use super::preset::{BindingPreset, preset_bindings};
 use super::touch::TouchSettings;
 use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
@@ -311,13 +311,7 @@ impl ViewportInput {
 
     /// Create a resolver for a named [`BindingPreset`].
     pub fn from_preset(preset: BindingPreset) -> Self {
-        let bindings = match preset {
-            BindingPreset::Default => viewport_default_bindings(),
-            BindingPreset::Viewer => viewer_bindings(),
-            // BindingPreset is non_exhaustive; an unknown preset gets the default set.
-            _ => viewport_default_bindings(),
-        };
-        Self::new(bindings)
+        Self::new(preset_bindings(preset))
     }
 
     /// Append bindings to the set, keeping the ones already there.
@@ -1028,7 +1022,7 @@ mod tests {
     use super::*;
     use crate::input::context::{InputOwnership, PointerOwnership};
     use crate::input::event::ButtonState;
-    use crate::input::preset::viewport_default_bindings;
+    use crate::input::preset::{viewer_bindings, viewport_default_bindings};
     use crate::input::viewport_binding::{ViewportBinding, ViewportGesture};
 
     fn ctx(pointer: PointerOwnership, keyboard: KeyboardOwnership) -> ViewportContext {

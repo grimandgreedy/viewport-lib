@@ -9,11 +9,11 @@
 //!    `&mut Camera` and produces a new pose. This is the half a custom controller
 //!    replaces; see [`CameraController`].
 //!
-//! The built-in [`controllers`] (orbit, first/third-person, turntable, and the
-//! `dt`-driven animator) are the batteries-included defaults. The winit/egui
-//! [adapters](input::adapters) that translate native events are optional
-//! features (`winit-adapter`, `egui-adapter`), so the crate builds with no
-//! framework dependency by default.
+//! The built-in [`controllers`] (orbit, first/third-person, turntable, the flat
+//! 2D camera, and the `dt`-driven animator) are the batteries-included
+//! defaults. The winit/egui [adapters](input::adapters) that translate native
+//! events are optional features (`winit-adapter`, `egui-adapter`), so the crate
+//! builds with no framework dependency by default.
 //!
 //! This crate carries no `wgpu` and no renderer. It stands on
 //! `viewport-lib-types` (the input vocabulary and the `Camera` type) plus `glam`.
@@ -81,8 +81,8 @@ pub mod prelude {
     //! [`crate::controllers`] for the rest.
     pub use crate::CameraController;
     pub use crate::controllers::{
-        CameraAnimator, FirstPersonCameraController, OrbitCameraController,
-        ThirdPersonCameraController, TurntableController,
+        Camera2d, Camera2dController, CameraAnimator, FirstPersonCameraController,
+        OrbitCameraController, Plane2d, ThirdPersonCameraController, TurntableController,
     };
     pub use crate::input::ViewportInput;
     pub use viewport_lib_types::camera::Camera;
