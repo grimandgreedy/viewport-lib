@@ -1,4 +1,4 @@
-//! Item types: point clouds, sprites, curves, volumes, vector and tensor
+//! Item types: point clouds, sprites, tilemaps, curves, volumes, vector and tensor
 //! fields and the rest.
 //!
 //! Each type is an [`ItemTypePlugin`](viewport_lib::plugin_api::ItemTypePlugin)
@@ -171,6 +171,7 @@ pub mod sprite;
 pub mod surface_contour;
 pub mod surface_lic;
 pub mod tensor_field;
+pub mod tilemap;
 pub mod vector_field;
 pub mod volume;
 pub mod volume_surface_slice;
@@ -207,6 +208,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(surface_contour::shader_sources());
     all.extend(surface_lic::shader_sources());
     all.extend(tensor_field::shader_sources());
+    all.extend(tilemap::shader_sources());
     all.extend(vector_field::shader_sources());
     all.extend(volume::shader_sources());
     all.extend(volume_surface_slice::shader_sources());
@@ -265,6 +267,8 @@ pub fn install(
     register(Box::new(
         external_instances::ExternalInstancesPlugin::default(),
     ));
+    // Before sprites, so a blended tile layer draws under painter sprites.
+    register(Box::new(tilemap::TilemapPlugin::default()));
     register(Box::new(sprite::SpritePlugin::default()));
     register(Box::new(gpu_particles::GpuParticlesPlugin::default()));
     // Scatter composites over the finished scene, so it registers after every

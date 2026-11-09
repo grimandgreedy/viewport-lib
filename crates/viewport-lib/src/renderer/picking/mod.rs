@@ -312,9 +312,10 @@ impl ViewportRenderer {
                 Some(a + ab * t.clamp(0.0, 1.0))
             }
             // The hit point already lies on these features.
-            SubObjectRef::Face(_) | SubObjectRef::Splat(_) | SubObjectRef::Instance(_) => {
-                Some(world_pos)
-            }
+            SubObjectRef::Face(_)
+            | SubObjectRef::Splat(_)
+            | SubObjectRef::Instance(_)
+            | SubObjectRef::Tile { .. } => Some(world_pos),
             // No single snap point.
             SubObjectRef::Cell(_)
             | SubObjectRef::Voxel(_)

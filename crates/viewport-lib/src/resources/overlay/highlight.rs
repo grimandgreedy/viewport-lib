@@ -518,6 +518,8 @@ impl DeviceResources {
                             }
                         }
                     }
+                    // The overlay has no lookup for a tilemap's cells.
+                    SubObjectRef::Tile { .. } => {}
                 }
             }
         } // end if let Some(sel)

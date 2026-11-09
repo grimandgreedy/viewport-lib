@@ -33,6 +33,7 @@ pub mod shadows;
 pub mod skinning;
 pub mod sprites_2d;
 pub mod textures;
+pub mod tilemap;
 pub mod tone_mapping;
 
 use glam::{Mat4, Quat, Vec3};
@@ -103,6 +104,8 @@ pub struct BuiltScene {
     pub ribbon_items: Vec<RibbonItem>,
     /// Sprite (billboard) items.
     pub sprite_items: Vec<SpriteItem>,
+    /// Tilemap layers, each naming a map the build uploaded.
+    pub tilemaps: Vec<viewport_lib_plugins::item_types::tilemap::TilemapItem>,
     /// GPU particle systems advanced and drawn each frame. The simulation runs
     /// on the GPU and carries state between frames, so a scene using these is
     /// only reproducible because the emit RNG is seeded from a frame counter
@@ -258,6 +261,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.ribbon_items.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::sprite::SpriteItem>() =
         scene.sprite_items.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::tilemap::TilemapItem>() =
+        scene.tilemaps.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>() =
         scene.gpu_particle_systems.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>() = scene.volumes.clone();
@@ -1104,6 +1109,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(tone_mapping::scenes());
     scenes.extend(occlusion::scenes());
     scenes.extend(sprites_2d::scenes());
+    scenes.extend(tilemap::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

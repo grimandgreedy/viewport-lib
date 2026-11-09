@@ -68,6 +68,10 @@ name = "winit-sprites-2d"
 path = "examples/winit_sprites_2d/main.rs"
 
 [[example]]
+name = "winit-tilemap-2d"
+path = "examples/winit_tilemap_2d/main.rs"
+
+[[example]]
 name = "winit-basic-interaction"
 path = "examples/winit_basic_interaction/main.rs"
 
