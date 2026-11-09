@@ -2,6 +2,7 @@
 //! shapes.
 
 use super::*;
+use crate::resources::overlay::font::GlyphGrid;
 use crate::resources::overlay::glyph_style::GlyphStyle;
 
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
@@ -1477,24 +1478,21 @@ impl ViewportRenderer {
                         continue;
                     }
 
-                    let layout = if let Some(max_w) = label.max_width {
-                        self.resources.content.glyph_atlas.layout_text_wrapped(
+                    // Shape once; each layer places the same glyphs.
+                    let shaped = if let Some(max_w) = label.max_width {
+                        self.resources.content.glyph_atlas.shape_text_wrapped(
                             &label.text,
                             label.text_style.size,
                             label.text_style.font,
                             max_w,
                             ppp,
-                            device,
-                            GlyphStyle::PLAIN,
                         )
                     } else {
-                        self.resources.content.glyph_atlas.layout_text(
+                        self.resources.content.glyph_atlas.shape_text(
                             &label.text,
                             label.text_style.size,
                             label.text_style.font,
                             ppp,
-                            device,
-                            GlyphStyle::PLAIN,
                         )
                     };
 
@@ -1505,12 +1503,12 @@ impl ViewportRenderer {
                         .glyph_atlas
                         .font_ascent(font_index, label.text_style.size);
 
-                    let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
+                    let align_offset = label.anchoring.align.x.align_shift(shaped.total_width);
                     let align_offset_y = label
                         .anchoring
                         .align
                         .y
-                        .align_shift(layout.height, Some(ascent));
+                        .align_shift(shaped.height, Some(ascent));
 
                     let text_x = anchor_px[0] + align_offset + label.transform.translate[0];
                     let text_y = anchor_px[1] + align_offset_y + label.transform.translate[1];
@@ -1519,22 +1517,23 @@ impl ViewportRenderer {
 
                     // A label is one range: its glyphs and their shadow layers,
                     // turned together about the laid-out box.
-                    let rot = OverlayRotation::new(
-                        &label.transform,
-                        OverlayRotation::pivot_point(
-                            [text_x, text_y],
-                            [layout.total_width, layout.height],
-                            label.transform.pivot,
-                        ),
+                    let pivot = OverlayRotation::pivot_point(
+                        [text_x, text_y],
+                        [shaped.total_width, shaped.height],
+                        label.transform.pivot,
                     );
+                    let rot = OverlayRotation::new(&label.transform, pivot);
+                    // The transform's scale picks the raster size, so a scaled
+                    // label is rasterised at its drawn size rather than magnified.
+                    let grid = GlyphGrid::for_transform(label.transform.linear(), pivot, ppp);
 
                     let text_start = batch.len();
 
                     // Shadow layers, back to front, behind the glyphs. Each is a
-                    // re-layout against a styled atlas cell, so the dilation and
+                    // placement against a styled atlas cell, so the dilation and
                     // fade are baked per glyph rather than faked with offset
-                    // copies. Layout is identical to the plain pass, so the
-                    // shadow stays registered with the text it backs.
+                    // copies. The glyphs are the plain pass's, so the shadow
+                    // stays registered with the text it backs.
                     for layer in label
                         .style
                         .shadows
@@ -1543,54 +1542,46 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
-                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+                            [layer.offset[0] * grid.scale, layer.offset[1] * grid.scale],
                         );
-                        let sl = if let Some(max_w) = label.max_width {
-                            self.resources.content.glyph_atlas.layout_text_wrapped(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                max_w,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        } else {
-                            self.resources.content.glyph_atlas.layout_text(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        };
+                        let origin = [text_x + layer.offset[0], text_y + ascent + layer.offset[1]];
+                        let quads = self.resources.content.glyph_atlas.place_text(
+                            &shaped,
+                            label.text_style.size,
+                            label.text_style.font,
+                            origin,
+                            grid,
+                            device,
+                            style,
+                        );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
-                        emit_glyph_quads(
-                            &mut batch,
-                            &sl.quads,
-                            text_x + layer.offset[0],
-                            text_y + ascent + layer.offset[1],
-                            col,
-                            vp_w,
-                            vp_h,
-                        );
+                        emit_glyph_quads(&mut batch, &quads, origin[0], origin[1], col, vp_w, vp_h);
                     }
 
                     // The glyphs start white and `style.fill` multiplies into
                     // them below, so a label has one colour source.
                     let text_colour = apply_opacity([1.0, 1.0, 1.0, 1.0], opacity);
                     // The label origin is the top-left of the text box; add the
-                    // ascent to reach the first baseline the quads are relative to.
+                    // ascent to reach the first baseline the glyphs are relative to.
+                    let baseline = [text_x, text_y + ascent];
+                    let quads = self.resources.content.glyph_atlas.place_text(
+                        &shaped,
+                        label.text_style.size,
+                        label.text_style.font,
+                        baseline,
+                        grid,
+                        device,
+                        GlyphStyle::PLAIN,
+                    );
                     let glyph_start = batch.len();
                     emit_glyph_quads(
                         &mut batch,
-                        &layout.quads,
-                        text_x,
-                        text_y + ascent,
+                        &quads,
+                        baseline[0],
+                        baseline[1],
                         text_colour,
                         vp_w,
                         vp_h,
@@ -1601,7 +1592,7 @@ impl ViewportRenderer {
                             glyph_start,
                             &label.style.fill,
                             [text_x, text_y],
-                            [layout.total_width, layout.height],
+                            [shaped.total_width, shaped.height],
                             &mut text_fills,
                             image.flatten().unwrap_or([1, 1]),
                         );
@@ -1619,39 +1610,28 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_inner_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
                         );
                         if style == GlyphStyle::PLAIN {
                             continue;
                         }
-                        let sl = if let Some(max_w) = label.max_width {
-                            self.resources.content.glyph_atlas.layout_text_wrapped(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                max_w,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        } else {
-                            self.resources.content.glyph_atlas.layout_text(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        };
+                        let quads = self.resources.content.glyph_atlas.place_text(
+                            &shaped,
+                            label.text_style.size,
+                            label.text_style.font,
+                            baseline,
+                            grid,
+                            device,
+                            style,
+                        );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
                         emit_glyph_quads(
                             &mut batch,
-                            &sl.quads,
-                            text_x,
-                            text_y + ascent,
+                            &quads,
+                            baseline[0],
+                            baseline[1],
                             col,
                             vp_w,
                             vp_h,
@@ -1725,11 +1705,20 @@ impl ViewportRenderer {
                         + run.anchoring.align.y.align_shift(ext_h, Some(min_y));
 
                     let opacity = run.style.opacity.clamp(0.0, 1.0);
-                    // Each glyph carries its multiplier through layout so the
+                    // The run turns about its glyph-extent box, shadows included,
+                    // and its transform's scale picks the raster size.
+                    let pivot = OverlayRotation::pivot_point(
+                        [run_x + min_x, run_y + min_y],
+                        [ext_w, ext_h],
+                        run.transform.pivot,
+                    );
+                    let rot = OverlayRotation::new(&run.transform, pivot);
+                    let grid = GlyphGrid::for_transform(run.transform.linear(), pivot, ppp);
+                    // Each glyph carries its multiplier through placement so the
                     // per-glyph entries stay aligned with the quads after
                     // zero-area skips. White is "the fill unmodified": the fill
                     // multiplies into the quads below.
-                    let quads = self.resources.content.glyph_atlas.layout_glyph_run(
+                    let quads = self.resources.content.glyph_atlas.place_glyphs(
                         run.glyphs.iter().enumerate().map(|(i, g)| {
                             let tint = run
                                 .glyph_tints
@@ -1740,7 +1729,8 @@ impl ViewportRenderer {
                         }),
                         run.text_style.size,
                         run.text_style.font,
-                        ppp,
+                        [run_x, run_y],
+                        grid,
                         device,
                         GlyphStyle::PLAIN,
                     );
@@ -1749,15 +1739,6 @@ impl ViewportRenderer {
                     }
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    // The run turns about its glyph-extent box, shadows included.
-                    let rot = OverlayRotation::new(
-                        &run.transform,
-                        OverlayRotation::pivot_point(
-                            [run_x + min_x, run_y + min_y],
-                            [ext_w, ext_h],
-                            run.transform.pivot,
-                        ),
-                    );
 
                     // Shadow layers, back to front, behind the run. Per-glyph
                     // colours do not carry into a shadow: the whole layer draws
@@ -1771,28 +1752,23 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
-                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+                            [layer.offset[0] * grid.scale, layer.offset[1] * grid.scale],
                         );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
-                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                        let origin = [run_x + layer.offset[0], run_y + layer.offset[1]];
+                        let sq = self.resources.content.glyph_atlas.place_glyphs(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
                             run.text_style.size,
                             run.text_style.font,
-                            ppp,
+                            origin,
+                            grid,
                             device,
                             style,
                         );
-                        emit_glyph_quads_colored(
-                            &mut batch,
-                            &sq,
-                            run_x + layer.offset[0],
-                            run_y + layer.offset[1],
-                            vp_w,
-                            vp_h,
-                        );
+                        emit_glyph_quads_colored(&mut batch, &sq, origin[0], origin[1], vp_w, vp_h);
                     }
 
                     // Positions are already relative to the run origin, so the
@@ -1823,19 +1799,20 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_inner_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
                         );
                         if style == GlyphStyle::PLAIN {
                             continue;
                         }
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
-                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                        let sq = self.resources.content.glyph_atlas.place_glyphs(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
                             run.text_style.size,
                             run.text_style.font,
-                            ppp,
+                            [run_x, run_y],
+                            grid,
                             device,
                             style,
                         );
@@ -2286,13 +2263,15 @@ impl ViewportRenderer {
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                    let atlas_view = &self.resources.content.glyph_atlas.view;
+                    let atlas_view = self.resources.content.glyph_atlas.coverage_view();
+                    let colour_view = self.resources.content.glyph_atlas.colour_view();
                     let coverage_view = &self.resources.content.coverage_atlas.view;
                     let key = (
                         atlas_view.clone(),
                         clip_buf.clone(),
                         vp_buf.clone(),
                         coverage_view.clone(),
+                        colour_view.clone(),
                     );
                     let bind_group = ov.overlay_bindings.label_bg.get(key, || {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2323,6 +2302,10 @@ impl ViewportRenderer {
                                     resource: crate::gpu::BindingResource::TextureView(
                                         coverage_view,
                                     ),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource: crate::gpu::BindingResource::TextureView(colour_view),
                                 },
                             ],
                         })

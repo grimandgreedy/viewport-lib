@@ -12,7 +12,7 @@ pub(crate) struct OverlayTextResources {
     /// The text pipeline's layout and shader, kept to build blend variants.
     pub(crate) layout: Option<crate::gpu::PipelineLayout>,
     pub(crate) shader: Option<crate::gpu::ShaderModule>,
-    /// Bind group layout (group 0: atlas texture + sampler).
+    /// Bind group layout (group 0: atlas pages, sampler, clips, viewport).
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear sampler for the glyph atlas texture.
     pub(crate) sampler: Option<crate::gpu::Sampler>,
@@ -43,8 +43,9 @@ impl crate::resources::DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        // binding 0: glyph atlas texture, binding 1: sampler, binding 2: the
-        // clip-shape uniform array (shared clip model, evaluated per fragment).
+        // binding 0: glyph atlas coverage page, binding 1: sampler, binding 2:
+        // the clip-shape uniform array (shared clip model, evaluated per
+        // fragment).
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_text_bgl"),
             entries: &[
@@ -80,6 +81,18 @@ impl crate::resources::DeviceResources {
                 // binding 4: the coverage atlas vector-shape cells sample.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 5: the glyph atlas's colour page (binding 0 is its
+                // coverage page).
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 5,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
@@ -210,8 +223,9 @@ pub(crate) struct OverlayTextVertex {
     pub uv: [f32; 2],
     /// RGBA tint colour.
     pub colour: [f32; 4],
-    /// 0.0 = solid colour, 1.0 = tint the glyph atlas's coverage, 2.0 = the
-    /// glyph atlas's colour as-is, 3.0 = tint the coverage atlas's cell.
+    /// 0.0 = solid colour, 1.0 = tint a cell of the glyph atlas's coverage
+    /// page, 2.0 = a cell of its colour page as-is, 3.0 = tint the coverage
+    /// atlas's cell.
     pub use_texture: f32,
     /// Index into the frame's clip-shape array, or `-1.0` for no clip.
     /// Selects the mask whose SDF (and parent chain) clips this vertex.

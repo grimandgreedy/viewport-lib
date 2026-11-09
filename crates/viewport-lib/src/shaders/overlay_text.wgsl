@@ -1,6 +1,7 @@
 // Screen-space overlay text and solid quad shader.
 //
-// Renders glyph quads (textured from the glyph atlas), vector-shape quads
+// Renders glyph quads (textured from the glyph atlas's coverage or colour
+// page), vector-shape quads
 // (textured from the coverage atlas) and solid-colour triangles (background
 // boxes, polylines, tessellated fills) in a single batched draw call. Solid
 // edges are anti-aliased by a one-device-pixel fringe the vertex stage places.
@@ -20,10 +21,13 @@
 // Soft clip coverage over `clip_shapes` and `eval_sdf` below.
 // #include "helpers/overlay_clip.wgsl"
 
+// The glyph atlas's coverage page: one channel per texel.
 @group(0) @binding(0) var glyph_atlas: texture_2d<f32>;
 @group(0) @binding(1) var atlas_sampler: sampler;
 // Vector-shape coverage cells, one channel.
 @group(0) @binding(4) var coverage_atlas: texture_2d<f32>;
+// The glyph atlas's colour page: straight-alpha RGBA.
+@group(0) @binding(5) var glyph_colour: texture_2d<f32>;
 
 // One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
 // parent_index, invert). Matches ClipShapeGpu on the CPU and overlay_shape.wgsl.
@@ -435,9 +439,10 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // `use_texture` varies per vertex, so the branches below are not uniform,
     // and a strict WGSL front end rejects the whole module: Tint does, naga
     // does not, so the text pipeline failed to build in Chrome while working in
-    // Firefox. The atlas has one mip level, so level zero is what an implicit
+    // Firefox. Each atlas has one mip level, so level zero is what an implicit
     // lookup would have chosen anyway.
-    let atlas = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0);
+    let glyph = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0).r;
+    let emoji = textureSampleLevel(glyph_colour, atlas_sampler, in.uv, 0.0);
     let cell = textureSampleLevel(coverage_atlas, atlas_sampler, in.uv, 0.0).r;
     // The item's fill multiplies into the vertex colour; with no record it is
     // white and the vertex colour passes through. Evaluated outside any
@@ -449,12 +454,13 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         // Vector-shape coverage cell: tint its coverage by the fill.
         result = vec4<f32>(colour.rgb, colour.a * cell);
     } else if (in.use_texture > 1.5) {
-        // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
-        // carries opacity through its alpha; the tint RGB is ignored.
-        result = vec4<f32>(atlas.rgb, atlas.a * colour.a);
+        // Colour glyph (emoji): draw the colour page's RGBA as-is. The run
+        // colour only carries opacity through its alpha; the tint RGB is
+        // ignored.
+        result = vec4<f32>(emoji.rgb, emoji.a * colour.a);
     } else if (in.use_texture > 0.5) {
-        // Coverage glyph: tint the atlas alpha by the run colour.
-        result = vec4<f32>(colour.rgb, colour.a * atlas.a);
+        // Coverage glyph: tint the coverage page by the run colour.
+        result = vec4<f32>(colour.rgb, colour.a * glyph);
     } else {
         result = colour;
     }

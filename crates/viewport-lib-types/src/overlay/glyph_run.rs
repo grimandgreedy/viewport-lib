@@ -72,6 +72,15 @@ pub struct GlyphRunItem {
     /// content turns within it. See [`OverlayTransform`](crate::overlay::OverlayTransform) for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
+    ///
+    /// The scale picks the size glyphs are rasterised at, so text scaled 2x
+    /// draws like text at twice the size rather than a magnified copy. An
+    /// axis-aligned item at a uniform scale lands each pen on whole device
+    /// pixels down and the nearest quarter pixel across, rasterising the glyph
+    /// at that quarter. A rotated, stretched or skewed item rasterises at its
+    /// largest stretch with no sub-pixel offset, and its glyphs are resampled
+    /// where they land. Sizes above 48 device pixels rasterise at a nearby
+    /// step and are scaled to fit, so a zoom reuses a bounded set of glyphs.
     pub transform: crate::overlay::OverlayTransform,
     /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///

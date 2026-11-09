@@ -41,11 +41,15 @@
 - **`LineJoin::Round`** - an arc round the outside of each turn, on polylines, vector strokes and the shadow bands that follow them.
 - **Inverse fills on vector shapes** - `OverlayShapeItem::with_inverse_fill` fills the item's box everywhere the path does not, from the coverage atlas when it fits and tessellated otherwise.
 - **Soft overlay clip edges** - `clip.rect` boxes and clip masks multiply in the pixel's coverage instead of discarding at a hard edge, so a mask's curved or rotated edge is anti-aliased; a box edge on a pixel boundary clips as before.
+- **Sub-pixel text positioning** - label and glyph-run pens land on whole device pixels down and the nearest quarter pixel across, with the glyph rasterised at that quarter offset, so small text is drawn texel for texel instead of resampled across pixel boundaries. Text on a rotated, stretched or skewed item, and text above 48 device pixels, keeps its fractional placement.
+- **Glyph atlas eviction by plot** - glyphs pack into 512-pixel plots on two pages, one byte per pixel for text and RGBA for colour glyphs, and a full page evicts the least recently used plot instead of clearing, so text drawn every frame stays resident. A retained group re-emits only when a plot it draws from is evicted.
+- **`FrameStats::overlay_glyph_rasters`** - the glyph cells rasterised this frame, which reads zero for static text after its first frame.
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
 
 ### Fixes
 
+- **Scaled labels and glyph runs magnified their glyphs** - an item's `transform.scale` (and `stretch`) scaled the quads of glyphs rasterised at the unscaled size, so scaled text blurred. The scale now selects the raster size, so a label scaled 2x draws like one at twice the font size; text that relied on the magnified look draws sharp. A retained group's own scale still magnifies what it compiled.
 - **Faceted gradients on text, vector shapes and polylines** - a radial or conical gradient was interpolated per vertex there and showed facets across large glyphs and paths; it is now evaluated per pixel. A radial gradient on a vector shape or polyline reaches its last stop at the larger half-extent of the box, as on an analytic shape and on text, instead of at the corner.
 - **GPU plugin timings allocated every frame** - `ViewportRuntime::pre_prepare` and `post_paint` now refill their timing maps in place, so an attached runtime adds no allocations to a settled frame.
 - **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.

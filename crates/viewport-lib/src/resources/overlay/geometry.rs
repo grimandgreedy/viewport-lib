@@ -66,8 +66,8 @@ pub(crate) struct CompiledSource {
     /// (glyphs, background box, and leader line, all on the text stream); a DPI or
     /// atlas change re-lays it out from here.
     pub labels: Vec<viewport_lib_types::overlay::LabelItem>,
-    /// The atlas growth version the current geometry baked UVs against.
-    pub baked_atlas_version: u64,
+    /// The glyph atlas cells the current geometry baked UVs against.
+    pub baked_glyphs: crate::resources::overlay::font::GlyphDeps,
     /// The coverage atlas's version the current geometry baked vector-shape
     /// cell UVs against.
     pub baked_coverage_version: u64,

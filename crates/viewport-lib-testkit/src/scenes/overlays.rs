@@ -62,6 +62,7 @@ pub fn scenes() -> Vec<NamedScene> {
         },
         scene("overlay_blend_modes", build_blend_modes),
         scene("overlay_strokes", build_strokes),
+        scene("overlay_text_subpixel", build_text_subpixel),
     ]
 }
 
@@ -1143,6 +1144,63 @@ fn build_strokes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 .with_position([15.5, 160.5])
                 .with_scale(3.0),
         ];
+        ovl
+    })
+}
+
+// --- sub-pixel text ----------------------------------------------------------
+
+/// Small text at fractional pen positions, and text whose transform scale
+/// picks its raster size.
+///
+/// The left column is one label stepped across by a quarter pixel per row,
+/// with whole-pixel row spacing: each row lands on whole device pixels and
+/// differs from the one above only in the glyph edges rasterised at that
+/// quarter. The right column is a small label scaled 1x, 1.5x, 2x and 3x
+/// about its top-left, each rasterised at its drawn size, beside a 3x scaled
+/// rotated copy that rasterises at 3x and resamples.
+fn build_text_subpixel(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let ink = Colour::srgb(1.0, 1.0, 1.0, 1.0);
+    let mut labels = Vec::new();
+    for i in 0..8 {
+        labels.push(
+            LabelItem::new("Quarter pixel steps 0123")
+                .with_position([20.0 + i as f32 * 0.25, 20.0 + i as f32 * 14.0])
+                .with_align_x(AnchorX::Left)
+                .with_align_y(AnchorY::Top)
+                .with_font_size(11.0)
+                .with_colour(ink),
+        );
+    }
+
+    let small = |position: [f32; 2]| {
+        LabelItem::new("Scaled")
+            .with_position(position)
+            .with_align_x(AnchorX::Left)
+            .with_align_y(AnchorY::Top)
+            .with_font_size(9.0)
+            .with_colour(Colour::srgb(1.0, 0.85, 0.5, 1.0))
+    };
+    let box_size = ctx
+        .renderer
+        .resources()
+        .measure_overlay_text("Scaled", 9.0, None);
+    // About the top-left of the text box: the pivot is measured from its centre.
+    let top_left = [-box_size.width * 0.5, -box_size.height * 0.5];
+    let mut y = 20.0;
+    for scale in [1.0, 1.5, 2.0, 3.0] {
+        labels.push(
+            small([220.0, y])
+                .with_scale(scale)
+                .with_rotation_pivot(top_left),
+        );
+        y += box_size.height * scale + 6.0;
+    }
+    labels.push(small([240.0, y + 10.0]).with_scale(3.0).with_rotation(0.2));
+
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.labels = labels;
         ovl
     })
 }

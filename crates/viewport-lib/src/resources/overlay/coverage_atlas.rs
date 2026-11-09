@@ -2,10 +2,9 @@
 //! vector paths, which small and retained vector overlay shapes draw their
 //! fills from as one textured quad instead of tessellated triangles.
 //!
-//! It packs and evicts the way the glyph atlas does (a row packer that grows
-//! the page by doubling, and a clear at the start of the next frame once the
-//! page is full at its largest), on a page of its own so vector shapes never
-//! evict text.
+//! It packs with a row packer that grows the page by doubling, and clears the
+//! page at the start of the next frame once it is full at its largest. It is a
+//! page of its own, so vector shapes never evict text.
 
 use crate::resources::builders::LoggedAlloc;
 use std::collections::HashMap;

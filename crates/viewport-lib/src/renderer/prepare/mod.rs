@@ -193,11 +193,13 @@ impl ViewportRenderer {
                 .resolve(frame.time, self.render_advances_state(), self.frame_counter);
         self.resources.feed_deform_time(queue, time.seconds as f32);
 
-        // A glyph atlas that filled up last frame is cleared here, before any
-        // text this frame is laid out against it. A derivative render leaves it
-        // alone: the presented frame it runs beside may still draw the old cells.
+        // A new frame of glyph use: plots drawn only in earlier frames become
+        // evictable, and a coverage atlas that filled up last frame is cleared,
+        // before any text or shape this frame is laid out against them. A
+        // derivative render leaves both alone: the presented frame it runs
+        // beside may still draw the cells.
         if self.render_advances_state() {
-            self.resources.content.glyph_atlas.evict_if_full();
+            self.resources.content.glyph_atlas.begin_frame();
             self.resources.content.coverage_atlas.evict_if_full();
         }
 
@@ -1068,6 +1070,7 @@ impl ViewportRenderer {
         ov.overlay_instances_ready = false;
         self.overlay_retained_counters = Default::default();
         let vector_rasters_before = self.resources.content.coverage_atlas.rasters();
+        let glyph_rasters_before = self.resources.content.glyph_atlas.rasters();
         self.prepare_overlay_labels(device, queue, frame, &mut ov);
         self.prepare_overlay_shapes(device, queue, frame, &mut ov);
         self.finalize_overlay_draw_order(device, queue, &mut ov);
@@ -1089,6 +1092,8 @@ impl ViewportRenderer {
         self.last_stats.overlay_draw_calls = overlay_draw_calls;
         self.last_stats.overlay_vector_rasters =
             (self.resources.content.coverage_atlas.rasters() - vector_rasters_before) as u32;
+        self.last_stats.overlay_glyph_rasters =
+            (self.resources.content.glyph_atlas.rasters() - glyph_rasters_before) as u32;
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

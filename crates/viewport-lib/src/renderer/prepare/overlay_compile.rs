@@ -3,6 +3,7 @@
 //! re-tessellating them.
 
 use super::*;
+use crate::resources::overlay::font::{GlyphDeps, GlyphGrid};
 use crate::resources::overlay::glyph_style::GlyphStyle;
 
 /// Bake an item's own `clip.rect` onto the vertices it just emitted, from
@@ -230,6 +231,9 @@ fn emit_vector_shapes(
 /// Emit one glyph run's quads into `verts` in local logical pixels (no anchor
 /// resolution: a retained group is positioned per frame by its translate). May
 /// rasterize glyphs into the atlas (and grow it).
+///
+/// Glyphs snap to the group's local pixel grid, so they land on device pixels
+/// when the group's translate is whole device pixels.
 fn emit_glyph_run(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     atlas: &mut crate::resources::overlay::font::GlyphAtlas,
@@ -252,15 +256,14 @@ fn emit_glyph_run(
     let run_y = run.transform.translate[1] + run.anchoring.align.y.align_shift(ext_h, Some(min_y));
     let opacity = run.style.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
-    let rot = overlay_geometry::OverlayRotation::new(
-        &run.transform,
-        overlay_geometry::OverlayRotation::pivot_point(
-            [run_x + min_x, run_y + min_y],
-            [ext_w, ext_h],
-            run.transform.pivot,
-        ),
+    let pivot = overlay_geometry::OverlayRotation::pivot_point(
+        [run_x + min_x, run_y + min_y],
+        [ext_w, ext_h],
+        run.transform.pivot,
     );
-    let quads = atlas.layout_glyph_run(
+    let rot = overlay_geometry::OverlayRotation::new(&run.transform, pivot);
+    let grid = GlyphGrid::for_transform(run.transform.linear(), pivot, ppp);
+    let quads = atlas.place_glyphs(
         run.glyphs.iter().enumerate().map(|(i, g)| {
             // White where the run has no per-glyph multiplier: the fill goes on
             // afterwards and multiplies, so white is "the fill unmodified".
@@ -278,7 +281,8 @@ fn emit_glyph_run(
         }),
         run.text_style.size,
         run.text_style.font,
-        ppp,
+        [run_x, run_y],
+        grid,
         device,
         GlyphStyle::PLAIN,
     );
@@ -293,28 +297,23 @@ fn emit_glyph_run(
         .filter(|l| l.is_visible())
     {
         let style = GlyphStyle::from_shadow(
-            layer.spread * ppp,
-            layer.blur * ppp,
+            layer.spread * grid.scale,
+            layer.blur * grid.scale,
             layer.falloff,
-            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+            [layer.offset[0] * grid.scale, layer.offset[1] * grid.scale],
         );
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
-        let sq = atlas.layout_glyph_run(
+        let origin = [run_x + layer.offset[0], run_y + layer.offset[1]];
+        let sq = atlas.place_glyphs(
             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
             run.text_style.size,
             run.text_style.font,
-            ppp,
+            origin,
+            grid,
             device,
             style,
         );
-        overlay_geometry::emit_glyph_quads_colored(
-            verts,
-            &sq,
-            run_x + layer.offset[0],
-            run_y + layer.offset[1],
-            0.0,
-            0.0,
-        );
+        overlay_geometry::emit_glyph_quads_colored(verts, &sq, origin[0], origin[1], 0.0, 0.0);
     }
     let glyph_start = verts.len();
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
@@ -337,17 +336,21 @@ fn emit_glyph_run(
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
         .filter(|l| l.is_visible())
     {
-        let style =
-            GlyphStyle::from_inner_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        let style = GlyphStyle::from_inner_shadow(
+            layer.spread * grid.scale,
+            layer.blur * grid.scale,
+            layer.falloff,
+        );
         if style == GlyphStyle::PLAIN {
             continue;
         }
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
-        let sq = atlas.layout_glyph_run(
+        let sq = atlas.place_glyphs(
             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
             run.text_style.size,
             run.text_style.font,
-            ppp,
+            [run_x, run_y],
+            grid,
             device,
             style,
         );
@@ -388,48 +391,34 @@ fn emit_label(
     }
     let item_start = verts.len();
     let opacity = label.style.opacity.clamp(0.0, 1.0);
-    let layout = if let Some(max_w) = label.max_width {
-        atlas.layout_text_wrapped(
-            &label.text,
-            label.text_style.size,
-            label.text_style.font,
-            max_w,
-            ppp,
-            device,
-            GlyphStyle::PLAIN,
-        )
+    let size = label.text_style.size;
+    let font = label.text_style.font;
+    let shaped = if let Some(max_w) = label.max_width {
+        atlas.shape_text_wrapped(&label.text, size, font, max_w, ppp)
     } else {
-        atlas.layout_text(
-            &label.text,
-            label.text_style.size,
-            label.text_style.font,
-            ppp,
-            device,
-            GlyphStyle::PLAIN,
-        )
+        atlas.shape_text(&label.text, size, font, ppp)
     };
-    let font_index = label.text_style.font.map_or(0, |h| h.0);
-    let ascent = atlas.font_ascent(font_index, label.text_style.size);
+    let font_index = font.map_or(0, |h| h.0);
+    let ascent = atlas.font_ascent(font_index, size);
 
     // Alignment places the laid-out box on the origin, which is [0, 0] here;
     // position nudges last.
-    let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
+    let align_offset = label.anchoring.align.x.align_shift(shaped.total_width);
     let align_offset_y = label
         .anchoring
         .align
         .y
-        .align_shift(layout.height, Some(ascent));
+        .align_shift(shaped.height, Some(ascent));
     let text_x = align_offset + label.transform.translate[0];
     let text_y = align_offset_y + label.transform.translate[1];
 
-    let rot = overlay_geometry::OverlayRotation::new(
-        &label.transform,
-        overlay_geometry::OverlayRotation::pivot_point(
-            [text_x, text_y],
-            [layout.total_width, layout.height],
-            label.transform.pivot,
-        ),
+    let pivot = overlay_geometry::OverlayRotation::pivot_point(
+        [text_x, text_y],
+        [shaped.total_width, shaped.height],
+        label.transform.pivot,
     );
+    let rot = overlay_geometry::OverlayRotation::new(&label.transform, pivot);
+    let grid = GlyphGrid::for_transform(label.transform.linear(), pivot, ppp);
 
     let text_start = verts.len();
 
@@ -441,54 +430,38 @@ fn emit_label(
         .filter(|l| l.is_visible())
     {
         let style = GlyphStyle::from_shadow(
-            layer.spread * ppp,
-            layer.blur * ppp,
+            layer.spread * grid.scale,
+            layer.blur * grid.scale,
             layer.falloff,
-            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+            [layer.offset[0] * grid.scale, layer.offset[1] * grid.scale],
         );
-        let sl = if let Some(max_w) = label.max_width {
-            atlas.layout_text_wrapped(
-                &label.text,
-                label.text_style.size,
-                label.text_style.font,
-                max_w,
-                ppp,
-                device,
-                style,
-            )
-        } else {
-            atlas.layout_text(
-                &label.text,
-                label.text_style.size,
-                label.text_style.font,
-                ppp,
-                device,
-                style,
-            )
-        };
+        let origin = [text_x + layer.offset[0], text_y + ascent + layer.offset[1]];
+        let quads = atlas.place_text(&shaped, size, font, origin, grid, device, style);
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
-        overlay_geometry::emit_glyph_quads(
-            verts,
-            &sl.quads,
-            text_x + layer.offset[0],
-            text_y + ascent + layer.offset[1],
-            col,
-            0.0,
-            0.0,
-        );
+        overlay_geometry::emit_glyph_quads(verts, &quads, origin[0], origin[1], col, 0.0, 0.0);
     }
 
     // The glyphs start white and `style.fill` multiplies into them below, so a
     // label has one colour source.
     let text_colour = overlay_geometry::apply_opacity([1.0, 1.0, 1.0, 1.0], opacity);
     // The label origin is the text-box top-left; add the ascent to reach the
-    // first baseline the quads are relative to.
+    // first baseline the glyphs are relative to.
+    let baseline = [text_x, text_y + ascent];
+    let quads = atlas.place_text(
+        &shaped,
+        size,
+        font,
+        baseline,
+        grid,
+        device,
+        GlyphStyle::PLAIN,
+    );
     let glyph_start = verts.len();
     overlay_geometry::emit_glyph_quads(
         verts,
-        &layout.quads,
-        text_x,
-        text_y + ascent,
+        &quads,
+        baseline[0],
+        baseline[1],
         text_colour,
         0.0,
         0.0,
@@ -499,7 +472,7 @@ fn emit_label(
             glyph_start,
             &label.style.fill,
             [text_x, text_y],
-            [layout.total_width, layout.height],
+            [shaped.total_width, shaped.height],
             fills,
             [1, 1],
         );
@@ -512,55 +485,31 @@ fn emit_label(
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
         .filter(|l| l.is_visible())
     {
-        let style =
-            GlyphStyle::from_inner_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        let style = GlyphStyle::from_inner_shadow(
+            layer.spread * grid.scale,
+            layer.blur * grid.scale,
+            layer.falloff,
+        );
         if style == GlyphStyle::PLAIN {
             continue;
         }
-        let sl = if let Some(max_w) = label.max_width {
-            atlas.layout_text_wrapped(
-                &label.text,
-                label.text_style.size,
-                label.text_style.font,
-                max_w,
-                ppp,
-                device,
-                style,
-            )
-        } else {
-            atlas.layout_text(
-                &label.text,
-                label.text_style.size,
-                label.text_style.font,
-                ppp,
-                device,
-                style,
-            )
-        };
+        let quads = atlas.place_text(&shaped, size, font, baseline, grid, device, style);
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
-        overlay_geometry::emit_glyph_quads(
-            verts,
-            &sl.quads,
-            text_x,
-            text_y + ascent,
-            col,
-            0.0,
-            0.0,
-        );
+        overlay_geometry::emit_glyph_quads(verts, &quads, baseline[0], baseline[1], col, 0.0, 0.0);
     }
     overlay_geometry::rotate_vertices_from(verts, text_start, rot);
     bake_clip_rect(verts, &label.clip, item_start, ppp);
 }
 
 /// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh
-/// vertex list, returning it with its fill records and the versions of the
-/// glyph and coverage atlases it baked UVs against.
+/// vertex list, returning it with its fill records, the glyph atlas cells it
+/// baked UVs against and the coverage atlas version.
 ///
-/// Glyph and coverage-cell UVs divide by the atlas size, so if rasterizing this
-/// group's glyphs or cells grows an atlas, what was emitted before the grow
+/// Glyph and coverage-cell UVs divide by the page size, so if rasterizing this
+/// group's glyphs or cells grows a page, what was emitted before the grow
 /// carries a stale divisor. The loop re-emits the atlas-backed portion once
 /// both atlases have stopped growing (all this group's glyphs and cells are
-/// then resident), so the returned geometry always uses a single, final atlas
+/// then resident), so the returned geometry always uses a single, final page
 /// size. The polylines are emitted once, and so are the vector shapes when
 /// none of them draws from the coverage atlas.
 ///
@@ -579,7 +528,7 @@ pub(super) fn emit_group_verts(
 ) -> (
     Vec<crate::resources::OverlayTextVertex>,
     super::overlay_fill::FillTable,
-    (u64, u64),
+    (GlyphDeps, u64),
 ) {
     let mut base = Vec::new();
     let mut base_fills = super::overlay_fill::FillTable::without_textures();
@@ -589,7 +538,7 @@ pub(super) fn emit_group_verts(
     // vector shapes are as fixed as the polylines.
     if !group_uses_atlas(vector_shapes, glyph_runs, labels, ppp) {
         emit_vector_shapes(&mut base, vector_shapes, ppp, &mut base_fills, None);
-        return (base, base_fills, (atlas.version(), coverage.version()));
+        return (base, base_fills, (GlyphDeps::default(), coverage.version()));
     }
 
     // A doubling atlas stabilises in a few iterations; the guard bounds it.
@@ -598,6 +547,7 @@ pub(super) fn emit_group_verts(
         let v0 = (atlas.version(), coverage.version());
         let mut verts = base.clone();
         let mut fills = base_fills.clone();
+        atlas.begin_recording();
         emit_vector_shapes(
             &mut verts,
             vector_shapes,
@@ -619,10 +569,11 @@ pub(super) fn emit_group_verts(
                 &mut fills,
             );
         }
+        let deps = atlas.finish_recording();
         guard += 1;
         let v1 = (atlas.version(), coverage.version());
         if v1 == v0 || guard >= 8 {
-            return (verts, fills, v1);
+            return (verts, fills, (deps, v1.1));
         }
     }
 }
@@ -853,8 +804,8 @@ fn group_bounds(
 
 /// Whether a group draws anything from the glyph atlas: glyphs, or a vector
 /// shape small enough to draw its fill from a coverage cell. Such a group bakes
-/// atlas UVs at `ppp`, so it keeps its source and re-emits when the atlas grows
-/// or is cleared, or the pixels per point change.
+/// atlas UVs at `ppp`, so it keeps its source and re-emits when an atlas grows
+/// or drops cells it uses, or the pixels per point change.
 fn group_uses_atlas(
     vector_shapes: &[crate::renderer::types::OverlayShapeItem],
     glyph_runs: &[crate::renderer::types::GlyphRunItem],
@@ -886,12 +837,15 @@ impl ViewportRenderer {
     /// [`free_overlay_geometry`](Self::free_overlay_geometry).
     ///
     /// `pixels_per_point` must match the frame's; glyphs rasterize at
-    /// `font_size * pixels_per_point`, and so does the coverage of a vector
-    /// shape small enough (512 device pixels a side) to draw its fill from a
-    /// coverage cell rather than as triangles. A group that carries either is
-    /// re-emitted automatically when an atlas grows or the frame's
-    /// `pixels_per_point` changes, so callers only re-compile when their own text,
-    /// style, or width changes.
+    /// `font_size * pixels_per_point` times their item's scale and snap to the
+    /// group's local pixel grid, and the coverage of a vector shape small
+    /// enough (512 device pixels a side) to draw its fill from a coverage cell
+    /// rather than as triangles rasterizes at `pixels_per_point` too. The
+    /// group's own scale, applied per frame, magnifies what was rasterized. A
+    /// group that carries glyphs or cells is re-emitted automatically when an
+    /// atlas grows or drops cells it uses, or the frame's `pixels_per_point`
+    /// changes, so callers only re-compile when their own text, style, or width
+    /// changes.
     ///
     /// All slices are optional (pass `&[]`). `vector_shapes` entries that are not
     /// `OverlayShape::Vector` are drawn as analytic SDF shapes. Geometry is taken in
@@ -1026,7 +980,7 @@ impl ViewportRenderer {
             vector_shapes: vector_shapes.to_vec(),
             glyph_runs: glyph_runs.to_vec(),
             labels: labels.to_vec(),
-            baked_atlas_version: baked_version.0,
+            baked_glyphs: baked_version.0,
             baked_coverage_version: baked_version.1,
             baked_ppp: pixels_per_point,
         });
@@ -1065,8 +1019,8 @@ impl ViewportRenderer {
     /// path.
     ///
     /// `pixels_per_point` must match the frame's; the group re-emits automatically
-    /// when the atlas grows or `pixels_per_point` changes, like any glyph-bearing
-    /// group. Submit the returned id through `OverlayFrame::retained`; a
+    /// when the atlas grows or drops cells it uses, or `pixels_per_point`
+    /// changes, like any glyph-bearing group. Submit the returned id through `OverlayFrame::retained`; a
     /// [`RetainedOverlay::translate`](crate::renderer::RetainedOverlay) composes on
     /// top of the resolved anchor (to scroll or nudge), and the group's own
     /// per-frame opacity and clip apply as for any retained group.
@@ -1119,7 +1073,7 @@ impl ViewportRenderer {
             vector_shapes: Vec::new(),
             glyph_runs: Vec::new(),
             labels: vec![label.clone()],
-            baked_atlas_version: baked_version.0,
+            baked_glyphs: baked_version.0,
             baked_coverage_version: baked_version.1,
             baked_ppp: pixels_per_point,
         };
@@ -1150,9 +1104,11 @@ impl ViewportRenderer {
         self.resources.content.overlay_geometry.remove(id).is_some()
     }
 
-    /// Re-emit a retained group's geometry if its baked glyph UVs are stale (the
-    /// atlas grew or `pixels_per_point` changed since it was compiled). Cheap when
-    /// the group has no glyphs or nothing changed: a version/ppp compare and return.
+    /// Re-emit a retained group's geometry if its baked glyph UVs are stale (an
+    /// atlas page grew, a plot it draws from was evicted, or `pixels_per_point`
+    /// changed since it was compiled). Cheap when the group has no glyphs or
+    /// nothing changed: a few compares, and the plots it draws from are marked
+    /// used this frame.
     ///
     /// Returns `true` when the group was rebuilt, which is what
     /// `FrameStats::overlay_retained_reemitted` counts.
@@ -1163,14 +1119,20 @@ impl ViewportRenderer {
         id: crate::renderer::OverlayGeometryId,
         ppp: f32,
     ) -> bool {
-        let current_version = self.resources.content.glyph_atlas.version();
+        let glyphs = &mut self.resources.content.glyph_atlas;
         let current_coverage = self.resources.content.coverage_atlas.version();
         let stale = match self.resources.content.overlay_geometry.get(id) {
             Some(c) => match &c.source {
                 Some(src) => {
-                    src.baked_atlas_version != current_version
+                    let stale = !glyphs.is_current(&src.baked_glyphs)
                         || src.baked_coverage_version != current_coverage
-                        || src.baked_ppp != ppp
+                        || src.baked_ppp != ppp;
+                    if !stale {
+                        // Drawn this frame from the cells it baked, so they
+                        // must outlive anything laid out after it.
+                        glyphs.touch(&src.baked_glyphs);
+                    }
+                    stale
                 }
                 None => false,
             },
@@ -1229,7 +1191,7 @@ impl ViewportRenderer {
             c.bounds = bounds;
         }
         if let Some(s) = &mut c.source {
-            s.baked_atlas_version = baked_version.0;
+            s.baked_glyphs = baked_version.0;
             s.baked_coverage_version = baked_version.1;
             s.baked_ppp = ppp;
         }

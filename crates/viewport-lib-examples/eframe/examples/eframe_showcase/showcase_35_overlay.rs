@@ -496,6 +496,7 @@ pub(crate) fn build_overlay_frame(
         let new_shapes_top = stack.row(70.0);
         let masks_top = stack.row(90.0);
         let features_top = stack.row(70.0);
+        let text_top = stack.row(80.0);
 
         let solid_right = row_solid_shapes(app, &mut shapes, solid_top);
         row_textured(app, &mut shapes, &mut labels, textured_top);
@@ -505,6 +506,7 @@ pub(crate) fn build_overlay_frame(
         row_new_shapes(app, &mut shapes, new_shapes_top);
         row_masks_and_polylines(app, &mut shapes, &mut polylines, &mut retained, masks_top);
         row_new_features(app, &mut shapes, features_top);
+        row_text(app, &mut labels, text_top);
         row_backdrop(app, &mut shapes, solid_right);
     }
 
@@ -759,6 +761,36 @@ fn row_textured(
         label.style.fill = OverlayFill::texture(tid);
         labels.push(label);
     }
+}
+
+/// Text row: one small label at a whole-pixel pen position and at three
+/// quarter-pixel offsets from it, and a label whose scale animates between 1
+/// and 2. Pens land on whole device pixels with the glyph rasterised at the
+/// quarter it was moved from, so the four copies differ only in their edges;
+/// the scaled label is rasterised at its drawn size each frame rather than
+/// magnified, so it stays sharp throughout.
+fn row_text(app: &App, labels: &mut Vec<LabelItem>, top: f32) {
+    let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+    let ink = Colour::srgb(0.92, 0.94, 1.0, 1.0);
+    for (i, fraction) in [0.0_f32, 0.25, 0.5, 0.75].into_iter().enumerate() {
+        labels.push(
+            LabelItem::new(format!("Pen at x + {fraction:.2} px: Hamburgefonstiv 0123"))
+                .with_position([20.0 + fraction, top + i as f32 * 18.0])
+                .with_align_x(LabelAnchor::Left)
+                .with_align_y(vpl::AnchorY::Top)
+                .with_font_size(11.0)
+                .with_colour(ink),
+        );
+    }
+    labels.push(
+        LabelItem::new("Scaled, not magnified")
+            .with_position([330.0, top + 30.0])
+            .with_align_x(LabelAnchor::Left)
+            .with_align_y(vpl::AnchorY::Top)
+            .with_font_size(11.0)
+            .with_colour(Colour::srgb(1.0, 0.85, 0.5, 1.0))
+            .with_scale(1.5 + 0.5 * (t * 1.3).sin()),
+    );
 }
 
 /// Row 3: linear, radial, conical and sweep gradient fills, with two to

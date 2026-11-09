@@ -658,6 +658,16 @@ pub struct FrameStats {
     /// miss the cache. Cells rasterised by `compile_overlay_geometry` are not
     /// counted.
     pub overlay_vector_rasters: u32,
+    /// Glyph cells rasterised into the glyph atlas this frame, for the most
+    /// recently prepared viewport: the glyph cache misses.
+    ///
+    /// A glyph is cached per font, raster size, style and quarter-pixel
+    /// horizontal position, so static text reads zero after its first frame.
+    /// Text that moves by fractions of a pixel reads up to four cells per
+    /// glyph before it settles, and text whose scale animates reads a cell
+    /// per glyph per new size. Glyphs rasterised by `compile_overlay_geometry`
+    /// are not counted.
+    pub overlay_glyph_rasters: u32,
     /// Section cap meshes generated this frame, for the most recently
     /// prepared viewport.
     ///
