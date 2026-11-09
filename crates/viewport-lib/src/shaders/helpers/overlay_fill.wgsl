@@ -12,13 +12,16 @@
 //   1: box half-extents xy; z = angle (linear), seam (conical) or arc start
 //      (sweep); w = arc span (sweep)
 //   2: sweep centre xy in pixels from the box centre; nine-slice centre and
-//      edge tile modes zw
-//   3: a solid colour, or the tint a texture sample is multiplied by
+//      edge tile modes zw; x = the registered function (custom)
+//   3: a solid colour, or the tint a texture sample or a custom fill is
+//      multiplied by
 //   4: texture transform: offset xy, scale zw
 //   5: texture transform: rotation, tile mode, flip x, flip y
 //   6: nine-slice insets in texture UV (top, right, bottom, left)
 //   7: nine-slice insets as box fractions (top, right, bottom, left)
-// then `count` stop colours, then the stop positions four to a texel. The
+// then `count` stop colours, then the stop positions four to a texel. A
+// custom fill has no stops: its sixteen parameters follow the header as four
+// texels. The
 // renderer's `overlay_fill` module writes the same layout. A colour matrix is
 // five texels anywhere in the table, its columns: the weights of red, green,
 // blue and alpha, then the offsets.
@@ -45,6 +48,26 @@ const FILL_CONICAL: i32 = 3;
 const FILL_SWEEP: i32 = 4;
 const FILL_TEXTURE: i32 = 5;
 const FILL_SOLID: i32 = 6;
+const FILL_CUSTOM: i32 = 7;
+
+// What a registered fill function receives besides its local coordinate: the
+// half-extents of the box the fill spans, in the same pixels, and the item's
+// sixteen parameters.
+struct OverlayFillParams {
+    half_size: vec2<f32>,
+    p0: vec4<f32>,
+    p1: vec4<f32>,
+    p2: vec4<f32>,
+    p3: vec4<f32>,
+};
+
+// Calls the registered fill function `id`. The renderer replaces this
+// function with one that switches over the registered functions when the
+// overlay pipelines are built; with none registered every custom fill is
+// transparent.
+fn overlay_custom_fill(id: i32, local: vec2<f32>, params: OverlayFillParams) -> vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+}
 
 fn fill_texel(i: i32) -> vec4<f32> {
     return textureLoad(
@@ -186,6 +209,17 @@ fn overlay_fill(local: vec2<f32>, fill: i32) -> vec4<f32> {
     }
     let params = fill_texel(base + 1);
     let hs = params.xy;
+    if (kind == FILL_CUSTOM) {
+        let p = OverlayFillParams(
+            hs,
+            fill_texel(base + FILL_HEADER_TEXELS),
+            fill_texel(base + FILL_HEADER_TEXELS + 1),
+            fill_texel(base + FILL_HEADER_TEXELS + 2),
+            fill_texel(base + FILL_HEADER_TEXELS + 3),
+        );
+        let id = i32(fill_texel(base + 2).x + 0.5);
+        return overlay_custom_fill(id, local, p) * colour;
+    }
     let two_pi = 6.28318530717958647692;
     var t = 0.0;
     if (kind == FILL_LINEAR) {

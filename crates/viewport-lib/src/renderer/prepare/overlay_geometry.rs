@@ -74,6 +74,87 @@ pub(super) fn emit_filled_polyline(
     }
 }
 
+/// Emit an overlay mesh as a triangle list, with no anti-aliasing fringe: the
+/// consumer's triangles are drawn as given.
+///
+/// `offset` is added to every position (the resolved anchor plus translate on
+/// the immediate path, the item's translate in a compiled group), and the
+/// item's linear map then turns the mesh about its bounding-box centre plus
+/// pivot. The fill spans the bounding box and multiplies the vertex colours;
+/// with UVs each vertex reads the fill at the point of the box its UV names.
+/// The item's tint is applied and its vertices marked as content.
+pub(super) fn emit_mesh(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    mesh: &crate::renderer::types::OverlayMeshItem,
+    offset: [f32; 2],
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
+) {
+    let Some((min, max)) = mesh.bounds() else {
+        return;
+    };
+    if mesh.positions.iter().flatten().any(|v| !v.is_finite()) {
+        return;
+    }
+    let start = verts.len();
+    let n = mesh.positions.len();
+    let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
+    let centre = [min[0] + half[0], min[1] + half[1]];
+    let (base_colour, index) = fill_record(
+        &mesh.style.fill,
+        mesh.style.opacity,
+        half,
+        fills,
+        image_size,
+    );
+    let uv_half = [half[0].max(0.5), half[1].max(0.5)];
+    let uvs = mesh.uvs.as_deref().filter(|u| u.len() == n);
+    // Resolve every vertex once; triangles index into it.
+    let resolved: Vec<crate::resources::OverlayTextVertex> = (0..n)
+        .map(|i| {
+            let p = mesh.positions[i];
+            let c = mesh.colours.at(i, n).to_linear_rgba();
+            let colour = [
+                c[0] * base_colour[0],
+                c[1] * base_colour[1],
+                c[2] * base_colour[2],
+                c[3] * base_colour[3],
+            ];
+            let local = match uvs {
+                Some(uvs) => [
+                    uvs[i][0] * 2.0 * uv_half[0] - half[0],
+                    uvs[i][1] * 2.0 * uv_half[1] - half[1],
+                ],
+                None => [p[0] - centre[0], p[1] - centre[1]],
+            };
+            let mut v = solid_vertex(
+                [p[0] + offset[0], p[1] + offset[1]],
+                colour,
+                crate::resources::OverlayTextVertex::NO_AA,
+            );
+            v.fill = [local[0], local[1], index, 0.0];
+            v
+        })
+        .collect();
+    for tri in mesh.indices.chunks_exact(3) {
+        let (a, b, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
+        if a >= n || b >= n || c >= n {
+            continue;
+        }
+        verts.extend_from_slice(&[resolved[a], resolved[b], resolved[c]]);
+    }
+    super::viewport_overlays::tint_vertices_from(verts, start, mesh.style.tint);
+    let rot = OverlayRotation::new(
+        &mesh.transform,
+        OverlayRotation::pivot_point(
+            [min[0] + offset[0], min[1] + offset[1]],
+            [max[0] - min[0], max[1] - min[1]],
+            mesh.transform.pivot,
+        ),
+    );
+    rotate_vertices_from(verts, start, rot);
+}
+
 /// The vertex colour and fill-record index a tessellated fill draws with: a
 /// solid fill is the vertex colour alone, any other fill a record in `fills`
 /// over a box of half-extents `half` with the opacity on the vertex.

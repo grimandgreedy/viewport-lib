@@ -15,9 +15,9 @@ use glam::Vec3;
 use viewport_lib::{
     Alignment, AnchorX, AnchorY, BackdropEffects, Colour, ColourMatrix, FillRule, GlyphRunItem,
     LabelItem, LineCap, LineJoin, Material, OutlineMode, OverlayBlend, OverlayClip, OverlayFill,
-    OverlayFrame, OverlayLayerStyle, OverlayOrigin, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, PositionedGlyph, RetainedOverlay, ShadowLayer, StrokePattern,
-    SubPath, TriangleDirection, primitives,
+    OverlayFrame, OverlayGroupItems, OverlayLayerStyle, OverlayMeshItem, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, PositionedGlyph,
+    RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TriangleDirection, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs};
@@ -65,6 +65,7 @@ pub fn scenes() -> Vec<NamedScene> {
         scene("overlay_strokes", build_strokes),
         scene("overlay_text_subpixel", build_text_subpixel),
         scene("overlay_layers", build_layers),
+        scene("overlay_mesh", build_mesh),
     ]
 }
 
@@ -1355,6 +1356,178 @@ fn build_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     grey.style.colour_matrix = Some(ColourMatrix::greyscale());
     ovl.shapes.push(coloured);
     ovl.shapes.push(grey);
+
+    backdrop(ctx, ovl)
+}
+
+/// The hatching fill the mesh scene registers: diagonal lines `p0.x` pixels
+/// apart and `p0.y` wide, in `p1` over `p2`.
+pub const HATCH_FILL_WGSL: &str = "
+fn fill(local: vec2<f32>, params: OverlayFillParams) -> vec4<f32> {
+    let spacing = max(params.p0.x, 1.0);
+    let half_width = params.p0.y * 0.5;
+    let d = (local.x + local.y) * 0.70710678;
+    let m = abs(fract(d / spacing + 0.5) - 0.5) * spacing;
+    let line = 1.0 - smoothstep(half_width - 0.5, half_width + 0.5, m);
+    return mix(params.p2, params.p1, line);
+}
+";
+
+/// The hatching fill, registered on first use.
+pub fn hatch_fill(
+    renderer: &mut viewport_lib::ViewportRenderer,
+    device: &viewport_lib::wgpu::Device,
+) -> viewport_lib::CustomFillId {
+    if let Some(id) = renderer.resources().overlay_fill_id("hatch") {
+        return id;
+    }
+    renderer
+        .resources_mut()
+        .register_overlay_fill(
+            device,
+            viewport_lib::plugin_api::OverlayFillDesc::new("hatch", HATCH_FILL_WGSL),
+        )
+        .expect("the hatch fill composes")
+}
+
+/// The colour of heatmap cell `(i, j)`: a smooth field through a blue to red
+/// ramp.
+fn heat(i: usize, j: usize) -> Colour {
+    let t = ((i as f32 * 0.7).sin() * 0.5 + (j as f32 * 0.9).cos() * 0.5) * 0.5 + 0.5;
+    Colour::srgb(
+        0.1 + 0.85 * t,
+        0.25 + 0.4 * (1.0 - (t - 0.5).abs() * 2.0),
+        0.9 - 0.8 * t,
+        1.0,
+    )
+}
+
+/// Meshes: a heatmap as one mesh beside the same cells as shapes (the two
+/// should match wherever cells abut), a textured mesh over UVs, a rect with a
+/// registered hatching fill, and a mesh compiled into a retained group.
+fn build_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    const COLS: usize = 8;
+    const ROWS: usize = 5;
+    const CELL: f32 = 14.0;
+    let mut ovl = OverlayFrame::default();
+
+    // One mesh, four vertices per cell so each cell is one flat colour.
+    let mut positions = Vec::new();
+    let mut colours = Vec::new();
+    let mut indices = Vec::new();
+    for j in 0..ROWS {
+        for i in 0..COLS {
+            let (x, y) = (i as f32 * CELL, j as f32 * CELL);
+            let base = positions.len() as u32;
+            positions.extend_from_slice(&[
+                [x, y],
+                [x + CELL, y],
+                [x + CELL, y + CELL],
+                [x, y + CELL],
+            ]);
+            colours.extend_from_slice(&[heat(i, j); 4]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+    ovl.meshes.push(
+        OverlayMeshItem::new(positions, indices)
+            .with_colours(colours)
+            .with_position([20.0, 20.0]),
+    );
+    for j in 0..ROWS {
+        for i in 0..COLS {
+            ovl.shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [150.0 + i as f32 * CELL, 20.0 + j as f32 * CELL],
+                    [CELL, CELL],
+                )
+                .with_fill(OverlayFill::Solid(heat(i, j))),
+            );
+        }
+    }
+
+    // A hexagon fan with a texture fill sampled at its vertex UVs.
+    let texture = ctx
+        .renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::srgb(
+                2,
+                2,
+                [
+                    [240u8, 90, 60, 255],
+                    [250, 220, 80, 255],
+                    [70, 140, 240, 255],
+                    [90, 210, 120, 255],
+                ]
+                .concat(),
+            ),
+        )
+        .expect("a well-formed sRGB image");
+    let mut hex = vec![[40.0f32, 40.0]];
+    let mut uvs = vec![[0.5f32, 0.5]];
+    for k in 0..6 {
+        let a = k as f32 * std::f32::consts::TAU / 6.0;
+        hex.push([40.0 + 38.0 * a.cos(), 40.0 + 38.0 * a.sin()]);
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+    let fan: Vec<u32> = (0..6).flat_map(|k| [0, 1 + k, 1 + (k + 1) % 6]).collect();
+    ovl.meshes.push(
+        OverlayMeshItem::new(hex, fan)
+            .with_uvs(uvs)
+            .with_fill(OverlayFill::texture(texture))
+            .with_position([20.0, 110.0]),
+    );
+
+    // A rect filled by the registered hatching function.
+    let hatch = hatch_fill(ctx.renderer, ctx.device);
+    let mut params = [0.0f32; 16];
+    params[0] = 9.0;
+    params[1] = 3.0;
+    params[4..8].copy_from_slice(&[0.95, 0.95, 1.0, 1.0]);
+    params[8..12].copy_from_slice(&[0.15, 0.2, 0.45, 0.85]);
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect {
+                corner_radius: 10.0,
+            },
+            [120.0, 112.0],
+            [100.0, 70.0],
+        )
+        .with_fill(OverlayFill::custom(hatch, params)),
+    );
+
+    // A per-vertex coloured strip, compiled into a retained group.
+    let strip = OverlayMeshItem::new(
+        vec![
+            [0.0, 0.0],
+            [60.0, 0.0],
+            [0.0, 60.0],
+            [60.0, 60.0],
+            [0.0, 30.0],
+            [60.0, 30.0],
+        ],
+        vec![0, 1, 4, 1, 5, 4, 4, 5, 2, 5, 3, 2],
+    )
+    .with_colours(vec![
+        Colour::srgb(1.0, 0.3, 0.3, 1.0),
+        Colour::srgb(1.0, 0.8, 0.2, 1.0),
+        Colour::srgb(0.3, 0.4, 1.0, 1.0),
+        Colour::srgb(0.6, 0.2, 0.9, 1.0),
+        Colour::srgb(0.3, 0.9, 0.4, 1.0),
+        Colour::srgb(0.2, 0.9, 0.9, 1.0),
+    ]);
+    let id = ctx.renderer.compile_overlay_group(
+        ctx.device,
+        ctx.queue,
+        &OverlayGroupItems::default().with_meshes(vec![strip]),
+        1.0,
+    );
+    ovl.retained
+        .push(RetainedOverlay::new(id).with_position([250.0, 115.0]));
 
     backdrop(ctx, ovl)
 }

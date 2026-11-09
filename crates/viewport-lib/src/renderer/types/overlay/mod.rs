@@ -16,6 +16,7 @@ pub use viewport_lib_types::overlay::geometry::*;
 pub use viewport_lib_types::overlay::glyph_run::*;
 pub use viewport_lib_types::overlay::label::*;
 pub use viewport_lib_types::overlay::layer::*;
+pub use viewport_lib_types::overlay::mesh::*;
 pub use viewport_lib_types::overlay::polyline::*;
 pub use viewport_lib_types::overlay::shape::*;
 pub use viewport_lib_types::overlay::style::*;

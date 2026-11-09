@@ -117,7 +117,7 @@ impl OverlayLayerStyle {
 /// item lists, in submission order.
 ///
 /// Ranges are indices into [`OverlayFrame`](crate::overlay::OverlayFrame)'s
-/// `shapes`, `labels`, `glyph_runs`, `polylines` and `retained`. A layer built
+/// `shapes`, `labels`, `glyph_runs`, `polylines`, `meshes` and `retained`. A layer built
 /// with [`OverlayFrame::layer_mark`](crate::overlay::OverlayFrame::layer_mark)
 /// and [`OverlayFrame::push_layer`](crate::overlay::OverlayFrame::push_layer)
 /// takes everything pushed between the two calls.
@@ -132,6 +132,8 @@ pub struct OverlayLayerMembers {
     pub glyph_runs: Range<usize>,
     /// Indices into `OverlayFrame::polylines`.
     pub polylines: Range<usize>,
+    /// Indices into `OverlayFrame::meshes`.
+    pub meshes: Range<usize>,
     /// Indices into `OverlayFrame::retained`.
     pub retained: Range<usize>,
 }
@@ -161,6 +163,12 @@ impl OverlayLayerMembers {
         self
     }
 
+    /// Name `range` of the frame's meshes.
+    pub fn with_meshes(mut self, range: Range<usize>) -> Self {
+        self.meshes = range;
+        self
+    }
+
     /// Name `range` of the frame's retained groups.
     pub fn with_retained(mut self, range: Range<usize>) -> Self {
         self.retained = range;
@@ -174,6 +182,7 @@ impl OverlayLayerMembers {
             labels: start.labels..end.labels,
             glyph_runs: start.glyph_runs..end.glyph_runs,
             polylines: start.polylines..end.polylines,
+            meshes: start.meshes..end.meshes,
             retained: start.retained..end.retained,
         }
     }
@@ -184,6 +193,7 @@ impl OverlayLayerMembers {
             + self.labels.len()
             + self.glyph_runs.len()
             + self.polylines.len()
+            + self.meshes.len()
             + self.retained.len()
     }
 
@@ -201,6 +211,7 @@ pub struct OverlayLayerMark {
     labels: usize,
     glyph_runs: usize,
     polylines: usize,
+    meshes: usize,
     retained: usize,
 }
 
@@ -257,6 +268,7 @@ impl crate::overlay::OverlayFrame {
             labels: self.labels.len(),
             glyph_runs: self.glyph_runs.len(),
             polylines: self.polylines.len(),
+            meshes: self.meshes.len(),
             retained: self.retained.len(),
         }
     }
@@ -285,6 +297,11 @@ impl crate::overlay::OverlayFrame {
             )
             .chain(
                 self.polylines[members.polylines.clone()]
+                    .iter()
+                    .map(|i| i.z_order),
+            )
+            .chain(
+                self.meshes[members.meshes.clone()]
                     .iter()
                     .map(|i| i.z_order),
             )

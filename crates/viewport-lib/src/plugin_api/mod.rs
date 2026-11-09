@@ -154,6 +154,7 @@ pub mod cull;
 pub mod depth;
 pub mod install;
 pub mod item_type;
+pub mod overlay_fill;
 pub mod pick_helpers;
 mod plugin_resources;
 pub mod post_effect;
@@ -175,6 +176,7 @@ pub use item_type::{
     PaintContext, PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection,
     RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
 };
+pub use overlay_fill::OverlayFillDesc;
 pub use plugin_resources::PluginResources;
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,

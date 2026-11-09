@@ -668,6 +668,15 @@ pub struct FrameStats {
     /// per glyph per new size. Glyphs rasterised by `compile_overlay_geometry`
     /// are not counted.
     pub overlay_glyph_rasters: u32,
+    /// Immediate vector shapes and polylines tessellated this frame, for the
+    /// most recently prepared viewport: the tessellation cache misses.
+    ///
+    /// An item's tessellated geometry is kept and reused while its content,
+    /// rotation, scale and pixels per point stay the same; moving it does not
+    /// miss. So a static or merely moving item reads zero after its first
+    /// frame, and a value that tracks the item count every frame means their
+    /// shape, style or transform changes every frame.
+    pub overlay_tessellations: u32,
     /// Overlay layers composited from a scratch target this frame, for the
     /// most recently prepared viewport: each `OverlayLayer` and retained-group
     /// layer that could not fold into its members, and each item whose blend

@@ -1,5 +1,5 @@
 //! Screen-space overlay item vocabulary: the shapes, labels, glyph runs,
-//! polylines, and vector paths a consumer builds to describe overlays, together
+//! polylines, meshes and vector paths a consumer builds to describe overlays, together
 //! with the fills, anchors, animations, and texture-sampling parameters they
 //! compose from.
 //!
@@ -19,6 +19,7 @@ pub mod geometry;
 pub mod glyph_run;
 pub mod label;
 pub mod layer;
+pub mod mesh;
 pub mod polyline;
 pub mod shape;
 pub mod style;
@@ -38,6 +39,7 @@ pub use self::geometry::*;
 pub use self::glyph_run::*;
 pub use self::label::*;
 pub use self::layer::*;
+pub use self::mesh::*;
 pub use self::polyline::*;
 pub use self::shape::*;
 pub use self::style::*;
@@ -58,6 +60,7 @@ mod tests {
         assert_partial_eq::<OverlayAnimations>();
         assert_partial_eq::<OverlayShapeItem>();
         assert_partial_eq::<OverlayPolylineItem>();
+        assert_partial_eq::<OverlayMeshItem>();
         assert_partial_eq::<LabelItem>();
         assert_partial_eq::<GlyphRunItem>();
         assert_partial_eq::<RetainedOverlay>();

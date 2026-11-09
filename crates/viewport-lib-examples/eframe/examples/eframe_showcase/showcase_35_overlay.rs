@@ -25,6 +25,17 @@ pub(crate) struct OvlState {
     /// A compiled hairline grid, drawn as a retained group at three times its
     /// size to show the lines stay one device pixel wide.
     pub hairline_grid: Option<vpl::OverlayGeometryId>,
+    /// Which halves of the heatmap row draw: the mesh, the shapes, or both.
+    pub heatmap: HeatmapMode,
+}
+
+/// Which halves of the heatmap row draw, so the overlay draw-call readout can
+/// be compared between one mesh item and the same cells as shapes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum HeatmapMode {
+    Both,
+    Mesh,
+    Shapes,
 }
 
 impl Default for OvlState {
@@ -48,6 +59,7 @@ impl Default for OvlState {
             emoji_font: None,
             emoji_glyphs: Vec::new(),
             hairline_grid: None,
+            heatmap: HeatmapMode::Both,
         }
     }
 }
@@ -399,6 +411,15 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui, frame: &crate::
     }
 
     ui.separator();
+    ui.label("Heatmap row:");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut app.ovl_state.heatmap, HeatmapMode::Both, "Both");
+        ui.radio_value(&mut app.ovl_state.heatmap, HeatmapMode::Mesh, "One mesh");
+        ui.radio_value(&mut app.ovl_state.heatmap, HeatmapMode::Shapes, "Shapes");
+    });
+    ui.label(egui::RichText::new("Compare the overlay draw calls above with each choice.").weak());
+
+    ui.separator();
     ui.label("Backdrop blur:");
     ui.add(egui::Slider::new(&mut app.ovl_state.backdrop_blur_radius, 0.0..=40.0).text("radius"));
 
@@ -450,6 +471,7 @@ pub(crate) fn build_overlay_frame(
     Vec<vpl::OverlayPolylineItem>,
     Vec<vpl::RetainedOverlay>,
     Vec<vpl::OverlayLayer>,
+    Vec<vpl::OverlayMeshItem>,
 ) {
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
@@ -485,6 +507,7 @@ pub(crate) fn build_overlay_frame(
     let mut polylines: Vec<vpl::OverlayPolylineItem> = Vec::new();
     let mut retained: Vec<vpl::RetainedOverlay> = Vec::new();
     let mut layers: Vec<vpl::OverlayLayer> = Vec::new();
+    let mut meshes: Vec<vpl::OverlayMeshItem> = Vec::new();
 
     if app.ovl_state.show_shapes {
         // Rows stack top to bottom from a single cursor: reserve each band in
@@ -499,6 +522,7 @@ pub(crate) fn build_overlay_frame(
         let masks_top = stack.row(90.0);
         let features_top = stack.row(70.0);
         let text_top = stack.row(80.0);
+        let heatmap_top = stack.row(70.0);
 
         let solid_right = row_solid_shapes(app, &mut shapes, solid_top);
         row_textured(app, &mut shapes, &mut labels, textured_top);
@@ -509,10 +533,81 @@ pub(crate) fn build_overlay_frame(
         row_masks_and_polylines(app, &mut shapes, &mut polylines, &mut retained, masks_top);
         row_layers(app, &mut shapes, &mut layers, features_top, solid_top);
         row_text(app, &mut labels, text_top);
+        row_heatmap(app, &mut shapes, &mut meshes, heatmap_top);
         row_backdrop(app, &mut shapes, solid_right);
     }
 
-    (shapes, labels, polylines, retained, layers)
+    (shapes, labels, polylines, retained, layers, meshes)
+}
+
+/// The colour of heatmap cell `(i, j)` at time `t`: a drifting field through
+/// a blue to red ramp.
+fn heat(i: usize, j: usize, t: f32) -> Colour {
+    let v = ((i as f32 * 0.5 + t).sin() * 0.5 + (j as f32 * 0.8 - t * 0.7).cos() * 0.5) * 0.5 + 0.5;
+    Colour::srgb(
+        0.1 + 0.85 * v,
+        0.25 + 0.4 * (1.0 - (v - 0.5).abs() * 2.0),
+        0.9 - 0.8 * v,
+        1.0,
+    )
+}
+
+/// The heatmap row: a heatmap drawn as one `OverlayMeshItem` (four vertices
+/// per cell, one flat colour each) beside the same cells drawn as one rect
+/// shape each.
+/// The mesh has no anti-aliasing fringe, so its cells meet without seams; the
+/// shapes anti-alias every cell edge. The controls choose which half draws, so
+/// the overlay draw-call readout can be compared.
+fn row_heatmap(
+    app: &App,
+    shapes: &mut Vec<OverlayShapeItem>,
+    meshes: &mut Vec<vpl::OverlayMeshItem>,
+    top: f32,
+) {
+    const COLS: usize = 24;
+    const ROWS: usize = 5;
+    const CELL: f32 = 14.0;
+    let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+    let mode = app.ovl_state.heatmap;
+    if mode != HeatmapMode::Shapes {
+        let mut positions = Vec::with_capacity(COLS * ROWS * 4);
+        let mut colours = Vec::with_capacity(COLS * ROWS * 4);
+        let mut indices = Vec::with_capacity(COLS * ROWS * 6);
+        for j in 0..ROWS {
+            for i in 0..COLS {
+                let (x, y) = (i as f32 * CELL, j as f32 * CELL);
+                let base = positions.len() as u32;
+                positions.extend_from_slice(&[
+                    [x, y],
+                    [x + CELL, y],
+                    [x + CELL, y + CELL],
+                    [x, y + CELL],
+                ]);
+                colours.extend_from_slice(&[heat(i, j, t); 4]);
+                indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
+        }
+        meshes.push(
+            vpl::OverlayMeshItem::new(positions, indices)
+                .with_colours(colours)
+                .with_position([20.0, top]),
+        );
+    }
+    if mode != HeatmapMode::Mesh {
+        let left = 20.0 + COLS as f32 * CELL + 24.0;
+        for j in 0..ROWS {
+            for i in 0..COLS {
+                shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: 0.0 },
+                        [left + i as f32 * CELL, top + j as f32 * CELL],
+                        [CELL, CELL],
+                    )
+                    .with_fill(OverlayFill::Solid(heat(i, j, t))),
+                );
+            }
+        }
+    }
 }
 
 /// Vertical stacking cursor for the overlay showcase rows. `row(h)` reserves a
@@ -2184,8 +2279,9 @@ pub(crate) fn scene(
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     fd.overlays.time = app.ovl_state.start_time.elapsed().as_secs_f64();
-    let (shapes, labels, polylines, retained, layers) = build_overlay_frame(app);
+    let (shapes, labels, polylines, retained, layers, meshes) = build_overlay_frame(app);
     fd.overlays.polylines = polylines;
+    fd.overlays.meshes = meshes;
     fd.overlays.retained = retained;
     // The dancing-As glyph run as a row above the emoji row.
     let mut runs = build_glyph_run(app);

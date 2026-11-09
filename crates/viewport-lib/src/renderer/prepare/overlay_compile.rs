@@ -75,6 +75,7 @@ fn names_unusable_mask(clip: &crate::renderer::types::OverlayClip, item: &str) -
 fn emit_base(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     polylines: &[crate::renderer::types::OverlayPolylineItem],
+    meshes: &[crate::renderer::types::OverlayMeshItem],
     ppp: f32,
     fills: &mut super::overlay_fill::FillTable,
 ) {
@@ -177,6 +178,25 @@ fn emit_base(
             verts,
             item_start,
             poly.style.colour_matrix.as_ref(),
+            fills,
+        );
+    }
+    // Meshes follow the polylines. Like them they are fixed geometry, emitted
+    // once. A compiled group binds no image, so a texture fill draws its tint.
+    for mesh in meshes {
+        if mesh.indices.len() < 3
+            || mesh.style.opacity <= 0.0
+            || names_unusable_mask(&mesh.clip, "mesh")
+        {
+            continue;
+        }
+        let item_start = verts.len();
+        overlay_geometry::emit_mesh(verts, mesh, mesh.transform.translate, fills, [1, 1]);
+        bake_clip_rect(verts, &mesh.clip, item_start, ppp);
+        super::overlay_fill::matrix_vertices_from(
+            verts,
+            item_start,
+            mesh.style.colour_matrix.as_ref(),
             fills,
         );
     }
@@ -525,7 +545,7 @@ fn emit_label(
     );
 }
 
-/// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh
+/// Emit a whole group (polylines, meshes, vector shapes, glyph runs, labels) into a fresh
 /// vertex list, returning it with its fill records, the glyph atlas cells it
 /// baked UVs against and the coverage atlas version.
 ///
@@ -534,7 +554,7 @@ fn emit_label(
 /// carries a stale divisor. The loop re-emits the atlas-backed portion once
 /// both atlases have stopped growing (all this group's glyphs and cells are
 /// then resident), so the returned geometry always uses a single, final page
-/// size. The polylines are emitted once, and so are the vector shapes when
+/// size. The polylines and meshes are emitted once, and so are the vector shapes when
 /// none of them draws from the coverage atlas.
 ///
 /// `label_leaders` is passed through to each label's `emit_label`: true for a
@@ -544,6 +564,7 @@ pub(super) fn emit_group_verts(
     coverage: &mut crate::resources::overlay::coverage_atlas::CoverageAtlas,
     device: &crate::gpu::Device,
     polylines: &[crate::renderer::types::OverlayPolylineItem],
+    meshes: &[crate::renderer::types::OverlayMeshItem],
     vector_shapes: &[crate::renderer::types::OverlayShapeItem],
     glyph_runs: &[crate::renderer::types::GlyphRunItem],
     labels: &[crate::renderer::types::LabelItem],
@@ -556,7 +577,7 @@ pub(super) fn emit_group_verts(
 ) {
     let mut base = Vec::new();
     let mut base_fills = super::overlay_fill::FillTable::without_textures();
-    emit_base(&mut base, polylines, ppp, &mut base_fills);
+    emit_base(&mut base, polylines, meshes, ppp, &mut base_fills);
 
     // Fast path: nothing draws from the atlas, so nothing grows it and the
     // vector shapes are as fixed as the polylines.
@@ -912,6 +933,59 @@ impl ViewportRenderer {
         labels: &[crate::renderer::types::LabelItem],
         pixels_per_point: f32,
     ) -> crate::renderer::OverlayGeometryId {
+        self.compile_group_items(
+            device,
+            queue,
+            polylines,
+            &[],
+            vector_shapes,
+            glyph_runs,
+            labels,
+            pixels_per_point,
+        )
+    }
+
+    /// Compile an [`OverlayGroupItems`](crate::renderer::types::OverlayGroupItems)
+    /// into a retained overlay-geometry handle: the same as
+    /// [`compile_overlay_geometry`](Self::compile_overlay_geometry), with every
+    /// family a group can hold, meshes included.
+    ///
+    /// Meshes compile with the polylines, after them, and are drawn in the
+    /// group's family order: polylines, meshes, vector shapes and analytic
+    /// shapes, glyph runs, labels. Like the other items, a mesh's
+    /// `transform.translate` is a plain offset in group-local pixels and its
+    /// anchor is not resolved.
+    pub fn compile_overlay_group(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        items: &crate::renderer::types::OverlayGroupItems,
+        pixels_per_point: f32,
+    ) -> crate::renderer::OverlayGeometryId {
+        self.compile_group_items(
+            device,
+            queue,
+            &items.polylines,
+            &items.meshes,
+            &items.shapes,
+            &items.glyph_runs,
+            &items.labels,
+            pixels_per_point,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compile_group_items(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        polylines: &[crate::renderer::types::OverlayPolylineItem],
+        meshes: &[crate::renderer::types::OverlayMeshItem],
+        vector_shapes: &[crate::renderer::types::OverlayShapeItem],
+        glyph_runs: &[crate::renderer::types::GlyphRunItem],
+        labels: &[crate::renderer::types::LabelItem],
+        pixels_per_point: f32,
+    ) -> crate::renderer::OverlayGeometryId {
         let has_glyphs = group_uses_atlas(vector_shapes, glyph_runs, labels, pixels_per_point);
 
         let (verts, text_fills, baked_version) = emit_group_verts(
@@ -919,6 +993,7 @@ impl ViewportRenderer {
             &mut self.resources.content.coverage_atlas,
             device,
             polylines,
+            meshes,
             vector_shapes,
             glyph_runs,
             labels,
@@ -999,6 +1074,7 @@ impl ViewportRenderer {
         // can go stale). Polyline/vector/shape-only groups never re-emit.
         let source = has_glyphs.then(|| crate::resources::CompiledSource {
             polylines: polylines.to_vec(),
+            meshes: meshes.to_vec(),
             vector_shapes: vector_shapes.to_vec(),
             glyph_runs: glyph_runs.to_vec(),
             labels: labels.to_vec(),
@@ -1069,6 +1145,7 @@ impl ViewportRenderer {
             &[],
             &[],
             &[],
+            &[],
             std::slice::from_ref(label),
             // A self-anchoring label: its anchor is resolved per frame, so its
             // world-anchor leader line is meaningful.
@@ -1092,6 +1169,7 @@ impl ViewportRenderer {
 
         let source = crate::resources::CompiledSource {
             polylines: Vec::new(),
+            meshes: Vec::new(),
             vector_shapes: Vec::new(),
             glyph_runs: Vec::new(),
             labels: vec![label.clone()],
@@ -1178,6 +1256,7 @@ impl ViewportRenderer {
             &mut self.resources.content.coverage_atlas,
             device,
             &src.polylines,
+            &src.meshes,
             &src.vector_shapes,
             &src.glyph_runs,
             &src.labels,

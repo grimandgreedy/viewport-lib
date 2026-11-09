@@ -176,25 +176,29 @@ impl crate::resources::DeviceResources {
         // binding 1 = the clip-mask shapes (a uniform array), binding 3 = the
         // per-draw group instance at a dynamic offset. No storage buffers, so
         // the overlay family runs on devices without them.
-        let shadow_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("overlay_shape_shadow_bgl"),
-            entries: &[
-                shadow_layer_entry(0),
-                clip_shapes_entry(1),
-                // binding 2: viewport-size uniform (logical w, h) for the
-                // vertex shader's local-pixel-to-NDC transform.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        // A rebuild after a fill function is registered keeps the layout, so
+        // bind groups built against it stay valid.
+        let shadow_bgl = self.overlay_shape.shadow_bgl.clone().unwrap_or_else(|| {
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("overlay_shape_shadow_bgl"),
+                entries: &[
+                    shadow_layer_entry(0),
+                    clip_shapes_entry(1),
+                    // binding 2: viewport-size uniform (logical w, h) for the
+                    // vertex shader's local-pixel-to-NDC transform.
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                group_instance_entry(3),
-            ],
+                    group_instance_entry(3),
+                ],
+            })
         });
 
         let fill_bgl = self.overlay_fill_bgl(device).clone();
@@ -207,7 +211,7 @@ impl crate::resources::DeviceResources {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "overlay_shape.wgsl",
-            crate::resources::builders::wgsl_source!("overlay_shape"),
+            self.overlay_fill_shader_source("overlay_shape"),
         );
 
         let pipeline = self.overlay_shape_variant(

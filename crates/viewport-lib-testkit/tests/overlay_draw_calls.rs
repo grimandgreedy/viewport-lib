@@ -10,8 +10,8 @@
 //! improvement.
 
 use viewport_lib::{
-    CameraFrame, Colour, FrameData, LabelItem, OverlayBlend, OverlayFill, OverlayShape,
-    OverlayShapeItem, SceneFrame,
+    CameraFrame, Colour, FrameData, LabelItem, OverlayBlend, OverlayFill, OverlayMeshItem,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, SceneFrame,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -170,5 +170,48 @@ fn texture_fills_batch_per_image() {
         stats.overlay_draw_calls,
         2 + 2,
         "shapes: untextured, then the shared image; text: plain, then the image"
+    );
+}
+
+/// A mesh draws through the text pipeline, so it batches with labels and
+/// polylines at the same family rank: rows that stack a mesh, a polyline and
+/// a label over each other, each at its own `z_order`, still draw as one.
+#[test]
+fn meshes_batch_with_text_and_polylines() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mut fd = frame(false);
+    fd.overlays.shapes.clear();
+    fd.overlays.labels.clear();
+    let mut z = 0;
+    for row in 0..ROWS {
+        let y = 8.0 + row as f32 * 6.0;
+        fd.overlays.meshes.push(
+            OverlayMeshItem::new(
+                vec![[0.0, 0.0], [120.0, 0.0], [120.0, 14.0], [0.0, 14.0]],
+                vec![0, 1, 2, 0, 2, 3],
+            )
+            .with_colour(Colour::srgb(0.2, 0.3, 0.5, 1.0))
+            .with_position([8.0, y])
+            .with_z_order(z),
+        );
+        fd.overlays.polylines.push(
+            OverlayPolylineItem::new(vec![[8.0, y + 7.0], [128.0, y + 7.0]])
+                .with_thickness(2.0)
+                .with_z_order(z + 1),
+        );
+        fd.overlays.labels.push(
+            LabelItem::new(format!("row {row}"))
+                .with_position([12.0, y + 1.0])
+                .with_z_order(z + 2),
+        );
+        z += 3;
+    }
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(
+        stats.overlay_draw_calls, 1,
+        "meshes, polylines and labels share the text pipeline"
     );
 }

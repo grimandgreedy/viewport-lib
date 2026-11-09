@@ -223,7 +223,7 @@ impl OverlayBlend {
 ///
 /// # Not every family draws every field
 ///
-/// The three coverage backends differ in what they can express, so a field can
+/// The coverage backends differ in what they can express, so a field can
 /// be present and inert. Ask [`OverlayStyleSupport`] rather than guessing, and
 /// see its docs for the per-family table. In debug builds the renderer logs
 /// once when a non-default value lands in a cell that family does not draw.
@@ -347,7 +347,8 @@ impl OverlayStyle {
 ///
 /// The axis that decides this is the coverage backend, not the item type: an
 /// analytic shape has a distance field, a vector path and a polyline are
-/// tessellated triangles, and a label or glyph run is a bitmap atlas. A field
+/// tessellated triangles, a mesh is the consumer's own triangles, and a label
+/// or glyph run is a bitmap atlas. A field
 /// is cheap to share only where all three can express it.
 ///
 /// Ask through [`OverlayStyleSupport::for_shape`] and the other constructors.
@@ -357,10 +358,10 @@ impl OverlayStyle {
 ///
 /// # The fields are the contract; the curve is not
 ///
-/// A `ShadowLayer` means the same thing everywhere, so `shadows` and
-/// `inner_shadows` are not variables here: an outer layer dilates what the
-/// item covers and is clipped to outside it, an inner layer erodes it inward
-/// from the boundary, and both draw on every family. What does differ is the
+/// A `ShadowLayer` means the same thing everywhere it draws: an outer layer
+/// dilates what the item covers and is clipped to outside it, an inner layer
+/// erodes it inward from the boundary, and both draw on every family but the
+/// mesh, which has no edge of its own to grow them from. What does differ is the
 /// falloff: the SDF path smoothsteps the distance field, the glyph path runs
 /// two box passes over the coverage bitmap, and the tessellated path draws five
 /// banded steps. Identical values are close but not identical across families.
@@ -372,6 +373,8 @@ pub struct OverlayStyleSupport {
     pub fill: &'static [OverlayFillKind],
     /// `backdrop` is composited.
     pub backdrop: bool,
+    /// `shadows` and `inner_shadows` are drawn.
+    pub shadows: bool,
 }
 
 /// Every fill kind.
@@ -379,6 +382,7 @@ const ALL_FILLS: &[OverlayFillKind] = &[
     OverlayFillKind::Solid,
     OverlayFillKind::Gradient,
     OverlayFillKind::Texture,
+    OverlayFillKind::Custom,
 ];
 
 impl OverlayStyleSupport {
@@ -386,12 +390,14 @@ impl OverlayStyleSupport {
     pub const ALL: Self = Self {
         fill: ALL_FILLS,
         backdrop: true,
+        shadows: true,
     };
 
     /// Nothing drawn.
     pub const NONE: Self = Self {
         fill: &[],
         backdrop: false,
+        shadows: false,
     };
 
     /// What an [`OverlayShapeItem`] draws. Every variant draws every fill kind
@@ -412,6 +418,7 @@ impl OverlayStyleSupport {
         Self {
             fill: if closed { ALL_FILLS } else { &[] },
             backdrop: false,
+            shadows: true,
         }
     }
 
@@ -421,6 +428,18 @@ impl OverlayStyleSupport {
         Self {
             fill: ALL_FILLS,
             backdrop: false,
+            shadows: true,
+        }
+    }
+
+    /// What an `OverlayMeshItem` draws: every fill kind, multiplied over its
+    /// vertex colours, but no backdrop. A mesh has no edge to grow a shadow
+    /// layer from, so its `shadows` and `inner_shadows` are not drawn either.
+    pub const fn for_mesh() -> Self {
+        Self {
+            fill: ALL_FILLS,
+            backdrop: false,
+            shadows: false,
         }
     }
 
@@ -445,6 +464,12 @@ impl OverlayStyleSupport {
         }
         if !self.backdrop && style.backdrop.is_active() {
             out.push("backdrop");
+        }
+        if !self.shadows && !style.shadows.is_empty() {
+            out.push("shadows");
+        }
+        if !self.shadows && !style.inner_shadows.is_empty() {
+            out.push("inner_shadows");
         }
         out
     }
@@ -496,5 +521,20 @@ mod tests {
                 .is_empty()
         );
         assert!(OverlayStyleSupport::NONE.inert_fields(&style).is_empty());
+    }
+
+    #[test]
+    fn a_mesh_draws_no_shadow_layers() {
+        let style = OverlayStyle::solid(Colour::WHITE).with_shadows(vec![ShadowLayer::default()]);
+        assert_eq!(
+            OverlayStyleSupport::for_mesh().inert_fields(&style),
+            vec!["shadows"]
+        );
+        assert!(
+            OverlayStyleSupport::for_mesh().draws_fill(&OverlayFill::custom(
+                crate::overlay::CustomFillId(0),
+                [0.0; 16]
+            ))
+        );
     }
 }

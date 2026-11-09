@@ -47,6 +47,7 @@ pub(crate) enum Family {
     Label,
     GlyphRun,
     Polyline,
+    Mesh,
     Retained,
 }
 
@@ -58,6 +59,7 @@ pub(crate) struct LayerPlan {
     labels: Vec<u32>,
     glyph_runs: Vec<u32>,
     polylines: Vec<u32>,
+    meshes: Vec<u32>,
     retained: Vec<u32>,
 }
 
@@ -68,6 +70,7 @@ impl LayerPlan {
             Family::Label => &self.labels,
             Family::GlyphRun => &self.glyph_runs,
             Family::Polyline => &self.polylines,
+            Family::Mesh => &self.meshes,
             Family::Retained => &self.retained,
         }
     }
@@ -78,6 +81,7 @@ impl LayerPlan {
             Family::Label => &mut self.labels,
             Family::GlyphRun => &mut self.glyph_runs,
             Family::Polyline => &mut self.polylines,
+            Family::Mesh => &mut self.meshes,
             Family::Retained => &mut self.retained,
         }
     }
@@ -150,6 +154,7 @@ impl LayerPlan {
             Family::Label,
             Family::GlyphRun,
             Family::Polyline,
+            Family::Mesh,
             Family::Retained,
         ] {
             self.list_mut(f).clear();
@@ -163,7 +168,8 @@ impl LayerPlan {
                 .any(|s| s.provides_mask.is_none() && reads(&s.style))
             || frame.labels.iter().any(|s| reads(&s.style))
             || frame.glyph_runs.iter().any(|s| reads(&s.style))
-            || frame.polylines.iter().any(|s| reads(&s.style));
+            || frame.polylines.iter().any(|s| reads(&s.style))
+            || frame.meshes.iter().any(|s| reads(&s.style));
         if !any {
             return;
         }
@@ -171,6 +177,7 @@ impl LayerPlan {
         self.labels.resize(frame.labels.len(), NO_LAYER);
         self.glyph_runs.resize(frame.glyph_runs.len(), NO_LAYER);
         self.polylines.resize(frame.polylines.len(), NO_LAYER);
+        self.meshes.resize(frame.meshes.len(), NO_LAYER);
         self.retained.resize(frame.retained.len(), NO_LAYER);
 
         // Explicit layers: an item belongs to the first layer naming it.
@@ -188,6 +195,7 @@ impl LayerPlan {
                 (Family::Label, m.labels.clone()),
                 (Family::GlyphRun, m.glyph_runs.clone()),
                 (Family::Polyline, m.polylines.clone()),
+                (Family::Mesh, m.meshes.clone()),
                 (Family::Retained, m.retained.clone()),
             ] {
                 let list = self.list_mut(family);
@@ -238,6 +246,9 @@ impl LayerPlan {
         for (i, s) in frame.polylines.iter().enumerate() {
             implicit(self, Family::Polyline, i, &s.style, s.z_order);
         }
+        for (i, s) in frame.meshes.iter().enumerate() {
+            implicit(self, Family::Mesh, i, &s.style, s.z_order);
+        }
 
         // Count each layer's drawn members and remember a lone immediate one.
         let mut counts = vec![(0usize, None::<(Family, usize)>); self.layers.len()];
@@ -261,6 +272,9 @@ impl LayerPlan {
         for (i, l) in self.polylines.iter().enumerate() {
             tally(*l, Some((Family::Polyline, i)));
         }
+        for (i, l) in self.meshes.iter().enumerate() {
+            tally(*l, Some((Family::Mesh, i)));
+        }
         for l in &self.retained {
             tally(*l, None);
         }
@@ -270,6 +284,7 @@ impl LayerPlan {
                 (Family::Label, i) => &frame.labels[i].style,
                 (Family::GlyphRun, i) => &frame.glyph_runs[i].style,
                 (Family::Polyline, i) => &frame.polylines[i].style,
+                (Family::Mesh, i) => &frame.meshes[i].style,
                 (Family::Retained, _) => unreachable!("a retained member is not pushed"),
             }
         };

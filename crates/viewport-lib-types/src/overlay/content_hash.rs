@@ -8,10 +8,10 @@ use crate::overlay::{
     AnchorX, AnchorY, AnimTrack, BackdropEffects, ColourMatrix, FillRule, FontHandle, GlyphRunItem,
     GradientStop, LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring,
     OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId,
-    OverlayLayerStyle, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayTextureId, OverlayTransform, PathSegment, PositionedGlyph,
-    RepeatMode, RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TextStyle, TextureTransform,
-    TileMode, TriangleDirection,
+    OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem, OverlayOrigin, OverlayPolylineItem,
+    OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
+    OverlayTransform, PathSegment, PositionedGlyph, RepeatMode, RetainedOverlay, ShadowLayer,
+    StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
 };
 
 /// Feeds everything that affects how an overlay value draws into a hasher, so
@@ -373,6 +373,11 @@ impl OverlayContentHash for OverlayFill {
                 transform.content_hash_at(origin, state);
                 nine_slice.content_hash_at(origin, state);
                 tint.content_hash_at(origin, state);
+            }
+            OverlayFill::Custom { kind, params } => {
+                state.write_u8(8);
+                put_u32(state, kind.0);
+                hash_floats(state, params);
             }
         }
     }
@@ -798,6 +803,64 @@ impl OverlayContentHash for OverlayPolylineItem {
                 }
             }
         }
+        put_i32(state, *z_order);
+    }
+}
+
+impl OverlayContentHash for OverlayMeshColours {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        match self {
+            OverlayMeshColours::Uniform(c) => {
+                state.write_u8(0);
+                c.content_hash_at(origin, state);
+            }
+            OverlayMeshColours::PerVertex(list) => {
+                state.write_u8(1);
+                list.content_hash_at(origin, state);
+            }
+        }
+    }
+}
+
+impl OverlayContentHash for OverlayMeshItem {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            positions,
+            indices,
+            colours,
+            uvs,
+            anchoring,
+            transform,
+            style,
+            animations,
+            clip,
+            z_order,
+        } = self;
+        // The positions are local to the translate, which is the placement.
+        hash_len(state, positions.len());
+        for p in positions {
+            hash_floats(state, p);
+        }
+        hash_len(state, indices.len());
+        for i in indices {
+            put_u32(state, *i);
+        }
+        colours.content_hash_at(origin, state);
+        match uvs {
+            None => state.write_u8(0),
+            Some(uvs) => {
+                state.write_u8(1);
+                hash_len(state, uvs.len());
+                for uv in uvs {
+                    hash_floats(state, uv);
+                }
+            }
+        }
+        anchoring.content_hash_at(origin, state);
+        transform.content_hash_at(origin, state);
+        style.content_hash_at(origin, state);
+        animations.content_hash_at(origin, state);
+        clip.content_hash_at(origin, state);
         put_i32(state, *z_order);
     }
 }

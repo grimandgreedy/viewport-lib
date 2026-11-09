@@ -14,6 +14,7 @@ mod overlay_compile;
 mod overlay_fill;
 mod overlay_geometry;
 mod overlay_style_check;
+pub(crate) mod overlay_tess_cache;
 mod overlay_vector;
 mod per_object;
 mod projection;
@@ -1073,6 +1074,7 @@ impl ViewportRenderer {
         let vector_rasters_before = self.resources.content.coverage_atlas.rasters();
         let glyph_rasters_before = self.resources.content.glyph_atlas.rasters();
         ov.layer_plan.build(&frame.overlays);
+        self.overlay_tess_cache.begin_pass();
         self.prepare_overlay_labels(device, queue, frame, &mut ov);
         self.prepare_overlay_shapes(device, queue, frame, &mut ov);
         // The layers' members draw into their targets before the overlay
@@ -1108,6 +1110,7 @@ impl ViewportRenderer {
             (self.resources.content.coverage_atlas.rasters() - vector_rasters_before) as u32;
         self.last_stats.overlay_glyph_rasters =
             (self.resources.content.glyph_atlas.rasters() - glyph_rasters_before) as u32;
+        self.last_stats.overlay_tessellations = self.overlay_tess_cache.tessellations;
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

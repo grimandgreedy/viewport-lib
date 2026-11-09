@@ -94,27 +94,27 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
     AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure,
-    BackdropEffects, BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit,
-    ClipObject, ClipShape, ColourMatrix, ContactShadowSettings, DebugOutputMode, DebugQuantity,
-    DebugVis, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
-    EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureSettings, FillRule,
-    ForegroundPass, ForegroundProjection, FrameData, FrameTime, GenericToneCurve, GlyphRunItem,
-    GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
-    LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayBlend, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayGeometryId, OverlayLayer, OverlayLayerMark, OverlayLayerMembers,
-    OverlayLayerStyle, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality,
-    ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
-    ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission, TextureTransform,
-    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace,
-    aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    BackdropEffects, BackgroundSource, BloomSettings, CUSTOM_FILL_PARAMS, CameraFrame, Candela,
+    CascadeSplit, ClipObject, ClipShape, ColourMatrix, ContactShadowSettings, CustomFillId,
+    DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings, DofSettings, EdlSettings,
+    EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting, ExposureMode,
+    ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData, FrameTime,
+    GenericToneCurve, GlyphRunItem, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode,
+    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
+    LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen,
+    Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode,
+    OverlayAnchoring, OverlayAnimations, OverlayBlend, OverlayClip, OverlayContentHash,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayGroupItems, OverlayLayer,
+    OverlayLayerMark, OverlayLayerMembers, OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem,
+    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
+    OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, PASSTHROUGH_EV100,
+    PathSegment, PipelineMode, PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings,
+    RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects,
+    SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
+    StrokePattern, SubPath, SurfaceSubmission, TextureTransform, TileMode, ToneCurve, ToneMapping,
+    TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, VignetteSettings,
+    VolumeMeshItem, VolumeTransparency, WorkingSpace, aabb_wireframe_polyline,
+    bake_view_transform_lut, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -607,6 +607,9 @@ pub struct ViewportRenderer {
     /// Retained-overlay counters for the frame being prepared. Reset at the start
     /// of the overlay phase and published into `FrameStats` at the end of it.
     overlay_retained_counters: OverlayRetainedCounters,
+    /// Tessellated immediate vector shapes and polylines, reused while their
+    /// content does not change.
+    overlay_tess_cache: prepare::overlay_tess_cache::TessellationCache,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -1197,6 +1200,7 @@ impl ViewportRenderer {
             last_frame_kept_scene_depth: false,
             surface_mask: surface_mask::SurfaceMaskState::new(),
             overlay_retained_counters: OverlayRetainedCounters::default(),
+            overlay_tess_cache: Default::default(),
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             mesh_uniforms: PerObjectState::new(),

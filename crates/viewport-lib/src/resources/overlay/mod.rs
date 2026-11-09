@@ -1,5 +1,7 @@
 /// Coverage cells for vector overlay shapes.
 pub(crate) mod coverage_atlas;
+/// Fill functions registered for `OverlayFill::Custom`.
+pub(crate) mod custom_fill;
 /// Font atlas and single-line text layout for overlay rendering.
 pub(crate) mod font;
 /// Retained overlay geometry: compiled buffers keyed by OverlayGeometryId.

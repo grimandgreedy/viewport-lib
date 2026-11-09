@@ -60,6 +60,7 @@ pub(crate) struct CompiledOverlay {
 #[derive(Clone)]
 pub(crate) struct CompiledSource {
     pub polylines: Vec<viewport_lib_types::overlay::OverlayPolylineItem>,
+    pub meshes: Vec<viewport_lib_types::overlay::OverlayMeshItem>,
     pub vector_shapes: Vec<viewport_lib_types::overlay::OverlayShapeItem>,
     pub glyph_runs: Vec<viewport_lib_types::overlay::GlyphRunItem>,
     /// Labels retained for re-emission. A label lays its text out at compile time

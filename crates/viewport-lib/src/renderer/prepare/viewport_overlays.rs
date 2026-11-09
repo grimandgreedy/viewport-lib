@@ -138,6 +138,22 @@ struct VectorCell {
     shift: [f32; 2],
 }
 
+/// Split a device-pixel translation into whole pixels and a fraction rounded
+/// to a quarter pixel, the phase a coverage cell is keyed by.
+fn split_device_translation(b: [f32; 2]) -> ([f32; 2], [u8; 2]) {
+    let mut whole = [b[0].floor(), b[1].floor()];
+    let mut phase = [0u8; 2];
+    for k in 0..2 {
+        let q = ((b[k] - whole[k]) * 4.0).round() as u8;
+        if q >= 4 {
+            whole[k] += 1.0;
+        } else {
+            phase[k] = q;
+        }
+    }
+    (whole, phase)
+}
+
 /// Plan the coverage cell a vector shape draws from under the device map
 /// `(a, b)`. The path's translation splits into whole pixels, which place the
 /// cell, and a fraction rounded to a quarter pixel, which is part of the key:
@@ -153,22 +169,12 @@ fn plan_vector_cell(
     inverse_box: Option<[f32; 2]>,
     a: [[f32; 2]; 2],
     b: [f32; 2],
+    path_hash: Option<u64>,
 ) -> Option<VectorCell> {
-    use crate::renderer::types::OverlayContentHash;
-    use std::hash::Hasher;
     if a.iter().flatten().chain(b.iter()).any(|v| !v.is_finite()) {
         return None;
     }
-    let mut whole = [b[0].floor(), b[1].floor()];
-    let mut phase = [0u8; 2];
-    for k in 0..2 {
-        let q = ((b[k] - whole[k]) * 4.0).round() as u8;
-        if q >= 4 {
-            whole[k] += 1.0;
-        } else {
-            phase[k] = q;
-        }
-    }
+    let (whole, phase) = split_device_translation(b);
     let frac = [phase[0] as f32 * 0.25, phase[1] as f32 * 0.25];
     // The cell spans every point the path can reach, control points included,
     // plus a pixel for the coverage ramp.
@@ -211,22 +217,11 @@ fn plan_vector_cell(
     }
     let lo = [min[0].floor() - 1.0, min[1].floor() - 1.0];
     let hi = [max[0].ceil() + 1.0, max[1].ceil() + 1.0];
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    crate::renderer::types::OverlayShape::Vector {
-        subpaths: subpaths.to_vec(),
-        fill_rule,
-        stroke: None,
-        inverse: inverse_box.is_some(),
-    }
-    .content_hash(&mut hasher);
-    if let Some(size) = inverse_box {
-        hasher.write_u32(size[0].to_bits());
-        hasher.write_u32(size[1].to_bits());
-    }
+    let hash = path_hash.unwrap_or_else(|| vector_path_hash(subpaths, fill_rule, inverse_box));
     let q = |v: f32| (v * 1024.0).round() as i32;
     Some(VectorCell {
         key: crate::resources::overlay::coverage_atlas::VectorKey {
-            hash: hasher.finish(),
+            hash,
             linear: [q(a[0][0]), q(a[0][1]), q(a[1][0]), q(a[1][1])],
             phase,
         },
@@ -234,6 +229,29 @@ fn plan_vector_cell(
         origin: [whole[0] + lo[0], whole[1] + lo[1]],
         shift: [frac[0] - lo[0], frac[1] - lo[1]],
     })
+}
+
+/// The part of a coverage cell's key that names the path: its subpaths, fill
+/// rule and, for an inverse fill, the box it is cut from.
+pub(super) fn vector_path_hash(
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse_box: Option<[f32; 2]>,
+) -> u64 {
+    use crate::renderer::types::OverlayContentHash;
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // The same bytes as an `OverlayShape::Vector` with no stroke hashes.
+    hasher.write_u8(12);
+    subpaths.content_hash(&mut hasher);
+    fill_rule.content_hash(&mut hasher);
+    hasher.write_u8(0);
+    hasher.write_u8(inverse_box.is_some() as u8);
+    if let Some(size) = inverse_box {
+        hasher.write_u32(size[0].to_bits());
+        hasher.write_u32(size[1].to_bits());
+    }
+    hasher.finish()
 }
 
 /// Rasterise the coverage of `subpaths` under `fill_rule`, mapped by `a` and
@@ -315,9 +333,17 @@ fn vector_atlas_cell(
     inverse: bool,
     ppp: f32,
     max_px: u32,
+    path_hash: Option<u64>,
 ) -> Option<(VectorCell, [[f32; 2]; 2])> {
     let (a, b) = vector_device_affine(shape, ppp);
-    let cell = plan_vector_cell(subpaths, fill_rule, inverse.then_some(shape.size), a, b)?;
+    let cell = plan_vector_cell(
+        subpaths,
+        fill_rule,
+        inverse.then_some(shape.size),
+        a,
+        b,
+        path_hash,
+    )?;
     (cell.size[0] <= max_px && cell.size[1] <= max_px).then_some((cell, a))
 }
 
@@ -343,6 +369,7 @@ pub(super) fn retained_vector_uses_atlas(
                     *inverse,
                     ppp,
                     VECTOR_ATLAS_MAX_RETAINED_PX,
+                    None,
                 )
                 .is_some()
         }
@@ -496,6 +523,9 @@ fn transform_vector_positions(
 /// in the atlas this frame, is tessellated with an anti-aliasing fringe. The
 /// shadow layers are tessellated bands either way.
 ///
+/// Returns how the fill was drawn, which the tessellation cache needs: the
+/// atlas quad's place in `batch` when it came from the atlas.
+///
 /// An inverse fill fills the item's box less the path: from the atlas, the
 /// box's coverage less the path's; tessellated, the box with the path's filled
 /// region cut out. `stroke` draws over the fill and the inner shadows, with
@@ -513,7 +543,7 @@ pub(super) fn emit_vector_shape(
     fills: &mut super::overlay_fill::FillTable,
     image_size: Option<[u32; 2]>,
     atlas: Option<VectorAtlas<'_>>,
-) {
+) -> VectorFillPath {
     // Shadow layers, behind the fill. A vector path has no distance field, so a
     // layer is drawn as the filled silhouette plus its contours re-stroked
     // wider, once per band: the stroke is what supplies the dilation the SDF
@@ -533,24 +563,30 @@ pub(super) fn emit_vector_shape(
     let draws_fill = !textured || (fills.draws_textures() && image_size.is_some());
     // The fill draws from the coverage atlas when it fits there, and is
     // tessellated with an anti-aliasing fringe otherwise.
+    let mut path = VectorFillPath::Tessellated;
     let from_atlas = draws_fill
-        && atlas.is_some_and(|mut va| {
-            vector_atlas_cell(shape, subpaths, fill_rule, inverse, va.ppp, va.max_px).is_some_and(
-                |(cell, a)| {
-                    emit_vector_atlas_fill(
-                        batch,
-                        shape,
-                        subpaths,
-                        fill_rule,
-                        inverse,
-                        &cell,
-                        a,
-                        &mut va,
-                        fills,
-                        image_size.unwrap_or([1, 1]),
-                    )
-                },
-            )
+        && atlas.is_some_and(|va| {
+            match emit_vector_atlas_quad(
+                batch,
+                shape,
+                subpaths,
+                fill_rule,
+                inverse,
+                va,
+                fills,
+                image_size.unwrap_or([1, 1]),
+                None,
+            ) {
+                Some(true) => {
+                    path = VectorFillPath::Atlas(content_start);
+                    true
+                }
+                Some(false) => {
+                    path = VectorFillPath::AtlasFull;
+                    false
+                }
+                None => false,
+            }
         });
     if draws_fill && !from_atlas {
         let (local, rule) = if inverse {
@@ -607,6 +643,44 @@ pub(super) fn emit_vector_shape(
     if let Some(stroke) = stroke {
         emit_vector_stroke(batch, shape, subpaths, stroke);
     }
+    path
+}
+
+/// How [`emit_vector_shape`] drew a shape's fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VectorFillPath {
+    /// Tessellated, or not drawn.
+    Tessellated,
+    /// One quad over a coverage cell, its six vertices at this index.
+    Atlas(usize),
+    /// The cell would have fitted the size limit but not the atlas this frame,
+    /// so the fill was tessellated instead.
+    AtlasFull,
+}
+
+/// Emit a vector shape's fill as one quad over its coverage cell, untinted.
+/// `None` when the shape's cell is over the size limit (nothing emitted),
+/// `Some(false)` when it is under it but the atlas has no room this frame,
+/// `Some(true)` when the quad was emitted. `path_hash` is the cell key's path
+/// part when the caller has it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_vector_atlas_quad(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse: bool,
+    mut va: VectorAtlas<'_>,
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
+    path_hash: Option<u64>,
+) -> Option<bool> {
+    let (cell, a) = vector_atlas_cell(
+        shape, subpaths, fill_rule, inverse, va.ppp, va.max_px, path_hash,
+    )?;
+    Some(emit_vector_atlas_fill(
+        batch, shape, subpaths, fill_rule, inverse, &cell, a, &mut va, fills, image_size,
+    ))
 }
 
 /// Emit a vector shape's stroke along each of its subpaths, open ones left
@@ -1113,6 +1187,7 @@ impl ViewportRenderer {
         let has_overlay = !frame.overlays.labels.is_empty()
             || !frame.overlays.glyph_runs.is_empty()
             || !frame.overlays.polylines.is_empty()
+            || !frame.overlays.meshes.is_empty()
             || has_vector_shape
             || !frame.overlays.retained.is_empty();
         if has_overlay {
@@ -1244,6 +1319,13 @@ impl ViewportRenderer {
                     else {
                         continue;
                     };
+                    // The tessellation cache key: the path and its style with
+                    // the offset left out, so a path that only moves reuses
+                    // its geometry.
+                    let poly_key = polyline_cache_key(
+                        poly,
+                        fill_image(&poly.style.fill, &self.resources.content.overlay_textures),
+                    );
                     let translated_storage;
                     let poly: &crate::renderer::types::OverlayPolylineItem = if offset == [0.0, 0.0]
                     {
@@ -1263,62 +1345,30 @@ impl ViewportRenderer {
                         crate::renderer::types::OverlayStyleSupport::for_polyline(poly.closed),
                         &poly.style,
                     );
-                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    // Shadow layers first, behind both the fill and the stroke.
-                    for layer in poly
-                        .style
-                        .shadows
-                        .iter()
-                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
-                        .filter(|l| l.is_visible())
-                    {
-                        emit_polyline_shadow(
-                            &mut batch,
-                            poly,
-                            layer,
-                            poly.style.opacity,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
-                    let content_start = batch.len();
                     let image =
                         fill_image(&poly.style.fill, &self.resources.content.overlay_textures);
                     let fill_texture = match image {
                         Some(Some(_)) if poly.closed => poly.style.fill.texture_id(),
                         _ => None,
                     };
-                    if poly.closed && image != Some(None) {
-                        emit_filled_polyline(
-                            &mut batch,
-                            &poly.points,
-                            &poly.style.fill,
-                            poly.style.opacity,
-                            vp_w,
-                            vp_h,
-                            &mut text_fills,
-                            poly.uvs.as_deref(),
-                            image.flatten().unwrap_or([1, 1]),
-                        );
-                    }
-                    // Tint the fill before the inner shadows go over it: a tint
-                    // never reaches a shadow layer.
-                    tint_vertices_from(&mut batch, content_start, poly.style.tint);
-                    // An inset layer goes over what it erodes and under the
-                    // edge of it: over the fill and under the stroke for a
-                    // filled path, over the stroke when the stroke is all the
-                    // item covers.
-                    let filled = poly.closed && poly.style.fill.is_set();
-                    let inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    let replayed = self
+                        .overlay_tess_cache
+                        .replay(poly_key, offset, &mut batch, &mut text_fills)
+                        .is_some();
+                    if !replayed {
+                        self.overlay_tess_cache.count_tessellation();
+                        let fill_from = text_fills.len();
+                        // Shadow layers first, behind both the fill and the stroke.
                         for layer in poly
                             .style
-                            .inner_shadows
+                            .shadows
                             .iter()
                             .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
                             .filter(|l| l.is_visible())
                         {
-                            emit_polyline_inner_shadow(
-                                batch,
+                            emit_polyline_shadow(
+                                &mut batch,
                                 poly,
                                 layer,
                                 poly.style.opacity,
@@ -1326,32 +1376,82 @@ impl ViewportRenderer {
                                 vp_h,
                             );
                         }
-                    };
-                    if filled {
-                        inner(&mut batch);
-                    }
-                    let stroke_start = batch.len();
-                    if let Some(stroke) = poly.stroke.as_ref() {
-                        let mut colour = stroke.colour.to_linear_rgba();
-                        colour[3] *= poly.style.opacity;
-                        emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
-                    }
-                    tint_vertices_from(&mut batch, stroke_start, poly.style.tint);
-                    if !filled {
-                        inner(&mut batch);
-                    }
-                    // The path turns and scales about its own bounding box,
-                    // shadows included, after every part of it has been emitted.
-                    if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
-                        let rot = OverlayRotation::new(
-                            &poly.transform,
-                            OverlayRotation::pivot_point(
-                                pmin,
-                                [pmax[0] - pmin[0], pmax[1] - pmin[1]],
-                                poly.transform.pivot,
-                            ),
+                        let content_start = batch.len();
+                        if poly.closed && image != Some(None) {
+                            emit_filled_polyline(
+                                &mut batch,
+                                &poly.points,
+                                &poly.style.fill,
+                                poly.style.opacity,
+                                vp_w,
+                                vp_h,
+                                &mut text_fills,
+                                poly.uvs.as_deref(),
+                                image.flatten().unwrap_or([1, 1]),
+                            );
+                        }
+                        // Tint the fill before the inner shadows go over it: a tint
+                        // never reaches a shadow layer.
+                        tint_vertices_from(&mut batch, content_start, poly.style.tint);
+                        // An inset layer goes over what it erodes and under the
+                        // edge of it: over the fill and under the stroke for a
+                        // filled path, over the stroke when the stroke is all the
+                        // item covers.
+                        let filled = poly.closed && poly.style.fill.is_set();
+                        let inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                            for layer in poly
+                                .style
+                                .inner_shadows
+                                .iter()
+                                .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                                .filter(|l| l.is_visible())
+                            {
+                                emit_polyline_inner_shadow(
+                                    batch,
+                                    poly,
+                                    layer,
+                                    poly.style.opacity,
+                                    vp_w,
+                                    vp_h,
+                                );
+                            }
+                        };
+                        if filled {
+                            inner(&mut batch);
+                        }
+                        let stroke_start = batch.len();
+                        if let Some(stroke) = poly.stroke.as_ref() {
+                            let mut colour = stroke.colour.to_linear_rgba();
+                            colour[3] *= poly.style.opacity;
+                            emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
+                        }
+                        tint_vertices_from(&mut batch, stroke_start, poly.style.tint);
+                        if !filled {
+                            inner(&mut batch);
+                        }
+                        // The path turns and scales about its own bounding box,
+                        // shadows included, after every part of it has been emitted.
+                        if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
+                            let rot = OverlayRotation::new(
+                                &poly.transform,
+                                OverlayRotation::pivot_point(
+                                    pmin,
+                                    [pmax[0] - pmin[0], pmax[1] - pmin[1]],
+                                    poly.transform.pivot,
+                                ),
+                            );
+                            rotate_vertices_from(&mut batch, 0, rot);
+                        }
+                        self.overlay_tess_cache.record(
+                            poly_key,
+                            offset,
+                            &batch,
+                            0,
+                            &text_fills,
+                            fill_from,
+                            None,
+                            0,
                         );
-                        rotate_vertices_from(&mut batch, 0, rot);
                     }
                     let clip = stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
                     super::overlay_fill::matrix_vertices_from(
@@ -1365,6 +1465,84 @@ impl ViewportRenderer {
                             z_order: poly.z_order,
                             texture: fill_texture,
                             blend: poly.style.blend,
+                            clip,
+                            verts: batch,
+                            layer: record_layer,
+                        });
+                    }
+                }
+
+                // --- Meshes (the consumer's own triangles, no fringe) ---
+                for (item_index, mesh) in frame.overlays.meshes.iter().enumerate() {
+                    if mesh.indices.len() < 3 || mesh.style.opacity <= 0.0 {
+                        continue;
+                    }
+                    let animated_storage;
+                    let mesh: &crate::renderer::types::OverlayMeshItem =
+                        if mesh.animations.is_none() {
+                            mesh
+                        } else {
+                            let mut owned = mesh.clone();
+                            if let Some(anims) = owned.animations.take() {
+                                anims.apply(
+                                    overlay_time,
+                                    &mut owned.transform,
+                                    &mut owned.style.opacity,
+                                    &mut owned.style.tint,
+                                );
+                            }
+                            animated_storage = owned;
+                            &animated_storage
+                        };
+                    let layer_storage;
+                    let mesh: &crate::renderer::types::OverlayMeshItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::Mesh, item_index, &mesh.style)
+                    {
+                        Some(style) => {
+                            let mut owned = mesh.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => mesh,
+                    };
+                    let record_layer = ov.layer_plan.record_layer(LayerFamily::Mesh, item_index);
+                    let Some(offset) =
+                        mesh.resolve_offset_at([vp_w, vp_h], view, proj, world_origin)
+                    else {
+                        continue;
+                    };
+                    super::overlay_style_check::warn_inert_style(
+                        "OverlayMeshItem",
+                        crate::renderer::types::OverlayStyleSupport::for_mesh(),
+                        &mesh.style,
+                    );
+                    let image =
+                        fill_image(&mesh.style.fill, &self.resources.content.overlay_textures);
+                    if image == Some(None) {
+                        continue;
+                    }
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    overlay_geometry::emit_mesh(
+                        &mut batch,
+                        mesh,
+                        offset,
+                        &mut text_fills,
+                        image.flatten().unwrap_or([1, 1]),
+                    );
+                    let clip = stamp_clip(&mut batch, mesh.clip.mask, mesh.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        mesh.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
+                    if !batch.is_empty() {
+                        batches.push(TextBatch {
+                            z_order: mesh.z_order,
+                            texture: mesh.style.fill.texture_id(),
+                            blend: mesh.style.blend,
                             clip,
                             verts: batch,
                             layer: record_layer,
@@ -1434,25 +1612,95 @@ impl ViewportRenderer {
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     // An animated shape would rasterise a new cell every frame
                     // its transform moves, so it keeps the tessellated fill.
-                    let atlas = shape.animations.is_none().then(|| VectorAtlas {
-                        atlas: &mut self.resources.content.coverage_atlas,
-                        device,
-                        ppp,
-                        max_px: VECTOR_ATLAS_MAX_IMMEDIATE_PX,
-                    });
-                    emit_vector_shape(
-                        &mut batch,
-                        &owned,
-                        subpaths,
-                        *fill_rule,
-                        stroke.as_ref(),
-                        *inverse,
-                        vp_w,
-                        vp_h,
-                        &mut text_fills,
-                        image.flatten(),
-                        atlas,
-                    );
+                    let atlas_offered = shape.animations.is_none();
+                    let key = vector_cache_key(&owned, ppp, atlas_offered, image);
+                    let mut replayed = false;
+                    if let Some(r) =
+                        self.overlay_tess_cache
+                            .replay(key, tl, &mut batch, &mut text_fills)
+                    {
+                        replayed = true;
+                        // The atlas quad is rebuilt: its cell is looked up
+                        // (and kept alive) again, and may have moved.
+                        if let Some(q) = r.atlas_quad {
+                            let mut quad = Vec::with_capacity(6);
+                            let drawn = emit_vector_atlas_quad(
+                                &mut quad,
+                                &owned,
+                                subpaths,
+                                *fill_rule,
+                                *inverse,
+                                VectorAtlas {
+                                    atlas: &mut self.resources.content.coverage_atlas,
+                                    device,
+                                    ppp,
+                                    max_px: VECTOR_ATLAS_MAX_IMMEDIATE_PX,
+                                },
+                                &mut text_fills,
+                                image.flatten().unwrap_or([1, 1]),
+                                Some(r.aux),
+                            ) == Some(true);
+                            if drawn && quad.len() == 6 && batch.len() >= q + 6 {
+                                tint_vertices_from(&mut quad, 0, owned.style.tint);
+                                batch[q..q + 6].copy_from_slice(&quad);
+                            } else {
+                                batch.clear();
+                                replayed = false;
+                            }
+                        }
+                    }
+                    if !replayed {
+                        self.overlay_tess_cache.count_tessellation();
+                        let fill_from = text_fills.len();
+                        let atlas = atlas_offered.then(|| VectorAtlas {
+                            atlas: &mut self.resources.content.coverage_atlas,
+                            device,
+                            ppp,
+                            max_px: VECTOR_ATLAS_MAX_IMMEDIATE_PX,
+                        });
+                        let path = emit_vector_shape(
+                            &mut batch,
+                            &owned,
+                            subpaths,
+                            *fill_rule,
+                            stroke.as_ref(),
+                            *inverse,
+                            vp_w,
+                            vp_h,
+                            &mut text_fills,
+                            image.flatten(),
+                            atlas,
+                        );
+                        // A fill that fell back to tessellation because the
+                        // atlas was full this frame is not kept: next frame
+                        // it may fit.
+                        let quad = match path {
+                            VectorFillPath::Atlas(q) => Some(Some(q)),
+                            VectorFillPath::Tessellated => Some(None),
+                            VectorFillPath::AtlasFull => None,
+                        };
+                        if let Some(quad) = quad {
+                            let aux = if quad.is_some() {
+                                vector_path_hash(
+                                    subpaths,
+                                    *fill_rule,
+                                    inverse.then_some(owned.size),
+                                )
+                            } else {
+                                0
+                            };
+                            self.overlay_tess_cache.record(
+                                key,
+                                tl,
+                                &batch,
+                                0,
+                                &text_fills,
+                                fill_from,
+                                quad,
+                                aux,
+                            );
+                        }
+                    }
                     let clip = stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
                     super::overlay_fill::matrix_vertices_from(
                         &mut batch,
@@ -3240,6 +3488,96 @@ impl ViewportRenderer {
     }
 }
 
+/// Feed an image size (`None` for a fill that is not a texture, `Some(None)`
+/// for a missing image) into a cache key.
+fn hash_image_size(h: &mut impl std::hash::Hasher, image: Option<Option<[u32; 2]>>) {
+    match image {
+        None => h.write_u8(0),
+        Some(None) => h.write_u8(1),
+        Some(Some([w, ht])) => {
+            h.write_u8(2);
+            h.write_u32(w);
+            h.write_u32(ht);
+        }
+    }
+}
+
+/// The tessellation-cache key of a vector shape placed at its resolved
+/// top-left: its content measured from there, the pixels per point, and, when
+/// its fill may draw from the coverage atlas, the sub-pixel phase of its
+/// position, which picks the cell.
+fn vector_cache_key(
+    shape: &crate::renderer::types::OverlayShapeItem,
+    ppp: f32,
+    atlas_offered: bool,
+    image: Option<Option<[u32; 2]>>,
+) -> u64 {
+    use crate::renderer::types::OverlayContentHash;
+    use std::hash::Hasher;
+    let mut h = super::overlay_tess_cache::key_hasher();
+    h.write_u8(1);
+    shape.content_hash_at(shape.transform.translate, &mut h);
+    h.write_u32(ppp.to_bits());
+    hash_image_size(&mut h, image);
+    if atlas_offered {
+        let (_, b) = vector_device_affine(shape, ppp);
+        let (_, phase) = split_device_translation(b);
+        h.write_u8(1);
+        h.write_u8(phase[0]);
+        h.write_u8(phase[1]);
+    } else {
+        h.write_u8(0);
+    }
+    h.finish()
+}
+
+/// The tessellation-cache key of a polyline before its anchor offset is
+/// applied: everything that shapes its geometry except where it sits. The
+/// offset (and with it `translate`) moves the geometry without changing it.
+fn polyline_cache_key(
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    image: Option<Option<[u32; 2]>>,
+) -> u64 {
+    use crate::renderer::types::OverlayContentHash;
+    use std::hash::Hasher;
+    let mut h = super::overlay_tess_cache::key_hasher();
+    h.write_u8(0);
+    let mut transform = poly.transform;
+    transform.translate = [0.0, 0.0];
+    transform.content_hash(&mut h);
+    h.write_usize(poly.points.len());
+    for p in &poly.points {
+        h.write_u32(p[0].to_bits());
+        h.write_u32(p[1].to_bits());
+    }
+    poly.style.content_hash(&mut h);
+    poly.stroke.content_hash(&mut h);
+    match &poly.widths {
+        None => h.write_u8(0),
+        Some(w) => {
+            h.write_u8(1);
+            h.write_usize(w.len());
+            for x in w {
+                h.write_u32(x.to_bits());
+            }
+        }
+    }
+    h.write_u8(poly.closed as u8);
+    match &poly.uvs {
+        None => h.write_u8(0),
+        Some(uvs) => {
+            h.write_u8(1);
+            h.write_usize(uvs.len());
+            for uv in uvs {
+                h.write_u32(uv[0].to_bits());
+                h.write_u32(uv[1].to_bits());
+            }
+        }
+    }
+    hash_image_size(&mut h, image);
+    h.finish()
+}
+
 /// One text-stream item before it is recorded for the draw list.
 struct TextBatch {
     z_order: i32,
@@ -3490,7 +3828,7 @@ mod vector_atlas_tests {
         inverse_box: Option<[f32; 2]>,
         b: [f32; 2],
     ) -> (Vec<u8>, [u32; 2]) {
-        let cell = plan_vector_cell(subpaths, fill_rule, inverse_box, IDENTITY, b).unwrap();
+        let cell = plan_vector_cell(subpaths, fill_rule, inverse_box, IDENTITY, b, None).unwrap();
         let mut out = vec![0u8; (cell.size[0] * cell.size[1]) as usize];
         rasterise_vector(
             subpaths,
@@ -3563,9 +3901,19 @@ mod vector_atlas_tests {
     #[test]
     fn cells_share_a_key_across_whole_pixel_moves() {
         let paths = [square(0.0, 10.0)];
-        let a = plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.25, 7.0]).unwrap();
-        let b = plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [105.25, 9.0]).unwrap();
-        let c = plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.5, 7.0]).unwrap();
+        let a =
+            plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.25, 7.0], None).unwrap();
+        let b = plan_vector_cell(
+            &paths,
+            FillRule::NonZero,
+            None,
+            IDENTITY,
+            [105.25, 9.0],
+            None,
+        )
+        .unwrap();
+        let c =
+            plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.5, 7.0], None).unwrap();
         assert_eq!(a.key, b.key);
         assert_eq!(
             [b.origin[0] - a.origin[0], b.origin[1] - a.origin[1]],
@@ -3573,7 +3921,8 @@ mod vector_atlas_tests {
         );
         assert_ne!(a.key, c.key);
         let turned = [[0.0, -1.0], [1.0, 0.0]];
-        let d = plan_vector_cell(&paths, FillRule::NonZero, None, turned, [5.25, 7.0]).unwrap();
+        let d =
+            plan_vector_cell(&paths, FillRule::NonZero, None, turned, [5.25, 7.0], None).unwrap();
         assert_ne!(a.key, d.key);
     }
 }

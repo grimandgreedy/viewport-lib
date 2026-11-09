@@ -1,4 +1,5 @@
-//! Fill styles for overlay items: solid colour, gradients, and textures.
+//! Fill styles for overlay items: solid colour, gradients, textures, and
+//! registered fill functions.
 
 use crate::colour::Colour;
 use crate::overlay::{NineSlice, OverlayTextureId, TextureTransform};
@@ -93,7 +94,31 @@ pub enum OverlayFill {
         /// image, and an alpha below one fades it.
         tint: crate::colour::Colour,
     },
+    /// A fill function the consumer registered with the renderer, evaluated
+    /// per pixel with `params`.
+    ///
+    /// The function is WGSL registered through the renderer's plugin API,
+    /// which returns the `kind`. It receives the pixel's offset from the
+    /// centre of the box the fill spans, the box half-extents and `params`,
+    /// and returns linear RGBA, which the item's opacity and tint then scale.
+    /// A `kind` the renderer does not know draws transparent.
+    Custom {
+        /// The registered fill function.
+        kind: CustomFillId,
+        /// The function's parameters, as it defines them.
+        params: [f32; CUSTOM_FILL_PARAMS],
+    },
 }
+
+/// How many `f32` parameters an [`OverlayFill::Custom`] carries.
+pub const CUSTOM_FILL_PARAMS: usize = 16;
+
+/// A fill function registered with the renderer, as an [`OverlayFill::Custom`]
+/// names it. The renderer hands these out when the function is registered;
+/// they mean nothing to another renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CustomFillId(pub u32);
 
 /// Which kind of fill an [`OverlayFill`] is, for asking a family what it can
 /// draw without naming a specific gradient or image.
@@ -105,6 +130,8 @@ pub enum OverlayFillKind {
     Gradient,
     /// An uploaded image.
     Texture,
+    /// A registered fill function.
+    Custom,
 }
 
 impl Default for OverlayFill {
@@ -210,6 +237,11 @@ impl OverlayFill {
         }
     }
 
+    /// A custom fill: the registered function `kind` with `params`.
+    pub fn custom(kind: CustomFillId, params: [f32; CUSTOM_FILL_PARAMS]) -> Self {
+        OverlayFill::Custom { kind, params }
+    }
+
     /// A texture fill with the default transform, no nine-patch, and no tint.
     pub fn texture(id: OverlayTextureId) -> Self {
         OverlayFill::Texture {
@@ -238,6 +270,7 @@ impl OverlayFill {
         match self {
             OverlayFill::Solid(_) => OverlayFillKind::Solid,
             OverlayFill::Texture { .. } => OverlayFillKind::Texture,
+            OverlayFill::Custom { .. } => OverlayFillKind::Custom,
             _ => OverlayFillKind::Gradient,
         }
     }
@@ -249,7 +282,9 @@ impl OverlayFill {
             | OverlayFill::RadialGradient { stops }
             | OverlayFill::ConicalGradient { stops, .. }
             | OverlayFill::SweepGradient { stops, .. } => Some(stops),
-            OverlayFill::Solid(_) | OverlayFill::Texture { .. } => None,
+            OverlayFill::Solid(_) | OverlayFill::Texture { .. } | OverlayFill::Custom { .. } => {
+                None
+            }
         }
     }
 
@@ -342,6 +377,11 @@ impl OverlayFill {
                 nine_slice: *nine_slice,
                 tint: f(*tint),
             },
+            // The function's colours are its own.
+            OverlayFill::Custom { kind, params } => OverlayFill::Custom {
+                kind: *kind,
+                params: *params,
+            },
         }
     }
 
@@ -351,11 +391,13 @@ impl OverlayFill {
     /// This is the CPU statement of the maths the overlay shaders run per
     /// pixel, for a consumer that needs the colour at a point (a hit test, a
     /// colour picker over a gradient). A texture fill returns its tint, since
-    /// the image itself lives on the GPU.
+    /// the image itself lives on the GPU, and a custom fill returns white, since
+    /// its function runs only there.
     pub fn sample_in_box(&self, p: [f32; 2], half_size: [f32; 2]) -> [f32; 4] {
         match self {
             OverlayFill::Solid(c) => c.to_linear_rgba(),
             OverlayFill::Texture { tint, .. } => tint.to_linear_rgba(),
+            OverlayFill::Custom { .. } => [1.0; 4],
             OverlayFill::LinearGradient { stops, angle } => {
                 sample_sorted_stops(stops, linear_t(p, half_size, *angle))
             }

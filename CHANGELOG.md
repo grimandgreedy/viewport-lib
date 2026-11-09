@@ -14,6 +14,7 @@
 - **One `LineCap` for every stroke** - `PolylineCap` is gone and `LineCap` is `Butt`, `Square` or `Round` for polylines, vector-path strokes, dash ends and the analytic `OverlayShape::Line`. `Square` now extends half the width past the end point everywhere; an analytic line that used `LineCap::Square` for flush ends uses `LineCap::Butt`.
 - **`OverlayShape::Vector` has `stroke` and `inverse` fields** - build the variant with `stroke: None, inverse: false`, or use `OverlayShapeItem::vector`, and add `..` to patterns that list its fields.
 - **A zero-width polyline stroke is a hairline** - a stroke of width `0.0` draws a line one device pixel wide instead of nothing; use `without_stroke()` for a fill with no line.
+- **`OverlayFillKind::Custom`** - the kind of a registered fill function; a `match` over `OverlayFillKind` needs an arm for it. `OverlayStyleSupport` gains a `shadows` flag, false for meshes.
 
 ### Features
 
@@ -49,6 +50,10 @@
 - **Destination-reading blend modes** - `OverlayBlend` gains `Overlay`, `Darken`, `Lighten`, `ColourDodge`, `ColourBurn`, `HardLight`, `SoftLight`, `Difference`, `Exclusion`, `Hue`, `Saturation`, `Colour` and `Luminosity`, composited by formula against a copy of the destination. An item with one of them draws as a layer of its own, and a layer with `Multiply` is exact over a non-opaque destination. Where the destination cannot be read they draw as `SourceOver`.
 - **Colour filters** - `ColourMatrix`, a 4x5 matrix over straight linear RGBA with `greyscale`, `saturation`, `brightness`, `contrast`, `tint`, `opacity` and `then`, applies to an item's fill through `OverlayStyle::colour_matrix` on every overlay family and in compiled groups, and to a whole layer through `OverlayLayerStyle::colour_matrix`.
 - **`FrameStats::overlay_layers_composited`, `overlay_layer_targets` and `overlay_layer_target_allocations`** - the layers drawn through a scratch target this frame, the targets they used, and the layer textures created, which reads zero once the pool fits the frame.
+- **`OverlayMeshItem`** - `OverlayFrame::meshes` takes coloured triangle lists the consumer tessellates itself (positions, indices, per-vertex or uniform colours, optional UVs), drawn with no anti-aliasing fringe through the text pipeline so they batch with labels and polylines. `style.fill` multiplies the vertex colours, `contains` hit-tests the triangles, layers name meshes through `OverlayLayerMembers::meshes`, and `ViewportRenderer::compile_overlay_group` compiles them into retained groups from an `OverlayGroupItems`.
+- **Custom overlay fills** - `DeviceResources::register_overlay_fill` takes an `OverlayFillDesc` (a WGSL `fill(local, params)` function) and returns a `CustomFillId`; `OverlayFill::Custom` (or `OverlayFill::custom`) fills any overlay item with it and sixteen parameters. A body that does not compose returns `ViewportError::OverlayFillInvalid`.
+- **Tessellation cache for immediate overlays** - vector shapes and polylines keep their tessellated geometry while their content, rotation, scale and pixels per point stay the same, so static and merely moving items are no longer re-tessellated every frame.
+- **`FrameStats::overlay_tessellations`** - the immediate vector shapes and polylines tessellated this frame, which reads zero for static or moving items after their first frame.
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
 

@@ -689,6 +689,9 @@ pub struct DeviceResources {
     // --- Overlay text / SDF shape / backdrop-blur pipelines (lazily created) ---
     /// Overlay text pipeline, layout, and sampler.
     pub(crate) overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources,
+    /// Fill functions registered with `register_overlay_fill`, in id order,
+    /// spliced into the overlay fill module when the overlay pipelines build.
+    pub(crate) overlay_custom_fills: Vec<crate::resources::overlay::custom_fill::StoredOverlayFill>,
     /// SDF overlay shape pipelines (solid + textured) and sampler.
     pub(crate) overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources,
     /// Backdrop blur pipeline, layout, and sampler.

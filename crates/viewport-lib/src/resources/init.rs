@@ -1715,6 +1715,7 @@ impl DeviceResources {
 
             sub_highlight: crate::resources::types::SubHighlightResources::default(),
             overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources::default(),
+            overlay_custom_fills: Vec::new(),
             overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources::default(
             ),
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(

@@ -46,66 +46,73 @@ impl crate::resources::DeviceResources {
         // binding 0: glyph atlas coverage page, binding 1: sampler, binding 2:
         // the clip-shape uniform array (shared clip model, evaluated per
         // fragment).
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("overlay_text_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+        // A rebuild after a fill function is registered keeps the layout, so
+        // bind groups built against it stay valid.
+        let bgl = self.overlay_text.bgl.clone().unwrap_or_else(|| {
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("overlay_text_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                crate::resources::overlay::overlay_shape::clip_shapes_entry(2),
-                // binding 3: viewport-size uniform (logical w, h). The vertex
-                // shader maps local-pixel positions to NDC with it.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
                     },
-                    count: None,
-                },
-                // binding 4: the coverage atlas vector-shape cells sample.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    crate::resources::overlay::overlay_shape::clip_shapes_entry(2),
+                    // binding 3: viewport-size uniform (logical w, h). The vertex
+                    // shader maps local-pixel positions to NDC with it.
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // binding 5: the glyph atlas's colour page (binding 0 is its
-                // coverage page).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    // binding 4: the coverage atlas vector-shape cells sample.
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
+                    // binding 5: the glyph atlas's colour page (binding 0 is its
+                    // coverage page).
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            })
         });
 
-        let sampler =
-            crate::resources::builders::clamp_linear_sampler(device, "overlay_text_sampler");
+        let sampler = self.overlay_text.sampler.clone().unwrap_or_else(|| {
+            crate::resources::builders::clamp_linear_sampler(device, "overlay_text_sampler")
+        });
 
         // Group 1: the shared fill module's records, image and sampler.
         let fill_bgl = self.overlay_fill_bgl(device).clone();
@@ -118,7 +125,7 @@ impl crate::resources::DeviceResources {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "overlay_text.wgsl",
-            crate::resources::builders::wgsl_source!("overlay_text"),
+            self.overlay_fill_shader_source("overlay_text"),
         );
 
         let pipeline = self.overlay_text_variant(

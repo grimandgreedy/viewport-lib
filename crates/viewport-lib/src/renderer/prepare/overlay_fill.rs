@@ -17,6 +17,7 @@ mod kind {
     pub const SWEEP: f32 = 4.0;
     pub const TEXTURE: f32 = 5.0;
     pub const SOLID: f32 = 6.0;
+    pub const CUSTOM: f32 = 7.0;
 }
 
 /// The record index the shaders read as "no fill": the caller's own colour
@@ -72,6 +73,23 @@ impl FillTable {
         self.texels.is_empty()
     }
 
+    /// Texels written so far: the index the next record starts at.
+    pub(crate) fn len(&self) -> usize {
+        self.texels.len()
+    }
+
+    /// The texels written from `from` on.
+    pub(crate) fn texels_from(&self, from: usize) -> &[[f32; 4]] {
+        &self.texels[from.min(self.texels.len())..]
+    }
+
+    /// Append `texels` as they are and return the index of the first.
+    pub(crate) fn append_raw(&mut self, texels: &[[f32; 4]]) -> usize {
+        let at = self.texels.len();
+        self.texels.extend_from_slice(texels);
+        at
+    }
+
     /// Append the record for `fill` over a box of half-extents `half` and
     /// return its index for the vertex or instance that reads it.
     ///
@@ -103,6 +121,7 @@ impl FillTable {
         // not a texture still samples a defined coordinate.
         header[4] = [0.0, 0.0, 1.0, 1.0];
         let mut stops: &[GradientStop] = &[];
+        let mut custom_params: Option<&[f32; crate::renderer::types::CUSTOM_FILL_PARAMS]> = None;
         match fill {
             OverlayFill::Solid(c) => {
                 header[0][0] = kind::SOLID;
@@ -192,6 +211,12 @@ impl FillTable {
                     }
                 }
             }
+            OverlayFill::Custom { kind: id, params } => {
+                header[0][0] = kind::CUSTOM;
+                header[2][0] = id.0 as f32;
+                header[3] = scale([1.0; 4]);
+                custom_params = Some(params);
+            }
             // `OverlayFill` is non_exhaustive; a fill this renderer does not
             // know draws nothing.
             _ => {
@@ -206,6 +231,14 @@ impl FillTable {
                 .partial_cmp(&b.position)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        if let Some(params) = custom_params {
+            // A custom fill's parameters sit where the stops would.
+            self.texels.extend_from_slice(&header);
+            for chunk in params.chunks(4) {
+                self.texels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            }
+            return base as f32;
+        }
         if sorted.is_empty() && header[0][0] != kind::SOLID && header[0][0] != kind::TEXTURE {
             sorted.push(GradientStop::new(0.0, crate::Colour::TRANSPARENT));
         }
@@ -316,6 +349,7 @@ pub(crate) fn leading_colour(fill: &OverlayFill) -> [f32; 4] {
     match fill {
         OverlayFill::Solid(c) => c.to_linear_rgba(),
         OverlayFill::Texture { tint, .. } => tint.to_linear_rgba(),
+        OverlayFill::Custom { .. } => [1.0; 4],
         other => {
             let mut stops: Vec<GradientStop> = other.stops().unwrap_or(&[]).to_vec();
             stops.sort_by(|a, b| {
@@ -385,6 +419,28 @@ mod tests {
         );
         assert_eq!(table.texels()[HEADER_TEXELS], [1.0, 0.5, 1.0, 0.25]);
         assert_eq!(table.texels()[HEADER_TEXELS + 1], [0.5, 0.25, 0.5, 0.25]);
+    }
+
+    #[test]
+    fn a_custom_record_carries_its_id_and_parameters() {
+        let mut params = [0.0f32; 16];
+        for (i, p) in params.iter_mut().enumerate() {
+            *p = i as f32;
+        }
+        let mut table = FillTable::new();
+        let at = table.push(
+            &OverlayFill::custom(crate::renderer::types::CustomFillId(3), params),
+            [4.0, 2.0],
+            0.5,
+            [1.0; 4],
+            [1, 1],
+        );
+        assert_eq!(at, 0.0);
+        assert_eq!(table.texel_count(), HEADER_TEXELS + 4);
+        assert_eq!(table.texels()[0][0], kind::CUSTOM);
+        assert_eq!(table.texels()[2][0], 3.0);
+        assert_eq!(table.texels()[3], [1.0, 1.0, 1.0, 0.5]);
+        assert_eq!(table.texels()[HEADER_TEXELS + 3], [12.0, 13.0, 14.0, 15.0]);
     }
 
     #[test]

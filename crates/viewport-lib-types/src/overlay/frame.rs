@@ -9,8 +9,8 @@ use crate::overlay::*;
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
 ///
 /// Items paint in `z_order` order, lowest first. At an equal `z_order`
-/// analytic shapes paint under everything else (labels, glyph runs, polylines
-/// and vector shapes), and each list paints in its own order. The order is kept between items that overlap on screen; items
+/// analytic shapes paint under everything else (labels, glyph runs, polylines,
+/// meshes and vector shapes), and each list paints in its own order. The order is kept between items that overlap on screen; items
 /// that do not overlap may be drawn in any order, which is what lets the
 /// renderer batch them across `z_order` values and families.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -34,6 +34,10 @@ pub struct OverlayFrame {
     /// Stroked polylines. Rendered through the same pipeline as labels; share
     /// their z-order space.
     pub polylines: Vec<OverlayPolylineItem>,
+    /// Coloured triangle lists the consumer tessellates itself. Rendered
+    /// through the same pipeline as labels and polylines, and batched with
+    /// them.
+    pub meshes: Vec<OverlayMeshItem>,
     /// Retained overlay groups: geometry compiled once with
     /// `compile_overlay_geometry` and re-drawn from cached buffers, each carrying
     /// its per-frame translate, opacity, z-order, and clip. Empty by default and
