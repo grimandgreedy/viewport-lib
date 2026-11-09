@@ -13,7 +13,13 @@ pub(crate) struct CompiledOverlay {
     pub vertex_buf: crate::gpu::Buffer,
     /// Number of vertices in `vertex_buf`.
     pub vertex_count: u32,
-    /// GPU bytes held by the shape stream: `shape_instance_buf` plus `shadow_tex`.
+    /// The text stream's fill records (gradient fills on its labels, runs,
+    /// polylines and vector shapes). `None` when it has none.
+    pub text_fill_tex: Option<crate::gpu::TextureView>,
+    /// GPU bytes held by `text_fill_tex`.
+    pub text_fill_bytes: u64,
+    /// GPU bytes held by the shape stream: `shape_instance_buf`, `shadow_tex`
+    /// and `shape_fill_tex`.
     ///
     /// The entry's total charge lives on its store slot. Only the text stream is
     /// rebuilt on a re-emit, so the shape half is kept here rather than measured
@@ -28,6 +34,8 @@ pub(crate) struct CompiledOverlay {
     /// alongside `shape_instance_buf`; always at least one (dummy) layer when the
     /// shape stream is present.
     pub shadow_tex: Option<crate::gpu::TextureView>,
+    /// The SDF shapes' fill records. Present whenever the shape stream is.
+    pub shape_fill_tex: Option<crate::gpu::TextureView>,
     /// Retained source items for re-emission, present only when the group carries
     /// glyphs. Glyph geometry bakes atlas UVs at a physical size, so it goes stale
     /// when the atlas grows or `pixels_per_point` changes; the renderer re-emits

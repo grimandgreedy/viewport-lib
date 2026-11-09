@@ -1,31 +1,28 @@
-// Screen-space SDF overlay shape shader with texture fill.
+// Screen-space overlay backdrop shader: frosted glass.
 //
-// Same SDF logic as overlay_shape.wgsl, but the interior samples from a
-// bound texture instead of a solid fill colour. fill_colour acts as a tint
-// multiplied with each texel. Reads the same stacked shadow-layer buffer the
-// solid path does, so a textured shape takes the same outer and inner layers.
+// Draws a backdrop-blur shape over the blurred scene, sampled at the screen
+// position, with the backdrop colour filters and a tint laid over it. An
+// analytic shape is a six-vertex quad evaluated by its distance field; a
+// vector path is its triangles, encoded as a sharp rect grown past the path
+// so the distance test reads fully inside. Reads the same stacked
+// shadow-layer texture the shape pass does, so a backdrop shape takes the
+// same outer and inner layers.
 
-@group(0) @binding(0) var t_fill: texture_2d<f32>;
-@group(0) @binding(1) var s_fill: sampler;
+@group(0) @binding(0) var t_backdrop: texture_2d<f32>;
+@group(0) @binding(1) var s_backdrop: sampler;
 
-// Sixteen attributes, the most WebGL2 allows.
 struct VertexInput {
-    @location(0) position:      vec2<f32>,  // logical pixels
-    @location(1) local_pos:     vec2<f32>,  // pixels from the shape pivot (or its centre for a tessellated fill)
-    @location(2) fill_colour:   vec4<f32>,  // tint (multiplied with texture sample)
-    @location(3) half_size:     vec2<f32>,  // shape half-extents in pixels
-    @location(4) radii:         vec4<f32>,  // shape-specific params
-    @location(5) shape_meta:    vec4<f32>,  // x=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), y=clip_index (or -1), zw=pivot in the shape frame
-    @location(6) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(7) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right (uv_mode 0)
-    @location(8) shadow_index:  vec3<f32>,  // base_index, outer_count, inner_count
-    @location(9) extras:         vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
-    @location(10) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
-    @location(11) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
-    @location(12) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
-    @location(13) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
-    @location(14) linv:         vec4<f32>,  // inverse item linear map, row-major a b c d
-    @location(15) item_params:  vec4<f32>,  // x=item scale (shadow offsets), y=uv_mode (0 attribute, 1 shape frame, 2 screen)
+    @location(0) position:     vec2<f32>,  // logical pixels
+    @location(1) local_pos:    vec2<f32>,  // pixels from the shape pivot (or the path's centre)
+    @location(2) tint:         vec4<f32>,  // laid over the filtered backdrop, alpha the mix
+    @location(3) half_size:    vec2<f32>,  // shape half-extents in pixels
+    @location(4) radii:        vec4<f32>,  // shape-specific params
+    @location(5) shape_meta:   vec4<f32>,  // x=shape_type, y=clip_index (or -1), zw=pivot in the shape frame
+    @location(6) clip_rect:    vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(7) shadow_index: vec3<f32>,  // base_index, outer_count, inner_count
+    @location(8) filters:      vec4<f32>,  // y=saturation, z=brightness, w=hue shift
+    @location(9) linv:         vec4<f32>,  // inverse item linear map, row-major a b c d
+    @location(10) item_params: vec4<f32>,  // x=item scale (shadow offsets)
 }
 
 // One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
@@ -109,22 +106,18 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local_pos:     vec2<f32>,
-    @location(1) fill_colour:   vec4<f32>,
-    @location(2) half_size:     vec2<f32>,
-    @location(3) radii:         vec4<f32>,
+    @location(1) @interpolate(flat) tint: vec4<f32>,
+    @location(2) @interpolate(flat) half_size: vec2<f32>,
+    @location(3) @interpolate(flat) radii: vec4<f32>,
+    // The blurred scene's coordinate: the screen position over the viewport.
     @location(4) uv:            vec2<f32>,
     @location(5) @interpolate(flat) shadow_index: vec3<f32>,
-    @location(6) extras:       vec4<f32>,
-    @location(7) @interpolate(flat) nine_slice_uv:   vec4<f32>,
-    @location(8) @interpolate(flat) nine_slice_frac: vec4<f32>,
-    @location(9) @interpolate(flat) texture_transform_a: vec4<f32>,
-    @location(10) @interpolate(flat) texture_transform_b: vec4<f32>,
-    @location(11) @interpolate(flat) clip_rect:  vec4<f32>,
+    @location(6) @interpolate(flat) filters: vec4<f32>,
+    @location(7) @interpolate(flat) clip_rect:  vec4<f32>,
     // shape_type, clip_index, pivot in the shape frame xy
-    @location(12) @interpolate(flat) shape_meta: vec4<f32>,
-    @location(13) @interpolate(flat) linv:       vec4<f32>,
-    // item scale, uv_mode
-    @location(14) @interpolate(flat) item_params: vec4<f32>,
+    @location(8) @interpolate(flat) shape_meta: vec4<f32>,
+    @location(9) @interpolate(flat) linv:       vec4<f32>,
+    @location(10) @interpolate(flat) item_params: vec4<f32>,
 };
 
 @vertex
@@ -132,21 +125,16 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
     out.local_pos     = in.local_pos;
-    out.fill_colour   = in.fill_colour;
+    out.tint          = in.tint;
     out.half_size     = in.half_size;
     out.radii         = in.radii;
-    // A backdrop blur samples the blurred scene at the screen position.
-    out.uv            = select(in.uv, in.position / viewport.size, in.item_params.y > 1.5);
-    out.shadow_index = in.shadow_index;
-    out.extras        = in.extras;
-    out.nine_slice_uv   = in.nine_slice_uv;
-    out.nine_slice_frac = in.nine_slice_frac;
-    out.texture_transform_a = in.texture_transform_a;
-    out.texture_transform_b = in.texture_transform_b;
-    out.clip_rect  = in.clip_rect;
-    out.shape_meta = in.shape_meta;
-    out.linv       = in.linv;
-    out.item_params = in.item_params;
+    out.uv            = in.position / viewport.size;
+    out.shadow_index  = in.shadow_index;
+    out.filters       = in.filters;
+    out.clip_rect     = in.clip_rect;
+    out.shape_meta    = in.shape_meta;
+    out.linv          = in.linv;
+    out.item_params   = in.item_params;
     return out;
 }
 
@@ -154,48 +142,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 // linear map, then the pivot's place in that frame.
 fn to_shape_frame(local: vec2<f32>, linv: vec4<f32>, pivot: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(linv.x * local.x + linv.y * local.y, linv.z * local.x + linv.w * local.y) + pivot;
-}
-
-// Remap one component of the shape UV through the 9-slice piecewise function.
-//   shape_uv : 0..1 across the shape's bounding box along this axis
-//   start_frac, end_frac : insets as shape fraction (left/right or top/bottom)
-//   start_uv, end_uv     : matching insets in texture UV
-//   edge_mode            : 0=stretch, 1=tile (for the corner/edge bands)
-//   centre_mode          : 0=stretch, 1=tile (for the centre band)
-// Returns the texture UV component to sample.
-fn ninepatch_axis(
-    shape_uv: f32,
-    start_frac: f32,
-    end_frac: f32,
-    start_uv: f32,
-    end_uv: f32,
-    edge_mode: f32,
-    centre_mode: f32,
-) -> f32 {
-    // Three regions along this axis: [0, start_frac), [start_frac, 1 - end_frac), [1 - end_frac, 1].
-    if (shape_uv < start_frac) {
-        // Leading edge band: shape_uv * (start_uv / start_frac) for stretch,
-        // or (shape_uv * (1/start_frac) modulo 1) * start_uv for tile.
-        let s = max(start_frac, 0.00001);
-        let t = shape_uv / s;
-        let tiled = fract(t);
-        let used_t = mix(t, tiled, edge_mode);
-        return used_t * start_uv;
-    } else if (shape_uv > 1.0 - end_frac) {
-        let e = max(end_frac, 0.00001);
-        let t = (shape_uv - (1.0 - end_frac)) / e;
-        let tiled = fract(t);
-        let used_t = mix(t, tiled, edge_mode);
-        return (1.0 - end_uv) + used_t * end_uv;
-    } else {
-        // Centre band.
-        let span_shape = max(1.0 - start_frac - end_frac, 0.00001);
-        let span_tex = max(1.0 - start_uv - end_uv, 0.00001);
-        let t = (shape_uv - start_frac) / span_shape;
-        let tiled = fract(t * (span_shape / span_tex));
-        let used_t = mix(t, tiled, centre_mode);
-        return start_uv + used_t * span_tex;
-    }
 }
 
 // Signed distance to a rounded box with per-corner radii.
@@ -445,111 +391,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Start with the shadow layers.
     var colour = shadow_col;
 
-    // The sample is hoisted out of the `fill_alpha > 0.0` branch below, with
-    // the UV computation it needs. `textureSample` derives its own LOD, so
-    // WGSL only permits it in uniform control flow, and `fill_alpha` comes
-    // from the vertex stage. Tint enforces that and rejects the whole module;
-    // naga does not, which is why this drew in Firefox and not in Chrome.
-    // Sampling unconditionally costs a fetch on fully transparent fills, which
-    // is the cheap half of the trade: an image fill can be mipped, so pinning
-    // it to level zero instead would alias whenever it is drawn smaller than
-    // its source.
-    // 9-slice remap when enabled: rebuild the sample UV by remapping
-    // each axis through the piecewise function so corners stay at
-    // their authored size and edges/centre tile or stretch per mode.
-    // An analytic shape's sample coordinate comes from the shape frame, so the
-    // image turns and scales with it; a tessellated fill carries its own.
-    var sample_uv = in.uv;
-    if (in.item_params.y > 0.5 && in.item_params.y < 1.5) {
-        sample_uv = (p + hs) / (2.0 * max(hs, vec2<f32>(0.5, 0.5)));
-    }
-    let shape_uv = sample_uv;
-    if (in.extras.w > 0.5) {
-        let u = ninepatch_axis(
-            shape_uv.x,
-            in.nine_slice_frac.w,   // left frac
-            in.nine_slice_frac.y,   // right frac
-            in.nine_slice_uv.w,     // left uv
-            in.nine_slice_uv.y,     // right uv
-            in.extras.z,            // edge mode
-            in.extras.y,            // centre mode
-        );
-        let v = ninepatch_axis(
-            shape_uv.y,
-            in.nine_slice_frac.x,   // top frac
-            in.nine_slice_frac.z,   // bottom frac
-            in.nine_slice_uv.x,     // top uv
-            in.nine_slice_uv.z,     // bottom uv
-            in.extras.z,
-            in.extras.y,
-        );
-        sample_uv = vec2<f32>(u, v);
-    } else {
-        // Texture transform path: scale + rotate around (0.5, 0.5),
-        // translate, flip, then apply tile_mode. Identity transform
-        // (scale=1, no rotation/offset/flip, Stretch) is a no-op.
-        let off = in.texture_transform_a.xy;
-        let scl = in.texture_transform_a.zw;
-        let rot = in.texture_transform_b.x;
-        let tile = i32(in.texture_transform_b.y + 0.5);
-        let flip_x = in.texture_transform_b.z > 0.5;
-        let flip_y = in.texture_transform_b.w > 0.5;
-        var uvc = shape_uv - vec2<f32>(0.5, 0.5);
-        // Scale: multiply the UV by `scale`. `scale = 1.0` is 1:1.
-        // Larger scale widens the sampled range (more tiles with Tile
-        // mode, or sees more of the texture with Stretch/Mirror).
-        uvc = uvc * scl;
-        // Rotate around the centre.
-        if (abs(rot) > 0.000001) {
-            let c = cos(rot);
-            let s = sin(rot);
-            uvc = vec2<f32>(c * uvc.x - s * uvc.y, s * uvc.x + c * uvc.y);
-        }
-        var uvt = uvc + vec2<f32>(0.5, 0.5) + off;
-        if (flip_x) { uvt.x = 1.0 - uvt.x; }
-        if (flip_y) { uvt.y = 1.0 - uvt.y; }
-        // Apply tile mode for sample lookup.
-        if (tile == 1) {
-            // Tile: wrap.
-            uvt = fract(uvt - floor(uvt));
-        } else if (tile == 2) {
-            // Mirror: ping-pong.
-            let m = uvt - 2.0 * floor(uvt * 0.5);
-            uvt = vec2<f32>(
-                select(m.x, 2.0 - m.x, m.x > 1.0),
-                select(m.y, 2.0 - m.y, m.y > 1.0),
-            );
-        } else {
-            // Stretch: clamp.
-            uvt = clamp(uvt, vec2<f32>(0.0), vec2<f32>(1.0));
-        }
-        sample_uv = uvt;
-    }
-    let tex_sample = textureSample(t_fill, s_fill, sample_uv);
+    // Sampled before the branch below: `textureSample` derives its own level
+    // of detail, which WGSL allows only in uniform control flow, and
+    // `fill_alpha` is not uniform. Tint enforces that; naga does not.
+    let backdrop = textureSample(t_backdrop, s_backdrop, in.uv);
 
-    // Composite textured fill on top of shadow.
+    // The filtered backdrop with the tint laid over it, masked by the SDF.
     if (fill_alpha > 0.0) {
-        var fc: vec4<f32>;
-        if (in.extras.x > 0.5) {
-            // Backdrop blur: bound texture is the scene-blur output (opaque
-            // RGBA). Apply the backdrop colour filters (extras.yzw =
-            // saturation, brightness, hue-shift), overlay the tint on top,
-            // then mask by the SDF.
-            let tint = in.fill_colour;
-            let filtered = apply_backdrop_filters(
-                tex_sample.rgb,
-                in.extras.y,
-                in.extras.z,
-                in.extras.w,
-            );
-            let blended_rgb = mix(filtered, tint.rgb, tint.a);
-            fc = vec4<f32>(blended_rgb, fill_alpha);
-        } else {
-            // Regular texture fill: multiply by tint colour. Works correctly
-            // for opaque PNGs (logos, icons, screenshots)
-            let tinted = tex_sample * in.fill_colour;
-            fc = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
-        }
+        let tint = in.tint;
+        let filtered = apply_backdrop_filters(
+            backdrop.rgb,
+            in.filters.y,
+            in.filters.z,
+            in.filters.w,
+        );
+        let fc = vec4<f32>(mix(filtered, tint.rgb, tint.a), fill_alpha);
         // Source-over on un-premultiplied colours: weight the destination by
         // its own alpha. A plain mix() would let a fully clipped shadow's
         // colour bleed through the fill, since its alpha is zero but its rgb
@@ -559,7 +415,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = vec4<f32>(select(fc.rgb, rgb, out_a > 0.0), out_a);
     }
 
-    // Stacked inner layers over the textured fill.
+    // Stacked inner layers over the backdrop.
     if (d < 0.0) {
         for (var j = 0; j < inner_count; j = j + 1) {
             let layer = shadow_layer(base_index + outer_count + j);

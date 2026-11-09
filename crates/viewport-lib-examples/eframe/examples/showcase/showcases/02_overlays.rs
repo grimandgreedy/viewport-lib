@@ -430,30 +430,30 @@ impl OverlaysShowcase {
                 [x, y],
                 [120.0, 70.0],
             )
-            .with_fill(OverlayFill::LinearGradient {
-                start_colour: Colour::srgb(0.05, 0.15, 0.55, 0.9),
-                end_colour: Colour::srgb(0.05, 0.65, 0.65, 0.9),
-                angle: 0.0,
-            })
+            .with_fill(OverlayFill::linear_gradient(
+                Colour::srgb(0.05, 0.15, 0.55, 0.9),
+                Colour::srgb(0.05, 0.65, 0.65, 0.9),
+                0.0,
+            ))
             .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
         );
         x += 136.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::RadialGradient {
-                    centre_colour: Colour::srgb(1.0, 0.95, 0.7, 1.0),
-                    edge_colour: Colour::srgb(0.2, 0.05, 0.0, 0.9),
-                })
+                .with_fill(OverlayFill::radial_gradient(
+                    Colour::srgb(1.0, 0.95, 0.7, 1.0),
+                    Colour::srgb(0.2, 0.05, 0.0, 0.9),
+                ))
                 .with_outline(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw, OutlineMode::Inset),
         );
         x += 86.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::ConicalGradient {
-                    start_colour: Colour::srgb(0.95, 0.2, 0.4, 1.0),
-                    end_colour: Colour::srgb(0.2, 0.6, 1.0, 1.0),
-                    offset_angle: 0.0,
-                })
+                .with_fill(OverlayFill::conical_gradient(
+                    Colour::srgb(0.95, 0.2, 0.4, 1.0),
+                    Colour::srgb(0.2, 0.6, 1.0, 1.0),
+                    0.0,
+                ))
                 .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
         );
         x += 86.0;
@@ -463,7 +463,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [120.0, 70.0],
             )
-            .with_fill(OverlayFill::LinearGradientMulti {
+            .with_fill(OverlayFill::LinearGradient {
                 stops: vec![
                     GradientStop::new(0.0, Colour::srgb(0.05, 0.05, 0.20, 1.0)),
                     GradientStop::new(0.4, Colour::srgb(0.55, 0.10, 0.45, 1.0)),
@@ -477,7 +477,7 @@ impl OverlaysShowcase {
         x += 136.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::ConicalGradientMulti {
+                .with_fill(OverlayFill::ConicalGradient {
                     stops: vec![
                         GradientStop::new(0.0, Colour::srgb(0.95, 0.2, 0.2, 1.0)),
                         GradientStop::new(0.25, Colour::srgb(1.0, 0.85, 0.2, 1.0)),
@@ -828,11 +828,11 @@ impl OverlaysShowcase {
             .with_thickness(2.0)
             .with_colour(Colour::srgb(1.0, 1.0, 1.0, 0.8))
             .with_closed(true)
-            .with_fill(OverlayFill::LinearGradient {
-                start_colour: Colour::srgb(0.12, 0.65, 0.95, 0.78),
-                end_colour: Colour::srgb(0.95, 0.35, 0.7, 0.82),
-                angle: PI * 0.25,
-            })
+            .with_fill(OverlayFill::linear_gradient(
+                Colour::srgb(0.12, 0.65, 0.95, 0.78),
+                Colour::srgb(0.95, 0.35, 0.7, 0.82),
+                PI * 0.25,
+            ))
             .with_z_order(1),
         );
         x += 130.0;
@@ -911,10 +911,10 @@ impl OverlaysShowcase {
             OverlayPolylineItem::closed_from_path(
                 blob_path,
                 64,
-                OverlayFill::RadialGradient {
-                    centre_colour: Colour::srgb(0.9, 0.7, 0.2, 0.85),
-                    edge_colour: Colour::srgb(0.7, 0.2, 0.5, 0.85),
-                },
+                OverlayFill::radial_gradient(
+                    Colour::srgb(0.9, 0.7, 0.2, 0.85),
+                    Colour::srgb(0.7, 0.2, 0.5, 0.85),
+                ),
                 Colour::srgb(1.0, 1.0, 1.0, 0.85),
                 2.0,
             )

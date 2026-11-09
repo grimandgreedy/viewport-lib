@@ -204,8 +204,6 @@ pub struct OverlayStyleSupport {
     pub backdrop: bool,
 }
 
-/// Colours and gradients, but no image.
-const COLOUR_FILLS: &[OverlayFillKind] = &[OverlayFillKind::Solid, OverlayFillKind::Gradient];
 /// Every fill kind.
 const ALL_FILLS: &[OverlayFillKind] = &[
     OverlayFillKind::Solid,
@@ -247,17 +245,11 @@ impl OverlayStyleSupport {
         }
     }
 
-    /// What a `LabelItem` or a `GlyphRunItem` draws. Both rasterise through the
-    /// glyph atlas, where a fill is a per-vertex tint over the coverage.
-    ///
-    /// A texture fill is the one gap left: the text pass binds the glyph atlas
-    /// and issues a single batched draw, so sampling a second image means
-    /// grouping the text by texture the way the shape pass does. Until then a
-    /// textured glyph fill reports as unsupported rather than silently
-    /// dropping.
+    /// What a `LabelItem` or a `GlyphRunItem` draws: every fill kind, evaluated
+    /// per pixel over the glyph coverage, but no backdrop.
     pub const fn for_glyphs() -> Self {
         Self {
-            fill: COLOUR_FILLS,
+            fill: ALL_FILLS,
             backdrop: false,
         }
     }
@@ -309,6 +301,18 @@ mod tests {
         });
         assert!(vector.inert_fields(&style).is_empty());
         assert!(vector.draws_fill(&OverlayFill::texture(crate::overlay::OverlayTextureId(0))));
+    }
+
+    #[test]
+    fn glyphs_draw_every_fill_kind() {
+        let glyphs = OverlayStyleSupport::for_glyphs();
+        assert!(glyphs.draws_fill(&OverlayFill::texture(crate::overlay::OverlayTextureId(0))));
+        assert!(glyphs.draws_fill(&OverlayFill::sweep_gradient(
+            Colour::WHITE,
+            Colour::BLACK,
+            0.0,
+            1.0
+        )));
     }
 
     #[test]

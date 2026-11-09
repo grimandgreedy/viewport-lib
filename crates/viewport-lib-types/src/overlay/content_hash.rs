@@ -332,50 +332,34 @@ impl OverlayContentHash for OverlayFill {
                 state.write_u8(0);
                 c.content_hash_at(origin, state);
             }
-            OverlayFill::LinearGradient {
-                start_colour,
-                end_colour,
-                angle,
-            } => {
+            OverlayFill::LinearGradient { stops, angle } => {
                 state.write_u8(1);
-                start_colour.content_hash_at(origin, state);
-                end_colour.content_hash_at(origin, state);
+                stops.content_hash_at(origin, state);
                 hash_f32(state, *angle);
             }
-            OverlayFill::RadialGradient {
-                centre_colour,
-                edge_colour,
-            } => {
+            OverlayFill::RadialGradient { stops } => {
                 state.write_u8(2);
-                centre_colour.content_hash_at(origin, state);
-                edge_colour.content_hash_at(origin, state);
+                stops.content_hash_at(origin, state);
             }
             OverlayFill::ConicalGradient {
-                start_colour,
-                end_colour,
-                offset_angle,
-            } => {
-                state.write_u8(3);
-                start_colour.content_hash_at(origin, state);
-                end_colour.content_hash_at(origin, state);
-                hash_f32(state, *offset_angle);
-            }
-            OverlayFill::LinearGradientMulti { stops, angle } => {
-                state.write_u8(4);
-                stops.content_hash_at(origin, state);
-                hash_f32(state, *angle);
-            }
-            OverlayFill::RadialGradientMulti { stops } => {
-                state.write_u8(5);
-                stops.content_hash_at(origin, state);
-            }
-            OverlayFill::ConicalGradientMulti {
                 stops,
                 offset_angle,
             } => {
-                state.write_u8(6);
+                state.write_u8(3);
                 stops.content_hash_at(origin, state);
                 hash_f32(state, *offset_angle);
+            }
+            OverlayFill::SweepGradient {
+                stops,
+                centre,
+                start_angle,
+                end_angle,
+            } => {
+                state.write_u8(4);
+                stops.content_hash_at(origin, state);
+                hash_floats(state, centre);
+                hash_f32(state, *start_angle);
+                hash_f32(state, *end_angle);
             }
             OverlayFill::Texture {
                 id,

@@ -2,23 +2,37 @@
 
 use crate::renderer::OverlayTextureId;
 
-/// SDF overlay shape pipelines (solid + textured fill) and their shared sampler.
-/// Lazily built on the first frame with non-empty shapes.
+/// SDF overlay shape pipelines (the instanced shape pipeline and the backdrop
+/// pipeline), the fill layout they share with the text pipeline, and their
+/// samplers. Lazily built on the first frame with non-empty shapes.
 #[derive(Default)]
 pub(crate) struct OverlayShapeResources {
-    /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
+    /// Render pipeline for screen-space SDF shapes (rounded rects, circles,
+    /// etc.), whatever their fill: one instance each.
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Bind group layout for the solid pipeline (group 0: shadow-layer storage buffer).
+    /// Bind group layout for the shape pipeline's group 0: shadow layers,
+    /// clip shapes, viewport and group instance.
     pub(crate) shadow_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Render pipeline for SDF shapes with texture fill.
+    /// Render pipeline for backdrop-blur shapes: an analytic shape's quad or a
+    /// vector path's triangles, sampling the blurred scene.
     pub(crate) tex_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Bind group layout for the texture pipeline (group 0: texture + sampler).
+    /// Bind group layout for the backdrop pipeline (group 0: the blurred scene
+    /// + sampler).
     pub(crate) tex_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Bind group layout for the texture pipeline's clip masks (group 1: the
-    /// clip-shape storage buffer, shared with the solid pipeline's binding 1).
+    /// Bind group layout for the backdrop pipeline's clip masks (group 1: the
+    /// clip-shape uniform, shared with the shape pipeline's binding 1).
     pub(crate) tex_clip_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Clamp-to-edge linear sampler shared across all texture shape bind groups.
+    /// Clamp-to-edge linear sampler for the backdrop bind groups.
     pub(crate) tex_sampler: Option<crate::gpu::Sampler>,
+    /// Group 1 of the shape and text pipelines, which the shared fill module
+    /// reads: the fill records, the image a texture fill samples, and its
+    /// sampler.
+    pub(crate) fill_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Clamp-to-edge linear sampler for texture fills.
+    pub(crate) fill_sampler: Option<crate::gpu::Sampler>,
+    /// One white texel, bound as the fill image for every draw that samples
+    /// no texture.
+    pub(crate) blank_image: Option<crate::gpu::TextureView>,
 }
 
 /// Fullscreen separable Gaussian blur pipeline used to produce the blurred
@@ -69,10 +83,11 @@ impl crate::resources::DeviceResources {
             ],
         });
 
+        let fill_bgl = self.overlay_fill_bgl(device).clone();
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "overlay_shape_layout",
-            &[&shadow_bgl],
+            &[&shadow_bgl, &fill_bgl],
         );
 
         let shader = crate::resources::builders::wgsl_module(
@@ -131,10 +146,10 @@ impl crate::resources::DeviceResources {
         self.overlay_shape.pipeline = Some(pipeline);
     }
 
-    /// Lazily create the SDF overlay shape render pipeline with texture fill.
+    /// Lazily create the backdrop-blur shape pipeline.
     ///
-    /// No-op if already created. Called from `prepare_viewport_internal()` when
-    /// any shape in `OverlayFrame.shapes` carries an `OverlayTextureId`.
+    /// No-op if already created. Called from the overlay shape prepare when a
+    /// shape sets a backdrop blur.
     pub(crate) fn ensure_overlay_shape_tex_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.overlay_shape.tex_pipeline.is_some() {
             return;
@@ -150,9 +165,8 @@ impl crate::resources::DeviceResources {
         let sampler =
             crate::resources::builders::clamp_linear_sampler(device, "overlay_shape_tex_sampler");
 
-        // Group 1: the clip-mask shapes, so a textured shape honours
-        // `with_clip` the same way a solid shape does, plus the shared shadow
-        // layers.
+        // Group 1: the clip-mask shapes, plus the shared shadow layers, so a
+        // backdrop shape takes the same layers as any other.
         let clip_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_tex_clip_bgl"),
             entries: &[
@@ -194,7 +208,7 @@ impl crate::resources::DeviceResources {
                 layout: &layout,
                 vertex_module: &shader,
                 vertex_entry: "vs_main",
-                vertex_buffers: &[OverlayShapeTexVertex::buffer_layout()],
+                vertex_buffers: &[OverlayBackdropVertex::buffer_layout()],
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
@@ -234,6 +248,122 @@ impl crate::resources::DeviceResources {
         self.overlay_shape.tex_clip_bgl = Some(clip_bgl);
         self.overlay_shape.tex_sampler = Some(sampler);
         self.overlay_shape.tex_pipeline = Some(pipeline);
+    }
+
+    /// The fill layout (group 1 of the shape and text pipelines), built on
+    /// first use.
+    pub(crate) fn overlay_fill_bgl(
+        &mut self,
+        device: &crate::gpu::Device,
+    ) -> &crate::gpu::BindGroupLayout {
+        self.overlay_shape.fill_bgl.get_or_insert_with(|| {
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("overlay_fill_bgl"),
+                entries: &[
+                    data_texture_entry(0),
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
+                    },
+                ],
+            })
+        })
+    }
+
+    /// Build the fill layout, its sampler, and the blank fill image if they do
+    /// not exist yet. The blank image is written here, which is why this takes
+    /// the queue and runs from the overlay prepare.
+    pub(crate) fn ensure_overlay_fill_resources(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
+        self.overlay_fill_bgl(device);
+        if self.overlay_shape.fill_sampler.is_none() {
+            self.overlay_shape.fill_sampler = Some(
+                crate::resources::builders::clamp_linear_sampler(device, "overlay_fill_sampler"),
+            );
+        }
+        if self.overlay_shape.blank_image.is_none() {
+            let entry = build_overlay_texture_entry(
+                device,
+                Some(queue),
+                1,
+                1,
+                crate::gpu::TextureFormat::Rgba8Unorm,
+                Some(&[255u8; 4]),
+            );
+            self.overlay_shape.blank_image = Some(entry.view);
+        }
+    }
+
+    /// A fill bind group over `records` and `image` (the blank image when
+    /// `None`), from `cache` when one was built for the same pair. Built
+    /// groups are moved into `used`, so a pass that starts each frame from an
+    /// empty `used` drops the ones it stopped drawing with.
+    pub(crate) fn overlay_fill_bind_group(
+        &self,
+        device: &crate::gpu::Device,
+        cache: &mut OverlayFillBindGroups,
+        used: &mut OverlayFillBindGroups,
+        records: &crate::gpu::TextureView,
+        image: Option<&crate::gpu::TextureView>,
+    ) -> crate::gpu::BindGroup {
+        let image = image.unwrap_or_else(|| {
+            self.overlay_shape
+                .blank_image
+                .as_ref()
+                .expect("ensure_overlay_fill_resources runs before a fill is bound")
+        });
+        let key = (records.clone(), image.clone());
+        if let Some(bg) = used.get(&key) {
+            return bg.clone();
+        }
+        let bg = cache.remove(&key).unwrap_or_else(|| {
+            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("overlay_fill_bg"),
+                layout: self
+                    .overlay_shape
+                    .fill_bgl
+                    .as_ref()
+                    .expect("built with the pipelines"),
+                entries: &[
+                    crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: crate::gpu::BindingResource::TextureView(records),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 1,
+                        resource: crate::gpu::BindingResource::TextureView(image),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 2,
+                        resource: crate::gpu::BindingResource::Sampler(
+                            self.overlay_shape
+                                .fill_sampler
+                                .as_ref()
+                                .expect("ensure_overlay_fill_resources runs first"),
+                        ),
+                    },
+                ],
+            })
+        });
+        used.insert(key, bg.clone());
+        bg
     }
 
     /// Upload an image as a texture for overlay shape fills.
@@ -634,8 +764,16 @@ pub(crate) const SHADOW_LAYERS_PER_ROW: u32 = 256;
 /// Texels one shadow layer takes: `colour`, `params`, `params2`.
 const SHADOW_LAYER_TEXELS: u32 = 3;
 
-/// Layout entry for the shadow-layer texture, read with `textureLoad`.
-fn shadow_layer_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+/// Texels per row of the shadow-layer texture.
+pub(crate) const SHADOW_ROW_TEXELS: u32 = SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS;
+
+/// Texels per row of the fill-record texture the shared fill module reads.
+/// `overlay_fill.wgsl` holds the same constant.
+pub(crate) const FILL_TEXELS_PER_ROW: u32 = 1024;
+
+/// Layout entry for an `Rgba32Float` data texture read with `textureLoad`: the
+/// shadow layers and the fill records.
+fn data_texture_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility: crate::gpu::ShaderStages::FRAGMENT,
@@ -646,6 +784,11 @@ fn shadow_layer_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
         },
         count: None,
     }
+}
+
+/// Layout entry for the shadow-layer texture, read with `textureLoad`.
+fn shadow_layer_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+    data_texture_entry(binding)
 }
 
 /// Layout entry for the clip-shape uniform array.
@@ -699,25 +842,34 @@ pub(crate) fn clip_binding(buf: &crate::gpu::Buffer) -> crate::gpu::BindingResou
     })
 }
 
-/// `layers` (at least one) as shadow-layer texels, padded to whole rows, and
-/// the row count.
-pub(crate) fn shadow_layer_texels(layers: &[OverlayShadowLayerGpu]) -> (Vec<u8>, u32) {
-    let rows = (layers.len() as u32).div_ceil(SHADOW_LAYERS_PER_ROW).max(1);
-    let mut texels = bytemuck::cast_slice::<_, u8>(layers).to_vec();
-    let row_bytes = (SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS * 16) as usize;
+/// `bytes` (whole `Rgba32Float` texels, at least one) padded to whole rows of
+/// `row_texels`, and the row count.
+pub(crate) fn data_texels(bytes: &[u8], row_texels: u32) -> (Vec<u8>, u32) {
+    let row_bytes = (row_texels * 16) as usize;
+    let rows = (bytes.len().div_ceil(row_bytes) as u32).max(1);
+    let mut texels = bytes.to_vec();
     texels.resize(rows as usize * row_bytes, 0);
     (texels, rows)
 }
 
-/// A shadow-layer texture `rows` rows high.
-pub(crate) fn create_shadow_layer_texture(
+/// `layers` (at least one) as shadow-layer texels, padded to whole rows, and
+/// the row count.
+#[cfg(test)]
+pub(crate) fn shadow_layer_texels(layers: &[OverlayShadowLayerGpu]) -> (Vec<u8>, u32) {
+    data_texels(bytemuck::cast_slice(layers), SHADOW_ROW_TEXELS)
+}
+
+/// An `Rgba32Float` data texture `row_texels` wide and `rows` rows high.
+pub(crate) fn create_data_texture(
     device: &crate::gpu::Device,
+    label: &'static str,
+    row_texels: u32,
     rows: u32,
 ) -> crate::gpu::Texture {
     device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some("overlay_shadow_layers"),
+        label: Some(label),
         size: crate::gpu::Extent3d {
-            width: SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS,
+            width: row_texels,
             height: rows,
             depth_or_array_layers: 1,
         },
@@ -730,14 +882,14 @@ pub(crate) fn create_shadow_layer_texture(
     })
 }
 
-/// Write `rows` rows of `texels` (from `shadow_layer_texels`) into `texture`.
-pub(crate) fn write_shadow_layer_texels(
+/// Write `rows` rows of `texels` (from `data_texels`) into `texture`.
+pub(crate) fn write_data_texels(
     queue: &crate::gpu::Queue,
     texture: &crate::gpu::Texture,
     texels: &[u8],
+    row_texels: u32,
     rows: u32,
 ) {
-    let width = SHADOW_LAYERS_PER_ROW * SHADOW_LAYER_TEXELS;
     queue.write_texture(
         crate::gpu::TexelCopyTextureInfo {
             texture,
@@ -748,15 +900,31 @@ pub(crate) fn write_shadow_layer_texels(
         texels,
         crate::gpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 16),
+            bytes_per_row: Some(row_texels * 16),
             rows_per_image: Some(rows),
         },
         crate::gpu::Extent3d {
-            width,
+            width: row_texels,
             height: rows,
             depth_or_array_layers: 1,
         },
     );
+}
+
+/// A data texture holding `bytes`, for a retained group compiled once.
+/// Returns the view and the bytes it holds.
+pub(crate) fn data_texture(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    label: &'static str,
+    row_texels: u32,
+    bytes: &[u8],
+) -> (crate::gpu::TextureView, u64) {
+    let (texels, rows) = data_texels(bytes, row_texels);
+    let texture = create_data_texture(device, label, row_texels, rows);
+    write_data_texels(queue, &texture, &texels, row_texels, rows);
+    let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    (view, texels.len() as u64)
 }
 
 /// A shadow-layer texture holding `layers` (at least one), for a retained
@@ -766,12 +934,36 @@ pub(crate) fn shadow_layer_texture(
     queue: &crate::gpu::Queue,
     layers: &[OverlayShadowLayerGpu],
 ) -> (crate::gpu::TextureView, u64) {
-    let (texels, rows) = shadow_layer_texels(layers);
-    let texture = create_shadow_layer_texture(device, rows);
-    write_shadow_layer_texels(queue, &texture, &texels, rows);
-    let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-    (view, texels.len() as u64)
+    data_texture(
+        device,
+        queue,
+        "overlay_shadow_layers",
+        SHADOW_ROW_TEXELS,
+        bytemuck::cast_slice(layers),
+    )
 }
+
+/// A fill-record texture holding `records`, for a retained group compiled
+/// once. Returns the view and the bytes it holds.
+pub(crate) fn fill_record_texture(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    records: &[[f32; 4]],
+) -> (crate::gpu::TextureView, u64) {
+    data_texture(
+        device,
+        queue,
+        "overlay_fill_records",
+        FILL_TEXELS_PER_ROW,
+        bytemuck::cast_slice(records),
+    )
+}
+
+/// Fill bind groups keyed by the record texture and the image they bind.
+pub(crate) type OverlayFillBindGroups = std::collections::HashMap<
+    (crate::gpu::TextureView, crate::gpu::TextureView),
+    crate::gpu::BindGroup,
+>;
 
 /// One stacked shadow layer as uploaded to the shadow-layer texture.
 ///
@@ -817,7 +1009,8 @@ pub(crate) struct ClipShapeGpu {
 /// record. The vertex shader expands a quad from the vertex index and
 /// `quad`; the fragment shader maps each pixel back into the shape's own frame
 /// through `linv` and evaluates the signed-distance function there, so one
-/// record draws a shape under any 2D affine transform.
+/// record draws a shape under any 2D affine transform. Its fill is a record in
+/// the shared fill table, or the flat `fill_colour`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OverlayShapeInstance {
@@ -832,18 +1025,13 @@ pub(crate) struct OverlayShapeInstance {
     /// pixel offset `q` from the pivot lands at `[a b; c d] . q + pivot_local`
     /// in the shape's frame.
     pub linv: [f32; 4],
-    /// RGBA fill colour (pre-multiplied opacity), or the first gradient stop.
+    /// RGBA fill colour (opacity and tint folded in), drawn when the shape
+    /// names no fill record.
     pub fill_colour: [f32; 4],
-    /// RGBA second gradient stop (equals `fill_colour` for a solid fill).
-    pub fill_colour2: [f32; 4],
     /// Shape-specific radii. For RoundedRect: [top-right, bottom-right,
     /// bottom-left, top-left]. For Rect: a uniform radius in every slot.
     /// Unused components are zero.
     pub radii: [f32; 4],
-    /// Gradient parameters: `[type, angle, stop_count, 0]`. `type` selects
-    /// solid/linear/radial/conical; `stop_count` is the number of active
-    /// gradient stops (0 for solid, 2..4 otherwise).
-    pub gradient_params: [f32; 4],
     /// `[base_index, outer_count, inner_count, shape_type]`: where this
     /// shape's run of stacked shadow layers starts in the shared texture, how
     /// many of each kind it has (outer first), and the encoded shape type.
@@ -851,27 +1039,21 @@ pub(crate) struct OverlayShapeInstance {
     /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
     /// no clipping. Fragments outside the rect are discarded.
     pub clip_rect: [f32; 4],
-    /// Third gradient colour stop. Unused for 2-stop and solid fills.
-    pub stop_colour_c: [f32; 4],
-    /// Fourth gradient colour stop. Unused for 2-stop and solid fills.
-    pub stop_colour_d: [f32; 4],
-    /// Stop positions in `[0, 1]` along the gradient axis, sorted ascending.
-    /// For 2-stop fills only `[0]` and `[1]` are valid; remaining entries
-    /// are 1.0 sentinels. The active stop count lives in
-    /// `gradient_params[2]`.
-    pub stop_positions: [f32; 4],
     /// `[clip_index, pivot_local_x, pivot_local_y, item_scale]`: the clip-mask
     /// index (or `-1` for none), the pivot in the shape's own frame as an
     /// offset from its centre, and the item's uniform scale, which its shadow
     /// offsets are given in.
     pub misc: [f32; 4],
+    /// `[fill_index, 0, 0, 0]`: the first texel of the shape's record in the
+    /// fill table, or `-1` to draw `fill_colour`.
+    pub fill: [f32; 4],
 }
 
 impl OverlayShapeInstance {
-    /// Thirteen `vec4` attributes, instance-stepped; no vertex stream.
+    /// Nine `vec4` attributes, instance-stepped; no vertex stream.
     pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
         use std::mem::offset_of;
-        const ATTRIBUTES: [crate::gpu::VertexAttribute; 13] = {
+        const ATTRIBUTES: [crate::gpu::VertexAttribute; 9] = {
             const fn at(offset: usize, shader_location: u32) -> crate::gpu::VertexAttribute {
                 crate::gpu::VertexAttribute {
                     offset: offset as u64,
@@ -886,15 +1068,11 @@ impl OverlayShapeInstance {
                 at(offset_of!(OverlayShapeInstance, pivot_half), 1),
                 at(offset_of!(OverlayShapeInstance, linv), 2),
                 at(offset_of!(OverlayShapeInstance, fill_colour), 3),
-                at(offset_of!(OverlayShapeInstance, fill_colour2), 4),
-                at(offset_of!(OverlayShapeInstance, radii), 5),
-                at(offset_of!(OverlayShapeInstance, gradient_params), 6),
-                at(offset_of!(OverlayShapeInstance, shadow_meta), 7),
-                at(offset_of!(OverlayShapeInstance, clip_rect), 8),
-                at(offset_of!(OverlayShapeInstance, stop_colour_c), 9),
-                at(offset_of!(OverlayShapeInstance, stop_colour_d), 10),
-                at(offset_of!(OverlayShapeInstance, stop_positions), 11),
-                at(offset_of!(OverlayShapeInstance, misc), 12),
+                at(offset_of!(OverlayShapeInstance, radii), 4),
+                at(offset_of!(OverlayShapeInstance, shadow_meta), 5),
+                at(offset_of!(OverlayShapeInstance, clip_rect), 6),
+                at(offset_of!(OverlayShapeInstance, misc), 7),
+                at(offset_of!(OverlayShapeInstance, fill), 8),
             ]
         };
         crate::gpu::VertexBufferLayout {
@@ -912,188 +1090,125 @@ impl OverlayShapeInstance {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<OverlayShapeInstance>() == 208);
+const _: () = assert!(std::mem::size_of::<OverlayShapeInstance>() == 144);
 
-/// Per-vertex data for SDF textured overlay shapes and tessellated textured
-/// fills.
-///
-/// The texture pipeline draws both an analytic shape's six-vertex quad and a
-/// tessellated triangle list through this one layout, which is why it stays
-/// per-vertex while the solid shapes are instanced. `fill_colour` acts as a
-/// tint multiplied with the sampled texel.
+/// Per-vertex data for backdrop-blur overlay shapes: an analytic shape's quad
+/// (six vertices, evaluated by its distance field) or a vector path's
+/// triangles (a sharp rect grown past the path, so the distance test reads
+/// fully inside). The blurred scene is sampled at the screen position.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct OverlayShapeTexVertex {
-    /// NDC position (xy).
+pub(crate) struct OverlayBackdropVertex {
+    /// Position in logical pixels.
     pub position: [f32; 2],
-    /// Position relative to shape centre, in logical pixels.
+    /// Position relative to the shape pivot (or the path's centre), in logical
+    /// pixels.
     pub local_pos: [f32; 2],
-    /// RGBA tint colour (pre-multiplied opacity). Multiplied with texture sample.
-    pub fill_colour: [f32; 4],
+    /// RGBA tint laid over the filtered backdrop, its alpha the mix amount.
+    pub tint: [f32; 4],
     /// Half-extents of the shape bounding box in logical pixels.
     pub half_size: [f32; 2],
-    /// Shape-specific radii (same encoding as `OverlayShapeVertex`).
+    /// Shape-specific radii (same encoding as `OverlayShapeInstance`).
     pub radii: [f32; 4],
     /// `[shape_type, clip_index, pivot_local_x, pivot_local_y]`: the encoded
     /// shape type (same values as `OverlayShapeInstance`), the clip-mask index
     /// (or `-1.0` for none), and the pivot in the shape's own frame.
     pub shape_meta: [f32; 4],
-    /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
-    /// Slightly outside [0,1] in the border/AA padding region.
-    pub uv: [f32; 2],
+    /// Framebuffer-pixel clip bbox `(x0, y0, x1, y1)`; all zero means no box
+    /// clip. Same encoding as `OverlayShapeInstance::clip_rect`.
+    pub clip_rect: [f32; 4],
     /// `[base_index, outer_count, inner_count]`: where this shape's run of
-    /// stacked shadow layers starts in the shared buffer and how many of each
+    /// stacked shadow layers starts in the shared texture and how many of each
     /// kind it has. Same encoding as `OverlayShapeInstance::shadow_meta`.
     pub shadow_index: [f32; 3],
-    /// Per-shape flags.
-    /// - `x` = is_backdrop_blur (0.0 = regular tinted sample; 1.0 = the bound
-    ///   texture is the scene-blur output composited under the tint).
-    /// - `y` = nine-slice centre tile mode (0 = stretch, 1 = tile).
-    /// - `z` = nine-slice edge tile mode (0 = stretch, 1 = tile).
-    /// - `w` = nine-slice enabled flag (0 = disabled, 1 = enabled).
-    pub extras: [f32; 4],
-    /// Nine-slice insets in texture UV space, `[top, right, bottom, left]`.
-    /// Unused when `extras.w == 0`.
-    pub nine_slice_uv: [f32; 4],
-    /// Nine-slice insets as fractions of the shape's bounding box,
-    /// `[top, right, bottom, left]`. Unused when `extras.w == 0`.
-    pub nine_slice_frac: [f32; 4],
-    /// Texture transform part A: `[offset_x, offset_y, scale_x, scale_y]`.
-    /// `scale = 1.0` is 1:1. Applies when 9-slice is disabled.
-    pub texture_transform_a: [f32; 4],
-    /// Texture transform part B:
-    /// `[rotation_radians, tile_mode (0/1/2), flip_x (0/1), flip_y (0/1)]`.
-    pub texture_transform_b: [f32; 4],
-    /// Framebuffer-pixel clip bbox `(x0, y0, x1, y1)`; all zero means no box
-    /// clip. Same encoding as `OverlayShapeInstance::clip_rect`; the cheap
-    /// bounding-box reject before the mask SDF.
-    pub clip_rect: [f32; 4],
+    /// `[0, saturation, brightness, hue_shift]`: the backdrop colour filters.
+    pub filters: [f32; 4],
     /// The inverse of the item's linear map, row-major `[a, b, c, d]`, mapping
     /// `local_pos` (a pixel offset from the pivot) into the shape's own frame.
-    /// Identity for a tessellated fill, whose triangles are already placed.
+    /// Identity for a tessellated path, whose triangles are already placed.
     pub linv: [f32; 4],
-    /// `[item_scale, uv_mode, 0, 0]`. `item_scale` is the uniform scale the
-    /// shadow offsets are given in. `uv_mode` selects the sample coordinate:
-    /// 0 reads the `uv` attribute (a tessellated fill), 1 derives it from the
-    /// shape's own frame (an analytic shape), 2 is the screen position over the
-    /// viewport (a backdrop blur).
+    /// `[item_scale, 0, 0, 0]`: the uniform scale the shadow offsets are given
+    /// in.
     pub item_params: [f32; 4],
 }
 
-impl OverlayShapeTexVertex {
+impl OverlayBackdropVertex {
     pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
         crate::gpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as crate::gpu::BufferAddress,
+            array_stride: std::mem::size_of::<OverlayBackdropVertex>() as crate::gpu::BufferAddress,
             step_mode: crate::gpu::VertexStepMode::Vertex,
             // Offsets come from `offset_of!` so reordering fields can't desync
             // them.
             attributes: &[
-                // location 0: position vec2f
+                // location 0: position vec2f (logical pixels)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, position) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, position) as u64,
                     shader_location: 0,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 1: local_pos vec2f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, local_pos) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, local_pos) as u64,
                     shader_location: 1,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
-                // location 2: fill_colour vec4f (tint)
+                // location 2: tint vec4f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, fill_colour) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, tint) as u64,
                     shader_location: 2,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 3: half_size vec2f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, half_size) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, half_size) as u64,
                     shader_location: 3,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 4: radii vec4f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, radii) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, radii) as u64,
                     shader_location: 4,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 5: shape_meta vec4f (shape_type, clip_index, pivot)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shape_meta) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, shape_meta) as u64,
                     shader_location: 5,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 6: clip_rect vec4f (framebuffer-pixel clip bbox)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, clip_rect) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, clip_rect) as u64,
                     shader_location: 6,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 7: uv vec2f
+                // location 7: shadow_index vec3f (base, outer_ct, inner_ct)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, uv) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, shadow_index) as u64,
                     shader_location: 7,
-                    format: crate::gpu::VertexFormat::Float32x2,
-                },
-                // location 8: shadow_index vec3f (base, outer_ct, inner_ct)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_index) as u64,
-                    shader_location: 8,
                     format: crate::gpu::VertexFormat::Float32x3,
                 },
-                // location 9: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
+                // location 8: filters vec4f (unused, saturation, brightness, hue)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, extras) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, filters) as u64,
+                    shader_location: 8,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 9: linv vec4f (the inverse item linear map)
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, linv) as u64,
                     shader_location: 9,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 10: nine_slice_uv vec4f
+                // location 10: item_params vec4f (item_scale, 0, 0, 0)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_uv) as u64,
+                    offset: std::mem::offset_of!(OverlayBackdropVertex, item_params) as u64,
                     shader_location: 10,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 11: nine_slice_frac vec4f
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_frac) as u64,
-                    shader_location: 11,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 12: texture_transform_a vec4f (offset.xy, scale.xy)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_a) as u64,
-                    shader_location: 12,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 13: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_b) as u64,
-                    shader_location: 13,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 14: linv vec4f (the inverse item linear map)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, linv) as u64,
-                    shader_location: 14,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 15: item_params vec4f (item_scale, uv_mode, 0, 0)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, item_params) as u64,
-                    shader_location: 15,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
         }
     }
-}
-
-/// One batch of textured SDF overlay shapes sharing a single texture.
-pub(crate) struct OverlayShapeTexBatch {
-    pub vertex_buf: crate::gpu::Buffer,
-    pub vertex_count: u32,
-    pub bind_group: crate::gpu::BindGroup,
 }
 
 /// Texture entry for an overlay shape texture fill.
@@ -1239,15 +1354,27 @@ fn build_external_overlay_texture_entry(
     }
 }
 
+/// One run of shape instances that draws with one fill bind group.
+pub(crate) struct OverlayShapeBatch {
+    pub instance_start: u32,
+    pub instance_count: u32,
+    /// Index into `OverlayShapeGpuData::fill_bind_groups`.
+    pub fill: u32,
+}
+
 /// Per-frame GPU data for batched SDF overlay shape rendering.
 pub(crate) struct OverlayShapeGpuData {
-    /// The solid (non-textured) shapes, one `OverlayShapeInstance` each.
-    /// `None` when all shapes are textured.
+    /// Every analytic shape, one `OverlayShapeInstance` each: the untextured
+    /// ones first, then the textured ones grouped by image.
     pub instance_buf: Option<crate::gpu::Buffer>,
-    /// Number of solid shape instances. Zero when all shapes are textured.
-    pub instance_count: u32,
+    /// The draws the fixed family order issues over `instance_buf`, in order:
+    /// the untextured run, then one run per image.
+    pub batches: Vec<OverlayShapeBatch>,
+    /// Group 1 bind groups: the frame's fill records with the blank image at
+    /// index 0, then one per image a textured shape samples.
+    pub fill_bind_groups: Vec<crate::gpu::BindGroup>,
     /// Bind group (group 0) holding the stacked shadow layers, the clip shapes
-    /// and the group-instance uniform for the solid pipeline. Present whenever
+    /// and the group-instance uniform for the shape pipeline. Present whenever
     /// `instance_buf` is `Some`; immediate draws bind it at dynamic offset 0,
     /// the identity instance.
     pub shadow_bind_group: Option<crate::gpu::BindGroup>,
@@ -1256,16 +1383,13 @@ pub(crate) struct OverlayShapeGpuData {
     pub _shadow_tex: Option<crate::gpu::TextureView>,
     /// Backing clip-shape uniform for `shadow_bind_group` (binding 1).
     pub _clip_buf: Option<crate::gpu::Buffer>,
-    /// One batch per unique texture, drawn after solid shapes.
-    pub tex_batches: Vec<OverlayShapeTexBatch>,
-    /// Clip-mask bind group (group 1) shared by every textured and blur draw.
-    /// Present whenever the texture pipeline is used this frame.
+    /// Clip-mask bind group (group 1) for the backdrop pipeline. Present
+    /// whenever a backdrop shape draws this frame.
     pub tex_clip_bind_group: Option<crate::gpu::BindGroup>,
     /// Backing clip-shape uniform for `tex_clip_bind_group`. Kept alive
     /// alongside it.
     pub _tex_clip_buf: Option<crate::gpu::Buffer>,
-    /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same
-    /// vertex layout as `OverlayShapeTexVertex` with screen-space UVs.
+    /// Vertex buffer for backdrop-blur shapes (frosted glass).
     /// The bind group is created at render time once the blurred scene texture
     /// is available.
     pub blur_vertex_buf: Option<crate::gpu::Buffer>,
@@ -1286,6 +1410,7 @@ mod tests {
     fn shader_constants_match() {
         let clip = format!("array<ClipShape, {MAX_OVERLAY_CLIP_SHAPES}>");
         let row = format!("SHADOW_LAYERS_PER_ROW: i32 = {SHADOW_LAYERS_PER_ROW};");
+        let fill_row = format!("FILL_TEXELS_PER_ROW: i32 = {FILL_TEXELS_PER_ROW};");
         for (name, src) in [
             (
                 "overlay_shape",
@@ -1303,6 +1428,12 @@ mod tests {
             assert!(src.contains(&clip), "{name} does not declare {clip}");
             if name != "overlay_text" {
                 assert!(src.contains(&row), "{name} does not declare {row}");
+            }
+            if name != "overlay_shape_tex" {
+                assert!(
+                    src.contains(&fill_row),
+                    "{name} does not declare {fill_row}"
+                );
             }
         }
         assert_eq!(CLIP_UNIFORM_BYTES, 16 << 10);

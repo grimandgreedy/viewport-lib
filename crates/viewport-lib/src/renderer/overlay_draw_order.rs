@@ -28,27 +28,23 @@ pub(crate) mod family_rank {
 /// per-family buffers built by the overlay prepare passes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum OverlayDrawSource {
-    /// A sub-range of the solid (untextured) shape instance buffer, one
-    /// instance per shape.
+    /// A sub-range of the shape instance buffer, one instance per shape.
+    /// `fill` selects the fill bind group (the image a textured shape
+    /// samples, or the blank image at `0`). Shapes sharing an image are
+    /// contiguous in the buffer but draw as separate segments at their own
+    /// `z_order`, so a solid shape can layer between two same-image shapes.
     Shape {
         instance_start: u32,
         instance_count: u32,
-    },
-    /// A sub-range of one textured-shape batch's vertex buffer. `batch_index`
-    /// selects the batch (and its texture bind group); `vertex_start` /
-    /// `vertex_count` bound the draw within that buffer. Shapes sharing a texture
-    /// share a batch buffer but draw as separate segments at their own `z_order`,
-    /// so a solid shape can layer between two same-texture shapes.
-    ShapeTex {
-        batch_index: u32,
-        vertex_start: u32,
-        vertex_count: u32,
+        fill: u32,
     },
     /// A sub-range of the merged text-pipeline buffer (`label_gpu_data`): labels,
-    /// glyph runs, and polylines.
+    /// glyph runs, polylines and vector shapes. `fill` selects the fill bind
+    /// group, as for a shape.
     Text {
         vertex_start: u32,
         vertex_count: u32,
+        fill: u32,
     },
     /// A retained overlay group drawn through the text pipeline. `draw_index`
     /// selects the group's cached buffer and per-frame instance in
@@ -74,14 +70,15 @@ pub(crate) struct OverlayDrawSegment {
 
 impl OverlayDrawSegment {
     /// Append a merged-text segment, coalescing with the previous text segment at
-    /// the same `z_order` when the ranges are contiguous. The merged batch is
-    /// built in z-sorted order, so runs of same-`z_order` items collapse to one
-    /// draw.
+    /// the same `z_order` and fill bind group when the ranges are contiguous.
+    /// The merged batch is built in z-sorted order, so runs of same-`z_order`
+    /// items collapse to one draw per fill image.
     pub fn push_text(
         segments: &mut Vec<OverlayDrawSegment>,
         z_order: i32,
         vertex_start: u32,
         vertex_count: u32,
+        fill: u32,
     ) {
         if vertex_count == 0 {
             return;
@@ -91,9 +88,10 @@ impl OverlayDrawSegment {
                 if let OverlayDrawSource::Text {
                     vertex_start: ls,
                     vertex_count: lc,
+                    fill: lf,
                 } = &mut last.source
                 {
-                    if *ls + *lc == vertex_start {
+                    if *lf == fill && *ls + *lc == vertex_start {
                         *lc += vertex_count;
                         return;
                     }
@@ -106,19 +104,22 @@ impl OverlayDrawSegment {
             source: OverlayDrawSource::Text {
                 vertex_start,
                 vertex_count,
+                fill,
             },
         });
     }
 
-    /// Append a solid-shape segment, coalescing with the previous solid-shape
-    /// segment at the same `z_order` when the ranges are contiguous. Solid
-    /// shapes are built in z-sorted order, so equal-`z_order` runs collapse to
-    /// one draw.
+    /// Append a shape segment, coalescing with the previous shape segment at
+    /// the same `z_order` and fill bind group when the ranges are contiguous.
+    /// Shapes are recorded in z-sorted order, so equal-`z_order` runs sharing
+    /// an image collapse to one draw while shapes at different `z_order` stay
+    /// separate (so a solid shape can layer between them).
     pub fn push_shape(
         segments: &mut Vec<OverlayDrawSegment>,
         z_order: i32,
         instance_start: u32,
         instance_count: u32,
+        fill: u32,
     ) {
         if instance_count == 0 {
             return;
@@ -128,9 +129,10 @@ impl OverlayDrawSegment {
                 if let OverlayDrawSource::Shape {
                     instance_start: ls,
                     instance_count: lc,
+                    fill: lf,
                 } = &mut last.source
                 {
-                    if *ls + *lc == instance_start {
+                    if *lf == fill && *ls + *lc == instance_start {
                         *lc += instance_count;
                         return;
                     }
@@ -143,48 +145,7 @@ impl OverlayDrawSegment {
             source: OverlayDrawSource::Shape {
                 instance_start,
                 instance_count,
-            },
-        });
-    }
-
-    /// Append a textured-shape segment, coalescing with the previous textured
-    /// segment when it targets the same batch at the same `z_order` and the
-    /// ranges are contiguous. Textured shapes are recorded in z-sorted order, so
-    /// equal-`z_order` runs sharing a texture collapse to one draw while shapes
-    /// at different `z_order` stay separate (so a solid shape can layer between
-    /// them).
-    pub fn push_shape_tex(
-        segments: &mut Vec<OverlayDrawSegment>,
-        z_order: i32,
-        batch_index: u32,
-        vertex_start: u32,
-        vertex_count: u32,
-    ) {
-        if vertex_count == 0 {
-            return;
-        }
-        if let Some(last) = segments.last_mut() {
-            if last.z_order == z_order && last.family_rank == family_rank::SHAPE {
-                if let OverlayDrawSource::ShapeTex {
-                    batch_index: lb,
-                    vertex_start: ls,
-                    vertex_count: lc,
-                } = &mut last.source
-                {
-                    if *lb == batch_index && *ls + *lc == vertex_start {
-                        *lc += vertex_count;
-                        return;
-                    }
-                }
-            }
-        }
-        segments.push(OverlayDrawSegment {
-            z_order,
-            family_rank: family_rank::SHAPE,
-            source: OverlayDrawSource::ShapeTex {
-                batch_index,
-                vertex_start,
-                vertex_count,
+                fill,
             },
         });
     }
@@ -238,6 +199,7 @@ mod tests {
             source: OverlayDrawSource::Shape {
                 instance_start: 0,
                 instance_count: 0,
+                fill: 0,
             },
         }
     }
@@ -274,6 +236,7 @@ mod tests {
             source: OverlayDrawSource::Shape {
                 instance_start: 0,
                 instance_count: 6,
+                fill: 0,
             },
         };
         let b = OverlayDrawSegment {
@@ -282,6 +245,7 @@ mod tests {
             source: OverlayDrawSource::Shape {
                 instance_start: 6,
                 instance_count: 6,
+                fill: 0,
             },
         };
         let mut segs = vec![a, b];
@@ -293,92 +257,81 @@ mod tests {
     #[test]
     fn push_text_coalesces_contiguous_same_z() {
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_text(&mut segs, 0, 0, 12);
-        OverlayDrawSegment::push_text(&mut segs, 0, 12, 8);
+        OverlayDrawSegment::push_text(&mut segs, 0, 0, 12, 0);
+        OverlayDrawSegment::push_text(&mut segs, 0, 12, 8, 0);
         assert_eq!(segs.len(), 1);
         assert_eq!(
             segs[0].source,
             OverlayDrawSource::Text {
                 vertex_start: 0,
                 vertex_count: 20,
+                fill: 0,
             }
         );
     }
 
     #[test]
-    fn push_text_splits_on_different_z() {
+    fn push_text_splits_on_different_z_or_image() {
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_text(&mut segs, 0, 0, 12);
-        OverlayDrawSegment::push_text(&mut segs, 5, 12, 8);
+        OverlayDrawSegment::push_text(&mut segs, 0, 0, 12, 0);
+        OverlayDrawSegment::push_text(&mut segs, 5, 12, 8, 0);
         assert_eq!(segs.len(), 2);
+        // Same z, a different fill image: the image is bound per draw.
+        OverlayDrawSegment::push_text(&mut segs, 5, 20, 8, 1);
+        assert_eq!(segs.len(), 3);
     }
 
     #[test]
     fn push_shape_coalesces_contiguous_same_z() {
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_shape(&mut segs, 3, 0, 6);
-        OverlayDrawSegment::push_shape(&mut segs, 3, 6, 6);
+        OverlayDrawSegment::push_shape(&mut segs, 3, 0, 1, 0);
+        OverlayDrawSegment::push_shape(&mut segs, 3, 1, 1, 0);
         assert_eq!(segs.len(), 1);
         assert_eq!(
             segs[0].source,
             OverlayDrawSource::Shape {
                 instance_start: 0,
-                instance_count: 12
+                instance_count: 2,
+                fill: 0,
             }
         );
     }
 
     #[test]
-    fn push_shape_tex_coalesces_same_batch_same_z() {
+    fn push_shape_splits_on_different_z_or_image() {
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_shape_tex(&mut segs, 3, 0, 0, 6);
-        OverlayDrawSegment::push_shape_tex(&mut segs, 3, 0, 6, 6);
-        assert_eq!(segs.len(), 1);
-        assert_eq!(
-            segs[0].source,
-            OverlayDrawSource::ShapeTex {
-                batch_index: 0,
-                vertex_start: 0,
-                vertex_count: 12,
-            }
-        );
-    }
-
-    #[test]
-    fn push_shape_tex_splits_on_different_z_or_batch() {
-        let mut segs = Vec::new();
-        // Same batch, different z: two segments.
-        OverlayDrawSegment::push_shape_tex(&mut segs, 3, 0, 0, 6);
-        OverlayDrawSegment::push_shape_tex(&mut segs, 4, 0, 6, 6);
-        // Same z, different batch: another segment.
-        OverlayDrawSegment::push_shape_tex(&mut segs, 4, 1, 0, 6);
+        // Same image, different z: two segments.
+        OverlayDrawSegment::push_shape(&mut segs, 3, 0, 1, 1);
+        OverlayDrawSegment::push_shape(&mut segs, 4, 1, 1, 1);
+        // Same z, different image: another segment.
+        OverlayDrawSegment::push_shape(&mut segs, 4, 2, 1, 2);
         assert_eq!(segs.len(), 3);
     }
 
     #[test]
     fn solid_layers_between_two_same_texture_shapes() {
-        // The repro: three textured shapes share batch 0 but are recorded at
-        // their own z (1001, 1003, 1005), with solid plates interleaved at
-        // 1000/1002/1004. After sorting, each image draws above its own plate,
-        // instead of the whole texture batch collapsing to z 1001.
+        // Three textured shapes share image 1 (instances 3..6) but are
+        // recorded at their own z (1001, 1003, 1005), with solid plates
+        // (instances 0..3) interleaved at 1000/1002/1004. After sorting, each
+        // image draws above its own plate, instead of the whole image group
+        // collapsing to z 1001.
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_shape(&mut segs, 1000, 0, 6); // plate A
-        OverlayDrawSegment::push_shape_tex(&mut segs, 1001, 0, 0, 6); // image X
-        OverlayDrawSegment::push_shape(&mut segs, 1002, 6, 6); // plate B
-        OverlayDrawSegment::push_shape_tex(&mut segs, 1003, 0, 6, 6); // image Y
-        OverlayDrawSegment::push_shape(&mut segs, 1004, 12, 6); // plate C
-        OverlayDrawSegment::push_shape_tex(&mut segs, 1005, 0, 12, 6); // image Z
+        OverlayDrawSegment::push_shape(&mut segs, 1000, 0, 1, 0); // plate A
+        OverlayDrawSegment::push_shape(&mut segs, 1002, 1, 1, 0); // plate B
+        OverlayDrawSegment::push_shape(&mut segs, 1004, 2, 1, 0); // plate C
+        OverlayDrawSegment::push_shape(&mut segs, 1001, 3, 1, 1); // image X
+        OverlayDrawSegment::push_shape(&mut segs, 1003, 4, 1, 1); // image Y
+        OverlayDrawSegment::push_shape(&mut segs, 1005, 5, 1, 1); // image Z
         sort_overlay_segments(&mut segs);
         let zs: Vec<i32> = segs.iter().map(|s| s.z_order).collect();
         assert_eq!(zs, vec![1000, 1001, 1002, 1003, 1004, 1005]);
-        // Each image sits directly above its plate: the segment after every
-        // solid plate is the matching textured sub-range.
+        // Each image sits directly above its plate.
         assert_eq!(
             segs[3].source,
-            OverlayDrawSource::ShapeTex {
-                batch_index: 0,
-                vertex_start: 6,
-                vertex_count: 6,
+            OverlayDrawSource::Shape {
+                instance_start: 4,
+                instance_count: 1,
+                fill: 1,
             }
         );
     }

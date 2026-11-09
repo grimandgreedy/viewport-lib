@@ -274,11 +274,11 @@ fn build_shapes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [115.0, 20.0],
             [80.0, 50.0],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.1, 0.4, 0.9, 1.0),
-            end_colour: Colour::srgb(0.9, 0.2, 0.6, 1.0),
-            angle: 0.6,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.1, 0.4, 0.9, 1.0),
+            Colour::srgb(0.9, 0.2, 0.6, 1.0),
+            0.6,
+        ))
         .with_outline(Colour::srgb(0.95, 0.95, 1.0, 0.9), 2.0, OutlineMode::Outer),
         OverlayShapeItem::new(OverlayShape::Circle, [215.0, 20.0], [50.0, 50.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.8, 0.45, 0.95))),
@@ -524,19 +524,19 @@ fn build_group_anchor(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 }
 
 fn build_text_fill(ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // Gradient-filled text. The fill is evaluated per glyph vertex over the
-    // laid-out text box, so a linear gradient is exact and a radial one is
-    // piecewise-linear per glyph: both worth pinning, since the faceting is
-    // the part that would show first if the sampling box drifted.
-    let linear = OverlayFill::LinearGradient {
-        start_colour: Colour::srgb(1.0, 0.85, 0.2, 1.0),
-        end_colour: Colour::srgb(0.9, 0.2, 0.55, 1.0),
-        angle: 0.0,
-    };
-    let radial = OverlayFill::RadialGradient {
-        centre_colour: Colour::srgb(0.6, 1.0, 0.9, 1.0),
-        edge_colour: Colour::srgb(0.1, 0.25, 0.6, 1.0),
-    };
+    // Gradient-filled text. The fill is evaluated per fragment over the
+    // laid-out text box, so a radial gradient is as smooth across a glyph as
+    // a linear one; both are worth pinning, since the box the fill spans is
+    // the part that would show first if it drifted.
+    let linear = OverlayFill::linear_gradient(
+        Colour::srgb(1.0, 0.85, 0.2, 1.0),
+        Colour::srgb(0.9, 0.2, 0.55, 1.0),
+        0.0,
+    );
+    let radial = OverlayFill::radial_gradient(
+        Colour::srgb(0.6, 1.0, 0.9, 1.0),
+        Colour::srgb(0.1, 0.25, 0.6, 1.0),
+    );
 
     let mut wide = LabelItem::new("Gradient")
         .with_position([20.0, 20.0])

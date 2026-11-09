@@ -10,6 +10,7 @@
 - **`PluginInstaller::uninstall` is required** - the default body that did nothing is gone. Every feature implements removal: attempt every piece, return the first error, and return `ViewportError::PluginUninstallUnsupported` for a feature that cannot be removed instead of `Ok(())`.
 - **`PluginInstaller::reattach_renderer` is required** - a new trait method that registers a feature's renderer-side pieces again on a new renderer and updates its handle, leaving the runtime alone. A feature with nothing on the renderer returns `Ok(())`.
 - **`PhysicsLitePlugin`, `AnimationPlugin` and `ConstraintPlugin` installers return a `RuntimePluginId`** - the handle is the id they registered on the runtime instead of `()`, so they can be uninstalled. Call sites that ignore the handle compile unchanged.
+- **`OverlayFill` gradients take a stop list** - `LinearGradient`, `RadialGradient` and `ConicalGradient` each hold `stops: Vec<GradientStop>` with any number of stops, and the `*Multi` variants and `OVERLAY_MAX_GRADIENT_STOPS` are gone. Build a two-stop gradient with `OverlayFill::linear_gradient`, `radial_gradient` or `conical_gradient`, or `GradientStop::pair`.
 
 ### Features
 
@@ -22,13 +23,16 @@
 - **`ViewportError::PluginUninstallUnsupported`** - returned by a feature's `uninstall` when its pieces cannot be removed.
 
 - **`OverlayTransform` is a full 2D affine map** - `stretch` (a per-axis scale in the item's own frame) and `skew` (a shear of x by y) join `translate`, `rotation`, `pivot` and `scale`, with `with_stretch`, `with_skew`, `with_linear`, `from_linear`, `linear`, `inverse_linear` and `linear_is_identity`. `compose` is exact for any pair. Every overlay family and retained group honours the new fields; a consumer that decomposed its own matrix into a box and a rotation can hand the matrix over whole.
-- **Analytic overlay shapes draw as one instance each** - the solid shape pipeline takes one record per shape and expands the quad on the GPU, in place of six vertices carrying the whole description, so a frame of many markers writes and uploads a fraction of the bytes. The textured shape pipeline, which also draws tessellated image fills, keeps its vertex form; a textured shape now follows its item rotation, stretch and skew like a solid one.
+- **Analytic overlay shapes draw as one instance each** - the shape pipeline takes one record per shape, whatever its fill, and expands the quad on the GPU, in place of six vertices carrying the whole description, so a frame of many markers writes and uploads a fraction of the bytes. A textured shape follows its item rotation, stretch and skew like a solid one.
+- **`OverlayFill::SweepGradient`** - stops spread over an arc of angles about a centre anywhere in the box, for gauges and dials; `OverlayFill::sweep_gradient` builds a two-stop one about the middle.
+- **Texture fills on text, vector shapes and polylines** - a `LabelItem`, `GlyphRunItem`, vector `OverlayShapeItem` or closed polyline takes `OverlayFill::Texture`, sampled per pixel across the item's box with its transform and nine-slice, and `OverlayStyleSupport::for_glyphs` now reports it as drawn. Every overlay family evaluates fills per pixel through the same code, so a gradient means the same thing on all of them.
 - **`FrameStats::overlay_draw_calls`** - the draw calls the overlay pass issues for the most recently prepared viewport, so a consumer can see what its `z_order` assignments cost in batching.
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
 
 ### Fixes
 
+- **Faceted gradients on text, vector shapes and polylines** - a radial or conical gradient was interpolated per vertex there and showed facets across large glyphs and paths; it is now evaluated per pixel. A radial gradient on a vector shape or polyline reaches its last stop at the larger half-extent of the box, as on an analytic shape and on text, instead of at the corner.
 - **GPU plugin timings allocated every frame** - `ViewportRuntime::pre_prepare` and `post_paint` now refill their timing maps in place, so an attached runtime adds no allocations to a settled frame.
 - **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
 - **GPU picks before their pipelines have compiled** - under `PipelineCompilation::Background`, the default everywhere but the web and Apple platforms on wgpu 27, a pick, rect pick or snap query that ran before its pipelines finished compiling drew nothing and reported no hit; it now builds the pipelines it needs first, so a click in the first frames hits what is under the cursor.

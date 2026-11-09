@@ -63,8 +63,13 @@ impl crate::resources::DeviceResources {
         let sampler =
             crate::resources::builders::clamp_linear_sampler(device, "overlay_text_sampler");
 
-        let layout =
-            crate::resources::builders::pipeline_layout(device, "overlay_text_layout", &[&bgl]);
+        // Group 1: the shared fill module's records, image and sampler.
+        let fill_bgl = self.overlay_fill_bgl(device).clone();
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "overlay_text_layout",
+            &[&bgl, &fill_bgl],
+        );
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -160,6 +165,15 @@ pub(crate) struct OverlayTextVertex {
     /// vertex. Immediate draws take the identity instance, whose tint changes
     /// nothing either way.
     pub group_tint: f32,
+    /// `[local_x, local_y, fill_index, 0]`: the vertex's offset from the centre
+    /// of the box its item's fill spans, in the item's own frame, and the first
+    /// texel of that fill's record, or `-1` when the colour alone is the fill.
+    pub fill: [f32; 4],
+}
+
+impl OverlayTextVertex {
+    /// The `fill` of a vertex that reads no fill record.
+    pub const NO_FILL: [f32; 4] = [0.0, 0.0, -1.0, 0.0];
 }
 
 impl OverlayTextVertex {
@@ -211,17 +225,36 @@ impl OverlayTextVertex {
                     shader_location: 6,
                     format: crate::gpu::VertexFormat::Float32,
                 },
+                // location 12 (7..11 are the instance stream): fill vec4f
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::offset_of!(OverlayTextVertex, fill) as u64,
+                    shader_location: 12,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
             ],
         }
     }
+}
+
+/// A run of the merged text buffer that draws with one fill bind group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OverlayTextRun {
+    pub vertex_start: u32,
+    pub vertex_count: u32,
+    /// Index into `LabelGpuData::fill_bind_groups`.
+    pub fill: u32,
 }
 
 /// Per-frame GPU data for batched overlay label rendering.
 pub(crate) struct LabelGpuData {
     /// Vertex buffer containing all label geometry for this frame.
     pub vertex_buf: crate::gpu::Buffer,
-    /// Number of vertices to draw.
-    pub vertex_count: u32,
+    /// The buffer's draws in the fixed family order: one run per stretch that
+    /// samples the same fill image.
+    pub runs: Vec<OverlayTextRun>,
+    /// Group 1 bind groups: the frame's fill records with the blank image at
+    /// index 0, then one per image a text-stream item is filled from.
+    pub fill_bind_groups: Vec<crate::gpu::BindGroup>,
     /// Bind group referencing the glyph atlas texture, sampler, and clip buffer.
     pub bind_group: crate::gpu::BindGroup,
     /// Backing clip-shape uniform for `bind_group` (binding 2). Kept alive

@@ -11,6 +11,7 @@ mod lighting;
 mod math;
 mod mesh_material;
 mod overlay_compile;
+mod overlay_fill;
 mod overlay_geometry;
 mod overlay_style_check;
 mod overlay_vector;

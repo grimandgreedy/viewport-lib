@@ -77,3 +77,63 @@ fn alternating_panel_draw_counts() {
         "one draw per alternation under equal-z batching"
     );
 }
+
+/// A texture fill binds its image per draw on both the shape and the text
+/// pipeline, so items filled from one image batch together and the families
+/// split only where the bound image changes. The rows submit, at one
+/// `z_order`, an untextured shape and two shapes sharing an image, then a
+/// plain label, two labels sharing that image, and another plain label.
+#[test]
+fn texture_fills_batch_per_image() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let image = h
+        .renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            &h.device,
+            &h.queue,
+            viewport_lib::TextureData::srgb(2, 2, vec![255u8; 16]),
+        )
+        .expect("a well-formed sRGB image");
+    let mut fd = frame(false);
+    fd.overlays.shapes.clear();
+    fd.overlays.labels.clear();
+    let textured = OverlayFill::texture(image);
+    for (i, fill) in [
+        OverlayFill::Solid(Colour::srgb(0.2, 0.3, 0.5, 1.0)),
+        textured.clone(),
+        textured.clone(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fd.overlays.shapes.push(
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 3.0 },
+                [8.0, 8.0 + i as f32 * 18.0],
+                [120.0, 16.0],
+            )
+            .with_fill(fill),
+        );
+    }
+    let white = OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0));
+    for (i, fill) in [white.clone(), textured.clone(), textured, white]
+        .into_iter()
+        .enumerate()
+    {
+        fd.overlays.labels.push(
+            LabelItem::new(format!("label {i}"))
+                .with_position([150.0, 8.0 + i as f32 * 18.0])
+                .with_fill(fill),
+        );
+    }
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(
+        stats.overlay_draw_calls,
+        2 + 3,
+        "shapes: untextured, then the shared image; text: plain, image, plain"
+    );
+}

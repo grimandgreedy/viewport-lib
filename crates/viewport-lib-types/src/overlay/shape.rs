@@ -102,7 +102,7 @@ pub enum OverlayShape {
     /// `style.tint`, `z_order`, `clip`, `animations`, and the whole
     /// `transform`. `position` places the path origin and `size` sets the
     /// rotation centre; gradient and image fills map across the path's own
-    /// extent, not `size`. An image fill's `nine_slice` is ignored. Ask
+    /// extent, not `size`. Ask
     /// [`OverlayStyleSupport::for_shape`] rather than hard-coding any of this.
     ///
     /// A vector shape also cannot serve as a clip mask. Setting `provides_mask`
@@ -281,10 +281,8 @@ impl Default for OverlayShape {
 /// and tessellated to triangles and drawn on the text pipeline instead, with
 /// its shadow layers re-emitted as geometry.
 ///
-/// The item hides which backend runs, but it cannot hide that they differ in
-/// what they can express: the options that need a distance field
-/// (`style.backdrop`, and a texture fill with or without its nine-patch) do
-/// nothing on a vector path. Ask
+/// The item hides which backend runs, and every fill and style field draws on
+/// both; the shadow curves differ slightly. Ask
 /// [`OverlayStyleSupport::for_shape`](crate::overlay::OverlayStyleSupport::for_shape)
 /// rather than memorising that, and see the per-variant note on
 /// [`OverlayShape::Vector`].
@@ -317,11 +315,11 @@ impl Default for OverlayShape {
 ///
 /// // Circle with a left-to-right gradient.
 /// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
-///     .with_fill(OverlayFill::LinearGradient {
-///         start_colour: Colour::srgb(0.0, 0.4, 1.0, 1.0),
-///         end_colour: Colour::srgb(0.0, 1.0, 0.5, 1.0),
-///         angle: 0.0,
-///     });
+///     .with_fill(OverlayFill::linear_gradient(
+///         Colour::srgb(0.0, 0.4, 1.0, 1.0),
+///         Colour::srgb(0.0, 1.0, 0.5, 1.0),
+///         0.0,
+///     ));
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -667,9 +665,9 @@ impl OverlayShapeItem {
 
     /// Build an arbitrary vector shape from `subpaths` combined under
     /// `fill_rule`. Subpath coordinates are path-local logical pixels, placed
-    /// at `position` (top-left); `size` is the bounding box gradient and
-    /// texture fills map across. Set the fill and other fields with the
-    /// `with_*` methods.
+    /// at `position` (top-left); `size` sets the rotation centre, and gradient
+    /// and texture fills map across the path's own extent. Set the fill and
+    /// other fields with the `with_*` methods.
     ///
     /// Use this for shapes that are not one of the analytic variants: multiple
     /// contours, holes, curves, or SVG / icon art. Reach for the analytic

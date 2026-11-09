@@ -482,7 +482,7 @@ pub(crate) fn build_overlay_frame(
         let features_top = stack.row(70.0);
 
         let solid_right = row_solid_shapes(app, &mut shapes, solid_top);
-        row_textured(app, &mut shapes, textured_top);
+        row_textured(app, &mut shapes, &mut labels, textured_top);
         row_gradients(app, &mut shapes, gradients_top);
         row_shadows(app, &mut shapes, shadows_top);
         row_anim(app, &mut shapes, &mut polylines, anim_top);
@@ -628,9 +628,15 @@ fn row_solid_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) -> 
     x
 }
 
-/// Row 2: texture-masked shapes. Shows upload_overlay_texture plus
-/// OverlayShapeItem::texture, texture transforms, and tiling.
-fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
+/// Row 2: textured fills. Shows upload_overlay_texture plus
+/// OverlayShapeItem::texture, texture transforms and tiling, and the same
+/// images filling a vector path and a run of text.
+fn row_textured(
+    app: &App,
+    shapes: &mut Vec<OverlayShapeItem>,
+    labels: &mut Vec<LabelItem>,
+    top: f32,
+) {
     if !app.ovl_state.show_tex_shapes {
         return;
     }
@@ -702,10 +708,45 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             )
             .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset),
         );
+        x2 += 180.0 + gap;
+    }
+
+    // A vector path filled from the colour-wheel image: a five-pointed star,
+    // the image spanning the path's own bounds.
+    if let Some(tid) = app.ovl_state.tex_id {
+        let sz = row2_h;
+        let star: Vec<[f32; 2]> = (0..10)
+            .map(|i| {
+                let a = i as f32 * std::f32::consts::PI / 5.0 - std::f32::consts::FRAC_PI_2;
+                let r = if i % 2 == 0 { sz * 0.5 } else { sz * 0.2 };
+                [sz * 0.5 + a.cos() * r, sz * 0.5 + a.sin() * r]
+            })
+            .collect();
+        shapes.push(
+            OverlayShapeItem::vector(
+                vec![vpl::SubPath::polygon(&star)],
+                vpl::FillRule::NonZero,
+                [x2, y2_mid - sz * 0.5],
+                [sz, sz],
+            )
+            .with_fill(OverlayFill::texture(tid)),
+        );
+        x2 += sz + gap;
+    }
+
+    // A label filled from the Carl Gauss portrait: the image is sampled
+    // across the laid-out text box, so the glyphs show the picture.
+    if let Some(tid) = app.ovl_state.carlgauss_tex_id {
+        let mut label = LabelItem::new("Gauss")
+            .with_position([x2, y2_mid - 30.0])
+            .with_font_size(52.0);
+        label.style.fill = OverlayFill::texture(tid);
+        labels.push(label);
     }
 }
 
-/// Row 3: linear, radial, conical, and multi-stop gradient fills.
+/// Row 3: linear, radial, conical and sweep gradient fills, with two to
+/// eight stops.
 fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     let cr = app.ovl_state.shape_corner_radius;
     let bw = app.ovl_state.shape_border_width;
@@ -722,11 +763,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [120.0, row3_h],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.05, 0.15, 0.55, 0.9),
-            end_colour: Colour::srgb(0.05, 0.65, 0.65, 0.9),
-            angle: 0.0,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.05, 0.15, 0.55, 0.9),
+            Colour::srgb(0.05, 0.65, 0.65, 0.9),
+            0.0,
+        ))
         .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
@@ -740,11 +781,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [120.0, row3_h],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.5, 0.05, 0.15, 0.9),
-            end_colour: Colour::srgb(1.0, 0.6, 0.1, 0.9),
-            angle: PI / 4.0,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.5, 0.05, 0.15, 0.9),
+            Colour::srgb(1.0, 0.6, 0.1, 0.9),
+            PI / 4.0,
+        ))
         .with_outline(Colour::srgb(1.0, 0.5, 0.2, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
@@ -756,11 +797,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [row3_h, row3_h],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.05, 0.35, 0.05, 0.9),
-            end_colour: Colour::srgb(0.5, 1.0, 0.3, 0.9),
-            angle: PI / 2.0,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.05, 0.35, 0.05, 0.9),
+            Colour::srgb(0.5, 1.0, 0.3, 0.9),
+            PI / 2.0,
+        ))
         .with_outline(Colour::srgb(0.4, 1.0, 0.3, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
@@ -768,11 +809,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     // Ellipse: horizontal gradient, purple-to-pink.
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Ellipse, [x3, y3_mid - 30.0], [120.0, 60.0])
-            .with_fill(OverlayFill::LinearGradient {
-                start_colour: Colour::srgb(0.35, 0.05, 0.55, 0.9),
-                end_colour: Colour::srgb(0.9, 0.3, 0.6, 0.9),
-                angle: 0.0,
-            })
+            .with_fill(OverlayFill::linear_gradient(
+                Colour::srgb(0.35, 0.05, 0.55, 0.9),
+                Colour::srgb(0.9, 0.3, 0.6, 0.9),
+                0.0,
+            ))
             .with_outline(Colour::srgb(0.8, 0.4, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
@@ -780,11 +821,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     // Capsule: horizontal gradient, dark grey to white.
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Capsule, [x3, y3_mid - 20.0], [120.0, 40.0])
-            .with_fill(OverlayFill::LinearGradient {
-                start_colour: Colour::srgb(0.15, 0.15, 0.15, 0.9),
-                end_colour: Colour::srgb(0.85, 0.85, 0.85, 0.9),
-                angle: 0.0,
-            })
+            .with_fill(OverlayFill::linear_gradient(
+                Colour::srgb(0.15, 0.15, 0.15, 0.9),
+                Colour::srgb(0.85, 0.85, 0.85, 0.9),
+                0.0,
+            ))
             .with_outline(Colour::srgb(0.6, 0.6, 0.6, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
@@ -798,11 +839,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [row3_h, row3_h],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.1, 0.3, 0.6, 0.9),
-            end_colour: Colour::srgb(0.7, 0.9, 1.0, 0.9),
-            angle: -PI / 4.0,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.1, 0.3, 0.6, 0.9),
+            Colour::srgb(0.7, 0.9, 1.0, 0.9),
+            -PI / 4.0,
+        ))
         .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
@@ -816,11 +857,11 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [60.0, row3_h],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.7, 0.15, 0.05, 0.9),
-            end_colour: Colour::srgb(1.0, 0.9, 0.1, 0.9),
-            angle: PI / 2.0,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.7, 0.15, 0.05, 0.9),
+            Colour::srgb(1.0, 0.9, 0.1, 0.9),
+            PI / 2.0,
+        ))
         .with_outline(Colour::srgb(1.0, 0.6, 0.2, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 60.0 + gap;
@@ -832,10 +873,10 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [row3_h, row3_h],
         )
-        .with_fill(OverlayFill::RadialGradient {
-            centre_colour: Colour::srgb(1.0, 0.95, 0.7, 1.0),
-            edge_colour: Colour::srgb(0.2, 0.05, 0.0, 0.9),
-        })
+        .with_fill(OverlayFill::radial_gradient(
+            Colour::srgb(1.0, 0.95, 0.7, 1.0),
+            Colour::srgb(0.2, 0.05, 0.0, 0.9),
+        ))
         .with_outline(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
@@ -847,25 +888,23 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x3, y3_mid - row3_h * 0.5],
             [row3_h, row3_h],
         )
-        .with_fill(OverlayFill::ConicalGradient {
-            start_colour: Colour::srgb(0.95, 0.2, 0.4, 1.0),
-            end_colour: Colour::srgb(0.2, 0.6, 1.0, 1.0),
-            offset_angle: 0.0,
-        })
+        .with_fill(OverlayFill::conical_gradient(
+            Colour::srgb(0.95, 0.2, 0.4, 1.0),
+            Colour::srgb(0.2, 0.6, 1.0, 1.0),
+            0.0,
+        ))
         .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
-    // Multi-stop linear gradient (sunset ramp): 4 stops at uneven
-    // positions, demonstrating the OverlayFill::LinearGradientMulti
-    // path.
+    // Linear gradient with four stops at uneven positions (a sunset ramp).
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: cr },
             [x3, y3_mid - row3_h * 0.5],
             [120.0, row3_h],
         )
-        .with_fill(OverlayFill::LinearGradientMulti {
+        .with_fill(OverlayFill::LinearGradient {
             stops: vec![
                 vpl::GradientStop::new(0.0, Colour::srgb(0.05, 0.05, 0.20, 1.0)),
                 vpl::GradientStop::new(0.4, Colour::srgb(0.55, 0.10, 0.45, 1.0)),
@@ -878,15 +917,15 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     );
     x3 += 120.0 + gap;
 
-    // Multi-stop conical gradient: 4 stops around the sweep, shows
-    // how positions can be packed asymmetrically.
+    // Conical gradient with four stops around the turn, packed
+    // asymmetrically.
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Circle,
             [x3, y3_mid - row3_h * 0.5],
             [row3_h, row3_h],
         )
-        .with_fill(OverlayFill::ConicalGradientMulti {
+        .with_fill(OverlayFill::ConicalGradient {
             stops: vec![
                 vpl::GradientStop::new(0.0, Colour::srgb(0.95, 0.2, 0.2, 1.0)),
                 vpl::GradientStop::new(0.25, Colour::srgb(1.0, 0.85, 0.2, 1.0)),
@@ -894,6 +933,59 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 vpl::GradientStop::new(1.0, Colour::srgb(0.3, 0.5, 1.0, 1.0)),
             ],
             offset_angle: 0.0,
+        })
+        .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
+    );
+    x3 += row3_h + gap;
+
+    // Eight stops: a stop list has no cap, so a full spectrum is one fill.
+    let spectrum = [
+        [0.90, 0.10, 0.10],
+        [0.95, 0.50, 0.10],
+        [0.95, 0.90, 0.15],
+        [0.30, 0.85, 0.25],
+        [0.10, 0.75, 0.75],
+        [0.15, 0.35, 0.95],
+        [0.45, 0.20, 0.85],
+        [0.85, 0.20, 0.70],
+    ];
+    shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: cr },
+            [x3, y3_mid - row3_h * 0.5],
+            [120.0, row3_h],
+        )
+        .with_fill(OverlayFill::LinearGradient {
+            stops: spectrum
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    vpl::GradientStop::new(i as f32 / 7.0, Colour::srgb(c[0], c[1], c[2], 1.0))
+                })
+                .collect(),
+            angle: 0.0,
+        })
+        .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
+    );
+    x3 += 120.0 + gap;
+
+    // Sweep gradient: half a turn over the top of a centre at the middle of
+    // the bottom edge, like a gauge.
+    shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: cr },
+            [x3, y3_mid - row3_h * 0.5],
+            [120.0, row3_h],
+        )
+        .with_fill(OverlayFill::SweepGradient {
+            stops: vec![
+                vpl::GradientStop::new(0.0, Colour::srgb(0.2, 0.85, 0.45, 1.0)),
+                vpl::GradientStop::new(0.6, Colour::srgb(1.0, 0.85, 0.2, 1.0)),
+                vpl::GradientStop::new(1.0, Colour::srgb(0.95, 0.2, 0.2, 1.0)),
+            ],
+            centre: [0.5, 1.0],
+            start_angle: -PI,
+            end_angle: 0.0,
         })
         .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
     );
@@ -1099,7 +1191,7 @@ fn row_anim(
             [x5, y5_mid - row5_h * 0.5],
             [row5_h, row5_h],
         )
-        .with_fill(OverlayFill::ConicalGradientMulti {
+        .with_fill(OverlayFill::ConicalGradient {
             stops: vec![
                 vpl::GradientStop::new(0.0, Colour::srgb(0.27, 0.0, 0.33, 1.0)),
                 vpl::GradientStop::new(0.25, Colour::srgb(0.13, 0.32, 0.55, 1.0)),
@@ -1382,11 +1474,11 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [x6, y6_mid - row6_h * 0.5],
             [row6_h, row6_h],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(1.0, 0.3, 0.1, 0.9),
-            end_colour: Colour::srgb(0.1, 0.3, 1.0, 0.9),
-            angle: std::f32::consts::PI * 0.25,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(1.0, 0.3, 0.1, 0.9),
+            Colour::srgb(0.1, 0.3, 1.0, 0.9),
+            std::f32::consts::PI * 0.25,
+        ))
         .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, OutlineMode::Inset),
     );
     let _ = x6;
@@ -1498,11 +1590,11 @@ fn row_masks_and_polylines(
             .with_thickness(2.0)
             .with_colour(Colour::srgb(1.0, 1.0, 1.0, 0.8))
             .with_closed(true)
-            .with_fill(OverlayFill::LinearGradient {
-                start_colour: Colour::srgb(0.12, 0.65, 0.95, 0.78),
-                end_colour: Colour::srgb(0.95, 0.35, 0.7, 0.82),
-                angle: std::f32::consts::PI * 0.25,
-            })
+            .with_fill(OverlayFill::linear_gradient(
+                Colour::srgb(0.12, 0.65, 0.95, 0.78),
+                Colour::srgb(0.95, 0.35, 0.7, 0.82),
+                std::f32::consts::PI * 0.25,
+            ))
             .with_z_order(1),
         );
 
@@ -1628,10 +1720,10 @@ fn row_masks_and_polylines(
             let mut blob = vpl::OverlayPolylineItem::closed_from_path(
                 blob_path,
                 64,
-                OverlayFill::RadialGradient {
-                    centre_colour: Colour::srgb(0.9, 0.7, 0.2, 0.85),
-                    edge_colour: Colour::srgb(0.7, 0.2, 0.5, 0.85),
-                },
+                OverlayFill::radial_gradient(
+                    Colour::srgb(0.9, 0.7, 0.2, 0.85),
+                    Colour::srgb(0.7, 0.2, 0.5, 0.85),
+                ),
                 Colour::linear(1.0, 1.0, 1.0, 0.85),
                 2.0,
             );

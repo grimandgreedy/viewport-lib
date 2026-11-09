@@ -10,8 +10,8 @@ use super::transform::OverlayTransform;
 /// A text label rendered as a screen-space overlay.
 ///
 /// Anchored to a viewport corner or a projected world point. The text colour is
-/// `style.fill`, which can be a gradient across the text box as well as a flat
-/// colour.
+/// `style.fill`, which can be a flat colour, a gradient across the text box, or
+/// an image sampled across it.
 ///
 /// A label draws text and nothing else. A backing panel behind it is an
 /// [`OverlayShapeItem`](crate::overlay::OverlayShapeItem) with the same
@@ -140,8 +140,8 @@ impl LabelItem {
         self
     }
 
-    /// Set what the glyphs are filled with: a colour, or a gradient across the
-    /// text box. This is the text colour, and the only source of it.
+    /// Set what the glyphs are filled with: a colour, or a gradient or an image
+    /// across the text box. This is the text colour, and the only source of it.
     pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
         self.style.fill = fill;
         self

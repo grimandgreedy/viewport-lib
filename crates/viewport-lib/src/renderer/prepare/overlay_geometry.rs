@@ -3,113 +3,6 @@
 use super::*;
 use crate::Colour;
 
-pub(super) fn gradient_lerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
-    let t = t.clamp(0.0, 1.0);
-    [
-        a[0] * (1.0 - t) + b[0] * t,
-        a[1] * (1.0 - t) + b[1] * t,
-        a[2] * (1.0 - t) + b[2] * t,
-        a[3] * (1.0 - t) + b[3] * t,
-    ]
-}
-
-pub(super) fn sample_stops(stops: &[crate::renderer::types::GradientStop], t: f32) -> [f32; 4] {
-    let mut colours = [[0.0; 4]; 4];
-    let mut positions = [0.0, 1.0, 1.0, 1.0];
-    let count = pack_stops(stops, &mut colours, &mut positions) as usize;
-    let t = t.clamp(0.0, 1.0);
-    if count <= 1 || t <= positions[0] {
-        return colours[0];
-    }
-    for i in 0..(count - 1) {
-        if t <= positions[i + 1] {
-            let span = (positions[i + 1] - positions[i]).max(1e-6);
-            let local = (t - positions[i]) / span;
-            return gradient_lerp(colours[i], colours[i + 1], local);
-        }
-    }
-    colours[count - 1]
-}
-
-pub(super) fn sample_overlay_fill(
-    fill: &crate::renderer::types::OverlayFill,
-    p: [f32; 2],
-    min: [f32; 2],
-    max: [f32; 2],
-) -> [f32; 4] {
-    let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
-    let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
-    match fill {
-        crate::renderer::types::OverlayFill::Solid(c) => c.to_linear_rgba(),
-        crate::renderer::types::OverlayFill::LinearGradient {
-            start_colour,
-            end_colour,
-            angle,
-        } => {
-            let dir = [angle.cos(), angle.sin()];
-            let rel = [p[0] - centre[0], p[1] - centre[1]];
-            let extent = (dir[0].abs() * size[0] + dir[1].abs() * size[1]).max(1e-6);
-            let t = (rel[0] * dir[0] + rel[1] * dir[1]) / extent + 0.5;
-            gradient_lerp(
-                start_colour.to_linear_rgba(),
-                end_colour.to_linear_rgba(),
-                t,
-            )
-        }
-        crate::renderer::types::OverlayFill::RadialGradient {
-            centre_colour,
-            edge_colour,
-        } => {
-            let dx = p[0] - centre[0];
-            let dy = p[1] - centre[1];
-            let radius = ((size[0] * 0.5).powi(2) + (size[1] * 0.5).powi(2))
-                .sqrt()
-                .max(1e-6);
-            gradient_lerp(
-                centre_colour.to_linear_rgba(),
-                edge_colour.to_linear_rgba(),
-                (dx * dx + dy * dy).sqrt() / radius,
-            )
-        }
-        crate::renderer::types::OverlayFill::ConicalGradient {
-            start_colour,
-            end_colour,
-            offset_angle,
-        } => {
-            let a = (p[1] - centre[1]).atan2(p[0] - centre[0]) - offset_angle;
-            let t = ((a / std::f32::consts::TAU) % 1.0 + 1.0) % 1.0;
-            gradient_lerp(
-                start_colour.to_linear_rgba(),
-                end_colour.to_linear_rgba(),
-                t,
-            )
-        }
-        crate::renderer::types::OverlayFill::LinearGradientMulti { stops, angle } => {
-            let dir = [angle.cos(), angle.sin()];
-            let rel = [p[0] - centre[0], p[1] - centre[1]];
-            let extent = (dir[0].abs() * size[0] + dir[1].abs() * size[1]).max(1e-6);
-            sample_stops(stops, (rel[0] * dir[0] + rel[1] * dir[1]) / extent + 0.5)
-        }
-        crate::renderer::types::OverlayFill::RadialGradientMulti { stops } => {
-            let dx = p[0] - centre[0];
-            let dy = p[1] - centre[1];
-            let radius = ((size[0] * 0.5).powi(2) + (size[1] * 0.5).powi(2))
-                .sqrt()
-                .max(1e-6);
-            sample_stops(stops, (dx * dx + dy * dy).sqrt() / radius)
-        }
-        crate::renderer::types::OverlayFill::ConicalGradientMulti {
-            stops,
-            offset_angle,
-        } => {
-            let a = (p[1] - centre[1]).atan2(p[0] - centre[0]) - offset_angle;
-            sample_stops(stops, ((a / std::f32::consts::TAU) % 1.0 + 1.0) % 1.0)
-        }
-        // OverlayFill is non_exhaustive; opaque white for fills not handled here.
-        _ => [1.0, 1.0, 1.0, 1.0],
-    }
-}
-
 pub(super) fn polygon_area(points: &[[f32; 2]]) -> f32 {
     let mut area = 0.0;
     for i in 0..points.len() {
@@ -120,6 +13,14 @@ pub(super) fn polygon_area(points: &[[f32; 2]]) -> f32 {
     area * 0.5
 }
 
+/// Emit a closed polyline's fill as a triangle list, recording a gradient or
+/// texture fill in `fills`.
+///
+/// The fill spans the points' bounding box. `uvs`, when given (one per input
+/// point), place a texture fill's image instead: each vertex samples the UV its
+/// outline point or edge carries. `image_size` is the pixel size of a texture
+/// fill's image.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_filled_polyline(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     points: &[[f32; 2]],
@@ -127,57 +28,103 @@ pub(super) fn emit_filled_polyline(
     opacity: f32,
     vp_w: f32,
     vp_h: f32,
+    fills: &mut super::overlay_fill::FillTable,
+    uvs: Option<&[[f32; 2]]>,
+    image_size: [u32; 2],
 ) {
     let Some((min, max)) = polyline_bounds(points) else {
         return;
     };
     let mesh = super::overlay_vector::tessellate_polygon(points);
+    let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
+    let centre = [min[0] + half[0], min[1] + half[1]];
+    let (base_colour, index) = fill_record(fill, opacity, half, fills, image_size);
+    // The local coordinate that lands an explicit UV where the fill module's
+    // box mapping reads it back.
+    let uv_half = [half[0].max(0.5), half[1].max(0.5)];
     for &i in &mesh.indices {
         let p = mesh.positions[i as usize];
-        let mut colour = sample_overlay_fill(fill, p, min, max);
-        colour[3] *= opacity;
+        let local = match uvs.filter(|u| u.len() == points.len()) {
+            Some(uvs) => {
+                let (from, to, t) = mesh.sources[i as usize];
+                let (a, b) = (uvs[from], uvs[to]);
+                let uv = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                [
+                    uv[0] * 2.0 * uv_half[0] - half[0],
+                    uv[1] * 2.0 * uv_half[1] - half[1],
+                ]
+            }
+            None => [p[0] - centre[0], p[1] - centre[1]],
+        };
         verts.push(crate::resources::OverlayTextVertex {
             position: overlay_local_px(p[0], p[1], vp_w, vp_h),
             uv: [0.0, 0.0],
-            colour,
+            colour: base_colour,
             use_texture: 0.0,
             clip_index: -1.0,
             clip_rect: [0.0; 4],
             group_tint: 0.0,
+            fill: [local[0], local[1], index, 0.0],
         });
     }
 }
 
-/// Emit a pre-tessellated triangle list as a colour fill, for an
+/// The vertex colour and fill-record index a tessellated fill draws with: a
+/// solid fill is the vertex colour alone, any other fill a record in `fills`
+/// over a box of half-extents `half` with the opacity on the vertex.
+fn fill_record(
+    fill: &crate::renderer::types::OverlayFill,
+    opacity: f32,
+    half: [f32; 2],
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
+) -> ([f32; 4], f32) {
+    if let crate::renderer::types::OverlayFill::Solid(c) = fill {
+        let mut colour = c.to_linear_rgba();
+        colour[3] *= opacity;
+        return (colour, super::overlay_fill::NO_FILL);
+    }
+    let index = fills.push(fill, half, 1.0, [1.0; 4], image_size);
+    ([1.0, 1.0, 1.0, opacity], index)
+}
+
+/// Emit a pre-tessellated triangle list as a fill, for an
 /// [`OverlayShape::Vector`](crate::renderer::types::OverlayShape). `positions`
 /// are screen-space logical pixels (already transformed for the shape's
-/// position and rotation); `indices` reference them in triples. The fill is
-/// sampled across the triangle list's bounding box, matching how a filled
-/// polyline resolves gradients.
+/// position and rotation) and `local_positions` the same points in the path's
+/// own frame; `indices` reference them in triples. The fill spans the path's
+/// own bounding box, so it turns and scales with the shape.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_vector_fill(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     positions: &[[f32; 2]],
+    local_positions: &[[f32; 2]],
     indices: &[u32],
     fill: &crate::renderer::types::OverlayFill,
     opacity: f32,
     vp_w: f32,
     vp_h: f32,
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
 ) {
-    let Some((min, max)) = polyline_bounds(positions) else {
+    let Some((min, max)) = polyline_bounds(local_positions) else {
         return;
     };
+    let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
+    let centre = [min[0] + half[0], min[1] + half[1]];
+    let (base_colour, index) = fill_record(fill, opacity, half, fills, image_size);
     for &idx in indices {
         let p = positions[idx as usize];
-        let mut colour = sample_overlay_fill(fill, p, min, max);
-        colour[3] *= opacity;
+        let l = local_positions[idx as usize];
         verts.push(crate::resources::OverlayTextVertex {
             position: overlay_local_px(p[0], p[1], vp_w, vp_h),
             uv: [0.0, 0.0],
-            colour,
+            colour: base_colour,
             use_texture: 0.0,
             clip_index: -1.0,
             clip_rect: [0.0; 4],
             group_tint: 0.0,
+            fill: [l[0] - centre[0], l[1] - centre[1], index, 0.0],
         });
     }
 }
@@ -418,6 +365,7 @@ pub(super) fn tessellate_ribbon(
             clip_index: -1.0,
             clip_rect: [0.0; 4],
             group_tint: 0.0,
+            fill: crate::resources::OverlayTextVertex::NO_FILL,
         });
     };
     for w in ribs.windows(2) {
@@ -571,6 +519,7 @@ pub(super) fn emit_disc(
         clip_index: -1.0,
         clip_rect: [0.0; 4],
         group_tint: 0.0,
+        fill: crate::resources::OverlayTextVertex::NO_FILL,
     };
     for i in 0..segs {
         let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
@@ -678,50 +627,13 @@ pub(super) fn emit_polyline_stroke(
     }
 }
 
-/// Encode `TileMode` as the float flag the texture shader consumes.
+/// Encode `TileMode` as the float flag the fill module consumes.
 pub(super) fn tile_mode_to_f(m: crate::renderer::types::TileMode) -> f32 {
     match m {
         crate::renderer::types::TileMode::Stretch => 0.0,
         crate::renderer::types::TileMode::Tile => 1.0,
         crate::renderer::types::TileMode::Mirror => 2.0,
     }
-}
-
-/// Pack a multi-stop gradient stop list into the fixed-cap vertex arrays.
-/// Returns the active stop count (clamped to [2, OVERLAY_MAX_GRADIENT_STOPS]).
-/// Stops are sorted by position; remaining slots are filled with the last
-/// stop so out-of-range loop iterations are a no-op.
-pub(super) fn pack_stops(
-    stops: &[crate::renderer::types::GradientStop],
-    colours: &mut [[f32; 4]; 4],
-    positions: &mut [f32; 4],
-) -> f32 {
-    let cap = crate::renderer::types::OVERLAY_MAX_GRADIENT_STOPS;
-    let mut buf: Vec<crate::renderer::types::GradientStop> = stops.iter().copied().collect();
-    buf.sort_by(|a, b| {
-        a.position
-            .partial_cmp(&b.position)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    if buf.is_empty() {
-        // Empty stops list: degrade to transparent black.
-        let s = crate::renderer::types::GradientStop::new(0.0, Colour::TRANSPARENT);
-        buf = vec![s, s];
-    } else if buf.len() == 1 {
-        buf.push(buf[0]);
-    }
-    let n = buf.len().min(cap);
-    for i in 0..n {
-        colours[i] = buf[i].colour.to_linear_rgba();
-        positions[i] = buf[i].position.clamp(0.0, 1.0);
-    }
-    // Fill remaining slots with the last stop so iteration past `count`
-    // returns the same colour and produces a no-op interpolation.
-    for i in n..cap {
-        colours[i] = buf[n - 1].colour.to_linear_rgba();
-        positions[i] = positions[n - 1];
-    }
-    n as f32
 }
 
 /// Emit a textured quad (6 vertices) for a glyph in screen pixel coordinates.
@@ -751,6 +663,7 @@ pub(super) fn emit_textured_quad(
         clip_index: -1.0,
         clip_rect: [0.0; 4],
         group_tint: 0.0,
+        fill: crate::resources::OverlayTextVertex::NO_FILL,
     };
     // UV layout: top-left = uv_min, bottom-right = uv_max.
     verts.extend_from_slice(&[
@@ -1322,6 +1235,7 @@ fn emit_quad(
         clip_index: -1.0,
         clip_rect: [0.0; 4],
         group_tint: 0.0,
+        fill: crate::resources::OverlayTextVertex::NO_FILL,
     };
     verts.extend_from_slice(&[v(a), v(b), v(c), v(a), v(c), v(d)]);
 }

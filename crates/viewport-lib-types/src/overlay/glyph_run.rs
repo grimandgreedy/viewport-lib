@@ -148,8 +148,9 @@ impl GlyphRunItem {
         self
     }
 
-    /// Set what the glyphs are filled with: a colour, or a gradient across the
-    /// text box. This is the text colour, and the only source of it.
+    /// Set what the glyphs are filled with: a colour, or a gradient or an image
+    /// across the run's extent. This is the text colour, and the only source of
+    /// it.
     pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
         self.style.fill = fill;
         self

@@ -7,7 +7,13 @@
 // textured vs solid fragments, and an optional clip: a framebuffer-pixel bounding
 // box plus an index into a shared clip-shape buffer for SDF and nested clipping.
 // The SDF functions mirror overlay_shape.wgsl so text clips to the same masks as
-// shapes.
+// shapes. An item's fill (a gradient or an image) is the shared overlay fill
+// module evaluated per fragment over the item's box and multiplied into the
+// vertex colour; a solid fill is carried by the vertex colour alone.
+
+// The fill module: group 1 (fill records, fill image, sampler) and
+// `overlay_fill`.
+// #include "helpers/overlay_fill.wgsl"
 
 @group(0) @binding(0) var glyph_atlas: texture_2d<f32>;
 @group(0) @binding(1) var atlas_sampler: sampler;
@@ -87,6 +93,7 @@ struct VertexInput {
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
     @location(6) group_tint:  f32,        // 1 = the group tint applies here, 0 = shadow geometry
+    @location(12) fill:       vec4<f32>,  // xy = pixels from the fill box centre, z = fill record or -1
 };
 
 struct VertexOutput {
@@ -99,6 +106,8 @@ struct VertexOutput {
     @location(5) @interpolate(flat) opacity:     f32,
     @location(6) @interpolate(flat) outer_clip:  vec4<f32>,
     @location(7) @interpolate(flat) tint:        vec4<f32>,
+    @location(8)                    fill_local:  vec2<f32>,
+    @location(9) @interpolate(flat) fill_index:  f32,
 };
 
 // Map a local logical-pixel position to NDC using the viewport size.
@@ -129,6 +138,8 @@ fn vs_main(in: VertexInput, instance: InstanceInput) -> VertexOutput {
     // the other way round and applies to both: a fading group takes its shadows
     // with it.
     out.tint          = mix(vec4<f32>(1.0, 1.0, 1.0, 1.0), inst.tint, in.group_tint);
+    out.fill_local    = in.fill.xy;
+    out.fill_index    = in.fill.z;
     return out;
 }
 
@@ -388,17 +399,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Firefox. The atlas has one mip level, so level zero is what an implicit
     // lookup would have chosen anyway.
     let atlas = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0);
+    // The item's fill multiplies into the vertex colour; with no record it is
+    // white and the vertex colour passes through. Evaluated outside any
+    // branch, because an image fill samples a texture.
+    let colour = in.colour * overlay_fill(in.fill_local, i32(in.fill_index));
 
     var result: vec4<f32>;
     if (in.use_texture > 1.5) {
         // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
         // carries opacity through its alpha; the tint RGB is ignored.
-        result = vec4<f32>(atlas.rgb, atlas.a * in.colour.a);
+        result = vec4<f32>(atlas.rgb, atlas.a * colour.a);
     } else if (in.use_texture > 0.5) {
         // Coverage glyph: tint the atlas alpha by the run colour.
-        result = vec4<f32>(in.colour.rgb, in.colour.a * atlas.a);
+        result = vec4<f32>(colour.rgb, colour.a * atlas.a);
     } else {
-        result = in.colour;
+        result = colour;
     }
     // Per-draw tint and opacity (identity for immediate draws).
     return vec4<f32>(result.rgb * in.tint.rgb, result.a * in.opacity * in.tint.a);

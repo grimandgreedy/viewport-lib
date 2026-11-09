@@ -4,24 +4,25 @@
 // the vertex index, and the fragment stage maps each pixel back into the
 // shape's own frame through the inverse of the item's linear map and evaluates
 // a signed-distance function there, producing an anti-aliased fill with
-// stacked outer and inner shadow layers around it.
+// stacked outer and inner shadow layers around it. The fill is the shared
+// overlay fill module evaluated in the shape's own frame (a gradient or an
+// image), or a flat colour.
 
-// Thirteen instance attributes and no vertex stream, inside the 16 WebGL2
-// allows.
+// The fill module: group 1 (fill records, fill image, sampler) and
+// `overlay_fill`.
+// #include "helpers/overlay_fill.wgsl"
+
+// Nine instance attributes and no vertex stream, inside the 16 WebGL2 allows.
 struct ShapeInstance {
-    @location(0) quad:            vec4<f32>,  // xy = quad centre (logical px), zw = quad half-extents
-    @location(1) pivot_half:      vec4<f32>,  // xy = pivot (logical px), zw = shape half-extents
-    @location(2) linv:            vec4<f32>,  // inverse item linear map, row-major a b c d
-    @location(3) fill_colour:     vec4<f32>,  // start colour (or solid colour)
-    @location(4) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
-    @location(5) radii:           vec4<f32>,  // shape-specific params
-    @location(6) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
-    @location(7) shadow_meta:     vec4<f32>,  // base_index, outer_ct, inner_ct, shape_type
-    @location(8) clip_rect:       vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(9) stop_colour_c:   vec4<f32>,  // 3rd colour stop (multi-stop gradients)
-    @location(10) stop_colour_d:  vec4<f32>,  // 4th colour stop
-    @location(11) stop_positions: vec4<f32>,  // positions in [0,1] for stops a..d
-    @location(12) misc:           vec4<f32>,  // clip-shape index (or -1), pivot in the shape frame xy, item scale
+    @location(0) quad:        vec4<f32>,  // xy = quad centre (logical px), zw = quad half-extents
+    @location(1) pivot_half:  vec4<f32>,  // xy = pivot (logical px), zw = shape half-extents
+    @location(2) linv:        vec4<f32>,  // inverse item linear map, row-major a b c d
+    @location(3) fill_colour: vec4<f32>,  // flat colour, drawn when there is no fill record
+    @location(4) radii:       vec4<f32>,  // shape-specific params
+    @location(5) shadow_meta: vec4<f32>,  // base_index, outer_ct, inner_ct, shape_type
+    @location(6) clip_rect:   vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(7) misc:        vec4<f32>,  // clip-shape index (or -1), pivot in the shape frame xy, item scale
+    @location(8) fill:        vec4<f32>,  // x = fill record index, or -1 for the flat colour
 };
 
 // One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
@@ -101,12 +102,12 @@ struct Viewport {
 
 // Per-draw instance: a retained group's per-frame transform, opacity, tint and
 // outer clip, bound as a uniform at a dynamic offset; offset 0 is the identity
-// immediate draws use. The shape shader is at the inter-stage variable limit,
-// so the instance is consumed in the vertex stage: the transform on the quad,
-// opacity folded into the vertex colours, and the outer clip intersected with
-// the baked clip into the single `clip_rect` varying (two bbox rejects are
-// equivalent to one reject against their intersection, which avoids a second
-// varying). Shadow-layer opacity rides its own flat varying.
+// immediate draws use. The instance is consumed in the vertex stage: the
+// transform on the quad, opacity and tint folded into the flat colour, and the
+// outer clip intersected with the baked clip into the single `clip_rect`
+// varying (two bbox rejects are equivalent to one reject against their
+// intersection). Opacity and tint ride flat varyings for the fill record and
+// the shadow layers, which are read in the fragment stage.
 struct OverlayInstance {
     translate:  vec2<f32>,
     opacity:    f32,
@@ -168,21 +169,20 @@ struct VertexOutput {
     // Pixel offset from the pivot in the item's own pixel space, before the
     // group transform: the one interpolated varying.
     @location(0) local_pos: vec2<f32>,
-    @location(1) @interpolate(flat) fill_colour:     vec4<f32>,
-    @location(2) @interpolate(flat) fill_colour2:    vec4<f32>,
-    @location(3) @interpolate(flat) radii:           vec4<f32>,
-    @location(4) @interpolate(flat) gradient_params: vec4<f32>,
-    @location(5) @interpolate(flat) shadow_meta:     vec4<f32>,
-    @location(6) @interpolate(flat) linv:            vec4<f32>,
+    @location(1) @interpolate(flat) fill_colour: vec4<f32>,
+    @location(2) @interpolate(flat) radii:       vec4<f32>,
+    @location(3) @interpolate(flat) shadow_meta: vec4<f32>,
+    @location(4) @interpolate(flat) linv:        vec4<f32>,
     // clip-shape index, pivot in the shape frame xy, the group's opacity (which
     // reaches the shadow layers, read from a texture in the fragment stage).
-    @location(7) @interpolate(flat) misc:            vec4<f32>,
+    @location(5) @interpolate(flat) misc:        vec4<f32>,
     // shape half-extents xy, the anti-aliasing band in shape units, item scale.
-    @location(8) @interpolate(flat) half_aa:         vec4<f32>,
-    @location(9) @interpolate(flat) clip_rect:       vec4<f32>,
-    @location(10) @interpolate(flat) stop_colour_c:  vec4<f32>,
-    @location(11) @interpolate(flat) stop_colour_d:  vec4<f32>,
-    @location(12) @interpolate(flat) stop_positions: vec4<f32>,
+    @location(6) @interpolate(flat) half_aa:     vec4<f32>,
+    @location(7) @interpolate(flat) clip_rect:   vec4<f32>,
+    // x = fill record index, or -1 for `fill_colour`.
+    @location(8) @interpolate(flat) fill:        vec4<f32>,
+    // The group's tint, applied to a fill record's colour.
+    @location(9) @interpolate(flat) group_tint:  vec4<f32>,
 };
 
 @vertex
@@ -198,35 +198,33 @@ fn vs_main(@builtin(vertex_index) vi: u32, in: ShapeInstance) -> VertexOutput {
     // band is `1 / aa_scale` shape units, one framebuffer pixel after the
     // group's mean scale.
     let q = in.quad.xy + quad_corner(vi) * in.quad.zw;
-    out.clip_position   = vec4<f32>(px_to_ndc(group_apply(q, inst)), 0.0, 1.0);
-    out.local_pos       = q - in.pivot_half.xy;
-    // Fold the per-draw opacity and colour tint into the colours (identity for
-    // immediate draws). The tint does not reach the SDF shadow layers (read in
-    // the fragment stage), so a tinted shape keeps its authored shadow colour.
-    out.fill_colour     = vec4<f32>(in.fill_colour.rgb * t.rgb, in.fill_colour.a * a * t.a);
-    out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb * t.rgb, in.fill_colour2.a * a * t.a);
-    out.radii           = in.radii;
-    out.gradient_params = in.gradient_params;
-    out.shadow_meta     = in.shadow_meta;
-    out.linv            = in.linv;
+    out.clip_position = vec4<f32>(px_to_ndc(group_apply(q, inst)), 0.0, 1.0);
+    out.local_pos     = q - in.pivot_half.xy;
+    // Fold the per-draw opacity and colour tint into the flat colour (identity
+    // for immediate draws). The tint does not reach the SDF shadow layers (read
+    // in the fragment stage), so a tinted shape keeps its authored shadow
+    // colour.
+    out.fill_colour   = vec4<f32>(in.fill_colour.rgb * t.rgb, in.fill_colour.a * a * t.a);
+    out.radii         = in.radii;
+    out.shadow_meta   = in.shadow_meta;
+    out.linv          = in.linv;
     // Prefer the per-frame group clip mask (retained groups) over the baked mask;
     // the identity instance is -1, so immediate draws keep their baked clip.
     // Opacity reaches the shadow layers; the tint does not. Fading a group out
     // has to take its shadows and its border band with it, and a border band is
     // a shadow layer.
-    out.misc            = vec4<f32>(
+    out.misc          = vec4<f32>(
         select(in.misc.x, inst.clip_index, inst.clip_index >= 0.0),
         in.misc.y,
         in.misc.z,
         a,
     );
-    out.half_aa         = vec4<f32>(in.pivot_half.zw, 1.0 / max(inst.aa_scale, 1.0e-6), in.misc.w);
+    out.half_aa       = vec4<f32>(in.pivot_half.zw, 1.0 / max(inst.aa_scale, 1.0e-6), in.misc.w);
     // Intersect the baked clip with the per-frame group clip (identity for
     // immediate draws), so a retained shape group clips to its outer rect.
-    out.clip_rect       = combine_clip(in.clip_rect, inst.clip_rect);
-    out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb * t.rgb, in.stop_colour_c.a * a * t.a);
-    out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb * t.rgb, in.stop_colour_d.a * a * t.a);
-    out.stop_positions  = in.stop_positions;
+    out.clip_rect     = combine_clip(in.clip_rect, inst.clip_rect);
+    out.fill          = in.fill;
+    out.group_tint    = t;
     return out;
 }
 
@@ -606,64 +604,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // Compute fill colour: solid, linear gradient, radial gradient, or
-    // conical (sweep) gradient. gradient_params.x selects the mode:
-    //   0 = solid
-    //   1 = linear  (y = angle in radians)
-    //   2 = radial  (centre -> edge over max half-extent)
-    //   3 = conical (sweep around origin, y = offset_angle in radians)
-    // stop_count selects the number of active stops (0 for solid, 2..4 for
-    // multi-stop). 2-stop fills use only stops a and b at positions 0,1.
-    var fill_col: vec4<f32>;
-    let gtype = i32(in.gradient_params.x + 0.5);
-    if (gtype == 0) {
-        fill_col = in.fill_colour;
-    } else {
-        // Compute the gradient parameter t in [0, 1] for the chosen mode.
-        var t: f32 = 0.0;
-        if (gtype == 1) {
-            let angle = in.gradient_params.y;
-            let dir = vec2<f32>(cos(angle), sin(angle));
-            let max_proj = abs(hs.x * dir.x) + abs(hs.y * dir.y);
-            t = clamp(dot(p, dir) / max(max_proj, 0.001) * 0.5 + 0.5, 0.0, 1.0);
-        } else if (gtype == 2) {
-            let max_half = max(hs.x, hs.y);
-            t = clamp(length(p) / max(max_half, 0.001), 0.0, 1.0);
-        } else if (gtype == 3) {
-            let two_pi = 6.28318530717958647692;
-            let a = atan2(p.y, p.x) - in.gradient_params.y;
-            t = fract(a / two_pi + 1.0);
-        }
-        // Pack the 4 stops into arrays so we can loop. WGSL doesn't index
-        // vec components by a non-const i, so we copy into temps.
-        var sc0 = in.fill_colour;
-        var sc1 = in.fill_colour2;
-        var sc2 = in.stop_colour_c;
-        var sc3 = in.stop_colour_d;
-        let p0 = in.stop_positions.x;
-        let p1 = in.stop_positions.y;
-        let p2 = in.stop_positions.z;
-        let p3 = in.stop_positions.w;
-        let n = i32(in.gradient_params.z + 0.5);
-        // Default: clamp before first stop / after last stop.
-        fill_col = sc0;
-        if (t >= p3 && n >= 4) {
-            fill_col = sc3;
-        } else if (t >= p2 && n >= 3) {
-            // Between stop 2 and stop 3.
-            let span = max(p3 - p2, 0.000001);
-            fill_col = mix(sc2, sc3, clamp((t - p2) / span, 0.0, 1.0));
-        } else if (t >= p1) {
-            // Between stop 1 and stop 2 (or end for 2-stop).
-            let end = select(p1, p2, n >= 3);
-            let end_col = select(sc1, sc2, n >= 3);
-            let span = max(end - p1, 0.000001);
-            fill_col = mix(sc1, end_col, clamp((t - p1) / span, 0.0, 1.0));
-        } else if (t >= p0) {
-            // Between stop 0 and stop 1.
-            let span = max(p1 - p0, 0.000001);
-            fill_col = mix(sc0, sc1, clamp((t - p0) / span, 0.0, 1.0));
-        }
+    // The fill: a record from the shared fill module (a gradient or an image)
+    // evaluated in the shape's own frame, with the group's opacity and tint on
+    // it, or the flat colour. Evaluated here, outside any branch, because an
+    // image fill samples a texture.
+    let record = i32(in.fill.x);
+    let fill_sample = overlay_fill(p, record);
+    var fill_col = in.fill_colour;
+    if (record >= 0) {
+        let gt = in.group_tint;
+        fill_col = vec4<f32>(fill_sample.rgb * gt.rgb, fill_sample.a * group_opacity * gt.a);
     }
 
     // Start with the accumulated outer shadow layers.

@@ -101,18 +101,18 @@ pub use self::types::{
     GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode,
-    OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing,
-    OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
-    OverlayTransform, PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem,
-    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
-    SurfaceSubmission, TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection,
-    VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem,
-    VolumeTransparency, WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
+    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
+    PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
+    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
+    TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER,
+    ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency,
+    WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -294,12 +294,10 @@ pub(crate) struct ViewportOverlay {
     /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
     /// passes write their per-frame geometry into these in place instead of
     /// allocating a fresh buffer every frame; each grows only when a frame needs
-    /// more room. One per fixed stream (text, solid shapes, blur) plus a pool for
-    /// the variable number of per-texture shape batches.
+    /// more room. One per stream: text, shape instances, and backdrop blur.
     pub overlay_text_vbuf: overlay_buffers::GrowBuffer,
     pub overlay_shape_vbuf: overlay_buffers::GrowBuffer,
     pub overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer,
-    pub overlay_shape_tex_vbufs: Vec<overlay_buffers::GrowBuffer>,
     /// Per-frame viewport-size uniform (logical `[w, h, 0, 0]`) shared by the
     /// overlay pipelines. Overlay vertices are stored in local logical pixels; the
     /// overlay vertex shaders read this to map them to NDC, so overlay geometry is
@@ -331,10 +329,10 @@ impl ViewportOverlay {
         }
         let mut n = 0;
         if let Some(sd) = &self.overlay_shape_gpu_data {
-            n += u32::from(sd.instance_count > 0) + sd.tex_batches.len() as u32;
+            n += sd.batches.len() as u32;
         }
         if let Some(ld) = &self.label_gpu_data {
-            n += u32::from(ld.vertex_count > 0);
+            n += ld.runs.len() as u32;
         }
         n
     }
@@ -346,7 +344,6 @@ impl ViewportOverlay {
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
             overlay_shape_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_vbuf"),
             overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
-            overlay_shape_tex_vbufs: Vec::new(),
             overlay_viewport_buf: None,
             overlay_retained_draws: Vec::new(),
             overlay_retained_shape_draws: Vec::new(),
