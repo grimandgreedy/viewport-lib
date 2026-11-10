@@ -133,6 +133,10 @@ pub struct SpritePlugin {
     /// allocated the first time a viewport draws a refractive sprite, and
     /// reallocated when the scene size changes.
     refraction: std::sync::Mutex<Vec<Option<RefractionResolve>>>,
+    /// Colour draws issued since the last prepare: the opaque, painter,
+    /// soft, OIT and refraction passes. Counted where each draw is recorded,
+    /// so a batch still compiling is not counted.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 /// A viewport's scene-colour copy, allocated the first frame that viewport
@@ -485,6 +489,8 @@ impl SpritePlugin {
                     }
                     bind_sprite(pass, gpu, sprite, key);
                     pass.draw(0..6, 0..sprite.sprite_count);
+                    self.issued
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -519,6 +525,8 @@ impl SpritePlugin {
             }
             bind_sprite(pass, gpu, sprite, key);
             pass.draw(0..6, 0..sprite.sprite_count);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -601,6 +609,10 @@ impl ItemTypePlugin for SpritePlugin {
         self.sets.allocated_bytes() + self.instance_sets.allocated_bytes()
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -608,6 +620,7 @@ impl ItemTypePlugin for SpritePlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.frame_settings.clear();
         self.outlines.clear();
@@ -848,6 +861,8 @@ impl ItemTypePlugin for SpritePlugin {
             }
             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
             pass.draw(0..6, 0..sprite.sprite_count);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -1038,6 +1053,8 @@ impl ItemTypePlugin for SpritePlugin {
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
             pass.draw(0..6, 0..sprite.sprite_count);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 

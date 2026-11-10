@@ -47,8 +47,7 @@ pub const PICK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForm
 /// written as `bitcast<u32>(z)`, so the renderer can reconstruct world position
 /// on read-back. An integer target because GL renders to `R32Float` only with
 /// `EXT_color_buffer_float`.
-pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
-    crate::gpu::TextureFormat::R32Uint;
+pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::R32Uint;
 
 impl DeviceResources {
     // ------------------------------------------------------------------
@@ -298,13 +297,14 @@ impl DeviceResources {
     ///
     /// Use this when a plugin samples user textures with state other than
     /// [`material_sampler`](Self::material_sampler)'s, such as nearest
-    /// filtering for pixel art. `key.lod_bias` is not applied.
+    /// filtering for pixel art. `key.lod_bias` is not applied. Works on every
+    /// tier.
     pub fn sampler_for(
         &self,
         device: &crate::gpu::Device,
         key: crate::scene::material::SamplerKey,
     ) -> crate::gpu::Sampler {
-        self.scene_tier.material.resolve_sampler(device, key)
+        self.sampler_palette.resolve(device, key)
     }
 
     /// Shared linear-repeat sampler used by the lib's material pipelines.

@@ -75,6 +75,8 @@ pub struct PointCloudPlugin {
     /// The device has no vertex storage, so the per-point channels are
     /// instance-stepped vertex streams. Set on registration.
     streams: bool,
+    /// Colour draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for PointCloudPlugin {
@@ -110,6 +112,10 @@ impl ItemTypePlugin for PointCloudPlugin {
         self.stored.allocated_bytes()
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -117,6 +123,7 @@ impl ItemTypePlugin for PointCloudPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.outlines.clear();
         let items = items.of::<PointCloudItem>();
@@ -211,6 +218,8 @@ impl ItemTypePlugin for PointCloudPlugin {
                     pass.set_vertex_buffer(slot as u32 + 1, buffer.slice(..));
                 }
                 pass.draw(0..6, 0..entry.draw.point_count);
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             return;
         }
@@ -229,6 +238,8 @@ impl ItemTypePlugin for PointCloudPlugin {
             pass.set_vertex_buffer(0, entry.draw.vertex_buffer.slice(..));
             // Six vertices per point (a billboard quad), one instance per point.
             pass.draw(0..6, 0..entry.draw.point_count);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -313,7 +324,9 @@ impl ItemTypePlugin for PointCloudPlugin {
             ) else {
                 continue;
             };
-            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin)
+                .dot(ray.direction)
+                .max(0.0);
             if !wants_cloud {
                 hit.sub_object = None;
             }

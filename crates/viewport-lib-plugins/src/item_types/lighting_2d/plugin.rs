@@ -119,6 +119,9 @@ pub struct Lighting2dPlugin {
     edge_capacity: u32,
     viewports: std::sync::Mutex<Vec<Option<ViewportLayer>>>,
     stats: std::sync::Mutex<Lighting2dStats>,
+    /// Draws encoded since the last prepare, across every viewport: each
+    /// light's shadow edges and quad, and the compose.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 const SCOPES: &[EncoderScope] = &[EncoderScope::AfterTransparent];
@@ -457,6 +460,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         self.frame = FrameLayer::default();
         *self.stats.get_mut().unwrap() = Lighting2dStats::default();
+        *self.issued.get_mut() = 0;
         let items: Vec<&Lighting2dItem> = items
             .of::<Lighting2dItem>()
             .iter()
@@ -528,6 +532,10 @@ impl ItemTypePlugin for Lighting2dPlugin {
         Vec::new()
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn encoder_scopes(&self) -> &[EncoderScope] {
         if self.frame.lights.is_empty() {
             &[]
@@ -549,6 +557,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
             return;
         };
         let count = frame.lights.len() as u32;
+        let mut draws = 0u32;
         let mut cache = self.viewports.lock().unwrap();
         let layer = self.viewport_layer(
             &mut cache,
@@ -625,9 +634,11 @@ impl ItemTypePlugin for Lighting2dPlugin {
                     pass.set_pipeline(&pipelines.shadow);
                     pass.set_vertex_buffer(0, edges.slice(..));
                     pass.draw(0..6, 0..frame.edge_count);
+                    draws += 1;
                 }
                 pass.set_pipeline(&pipelines.light);
                 pass.draw(0..6, 0..1);
+                draws += 1;
             }
         }
 
@@ -652,7 +663,10 @@ impl ItemTypePlugin for Lighting2dPlugin {
             pass.set_pipeline(&pipelines.compose);
             pass.set_bind_group(0, &layer.compose_bg, &[]);
             pass.draw(0..3, 0..1);
+            draws += 1;
         }
+        self.issued
+            .fetch_add(draws, std::sync::atomic::Ordering::Relaxed);
 
         *self.stats.lock().unwrap() = Lighting2dStats {
             lights: count,

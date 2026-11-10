@@ -1769,9 +1769,8 @@ impl DeviceResources {
         // palette; a material that set no `SamplerKey` binds the default key's.
         // Bound at binding 2 below.
         let keyed_sampler = self
-            .scene_tier
-            .material
-            .resolve_sampler(device, sampler.unwrap_or_default());
+            .sampler_palette
+            .resolve(device, sampler.unwrap_or_default());
         let bound_sampler = &keyed_sampler;
 
         // Cache hit: the previously built bind group is still valid, so skip the

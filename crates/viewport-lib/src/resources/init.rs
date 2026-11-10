@@ -1558,15 +1558,7 @@ impl DeviceResources {
                         emissive: fallback_emissive_texture,
                         emissive_view: fallback_emissive_texture_view,
                         sampler: material_sampler,
-                        mesh_sampler: mesh_sampler.clone(),
-                        sampler_palette: std::sync::Mutex::new(std::collections::HashMap::from([
-                            (
-                                crate::resources::material::fallbacks::sampler_palette_key(
-                                    crate::scene::material::SamplerKey::default(),
-                                ),
-                                mesh_sampler,
-                            ),
-                        ])),
+                        mesh_sampler,
                         lut_sampler,
                         depth_read_sampler,
                         depth_read_bgl,
@@ -1653,6 +1645,15 @@ impl DeviceResources {
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
             plugin_texture_budget,
+            // The full tier's default-key sampler is the palette's entry for
+            // that key, so a material that sets the default key binds it.
+            sampler_palette: match &scene_tier {
+                Some(tier) => crate::resources::material::fallbacks::SamplerPalette::seeded(
+                    crate::scene::material::SamplerKey::default(),
+                    tier.material.mesh_sampler.clone(),
+                ),
+                None => Default::default(),
+            },
             scene_tier: crate::resources::device_resources::SceneTierSlot::new(scene_tier),
             mesh_store: {
                 let mut store = crate::resources::mesh::mesh_store::MeshStore::new();

@@ -100,6 +100,7 @@ impl TilemapPlugin {
     ) -> StoredTilemap {
         let layouts = self.layouts(device);
         let binds = resolve_bindings(
+            device,
             resources,
             layouts,
             map.tileset.texture_id,
@@ -120,6 +121,7 @@ impl TilemapPlugin {
     ) -> viewport_lib::resources::JobId {
         let layouts = self.layouts(device);
         let binds = resolve_bindings(
+            device,
             resources,
             layouts,
             map.tileset.texture_id,
@@ -246,6 +248,7 @@ impl TilemapPlugin {
                 continue;
             }
             let binds = resolve_bindings(
+                device,
                 resources,
                 layouts,
                 Some(texture),
@@ -375,7 +378,7 @@ impl ItemTypePlugin for TilemapPlugin {
                 continue;
             };
             let offset = uniforms.len() as u32;
-            let data = layer_uniform(item, stored, origin);
+            let data = layer_uniform(item, stored, origin, ctx.time.seconds);
             uniforms.extend_from_slice(bytemuck::bytes_of(&data));
             uniforms.resize(offset as usize + LAYER_STRIDE as usize, 0);
             let visible = (0..stored.chunks.len() as u32)

@@ -260,6 +260,12 @@ pub struct ItemFrameContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter assigned by the lib.
     pub frame_index: u64,
+    /// The time this frame renders at: the value the shaders read as
+    /// `camera.time`, with `seconds` in f64. It is `FrameData::time` when the
+    /// host set one, and the renderer's own clock otherwise. Drive CPU-side
+    /// animation (a tile frame, a flipbook index) from `time.seconds` so it
+    /// stays in step with what the shaders draw.
+    pub time: crate::FrameTime,
     /// The host's scene version counter for this frame (`SceneFrame::generation`).
     ///
     /// A plugin that rebuilds per-frame state from an inline collection can keep
@@ -1022,9 +1028,13 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// frame's draw-call figure however much it draws.
     ///
     /// This is a per-frame count, not a running total: reset it in your
-    /// `prepare` and accumulate as you record draws. The renderer reads it
-    /// during `prepare` and does not reset it for you, so a plugin that only
-    /// ever adds will report a number that climbs for the process lifetime.
+    /// `prepare` and accumulate as you record draws. The paint hooks take
+    /// `&self`, so a count kept as draws are recorded lives in an atomic or a
+    /// `Cell`. The renderer reads it when the host asks for the frame's
+    /// stats, after the frame has painted, and does not reset it for you, so
+    /// a plugin that only ever adds reports a number that climbs for the
+    /// process lifetime. A frame with none of the plugin's items reports
+    /// zero for it without calling this.
     fn draw_calls(&self) -> u32 {
         0
     }

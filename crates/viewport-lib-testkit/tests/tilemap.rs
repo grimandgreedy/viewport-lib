@@ -225,3 +225,32 @@ fn the_catalogue_scene_draws_on_the_compatibility_tier() {
     );
     assert_eq!(harness.stats().items_skipped_by_tier, 0);
 }
+
+/// An item on the frame clock animates with `FrameData::time` exactly as one
+/// handed the same time by hand.
+#[test]
+fn an_item_on_the_frame_clock_animates_with_the_frame_time() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let scenes = catalogue();
+    let scene = scenes.iter().find(|s| s.name == "tilemap").unwrap();
+    let built = harness.build_scene(scene);
+    let camera = &scene.cameras[0].camera;
+    // The water frames last a quarter second each.
+    let at = |clock: bool, item_time: f32, frame_time: f64| {
+        let mut f = frame_for(&built, camera, [200.0, 150.0]);
+        for item in f.scene.items_mut::<TilemapItem>().iter_mut() {
+            item.use_frame_clock = clock;
+            item.time = item_time;
+        }
+        f.time = Some(viewport_lib::FrameTime::fixed(frame_time));
+        f
+    };
+    let by_hand = harness.render(&at(false, 0.3, 0.0), 200, 150);
+    let held = harness.render(&at(false, 0.0, 0.3), 200, 150);
+    let on_clock = harness.render(&at(true, 0.0, 0.3), 200, 150);
+    assert!(by_hand != held, "the water shows another frame at 0.3 s");
+    assert!(on_clock == by_hand, "the frame clock drives the animation");
+}

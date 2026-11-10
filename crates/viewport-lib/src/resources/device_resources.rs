@@ -602,6 +602,8 @@ pub struct DeviceResources {
     /// The scene draws' layouts, bind groups and textures. Absent on a device
     /// below the full tier, where only the overlay family draws.
     pub(crate) scene_tier: SceneTierSlot,
+    /// Samplers resolved from material sampler keys, on every tier.
+    pub(crate) sampler_palette: crate::resources::material::fallbacks::SamplerPalette,
     /// Group 0 on the compatibility tier: built there in place of the scene tier,
     /// `None` on every other tier.
     pub(crate) compatibility_tier:

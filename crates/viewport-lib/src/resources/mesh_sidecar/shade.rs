@@ -1406,11 +1406,8 @@ impl crate::resources::DeviceResources {
             });
         // The plugin's sampler key, deduped through the material sampler
         // palette like a material's own.
-        let sampler = (texture_count > 0).then(|| {
-            self.scene_tier
-                .material
-                .resolve_sampler(device, plugin.sampler())
-        });
+        let sampler =
+            (texture_count > 0).then(|| self.sampler_palette.resolve(device, plugin.sampler()));
         let default_group = self.build_plugin_texture_group(
             device,
             plugin.name(),

@@ -1451,7 +1451,12 @@ impl ViewportRenderer {
                 name,
                 crate::renderer::stats::PluginFrameCounters {
                     prepare_ms,
-                    draw_calls: plugin.draw_calls(),
+                    // A type with no items this frame drew nothing.
+                    draw_calls: if self.plugins_with_items.contains(name) {
+                        plugin.draw_calls()
+                    } else {
+                        0
+                    },
                     upload_bytes: plugin.upload_bytes(),
                 },
             )
@@ -1466,6 +1471,12 @@ impl ViewportRenderer {
             notices: self.resources.notices.counts(),
             device_lost,
             frames_skipped_device_lost: self.frames_skipped_device_lost,
+            // Read now rather than at prepare, so the draws a plugin counts
+            // as its paint records them are in.
+            plugin_draw_calls: prepare::plugin_draw_calls(
+                &self.item_type_plugins,
+                &self.plugins_with_items,
+            ),
             ..self.last_stats
         }
     }
@@ -2679,6 +2690,7 @@ impl ViewportRenderer {
                     viewport_size: glam::Vec2::from(frame.camera.viewport_size),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
+                    time: self.frame_clock.current(),
                     scene_generation: frame.scene.generation,
                     jobs: crate::resources::Jobs::new(&self.resources),
                     resources: &self.resources,
@@ -2738,6 +2750,7 @@ impl ViewportRenderer {
                 viewport_size: glam::Vec2::from(frame.camera.viewport_size),
                 viewport_index: frame.camera.viewport_index,
                 frame_index: self.plugin_frame_index,
+                time: self.frame_clock.current(),
                 scene_generation: frame.scene.generation,
                 jobs: crate::resources::Jobs::new(&self.resources),
                 resources: &self.resources,
@@ -3275,6 +3288,7 @@ impl ViewportRenderer {
                     viewport_size: glam::Vec2::from(frame.camera.viewport_size),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
+                    time: self.frame_clock.current(),
                     scene_generation: frame.scene.generation,
                     jobs: crate::resources::Jobs::new(&self.resources),
                     resources: &self.resources,

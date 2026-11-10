@@ -558,8 +558,13 @@ pub struct TilemapItem {
     pub tint: Colour,
     /// The animation clock, in seconds: each animated tile shows the frame
     /// [`TileAnimation::frame_at`] picks for it. Pass the frame time to
-    /// animate, or a fixed value to hold a frame.
+    /// animate, or a fixed value to hold a frame. Ignored while
+    /// [`use_frame_clock`](Self::use_frame_clock) is set.
     pub time: f32,
+    /// When `true`, tiles animate on the frame's own clock (the time the
+    /// shaders see, `FrameData::time` or the renderer's clock) and `time` is
+    /// ignored. Default `false`.
+    pub use_frame_clock: bool,
     /// Cutout or blended. Default [`TilemapDraw::Cutout`].
     pub draw: TilemapDraw,
     /// When `true`, the layer is moved by less than a device pixel so its
@@ -583,6 +588,7 @@ impl TilemapItem {
             parallax: [1.0, 1.0],
             tint: Colour::WHITE,
             time: 0.0,
+            use_frame_clock: false,
             draw: TilemapDraw::default(),
             pixel_snap: false,
             settings: ItemSettings::default(),

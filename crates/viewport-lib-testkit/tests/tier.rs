@@ -45,6 +45,30 @@ fn webgl2_profile_builds_a_forward_renderer() {
 
 /// WebGL2's limits with two bind groups: below the compatibility tier, so only the
 /// overlay family builds.
+/// `sampler_for` answers on the compatibility tier as on the full tier, and
+/// shares one sampler per key.
+#[test]
+fn sampler_for_works_on_the_compatibility_tier() {
+    let Some(harness) = Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-sampler-for"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(harness.renderer.tier(), Tier::Compatibility);
+    let resources = harness.renderer.resources();
+    let nearest = viewport_lib::SamplerKey {
+        wrap_u: viewport_lib::WrapMode::ClampToEdge,
+        wrap_v: viewport_lib::WrapMode::ClampToEdge,
+        filter: viewport_lib::TextureFilter::Nearest,
+        ..Default::default()
+    };
+    let a = resources.sampler_for(&harness.device, nearest);
+    let b = resources.sampler_for(&harness.device, nearest);
+    assert!(a == b, "one key resolves to one shared sampler");
+    let linear = resources.sampler_for(&harness.device, viewport_lib::SamplerKey::default());
+    assert!(a != linear, "different keys resolve to different samplers");
+}
+
 fn overlay_only_profile() -> DeviceProfile {
     DeviceProfile::downlevel_webgl2("tier-overlay-only").max_bind_groups(2)
 }

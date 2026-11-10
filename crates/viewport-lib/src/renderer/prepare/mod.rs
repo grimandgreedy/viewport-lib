@@ -676,11 +676,8 @@ impl ViewportRenderer {
             }
 
             let deform = resources.scene_tier.deform.take_counters();
-            let plugin_draw_calls = self
-                .item_type_plugins
-                .values()
-                .map(|p| p.draw_calls())
-                .sum();
+            let plugin_draw_calls =
+                plugin_draw_calls(&self.item_type_plugins, &self.plugins_with_items);
             let plugin_upload_bytes = self
                 .item_type_plugins
                 .values()
@@ -1594,6 +1591,20 @@ impl ViewportRenderer {
 /// for them under the compilation policy, and under `Background` the
 /// frames until they are built take the CPU path, which draws the same
 /// image.
+/// The draw calls the item types that had items this frame report. A type
+/// with none was not prepared, so whatever it last counted is not this
+/// frame's.
+pub(crate) fn plugin_draw_calls(
+    plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
+    with_items: &std::collections::HashSet<&'static str>,
+) -> u32 {
+    plugins
+        .iter()
+        .filter(|(name, _)| with_items.contains(name))
+        .map(|(_, p)| p.draw_calls())
+        .sum()
+}
+
 fn settle_gpu_culling(
     inst: &mut InstancingState,
     compiler: &crate::resources::pipeline_slot::PipelineCompiler,

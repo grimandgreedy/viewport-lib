@@ -69,10 +69,6 @@ pub(crate) struct TilemapLayouts {
     pub(crate) map: viewport_lib::gpu::BindGroupLayout,
     /// Group 2: the layer uniform at a dynamic offset.
     pub(crate) layer: viewport_lib::gpu::BindGroupLayout,
-    /// Nearest-filtered, clamped sampler for pixel-art atlases. Made here
-    /// rather than taken from `DeviceResources::sampler_for`, which the
-    /// compatibility tier does not provide.
-    pub(crate) nearest: viewport_lib::gpu::Sampler,
 }
 
 impl TilemapLayouts {
@@ -124,20 +120,7 @@ impl TilemapLayouts {
                 count: None,
             }],
         });
-        let nearest = device.create_sampler(&gpu::SamplerDescriptor {
-            label: Some("tilemap_nearest_sampler"),
-            address_mode_u: gpu::AddressMode::ClampToEdge,
-            address_mode_v: gpu::AddressMode::ClampToEdge,
-            address_mode_w: gpu::AddressMode::ClampToEdge,
-            mag_filter: gpu::FilterMode::Nearest,
-            min_filter: gpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        Self {
-            map,
-            layer,
-            nearest,
-        }
+        Self { map, layer }
     }
 }
 
@@ -154,6 +137,7 @@ pub(crate) struct TilesetBindings {
 /// Resolve the atlas view and sampler `map`'s tileset names. A missing or
 /// stale texture binds the neutral fallback and draws untextured.
 pub(crate) fn resolve_bindings(
+    device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     layouts: &TilemapLayouts,
     texture_id: Option<viewport_lib::resources::TextureId>,
@@ -173,7 +157,16 @@ pub(crate) fn resolve_bindings(
     };
     let sampler = match filter {
         viewport_lib::TextureFilter::Linear => resources.material_sampler().clone(),
-        viewport_lib::TextureFilter::Nearest => layouts.nearest.clone(),
+        // Clamped, so a tile at the atlas edge never samples the far side.
+        viewport_lib::TextureFilter::Nearest => resources.sampler_for(
+            device,
+            viewport_lib::SamplerKey {
+                wrap_u: viewport_lib::WrapMode::ClampToEdge,
+                wrap_v: viewport_lib::WrapMode::ClampToEdge,
+                filter: viewport_lib::TextureFilter::Nearest,
+                ..Default::default()
+            },
+        ),
     };
     TilesetBindings {
         view,
@@ -410,11 +403,13 @@ fn build_bind_group(
 }
 
 /// The layer uniform for one drawn item against `stored`, relative to
-/// `origin`, the frame's world origin.
+/// `origin`, the frame's world origin. `frame_seconds` is the frame clock,
+/// read when the item animates on it.
 pub(crate) fn layer_uniform(
     item: &TilemapItem,
     stored: &StoredTilemap,
     origin: glam::DVec3,
+    frame_seconds: f64,
 ) -> LayerUniformData {
     let plane = item.plane;
     // The layer at world `p` draws at `p - origin` relative to the origin;
@@ -443,7 +438,11 @@ pub(crate) fn layer_uniform(
         flags: item.pixel_snap as u32,
         pick_id: item.settings.pick_id.0 as u32,
         _pad: 0,
-        anim: stored.animation_frames(item.time),
+        anim: stored.animation_frames(if item.use_frame_clock {
+            frame_seconds as f32
+        } else {
+            item.time
+        }),
     }
 }
 

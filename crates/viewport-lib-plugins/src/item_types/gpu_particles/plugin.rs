@@ -83,6 +83,9 @@ pub struct GpuParticlesPlugin {
     draw_bg_rebuilds: u64,
     gpu: Option<pipeline::ParticleGpu>,
     frame: Vec<ParticleFrame>,
+    /// Draws issued since the last prepare, one per system drawn. Counted
+    /// where each draw is recorded, so a system still compiling is not.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl GpuParticlesPlugin {
@@ -321,6 +324,10 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         self.systems.allocated_bytes()
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Asks for the compute pipelines and every HDR draw pipeline; the type
     /// does not draw into the LDR pass.
     fn warm(
@@ -353,6 +360,7 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.revalidate_draw_bindings(device, ctx.resources);
         let items = items.of::<GpuParticleSystemItem>();
@@ -547,6 +555,8 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                         pass.set_bind_group(2, normal_bg, &[]);
                     }
                     pass.draw(0..6, 0..pd.capacity);
+                    self.issued
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 ParticleDrawRoute::Mesh { mesh_id } => {
                     let Some(draw_bg) = pd.draw_bg_mesh.as_ref() else {
@@ -560,8 +570,13 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                     };
                     pass.set_pipeline(pl);
                     pass.set_bind_group(1, draw_bg, &[]);
-                    ctx.meshes
-                        .draw_indexed_instanced(pass, mesh_id, pd.capacity);
+                    if ctx
+                        .meshes
+                        .draw_indexed_instanced(pass, mesh_id, pd.capacity)
+                    {
+                        self.issued
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
         }

@@ -396,7 +396,8 @@ pub struct FrameStats {
     /// A plugin reports this itself through
     /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls)
     /// and one that has not implemented it contributes zero whatever it draws,
-    /// so this is a floor, not a guarantee. Per-plugin breakdown:
+    /// so this is a floor, not a guarantee. Every built-in item type reports
+    /// its colour draws. Per-plugin breakdown:
     /// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
     pub plugin_draw_calls: u32,
     /// Bytes uploaded by item-type plugins this frame, summed across every

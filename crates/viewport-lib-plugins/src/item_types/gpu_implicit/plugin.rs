@@ -60,6 +60,8 @@ pub struct GpuImplicitPlugin {
     /// Whether the frame's selection outline is active; the mask hook draws
     /// nothing when it is off.
     outline_active: bool,
+    /// Colour draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for GpuImplicitPlugin {
@@ -74,6 +76,10 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         gpu.pipelines.request_all();
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -81,6 +87,7 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.pick_items.clear();
         self.outline_active = ctx.outline_selected;
@@ -135,6 +142,8 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         for entry in &self.frame {
             pass.set_bind_group(1, &entry.bind_group, &[]);
             pass.draw(0..6, 0..1);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
