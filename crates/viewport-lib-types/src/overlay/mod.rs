@@ -1,7 +1,8 @@
 //! Screen-space overlay item vocabulary: the shapes, labels, glyph runs,
 //! polylines, meshes and vector paths a consumer builds to describe overlays, together
 //! with the fills, anchors, animations, and texture-sampling parameters they
-//! compose from.
+//! compose from, and the world layer that places an overlay frame on a plane
+//! in the scene.
 //!
 //! This is pure data. The renderer rasterises and uploads these items; a
 //! consumer (or a feature crate such as the gizmo or ui overlays) only needs to
@@ -26,6 +27,7 @@ pub mod style;
 pub mod texture;
 pub mod transform;
 pub mod vector;
+pub mod world;
 
 pub use self::anchor::*;
 pub use self::animation::*;
@@ -46,6 +48,7 @@ pub use self::style::*;
 pub use self::texture::*;
 pub use self::transform::*;
 pub use self::vector::*;
+pub use self::world::*;
 
 #[cfg(test)]
 mod tests {

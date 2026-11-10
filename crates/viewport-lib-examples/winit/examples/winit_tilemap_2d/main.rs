@@ -3,8 +3,10 @@
 //!
 //! A far layer of hills scrolls at a third of the camera's speed behind a
 //! ground layer of grass, paths and animated water; three hundred critters
-//! walk over the ground as painter-ordered sprites sorted by `-y`. The camera
-//! drifts to the right on its own.
+//! walk over the ground as painter-ordered sprites sorted by `-y`. A signpost
+//! of vector art and a glowing additive path sit on a world overlay layer
+//! between the ground and the critters, so they scroll and zoom with the map
+//! and take bloom. The camera drifts to the right on its own.
 //!
 //! Drag to pan, scroll or pinch to zoom, `P` to switch between crisp pixel art
 //! (nearest-sampled and snapped to the pixel grid) and smooth filtering.
@@ -23,9 +25,11 @@ use viewport_lib_plugins::item_types::tilemap::{
     Tile, TileAnimation, TileFlip, TileFrame, Tilemap, TilemapId, TilemapItem, Tileset,
 };
 use vpl::{
-    Action, AppConfig, Camera2d, Camera2dController, ExtraId, KeyCode, Modifiers, ModifiersMatch,
-    Plane2d, TextureData, TextureFilter, TextureId, ViewportApp, ViewportBinding, ViewportGesture,
-    WindowConfig, planar_bindings,
+    Action, AppConfig, Camera2d, Camera2dController, Colour, ExtraId, FillRule, KeyCode, LabelItem,
+    LineCap, Modifiers, ModifiersMatch, OverlayBlend, OverlayFill, OverlayFrame,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, Plane2d, SubPath,
+    TextureData, TextureFilter, TextureId, ViewportApp, ViewportBinding, ViewportGesture,
+    WindowConfig, WorldOverlayLayer, WorldPlane, planar_bindings,
 };
 
 const TOGGLE_PIXEL_ART: Action = Action::Custom(1);
@@ -225,8 +229,9 @@ fn sprites(atlas: TextureId, critters: &[Critter], pixel_art: bool) -> SpriteIte
         TextureFilter::Linear
     };
     item.pixel_snap = pixel_art;
+    // Above the signpost's world layer at order 0.
     item.order = SpriteOrder::Painter {
-        layer: 0,
+        layer: 1,
         depth_test: false,
     };
     // The critter's tile in the 4 x 2 atlas. A sprite quad maps `v = 0` to
@@ -245,6 +250,73 @@ fn sprites(atlas: TextureId, critters: &[Critter], pixel_art: bool) -> SpriteIte
         item.sort_keys.push(-c.position.y);
     }
     item
+}
+
+/// A signpost and a glowing path on a world layer, in world units with
+/// layer y running down the plane from the layer's origin.
+fn signpost(time: f32) -> WorldOverlayLayer {
+    let mut frame = OverlayFrame::default();
+    // The post and the board.
+    frame.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 1.0 },
+            [29.0, 30.0],
+            [6.0, 34.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.35, 0.22, 0.12, 1.0))),
+    );
+    frame.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 3.0 },
+            [0.0, 0.0],
+            [64.0, 34.0],
+        )
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.95, 0.82, 0.5, 1.0),
+            Colour::srgb(0.62, 0.4, 0.2, 1.0),
+            1.4,
+        )),
+    );
+    let arrow = SubPath::polygon(&[
+        [0.0, 4.0],
+        [24.0, 4.0],
+        [24.0, 0.0],
+        [36.0, 8.0],
+        [24.0, 16.0],
+        [24.0, 12.0],
+        [0.0, 12.0],
+    ]);
+    frame.shapes.push(
+        OverlayShapeItem::vector(vec![arrow], FillRule::NonZero, [14.0, 14.0], [36.0, 16.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.45, 0.85, 1.0)))
+            .with_stroke(OverlayStroke::new(1.0, Colour::srgb(0.05, 0.1, 0.25, 1.0))),
+    );
+    frame.labels.push(
+        LabelItem::new("TO THE LAKE")
+            .with_position([5.0, 2.5])
+            .with_font_size(8.0)
+            .with_colour(Colour::srgb(0.18, 0.1, 0.05, 1.0)),
+    );
+    // A glowing trail along the path, rippling with time: bright enough in
+    // linear light for bloom, added over what is below.
+    let points = (0..=64)
+        .map(|i| {
+            let x = i as f32 * 4.0;
+            [40.0 + x, 60.0 + 6.0 * (x * 0.08 + time * 2.0).sin()]
+        })
+        .collect();
+    frame.polylines.push(
+        OverlayPolylineItem::new(points)
+            .with_thickness(2.0)
+            .with_cap(LineCap::Round)
+            .with_colour(Colour::linear(4.0, 2.6, 0.8, 1.0))
+            .with_blend(OverlayBlend::Additive),
+    );
+    WorldOverlayLayer::new(WorldPlane::Xy)
+        .with_origin([240.0, 200.0])
+        .with_elevation(0.5)
+        .with_order(0)
+        .with_frame(frame)
 }
 
 fn main() {
@@ -351,6 +423,11 @@ fn main() {
                     extras.push(ctx.add_item(near));
                     extras.push(ctx.add_item(sprites(layers.atlas, &critters, pixel_art)));
                 }
+                let layer = signpost(ctx.time());
+                ctx.inject(move |frame| {
+                    frame.scene.world_overlays.push(layer);
+                    frame.effects.post_process.bloom.enabled = true;
+                });
 
                 // Drift right, then pan and zoom on top.
                 let centre = camera.centre() + Vec2::new(20.0 * dt, 0.0);

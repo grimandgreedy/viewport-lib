@@ -29,6 +29,11 @@ pub(crate) enum LayerMode {
     Push,
     /// Its members draw into a scratch target that is composited as one.
     Target,
+    /// Its members draw into the frame, each with the layer's opacity, blend
+    /// and colour matrix: a layer where nothing can be composited as one (a world layer,
+    /// inside the scene pass). A blend that reads the destination draws as
+    /// source-over and backdrops are dropped.
+    Flat,
 }
 
 /// A layer as the frame resolved it.
@@ -131,6 +136,21 @@ impl LayerPlan {
                 }
                 Some(s)
             }
+            LayerMode::Flat => {
+                let mut s = style.clone();
+                s.opacity *= layer.style.opacity;
+                if layer.style.blend != OverlayBlend::SourceOver {
+                    s.blend = layer.style.blend;
+                }
+                if s.blend.reads_destination() {
+                    s.blend = OverlayBlend::SourceOver;
+                }
+                if s.colour_matrix.is_none() {
+                    s.colour_matrix = layer.style.colour_matrix;
+                }
+                s.backdrop = Default::default();
+                Some(s)
+            }
             LayerMode::Target => {
                 if !style.blend.reads_destination() && !style.backdrop.is_active() {
                     return None;
@@ -141,6 +161,16 @@ impl LayerPlan {
                 }
                 s.backdrop = Default::default();
                 Some(s)
+            }
+        }
+    }
+
+    /// Draw every layer that would need a scratch target flat instead, for a
+    /// frame drawn where nothing can be composited as one.
+    pub(crate) fn flatten(&mut self) {
+        for layer in &mut self.layers {
+            if layer.mode == LayerMode::Target {
+                layer.mode = LayerMode::Flat;
             }
         }
     }

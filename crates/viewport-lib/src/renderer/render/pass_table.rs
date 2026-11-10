@@ -320,7 +320,7 @@ impl ViewportRenderer {
         table.declare(
             HdrPass::DepthRead,
             "depth_read",
-            self.any_plugin_draws_depth_read(frame),
+            self.hdr_depth_read_active(frame),
             scene.with(T::SurfaceStencil),
             TargetSet::of(T::HdrColour),
         );

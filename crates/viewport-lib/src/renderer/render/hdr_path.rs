@@ -1376,7 +1376,7 @@ impl ViewportRenderer {
     /// pass begins and the depth attachment sees no transition.
     fn hdr_depth_read_pass(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         let frame = ctx.frame;
-        if !self.any_plugin_draws_depth_read(frame) {
+        if !self.hdr_depth_read_active(frame) {
             return;
         }
         self.mark_pass_ran(ctx.vp_idx, HdrPass::DepthRead);
@@ -1468,6 +1468,9 @@ impl ViewportRenderer {
             &resources.scene_tier.material.depth_read_sampler,
             &depth_bg,
         );
+        // Painter's-order content and world overlay layers, after every
+        // other draw in the pass.
+        self.paint_painters_and_world(&mut pass, frame, camera_bg, Some(&depth_bg));
     }
 
     /// Hand the encoder to the plugins that encode at `scope`. Without direct

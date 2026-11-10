@@ -12,8 +12,9 @@ impl ViewportRenderer {
     /// renderer below the full tier, which draws every frame that way), and
     /// nothing may want the scene pass:
     ///
-    /// - the scene submits no surfaces, volume meshes, mesh instances or
-    ///   foreground items, and every item-type collection on it is empty;
+    /// - the scene submits no surfaces, volume meshes, mesh instances,
+    ///   foreground items or world overlay layers, and every item-type
+    ///   collection on it is empty;
     /// - on the full tier, the frame shows no grid, ground plane or shadow
     ///   atlas viewer;
     /// - the interaction frame carries no constraint guides and no sub-object
@@ -30,6 +31,7 @@ impl ViewportRenderer {
             return false;
         }
         if Self::has_mesh_content(frame)
+            || !frame.scene.world_overlays.is_empty()
             || frame
                 .scene
                 .plugin_items

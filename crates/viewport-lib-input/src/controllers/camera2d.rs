@@ -29,7 +29,10 @@ use crate::input::viewport_input::ViewportInput;
 /// The world plane a [`Camera2d`] looks at.
 ///
 /// Both choices put plane x on world +X (screen right at rotation 0) and plane
-/// y on the world axis that should read as up.
+/// y on the world axis that should read as up. They match
+/// `viewport_lib::WorldPlane` (the plane of a world overlay layer) and the
+/// tilemap's `TilemapPlane`, axis for axis, and convert to `WorldPlane` with
+/// `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum Plane2d {
@@ -41,6 +44,15 @@ pub enum Plane2d {
     /// world +Z, so up on screen is up in the Z-up world: the plane for a side
     /// view.
     Xz,
+}
+
+impl From<Plane2d> for viewport_lib_types::overlay::WorldPlane {
+    fn from(plane: Plane2d) -> Self {
+        match plane {
+            Plane2d::Xy => Self::Xy,
+            Plane2d::Xz => Self::Xz,
+        }
+    }
 }
 
 impl Plane2d {

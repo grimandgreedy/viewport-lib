@@ -6,7 +6,7 @@ use super::store::{
 };
 use super::*;
 use viewport_lib::plugin_api::{
-    DepthReadContext, ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PainterContext, PickContext,
     PickPassContext, PickRay, PluginItem,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, SubObjectRef};
@@ -482,36 +482,39 @@ impl ItemTypePlugin for TilemapPlugin {
             return;
         }
         self.draw_layers(pass, self.cutout_layers(), |_| pipeline::CUTOUT_LDR);
-        // The LDR path has no later pass, so blended layers draw here, after
-        // the cutout ones.
-        self.draw_layers(pass, self.painter_sequence.iter().copied(), |l| {
-            match l.painter() {
-                Some((_, false)) => pipeline::BLEND_OFF_LDR,
-                _ => pipeline::BLEND_TEST_LDR,
-            }
-        });
     }
 
     fn draws_ldr(&self) -> bool {
         true
     }
 
-    fn draws_depth_read(&self) -> bool {
+    fn draws_painter(&self) -> bool {
         !self.painter_sequence.is_empty()
     }
 
-    fn paint_depth_read(
+    fn paint_painter(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
-        _ctx: &DepthReadContext<'_>,
+        ctx: &PainterContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        self.draw_layers(pass, self.painter_sequence.iter().copied(), |l| {
-            match l.painter() {
+        let in_range = |i: &usize| {
+            self.frame[*i]
+                .painter()
+                .is_some_and(|(layer, _)| ctx.includes(layer))
+        };
+        let layers = self.painter_sequence.iter().copied().filter(in_range);
+        if ctx.is_hdr_pass() {
+            self.draw_layers(pass, layers, |l| match l.painter() {
                 Some((_, false)) => pipeline::BLEND_OFF_DEPTH_READ,
                 _ => pipeline::BLEND_TEST_DEPTH_READ,
-            }
-        });
+            });
+        } else {
+            self.draw_layers(pass, layers, |l| match l.painter() {
+                Some((_, false)) => pipeline::BLEND_OFF_LDR,
+                _ => pipeline::BLEND_TEST_LDR,
+            });
+        }
     }
 
     fn render_pick(

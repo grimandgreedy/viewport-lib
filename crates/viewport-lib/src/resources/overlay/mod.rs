@@ -17,3 +17,5 @@ pub(crate) mod overlay_text;
 pub(crate) mod overlays;
 /// Section cap fill pipelines.
 pub(crate) mod section_cap;
+/// The world-layer variants of the shape and text pipelines.
+pub(crate) mod world;

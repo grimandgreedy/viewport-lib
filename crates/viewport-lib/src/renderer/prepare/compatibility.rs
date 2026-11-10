@@ -437,10 +437,11 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         self.paint_basic_meshes(pass, camera_bg);
+        pass.set_bind_group(0, camera_bg, &[]);
         if !self.item_type_plugins.is_empty() {
-            pass.set_bind_group(0, camera_bg, &[]);
             self.dispatch_plugin_paint(pass, frame, false);
         }
+        self.paint_painters_and_world(pass, frame, camera_bg, None);
     }
 
     /// Issue the basic mesh draws into the LDR scene pass. `camera_bg` is the

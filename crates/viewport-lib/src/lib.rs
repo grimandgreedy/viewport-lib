@@ -338,8 +338,9 @@ pub use renderer::{
     SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode,
     ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame,
     ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeTransparency, WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    VolumeTransparency, WorkingSpace, WorldOverlayHit, WorldOverlayItem, WorldOverlayLayer,
+    WorldPlane, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 pub use resources::PipelineCompilation;

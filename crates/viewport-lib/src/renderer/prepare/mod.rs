@@ -24,6 +24,7 @@ mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
 mod viewport_overlays;
+mod world_overlays;
 
 use math::*;
 use mesh_material::*;
@@ -1083,11 +1084,12 @@ impl ViewportRenderer {
         let glyph_rasters_before = self.resources.content.glyph_atlas.rasters();
         ov.layer_plan.build(&frame.overlays);
         self.overlay_tess_cache.begin_pass();
-        self.prepare_overlay_labels(device, queue, frame, &mut ov);
-        self.prepare_overlay_shapes(device, queue, frame, &mut ov);
+        let space = viewport_overlays::OverlaySpace::screen(frame, &self.origin);
+        self.prepare_overlay_labels(device, queue, &space, &mut ov);
+        self.prepare_overlay_shapes(device, queue, &space, &mut ov);
         // The layers' members draw into their targets before the overlay
         // pass, so their command buffer goes out with the prepare passes.
-        if let Some(layers) = self.finalize_overlay_draw_order(device, queue, frame, &mut ov) {
+        if let Some(layers) = self.finalize_overlay_draw_order(device, queue, &space, &mut ov) {
             sink.push(layers);
         }
         let overlay_draw_calls = ov.draw_call_count();
@@ -1119,6 +1121,7 @@ impl ViewportRenderer {
         self.last_stats.overlay_glyph_rasters =
             (self.resources.content.glyph_atlas.rasters() - glyph_rasters_before) as u32;
         self.last_stats.overlay_tessellations = self.overlay_tess_cache.tessellations;
+        self.prepare_world_overlays(device, queue, frame, sink);
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

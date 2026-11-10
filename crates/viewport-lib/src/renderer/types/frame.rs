@@ -717,6 +717,12 @@ pub struct SceneFrame {
     /// Replaces [`RendererConfig::world_origin`](crate::RendererConfig::world_origin)
     /// for this frame. Default `None`.
     pub world_origin: Option<crate::renderer::WorldOrigin>,
+    /// Overlay frames placed on a world plane and drawn inside the scene under
+    /// the camera: vector art, labels and markers in world units that scale
+    /// with the camera and take bloom and tone mapping. See
+    /// [`WorldOverlayLayer`](crate::WorldOverlayLayer). Empty by default;
+    /// an empty list draws nothing and allocates nothing.
+    pub world_overlays: Vec<crate::renderer::types::WorldOverlayLayer>,
 }
 
 impl Default for SceneFrame {
@@ -731,6 +737,7 @@ impl Default for SceneFrame {
             lightmap_placements: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
             world_origin: None,
+            world_overlays: Vec::new(),
         }
     }
 }

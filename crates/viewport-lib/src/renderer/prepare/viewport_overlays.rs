@@ -6,6 +6,55 @@ use crate::renderer::overlay_layers::Family as LayerFamily;
 use crate::resources::overlay::font::GlyphGrid;
 use crate::resources::overlay::glyph_style::GlyphStyle;
 
+/// The space one overlay prepare lays its items out in.
+///
+/// For the screen this is the viewport: logical pixels, `pixels_per_point`
+/// device pixels to each, and the camera resolving world anchors. A world
+/// layer runs the same prepare with its own space: world units on the plane,
+/// the device pixels one world unit covers at the camera's zoom, and a map
+/// that drops world anchors onto the layer.
+pub(super) struct OverlaySpace<'a> {
+    /// The items.
+    pub overlays: &'a crate::renderer::types::OverlayFrame,
+    /// The extent viewport anchors resolve against, in the space's units.
+    pub size: [f32; 2],
+    /// Device pixels per unit of the space.
+    pub ppp: f32,
+    /// View and projection taking a world point, relative to `world_origin`,
+    /// into the space through `size`.
+    pub view: glam::Mat4,
+    pub proj: glam::Mat4,
+    pub world_origin: glam::DVec3,
+    /// The camera orientation when the space draws the axes indicator.
+    pub axes: Option<glam::Quat>,
+    /// `true` for a world layer: layers draw flat and nothing reads the
+    /// destination.
+    pub world: bool,
+}
+
+impl<'a> OverlaySpace<'a> {
+    /// The screen space of `frame`'s own overlays.
+    pub(super) fn screen(
+        frame: &'a FrameData,
+        origin: &crate::renderer::origin::OriginState,
+    ) -> Self {
+        let camera = &frame.camera.render_camera;
+        Self {
+            overlays: &frame.overlays,
+            size: frame.camera.viewport_size,
+            ppp: frame.camera.pixels_per_point,
+            view: origin.camera(camera).view(),
+            proj: camera.projection(),
+            world_origin: origin.origin(),
+            axes: frame
+                .viewport
+                .show_axes_indicator
+                .then(|| camera.orientation()),
+            world: false,
+        }
+    }
+}
+
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
 /// draw path's packing. `hw`/`hh` are the half-extents used to clamp corner radii.
 /// This is shared by the shape draw path and the clip-shape registry so the mask
@@ -1093,17 +1142,19 @@ impl ViewportRenderer {
     /// Empty when `show_axes_indicator` is off or the viewport has no area.
     fn axes_overlay_items(
         &self,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
     ) -> Vec<crate::renderer::types::OverlayShapeItem> {
         let mut shapes = Vec::new();
-        let [w, h] = frame.camera.viewport_size;
-        if frame.viewport.show_axes_indicator && w > 0.0 && h > 0.0 {
-            crate::interaction::widgets::axes_indicator::build_axes_overlays(
-                w,
-                h,
-                frame.camera.render_camera.orientation(),
-                &mut shapes,
-            );
+        let [w, h] = space.size;
+        if let Some(orientation) = space.axes {
+            if w > 0.0 && h > 0.0 {
+                crate::interaction::widgets::axes_indicator::build_axes_overlays(
+                    w,
+                    h,
+                    orientation,
+                    &mut shapes,
+                );
+            }
         }
         shapes
     }
@@ -1164,7 +1215,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
         ov: &mut crate::renderer::ViewportOverlay,
     ) {
         // ---------------------------------------------------------------
@@ -1177,31 +1228,31 @@ impl ViewportRenderer {
         ov.label_gpu_data = None;
         // Counted before any of the paths below can skip a group, so the
         // submitted/drawn pair carries the skips.
-        self.overlay_retained_counters.submitted = frame.overlays.retained.len() as u32;
-        let has_vector_shape = frame.overlays.shapes.iter().any(|s| {
+        self.overlay_retained_counters.submitted = space.overlays.retained.len() as u32;
+        let has_vector_shape = space.overlays.shapes.iter().any(|s| {
             matches!(
                 &s.shape,
                 crate::renderer::types::OverlayShape::Vector { .. }
             )
         });
-        let has_overlay = !frame.overlays.labels.is_empty()
-            || !frame.overlays.glyph_runs.is_empty()
-            || !frame.overlays.polylines.is_empty()
-            || !frame.overlays.meshes.is_empty()
+        let has_overlay = !space.overlays.labels.is_empty()
+            || !space.overlays.glyph_runs.is_empty()
+            || !space.overlays.polylines.is_empty()
+            || !space.overlays.meshes.is_empty()
             || has_vector_shape
-            || !frame.overlays.retained.is_empty();
+            || !space.overlays.retained.is_empty();
         if has_overlay {
             self.resources.ensure_overlay_fill_resources(device, queue);
             self.resources.ensure_overlay_text_pipeline(device);
-            let vp_w = frame.camera.viewport_size[0];
-            let vp_h = frame.camera.viewport_size[1];
-            let ppp = frame.camera.pixels_per_point;
+            let vp_w = space.size[0];
+            let vp_h = space.size[1];
+            let ppp = space.ppp;
             if vp_w > 0.0 && vp_h > 0.0 {
                 // World anchors project through the camera relative to the
                 // world origin, with the origin subtracted in f64.
-                let world_origin = self.origin.origin();
-                let view = &self.origin.camera(&frame.camera.render_camera).view();
-                let proj = &frame.camera.render_camera.projection();
+                let world_origin = space.world_origin;
+                let view = &space.view;
+                let proj = &space.proj;
 
                 // Each item (label, glyph run, polyline or vector shape)
                 // contributes a batch: its z_order, fill image, blend, the
@@ -1229,9 +1280,9 @@ impl ViewportRenderer {
                 // masks scroll containers use.) The bbox and the SDF index come from the
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
-                let overlay_time = frame.overlays.time;
+                let overlay_time = space.overlays.time;
                 let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
-                    &frame.overlays.shapes,
+                    &space.overlays.shapes,
                     ppp,
                     [vp_w, vp_h],
                     view,
@@ -1267,7 +1318,7 @@ impl ViewportRenderer {
                     };
 
                 // --- Polylines (between shapes and labels in z order) ---
-                for (item_index, poly) in frame.overlays.polylines.iter().enumerate() {
+                for (item_index, poly) in space.overlays.polylines.iter().enumerate() {
                     if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1473,7 +1524,7 @@ impl ViewportRenderer {
                 }
 
                 // --- Meshes (the consumer's own triangles, no fringe) ---
-                for (item_index, mesh) in frame.overlays.meshes.iter().enumerate() {
+                for (item_index, mesh) in space.overlays.meshes.iter().enumerate() {
                     if mesh.indices.len() < 3 || mesh.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1556,7 +1607,7 @@ impl ViewportRenderer {
                 // SDF shape pass, image fills included. Only a backdrop blur
                 // goes through the shape pass's backdrop pipeline (see
                 // `prepare_overlay_shapes`).
-                for (item_index, shape) in frame.overlays.shapes.iter().enumerate() {
+                for (item_index, shape) in space.overlays.shapes.iter().enumerate() {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
                         fill_rule,
@@ -1721,7 +1772,7 @@ impl ViewportRenderer {
                 }
 
                 // --- Labels ---
-                for (item_index, label) in frame.overlays.labels.iter().enumerate() {
+                for (item_index, label) in space.overlays.labels.iter().enumerate() {
                     if label.text.is_empty() || label.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1960,7 +2011,7 @@ impl ViewportRenderer {
                 }
 
                 // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
-                for (item_index, run) in frame.overlays.glyph_runs.iter().enumerate() {
+                for (item_index, run) in space.overlays.glyph_runs.iter().enumerate() {
                     if run.glyphs.is_empty() || run.style.opacity <= 0.0 {
                         continue;
                     }
@@ -2267,7 +2318,7 @@ impl ViewportRenderer {
                     crate::renderer::overlay_draw_order::Bounds,
                     u32,
                 )> = Vec::new();
-                for (item_index, r) in frame.overlays.retained.iter().enumerate() {
+                for (item_index, r) in space.overlays.retained.iter().enumerate() {
                     let record_layer = ov
                         .layer_plan
                         .record_layer(LayerFamily::Retained, item_index);
@@ -2286,7 +2337,7 @@ impl ViewportRenderer {
                         let mut owned = r.clone();
                         if let Some(anims) = owned.animations.take() {
                             anims.apply(
-                                frame.overlays.time,
+                                space.overlays.time,
                                 &mut owned.transform,
                                 &mut owned.opacity,
                                 &mut owned.tint,
@@ -2679,7 +2730,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
         ov: &mut crate::renderer::ViewportOverlay,
     ) {
         // ------------------------------------------------------------------
@@ -2687,21 +2738,21 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         ov.overlay_shape_gpu_data = None;
         // The bottom-left orientation indicator draws as overlay shapes too.
-        let axes_shapes = self.axes_overlay_items(frame);
-        if frame.overlays.shapes.is_empty() && axes_shapes.is_empty() {
+        let axes_shapes = self.axes_overlay_items(space);
+        if space.overlays.shapes.is_empty() && axes_shapes.is_empty() {
             return;
         }
-        let vp_w = frame.camera.viewport_size[0];
-        let vp_h = frame.camera.viewport_size[1];
+        let vp_w = space.size[0];
+        let vp_h = space.size[1];
         if vp_w <= 0.0 || vp_h <= 0.0 {
             return;
         }
-        let ppp = frame.camera.pixels_per_point;
+        let ppp = space.ppp;
         Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h, ppp);
         Self::ensure_overlay_instances_default(ov, device, queue);
         // Each with its index in the frame's list, which names its layer; the
         // axes indicator's shapes belong to none. The draw list orders them.
-        let mut sorted: Vec<(usize, &crate::renderer::types::OverlayShapeItem)> = frame
+        let mut sorted: Vec<(usize, &crate::renderer::types::OverlayShapeItem)> = space
             .overlays
             .shapes
             .iter()
@@ -2741,21 +2792,21 @@ impl ViewportRenderer {
         let mut blur_verts: Vec<crate::resources::OverlayBackdropVertex> = Vec::new();
         let mut max_blur_radius: f32 = 0.0;
 
-        let overlay_time = frame.overlays.time;
+        let overlay_time = space.overlays.time;
 
         // The SDF clip registry, plus each mask's bounding box (framebuffer
         // pixels) for the shader's cheap pre-reject. Built from
-        // `frame.overlays.shapes` (not `sorted`) so the mask indices match
+        // `space.overlays.shapes` (not `sorted`) so the mask indices match
         // exactly what the label pass assigned, since text and shapes reference
         // the same masks by index. The bbox is looked up by that same index, so
         // `clip_rect` and `clip_index` always describe the same mask.
         // World anchors project through the camera relative to the
         // world origin, with the origin subtracted in f64.
-        let world_origin = self.origin.origin();
-        let view = &self.origin.camera(&frame.camera.render_camera).view();
-        let proj = &frame.camera.render_camera.projection();
+        let world_origin = space.world_origin;
+        let view = &space.view;
+        let proj = &space.proj;
         let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
-            &frame.overlays.shapes,
+            &space.overlays.shapes,
             ppp,
             [vp_w, vp_h],
             view,
@@ -3305,7 +3356,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
         ov: &mut crate::renderer::ViewportOverlay,
     ) -> Option<crate::gpu::CommandBuffer> {
         use crate::renderer::overlay_draw_order::{
@@ -3319,8 +3370,8 @@ impl ViewportRenderer {
         ov.overlay_draw_segments.clear();
         ov.overlay_breaks.clear();
         ov.layer_targets.draws.clear();
-        let vp = frame.camera.viewport_size;
-        let ppp = frame.camera.pixels_per_point;
+        let vp = space.size;
+        let ppp = space.ppp;
 
         // Group the items by the layer they record into, the frame's own last.
         // The sort is stable, so each group keeps its recording order.
@@ -3333,11 +3384,11 @@ impl ViewportRenderer {
                 .unwrap_or(items.len());
             let needs_masks = ov.layer_plan.layers.iter().any(|l| l.clip.mask.is_some());
             let registry = needs_masks.then(|| {
-                let world_origin = self.origin.origin();
-                let view = self.origin.camera(&frame.camera.render_camera).view();
-                let proj = frame.camera.render_camera.projection();
+                let world_origin = space.world_origin;
+                let view = space.view;
+                let proj = space.proj;
                 let (_, index_of, bboxes, _) =
-                    build_clip_shapes(&frame.overlays.shapes, ppp, vp, &view, &proj, world_origin);
+                    build_clip_shapes(&space.overlays.shapes, ppp, vp, &view, &proj, world_origin);
                 (index_of, bboxes)
             });
             let mut k = 0;
@@ -3472,8 +3523,10 @@ impl ViewportRenderer {
             ((vp[0] * ppp).round() as u32).max(1),
             ((vp[1] * ppp).round() as u32).max(1),
         ];
-        let needs_backdrop = ov.has_backdrops();
-        let needs_snapshot = ov.has_breaks();
+        // A world layer draws inside the scene, where nothing is copied or
+        // blurred for it.
+        let needs_backdrop = ov.has_backdrops() && !space.world;
+        let needs_snapshot = ov.has_breaks() && !space.world;
         self.prepare_layer_targets(
             device,
             queue,

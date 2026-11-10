@@ -113,8 +113,9 @@ pub use self::types::{
     SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
     StrokePattern, SubPath, SurfaceSubmission, TextureTransform, TileMode, ToneCurve, ToneMapping,
     TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, VignetteSettings,
-    VolumeMeshItem, VolumeTransparency, WorkingSpace, aabb_wireframe_polyline,
-    bake_view_transform_lut, obb_wireframe_polyline, sphere_wireframe_polyline,
+    VolumeMeshItem, VolumeTransparency, WorkingSpace, WorldOverlayHit, WorldOverlayItem,
+    WorldOverlayLayer, WorldPlane, aabb_wireframe_polyline, bake_view_transform_lut,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -254,6 +255,8 @@ pub(crate) struct ViewportSlot {
     pub draw_skybox: bool,
     /// This viewport's prepared 2D overlay pass.
     pub overlay: ViewportOverlay,
+    /// This viewport's prepared world overlay layers, drawn inside the scene.
+    pub world_overlays: WorldOverlays,
     /// Ground-plane uniform for this viewport's camera, and the bind group
     /// over it and the shadow atlas, rebuilt when the atlas view changes.
     pub ground_uniform_buf: crate::gpu::Buffer,
@@ -390,6 +393,33 @@ impl ViewportOverlay {
             overlay_main_segments: 0,
             overlay_breaks: Vec::new(),
         }
+    }
+}
+
+/// One world overlay layer as prepared for a viewport: the overlay pass state
+/// its items were prepared into, and where it draws among the scene's
+/// painter's-order content.
+pub(crate) struct WorldOverlayDraw {
+    pub ov: ViewportOverlay,
+    pub order: u32,
+    pub depth_test: bool,
+}
+
+/// A viewport's world overlay layers. The states are kept across frames to
+/// reuse their buffers; `sequence` names the ones prepared this frame in draw
+/// order.
+#[derive(Default)]
+pub(crate) struct WorldOverlays {
+    pub layers: Vec<WorldOverlayDraw>,
+    pub sequence: Vec<usize>,
+    /// The pass the layers' pipelines were built for this frame.
+    pub pass: Option<crate::resources::overlay::world::WorldPassKey>,
+}
+
+impl WorldOverlays {
+    /// Whether any layer draws this frame.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sequence.is_empty()
     }
 }
 
@@ -2890,6 +2920,116 @@ impl ViewportRenderer {
             })
     }
 
+    /// `true` when a registered plugin with items this frame has
+    /// painter's-order draws.
+    pub(crate) fn any_plugin_draws_painter(&self, frame: &FrameData) -> bool {
+        !self.item_type_plugins.is_empty()
+            && self.item_type_plugins.iter().any(|(name, plugin)| {
+                plugin.draws_painter()
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
+            })
+    }
+
+    /// Whether the HDR path opens its read-only-depth pass this frame: for
+    /// plugins that draw there, painter's-order content, or world overlays.
+    pub(crate) fn hdr_depth_read_active(&self, frame: &FrameData) -> bool {
+        self.any_plugin_draws_depth_read(frame)
+            || self.any_plugin_draws_painter(frame)
+            || self
+                .viewport_slots
+                .get(frame.camera.viewport_index)
+                .is_some_and(|s| !s.world_overlays.is_empty())
+    }
+
+    /// Invoke `paint_painter` for `layers` on each painter-drawing plugin
+    /// with items on `frame.scene`.
+    fn dispatch_plugin_paint_painter(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        layers: std::ops::RangeInclusive<u32>,
+        scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+    ) {
+        if self.item_type_plugins.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::PainterContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+            layers,
+            scene_depth_bind_group,
+        };
+        let hdr = scene_depth_bind_group.is_some();
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if !plugin.draws_painter() || (!hdr && !plugin.draws_ldr()) {
+                continue;
+            }
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_painter(pass, &ctx, &items);
+            }
+        }
+    }
+
+    /// Draw the frame's painter's-order content and its world overlay layers,
+    /// interleaved by layer: plugin content up to each world layer's `order`,
+    /// then the world layers at that order, then the rest. `camera_bg` is
+    /// rebound at group 0 after the world layers, which bind their own.
+    /// `scene_depth_bind_group` is `Some` in the HDR read-only-depth pass and
+    /// `None` in the LDR scene pass.
+    pub(crate) fn paint_painters_and_world(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        camera_bg: &crate::gpu::BindGroup,
+        scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+    ) {
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        let sequence: &[usize] = worlds.map_or(&[], |w| &w.sequence);
+        let mut lo = 0u32;
+        let mut k = 0;
+        while let Some(worlds) = worlds.filter(|_| k < sequence.len()) {
+            let order = worlds.layers[sequence[k]].order;
+            self.dispatch_plugin_paint_painter(pass, frame, lo..=order, scene_depth_bind_group);
+            let _span =
+                tracing::debug_span!(target: "viewport_lib::frame", "world_overlay").entered();
+            while k < sequence.len() && worlds.layers[sequence[k]].order == order {
+                let draw = &worlds.layers[sequence[k]];
+                if let Some(pass_key) = worlds.pass {
+                    crate::renderer::render::emit_overlay_segments(
+                        &self.resources,
+                        &draw.ov,
+                        pass,
+                        draw.ov.main_segments(),
+                        &crate::renderer::render::OverlayEmit {
+                            dst: false,
+                            backdrop: None,
+                            world: Some(crate::resources::overlay::world::WorldPassKey {
+                                depth_test: draw.depth_test,
+                                ..pass_key
+                            }),
+                        },
+                    );
+                }
+                k += 1;
+            }
+            pass.set_bind_group(0, camera_bg, &[]);
+            match order.checked_add(1) {
+                Some(next) => lo = next,
+                None => return,
+            }
+        }
+        self.dispatch_plugin_paint_painter(pass, frame, lo..=u32::MAX, scene_depth_bind_group);
+    }
+
     /// Walk registered plugins and invoke `paint_depth_read` for each
     /// depth-read-drawing plugin whose collection is on `frame.scene`.
     ///
@@ -3913,6 +4053,7 @@ impl ViewportRenderer {
                 dyn_res: None,
                 hdr_callback: None,
                 overlay: ViewportOverlay::new(),
+                world_overlays: WorldOverlays::default(),
                 ground_uniform_buf,
                 ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
                 overlay_depth: None,

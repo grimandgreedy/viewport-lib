@@ -37,6 +37,7 @@ pub mod sprites_effects;
 pub mod textures;
 pub mod tilemap;
 pub mod tone_mapping;
+pub mod world_overlay;
 
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
@@ -164,6 +165,8 @@ pub struct BuiltScene {
     /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
     /// retained groups compiled during `build`.
     pub overlays: viewport_lib::OverlayFrame,
+    /// World overlay layers, drawn inside the scene.
+    pub world_overlays: Vec<viewport_lib::WorldOverlayLayer>,
     /// Scene-content version stamped onto `SceneFrame::generation`.
     ///
     /// The renderer's instanced-batch cache trusts this: two consecutive
@@ -287,6 +290,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     ) = scene.external_instances.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     sf.volume_meshes = scene.volume_meshes.clone();
+    sf.world_overlays = scene.world_overlays.clone();
     if let Some(origin) = scene.world_origin {
         sf = sf.with_world_origin(origin);
     }
@@ -1118,6 +1122,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(sprites_effects::scenes());
     scenes.extend(tilemap::scenes());
     scenes.extend(lighting_2d::scenes());
+    scenes.extend(world_overlay::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

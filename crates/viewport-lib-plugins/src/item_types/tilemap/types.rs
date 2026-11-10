@@ -18,8 +18,10 @@ pub const MAX_TILE_ANIMATIONS: usize = 256;
 pub const MAX_TILEMAP_SIDE: u32 = 1 << 16;
 
 /// The world plane a tilemap lies in. The same two planes as
-/// `viewport_lib::Plane2d`, with the same axes, so a map drawn on a plane
-/// lines up with a `Camera2d` looking at it.
+/// `viewport_lib::Plane2d` and `viewport_lib::WorldPlane`, with the same axes
+/// and elevation direction, so a map drawn on a plane lines up with a
+/// `Camera2d` looking at it and with a world overlay layer on it. Converts to
+/// `WorldPlane` with `From`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TilemapPlane {
     /// The world XY plane seen from above, looking along -Z. Plane x is world
@@ -30,6 +32,15 @@ pub enum TilemapPlane {
     /// world +X and plane y is world +Z; elevation is world -Y, towards the
     /// camera.
     Xz,
+}
+
+impl From<TilemapPlane> for viewport_lib_types::overlay::WorldPlane {
+    fn from(plane: TilemapPlane) -> Self {
+        match plane {
+            TilemapPlane::Xy => Self::Xy,
+            TilemapPlane::Xz => Self::Xz,
+        }
+    }
 }
 
 impl TilemapPlane {

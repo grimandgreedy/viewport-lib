@@ -10,8 +10,8 @@ use store::{
 };
 use viewport_lib::plugin_api::{
     DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext,
-    ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext, PickPassContext, PickRay,
-    PluginItem, RectPickContext,
+    ItemTypePlugin, OutlineMaskContext, PaintContext, PainterContext, PickContext, PickPassContext,
+    PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
 
@@ -497,12 +497,13 @@ impl SpritePlugin {
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
         target: pipeline::SpritePass,
         group2: &viewport_lib::gpu::BindGroup,
+        layers: &std::ops::RangeInclusive<u32>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = None;
         for &i in &self.painter_sequence {
             let sprite = &self.frame[i];
-            if !is_painter(sprite) {
+            if !is_painter(sprite) || !sprite.painter.is_some_and(|p| layers.contains(&p.layer)) {
                 continue;
             }
             let key = pipeline::SpriteKey::of(sprite);
@@ -761,9 +762,6 @@ impl ItemTypePlugin for SpritePlugin {
                 is_opaque,
             );
         }
-        // The LDR path has no later pass, so painter batches draw here, after
-        // the opaque ones, without the soft fade.
-        self.draw_painter(pass, pipeline::SpritePass::Ldr, &gpu.soft_fallback_bg);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -771,7 +769,35 @@ impl ItemTypePlugin for SpritePlugin {
     }
 
     fn draws_depth_read(&self) -> bool {
-        self.frame.iter().any(|s| is_soft(s) || is_painter(s))
+        self.frame.iter().any(is_soft)
+    }
+
+    fn draws_painter(&self) -> bool {
+        !self.painter_sequence.is_empty()
+    }
+
+    fn paint_painter(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &PainterContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        // Painter batches in their own order: after every opaque draw and
+        // before transparency and post effects. In the read-only-depth pass
+        // the live scene depth is bound for the soft fade; the LDR scene pass
+        // gets the 1x1 fallback.
+        match ctx.scene_depth_bind_group {
+            Some(depth) => {
+                self.draw_painter(pass, pipeline::SpritePass::DepthRead, depth, &ctx.layers)
+            }
+            None => self.draw_painter(
+                pass,
+                pipeline::SpritePass::Ldr,
+                &gpu.soft_fallback_bg,
+                &ctx.layers,
+            ),
+        }
     }
 
     fn draws_transparent(&self) -> bool {
@@ -795,13 +821,6 @@ impl ItemTypePlugin for SpritePlugin {
             pipeline::SpritePass::DepthRead,
             ctx.scene_depth_bind_group,
             is_soft,
-        );
-        // Painter batches last, in their own order: after every opaque draw and
-        // before transparency and post effects.
-        self.draw_painter(
-            pass,
-            pipeline::SpritePass::DepthRead,
-            ctx.scene_depth_bind_group,
         );
     }
 

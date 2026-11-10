@@ -536,6 +536,39 @@ pub struct DepthReadContext<'a> {
     pub scene_depth_bind_group: &'a crate::gpu::BindGroup,
 }
 
+/// Per-call context for [`ItemTypePlugin::paint_painter`].
+#[non_exhaustive]
+pub struct PainterContext<'a> {
+    /// Active render-camera snapshot for this viewport.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+    /// The painter layers this call draws, inclusive.
+    pub layers: std::ops::RangeInclusive<u32>,
+    /// On the HDR path, the read-only-depth pass's ready-made scene depth
+    /// bind group (see [`DepthReadContext::scene_depth_bind_group`]); `None`
+    /// in the LDR scene pass, whose depth attachment is writable.
+    pub scene_depth_bind_group: Option<&'a crate::gpu::BindGroup>,
+}
+
+impl PainterContext<'_> {
+    /// `true` in the HDR path's read-only-depth pass (`HDR_COLOR_FORMAT`,
+    /// the renderer's sample count), `false` in the LDR scene pass (the
+    /// renderer's output format, one sample).
+    pub fn is_hdr_pass(&self) -> bool {
+        self.scene_depth_bind_group.is_some()
+    }
+
+    /// Whether `layer` is drawn by this call.
+    pub fn includes(&self, layer: u32) -> bool {
+        self.layers.contains(&layer)
+    }
+}
+
 /// Where in the HDR frame an [`encode`](ItemTypePlugin::encode) call is
 /// happening.
 ///
@@ -1146,6 +1179,41 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &DepthReadContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// `true` when this frame's items have painter's-order draws for
+    /// [`paint_painter`](Self::paint_painter).
+    ///
+    /// Read after [`prepare`](Self::prepare). A frame where some plugin says
+    /// `true` draws them on the HDR path inside the read-only-depth pass (which
+    /// opens for it) and on the LDR path in the scene pass, after every
+    /// plugin's [`paint`](Self::paint).
+    fn draws_painter(&self) -> bool {
+        false
+    }
+
+    /// Issue this frame's painter's-order draws whose layer lies in
+    /// [`PainterContext::layers`].
+    ///
+    /// Painter's-order content (blended sprites, blended tile layers) is
+    /// ordered by a `u32` layer, and world overlay layers interleave with it by
+    /// the same number. The renderer calls this once per run of layers between
+    /// world overlay layers, ascending: each plugin draws its content in the
+    /// run, then the next plugin, then the world layers at the run's top
+    /// layer. A frame with no world layers makes one call covering every
+    /// layer. Within a run, plugins draw in registration order, so one
+    /// plugin's content at a lower layer can still land over another's at a
+    /// higher one.
+    ///
+    /// The pass has the viewport's camera bind group at group 0 on entry.
+    /// Only called when [`draws_painter`](Self::draws_painter) returns `true`,
+    /// and on the LDR path only for a plugin that [`draws_ldr`](Self::draws_ldr).
+    fn paint_painter(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PainterContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
     }

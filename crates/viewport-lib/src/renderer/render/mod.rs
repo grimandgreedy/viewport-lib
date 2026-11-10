@@ -76,6 +76,9 @@ pub(crate) struct OverlayEmit<'a> {
     /// The backdrop pipeline's group 0 over the blurred destination; `None`
     /// skips every backdrop draw.
     pub backdrop: Option<&'a crate::gpu::BindGroup>,
+    /// The pass a world layer draws in, which selects the world variants of
+    /// the shape and text pipelines; `None` for screen overlays.
+    pub world: Option<crate::resources::overlay::world::WorldPassKey>,
 }
 
 impl OverlayEmit<'_> {
@@ -83,6 +86,7 @@ impl OverlayEmit<'_> {
     pub(crate) const NO_DESTINATION: OverlayEmit<'static> = OverlayEmit {
         dst: false,
         backdrop: None,
+        world: None,
     };
     /// A layer's members, drawn into its scratch target.
     pub(crate) const MEMBERS: OverlayEmit<'static> = Self::NO_DESTINATION;
@@ -121,8 +125,23 @@ pub(crate) fn emit_overlay_segments(
     // 1: slot 0 is the identity, retained groups their own.
     let instances = ov.overlay_bindings.instances.buffer();
     for seg in segs {
-        let shape_pipeline = resources.overlay_shape.pipeline_for(seg.blend);
-        let text_pipeline = resources.overlay_text.pipeline_for(seg.blend);
+        let (shape_pipeline, text_pipeline) = match emit.world {
+            Some(key) => {
+                use crate::resources::overlay::world::WorldPipe;
+                (
+                    resources
+                        .overlay_world
+                        .pipeline(key, WorldPipe::Shape, seg.blend),
+                    resources
+                        .overlay_world
+                        .pipeline(key, WorldPipe::Text, seg.blend),
+                )
+            }
+            None => (
+                resources.overlay_shape.pipeline_for(seg.blend),
+                resources.overlay_text.pipeline_for(seg.blend),
+            ),
+        };
         match seg.source {
             OverlayDrawSource::Shape {
                 instance_start,
@@ -407,6 +426,7 @@ impl ViewportRenderer {
             // Item-type plugin paint (LDR opt-in only): after all built-in
             // scene content, mirroring the HDR scene-pass position.
             self.dispatch_plugin_paint(&mut render_pass, frame, false);
+            self.paint_painters_and_world(&mut render_pass, frame, camera_bg, None);
             // Outline composite after all scene content.
             emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             // Sub-object highlight (LDR path).
@@ -1543,6 +1563,7 @@ impl ViewportRenderer {
                     } else {
                         None
                     },
+                    world: None,
                 },
             );
             return;
@@ -1553,6 +1574,7 @@ impl ViewportRenderer {
         let emit = OverlayEmit {
             dst: true,
             backdrop: ov.layer_targets.item_backdrop_bg(),
+            world: None,
         };
         let mut start = 0usize;
         // A clear still owed: the first pass runs even with nothing to draw

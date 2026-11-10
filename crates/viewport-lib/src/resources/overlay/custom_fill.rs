@@ -24,6 +24,16 @@ const FILL_SHADERS: &[(&str, &str)] = &[
     ),
 ];
 
+/// The base source of one of the fill shaders, by name.
+#[cfg(test)]
+pub(crate) fn fill_shader(name: &str) -> &'static str {
+    FILL_SHADERS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, s)| *s)
+        .unwrap_or_default()
+}
+
 /// A registered fill: its name and its body with every top-level identifier
 /// prefixed by `<name>__`.
 #[derive(Clone, Debug)]
@@ -185,6 +195,7 @@ impl crate::resources::DeviceResources {
         self.overlay_shape.variants = Default::default();
         self.overlay_shape.layout = None;
         self.overlay_shape.shader = None;
+        self.overlay_world.clear();
     }
 }
 

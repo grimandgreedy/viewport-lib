@@ -174,8 +174,9 @@ pub use install::{
 pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
     ItemFrameContext, ItemTypeHost, ItemTypeId, ItemTypePlugin, LightContext, OutlineMaskContext,
-    PaintContext, PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection,
-    RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+    PaintContext, PainterContext, PickContext, PickPassContext, PickRay, PluginItem,
+    PluginItemCollection, RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext,
+    SurfaceMaskContext, surface_mask_bits,
 };
 pub use overlay_fill::OverlayFillDesc;
 pub use plugin_resources::PluginResources;

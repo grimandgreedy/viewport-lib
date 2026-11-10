@@ -23,3 +23,4 @@ pub use viewport_lib_types::overlay::style::*;
 pub use viewport_lib_types::overlay::texture::*;
 pub use viewport_lib_types::overlay::transform::*;
 pub use viewport_lib_types::overlay::vector::*;
+pub use viewport_lib_types::overlay::world::*;

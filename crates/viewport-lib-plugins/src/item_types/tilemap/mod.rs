@@ -13,8 +13,10 @@
 //! animation never touches the chunk buffers.
 //!
 //! A cutout layer draws in the opaque scene pass. A blended layer draws after
-//! the opaque scene in painter's order, in the read-only-depth pass on the HDR
-//! path and after the cutout layers on the LDR path, like painter sprites.
+//! the opaque scene in painter's order through `paint_painter`, in the
+//! read-only-depth pass on the HDR path and after every item type's opaque
+//! draws on the LDR path, like painter sprites, interleaved by layer with world
+//! overlay layers.
 //!
 //! The draws use instanced vertex streams and uniforms only, so the type runs
 //! on the compatibility tier.
