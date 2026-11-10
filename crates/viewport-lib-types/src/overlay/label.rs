@@ -86,7 +86,10 @@ pub struct LabelItem {
     /// Text content to display.
     pub text: String,
 
-    /// Which font to draw the text in, and at what size.
+    /// Which font to draw the text in, and at what size: logical pixels by
+    /// default, or world units with
+    /// [`TextSizing::World`](crate::overlay::TextSizing::World), so the text
+    /// scales with the camera.
     pub text_style: crate::overlay::TextStyle,
 
     /// Maximum text width in logical pixels.  When set, text that exceeds
@@ -192,6 +195,14 @@ impl LabelItem {
     /// Set the font size in logical pixels.
     pub fn with_font_size(mut self, font_size: f32) -> Self {
         self.text_style.size = font_size;
+        self
+    }
+
+    /// Size the text in world units: `height` world units tall, measured as
+    /// `world` says. See [`TextSizing`](crate::overlay::TextSizing).
+    pub fn with_world_size(mut self, height: f32, world: crate::overlay::WorldTextSize) -> Self {
+        self.text_style.size = height;
+        self.text_style.sizing = crate::overlay::TextSizing::World(world);
         self
     }
 

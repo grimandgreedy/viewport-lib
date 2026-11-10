@@ -11,6 +11,7 @@ pub use viewport_lib_types::overlay::clip::*;
 pub use viewport_lib_types::overlay::colour_matrix::*;
 pub use viewport_lib_types::overlay::content_hash::*;
 pub use viewport_lib_types::overlay::fill::*;
+pub use viewport_lib_types::overlay::font::{TextFit, TextSizing, TextStyle, WorldTextSize};
 pub use viewport_lib_types::overlay::frame::*;
 pub use viewport_lib_types::overlay::geometry::*;
 pub use viewport_lib_types::overlay::glyph_run::*;

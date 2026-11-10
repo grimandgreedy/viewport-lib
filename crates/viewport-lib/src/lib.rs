@@ -335,12 +335,12 @@ pub use renderer::{
     PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
     ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
     ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern, SubObjectRef,
-    SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform, TileMode,
-    ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame,
-    ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeTransparency, WorkingSpace, WorldOverlayHit, WorldOverlayItem, WorldOverlayLayer,
-    WorldPlane, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextFit, TextSizing, TextStyle,
+    TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER,
+    ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem,
+    VolumeSelectionInfo, VolumeTransparency, WorkingSpace, WorldOverlayHit, WorldOverlayItem,
+    WorldOverlayLayer, WorldPlane, WorldTextSize, aabb_wireframe_polyline, bake_view_transform_lut,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 pub use resources::PipelineCompilation;

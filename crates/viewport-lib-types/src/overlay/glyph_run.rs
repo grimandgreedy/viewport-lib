@@ -55,7 +55,11 @@ impl PositionedGlyph {
 #[non_exhaustive]
 pub struct GlyphRunItem {
     /// Which font the glyph ids index into, and the size the bitmaps are
-    /// rasterised at. The glyph positions themselves come from `glyphs`.
+    /// rasterised at. The glyph positions themselves come from `glyphs`, in
+    /// the same units as the size: with
+    /// [`TextSizing::World`](crate::overlay::TextSizing::World) the run is
+    /// drawn as if laid out at `size` logical pixels and then scaled to its
+    /// on-screen size, positions included.
     pub text_style: crate::overlay::TextStyle,
 
     /// Where the item hangs from and which point of its own box lands there.
@@ -154,6 +158,14 @@ impl GlyphRunItem {
     /// Set the font size in logical pixels.
     pub fn with_font_size(mut self, font_size: f32) -> Self {
         self.text_style.size = font_size;
+        self
+    }
+
+    /// Size the text in world units: `height` world units tall, measured as
+    /// `world` says. See [`TextSizing`](crate::overlay::TextSizing).
+    pub fn with_world_size(mut self, height: f32, world: crate::overlay::WorldTextSize) -> Self {
+        self.text_style.size = height;
+        self.text_style.sizing = crate::overlay::TextSizing::World(world);
         self
     }
 

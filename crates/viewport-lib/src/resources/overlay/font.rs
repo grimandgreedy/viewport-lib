@@ -79,6 +79,30 @@ impl RasterSize {
             },
         }
     }
+
+    /// The raster for text drawn at `px` whose size sweeps as a camera
+    /// zooms: every size snaps to the ladder `for_px` uses above
+    /// `EXACT_SIZE_PX`, extended below it, so a zoom reuses a bounded set of
+    /// cells at every size. A size already on the ladder (within float
+    /// error) rasterises at itself, so it still snaps to the pixel grid.
+    fn for_px_stepped(px: f32) -> Self {
+        if !(px > 0.0) {
+            return Self::for_px(px);
+        }
+        let capped = px.min(MAX_RASTER_PX);
+        let steps = ((capped / EXACT_SIZE_PX).ln() / SIZE_STEP.ln()).round();
+        let raster = (EXACT_SIZE_PX * SIZE_STEP.powf(steps)).min(MAX_RASTER_PX);
+        let scale = px / raster;
+        Self {
+            px: raster,
+            tenths: (raster * 10.0).round() as u32,
+            scale: if (scale - 1.0).abs() < 1.0e-5 {
+                1.0
+            } else {
+                scale
+            },
+        }
+    }
 }
 
 /// The table-directory offset and a cache key for face `face` of `font_bytes`.
@@ -283,6 +307,9 @@ pub(crate) struct GlyphGrid {
     /// Whether a cell's texels land one-to-one on device pixels, so a pen
     /// snaps to the pixel grid and rasterises at its sub-pixel offset.
     pub snap: bool,
+    /// Whether the raster size snaps to the stepped ladder at every size,
+    /// for text whose size follows a zooming camera.
+    pub stepped: bool,
 }
 
 impl GlyphGrid {
@@ -293,6 +320,7 @@ impl GlyphGrid {
             scale: ppp,
             offset: [0.0, 0.0],
             snap: true,
+            stepped: false,
         }
     }
 
@@ -311,13 +339,22 @@ impl GlyphGrid {
                 scale: ppp * k,
                 offset: [ppp * centre[0] * (1.0 - k), ppp * centre[1] * (1.0 - k)],
                 snap: true,
+                stepped: false,
             };
         }
         Self {
             scale: ppp * spectral_norm(linear).max(1.0 / 64.0),
             offset: [0.0, 0.0],
             snap: false,
+            stepped: false,
         }
+    }
+
+    /// The same grid with its raster size on the stepped ladder when
+    /// `stepped` is set.
+    pub(crate) fn with_stepped(mut self, stepped: bool) -> Self {
+        self.stepped = stepped;
+        self
     }
 }
 
@@ -1035,7 +1072,11 @@ impl GlyphAtlas {
         I: IntoIterator<Item = (u16, f32, f32, P)>,
     {
         let font_index = font.map_or(0, |h| h.0);
-        let raster = RasterSize::for_px(font_size * grid.scale);
+        let raster = if grid.stepped {
+            RasterSize::for_px_stepped(font_size * grid.scale)
+        } else {
+            RasterSize::for_px(font_size * grid.scale)
+        };
         // Snapping only lands texels on pixels while a texel is a pixel.
         let snap = grid.snap && raster.scale == 1.0;
         let inv = 1.0 / grid.scale;
@@ -2223,6 +2264,67 @@ mod tests {
             px += 0.1;
         }
         assert!(seen.len() < 50, "{} raster sizes", seen.len());
+    }
+
+    /// The stepped raster ladder is the one world-sized screen text rounds
+    /// its drawn size to, so that text rasterises at its drawn size.
+    #[test]
+    fn the_stepped_ladder_matches_the_text_size_steps() {
+        assert_eq!(SIZE_STEP, viewport_lib_types::overlay::TextSizing::STEP);
+        let mut px = 3.0_f32;
+        while px < MAX_RASTER_PX {
+            let step = viewport_lib_types::overlay::TextSizing::step_px(px);
+            // Above the cap the raster is magnified.
+            for ppp in [1.0_f32, 1.5, 2.0]
+                .into_iter()
+                .filter(|_| step <= MAX_RASTER_PX)
+            {
+                let drawn = (step / ppp) * ppp;
+                let r = RasterSize::for_px_stepped(drawn);
+                assert_eq!(r.scale, 1.0, "{px} at {ppp}: raster {} for {drawn}", r.px);
+            }
+            let r = RasterSize::for_px_stepped(px);
+            assert!((r.px * r.scale - px).abs() < px * 1e-4 && r.scale > 0.97 && r.scale < 1.03);
+            px += 0.13;
+        }
+        let r = RasterSize::for_px_stepped(1000.0);
+        assert_eq!(r.px, RasterSize::for_px(1000.0).px);
+    }
+
+    /// Text on a stepped grid zoomed smoothly through 2x rasterises each glyph
+    /// at one size per ladder step, however many frames the zoom takes.
+    #[test]
+    fn a_stepped_zoom_rasterises_a_bounded_set() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let count = |stepped: bool| {
+            let mut atlas = GlyphAtlas::new(&device);
+            let before = atlas.rasters();
+            for i in 0..=400 {
+                atlas.begin_frame();
+                let px = 14.0 * 2.0_f32.powf(i as f32 / 400.0);
+                let shaped = atlas.shape_text("0123456789", px, None, 1.0);
+                let grid = GlyphGrid::screen(1.0).with_stepped(stepped);
+                atlas.place_text(
+                    &shaped,
+                    px,
+                    None,
+                    [0.0, 0.0],
+                    grid,
+                    &device,
+                    GlyphStyle::PLAIN,
+                );
+            }
+            atlas.rasters() - before
+        };
+        let stepped = count(true);
+        let exact = count(false);
+        // About 18 steps through 2x, ten glyphs each; the sub-pixel bins
+        // only come in at sizes exactly on a step.
+        assert!(stepped <= 19 * 10 * 4, "{stepped} rasters stepped");
+        assert!(stepped * 4 < exact, "{stepped} stepped, {exact} exact");
     }
 
     /// One glyph at 5,000px draws, at about its drawn size, without the atlas

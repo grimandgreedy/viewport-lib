@@ -30,6 +30,82 @@ pub(super) struct OverlaySpace<'a> {
     /// `true` for a world layer: layers draw flat and nothing reads the
     /// destination.
     pub world: bool,
+    /// Device pixels per logical pixel of the screen the space is seen on,
+    /// which world-sized text measures its clamps in.
+    pub screen_ppp: f32,
+}
+
+/// What a text item's sizing does to it this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TextSize {
+    /// Drawn at its own `size`.
+    Unchanged,
+    /// Not drawn: faded out, or its plane cannot be measured.
+    Hidden,
+    /// World-sized: its size and every length that follows the text scale by
+    /// `scale`, its opacity multiplies by `opacity`, and it rasterises on the
+    /// stepped ladder.
+    Sized { scale: f32, opacity: f32 },
+}
+
+impl OverlaySpace<'_> {
+    /// How text in `style` hanging from `anchor` is sized in this space.
+    ///
+    /// On the screen, world sizing resolves the logical pixels one world unit
+    /// covers at the anchor. In a world layer `size` is already in world
+    /// units, so only the clamps and fade apply, measured in screen pixels.
+    pub(super) fn text_size(
+        &self,
+        style: &crate::renderer::types::TextStyle,
+        anchor: &crate::renderer::types::OverlayOrigin,
+    ) -> TextSize {
+        let crate::renderer::types::TextSizing::World(world) = style.sizing else {
+            return TextSize::Unchanged;
+        };
+        if !(style.size > 0.0) {
+            return TextSize::Unchanged;
+        }
+        let fit = if self.world {
+            // Logical screen pixels per layer unit.
+            let per_unit = self.ppp / self.screen_ppp.max(1.0e-6);
+            world
+                .fit(style.size, per_unit)
+                .map(|f| (f.size / per_unit, f.opacity))
+        } else {
+            style
+                .resolve_screen_size_at(
+                    anchor,
+                    self.size,
+                    self.ppp,
+                    &self.view,
+                    &self.proj,
+                    self.world_origin,
+                )
+                .map(|f| (f.size, f.opacity))
+        };
+        match fit {
+            Some((size, opacity)) if opacity > 0.0 && size > 0.0 => TextSize::Sized {
+                scale: size / style.size,
+                opacity,
+            },
+            _ => TextSize::Hidden,
+        }
+    }
+}
+
+/// Scale the lengths of a text item's style that follow its size: shadow
+/// offsets, blur and spread.
+fn scale_text_style(style: &mut crate::renderer::types::OverlayStyle, scale: f32, opacity: f32) {
+    style.opacity *= opacity;
+    for layer in style
+        .shadows
+        .iter_mut()
+        .chain(style.inner_shadows.iter_mut())
+    {
+        layer.offset = [layer.offset[0] * scale, layer.offset[1] * scale];
+        layer.blur *= scale;
+        layer.spread *= scale;
+    }
 }
 
 impl<'a> OverlaySpace<'a> {
@@ -51,6 +127,7 @@ impl<'a> OverlaySpace<'a> {
                 .show_axes_indicator
                 .then(|| camera.orientation()),
             world: false,
+            screen_ppp: frame.camera.pixels_per_point,
         }
     }
 }
@@ -1818,6 +1895,22 @@ impl ViewportRenderer {
                         }
                         None => label,
                     };
+                    // A world-sized label draws at its size on screen this
+                    // frame, with the lengths that follow the text scaled.
+                    let sized_storage;
+                    let (label, stepped) =
+                        match space.text_size(&label.text_style, &label.anchoring.origin) {
+                            TextSize::Unchanged => (label, false),
+                            TextSize::Hidden => continue,
+                            TextSize::Sized { scale, opacity } => {
+                                let mut owned = label.clone();
+                                owned.text_style.size *= scale;
+                                owned.max_width = owned.max_width.map(|w| w * scale);
+                                scale_text_style(&mut owned.style, scale, opacity);
+                                sized_storage = owned;
+                                (&sized_storage, true)
+                            }
+                        };
                     let record_layer = ov.layer_plan.record_layer(LayerFamily::Label, item_index);
                     let opacity = label.style.opacity.clamp(0.0, 1.0);
                     super::overlay_style_check::warn_inert_style(
@@ -1878,7 +1971,8 @@ impl ViewportRenderer {
                     let rot = OverlayRotation::new(&label.transform, pivot);
                     // The transform's scale picks the raster size, so a scaled
                     // label is rasterised at its drawn size rather than magnified.
-                    let grid = GlyphGrid::for_transform(label.transform.linear(), pivot, ppp);
+                    let grid = GlyphGrid::for_transform(label.transform.linear(), pivot, ppp)
+                        .with_stepped(stepped);
 
                     let text_start = batch.len();
 
@@ -2044,6 +2138,25 @@ impl ViewportRenderer {
                         }
                         None => run,
                     };
+                    // A world-sized run scales its size and glyph positions
+                    // together, so it grows about its anchor.
+                    let sized_storage;
+                    let (run, stepped) =
+                        match space.text_size(&run.text_style, &run.anchoring.origin) {
+                            TextSize::Unchanged => (run, false),
+                            TextSize::Hidden => continue,
+                            TextSize::Sized { scale, opacity } => {
+                                let mut owned = run.clone();
+                                owned.text_style.size *= scale;
+                                for g in &mut owned.glyphs {
+                                    g.x *= scale;
+                                    g.y *= scale;
+                                }
+                                scale_text_style(&mut owned.style, scale, opacity);
+                                sized_storage = owned;
+                                (&sized_storage, true)
+                            }
+                        };
                     let record_layer = ov
                         .layer_plan
                         .record_layer(LayerFamily::GlyphRun, item_index);
@@ -2089,7 +2202,8 @@ impl ViewportRenderer {
                         run.transform.pivot,
                     );
                     let rot = OverlayRotation::new(&run.transform, pivot);
-                    let grid = GlyphGrid::for_transform(run.transform.linear(), pivot, ppp);
+                    let grid = GlyphGrid::for_transform(run.transform.linear(), pivot, ppp)
+                        .with_stepped(stepped);
                     // Each glyph carries its multiplier through placement so the
                     // per-glyph entries stay aligned with the quads after
                     // zero-area skips. White is "the fill unmodified": the fill

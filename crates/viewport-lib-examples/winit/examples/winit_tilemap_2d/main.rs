@@ -6,7 +6,11 @@
 //! walk over the ground as painter-ordered sprites sorted by `-y`. A signpost
 //! of vector art and a glowing additive path sit on a world overlay layer
 //! between the ground and the critters, so they scroll and zoom with the map
-//! and take bloom. The camera drifts to the right on its own.
+//! and take bloom. Damage numbers float up from the critters and fade, and
+//! one critter carries a name tag: both are screen labels anchored to world
+//! points and sized in world units, so they scale with the zoom while facing
+//! the screen, and the name tag never shrinks below 12 pixels. The camera
+//! drifts to the right on its own.
 //!
 //! Drag to pan, scroll or pinch to zoom, `P` to switch between crisp pixel art
 //! (nearest-sampled and snapped to the pixel grid) and smooth filtering.
@@ -25,11 +29,11 @@ use viewport_lib_plugins::item_types::tilemap::{
     Tile, TileAnimation, TileFlip, TileFrame, Tilemap, TilemapId, TilemapItem, Tileset,
 };
 use vpl::{
-    Action, AppConfig, Camera2d, Camera2dController, Colour, ExtraId, FillRule, KeyCode, LabelItem,
-    LineCap, Modifiers, ModifiersMatch, OverlayBlend, OverlayFill, OverlayFrame,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, Plane2d, SubPath,
-    TextureData, TextureFilter, TextureId, ViewportApp, ViewportBinding, ViewportGesture,
-    WindowConfig, WorldOverlayLayer, WorldPlane, planar_bindings,
+    Action, Alignment, AnchorX, AnchorY, AppConfig, Camera2d, Camera2dController, Colour, ExtraId,
+    FillRule, KeyCode, LabelItem, LineCap, Modifiers, ModifiersMatch, OverlayBlend, OverlayFill,
+    OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, Plane2d,
+    ShadowLayer, SubPath, TextureData, TextureFilter, TextureId, ViewportApp, ViewportBinding,
+    ViewportGesture, WindowConfig, WorldOverlayLayer, WorldPlane, WorldTextSize, planar_bindings,
 };
 
 const TOGGLE_PIXEL_ART: Action = Action::Custom(1);
@@ -319,6 +323,55 @@ fn signpost(time: f32) -> WorldOverlayLayer {
         .with_frame(frame)
 }
 
+/// A damage number floating up from where it was dealt.
+struct Damage {
+    at: Vec2,
+    age: f32,
+    amount: u32,
+}
+
+/// How long a damage number floats, in seconds.
+const DAMAGE_LIFE: f32 = 1.2;
+
+/// A thin dark outline, in world units like the text it backs.
+fn outline(spread: f32) -> ShadowLayer {
+    ShadowLayer::new(Colour::srgb(0.05, 0.03, 0.02, 1.0), 0.0, [0.0, 0.0]).with_spread(spread)
+}
+
+/// The damage numbers as screen labels anchored in the world and sized in
+/// world units: they rise ten units and fade over their life.
+fn damage_labels(damage: &[Damage]) -> Vec<LabelItem> {
+    damage
+        .iter()
+        .map(|d| {
+            let t = d.age / DAMAGE_LIFE;
+            LabelItem::new(d.amount.to_string())
+                .with_world_anchor([d.at.x, d.at.y + 10.0 + 10.0 * t, 2.0])
+                .with_align(Alignment::new(AnchorX::Middle, AnchorY::Baseline))
+                .with_world_size(7.0, WorldTextSize::new(WorldPlane::Xy))
+                .with_colour(Colour::srgb(1.0, 0.85, 0.25, 1.0))
+                .with_shadow(outline(0.6))
+                .with_opacity((1.0 - t * t).clamp(0.0, 1.0))
+        })
+        .collect()
+}
+
+/// A name tag over a critter: world-sized, but never smaller than 12 or
+/// larger than 32 logical pixels.
+fn name_tag(at: Vec2) -> LabelItem {
+    LabelItem::new("Bramble")
+        .with_world_anchor([at.x, at.y + 10.0, 2.0])
+        .with_align(Alignment::new(AnchorX::Middle, AnchorY::Baseline))
+        .with_world_size(
+            4.0,
+            WorldTextSize::new(WorldPlane::Xy)
+                .with_min_px(12.0)
+                .with_max_px(32.0),
+        )
+        .with_colour(Colour::srgb(0.85, 0.95, 1.0, 1.0))
+        .with_shadow(outline(0.4))
+}
+
 fn main() {
     let layers: Rc<Cell<Option<Layers>>> = Rc::new(Cell::new(None));
     let setup_layers = layers.clone();
@@ -331,6 +384,9 @@ fn main() {
     camera.snap_to_pixels = true;
     let mut controller = Camera2dController::new_stateless();
     let mut critters = critters();
+    let mut damage: Vec<Damage> = Vec::new();
+    let mut damage_seed = 0x5EED_D00D_u32;
+    let mut next_hit = 0.0_f32;
     let mut pixel_art = true;
     let mut extras: Vec<ExtraId> = Vec::new();
 
@@ -398,6 +454,29 @@ fn main() {
                     c.position = c.position.clamp(Vec2::ZERO, extent);
                 }
 
+                // A hit on a critter near the middle of the view every so
+                // often, floating up from where it landed.
+                next_hit -= dt;
+                if next_hit <= 0.0 {
+                    next_hit = 0.15 + next(&mut damage_seed) * 0.3;
+                    let centre = camera.centre();
+                    if let Some(c) = critters
+                        .iter()
+                        .filter(|c| (c.position - centre).length() < 120.0)
+                        .nth((next(&mut damage_seed) * 8.0) as usize)
+                    {
+                        damage.push(Damage {
+                            at: c.position,
+                            age: 0.0,
+                            amount: 5 + (next(&mut damage_seed) * 95.0) as u32,
+                        });
+                    }
+                }
+                for d in &mut damage {
+                    d.age += dt;
+                }
+                damage.retain(|d| d.age < DAMAGE_LIFE);
+
                 // The setup callback runs again after a lost device with new
                 // handles, so the items are rebuilt each frame from them.
                 for id in extras.drain(..) {
@@ -424,8 +503,11 @@ fn main() {
                     extras.push(ctx.add_item(sprites(layers.atlas, &critters, pixel_art)));
                 }
                 let layer = signpost(ctx.time());
+                let mut labels = damage_labels(&damage);
+                labels.push(name_tag(critters[0].position));
                 ctx.inject(move |frame| {
                     frame.scene.world_overlays.push(layer);
+                    frame.overlays.labels.extend(labels);
                     frame.effects.post_process.bloom.enabled = true;
                 });
 

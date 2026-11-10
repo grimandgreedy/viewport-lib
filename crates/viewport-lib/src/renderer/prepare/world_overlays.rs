@@ -128,6 +128,7 @@ impl ViewportRenderer {
                 world_origin,
                 axes: None,
                 world: true,
+                screen_ppp,
             };
             let draw = &mut worlds.layers[i];
             draw.order = layer.order;

@@ -90,8 +90,11 @@ impl WorldPlane {
 /// hairline (a stroke of width `0.0`) is one device pixel wide, the
 /// anti-aliasing fringe and clip edges are one device pixel, and text and
 /// small vector shapes rasterise at their size on screen, so they re-rasterise
-/// as the camera zooms. Under a perspective camera the zoom is taken where the
-/// view's centre ray meets the plane.
+/// as the camera zooms. Text whose `text_style.sizing` is
+/// [`TextSizing::World`](crate::overlay::TextSizing::World) rasterises at
+/// stepped sizes instead, so a zoom reuses a bounded set of glyphs, and can
+/// clamp or fade by its size on screen. Under a perspective camera the zoom
+/// is taken where the view's centre ray meets the plane.
 ///
 /// Inside a world layer, `OverlayFrame::layers` are drawn flat: each immediate
 /// member draws straight into the scene with the layer's opacity, blend and

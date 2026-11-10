@@ -11,7 +11,8 @@ use crate::overlay::{
     OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem, OverlayOrigin, OverlayPolylineItem,
     OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
     OverlayTransform, PathSegment, PositionedGlyph, RepeatMode, RetainedOverlay, ShadowLayer,
-    StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
+    StrokePattern, SubPath, TextSizing, TextStyle, TextureTransform, TileMode, TriangleDirection,
+    WorldPlane, WorldTextSize,
 };
 
 /// Feeds everything that affects how an overlay value draws into a hasher, so
@@ -270,9 +271,43 @@ impl OverlayContentHash for OverlayClip {
 
 impl OverlayContentHash for TextStyle {
     fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
-        let Self { font, size } = self;
+        let Self { font, size, sizing } = self;
         font.content_hash_at(origin, state);
         hash_f32(state, *size);
+        match sizing {
+            TextSizing::Screen => state.write_u8(0),
+            TextSizing::World(w) => {
+                state.write_u8(1);
+                let WorldTextSize {
+                    plane,
+                    elevation,
+                    min_px,
+                    max_px,
+                    fade_px,
+                } = w;
+                state.write_u8(match plane {
+                    WorldPlane::Xy => 0,
+                    WorldPlane::Xz => 1,
+                });
+                hash_f32(state, *elevation);
+                for v in [*min_px, *max_px] {
+                    match v {
+                        None => state.write_u8(0),
+                        Some(v) => {
+                            state.write_u8(1);
+                            hash_f32(state, v);
+                        }
+                    }
+                }
+                match fade_px {
+                    None => state.write_u8(0),
+                    Some(f) => {
+                        state.write_u8(1);
+                        hash_floats(state, f);
+                    }
+                }
+            }
+        }
     }
 }
 

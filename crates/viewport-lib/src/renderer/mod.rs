@@ -111,11 +111,12 @@ pub use self::types::{
     PathSegment, PipelineMode, PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings,
     RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects,
     SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
-    StrokePattern, SubPath, SurfaceSubmission, TextureTransform, TileMode, ToneCurve, ToneMapping,
-    TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, VignetteSettings,
-    VolumeMeshItem, VolumeTransparency, WorkingSpace, WorldOverlayHit, WorldOverlayItem,
-    WorldOverlayLayer, WorldPlane, aabb_wireframe_polyline, bake_view_transform_lut,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    StrokePattern, SubPath, SurfaceSubmission, TextFit, TextSizing, TextStyle, TextureTransform,
+    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
+    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace,
+    WorldOverlayHit, WorldOverlayItem, WorldOverlayLayer, WorldPlane, WorldTextSize,
+    aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
