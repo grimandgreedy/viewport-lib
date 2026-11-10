@@ -240,13 +240,6 @@ impl ViewportRenderer {
             || self.any_plugin_draws_transparent(frame)
     }
 
-    /// Whether any item-type plugin encodes at `scope`.
-    pub(super) fn any_plugin_encodes_at(&self, scope: crate::plugin_api::EncoderScope) -> bool {
-        self.item_type_plugins
-            .values()
-            .any(|p| p.encoder_scopes().contains(&scope))
-    }
-
     /// Fill viewport `vp_idx`'s pass table for `frame`. The slot must exist.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn plan_hdr_passes(
@@ -308,7 +301,11 @@ impl ViewportRenderer {
         table.declare_side_effect(
             HdrPass::ScopeOnOpaqueSurfaces,
             "scope_on_opaque_surfaces",
-            self.any_plugin_encodes_at(crate::plugin_api::EncoderScope::OnOpaqueSurfaces),
+            self.any_plugin_encodes_at(
+                frame,
+                crate::plugin_api::EncoderScope::OnOpaqueSurfaces,
+                true,
+            ),
         );
         table.declare(
             HdrPass::SubHighlight,
@@ -346,7 +343,7 @@ impl ViewportRenderer {
         table.declare_side_effect(
             HdrPass::ScopeAfterOpaque,
             "scope_after_opaque",
-            self.any_plugin_encodes_at(crate::plugin_api::EncoderScope::AfterOpaque),
+            self.any_plugin_encodes_at(frame, crate::plugin_api::EncoderScope::AfterOpaque, true),
         );
         table.declare(
             HdrPass::Oit,
@@ -360,7 +357,11 @@ impl ViewportRenderer {
         table.declare_side_effect(
             HdrPass::ScopeAfterTransparent,
             "scope_after_transparent",
-            self.any_plugin_encodes_at(crate::plugin_api::EncoderScope::AfterTransparent),
+            self.any_plugin_encodes_at(
+                frame,
+                crate::plugin_api::EncoderScope::AfterTransparent,
+                true,
+            ),
         );
         table.declare(
             HdrPass::OutlineComposite,

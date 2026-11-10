@@ -54,15 +54,9 @@ fn passes(harness: &mut Harness, frame: &FrameData) -> Vec<&'static str> {
 }
 
 /// The passes every HDR frame of the quad scene runs. The harness installs
-/// the built-in item types, some of which encode at every encoder scope.
-const BASE: [&str; 6] = [
-    "scene",
-    "scope_on_opaque_surfaces",
-    "scope_after_opaque",
-    "scope_after_transparent",
-    "exposure",
-    "tone_map",
-];
+/// the built-in item types, some of which encode at the encoder scopes, but
+/// the frame has none of their items, so no scope runs.
+const BASE: [&str; 3] = ["scene", "exposure", "tone_map"];
 
 fn with(extra: &[&'static str]) -> Vec<&'static str> {
     let mut list: Vec<&'static str> = Vec::new();

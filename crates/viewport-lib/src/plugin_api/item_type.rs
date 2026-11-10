@@ -553,8 +553,15 @@ pub struct PainterContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter.
     pub frame_index: u64,
-    /// The painter layers this call draws, inclusive.
+    /// The painter layers this call draws, inclusive. For a call with
+    /// [`batches`](Self::batches), the layers those batches span.
     pub layers: std::ops::RangeInclusive<u32>,
+    /// For a plugin that reports
+    /// [`painter_batches`](ItemTypePlugin::painter_batches): the batch handles
+    /// this call draws, in the order to draw them. `None` for a plugin that
+    /// reports none, which draws everything it has in
+    /// [`layers`](Self::layers).
+    pub batches: Option<&'a [u32]>,
     /// On the HDR path, the read-only-depth pass's ready-made scene depth
     /// bind group (see [`DepthReadContext::scene_depth_bind_group`]); `None`
     /// in the LDR scene pass, whose depth attachment is writable.
@@ -572,6 +579,37 @@ impl PainterContext<'_> {
     /// Whether `layer` is drawn by this call.
     pub fn includes(&self, layer: u32) -> bool {
         self.layers.contains(&layer)
+    }
+}
+
+/// One of a plugin's painter's-order draws this frame, as reported by
+/// [`ItemTypePlugin::painter_batches`].
+///
+/// The renderer sorts every plugin's batches into one sequence: ascending
+/// `layer`, then ascending `sort_key`, then registration order of the plugins,
+/// then the order each plugin reported them in. A world overlay layer draws
+/// after every batch whose layer is at or below its `order`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct PainterBatch {
+    /// Painter layer: lower layers draw first.
+    pub layer: u32,
+    /// Order within the layer, across plugins: lower keys draw first. A batch
+    /// holding many sorted instances reports the key of its first one.
+    pub sort_key: f32,
+    /// The plugin's own handle for the batch, handed back in
+    /// [`PainterContext::batches`].
+    pub batch: u32,
+}
+
+impl PainterBatch {
+    /// A batch at `layer` with `sort_key`, named `batch` by the plugin.
+    pub fn new(layer: u32, sort_key: f32, batch: u32) -> Self {
+        Self {
+            layer,
+            sort_key,
+            batch,
+        }
     }
 }
 
@@ -613,6 +651,11 @@ pub enum EncoderScope {
     /// The scene colour now holds opaque plus resolved transparency, which is
     /// what a participating-media or volumetric effect wants to composite
     /// over. Depth is still opaque-only: the OIT pass writes none.
+    ///
+    /// The one scope the LDR path also has, for plugins that opt in through
+    /// [`encodes_ldr`](ItemTypePlugin::encodes_ldr): after the scene content,
+    /// the painter's-order content and the world overlay layers, and before
+    /// the selection outline and the overlays.
     AfterTransparent,
 }
 
@@ -655,15 +698,21 @@ pub struct EncoderScopeContext<'a> {
     /// Size in pixels of the scene attachments below, render scale applied.
     /// Size intermediate targets from this, not from the viewport extent.
     pub scene_size: [u32; 2],
+    /// Format of [`scene_colour`](Self::scene_colour):
+    /// [`HDR_COLOR_FORMAT`](crate::resources::HDR_COLOR_FORMAT) on the HDR
+    /// path, the renderer's output format on the LDR path.
+    pub target_format: crate::gpu::TextureFormat,
+
     /// The shared group-0 bind group for this viewport, the same one the lib
     /// binds before the draw hooks. Bind it at group 0 in passes of the
     /// plugin's own so its shaders can use the shared camera, lighting and
     /// clip declarations.
     pub camera_bind_group: &'a crate::gpu::BindGroup,
-    /// The scene colour target, as a view to attach and render into. This is
-    /// the HDR target at scene resolution even under supersampling: the SSAA
-    /// resolve runs before either scope, so from here on the frame is drawing
-    /// into the same target it would without SSAA.
+    /// The scene colour target, as a view to attach and render into. On the
+    /// HDR path this is the HDR target at scene resolution even under
+    /// supersampling: the SSAA resolve runs before either scope, so from here
+    /// on the frame is drawing into the same target it would without SSAA. On
+    /// the LDR path it is the target the scene pass drew into.
     pub scene_colour: &'a crate::gpu::TextureView,
     /// The same target as a texture, as the source for a
     /// `copy_texture_to_texture` into a sampleable copy. An effect that reads
@@ -724,6 +773,18 @@ pub struct EncoderScopeContext<'a> {
     /// `true` when the frame budget asked for reduced quality this frame, the
     /// same signal [`ItemFrameContext::quality_reduced`] carries.
     pub quality_reduced: bool,
+    /// Whether this is the HDR path's scope.
+    pub(crate) hdr_pass: bool,
+}
+
+impl EncoderScopeContext<'_> {
+    /// `true` on the HDR path, `false` at the LDR path's
+    /// [`AfterTransparent`](EncoderScope::AfterTransparent) point. Choose the
+    /// pipelines that write [`scene_colour`](Self::scene_colour) by this or by
+    /// [`target_format`](Self::target_format).
+    pub fn is_hdr_pass(&self) -> bool {
+        self.hdr_pass
+    }
 }
 
 /// Information forwarded to a plugin's `cast_shadow_pass`.
@@ -1113,10 +1174,12 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// (and the renderer warns once), never handed a pass their pipeline
     /// cannot draw into.
     ///
-    /// Only `paint` runs on the LDR path: the OIT, read-only-depth, and
-    /// foreground passes exist on the HDR path alone, so
+    /// `paint` and `paint_painter` run on the LDR path: the OIT,
+    /// read-only-depth, and foreground passes exist on the HDR path alone, so
     /// `paint_transparent`, `paint_depth_read`, and `paint_foreground` are
-    /// HDR-only regardless of this value.
+    /// HDR-only regardless of this value. An encode after the scene opts in
+    /// separately, through [`encodes_ldr`](Self::encodes_ldr).
+
     fn draws_ldr(&self) -> bool {
         false
     }
@@ -1204,22 +1267,39 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         false
     }
 
-    /// Issue this frame's painter's-order draws whose layer lies in
-    /// [`PainterContext::layers`].
+    /// This frame's painter's-order draws, pushed onto `out`, so they take
+    /// their place in the sequence the renderer sorts across every plugin.
+    ///
+    /// Read after [`prepare`](Self::prepare) and [`cull`](Self::cull), only
+    /// when [`draws_painter`](Self::draws_painter) returns `true`. Push one
+    /// [`PainterBatch`] per draw that can be ordered on its own; the renderer
+    /// then calls [`paint_painter`](Self::paint_painter) once per run of
+    /// consecutive batches of this plugin, naming them in
+    /// [`PainterContext::batches`]. Pushing nothing, the default, keeps the
+    /// plugin out of the sequence: see `paint_painter` for where it draws then.
+    fn painter_batches(&self, _out: &mut Vec<PainterBatch>) {}
+
+    /// Issue this frame's painter's-order draws.
     ///
     /// Painter's-order content (blended sprites, blended tile layers) is
     /// ordered by a `u32` layer, and world overlay layers interleave with it by
-    /// the same number. The renderer calls this once per run of layers between
-    /// world overlay layers, ascending: each plugin draws its content in the
-    /// run, then the next plugin, then the world layers at the run's top
-    /// layer. A frame with no world layers makes one call covering every
-    /// layer. Within a run, plugins draw in registration order, so one
-    /// plugin's content at a lower layer can still land over another's at a
-    /// higher one.
+    /// the same number. A plugin that reports
+    /// [`painter_batches`](Self::painter_batches) is called once per run of
+    /// its own batches in the renderer's sequence and draws exactly the
+    /// batches [`PainterContext::batches`] names, in that order, so its
+    /// content interleaves with other plugins' by layer and sort key.
+    ///
+    /// A plugin that reports none is called once per run of layers between
+    /// world overlay layers, ascending, after the sequenced batches of that
+    /// run, and draws its content whose layer lies in
+    /// [`PainterContext::layers`]; then the world layers at the run's top
+    /// layer draw. A frame with no world layers makes one such call covering
+    /// every layer. Such plugins draw in registration order within a run.
     ///
     /// The pass has the viewport's camera bind group at group 0 on entry.
     /// Only called when [`draws_painter`](Self::draws_painter) returns `true`,
     /// and on the LDR path only for a plugin that [`draws_ldr`](Self::draws_ldr).
+
     fn paint_painter(
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
@@ -1412,11 +1492,48 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// passes of its own, and the renderer will call `encode` once per listed
     /// scope, in the order the frame reaches them rather than the order listed.
     ///
-    /// HDR-only, like the OIT, read-only-depth and foreground hooks: the LDR
-    /// path has no intermediate scene target to read or composite into, so a
-    /// plugin listing scopes is simply not called there.
+    /// Read after [`prepare`](Self::prepare), and only for a plugin with items
+    /// this frame: a scope no plugin with items lists opens no pass.
+    ///
+    /// On the HDR path every scope runs. The LDR path runs
+    /// [`AfterTransparent`](EncoderScope::AfterTransparent) alone, and only
+    /// for a plugin that opts in through [`encodes_ldr`](Self::encodes_ldr).
     fn encoder_scopes(&self) -> &[EncoderScope] {
         &[]
+    }
+
+    /// `true` when this plugin's [`AfterTransparent`](EncoderScope::AfterTransparent)
+    /// encode also runs on the LDR path.
+    ///
+    /// There the renderer ends its scene pass after the painter's-order
+    /// content and world overlay layers, calls `encode`, and resumes with the
+    /// selection outline, the sub-object highlight and the overlays. The
+    /// context's scene colour is the LDR target in the renderer's output
+    /// format ([`EncoderScopeContext::target_format`], with
+    /// [`EncoderScopeContext::is_hdr_pass`] `false`), at one sample, so the
+    /// plugin needs pipelines for that format as well. The scene colour is a
+    /// texture that can be copied from: when the output cannot be, the frame
+    /// draws into an intermediate target and copies it to the output at the
+    /// end.
+    ///
+    /// The host-owned render pass (`pass().paint`, `paint_to`,
+    /// `paint_viewport`) cannot be ended mid-frame, so there the encode is
+    /// skipped and the renderer reports it once.
+    fn encodes_ldr(&self) -> bool {
+        false
+    }
+
+    /// `false` when this plugin's encode at `scope` never reads the scene
+    /// depth.
+    ///
+    /// Without [`direct_depth_sampling`](crate::Capabilities::direct_depth_sampling)
+    /// the renderer copies the scene depth before a scope so
+    /// [`EncoderScopeContext::scene_depth_only`] can be sampled; it skips the
+    /// copy when no plugin encoding at the scope says `true`. On such a frame
+    /// `scene_depth_only` views the live depth buffer, which must not then be
+    /// sampled while `scene_depth` is attached.
+    fn encode_reads_depth(&self, _scope: EncoderScope) -> bool {
+        true
     }
 
     /// Encode passes of this plugin's own into the frame's command encoder.

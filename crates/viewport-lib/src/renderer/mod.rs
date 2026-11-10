@@ -2956,46 +2956,142 @@ impl ViewportRenderer {
                 .is_some_and(|s| !s.world_overlays.is_empty())
     }
 
-    /// Invoke `paint_painter` for `layers` on each painter-drawing plugin
-    /// with items on `frame.scene`.
+    /// The frame's painter sequence: every plugin's painter's-order draws and
+    /// the world overlay layers, in the order they draw. `hdr` selects the
+    /// plugins that draw on the path: on the LDR path only those that
+    /// [`draws_ldr`](crate::plugin_api::ItemTypePlugin::draws_ldr).
+    ///
+    /// Batches reported through `painter_batches` sort by layer, then sort key,
+    /// then plugin registration order, then report order, and draw as runs of
+    /// consecutive batches of one plugin. Layers between world overlay layers
+    /// form runs: a run draws its sequenced batches, then once each plugin that
+    /// reported no batches (for the run's layers), then the world layers at the
+    /// run's top layer.
+    pub(crate) fn painter_plan(&self, frame: &FrameData, hdr: bool) -> PainterPlan {
+        struct Entry {
+            layer: u32,
+            key: f32,
+            plugin: usize,
+            report: usize,
+            name: &'static str,
+            batch: u32,
+        }
+        let mut plan = PainterPlan::default();
+        let mut entries: Vec<Entry> = Vec::new();
+        let mut unsequenced: Vec<&'static str> = Vec::new();
+        let mut reported = Vec::new();
+        for (plugin, (name, p)) in self.item_type_plugins.iter().enumerate() {
+            if !p.draws_painter() || (!hdr && !p.draws_ldr()) {
+                continue;
+            }
+            if crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                .all(|items| items.is_empty())
+            {
+                continue;
+            }
+            reported.clear();
+            p.painter_batches(&mut reported);
+            if reported.is_empty() {
+                unsequenced.push(name);
+            }
+            for (report, b) in reported.iter().enumerate() {
+                entries.push(Entry {
+                    layer: b.layer,
+                    key: b.sort_key,
+                    plugin,
+                    report,
+                    name,
+                    batch: b.batch,
+                });
+            }
+        }
+        entries.sort_by(|a, b| {
+            a.layer
+                .cmp(&b.layer)
+                .then(a.key.total_cmp(&b.key))
+                .then(a.plugin.cmp(&b.plugin))
+                .then(a.report.cmp(&b.report))
+        });
+
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        let sequence: &[usize] = worlds.map_or(&[], |w| &w.sequence);
+        let order_of = |k: usize| worlds.map_or(0, |w| w.layers[sequence[k]].order);
+        let (mut e, mut k, mut lo) = (0, 0, 0u32);
+        loop {
+            let top = (k < sequence.len()).then(|| order_of(k));
+            let hi = top.unwrap_or(u32::MAX);
+            while e < entries.len() && entries[e].layer <= hi {
+                let first = e;
+                let name = entries[e].name;
+                while e < entries.len() && entries[e].layer <= hi && entries[e].name == name {
+                    e += 1;
+                }
+                let at = plan.batches.len();
+                plan.batches
+                    .extend(entries[first..e].iter().map(|entry| entry.batch));
+                plan.steps.push(PainterStep::Batches {
+                    plugin: name,
+                    layers: entries[first].layer..=entries[e - 1].layer,
+                    batches: at..plan.batches.len(),
+                });
+            }
+            for &name in &unsequenced {
+                plan.steps.push(PainterStep::Layers {
+                    plugin: name,
+                    layers: lo..=hi,
+                });
+            }
+            let Some(order) = top else { break };
+            let from = k;
+            while k < sequence.len() && order_of(k) == order {
+                k += 1;
+            }
+            plan.steps.push(PainterStep::World { layers: from..k });
+            match order.checked_add(1) {
+                Some(next) => lo = next,
+                None => break,
+            }
+        }
+        plan
+    }
+
+    /// Call one plugin's `paint_painter` for `layers`, naming `batches` when
+    /// the plugin reported them.
     fn dispatch_plugin_paint_painter(
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         frame: &FrameData,
+        name: &'static str,
         layers: std::ops::RangeInclusive<u32>,
+        batches: Option<&[u32]>,
         scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
     ) {
-        if self.item_type_plugins.is_empty() {
+        let Some(plugin) = self.item_type_plugins.get(name) else {
             return;
-        }
+        };
         let ctx = crate::plugin_api::PainterContext {
             camera: &frame.camera.render_camera,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             layers,
+            batches,
             scene_depth_bind_group,
         };
-        let hdr = scene_depth_bind_group.is_some();
-        for (name, plugin) in self.item_type_plugins.iter() {
-            if !plugin.draws_painter() || (!hdr && !plugin.draws_ldr()) {
-                continue;
-            }
-            let items = crate::plugin_api::ItemCollections::new(
-                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
-            );
-            if !items.is_empty() {
-                plugin.paint_painter(pass, &ctx, &items);
-            }
-        }
+        let items = crate::plugin_api::ItemCollections::new(
+            crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+        );
+        plugin.paint_painter(pass, &ctx, &items);
     }
 
-    /// Draw the frame's painter's-order content and its world overlay layers,
-    /// interleaved by layer: plugin content up to each world layer's `order`,
-    /// then the world layers at that order, then the rest. `camera_bg` is
-    /// rebound at group 0 after the world layers, which bind their own.
-    /// `scene_depth_bind_group` is `Some` in the HDR read-only-depth pass and
-    /// `None` in the LDR scene pass.
+    /// Draw the frame's painter sequence: painter's-order content and the
+    /// world overlay layers, in [`painter_plan`](Self::painter_plan) order.
+    /// `camera_bg` is rebound at group 0 after the world layers, which bind
+    /// their own. `scene_depth_bind_group` is `Some` in the HDR
+    /// read-only-depth pass and `None` in the LDR scene pass.
     pub(crate) fn paint_painters_and_world(
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
@@ -3007,41 +3103,105 @@ impl ViewportRenderer {
             .viewport_slots
             .get(frame.camera.viewport_index)
             .map(|s| &s.world_overlays);
-        let sequence: &[usize] = worlds.map_or(&[], |w| &w.sequence);
-        let mut lo = 0u32;
-        let mut k = 0;
-        while let Some(worlds) = worlds.filter(|_| k < sequence.len()) {
-            let order = worlds.layers[sequence[k]].order;
-            self.dispatch_plugin_paint_painter(pass, frame, lo..=order, scene_depth_bind_group);
-            let _span =
-                tracing::debug_span!(target: "viewport_lib::frame", "world_overlay").entered();
-            while k < sequence.len() && worlds.layers[sequence[k]].order == order {
-                let draw = &worlds.layers[sequence[k]];
-                if let Some(pass_key) = worlds.pass {
-                    crate::renderer::render::emit_overlay_segments(
-                        &self.resources,
-                        &draw.ov,
-                        pass,
-                        draw.ov.main_segments(),
-                        &crate::renderer::render::OverlayEmit {
-                            dst: false,
-                            backdrop: None,
-                            world: Some(crate::resources::overlay::world::WorldPassKey {
-                                depth_test: draw.depth_test,
-                                ..pass_key
-                            }),
-                        },
-                    );
+        if worlds.is_none_or(|w| w.sequence.is_empty()) && !self.any_plugin_draws_painter(frame) {
+            return;
+        }
+        let plan = self.painter_plan(frame, scene_depth_bind_group.is_some());
+        for step in &plan.steps {
+            match step {
+                PainterStep::Batches {
+                    plugin,
+                    layers,
+                    batches,
+                } => self.dispatch_plugin_paint_painter(
+                    pass,
+                    frame,
+                    plugin,
+                    layers.clone(),
+                    Some(&plan.batches[batches.clone()]),
+                    scene_depth_bind_group,
+                ),
+                PainterStep::Layers { plugin, layers } => self.dispatch_plugin_paint_painter(
+                    pass,
+                    frame,
+                    plugin,
+                    layers.clone(),
+                    None,
+                    scene_depth_bind_group,
+                ),
+                PainterStep::World { layers } => {
+                    let Some(worlds) = worlds else { continue };
+                    let _span =
+                        tracing::debug_span!(target: "viewport_lib::frame", "world_overlay")
+                            .entered();
+                    for &i in &worlds.sequence[layers.clone()] {
+                        let draw = &worlds.layers[i];
+                        if let Some(pass_key) = worlds.pass {
+                            crate::renderer::render::emit_overlay_segments(
+                                &self.resources,
+                                &draw.ov,
+                                pass,
+                                draw.ov.main_segments(),
+                                &crate::renderer::render::OverlayEmit {
+                                    dst: false,
+                                    backdrop: None,
+                                    world: Some(crate::resources::overlay::world::WorldPassKey {
+                                        depth_test: draw.depth_test,
+                                        ..pass_key
+                                    }),
+                                },
+                            );
+                        }
+                    }
+                    pass.set_bind_group(0, camera_bg, &[]);
                 }
-                k += 1;
-            }
-            pass.set_bind_group(0, camera_bg, &[]);
-            match order.checked_add(1) {
-                Some(next) => lo = next,
-                None => return,
             }
         }
-        self.dispatch_plugin_paint_painter(pass, frame, lo..=u32::MAX, scene_depth_bind_group);
+    }
+
+    /// The painter sequence the next draw of `frame` on the HDR (`hdr`) or LDR
+    /// path follows, one entry per call: the plugin's type name (or
+    /// `"world_overlay"`), the layers the call covers, and the batch handles
+    /// it names (for world layers, their indices in submission order; empty
+    /// for a plugin that reports no batches). For tests of the draw order.
+    #[doc(hidden)]
+    pub fn debug_painter_sequence(
+        &self,
+        frame: &FrameData,
+        hdr: bool,
+    ) -> Vec<(&'static str, std::ops::RangeInclusive<u32>, Vec<u32>)> {
+        let plan = self.painter_plan(frame, hdr);
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        plan.steps
+            .iter()
+            .map(|step| match step {
+                PainterStep::Batches {
+                    plugin,
+                    layers,
+                    batches,
+                } => (
+                    *plugin,
+                    layers.clone(),
+                    plan.batches[batches.clone()].to_vec(),
+                ),
+                PainterStep::Layers { plugin, layers } => (*plugin, layers.clone(), Vec::new()),
+                PainterStep::World { layers } => {
+                    let w = worlds.expect("world steps come from the slot's world layers");
+                    let order = w.layers[w.sequence[layers.start]].order;
+                    (
+                        "world_overlay",
+                        order..=order,
+                        w.sequence[layers.clone()]
+                            .iter()
+                            .map(|&i| i as u32)
+                            .collect(),
+                    )
+                }
+            })
+            .collect()
     }
 
     /// Walk registered plugins and invoke `paint_depth_read` for each
@@ -3086,12 +3246,51 @@ impl ViewportRenderer {
         }
     }
 
-    /// Walk registered plugins and invoke `encode` for each one that asked for
-    /// `scope`, handing over the frame's command encoder rather than a begun
-    /// render pass.
-    ///
-    /// Called from the HDR path at each [`EncoderScope`] point. A plugin that
-    /// lists no scopes is skipped without building the context.
+    /// Whether `plugin`, with items on `frame`, encodes at `scope` on the HDR
+    /// (`hdr`) or LDR path.
+    pub(crate) fn plugin_encodes_at(
+        frame: &FrameData,
+        name: &str,
+        plugin: &dyn crate::plugin_api::ItemTypePlugin,
+        scope: crate::plugin_api::EncoderScope,
+        hdr: bool,
+    ) -> bool {
+        (hdr || (scope == crate::plugin_api::EncoderScope::AfterTransparent
+            && plugin.encodes_ldr()))
+            && plugin.encoder_scopes().contains(&scope)
+            && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                .any(|items| !items.is_empty())
+    }
+
+    /// Whether a plugin with items on `frame` encodes at `scope` on the HDR
+    /// (`hdr`) or LDR path. A scope nothing encodes at opens no pass.
+    pub(crate) fn any_plugin_encodes_at(
+        &self,
+        frame: &FrameData,
+        scope: crate::plugin_api::EncoderScope,
+        hdr: bool,
+    ) -> bool {
+        self.item_type_plugins
+            .iter()
+            .any(|(name, p)| Self::plugin_encodes_at(frame, name, p, scope, hdr))
+    }
+
+    /// Whether a plugin encoding at `scope` reads the scene depth there.
+    pub(crate) fn any_plugin_scope_reads_depth(
+        &self,
+        frame: &FrameData,
+        scope: crate::plugin_api::EncoderScope,
+        hdr: bool,
+    ) -> bool {
+        self.item_type_plugins.iter().any(|(name, p)| {
+            Self::plugin_encodes_at(frame, name, p, scope, hdr) && p.encode_reads_depth(scope)
+        })
+    }
+
+    /// Walk registered plugins and invoke `encode` for each one with items
+    /// that asked for `scope`, handing over the frame's command encoder
+    /// rather than a begun render pass. `targets` are the attachments the
+    /// scope sees: the HDR scene's, or the LDR target's.
     ///
     /// [`EncoderScope`]: crate::plugin_api::EncoderScope
     #[allow(clippy::too_many_arguments)]
@@ -3103,26 +3302,14 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         vp_idx: usize,
+        targets: &ScopeTargets<'_>,
     ) {
-        if self.item_type_plugins.is_empty() {
-            return;
-        }
-        if !self
-            .item_type_plugins
-            .values()
-            .any(|p| p.encoder_scopes().contains(&scope))
-        {
+        if !self.any_plugin_encodes_at(frame, scope, targets.hdr) {
             return;
         }
         let Some(slot) = self.viewport_slots.get(vp_idx) else {
             return;
         };
-        let Some(slot_hdr) = slot.hdr.as_ref() else {
-            return;
-        };
-        // The HDR attachments, not the supersampled ones: under SSAA the
-        // resolve has already run by the time either scope fires, so from here
-        // on the frame draws into the HDR target like every other frame.
         let ctx = crate::plugin_api::EncoderScopeContext {
             scope,
             device,
@@ -3130,35 +3317,26 @@ impl ViewportRenderer {
             camera: &frame.camera.render_camera,
             viewport_index: vp_idx,
             frame_index: self.plugin_frame_index,
-            scene_size: slot_hdr.scene_size,
+            scene_size: targets.scene_size,
+            target_format: targets.target_format,
             camera_bind_group: &slot.camera_bind_group,
-            scene_colour: &slot_hdr.hdr_view,
-            scene_colour_texture: &slot_hdr.hdr_texture,
-            scene_depth: &slot_hdr.hdr_depth_view,
-            scene_depth_only: if self.resources.capabilities.direct_depth_sampling {
-                &slot_hdr.hdr_depth_only_view
-            } else {
-                // Taken by the caller just before this scope.
-                slot_hdr
-                    .depth_read_copy
-                    .as_ref()
-                    .map_or(&slot_hdr.hdr_depth_only_view, |c| &c.depth_only_view)
-            },
-            scene_stencil_only: &slot_hdr.hdr_stencil_only_view,
+            scene_colour: targets.colour,
+            scene_colour_texture: targets.colour_texture,
+            scene_depth: targets.depth,
+            scene_depth_only: targets.depth_only,
+            scene_stencil_only: targets.stencil_only,
             effects: &frame.effects,
             outline_colour: frame.interaction.outline_colour,
             outline_width_px: frame.interaction.outline_width_px,
             meshes: crate::resources::MeshDraw::new(&self.resources),
             quality_reduced: self.last_stats.volume_quality_reduced,
+            hdr_pass: targets.hdr,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if !plugin.encoder_scopes().contains(&scope) {
-                continue;
-            }
-            let items = crate::plugin_api::ItemCollections::new(
-                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
-            );
-            if !items.is_empty() {
+            if Self::plugin_encodes_at(frame, name, plugin, scope, targets.hdr) {
+                let items = crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                );
                 plugin.encode(encoder, &ctx, &items);
             }
         }
@@ -4542,4 +4720,43 @@ impl ViewportRenderer {
             .get(viewport_index)
             .map_or_else(Vec::new, |slot| slot.pass_table.ran_names())
     }
+}
+
+/// One call of the frame's painter sequence, from
+/// [`ViewportRenderer::painter_plan`].
+pub(crate) enum PainterStep {
+    /// A run of one plugin's reported batches: `PainterPlan::batches[batches]`.
+    Batches {
+        plugin: &'static str,
+        layers: std::ops::RangeInclusive<u32>,
+        batches: std::ops::Range<usize>,
+    },
+    /// A plugin that reports no batches, drawing its content in `layers`.
+    Layers {
+        plugin: &'static str,
+        layers: std::ops::RangeInclusive<u32>,
+    },
+    /// World overlay layers: `world_overlays.sequence[layers]`.
+    World { layers: std::ops::Range<usize> },
+}
+
+/// The frame's painter sequence: the steps in draw order and the batch
+/// handles their runs name.
+#[derive(Default)]
+pub(crate) struct PainterPlan {
+    pub(crate) steps: Vec<PainterStep>,
+    pub(crate) batches: Vec<u32>,
+}
+
+/// The attachments an encoder scope hands to plugins: the HDR scene's, or the
+/// LDR target's.
+pub(crate) struct ScopeTargets<'a> {
+    pub(crate) scene_size: [u32; 2],
+    pub(crate) colour: &'a crate::gpu::TextureView,
+    pub(crate) colour_texture: &'a crate::gpu::Texture,
+    pub(crate) depth: &'a crate::gpu::TextureView,
+    pub(crate) depth_only: &'a crate::gpu::TextureView,
+    pub(crate) stencil_only: &'a crate::gpu::TextureView,
+    pub(crate) target_format: crate::gpu::TextureFormat,
+    pub(crate) hdr: bool,
 }

@@ -19,9 +19,12 @@
 //! | -1.0 | the player                                             |
 //! | -2.0 | the torch flames (GPU particles)                       |
 //!
-//! Sprites sort for the side view: painter's order with `-z` (the height of
-//! the feet) as the key, so a critter whose feet are lower on screen stands
-//! nearer and covers the ones behind it.
+//! Sprites sort for the side view: the critters, the stones and the player
+//! share one painter layer with `-z` (the height of the feet) as the key, so
+//! whoever's feet are lower on screen stands nearer and covers the ones behind
+//! it, across the three batches. At equal keys the later batch draws on top:
+//! the player standing on the ground is in front of a stone, and behind it in
+//! the air.
 
 use glam::{DVec3, Vec2};
 
@@ -56,6 +59,8 @@ pub(crate) const COLS: u32 = 160;
 pub(crate) const ROWS: u32 = 48;
 /// Height of the ground's top surface.
 const GROUND_Z: f32 = 40.0;
+/// The painter layer the critters, the stones and the player share.
+const SIDE_LAYER: u32 = 1;
 /// How many critters wander the back lane.
 pub(crate) const CRITTERS: usize = 300;
 
@@ -130,6 +135,9 @@ pub(crate) struct WorldOptions {
     pub pixel_art: bool,
     pub night: bool,
     pub shadows: bool,
+    /// The HDR path, which bloom, the vignette and the torch flames need;
+    /// off draws the frame on the LDR path (`PipelineMode::Direct`).
+    pub hdr: bool,
     pub bloom: bool,
     pub vignette: bool,
     pub hud: bool,
@@ -144,6 +152,7 @@ impl Default for WorldOptions {
             pixel_art: true,
             night: false,
             shadows: true,
+            hdr: true,
             bloom: true,
             vignette: true,
             hud: true,
@@ -873,8 +882,13 @@ impl World {
         } else {
             Colour::srgb(0.48, 0.68, 0.92, 1.0)
         });
-        // The light layer, bloom and vignette run on the HDR path.
-        fd.effects.display.mode = vpl::PipelineMode::Hdr;
+        // The light layer runs on either path; bloom, the vignette and the
+        // GPU particle torch flames on the HDR path only.
+        fd.effects.display.mode = if o.hdr {
+            vpl::PipelineMode::Hdr
+        } else {
+            vpl::PipelineMode::Direct
+        };
         fd.effects.post_process.bloom.enabled = o.bloom;
         fd.effects.post_process.bloom.threshold = 1.0;
         fd.effects.post_process.bloom.intensity = 0.12;
@@ -990,7 +1004,7 @@ impl World {
         let mut item = pixel_sprites(Some(atlas), o);
         // Behind the walls, which cover them through the depth test.
         item.order = SpriteOrder::Painter {
-            layer: 1,
+            layer: SIDE_LAYER,
             depth_test: true,
         };
         let mut effects = SpriteEffects::default();
@@ -1016,7 +1030,7 @@ impl World {
     fn stones_item(&self, atlas: TextureId, o: WorldOptions) -> SpriteItem {
         let mut item = pixel_sprites(Some(atlas), o);
         item.order = SpriteOrder::Painter {
-            layer: 2,
+            layer: SIDE_LAYER,
             depth_test: false,
         };
         for &x in &STONES {
@@ -1032,11 +1046,12 @@ impl World {
         let p = &self.player;
         let mut item = pixel_sprites(Some(atlas), o);
         item.order = SpriteOrder::Painter {
-            layer: 3,
+            layer: SIDE_LAYER,
             depth_test: false,
         };
         let frame = if p.on_ground { p.phase as usize % 4 } else { 3 };
         item.positions.push([p.position.x, -1.0, p.position.y]);
+        item.sort_keys.push(-p.position.y);
         item.sizes.push([8.0, 16.0]);
         item.uv_rects.push(cell_uv(frame, 2, 1, 2));
         item.flips.push(if p.facing_left {

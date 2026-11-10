@@ -312,8 +312,11 @@ impl ViewportRenderer {
     /// [`paint_dyn_res_blit`](Self::paint_dyn_res_blit) from `CallbackTrait::paint`
     /// instead of [`paint`](Self::paint).
     ///
-    /// If scale is 1.0 or above, nothing is encoded and `false` is returned. Call
-    /// [`paint`](Self::paint) as normal.
+    /// If scale is 1.0 or above and no plugin encodes after the scene (see
+    /// [`ldr_intermediate_active`](Self::ldr_intermediate_active)), nothing is
+    /// encoded and `false` is returned. Call [`paint`](Self::paint) as normal.
+    /// A frame with such a plugin draws into the intermediate at full
+    /// resolution, so the scene pass can end for the plugin's passes.
     ///
     /// The `egui_encoder` is submitted before the surface render pass begins, so the
     /// intermediate texture is fully written before the blit reads it.
@@ -321,17 +324,29 @@ impl ViewportRenderer {
         &mut self,
         encoder: &mut crate::gpu::CommandEncoder,
         device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> bool {
-        if self.current_render_scale >= 1.0 - 0.001 {
+        let scaled = self.current_render_scale < 1.0 - 0.001;
+        let scope = self.ldr_scope_active(frame);
+        if !scaled && !scope {
             return false;
         }
 
         let vp_idx = frame.camera.viewport_index;
-        let w = (frame.camera.viewport_size[0] as u32).max(1);
-        let h = (frame.camera.viewport_size[1] as u32).max(1);
-        let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
-        let sh = ((h as f32 * self.current_render_scale) as u32).max(1);
+        let (sw, sh, w, h) = if scaled {
+            let w = (frame.camera.viewport_size[0] as u32).max(1);
+            let h = (frame.camera.viewport_size[1] as u32).max(1);
+            let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
+            let sh = ((h as f32 * self.current_render_scale) as u32).max(1);
+            (sw, sh, w, h)
+        } else {
+            // The host's pass is in physical pixels.
+            let ppp = frame.camera.pixels_per_point;
+            let w = ((frame.camera.viewport_size[0] * ppp).round() as u32).max(1);
+            let h = ((frame.camera.viewport_size[1] * ppp).round() as u32).max(1);
+            (w, h, w, h)
+        };
 
         self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w, h]);
         self.resources.ensure_dyn_res_ds_pipeline(device);
@@ -368,7 +383,12 @@ impl ViewportRenderer {
                     view: depth_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
-                        store: crate::gpu::StoreOp::Discard,
+                        // The pass after the scope loads it.
+                        store: if scope {
+                            crate::gpu::StoreOp::Store
+                        } else {
+                            crate::gpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -427,15 +447,33 @@ impl ViewportRenderer {
             // scene content, mirroring the HDR scene-pass position.
             self.dispatch_plugin_paint(&mut render_pass, frame, false);
             self.paint_painters_and_world(&mut render_pass, frame, camera_bg, None);
-            // Outline composite after all scene content.
-            emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
-            // Sub-object highlight (LDR path).
-            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
-            let ov = &self.viewport_slots[vp_idx].overlay;
-            emit_overlay_2d!(self, ov, render_pass);
+            if !scope {
+                self.paint_ldr_scene_finish(&mut render_pass, vp_idx, true);
+            }
+        }
+        if scope {
+            let dr = self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap();
+            let (colour, depth, size) = (&dr.colour_view, &dr.depth_view, dr.scaled_size);
+            self.encode_ldr_scope(encoder, device, queue, frame, vp_idx, colour, depth, size);
+            let mut pass = ldr_path::begin_ldr_resume_pass(
+                encoder,
+                colour,
+                depth,
+                crate::gpu::StoreOp::Discard,
+            );
+            self.paint_ldr_scene_finish(&mut pass, vp_idx, true);
         }
 
         true
+    }
+
+    /// Whether the `pass()` path draws `frame` into the intermediate in
+    /// `prepare` and blits it in `paint`: under dynamic resolution, or when a
+    /// plugin encodes after the scene, which a host-owned pass cannot be ended
+    /// for. An overlays-only frame paints straight into the host's pass.
+    pub(crate) fn ldr_intermediate_active(&self, frame: &FrameData) -> bool {
+        (self.current_render_scale < 1.0 - 0.001 || self.ldr_scope_active(frame))
+            && !self.draws_overlays_only(frame)
     }
 
     /// Blit the dyn-res intermediate texture into the provided render pass.
@@ -669,14 +707,12 @@ impl ViewportRenderer {
         } else {
             self.direct_paint = true;
             self.prepare(device, queue, frame);
-            // An overlays-only frame paints straight into the host's pass at
-            // full resolution.
-            if self.current_render_scale < 1.0 - 0.001 && !self.draws_overlays_only(frame) {
+            if self.ldr_intermediate_active(frame) {
                 let mut encoder =
                     device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                         label: Some("ldr_dyn_res_callback_encoder"),
                     });
-                self.prepare_ldr_dyn_res(&mut encoder, device, frame);
+                self.prepare_ldr_dyn_res(&mut encoder, device, queue, frame);
                 vec![encoder.finish()]
             } else {
                 Vec::new()
@@ -709,8 +745,7 @@ impl ViewportRenderer {
                 return;
             }
         }
-        if self.current_render_scale < 1.0 - 0.001
-            && !self.draws_overlays_only(frame)
+        if self.ldr_intermediate_active(frame)
             && self
                 .viewport_slots
                 .get(vp_idx)

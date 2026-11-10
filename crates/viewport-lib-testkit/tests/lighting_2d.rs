@@ -1,16 +1,17 @@
 //! The 2D light layer: it encodes its passes only when the frame has point
-//! lights, and an occluder darkens what lies behind it from the light to the
-//! ambient level.
+//! lights, an occluder darkens what lies behind it from the light to the
+//! ambient level, and it lights the LDR path and the compatibility tier too.
 
 use glam::{DVec3, Vec2};
 use viewport_lib::{
-    Camera2d, CameraFrame, Candela, Colour, FrameData, LightSource, Plane2d, SceneFrame,
+    Camera2d, CameraFrame, Candela, Colour, FrameData, FramePath, LightSource, PipelineMode,
+    Plane2d, SceneFrame, Tier,
 };
 use viewport_lib_plugins::item_types::lighting_2d::{
     Lighting2dItem, Lighting2dPlugin, Lighting2dStats, Occluder2d, TYPE_NAME,
 };
 use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteSizeMode};
-use viewport_lib_testkit::Harness;
+use viewport_lib_testkit::{DeviceProfile, Harness};
 
 const W: u32 = 160;
 const H: u32 = 100;
@@ -111,4 +112,70 @@ fn an_occluder_shadows_what_lies_behind_it() {
     );
     assert!(beside > behind + 60, "behind {behind}, beside {beside}");
     assert!(in_front > beside, "beside {beside}, in front {in_front}");
+}
+
+#[test]
+fn a_frame_without_scoped_items_opens_no_scope_pass() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // Scatter volumes and this layer both encode after transparency; with no
+    // lights the layer has nothing to encode, and there are no volumes.
+    let _ = harness.render(&frame(Lighting2dItem::default(), Vec::new()), W, H);
+    let ran = harness.renderer.debug_viewport_passes_ran(0);
+    assert!(!ran.contains(&"scope_after_transparent"), "{ran:?}");
+
+    let _ = harness.render(&frame(Lighting2dItem::default(), vec![torch(0.0)]), W, H);
+    let ran = harness.renderer.debug_viewport_passes_ran(0);
+    assert!(ran.contains(&"scope_after_transparent"), "{ran:?}");
+}
+
+#[test]
+fn the_layer_lights_the_ldr_path() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let ldr = |lights| {
+        let mut f = frame(Lighting2dItem::default(), lights);
+        f.effects.display.mode = PipelineMode::Direct;
+        f
+    };
+    let unlit = harness.render(&ldr(Vec::new()), W, H);
+    assert_eq!(harness.stats().frame_path, FramePath::Ldr);
+    assert_eq!(stats(&harness).passes, 0);
+    let lit = harness.render(&ldr(vec![torch(0.0)]), W, H);
+    assert_eq!(harness.stats().frame_path, FramePath::Ldr);
+    assert_eq!(stats(&harness).passes, 2);
+    // The default ambient darkens the floor away from the light; the light
+    // brightens it near the light.
+    let (near, far) = (luma(&lit, 0.0, 0.0), luma(&lit, 75.0, 45.0));
+    assert!(near > far + 60, "near {near}, far {far}");
+    assert_ne!(unlit, lit);
+}
+
+#[test]
+fn the_layer_lights_the_compatibility_tier() {
+    let Some(mut harness) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("lighting-2d-compat"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(harness.renderer.tier(), Tier::Compatibility);
+    assert!(harness.renderer.has_item_type_plugin(TYPE_NAME));
+    // Sprites are full-tier only, so the layer lights the background.
+    let compat = |lights| {
+        let mut f = frame(Lighting2dItem::default(), lights);
+        f.viewport.background_colour = Some(Colour::linear_rgb(0.5, 0.5, 0.5));
+        f
+    };
+    let unlit = harness.render(&compat(Vec::new()), W, H);
+    assert_eq!(stats(&harness).passes, 0);
+    let lit = harness.render(&compat(vec![torch(0.0)]), W, H);
+    assert_eq!(stats(&harness).passes, 2);
+    let (near, far) = (luma(&lit, 0.0, 0.0), luma(&lit, 75.0, 45.0));
+    assert!(near > far + 60, "near {near}, far {far}");
+    assert_ne!(unlit, lit);
 }

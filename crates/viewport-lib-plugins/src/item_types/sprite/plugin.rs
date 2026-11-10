@@ -10,8 +10,8 @@ use store::{
 };
 use viewport_lib::plugin_api::{
     DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext,
-    ItemTypePlugin, OutlineMaskContext, PaintContext, PainterContext, PickContext, PickPassContext,
-    PickRay, PluginItem, RectPickContext,
+    ItemTypePlugin, OutlineMaskContext, PaintContext, PainterBatch, PainterContext, PickContext,
+    PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
 
@@ -120,8 +120,9 @@ pub struct SpritePlugin {
     pick_items: Vec<SpriteItem>,
     /// Selection-outline coverage for this frame.
     outlines: Vec<SpriteOutline>,
-    /// Indices into `frame` of the painter batches, in the order they draw.
-    painter_sequence: Vec<usize>,
+    /// The painter batches in the order they draw, split where batches on one
+    /// layer interleave by key. `batch` indexes `frame`.
+    painter_pieces: Vec<store::PainterPiece>,
     /// Each batch's item settings, parallel to `frame`, for the surface mask.
     frame_settings: Vec<viewport_lib::ItemSettings>,
     /// Per-batch group-2 pick-id bind groups, parallel to `frame`.
@@ -496,20 +497,23 @@ impl SpritePlugin {
         }
     }
 
-    /// Draw the painter batches in painter order, switching pipeline only
-    /// where consecutive batches differ.
+    /// Draw painter pieces (indices into `painter_pieces`) in the order
+    /// given, switching pipeline only where consecutive pieces differ.
     fn draw_painter(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
         target: pipeline::SpritePass,
         group2: &viewport_lib::gpu::BindGroup,
-        layers: &std::ops::RangeInclusive<u32>,
+        pieces: impl Iterator<Item = usize>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = None;
-        for &i in &self.painter_sequence {
-            let sprite = &self.frame[i];
-            if !is_painter(sprite) || !sprite.painter.is_some_and(|p| layers.contains(&p.layer)) {
+        for piece in pieces {
+            let Some(piece) = self.painter_pieces.get(piece) else {
+                continue;
+            };
+            let sprite = &self.frame[piece.batch];
+            if !is_painter(sprite) {
                 continue;
             }
             let key = pipeline::SpriteKey::of(sprite);
@@ -524,10 +528,19 @@ impl SpritePlugin {
                 bound = Some(member);
             }
             bind_sprite(pass, gpu, sprite, key);
-            pass.draw(0..6, 0..sprite.sprite_count);
+            pass.draw(0..6, piece.instances.clone());
             self.issued
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
+    }
+
+    /// The batch and drawn-sprite range of painter batch handle `batch`, as
+    /// reported through `painter_batches`. For tests of the draw order.
+    #[doc(hidden)]
+    pub fn debug_painter_piece(&self, batch: u32) -> Option<(usize, std::ops::Range<u32>)> {
+        self.painter_pieces
+            .get(batch as usize)
+            .map(|p| (p.batch, p.instances.clone()))
     }
 }
 
@@ -624,7 +637,7 @@ impl ItemTypePlugin for SpritePlugin {
         self.frame.clear();
         self.frame_settings.clear();
         self.outlines.clear();
-        self.painter_sequence.clear();
+        self.painter_pieces.clear();
         self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
         let origin = ctx.world_origin();
@@ -722,16 +735,25 @@ impl ItemTypePlugin for SpritePlugin {
             self.frame_settings.push(ref_item.settings);
         }
 
-        let painters: Vec<(usize, u32)> = self
-            .frame
+        let painters: Vec<usize> = (0..self.frame.len())
+            .filter(|&i| self.frame[i].painter.is_some())
+            .collect();
+        let inputs: Vec<store::PainterInput<'_>> = painters
             .iter()
-            .enumerate()
-            .filter_map(|(i, s)| s.painter.map(|p| (i, p.layer)))
+            .map(|&i| {
+                let s = &self.frame[i];
+                store::PainterInput {
+                    layer: s.painter.map_or(0, |p| p.layer),
+                    count: s.sprite_count,
+                    keys: s.painter_keys.as_deref(),
+                }
+            })
             .collect();
-        self.painter_sequence = store::painter_batch_order(painters.iter().map(|&(_, l)| l))
-            .into_iter()
-            .map(|k| painters[k].0)
-            .collect();
+        let mut pieces = store::painter_pieces(&inputs);
+        for piece in &mut pieces {
+            piece.batch = painters[piece.batch];
+        }
+        self.painter_pieces = pieces;
 
         // Group-2 pick-id bind groups, one per pickable batch.
         self.pick_bind_groups = self
@@ -786,7 +808,17 @@ impl ItemTypePlugin for SpritePlugin {
     }
 
     fn draws_painter(&self) -> bool {
-        !self.painter_sequence.is_empty()
+        !self.painter_pieces.is_empty()
+    }
+
+    /// One batch per piece: a painter batch whole, or the part of it between
+    /// two keys of another batch on its layer.
+    fn painter_batches(&self, out: &mut Vec<PainterBatch>) {
+        for (i, piece) in self.painter_pieces.iter().enumerate() {
+            if is_painter(&self.frame[piece.batch]) {
+                out.push(PainterBatch::new(piece.layer, piece.key, i as u32));
+            }
+        }
     }
 
     fn paint_painter(
@@ -800,15 +832,19 @@ impl ItemTypePlugin for SpritePlugin {
         // before transparency and post effects. In the read-only-depth pass
         // the live scene depth is bound for the soft fade; the LDR scene pass
         // gets the 1x1 fallback.
+        let all =
+            (0..self.painter_pieces.len()).filter(|&i| ctx.includes(self.painter_pieces[i].layer));
+        let pieces: Box<dyn Iterator<Item = usize> + '_> = match ctx.batches {
+            Some(batches) => Box::new(batches.iter().map(|&b| b as usize)),
+            None => Box::new(all),
+        };
         match ctx.scene_depth_bind_group {
-            Some(depth) => {
-                self.draw_painter(pass, pipeline::SpritePass::DepthRead, depth, &ctx.layers)
-            }
+            Some(depth) => self.draw_painter(pass, pipeline::SpritePass::DepthRead, depth, pieces),
             None => self.draw_painter(
                 pass,
                 pipeline::SpritePass::Ldr,
                 &gpu.soft_fallback_bg,
-                &ctx.layers,
+                pieces,
             ),
         }
     }
@@ -1148,13 +1184,19 @@ impl ItemTypePlugin for SpritePlugin {
             return;
         }
         let Some(gpu) = &self.gpu else { return };
-        // Depth-ordered batches first, then the painter batches in the order
+        // Depth-ordered batches first, then the painter pieces in the order
         // they were drawn, each through a pipeline that lets the later of two
         // sprites at one depth win, as it did on screen.
-        let depth_ordered = (0..self.frame.len()).filter(|&i| self.frame[i].painter.is_none());
-        let order = depth_ordered.chain(self.painter_sequence.iter().copied());
+        let depth_ordered = (0..self.frame.len())
+            .filter(|&i| self.frame[i].painter.is_none())
+            .map(|i| (i, 0..self.frame[i].sprite_count));
+        let painter = self
+            .painter_pieces
+            .iter()
+            .map(|p| (p.batch, p.instances.clone()));
+        let order = depth_ordered.chain(painter);
         let mut bound = None;
-        for i in order {
+        for (i, instances) in order {
             let sprite = &self.frame[i];
             let Some(pick_bg) = &self.pick_bind_groups[i] else {
                 continue;
@@ -1177,7 +1219,7 @@ impl ItemTypePlugin for SpritePlugin {
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             pass.set_bind_group(2, pick_bg, &[]);
             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-            pass.draw(0..6, 0..sprite.sprite_count);
+            pass.draw(0..6, instances);
         }
     }
 

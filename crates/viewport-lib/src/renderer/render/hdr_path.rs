@@ -1473,36 +1473,55 @@ impl ViewportRenderer {
         self.paint_painters_and_world(&mut pass, frame, camera_bg, Some(&depth_bg));
     }
 
-    /// Hand the encoder to the plugins that encode at `scope`. Without direct
-    /// depth sampling their `scene_depth_only` is the depth-read copy, taken
-    /// here so it holds the depth as of this scope.
+    /// Hand the encoder to the plugins with items that encode at `scope`.
+    /// Without direct depth sampling their `scene_depth_only` is the
+    /// depth-read copy, taken here when one of them reads depth so it holds
+    /// the depth as of this scope.
     fn encode_scope(
         &mut self,
         ctx: &HdrFrameCtx,
         encoder: &mut crate::gpu::CommandEncoder,
         scope: crate::plugin_api::EncoderScope,
     ) {
-        if !self.resources.capabilities.direct_depth_sampling
-            && self
-                .item_type_plugins
-                .values()
-                .any(|p| p.encoder_scopes().contains(&scope))
-        {
+        if !self.any_plugin_encodes_at(ctx.frame, scope, true) {
+            return;
+        }
+        let copied = !self.resources.capabilities.direct_depth_sampling
+            && self.any_plugin_scope_reads_depth(ctx.frame, scope, true);
+        if copied {
             self.copy_depth_for_read(ctx, encoder);
         }
-        if self.any_plugin_encodes_at(scope) {
-            self.mark_pass_ran(
-                ctx.vp_idx,
-                match scope {
-                    crate::plugin_api::EncoderScope::OnOpaqueSurfaces => {
-                        HdrPass::ScopeOnOpaqueSurfaces
-                    }
-                    crate::plugin_api::EncoderScope::AfterOpaque => HdrPass::ScopeAfterOpaque,
-                    _ => HdrPass::ScopeAfterTransparent,
-                },
-            );
-        }
-        self.dispatch_plugin_encode(encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx);
+        self.mark_pass_ran(
+            ctx.vp_idx,
+            match scope {
+                crate::plugin_api::EncoderScope::OnOpaqueSurfaces => HdrPass::ScopeOnOpaqueSurfaces,
+                crate::plugin_api::EncoderScope::AfterOpaque => HdrPass::ScopeAfterOpaque,
+                _ => HdrPass::ScopeAfterTransparent,
+            },
+        );
+        let slot = &self.viewport_slots[ctx.vp_idx];
+        let Some(slot_hdr) = slot.hdr.as_ref() else {
+            return;
+        };
+        // The HDR attachments, not the supersampled ones: under SSAA the
+        // resolve has already run by the time any scope fires, so from here
+        // on the frame draws into the HDR target like every other frame.
+        let targets = crate::renderer::ScopeTargets {
+            scene_size: slot_hdr.scene_size,
+            colour: &slot_hdr.hdr_view,
+            colour_texture: &slot_hdr.hdr_texture,
+            depth: &slot_hdr.hdr_depth_view,
+            depth_only: match (copied, slot_hdr.depth_read_copy.as_ref()) {
+                (true, Some(c)) => &c.depth_only_view,
+                _ => &slot_hdr.hdr_depth_only_view,
+            },
+            stencil_only: &slot_hdr.hdr_stencil_only_view,
+            target_format: crate::resources::HDR_COLOR_FORMAT,
+            hdr: true,
+        };
+        self.dispatch_plugin_encode(
+            encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx, &targets,
+        );
     }
 
     /// Copy the scene depth into the viewport's depth-read copy with the depth

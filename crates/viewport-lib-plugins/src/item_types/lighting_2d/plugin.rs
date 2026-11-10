@@ -62,9 +62,15 @@ struct GpuEdge {
     one_sided: u32,
 }
 
-/// The format of the light layer: the scene's HDR colour format, so a light
+/// The light layer's format over the HDR scene: the scene's own, so a light
 /// can be brighter than one.
-const LIGHT_FORMAT: viewport_lib::gpu::TextureFormat = viewport_lib::resources::HDR_COLOR_FORMAT;
+const HDR_LIGHT_FORMAT: viewport_lib::gpu::TextureFormat =
+    viewport_lib::resources::HDR_COLOR_FORMAT;
+/// The light layer's format over an LDR target, which every tier can render
+/// to. It holds half the light, and the compose doubles it, so a light can
+/// still brighten what it lands on up to twice.
+const LDR_LIGHT_FORMAT: viewport_lib::gpu::TextureFormat =
+    viewport_lib::gpu::TextureFormat::Rgba8Unorm;
 /// The stencil the shadows stamp. The depth half is unused.
 const STENCIL_FORMAT: viewport_lib::gpu::TextureFormat =
     viewport_lib::gpu::TextureFormat::Depth24PlusStencil8;
@@ -88,18 +94,28 @@ struct FrameLayer {
     y_axis: glam::Vec3,
 }
 
-struct Pipelines {
+struct Layouts {
     light_bgl: viewport_lib::gpu::BindGroupLayout,
     compose_bgl: viewport_lib::gpu::BindGroupLayout,
+}
+
+/// The pipelines for one scene target format.
+struct Pipelines {
+    /// The scene target the compose writes.
+    target: viewport_lib::gpu::TextureFormat,
+    /// The light layer's format, and the factor its contents carry.
+    layer: viewport_lib::gpu::TextureFormat,
+    scale: f32,
     shadow: viewport_lib::gpu::RenderPipeline,
     light: viewport_lib::gpu::RenderPipeline,
     compose: viewport_lib::gpu::RenderPipeline,
 }
 
 /// A viewport's light layer, stencil and light blocks, reallocated when the
-/// scene size or the light count outgrows them.
+/// scene size, the layer format or the light count outgrows them.
 struct ViewportLayer {
     size: [u32; 2],
+    format: viewport_lib::gpu::TextureFormat,
     light_view: viewport_lib::gpu::TextureView,
     stencil_view: viewport_lib::gpu::TextureView,
     blocks: viewport_lib::gpu::Buffer,
@@ -113,7 +129,9 @@ struct ViewportLayer {
 /// or through `item_types::install`.
 #[derive(Default)]
 pub struct Lighting2dPlugin {
-    pipelines: Option<Pipelines>,
+    layouts: Option<Layouts>,
+    /// One set per scene target format the layer has composed over.
+    pipelines: std::sync::Mutex<Vec<std::sync::Arc<Pipelines>>>,
     frame: FrameLayer,
     edges: Option<viewport_lib::gpu::Buffer>,
     edge_capacity: u32,
@@ -133,9 +151,8 @@ impl Lighting2dPlugin {
         *self.stats.lock().unwrap()
     }
 
-    fn pipelines(device: &viewport_lib::gpu::Device) -> Pipelines {
+    fn layouts(device: &viewport_lib::gpu::Device) -> Layouts {
         use viewport_lib::gpu;
-        use viewport_lib::plugin_api::builders;
         let light_bgl =
             device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
                 label: Some("lighting_2d_light_bgl"),
@@ -165,6 +182,46 @@ impl Lighting2dPlugin {
                 count: None,
             }],
         });
+        Layouts {
+            light_bgl,
+            compose_bgl,
+        }
+    }
+
+    /// The pipelines that compose over a `target` scene colour, built the
+    /// first time a frame asks for them.
+    fn pipelines_for(
+        &self,
+        device: &viewport_lib::gpu::Device,
+        layouts: &Layouts,
+        target: viewport_lib::gpu::TextureFormat,
+    ) -> std::sync::Arc<Pipelines> {
+        let mut cache = self.pipelines.lock().unwrap();
+        if let Some(p) = cache.iter().find(|p| p.target == target) {
+            return p.clone();
+        }
+        let built = std::sync::Arc::new(Self::build_pipelines(device, layouts, target));
+        cache.push(built.clone());
+        built
+    }
+
+    fn build_pipelines(
+        device: &viewport_lib::gpu::Device,
+        layouts: &Layouts,
+        target: viewport_lib::gpu::TextureFormat,
+    ) -> Pipelines {
+        use viewport_lib::gpu;
+        use viewport_lib::plugin_api::builders;
+        let Layouts {
+            light_bgl,
+            compose_bgl,
+        } = layouts;
+        let hdr = target == viewport_lib::resources::HDR_COLOR_FORMAT;
+        let layer = if hdr {
+            HDR_LIGHT_FORMAT
+        } else {
+            LDR_LIGHT_FORMAT
+        };
         let shader = builders::wgsl_module(
             device,
             "lighting_2d_shader",
@@ -175,9 +232,9 @@ impl Lighting2dPlugin {
             "lighting_2d_compose_shader",
             crate::item_types::shader::wgsl_source!("lighting_2d_compose"),
         );
-        let layout = builders::pipeline_layout(device, "lighting_2d_layout", &[&light_bgl]);
+        let layout = builders::pipeline_layout(device, "lighting_2d_layout", &[light_bgl]);
         let compose_layout =
-            builders::pipeline_layout(device, "lighting_2d_compose_layout", &[&compose_bgl]);
+            builders::pipeline_layout(device, "lighting_2d_compose_layout", &[compose_bgl]);
 
         let stencil = |compare, pass_op| {
             let face = gpu::StencilFaceState {
@@ -256,7 +313,7 @@ impl Lighting2dPlugin {
             "fs_shadow",
             &edge_layout,
             gpu::ColorTargetState {
-                format: LIGHT_FORMAT,
+                format: layer,
                 blend: None,
                 write_mask: gpu::ColorWrites::empty(),
             },
@@ -274,7 +331,7 @@ impl Lighting2dPlugin {
             "fs_light",
             &[],
             gpu::ColorTargetState {
-                format: LIGHT_FORMAT,
+                format: layer,
                 blend: Some(builders::ADDITIVE_BLEND),
                 write_mask: gpu::ColorWrites::COLOR,
             },
@@ -284,9 +341,14 @@ impl Lighting2dPlugin {
             )),
         );
         // `dst * src`: the layer multiplied over the scene, alpha untouched.
+        // The LDR layer holds half the light: `src * dst + dst * src`.
         let multiply = gpu::BlendState {
             color: gpu::BlendComponent {
-                src_factor: gpu::BlendFactor::Zero,
+                src_factor: if hdr {
+                    gpu::BlendFactor::Zero
+                } else {
+                    gpu::BlendFactor::Dst
+                },
                 dst_factor: gpu::BlendFactor::Src,
                 operation: gpu::BlendOperation::Add,
             },
@@ -304,15 +366,16 @@ impl Lighting2dPlugin {
             "fs_main",
             &[],
             gpu::ColorTargetState {
-                format: LIGHT_FORMAT,
+                format: target,
                 blend: Some(multiply),
                 write_mask: gpu::ColorWrites::ALL,
             },
             None,
         );
         Pipelines {
-            light_bgl,
-            compose_bgl,
+            target,
+            layer,
+            scale: if hdr { 1.0 } else { 0.5 },
             shadow,
             light,
             compose,
@@ -320,11 +383,13 @@ impl Lighting2dPlugin {
     }
 
     /// The viewport's layer, allocated or reallocated for `size` and `lights`.
+    #[allow(clippy::too_many_arguments)]
     fn viewport_layer<'a>(
         &self,
         cache: &'a mut Vec<Option<ViewportLayer>>,
         device: &viewport_lib::gpu::Device,
-        pipelines: &Pipelines,
+        layouts: &Layouts,
+        format: viewport_lib::gpu::TextureFormat,
         index: usize,
         size: [u32; 2],
         lights: u32,
@@ -335,7 +400,7 @@ impl Lighting2dPlugin {
         }
         let stale = cache[index]
             .as_ref()
-            .is_none_or(|l| l.size != size || l.block_capacity < lights);
+            .is_none_or(|l| l.size != size || l.format != format || l.block_capacity < lights);
         if stale {
             let texture = |label, format, usage| {
                 device.create_texture(&gpu::TextureDescriptor {
@@ -355,7 +420,7 @@ impl Lighting2dPlugin {
             };
             let light_view = texture(
                 "lighting_2d_layer",
-                LIGHT_FORMAT,
+                format,
                 gpu::TextureUsages::RENDER_ATTACHMENT | gpu::TextureUsages::TEXTURE_BINDING,
             )
             .create_view(&gpu::TextureViewDescriptor::default());
@@ -374,7 +439,7 @@ impl Lighting2dPlugin {
             });
             let light_bg = device.create_bind_group(&gpu::BindGroupDescriptor {
                 label: Some("lighting_2d_light_bg"),
-                layout: &pipelines.light_bgl,
+                layout: &layouts.light_bgl,
                 entries: &[gpu::BindGroupEntry {
                     binding: 0,
                     resource: gpu::BindingResource::Buffer(gpu::BufferBinding {
@@ -386,7 +451,7 @@ impl Lighting2dPlugin {
             });
             let compose_bg = device.create_bind_group(&gpu::BindGroupDescriptor {
                 label: Some("lighting_2d_compose_bg"),
-                layout: &pipelines.compose_bgl,
+                layout: &layouts.compose_bgl,
                 entries: &[gpu::BindGroupEntry {
                     binding: 0,
                     resource: gpu::BindingResource::TextureView(&light_view),
@@ -394,6 +459,7 @@ impl Lighting2dPlugin {
             });
             cache[index] = Some(ViewportLayer {
                 size,
+                format,
                 light_view,
                 stencil_view,
                 blocks,
@@ -445,10 +511,10 @@ impl ItemTypePlugin for Lighting2dPlugin {
         TYPE_NAME
     }
 
-    /// The full tier: the layer draws after the scene on the HDR path, which
-    /// only the full tier has.
+    /// Every tier: uniforms, vertex streams and a stencil, drawn after the
+    /// scene on either path.
     fn requires(&self) -> viewport_lib::Requirements {
-        viewport_lib::Requirements::full_tier()
+        viewport_lib::Requirements::compatibility_tier()
     }
 
     fn prepare(
@@ -484,8 +550,8 @@ impl ItemTypePlugin for Lighting2dPlugin {
         if lights.is_empty() {
             return Vec::new();
         }
-        if self.pipelines.is_none() {
-            self.pipelines = Some(Self::pipelines(device));
+        if self.layouts.is_none() {
+            self.layouts = Some(Self::layouts(device));
         }
 
         let mut edges = Vec::new();
@@ -544,6 +610,14 @@ impl ItemTypePlugin for Lighting2dPlugin {
         }
     }
 
+    fn encodes_ldr(&self) -> bool {
+        true
+    }
+
+    fn encode_reads_depth(&self, _scope: EncoderScope) -> bool {
+        false
+    }
+
     fn encode(
         &self,
         encoder: &mut viewport_lib::gpu::CommandEncoder,
@@ -552,21 +626,24 @@ impl ItemTypePlugin for Lighting2dPlugin {
     ) {
         use viewport_lib::gpu;
         let frame = &self.frame;
-        let (Some(pipelines), false) = (&self.pipelines, frame.lights.is_empty()) else {
+        let (Some(layouts), false) = (&self.layouts, frame.lights.is_empty()) else {
             *self.stats.lock().unwrap() = Lighting2dStats::default();
             return;
         };
+        let pipelines = self.pipelines_for(ctx.device, layouts, ctx.target_format);
         let count = frame.lights.len() as u32;
         let mut draws = 0u32;
         let mut cache = self.viewports.lock().unwrap();
         let layer = self.viewport_layer(
             &mut cache,
             ctx.device,
-            pipelines,
+            layouts,
+            pipelines.layer,
             ctx.viewport_index,
             ctx.scene_size,
             count,
         );
+        let k = pipelines.scale;
 
         // Everything relative to the camera eye, so far-off scenes keep their
         // precision.
@@ -582,7 +659,12 @@ impl ItemTypePlugin for Lighting2dPlugin {
                 x_axis: frame.x_axis.extend(0.0).to_array(),
                 y_axis: frame.y_axis.extend(0.0).to_array(),
                 light: [light.position.x, light.position.y, light.radius, 0.0],
-                colour: [light.colour[0], light.colour[1], light.colour[2], 0.0],
+                colour: [
+                    light.colour[0] * k,
+                    light.colour[1] * k,
+                    light.colour[2] * k,
+                    0.0,
+                ],
             };
             ctx.queue.write_buffer(
                 &layer.blocks,
@@ -592,7 +674,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
         }
 
         {
-            let [r, g, b] = frame.ambient;
+            let [r, g, b] = frame.ambient.map(|c| c * k);
             let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
                 #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,

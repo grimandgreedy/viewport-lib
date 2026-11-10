@@ -13,7 +13,7 @@ impl ViewportRenderer {
     pub(crate) fn render_frame_ldr(
         &mut self,
         device: &crate::gpu::Device,
-        _queue: &crate::gpu::Queue,
+        queue: &crate::gpu::Queue,
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
@@ -31,6 +31,7 @@ impl ViewportRenderer {
         // Report each dropped feature instead of silently omitting it.
         for (name, plugin) in self.item_type_plugins.iter() {
             let skipped = !plugin.draws_ldr()
+                && !plugin.encodes_ldr()
                 && crate::renderer::item_plugins::plugin_collections_for(frame, name)
                     .any(|items| !items.is_empty());
             if skipped {
@@ -77,7 +78,17 @@ impl ViewportRenderer {
         // the scene, into a target they can copy from: the output when it
         // allows that, or an intermediate blitted to it at the end.
         let has_breaks = self.viewport_slots[vp_idx].overlay.has_breaks();
-        let needs_blur = self.ldr_overlay_intermediate(vp_idx, Some(output_view));
+        // Plugins that encode after the scene end the scene pass there; they
+        // are handed a target they can copy from, so an output that cannot be
+        // copied from routes the frame through the intermediate.
+        let scope = self.ldr_scope_active(frame);
+        let needs_blur = self.ldr_overlay_intermediate(vp_idx, Some(output_view))
+            || (scope
+                && !use_dyn_res
+                && !output_view
+                    .texture()
+                    .usage()
+                    .contains(crate::gpu::TextureUsages::COPY_SRC));
 
         if use_dyn_res {
             let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
@@ -94,6 +105,11 @@ impl ViewportRenderer {
         // next frame's reprojection. The copy happens after the scene pass below.
         let store_scene_depth =
             self.resources.occlusion_culling_enabled() && self.resources.scene_tier.is_built();
+        let depth_store = if store_scene_depth || self.keep_scene_depth {
+            crate::gpu::StoreOp::Store
+        } else {
+            crate::gpu::StoreOp::Discard
+        };
 
         {
             let slot = &self.viewport_slots[vp_idx];
@@ -146,10 +162,11 @@ impl ViewportRenderer {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
-                        store: if store_scene_depth || self.keep_scene_depth {
+                        // The pass after the scope loads it.
+                        store: if scope {
                             crate::gpu::StoreOp::Store
                         } else {
-                            crate::gpu::StoreOp::Discard
+                            depth_store
                         },
                     }),
                     stencil_ops: None,
@@ -212,21 +229,46 @@ impl ViewportRenderer {
                 // scene content, mirroring the HDR scene-pass position.
                 self.dispatch_plugin_paint(&mut render_pass, frame, false);
                 self.paint_painters_and_world(&mut render_pass, frame, camera_bg, None);
-                // Outline composite after all scene content.
-                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             } else {
                 self.paint_compatibility_scene(&mut render_pass, camera_bg, frame);
-                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
-            // The sub-object highlight, over the scene and the outline.
-            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
-            // Overlays that read the destination are drawn after this pass.
-            if !has_breaks {
-                let ov = &self.viewport_slots[vp_idx].overlay;
-                emit_overlay_2d!(self, ov, render_pass);
+            if !scope {
+                // Overlays that read the destination are drawn after this pass.
+                self.paint_ldr_scene_finish(&mut render_pass, vp_idx, !has_breaks);
             }
         }
         // -- End of scene render pass (dropped above). ---
+
+        // The after-scene scope, then the rest of the scene pass's content in
+        // a pass of its own over the same targets.
+        if scope {
+            let slot = &self.viewport_slots[vp_idx];
+            let (colour, depth, size) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (&dr.colour_view, &dr.depth_view, dr.scaled_size)
+            } else if needs_blur {
+                let bs = self.backdrop_blur_state.as_ref().unwrap();
+                (&bs.intermediate_view, self.ldr_depth_view(vp_idx), bs.size)
+            } else {
+                (
+                    output_view,
+                    self.ldr_depth_view(vp_idx),
+                    [w.max(1), h.max(1)],
+                )
+            };
+            self.encode_ldr_scope(
+                &mut encoder,
+                device,
+                queue,
+                frame,
+                vp_idx,
+                colour,
+                depth,
+                size,
+            );
+            let mut pass = begin_ldr_resume_pass(&mut encoder, colour, depth, depth_store);
+            self.paint_ldr_scene_finish(&mut pass, vp_idx, !has_breaks);
+        }
 
         // Foreground pass: draw foreground items over the finished scene
         // against a freshly cleared own depth target, into the same colour
@@ -486,8 +528,96 @@ impl ViewportRenderer {
         return encoder.finish();
     }
 
+    /// Whether an LDR frame of `frame` ends its scene pass for plugins that
+    /// encode after the scene.
+    pub(crate) fn ldr_scope_active(&self, frame: &FrameData) -> bool {
+        self.any_plugin_encodes_at(
+            frame,
+            crate::plugin_api::EncoderScope::AfterTransparent,
+            false,
+        )
+    }
+
+    /// The LDR path's after-scene point: hand `encoder` to the plugins that
+    /// encode there, with `colour` (the target the scene pass drew into, of
+    /// `size` pixels) and `depth` (its depth target, no longer attached).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_ldr_scope(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        vp_idx: usize,
+        colour: &crate::gpu::TextureView,
+        depth: &crate::gpu::TextureView,
+        size: [u32; 2],
+    ) {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "ldr_scope", vp = vp_idx).entered();
+        let colour_texture = colour.texture();
+        let depth_texture = depth.texture();
+        let aspect = |aspect| {
+            depth_texture.create_view(&crate::gpu::TextureViewDescriptor {
+                aspect,
+                ..Default::default()
+            })
+        };
+        let depth_only = aspect(crate::gpu::TextureAspect::DepthOnly);
+        let stencil_only = if depth_texture.format().has_stencil_aspect() {
+            aspect(crate::gpu::TextureAspect::StencilOnly)
+        } else {
+            depth_only.clone()
+        };
+        let targets = crate::renderer::ScopeTargets {
+            scene_size: size,
+            colour,
+            colour_texture: &colour_texture,
+            depth,
+            depth_only: &depth_only,
+            stencil_only: &stencil_only,
+            target_format: colour_texture.format(),
+            hdr: false,
+        };
+        self.dispatch_plugin_encode(
+            encoder,
+            frame,
+            crate::plugin_api::EncoderScope::AfterTransparent,
+            device,
+            queue,
+            vp_idx,
+            &targets,
+        );
+    }
+
+    /// What the LDR scene pass draws after the scene content and the
+    /// after-scene point: the selection outline, the sub-object highlight
+    /// and, with `overlays`, the screen overlays.
+    pub(crate) fn paint_ldr_scene_finish(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        vp_idx: usize,
+        overlays: bool,
+    ) {
+        let slot = &self.viewport_slots[vp_idx];
+        emit_outline_composite!(&self.resources, &mut *pass, Some(slot));
+        // The sub-object highlight, over the scene and the outline.
+        self.paint_ldr_sub_highlight(pass, vp_idx, &slot.camera_bind_group);
+        if overlays {
+            let ov = &slot.overlay;
+            emit_overlay_segments(
+                &self.resources,
+                ov,
+                pass,
+                ov.main_segments(),
+                &OverlayEmit::NO_DESTINATION,
+            );
+        }
+    }
+
     /// Resolve last frame's timestamp queries into the staging buffer from
     /// `encoder`, when the previous readback has finished.
+
     pub(crate) fn resolve_prev_timestamps(&mut self, encoder: &mut crate::gpu::CommandEncoder) {
         // Resolve last frame's timestamp queries -> staging buffer, but only
         // when the previous readback has finished. Skipping while a map is in
@@ -591,4 +721,38 @@ impl ViewportRenderer {
             blit_pass.draw(0..3, 0..1);
         }
     }
+}
+
+/// The LDR scene pass resumed after the after-scene point: `colour` and
+/// `depth` loaded, the depth stored by `depth_store`.
+pub(crate) fn begin_ldr_resume_pass<'e>(
+    encoder: &'e mut crate::gpu::CommandEncoder,
+    colour: &crate::gpu::TextureView,
+    depth: &crate::gpu::TextureView,
+    depth_store: crate::gpu::StoreOp,
+) -> crate::gpu::RenderPass<'e> {
+    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+        #[cfg(any(wgpu29, wgpu30))]
+        multiview_mask: None,
+        label: Some("ldr_resume_pass"),
+        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            view: colour,
+            resolve_target: None,
+            ops: crate::gpu::Operations {
+                load: crate::gpu::LoadOp::Load,
+                store: crate::gpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: Some(crate::gpu::Operations {
+                load: crate::gpu::LoadOp::Load,
+                store: depth_store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
 }

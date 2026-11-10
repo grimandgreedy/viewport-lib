@@ -57,6 +57,32 @@ impl ViewportRenderer {
         // An overlays-only frame draws its overlays and nothing else: they
         // ignore depth, so the host's depth needs no reset.
         let overlays_only = self.draws_overlays_only(frame);
+        // A host-owned pass cannot be ended for the plugins that encode after
+        // the scene.
+        if !overlays_only {
+            for (name, plugin) in self.item_type_plugins.iter() {
+                if Self::plugin_encodes_at(
+                    frame,
+                    name,
+                    plugin,
+                    crate::plugin_api::EncoderScope::AfterTransparent,
+                    false,
+                ) {
+                    self.resources.notices.report(
+                        crate::notice::NoticeKey::new(
+                            crate::NoticeCategory::Pipeline,
+                            "encode_skipped_on_path",
+                            [crate::notice::name_id(name), 0],
+                        ),
+                        crate::Severity::Warning,
+                        || crate::NoticeDetail::EncodeSkippedOnPath {
+                            plugin: name.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+
         // The host cleared this pass's depth to a value of its own; reset the
         // viewport rect to the renderer's clear value before drawing.
         if let (false, Some(reset)) = (

@@ -502,8 +502,9 @@ pub enum TilemapDraw {
         alpha_threshold: f32,
     },
     /// Alpha-blended, drawn after the opaque scene in painter's order: by
-    /// `layer` (lower first, then submission order), each layer's chunks in
-    /// map order. Never writes depth. For decoration layers with soft edges.
+    /// `layer` (lower first), at sort key `0.0` against painter sprites on the
+    /// same layer, then submission order; each layer's chunks in map order.
+    /// Never writes depth. For decoration layers with soft edges.
     Blended {
         /// Layer order. Lower layers draw first.
         layer: u32,

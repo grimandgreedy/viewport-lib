@@ -163,10 +163,18 @@ pub struct SpriteItem {
     /// How blended sprites in this batch are ordered against other blended
     /// content. Default [`SpriteOrder::Depth`].
     pub order: SpriteOrder,
-    /// Per-instance sort keys for [`SpriteOrder::Painter`]: within the batch,
-    /// lower keys draw first and higher keys draw on top. A top-down game
-    /// passes `-y` so sprites further down the screen cover the ones behind
-    /// them. Empty keeps submission order. Ignored by `SpriteOrder::Depth`.
+    /// Per-instance sort keys for [`SpriteOrder::Painter`]: lower keys draw
+    /// first and higher keys draw on top, within the batch and across the
+    /// painter batches on the same layer, of this type or another (a blended
+    /// tile layer sorts at key `0.0`). A top-down game passes `-y` so sprites
+    /// further down the screen cover the ones behind them. Empty keeps
+    /// submission order and sorts at `0.0`. Ignored by `SpriteOrder::Depth`.
+    ///
+    /// Batches on one layer split into separate draws where their keys
+    /// interleave, so two large batches with evenly mixed keys cost up to a
+    /// draw per sprite; batches whose key ranges do not overlap draw whole.
+    /// Against another type's batches a sprite batch orders by the key of each
+    /// of its pieces' first sprite.
     ///
     /// The batch is sorted when it is built: an uploaded set is sorted once,
     /// and later ranged writes into it are not re-sorted.
@@ -243,10 +251,11 @@ pub enum SpriteOrder {
     #[default]
     Depth,
     /// Drawn in an exact order after the opaque scene, never through
-    /// order-independent transparency: batches by `layer` (lower first, then
-    /// submission order), and each batch's sprites by
-    /// [`SpriteItem::sort_keys`]. Depth writes are off whatever
-    /// `depth_write` says. Use for 2D scenes that stack cutouts.
+    /// order-independent transparency: by `layer` (lower first), then by
+    /// [`SpriteItem::sort_keys`], then submission order, in one sequence with
+    /// the other painter's-order content (blended tile layers) and the world
+    /// overlay layers. Depth writes are off whatever `depth_write` says. Use
+    /// for 2D scenes that stack cutouts.
     Painter {
         /// Layer order, for example the `order` of the scene layer the batch
         /// belongs to. Lower layers draw first.

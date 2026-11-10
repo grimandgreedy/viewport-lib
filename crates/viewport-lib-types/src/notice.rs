@@ -66,6 +66,13 @@ pub enum NoticeDetail {
     /// Transparent volume meshes were skipped because the LDR pipeline has no
     /// order-independent transparency pass.
     VolumeTransparencyOnLdr,
+    /// A plugin that encodes after the scene on the LDR path was skipped
+    /// because the frame was drawn into a host-owned render pass
+    /// (`paint_viewport`), which cannot be ended mid-frame.
+    EncodeSkippedOnPath {
+        /// The item type name the plugin registered.
+        plugin: String,
+    },
     /// A runtime's GPU plugins have a `post_paint` hook, but this frame left
     /// no scene colour and depth they can read, so the hook was not called.
     PostPaintSkipped {
@@ -184,6 +191,12 @@ impl fmt::Display for NoticeDetail {
                  plugin does not opt into it via ItemTypePlugin::draws_ldr. Opt in (with an \
                  LDR-format pipeline) or set effects.display.mode = PipelineMode::Hdr to render \
                  them."
+            ),
+            Self::EncodeSkippedOnPath { plugin } => write!(
+                f,
+                "'{plugin}' passes after the scene were skipped: paint_viewport() draws into a \
+                 host-owned render pass, which cannot be ended for them. Use pass().prepare and \
+                 pass().paint for one viewport, an owned-encoder path, or the HDR path."
             ),
             Self::VolumeTransparencyOnLdr => f.write_str(
                 "transparent volume meshes are not drawn on the LDR pipeline \

@@ -226,8 +226,10 @@ impl DeviceResources {
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
             format: self.target_format,
+            // COPY_SRC for the plugins that encode after the scene.
             usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
+                | crate::gpu::TextureUsages::TEXTURE_BINDING
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let colour_view = colour_texture.create_view(&crate::gpu::TextureViewDescriptor::default());

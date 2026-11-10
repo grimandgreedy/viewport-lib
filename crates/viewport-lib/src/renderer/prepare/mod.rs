@@ -842,12 +842,13 @@ impl ViewportRenderer {
         }
     }
 
-    /// The plugin items in `frame` that a registered item type paints on the
-    /// LDR path, which is every plugin item the compatibility tier draws.
+    /// The plugin items in `frame` that a registered item type paints or
+    /// encodes on the LDR path, which is every plugin item the compatibility
+    /// tier draws.
     fn ldr_plugin_item_count(&self, frame: &FrameData) -> u32 {
         self.item_type_plugins
             .iter()
-            .filter(|(_, plugin)| plugin.draws_ldr())
+            .filter(|(_, plugin)| plugin.draws_ldr() || plugin.encodes_ldr())
             .map(|(name, _)| {
                 crate::renderer::item_plugins::plugin_collections_for(frame, name)
                     .map(|c| c.len())

@@ -6,8 +6,8 @@ use super::store::{
 };
 use super::*;
 use viewport_lib::plugin_api::{
-    ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PainterContext, PickContext,
-    PickPassContext, PickRay, PluginItem,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PainterBatch, PainterContext,
+    PickContext, PickPassContext, PickRay, PluginItem,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, SubObjectRef};
 
@@ -495,6 +495,16 @@ impl ItemTypePlugin for TilemapPlugin {
         !self.painter_sequence.is_empty()
     }
 
+    /// One batch per blended layer, at sort key `0.0`, handle its index into
+    /// the frame's layers.
+    fn painter_batches(&self, out: &mut Vec<PainterBatch>) {
+        for &i in &self.painter_sequence {
+            if let Some((layer, _)) = self.frame[i].painter() {
+                out.push(PainterBatch::new(layer, 0.0, i as u32));
+            }
+        }
+    }
+
     fn paint_painter(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
@@ -506,7 +516,16 @@ impl ItemTypePlugin for TilemapPlugin {
                 .painter()
                 .is_some_and(|(layer, _)| ctx.includes(layer))
         };
-        let layers = self.painter_sequence.iter().copied().filter(in_range);
+        let layers: Box<dyn Iterator<Item = usize> + '_> = match ctx.batches {
+            Some(batches) => Box::new(
+                batches
+                    .iter()
+                    .map(|&b| b as usize)
+                    .filter(|&i| i < self.frame.len()),
+            ),
+            None => Box::new(self.painter_sequence.iter().copied().filter(in_range)),
+        };
+
         if ctx.is_hdr_pass() {
             self.draw_layers(pass, layers, |l| match l.painter() {
                 Some((_, false)) => pipeline::BLEND_OFF_DEPTH_READ,

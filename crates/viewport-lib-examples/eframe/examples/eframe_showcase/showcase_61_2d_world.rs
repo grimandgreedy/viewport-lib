@@ -73,6 +73,9 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         .on_hover_text("Nearest filtering, pixel snapping and integer zoom; off is smooth");
     ui.checkbox(&mut o.night, "Night (N)");
     ui.checkbox(&mut o.shadows, "Occluder shadows");
+    ui.checkbox(&mut o.hdr, "HDR path").on_hover_text(
+        "Off draws on the LDR path: the 2D lights still apply; bloom, the vignette and the torch flames need HDR",
+    );
     ui.checkbox(&mut o.bloom, "Bloom");
     ui.checkbox(&mut o.vignette, "Vignette");
     ui.checkbox(&mut o.outline, "Player outline");
