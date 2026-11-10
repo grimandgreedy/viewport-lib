@@ -1469,8 +1469,25 @@ impl ViewportRenderer {
             &depth_bg,
         );
         // Painter's-order content and world overlay layers, after every
-        // other draw in the pass.
-        self.paint_painters_and_world(&mut pass, frame, camera_bg, Some(&depth_bg));
+        // other draw in the pass. A world layer that reads what is drawn under
+        // it ends the pass at each of its breaks.
+        if !self.world_overlays_break(vp_idx, &slot_hdr.hdr_texture) {
+            self.paint_painters_and_world(&mut pass, frame, camera_bg, Some(&depth_bg));
+            return;
+        }
+        drop(pass);
+        self.paint_painters_and_world_in_passes(
+            encoder,
+            frame,
+            &crate::renderer::ScenePassTarget {
+                colour: colour_view,
+                depth: depth_view,
+                depth_ops: None,
+                label: "hdr_world_overlay_pass",
+            },
+            camera_bg,
+            Some(&depth_bg),
+        );
     }
 
     /// Hand the encoder to the plugins with items that encode at `scope`.

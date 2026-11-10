@@ -54,6 +54,23 @@ impl ViewportRenderer {
             );
         }
         self.report_auto_exposure_on_ldr(frame);
+        // Nor can it be ended to copy the destination for the overlays that
+        // read it.
+        let reads = self
+            .viewport_slots
+            .get(vp_idx)
+            .is_some_and(|s| s.overlay.has_breaks())
+            || self.world_overlays_read(vp_idx);
+        if reads {
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Pipeline,
+                    "overlay_destination_reads_on_path",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::OverlayDestinationReadsOnPath,
+            );
+        }
         // An overlays-only frame draws its overlays and nothing else: they
         // ignore depth, so the host's depth needs no reset.
         let overlays_only = self.draws_overlays_only(frame);

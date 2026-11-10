@@ -1,4 +1,4 @@
-//! The overlay shape and text pipelines for world layers.
+//! The overlay shape, text and backdrop pipelines for world layers.
 //!
 //! A world layer's items are prepared exactly as screen overlays are, with a
 //! "pixel" that is one world unit on the layer. The shaders differ in two
@@ -15,17 +15,20 @@
 const WORLD_VIEWPORT_WGSL: &str = "\
 // A world layer's space: its anchor extent and the device pixels one layer
 // unit covers (the screen viewport's fields), and the map from layer units to
-// clip space through the scene camera.
+// clip space through the scene camera, and the size in device pixels of the
+// target the layer draws into.
 struct WorldViewport {
     size:          vec2<f32>,
     ppp:           f32,
     pad:           f32,
     layer_to_clip: mat4x4<f32>,
+    target_px:     vec2<f32>,
+    pad2:          vec2<f32>,
 };
 ";
 
 /// Bytes of the world viewport uniform.
-pub(crate) const WORLD_VIEWPORT_BYTES: u64 = 80;
+pub(crate) const WORLD_VIEWPORT_BYTES: u64 = 96;
 
 /// Why a world variant could not be made: the screen source no longer has a
 /// line the substitution looks for.
@@ -86,6 +89,30 @@ pub(crate) fn world_variant(src: &str, fp_location: u32) -> Result<String, Missi
     Ok(s)
 }
 
+/// The world variant of the backdrop shader: [`world_variant`], with the
+/// edge band one device pixel of the layer and the blurred destination read
+/// at the fragment's place on the target rather than its layer position.
+pub(crate) fn world_backdrop_variant(src: &str) -> Result<String, MissingLine> {
+    let mut s = world_variant(src, BACKDROP_FP_LOCATION)?;
+    let aa = "let aa = 1.0;";
+    if !s.contains(aa) {
+        return Err(MissingLine(aa));
+    }
+    s = s.replace(aa, "let aa = 1.0 / max(viewport.ppp, 1.0e-6);");
+    let sample = "textureSample(t_backdrop, s_backdrop, in.uv)";
+    if !s.contains(sample) {
+        return Err(MissingLine(sample));
+    }
+    s = s.replace(
+        sample,
+        "textureSample(t_backdrop, s_backdrop, in.clip_position.xy / viewport.target_px)",
+    );
+    Ok(s)
+}
+
+/// The inter-stage location the backdrop shader's world variant adds.
+pub(crate) const BACKDROP_FP_LOCATION: u32 = 11;
+
 /// The inter-stage location the shape shader's world variant adds.
 pub(crate) const SHAPE_FP_LOCATION: u32 = 10;
 /// The inter-stage location the text shader's world variant adds.
@@ -96,6 +123,8 @@ pub(crate) const TEXT_FP_LOCATION: u32 = 11;
 pub(crate) enum WorldPipe {
     Shape,
     Text,
+    /// A backdrop-blur shape over the blurred destination.
+    Backdrop,
 }
 
 /// The pass a world layer draws into: its colour format and sample count, and
@@ -113,6 +142,8 @@ pub(crate) struct WorldPassKey {
 pub(crate) struct OverlayWorldResources {
     pub(crate) shape_shader: Option<crate::gpu::ShaderModule>,
     pub(crate) text_shader: Option<crate::gpu::ShaderModule>,
+    backdrop_shader: Option<crate::gpu::ShaderModule>,
+    backdrop_layout: Option<crate::gpu::PipelineLayout>,
     pipelines: Vec<(
         (WorldPassKey, WorldPipe, crate::renderer::OverlayBlend),
         crate::gpu::RenderPipeline,
@@ -138,7 +169,8 @@ impl OverlayWorldResources {
     pub(crate) fn clear(&mut self) {
         self.shape_shader = None;
         self.text_shader = None;
-        self.pipelines.clear();
+        self.pipelines
+            .retain(|((_, pipe, _), _)| *pipe == WorldPipe::Backdrop);
     }
 }
 
@@ -157,6 +189,10 @@ impl crate::resources::DeviceResources {
         if self.overlay_world.pipeline(key, pipe, blend).is_some() {
             return;
         }
+        if pipe == WorldPipe::Backdrop {
+            self.ensure_overlay_world_backdrop_pipeline(device, key);
+            return;
+        }
         let (layout, label, buffers): (_, _, Vec<crate::gpu::VertexBufferLayout<'static>>) =
             match pipe {
                 WorldPipe::Shape => {
@@ -167,6 +203,7 @@ impl crate::resources::DeviceResources {
                         vec![crate::resources::OverlayShapeInstance::buffer_layout()],
                     )
                 }
+                WorldPipe::Backdrop => unreachable!("built above"),
                 WorldPipe::Text => {
                     self.ensure_overlay_text_pipeline(device);
                     (
@@ -186,14 +223,14 @@ impl crate::resources::DeviceResources {
         };
         let shader = match pipe {
             WorldPipe::Shape => self.overlay_world.shape_shader.clone(),
-            WorldPipe::Text => self.overlay_world.text_shader.clone(),
+            _ => self.overlay_world.text_shader.clone(),
         };
         let shader = match shader {
             Some(s) => s,
             None => {
                 let (name, location) = match pipe {
                     WorldPipe::Shape => ("overlay_shape", SHAPE_FP_LOCATION),
-                    WorldPipe::Text => ("overlay_text", TEXT_FP_LOCATION),
+                    _ => ("overlay_text", TEXT_FP_LOCATION),
                 };
                 let src = self.overlay_fill_shader_source(name);
                 let world = match world_variant(&src, location) {
@@ -207,13 +244,13 @@ impl crate::resources::DeviceResources {
                     device,
                     match pipe {
                         WorldPipe::Shape => "overlay_world_shape.wgsl",
-                        WorldPipe::Text => "overlay_world_text.wgsl",
+                        _ => "overlay_world_text.wgsl",
                     },
                     world,
                 );
                 match pipe {
                     WorldPipe::Shape => self.overlay_world.shape_shader = Some(module.clone()),
-                    WorldPipe::Text => self.overlay_world.text_shader = Some(module.clone()),
+                    _ => self.overlay_world.text_shader = Some(module.clone()),
                 }
                 module
             }
@@ -266,6 +303,103 @@ impl crate::resources::DeviceResources {
     }
 }
 
+impl crate::resources::DeviceResources {
+    /// Build the world backdrop pipeline for the pass `key`: the screen
+    /// backdrop pipeline's layout and blend over the world variant of its
+    /// shader.
+    fn ensure_overlay_world_backdrop_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+        key: WorldPassKey,
+    ) {
+        self.ensure_overlay_shape_tex_pipeline(device);
+        let (Some(bgl), Some(clip_bgl)) = (
+            self.overlay_shape.tex_bgl.as_ref(),
+            self.overlay_shape.tex_clip_bgl.as_ref(),
+        ) else {
+            return;
+        };
+        let layout = self
+            .overlay_world
+            .backdrop_layout
+            .get_or_insert_with(|| {
+                crate::resources::builders::pipeline_layout(
+                    device,
+                    "overlay_world_backdrop_layout",
+                    &[bgl, clip_bgl],
+                )
+            })
+            .clone();
+        let shader = match self.overlay_world.backdrop_shader.clone() {
+            Some(s) => s,
+            None => {
+                let src = crate::resources::builders::wgsl_source!("overlay_shape_tex");
+                let world = match world_backdrop_variant(src) {
+                    Ok(world) => world,
+                    Err(MissingLine(line)) => {
+                        tracing::warn!("overlay_shape_tex: no world variant, missing `{line}`");
+                        return;
+                    }
+                };
+                let module = crate::resources::builders::wgsl_module(
+                    device,
+                    "overlay_world_backdrop.wgsl",
+                    world,
+                );
+                self.overlay_world.backdrop_shader = Some(module.clone());
+                module
+            }
+        };
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "overlay_world_backdrop_pipeline",
+                layout: &layout,
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[crate::resources::OverlayBackdropVertex::buffer_layout()],
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    self.scene_depth_format(),
+                    false,
+                    if key.depth_test {
+                        crate::plugin_api::depth::DEPTH_COMPARE
+                    } else {
+                        crate::gpu::CompareFunction::Always
+                    },
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: key.samples,
+                    ..Default::default()
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: key.format,
+                        blend: Some(crate::resources::overlay::overlay_shape::BACKDROP_BLEND),
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                cache: None,
+            },
+        );
+        self.overlay_world.pipelines.push((
+            (
+                key,
+                WorldPipe::Backdrop,
+                crate::renderer::OverlayBlend::SourceOver,
+            ),
+            pipeline,
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +437,24 @@ mod tests {
             .validate(&module)
             .unwrap_or_else(|e| panic!("{name} world variant: {e:?}"));
         }
+    }
+
+    #[test]
+    fn the_world_backdrop_variant_is_made_and_validates() {
+        let src = include_str!(concat!(env!("OUT_DIR"), "/overlay_shape_tex.wgsl"));
+        let world = world_backdrop_variant(src).unwrap_or_else(|e| panic!("no line {:?}", e.0));
+        assert!(world.contains("in.clip_position.xy / viewport.target_px"));
+        let module = naga::front::wgsl::parse_str(&world)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&world)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("backdrop world variant: {e:?}"));
+        let start = src.find("struct VertexOutput {").expect("VertexOutput");
+        let end = start + src[start..].find("};").expect("end of VertexOutput");
+        assert!(!src[start..end].contains(&format!("@location({BACKDROP_FP_LOCATION})")));
     }
 
     /// The location the world variant adds is not one the vertex stage

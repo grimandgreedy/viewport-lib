@@ -96,12 +96,21 @@ impl WorldPlane {
 /// clamp or fade by its size on screen. Under a perspective camera the zoom
 /// is taken where the view's centre ray meets the plane.
 ///
-/// Inside a world layer, `OverlayFrame::layers` are drawn flat: each immediate
-/// member draws straight into the scene with the layer's opacity, blend and
-/// colour filter folded into its own (its own filter wins), so overlapping
-/// faded members show through each other, and the layer's blur, shadow and
-/// backdrop are not applied. Blend modes that read the destination draw as
-/// `SourceOver`, and backdrop blur is not drawn. Viewport-anchored items resolve against the rectangle `size`
+/// Inside a world layer, `OverlayFrame::layers` composite as they do on the
+/// screen, nested ones included: a layer's members draw into a target the size
+/// of the viewport, which composites into the scene with the layer's blur,
+/// shadow, colour filter and backdrop. A layer's clip does not apply to its
+/// composite there (its members keep their own clips), and members drawn into
+/// a layer's target do not test scene depth.
+///
+/// Blend modes that read the destination and backdrop blurs read the scene as
+/// drawn so far: the renderer ends the scene pass where one is needed, copies
+/// what is under it and resumes. In a host-owned pass (`paint`,
+/// `paint_viewport`), on the compatibility tier, or at a render scale below
+/// one, the scene pass cannot be ended there: those blends draw as `SourceOver`
+/// and backdrops are not drawn.
+///
+/// Viewport-anchored items resolve against the rectangle `size`
 /// from `origin`; world-anchored items resolve to the point's place on the
 /// layer and are dropped outside that rectangle.
 #[derive(Debug, Clone, PartialEq)]

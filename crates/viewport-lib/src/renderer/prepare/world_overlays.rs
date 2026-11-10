@@ -5,7 +5,7 @@
 
 use super::viewport_overlays::OverlaySpace;
 use super::*;
-use crate::resources::overlay::world::{WORLD_VIEWPORT_BYTES, WorldPassKey, WorldPipe};
+use crate::resources::overlay::world::{WORLD_VIEWPORT_BYTES, WorldPassKey};
 
 /// How a world layer maps to the screen this frame.
 #[derive(Clone, Copy, Debug)]
@@ -119,6 +119,10 @@ impl ViewportRenderer {
                 continue;
             };
             let (anchor_view, anchor_proj) = layer.anchor_view_projection(world_origin);
+            let key = WorldPassKey {
+                depth_test: layer.depth_test,
+                ..pass
+            };
             let space = OverlaySpace {
                 overlays: &layer.frame,
                 size: layer.anchor_extent(),
@@ -127,7 +131,16 @@ impl ViewportRenderer {
                 proj: anchor_proj,
                 world_origin,
                 axes: None,
-                world: true,
+                world: Some(super::viewport_overlays::WorldSpace {
+                    map: crate::renderer::overlay_layers::WorldMap {
+                        layer_to_clip,
+                        device_size,
+                        screen_ppp,
+                        ppp: view.ppp,
+                    },
+                    pass: key,
+                    screen_size: frame.camera.viewport_size,
+                }),
                 screen_ppp,
             };
             let draw = &mut worlds.layers[i];
@@ -159,7 +172,7 @@ impl ViewportRenderer {
                     }));
             }
             ov.layer_plan.build(&layer.frame);
-            ov.layer_plan.flatten();
+            self.report_layer_plan(&ov.layer_plan);
             self.prepare_overlay_labels(device, queue, &space, ov);
             self.prepare_overlay_shapes(device, queue, &space, ov);
             if let Some(cb) = self.finalize_overlay_draw_order(device, queue, &space, ov) {
@@ -168,26 +181,18 @@ impl ViewportRenderer {
             if ov.main_segments().is_empty() {
                 continue;
             }
-            let mut uniform = [0.0f32; 20];
+            let mut uniform = [0.0f32; 24];
             uniform[..4].copy_from_slice(&[space.size[0], space.size[1], view.ppp, 0.0]);
-            uniform[4..].copy_from_slice(&view.layer_to_clip.to_cols_array());
+            uniform[4..20].copy_from_slice(&view.layer_to_clip.to_cols_array());
+            uniform[20..22].copy_from_slice(&device_size);
             if let Some(buf) = &ov.overlay_viewport_buf {
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(&uniform));
             }
-            let key = WorldPassKey {
-                depth_test: layer.depth_test,
-                ..pass
-            };
             for seg in ov.main_segments() {
-                let pipe = if seg.is_shape() {
-                    WorldPipe::Shape
-                } else if seg.is_text() {
-                    WorldPipe::Text
-                } else {
-                    continue;
-                };
-                self.resources
-                    .ensure_overlay_world_pipeline(device, key, pipe, seg.blend);
+                if let Some(pipe) = seg.world_pipe() {
+                    self.resources
+                        .ensure_overlay_world_pipeline(device, key, pipe, seg.blend);
+                }
             }
             worlds.sequence.push(i);
         }

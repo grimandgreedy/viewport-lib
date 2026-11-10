@@ -82,14 +82,12 @@ pub(crate) struct OverlayEmit<'a> {
 }
 
 impl OverlayEmit<'_> {
-    /// A pass that cannot be interrupted, or a layer's members.
+    /// A pass that cannot be interrupted.
     pub(crate) const NO_DESTINATION: OverlayEmit<'static> = OverlayEmit {
         dst: false,
         backdrop: None,
         world: None,
     };
-    /// A layer's members, drawn into its scratch target.
-    pub(crate) const MEMBERS: OverlayEmit<'static> = Self::NO_DESTINATION;
 }
 
 /// The pipeline a segment draws with, to skip redundant `set_pipeline` calls.
@@ -236,11 +234,17 @@ pub(crate) fn emit_overlay_segments(
             } => {
                 // A backdrop-blur shape over the blurred destination. Without
                 // a blurred destination there is nothing to draw it over.
-                if let (Some(bg), Some(sd), Some(pipeline)) = (
-                    emit.backdrop,
-                    ov.overlay_shape_gpu_data.as_ref(),
-                    resources.overlay_shape.tex_pipeline.as_ref(),
-                ) {
+                let pipeline = match emit.world {
+                    Some(key) => resources.overlay_world.pipeline(
+                        key,
+                        crate::resources::overlay::world::WorldPipe::Backdrop,
+                        crate::renderer::types::OverlayBlend::SourceOver,
+                    ),
+                    None => resources.overlay_shape.tex_pipeline.as_ref(),
+                };
+                if let (Some(bg), Some(sd), Some(pipeline)) =
+                    (emit.backdrop, ov.overlay_shape_gpu_data.as_ref(), pipeline)
+                {
                     if let (Some(clip_bg), Some(vbuf)) =
                         (sd.tex_clip_bind_group.as_ref(), sd.blur_vertex_buf.as_ref())
                     {
@@ -264,7 +268,13 @@ pub(crate) fn emit_overlay_segments(
                 let Some(bg) = lt.composite_bg(d.scratch) else {
                     continue;
                 };
-                let layer = &resources.overlay_layer;
+                // A world layer's composites draw into the pass its items do.
+                let pipeline_for = |key| match emit.world {
+                    Some(w) => resources
+                        .overlay_layer
+                        .pipeline_in(key, w.format, w.samples),
+                    None => resources.overlay_layer_pipeline(key),
+                };
                 let slice = ibuf.slice(
                     crate::resources::overlay::overlay_layer::OverlayLayerInstance::byte_offset(
                         index,
@@ -274,7 +284,7 @@ pub(crate) fn emit_overlay_segments(
                 // The backdrop under the content, when the destination has
                 // been blurred.
                 if d.style.backdrop.is_active() && emit.backdrop.is_some() {
-                    if let Some(pipeline) = layer.pipeline(K::Backdrop) {
+                    if let Some(pipeline) = pipeline_for(K::Backdrop) {
                         set(render_pass, OverlayPipe::Layer(K::Backdrop), pipeline);
                         render_pass.set_bind_group(0, bg, &[]);
                         render_pass.set_bind_group(1, clip_bg, &[]);
@@ -283,7 +293,7 @@ pub(crate) fn emit_overlay_segments(
                     }
                 }
                 let key = if emit.dst { d.key() } else { d.fallback_key() };
-                if let Some(pipeline) = layer.pipeline(key) {
+                if let Some(pipeline) = pipeline_for(key) {
                     set(render_pass, OverlayPipe::Layer(key), pipeline);
                     render_pass.set_bind_group(0, bg, &[]);
                     render_pass.set_bind_group(1, clip_bg, &[]);

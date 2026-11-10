@@ -24,7 +24,8 @@
 //!
 //! A layer's members are ranked among themselves into a draw list of their
 //! own, drawn into the layer's scratch target; the layer is one item in the
-//! frame's list.
+//! list of the target it draws into (the frame's, or the layer around it),
+//! and a member list breaks the same way to read its own target.
 
 use crate::renderer::types::OverlayBlend;
 
@@ -192,6 +193,22 @@ impl OverlayDrawSegment {
             self.source,
             OverlayDrawSource::Shape { .. } | OverlayDrawSource::RetainedShape { .. }
         )
+    }
+
+    /// The world pipeline the segment draws through, or `None` for a layer
+    /// composite.
+    pub(crate) fn world_pipe(&self) -> Option<crate::resources::overlay::world::WorldPipe> {
+        use crate::resources::overlay::world::WorldPipe;
+        match self.source {
+            OverlayDrawSource::Shape { .. } | OverlayDrawSource::RetainedShape { .. } => {
+                Some(WorldPipe::Shape)
+            }
+            OverlayDrawSource::Text { .. } | OverlayDrawSource::Retained { .. } => {
+                Some(WorldPipe::Text)
+            }
+            OverlayDrawSource::Backdrop { .. } => Some(WorldPipe::Backdrop),
+            OverlayDrawSource::Layer { .. } => None,
+        }
     }
 
     /// Whether the segment draws through the text pipeline.

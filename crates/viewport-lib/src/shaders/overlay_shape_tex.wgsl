@@ -381,7 +381,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             in.filters.z,
             in.filters.w,
         );
-        let fc = vec4<f32>(mix(filtered, tint.rgb, tint.a), fill_alpha);
+        // The backdrop is premultiplied: opaque over the frame, and inside a
+        // layer only as covered as the layer is under it.
+        var fc = vec4<f32>(mix(filtered, tint.rgb, tint.a), fill_alpha);
+        if (backdrop.a < 1.0) {
+            let covered = backdrop.a * (1.0 - tint.a) + tint.a;
+            fc = vec4<f32>(
+                (filtered * (1.0 - tint.a) + tint.rgb * tint.a) / max(covered, 1.0e-5),
+                fill_alpha * covered,
+            );
+        }
         // Source-over on un-premultiplied colours: weight the destination by
         // its own alpha. A plain mix() would let a fully clipped shadow's
         // colour bleed through the fill, since its alpha is zero but its rgb

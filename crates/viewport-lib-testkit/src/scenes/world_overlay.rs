@@ -30,14 +30,124 @@ pub const PIXELS_PER_UNIT: f32 = 20.0;
 
 /// The world overlay scene appended to the catalogue.
 pub fn scenes() -> Vec<NamedScene> {
-    vec![NamedScene {
-        name: "overlay_world_layer",
+    vec![
+        NamedScene {
+            name: "overlay_world_layer",
+            cameras: vec![NamedCamera {
+                name: "top",
+                camera: camera(1.0 / PIXELS_PER_UNIT, Vec2::ZERO),
+            }],
+            build: build_world_layer,
+        },
+        blends_scene(),
+    ]
+}
+
+/// The world layer blends scene: destination reads and backdrops on a world
+/// layer.
+pub fn blends_scene() -> NamedScene {
+    NamedScene {
+        name: "overlay_world_layer_blends",
         cameras: vec![NamedCamera {
             name: "top",
             camera: camera(1.0 / PIXELS_PER_UNIT, Vec2::ZERO),
         }],
-        build: build_world_layer,
-    }]
+        build: build_world_blends,
+    }
+}
+
+/// Where the blends scene's difference disc is centred, in layer units.
+pub const BLEND_DISC_CENTRE: [f32; 2] = [4.5, 4.5];
+
+/// Destination reads on a world layer, over the checkered ground and two
+/// painter sprites at layer 0: a white disc composited by `Difference`
+/// (centred on [`BLEND_DISC_CENTRE`]), which inverts the ground and the
+/// sprite under it; a frosted card, an item with a backdrop blur, over the
+/// other sprite; and a faded layer of two overlapping rects holding a layer
+/// with a backdrop blur, which blurs the rects the faded layer has drawn
+/// under it.
+fn build_world_blends(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let ground = ground(ctx);
+    let rect = |at: [f32; 2], size: [f32; 2], r: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: r }, at, size)
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let mut frame = OverlayFrame::default();
+    let d = 5.0;
+    frame.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Circle,
+            [
+                BLEND_DISC_CENTRE[0] - d * 0.5,
+                BLEND_DISC_CENTRE[1] - d * 0.5,
+            ],
+            [d, d],
+        )
+        .with_fill(OverlayFill::Solid(Colour::WHITE))
+        .with_blend(OverlayBlend::Difference),
+    );
+    frame.shapes.push(
+        rect(
+            [10.0, 1.5],
+            [7.0, 4.5],
+            0.6,
+            Colour::srgb(1.0, 1.0, 1.0, 0.25),
+        )
+        .with_backdrop_blur(0.15),
+    );
+    let faded = frame.layer_mark();
+    frame.shapes.push(rect(
+        [2.0, 8.5],
+        [6.0, 3.5],
+        0.4,
+        Colour::srgb(0.9, 0.2, 0.2, 1.0),
+    ));
+    frame.shapes.push(rect(
+        [5.0, 9.5],
+        [6.0, 3.0],
+        0.4,
+        Colour::srgb(0.2, 0.4, 0.95, 1.0),
+    ));
+    let frosted = frame.layer_mark();
+    frame.shapes.push(rect(
+        [9.0, 8.0],
+        [6.0, 3.0],
+        0.6,
+        Colour::srgb(1.0, 1.0, 1.0, 0.2),
+    ));
+    frame.push_layer(
+        frosted,
+        viewport_lib::OverlayLayerStyle::default()
+            .with_backdrop(viewport_lib::BackdropEffects::default().with_blur(0.15)),
+    );
+    frame.push_layer(
+        faded,
+        viewport_lib::OverlayLayerStyle::default().with_opacity(0.6),
+    );
+    let layer = WorldOverlayLayer::new(WorldPlane::Xy)
+        .with_origin([-9.0, 6.5])
+        .with_elevation(0.5)
+        .with_order(1)
+        .with_frame(frame);
+
+    // A sprite under the disc and one under the frosted card.
+    let mut sprite = SpriteItem::default();
+    sprite.positions = vec![[-3.0, 1.0, 0.5], [4.0, 2.5, 0.5]];
+    sprite.default_size = 3.0;
+    sprite.size_mode = SpriteSizeMode::WorldSpace;
+    sprite.default_colour = Colour::linear_rgb(0.95, 0.55, 0.1);
+    sprite.order = SpriteOrder::Painter {
+        layer: 0,
+        depth_test: false,
+    };
+    BuiltScene {
+        tilemaps: vec![ground],
+        sprite_items: vec![sprite],
+        world_overlays: vec![layer],
+        lighting: rigs::from_above(),
+        background: Some([0.05, 0.06, 0.08, 1.0]),
+        ..Default::default()
+    }
 }
 
 /// The scene's camera at `units_per_pixel`, centred on plane `centre`.

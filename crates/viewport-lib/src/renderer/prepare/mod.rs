@@ -1081,6 +1081,7 @@ impl ViewportRenderer {
         let vector_rasters_before = self.resources.content.coverage_atlas.rasters();
         let glyph_rasters_before = self.resources.content.glyph_atlas.rasters();
         ov.layer_plan.build(&frame.overlays);
+        self.report_layer_plan(&ov.layer_plan);
         self.overlay_tess_cache.begin_pass();
         let space = viewport_overlays::OverlaySpace::screen(frame, &self.origin);
         self.prepare_overlay_labels(device, queue, &space, &mut ov);

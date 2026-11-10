@@ -231,6 +231,7 @@ fn expected(name: &str) -> Option<Expected> {
         // A tilemap ground, a world overlay layer and a painter sprite: no
         // mesh-family draws.
         "overlay_world_layer" => e(0, 0, 0, 0, 0),
+        "overlay_world_layer_blends" => e(0, 0, 0, 0, 0),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),
@@ -251,6 +252,7 @@ fn expected(name: &str) -> Option<Expected> {
         "overlay_text_subpixel" => e(1, 1, 1, 1, 960),
         "overlay_layers" => e(1, 1, 1, 1, 960),
         "overlay_mesh" => e(1, 1, 1, 1, 960),
+        "overlay_layers_nested" => e(1, 1, 1, 1, 960),
         _ => return None,
     })
 }

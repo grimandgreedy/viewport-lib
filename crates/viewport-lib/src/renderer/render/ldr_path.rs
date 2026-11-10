@@ -82,8 +82,11 @@ impl ViewportRenderer {
         // are handed a target they can copy from, so an output that cannot be
         // copied from routes the frame through the intermediate.
         let scope = self.ldr_scope_active(frame);
+        // A world layer that reads what is drawn under it ends the scene pass
+        // at its breaks, so it too needs a target it can copy from.
+        let world_reads = self.resources.scene_tier.is_built() && self.world_overlays_read(vp_idx);
         let needs_blur = self.ldr_overlay_intermediate(vp_idx, Some(output_view))
-            || (scope
+            || ((scope || world_reads)
                 && !use_dyn_res
                 && !output_view
                     .texture()
@@ -111,6 +114,7 @@ impl ViewportRenderer {
             crate::gpu::StoreOp::Discard
         };
 
+        let world_breaks;
         {
             let slot = &self.viewport_slots[vp_idx];
             let ldr_depth_view = self.ldr_depth_view(vp_idx);
@@ -129,6 +133,8 @@ impl ViewportRenderer {
             } else {
                 (output_view, ldr_depth_view)
             };
+            world_breaks =
+                world_reads && self.world_overlays_break(vp_idx, &scene_colour_view.texture());
             let ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
                     1 << crate::renderer::GPU_TS_SCENE,
@@ -162,8 +168,9 @@ impl ViewportRenderer {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
-                        // The pass after the scope loads it.
-                        store: if scope {
+                        // The pass after the scope or a world layer's
+                        // break loads it.
+                        store: if scope || world_breaks {
                             crate::gpu::StoreOp::Store
                         } else {
                             depth_store
@@ -228,16 +235,53 @@ impl ViewportRenderer {
                 // Item-type plugin paint (LDR opt-in only): after all built-in
                 // scene content, mirroring the HDR scene-pass position.
                 self.dispatch_plugin_paint(&mut render_pass, frame, false);
-                self.paint_painters_and_world(&mut render_pass, frame, camera_bg, None);
+                if !world_breaks {
+                    self.paint_painters_and_world(&mut render_pass, frame, camera_bg, None);
+                }
             } else {
                 self.paint_compatibility_scene(&mut render_pass, camera_bg, frame);
             }
-            if !scope {
+            if !scope && !world_breaks {
                 // Overlays that read the destination are drawn after this pass.
                 self.paint_ldr_scene_finish(&mut render_pass, vp_idx, !has_breaks);
             }
         }
         // -- End of scene render pass (dropped above). ---
+
+        // Painter's-order content and the world layers, in passes of their
+        // own that end at each world layer break, then the rest of the scene
+        // pass's content unless the after-scene scope follows.
+        if world_breaks {
+            let slot = &self.viewport_slots[vp_idx];
+            let (colour, depth) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (&dr.colour_view, &dr.depth_view)
+            } else if needs_blur {
+                let bs = self.backdrop_blur_state.as_ref().unwrap();
+                (&bs.intermediate_view, self.ldr_depth_view(vp_idx))
+            } else {
+                (output_view, self.ldr_depth_view(vp_idx))
+            };
+            self.paint_painters_and_world_in_passes(
+                &mut encoder,
+                frame,
+                &crate::renderer::ScenePassTarget {
+                    colour,
+                    depth,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                    label: "ldr_world_overlay_pass",
+                },
+                &slot.camera_bind_group,
+                None,
+            );
+            if !scope {
+                let mut pass = begin_ldr_resume_pass(&mut encoder, colour, depth, depth_store);
+                self.paint_ldr_scene_finish(&mut pass, vp_idx, !has_breaks);
+            }
+        }
 
         // The after-scene scope, then the rest of the scene pass's content in
         // a pass of its own over the same targets.

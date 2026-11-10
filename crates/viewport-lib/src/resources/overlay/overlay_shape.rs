@@ -322,10 +322,11 @@ impl crate::resources::DeviceResources {
             entries: &[
                 clip_shapes_entry(0),
                 // binding 1: viewport-size uniform (logical w, h) for the
-                // vertex shader's local-pixel-to-NDC transform.
+                // vertex shader's local-pixel-to-NDC transform. A world
+                // layer's backdrop reads its pixel scale in the fragment.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    visibility: crate::gpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -374,18 +375,7 @@ impl crate::resources::DeviceResources {
                     entry_point: Some("fs_main"),
                     targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
-                        blend: Some(crate::gpu::BlendState {
-                            color: crate::gpu::BlendComponent {
-                                src_factor: crate::gpu::BlendFactor::SrcAlpha,
-                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: crate::gpu::BlendOperation::Add,
-                            },
-                            alpha: crate::gpu::BlendComponent {
-                                src_factor: crate::gpu::BlendFactor::One,
-                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: crate::gpu::BlendOperation::Add,
-                            },
-                        }),
+                        blend: Some(BACKDROP_BLEND),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
                     compilation_options: crate::gpu::PipelineCompilationOptions::default(),
@@ -894,6 +884,20 @@ impl crate::resources::DeviceResources {
         self.backdrop_blur.pipeline = Some(pipeline);
     }
 }
+
+/// The backdrop pipeline's blend: straight colour over, premultiplied alpha.
+pub(crate) const BACKDROP_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+    color: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::SrcAlpha,
+        dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+        operation: crate::gpu::BlendOperation::Add,
+    },
+    alpha: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+        operation: crate::gpu::BlendOperation::Add,
+    },
+};
 
 /// Clip-mask shapes a frame can hold. The shaders declare a uniform array this
 /// long, which at 64 bytes an entry fills the 16 KiB uniform binding every tier

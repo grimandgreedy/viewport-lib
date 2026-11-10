@@ -27,12 +27,23 @@ pub(super) struct OverlaySpace<'a> {
     pub world_origin: glam::DVec3,
     /// The camera orientation when the space draws the axes indicator.
     pub axes: Option<glam::Quat>,
-    /// `true` for a world layer: layers draw flat and nothing reads the
-    /// destination.
-    pub world: bool,
+    /// Set for a world layer: where it lies on the screen and the pass it
+    /// draws into.
+    pub world: Option<WorldSpace>,
     /// Device pixels per logical pixel of the screen the space is seen on,
     /// which world-sized text measures its clamps in.
     pub screen_ppp: f32,
+}
+
+/// How a world layer's space reaches the screen.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct WorldSpace {
+    /// Layer units to the target's device pixels.
+    pub map: crate::renderer::overlay_layers::WorldMap,
+    /// The pass the layer's items draw into.
+    pub pass: crate::resources::overlay::world::WorldPassKey,
+    /// The screen viewport's size in logical pixels.
+    pub screen_size: [f32; 2],
 }
 
 /// What a text item's sizing does to it this frame.
@@ -65,7 +76,7 @@ impl OverlaySpace<'_> {
         if !(style.size > 0.0) {
             return TextSize::Unchanged;
         }
-        let fit = if self.world {
+        let fit = if self.world.is_some() {
             // Logical screen pixels per layer unit.
             let per_unit = self.ppp / self.screen_ppp.max(1.0e-6);
             world
@@ -126,7 +137,7 @@ impl<'a> OverlaySpace<'a> {
                 .viewport
                 .show_axes_indicator
                 .then(|| camera.orientation()),
-            world: false,
+            world: None,
             screen_ppp: frame.camera.pixels_per_point,
         }
     }
@@ -3028,7 +3039,7 @@ impl ViewportRenderer {
                             start,
                             count: blur_verts.len() as u32 - start,
                         },
-                        layer: crate::renderer::overlay_draw_order::NO_LAYER,
+                        layer: record_layer,
                         dst: crate::renderer::overlay_draw_order::dst_read::BACKDROP,
                     },
                 );
@@ -3198,7 +3209,7 @@ impl ViewportRenderer {
                             start,
                             count: 6,
                         },
-                        layer: crate::renderer::overlay_draw_order::NO_LAYER,
+                        layer: record_layer,
                         dst: crate::renderer::overlay_draw_order::dst_read::BACKDROP,
                     },
                 );
@@ -3487,16 +3498,28 @@ impl ViewportRenderer {
         let vp = space.size;
         let ppp = space.ppp;
 
-        // Group the items by the layer they record into, the frame's own last.
-        // The sort is stable, so each group keeps its recording order.
+        // Each composited layer joins the list of the target it draws into,
+        // innermost first so a layer's bounds take in the layers inside it.
+        // Then the items are grouped by the target they record into, the
+        // frame's own last; the sort is stable, so each group keeps its
+        // recording order.
         let mut member_ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        ov.layer_targets.breaks.clear();
+        ov.layer_targets.world = space.world.as_ref().map(|w| w.map);
         let main_start = if ov.layer_plan.has_targets() {
-            items.sort_by_key(|i| i.layer);
-            let main_start = items
-                .iter()
-                .position(|i| i.layer == NO_LAYER)
-                .unwrap_or(items.len());
-            let needs_masks = ov.layer_plan.layers.iter().any(|l| l.clip.mask.is_some());
+            let plan = &ov.layer_plan;
+            let mut content: Vec<Option<crate::renderer::overlay_draw_order::Bounds>> =
+                vec![None; plan.layers.len()];
+            for i in &items {
+                let b = i.bounds;
+                if let Some(c) = content.get_mut(i.layer as usize)
+                    && b[0] < b[2]
+                    && b[1] < b[3]
+                {
+                    *c = Some(c.map_or(b, |c| union(c, b)));
+                }
+            }
+            let needs_masks = plan.layers.iter().any(|l| l.clip.mask.is_some());
             let registry = needs_masks.then(|| {
                 let world_origin = space.world_origin;
                 let view = space.view;
@@ -3505,28 +3528,23 @@ impl ViewportRenderer {
                     build_clip_shapes(&space.overlays.shapes, ppp, vp, &view, &proj, world_origin);
                 (index_of, bboxes)
             });
-            let mut k = 0;
-            while k < main_start {
-                let l = items[k].layer;
-                let end = k + items[k..main_start]
-                    .iter()
-                    .take_while(|i| i.layer == l)
-                    .count();
-                let range = k..end;
-                k = end;
-                let Some(layer) = ov.layer_plan.layers.get(l as usize) else {
-                    continue;
-                };
-                let Some(content) = items[range.clone()]
-                    .iter()
-                    .map(|i| i.bounds)
-                    .filter(|b| b[0] < b[2] && b[1] < b[3])
-                    .reduce(union)
-                else {
+            let mut order: Vec<u32> = (0..plan.layers.len() as u32)
+                .filter(|&l| {
+                    plan.layers[l as usize].mode
+                        == crate::renderer::overlay_layers::LayerMode::Target
+                })
+                .collect();
+            order.sort_by_key(|&l| std::cmp::Reverse(plan.layers[l as usize].depth));
+            let mut draw_of = vec![u32::MAX; plan.layers.len()];
+            for l in order {
+                let layer = &plan.layers[l as usize];
+                let Some(content_bounds) = content[l as usize] else {
                     continue;
                 };
                 // The composite's clip: the mask's box and index, cut to the
-                // clip rect, as an item's clip is resolved.
+                // clip rect, as an item's clip is resolved. A world layer's
+                // composite draws over the screen, where the layer's clips do
+                // not apply.
                 let mask = layer.clip.mask.and_then(|id| {
                     registry.as_ref().and_then(|(index_of, bboxes)| {
                         index_of.get(&id).map(|i| (*i, bboxes[*i as usize]))
@@ -3537,23 +3555,54 @@ impl ViewportRenderer {
                     Some(r) => combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp)),
                     None => mask_rect,
                 };
+                // A world layer's extent does not clip it.
+                let area = match space.world {
+                    Some(_) => crate::renderer::overlay_draw_order::UNBOUNDED,
+                    None => [0.0, 0.0, vp[0], vp[1]],
+                };
                 let bounds = crate::renderer::overlay_layers::composite_bounds(
-                    content,
+                    content_bounds,
                     &layer.style,
                     clip_bounds(clip_rect, ppp),
-                    vp,
+                    area,
                     ppp,
                 );
                 if !(bounds[0] < bounds[2] && bounds[1] < bounds[3]) {
                     continue;
                 }
+                let shadow = layer.style.shadow.map_or([0.0; 2], |s| s.offset);
+                let (quad, shadow_offset, clip_rect, clip_index) = match &space.world {
+                    Some(w) => (
+                        w.map.screen_box(bounds),
+                        w.map.screen_offset(
+                            [
+                                (content_bounds[0] + content_bounds[2]) * 0.5,
+                                (content_bounds[1] + content_bounds[3]) * 0.5,
+                            ],
+                            shadow,
+                        ),
+                        [0.0; 4],
+                        -1.0,
+                    ),
+                    None => (
+                        bounds,
+                        shadow,
+                        clip_rect,
+                        mask.map_or(-1.0, |(i, _)| i as f32),
+                    ),
+                };
+                let parent = plan.target_of(layer.parent);
                 let draw = crate::renderer::overlay_layers::LayerDraw {
                     segments: 0..0,
+                    breaks: 0..0,
                     scratch: 0,
+                    level: plan.level_of(l),
                     bounds,
+                    quad,
+                    shadow_offset,
                     style: layer.style.clone(),
                     clip_rect,
-                    clip_index: mask.map_or(-1.0, |(i, _)| i as f32),
+                    clip_index,
                 };
                 let index = ov.layer_targets.draws.len() as u32;
                 items.push(OverlayOrderItem {
@@ -3562,11 +3611,32 @@ impl ViewportRenderer {
                     bounds,
                     blend: layer.style.blend,
                     source: OverlayItemSource::Layer { index },
-                    layer: NO_LAYER,
+                    layer: parent,
                     dst: draw.dst_read(),
                 });
+                if let Some(c) = content.get_mut(parent as usize) {
+                    *c = Some(c.map_or(bounds, |c| union(c, bounds)));
+                }
+                draw_of[l as usize] = index;
                 ov.layer_targets.draws.push(draw);
-                member_ranges.push(range);
+            }
+            items.sort_by_key(|i| i.layer);
+            let main_start = items
+                .iter()
+                .position(|i| i.layer == NO_LAYER)
+                .unwrap_or(items.len());
+            member_ranges.resize(ov.layer_targets.draws.len(), 0..0);
+            let mut k = 0;
+            while k < main_start {
+                let l = items[k].layer;
+                let end = k + items[k..main_start]
+                    .iter()
+                    .take_while(|i| i.layer == l)
+                    .count();
+                if let Some(&d) = draw_of.get(l as usize).filter(|&&d| d != u32::MAX) {
+                    member_ranges[d as usize] = k..end;
+                }
+                k = end;
             }
             main_start
         } else {
@@ -3584,9 +3654,9 @@ impl ViewportRenderer {
             &mut ov.overlay_order_scratch,
         );
         ov.overlay_main_segments = ov.overlay_draw_segments.len() as u32;
-        let mut no_breaks = Vec::new();
         for (d, range) in ov.layer_targets.draws.iter_mut().zip(member_ranges) {
             let start = ov.overlay_draw_segments.len() as u32;
+            let first_break = ov.layer_targets.breaks.len() as u32;
             build_draw_list(
                 &mut items[range],
                 &ov.overlay_shape_instances,
@@ -3594,10 +3664,11 @@ impl ViewportRenderer {
                 &mut shapes,
                 &mut text,
                 &mut ov.overlay_draw_segments,
-                &mut no_breaks,
+                &mut ov.layer_targets.breaks,
                 &mut ov.overlay_order_scratch,
             );
             d.segments = start..ov.overlay_draw_segments.len() as u32;
+            d.breaks = first_break..ov.layer_targets.breaks.len() as u32;
         }
         ov.overlay_order_items = items;
 
@@ -3626,21 +3697,62 @@ impl ViewportRenderer {
             .overlay_shape_gpu_data
             .as_ref()
             .map_or(0.0, |d| d.max_blur_radius);
-        ov.layer_targets.backdrop_radius = ov
+        let backdrop_radius = ov
             .layer_targets
             .draws
             .iter()
             .filter(|d| d.style.backdrop.is_active())
             .map(|d| d.style.backdrop.blur)
             .fold(max_backdrop_radius, f32::max);
-        let size = [
-            ((vp[0] * ppp).round() as u32).max(1),
-            ((vp[1] * ppp).round() as u32).max(1),
-        ];
-        // A world layer draws inside the scene, where nothing is copied or
-        // blurred for it.
-        let needs_backdrop = ov.has_backdrops() && !space.world;
-        let needs_snapshot = ov.has_breaks() && !space.world;
+        // The backdrop blur is sized in device pixels: a world layer's radii
+        // are layer units.
+        ov.layer_targets.backdrop_radius = match space.world {
+            Some(_) => backdrop_radius * ppp,
+            None => backdrop_radius,
+        };
+        let size = match &space.world {
+            Some(w) => [
+                (w.map.device_size[0].round() as u32).max(1),
+                (w.map.device_size[1].round() as u32).max(1),
+            ],
+            None => [
+                ((vp[0] * ppp).round() as u32).max(1),
+                ((vp[1] * ppp).round() as u32).max(1),
+            ],
+        };
+        let lt = &ov.layer_targets;
+        let needs_backdrop = ov.has_backdrops();
+        let needs_inner_backdrop = lt.breaks.iter().any(|b| b.blur);
+        let needs_snapshot = ov.has_breaks() || lt.has_breaks();
+        let (format, composite_pass, world) = match &space.world {
+            Some(w) => (
+                w.pass.format,
+                (w.pass.format, w.pass.samples),
+                Some((
+                    crate::resources::overlay::world::WorldPassKey {
+                        format: w.pass.format,
+                        samples: 1,
+                        depth_test: false,
+                    },
+                    w.screen_size,
+                )),
+            ),
+            None => (
+                self.resources.target_format,
+                (self.resources.target_format, 1),
+                None,
+            ),
+        };
+        if let Some((key, _)) = world {
+            // The world pipelines the members draw with inside a layer target.
+            for k in ov.overlay_main_segments as usize..ov.overlay_draw_segments.len() {
+                let seg = ov.overlay_draw_segments[k];
+                if let Some(pipe) = seg.world_pipe() {
+                    self.resources
+                        .ensure_overlay_world_pipeline(device, key, pipe, seg.blend);
+                }
+            }
+        }
         self.prepare_layer_targets(
             device,
             queue,
@@ -3649,7 +3761,11 @@ impl ViewportRenderer {
                 size,
                 ppp,
                 needs_backdrop,
+                needs_inner_backdrop,
                 needs_snapshot,
+                format,
+                composite_pass,
+                world,
             },
         )
     }

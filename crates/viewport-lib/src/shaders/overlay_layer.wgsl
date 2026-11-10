@@ -539,9 +539,11 @@ fn fs_composite_dst(in: VertexOutput) -> @location(0) vec4<f32> {
     // With a backdrop the layer was drawn over it, not over the copy.
     let bd = textureSampleLevel(t_backdrop, s_linear, in.uv, 0.0);
     if (in.backdrop.w > 0.5) {
-        let m = layer_clip(in);
+        // Premultiplied: a backdrop inside a layer keeps the layer's alpha,
+        // one over the frame is opaque.
+        let m = layer_clip(in) * bd.a;
         let b = filter_backdrop(bd.rgb, in.backdrop);
-        d = vec4<f32>(b * m, m) + d * (1.0 - m);
+        d = vec4<f32>(b * layer_clip(in), m) + d * (1.0 - m);
     }
     let mode = i32(in.params.y + 0.5);
     let s = unpremultiply(p);
@@ -556,5 +558,5 @@ fn fs_composite_dst(in: VertexOutput) -> @location(0) vec4<f32> {
 fn fs_backdrop(in: VertexOutput) -> @location(0) vec4<f32> {
     let bd = textureSampleLevel(t_backdrop, s_linear, in.uv, 0.0);
     let m = layer_clip(in);
-    return vec4<f32>(filter_backdrop(bd.rgb, in.backdrop) * m, m);
+    return vec4<f32>(filter_backdrop(bd.rgb, in.backdrop) * m, bd.a * m);
 }

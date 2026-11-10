@@ -23,7 +23,19 @@ pub(crate) struct OverlayLayerResources {
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     layout: Option<crate::gpu::PipelineLayout>,
     shader: Option<crate::gpu::ShaderModule>,
-    pipelines: Vec<(LayerPipelineKey, crate::gpu::RenderPipeline)>,
+    /// Every pipeline built, by key and by the colour format and sample count
+    /// of the pass it composites into.
+    pipelines: Vec<(
+        (LayerPipelineKey, crate::gpu::TextureFormat, u32),
+        crate::gpu::RenderPipeline,
+    )>,
+    /// The downsample and blur pipelines for layer targets of a format other
+    /// than the renderer's target format (the HDR scene, for a world layer).
+    blur_pipelines: Vec<(
+        crate::gpu::TextureFormat,
+        crate::gpu::RenderPipeline,
+        crate::gpu::RenderPipeline,
+    )>,
     /// Linear clamp sampler for the blurred copies.
     pub(crate) sampler: Option<crate::gpu::Sampler>,
     /// One transparent texel, bound where a layer has no blurred copy or no
@@ -32,11 +44,17 @@ pub(crate) struct OverlayLayerResources {
 }
 
 impl OverlayLayerResources {
-    /// The pipeline for `key`, if it has been built.
-    pub(crate) fn pipeline(&self, key: LayerPipelineKey) -> Option<&crate::gpu::RenderPipeline> {
+    /// The pipeline for `key` into a pass of `format` with `samples`, if it
+    /// has been built.
+    pub(crate) fn pipeline_in(
+        &self,
+        key: LayerPipelineKey,
+        format: crate::gpu::TextureFormat,
+        samples: u32,
+    ) -> Option<&crate::gpu::RenderPipeline> {
         self.pipelines
             .iter()
-            .find(|(k, _)| *k == key)
+            .find(|(k, _)| *k == (key, format, samples))
             .map(|(_, p)| p)
     }
 }
@@ -224,13 +242,85 @@ impl crate::resources::DeviceResources {
         self.overlay_layer.blank = Some(blank.create_view(&Default::default()));
     }
 
-    /// The composite pipeline for `key`, built on first use.
-    pub(crate) fn ensure_overlay_layer_pipeline(
+    /// The composite pipeline for `key` into the renderer's target format.
+    pub(crate) fn overlay_layer_pipeline(
+        &self,
+        key: LayerPipelineKey,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        self.overlay_layer.pipeline_in(key, self.target_format, 1)
+    }
+
+    /// The downsample and blur pipelines for a layer target of `format`.
+    pub(crate) fn overlay_blur_pipelines(
+        &self,
+        format: crate::gpu::TextureFormat,
+    ) -> Option<(&crate::gpu::RenderPipeline, &crate::gpu::RenderPipeline)> {
+        if format == self.target_format {
+            return self
+                .post
+                .dyn_res_upscale_pipeline
+                .as_ref()
+                .zip(self.backdrop_blur.pipeline.as_ref());
+        }
+        self.overlay_layer
+            .blur_pipelines
+            .iter()
+            .find(|(f, _, _)| *f == format)
+            .map(|(_, d, b)| (d, b))
+    }
+
+    /// Build the downsample and blur pipelines for layer targets of `format`
+    /// if they are not built: the shared ones serve the target format. Needs
+    /// both shared pipelines built first, for their layouts.
+    pub(crate) fn ensure_overlay_blur_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        format: crate::gpu::TextureFormat,
+    ) {
+        if self.overlay_blur_pipelines(format).is_some() {
+            return;
+        }
+        let (Some(down_bgl), Some(blur_bgl)) = (
+            self.post.dyn_res_upscale_bgl.as_ref(),
+            self.backdrop_blur.bgl.as_ref(),
+        ) else {
+            return;
+        };
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        let build = |label: &'static str, bgl: &crate::gpu::BindGroupLayout, src: &'static str| {
+            let layout = crate::resources::builders::pipeline_layout(device, label, &[bgl]);
+            let shader = crate::resources::builders::wgsl_module(device, label, src);
+            crate::resources::builders::build_fullscreen_pipeline(
+                device, label, &layout, &shader, format, None,
+            )
+        };
+        let down = build(
+            "overlay_layer_downsample",
+            down_bgl,
+            crate::resources::builders::wgsl_source!("dyn_res_upscale"),
+        );
+        let blur = build(
+            "overlay_layer_blur",
+            blur_bgl,
+            crate::resources::builders::wgsl_source!("backdrop_blur"),
+        );
+        self.overlay_layer.blur_pipelines.push((format, down, blur));
+    }
+
+    /// The composite pipeline for `key` into a pass of `format` with
+    /// `samples`, built on first use.
+    pub(crate) fn ensure_overlay_layer_pipeline_in(
         &mut self,
         device: &crate::gpu::Device,
         key: LayerPipelineKey,
+        format: crate::gpu::TextureFormat,
+        samples: u32,
     ) {
-        if self.overlay_layer.pipeline(key).is_some() {
+        if self
+            .overlay_layer
+            .pipeline_in(key, format, samples)
+            .is_some()
+        {
             return;
         }
         let (Some(layout), Some(shader)) = (
@@ -284,12 +374,15 @@ impl crate::resources::DeviceResources {
                     false,
                     crate::gpu::CompareFunction::Always,
                 )),
-                multisample: crate::gpu::MultisampleState::default(),
+                multisample: crate::gpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some(entry),
                     targets: &[Some(crate::gpu::ColorTargetState {
-                        format: self.target_format,
+                        format,
                         blend: Some(blend),
                         write_mask: crate::gpu::ColorWrites::ALL,
                     })],
@@ -298,7 +391,9 @@ impl crate::resources::DeviceResources {
                 cache: None,
             },
         );
-        self.overlay_layer.pipelines.push((key, pipeline));
+        self.overlay_layer
+            .pipelines
+            .push(((key, format, samples), pipeline));
     }
 }
 

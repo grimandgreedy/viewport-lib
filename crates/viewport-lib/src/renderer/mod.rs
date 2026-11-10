@@ -3159,6 +3159,170 @@ impl ViewportRenderer {
         }
     }
 
+    /// Whether a world layer of `vp_idx` reads what is drawn under it, and
+    /// every such layer can copy `target` at its breaks.
+    pub(crate) fn world_overlays_break(&self, vp_idx: usize, target: &crate::gpu::Texture) -> bool {
+        let Some(worlds) = self.viewport_slots.get(vp_idx).map(|s| &s.world_overlays) else {
+            return false;
+        };
+        let mut reads = worlds
+            .sequence
+            .iter()
+            .map(|&i| &worlds.layers[i].ov)
+            .filter(|ov| ov.has_breaks())
+            .peekable();
+        reads.peek().is_some() && reads.all(|ov| ov.layer_targets.can_snapshot(target))
+    }
+
+    /// Whether a world layer of `vp_idx` reads what is drawn under it.
+    pub(crate) fn world_overlays_read(&self, vp_idx: usize) -> bool {
+        self.viewport_slots.get(vp_idx).is_some_and(|s| {
+            let w = &s.world_overlays;
+            w.sequence.iter().any(|&i| w.layers[i].ov.has_breaks())
+        })
+    }
+
+    /// Draw the frame's painter sequence as
+    /// [`paint_painters_and_world`](Self::paint_painters_and_world) does, in
+    /// passes of its own over `target`, ending the pass at each world layer
+    /// break: what is drawn so far is copied into that layer's snapshot (and
+    /// blurred for backdrops) before the items that read it. Call only when
+    /// [`world_overlays_break`](Self::world_overlays_break) holds for
+    /// `target`.
+    pub(crate) fn paint_painters_and_world_in_passes(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        frame: &FrameData,
+        target: &ScenePassTarget<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+    ) {
+        enum Unit {
+            Step(usize),
+            World(usize, std::ops::Range<usize>),
+            Rebind,
+        }
+        let Some(worlds) = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays)
+        else {
+            return;
+        };
+        let Some(pass_key) = worlds.pass else {
+            return;
+        };
+        let plan = self.painter_plan(frame, scene_depth_bind_group.is_some());
+        // The sequence cut at every break: each chunk draws in one pass, and
+        // the break after it names the layer whose snapshot it fills.
+        let mut chunks: Vec<(Vec<Unit>, Option<(usize, overlay_draw_order::OverlayBreak)>)> =
+            Vec::new();
+        let mut units = Vec::new();
+        for (k, step) in plan.steps.iter().enumerate() {
+            let PainterStep::World { layers } = step else {
+                units.push(Unit::Step(k));
+                continue;
+            };
+            for &i in &worlds.sequence[layers.clone()] {
+                let ov = &worlds.layers[i].ov;
+                let mut start = 0;
+                for b in &ov.overlay_breaks {
+                    units.push(Unit::World(i, start..b.segment as usize));
+                    chunks.push((std::mem::take(&mut units), Some((i, *b))));
+                    start = b.segment as usize;
+                }
+                units.push(Unit::World(i, start..ov.main_segments().len()));
+            }
+            units.push(Unit::Rebind);
+        }
+        chunks.push((units, None));
+
+        let colour_texture = target.colour.texture();
+        for (units, brk) in &chunks {
+            {
+                let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                    #[cfg(any(wgpu29, wgpu30))]
+                    multiview_mask: None,
+                    label: Some(target.label),
+                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                        view: target.colour,
+                        resolve_target: None,
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Load,
+                            store: crate::gpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                        view: target.depth,
+                        depth_ops: target.depth_ops,
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_bind_group(0, camera_bg, &[]);
+                for unit in units {
+                    match unit {
+                        Unit::Step(k) => match &plan.steps[*k] {
+                            PainterStep::Batches {
+                                plugin,
+                                layers,
+                                batches,
+                            } => self.dispatch_plugin_paint_painter(
+                                &mut pass,
+                                frame,
+                                plugin,
+                                layers.clone(),
+                                Some(&plan.batches[batches.clone()]),
+                                scene_depth_bind_group,
+                            ),
+                            PainterStep::Layers { plugin, layers } => self
+                                .dispatch_plugin_paint_painter(
+                                    &mut pass,
+                                    frame,
+                                    plugin,
+                                    layers.clone(),
+                                    None,
+                                    scene_depth_bind_group,
+                                ),
+                            PainterStep::World { .. } => {}
+                        },
+                        Unit::World(i, segs) => {
+                            let _span = tracing::debug_span!(
+                                target: "viewport_lib::frame",
+                                "world_overlay"
+                            )
+                            .entered();
+                            let draw = &worlds.layers[*i];
+                            crate::renderer::render::emit_overlay_segments(
+                                &self.resources,
+                                &draw.ov,
+                                &mut pass,
+                                &draw.ov.main_segments()[segs.clone()],
+                                &crate::renderer::render::OverlayEmit {
+                                    dst: true,
+                                    backdrop: draw.ov.layer_targets.item_backdrop_bg(),
+                                    world: Some(crate::resources::overlay::world::WorldPassKey {
+                                        depth_test: draw.depth_test,
+                                        ..pass_key
+                                    }),
+                                },
+                            );
+                        }
+                        Unit::Rebind => pass.set_bind_group(0, camera_bg, &[]),
+                    }
+                }
+            }
+            if let Some((i, b)) = brk {
+                let lt = &worlds.layers[*i].ov.layer_targets;
+                let ppp = lt.world.map_or(1.0, |w| w.ppp);
+                let region = lt.break_region(b.bounds, b.blur, ppp);
+                lt.snapshot(encoder, &self.resources, &colour_texture, region, b.blur);
+            }
+        }
+    }
+
     /// The painter sequence the next draw of `frame` on the HDR (`hdr`) or LDR
     /// path follows, one entry per call: the plugin's type name (or
     /// `"world_overlay"`), the layers the call covers, and the batch handles
@@ -4746,6 +4910,16 @@ pub(crate) enum PainterStep {
 pub(crate) struct PainterPlan {
     pub(crate) steps: Vec<PainterStep>,
     pub(crate) batches: Vec<u32>,
+}
+
+/// The target a painter sequence that breaks draws into: the scene's colour
+/// and depth, the depth read-only (`depth_ops: None`) in the HDR
+/// read-only-depth pass and loaded and stored in the LDR scene pass.
+pub(crate) struct ScenePassTarget<'a> {
+    pub(crate) colour: &'a crate::gpu::TextureView,
+    pub(crate) depth: &'a crate::gpu::TextureView,
+    pub(crate) depth_ops: Option<crate::gpu::Operations<f32>>,
+    pub(crate) label: &'static str,
 }
 
 /// The attachments an encoder scope hands to plugins: the HDR scene's, or the

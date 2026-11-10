@@ -3,15 +3,19 @@
 //! compatibility tier draw the layer, and a CPU pick through the plane finds
 //! the item drawn under the cursor.
 //!
-//! The two-zoom pair has goldens of its own next to the catalogue's:
+//! Destination reads and backdrops on a world layer draw on both owned paths
+//! and fall back to source-over in a host-owned pass.
+//!
+//! The two-zoom pair and the blends scene on the LDR path have goldens of
+//! their own next to the catalogue's:
 //!
 //!     BLESS=1 cargo test --release --test world_overlay
 
 use glam::{DVec3, Vec2};
 use std::path::Path;
 use viewport_lib::{
-    Camera2d, Colour, FrameData, OverlayFrame, OverlayPolylineItem, PipelineMode, Plane2d,
-    WorldOverlayItem, WorldOverlayLayer, WorldPlane,
+    Camera2d, Colour, FrameData, NoticeDetail, OverlayBlend, OverlayFrame, OverlayPolylineItem,
+    PipelineMode, Plane2d, WorldOverlayItem, WorldOverlayLayer, WorldPlane, wgpu,
 };
 use viewport_lib_testkit::golden::{self, GoldenMode, Outcome, RgbaImage, Tolerance};
 use viewport_lib_testkit::scenes::{BuiltScene, NamedCamera, NamedScene, world_overlay};
@@ -255,4 +259,185 @@ fn the_compatibility_tier_draws_the_world_layer() {
     let pixels = render(&mut harness, &frame);
     let c = pixel(&pixels, 70, 110);
     assert!(c[2] > c[0] + 60, "arrow pixel {c:?}");
+}
+
+/// A pixel over the painter sprite inside the blends scene's difference disc.
+const UNDER_DISC: (u32, u32) = (125, 125);
+
+/// The blends scene with its disc drawn by `blend`, on `mode`.
+fn blends_frame(
+    harness: &mut Harness,
+    blend: OverlayBlend,
+    mode: PipelineMode,
+) -> (BuiltScene, FrameData) {
+    let scene = world_overlay::blends_scene();
+    let mut built = harness.build_scene(&scene);
+    built.pipeline_mode = Some(mode);
+    built.world_overlays[0].frame.shapes[0].style.blend = blend;
+    let frame = frame_for(&built, &scene.cameras[0].camera, [W as f32, H as f32]);
+    (built, frame)
+}
+
+/// The world layer blends scene on the LDR path, beside the catalogue's HDR
+/// golden of it.
+#[test]
+fn world_layer_blends_golden_on_the_ldr_path() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (_built, frame) =
+        blends_frame(&mut harness, OverlayBlend::Difference, PipelineMode::Direct);
+    let pixels = render(&mut harness, &frame);
+    check_golden(&harness, "overlay_world_layer_blends_ldr", pixels);
+}
+
+/// The difference disc inverts the orange sprite under it to blue on both
+/// paths, where drawn source-over it is white.
+#[test]
+fn a_world_destination_read_differs_from_source_over() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for mode in [PipelineMode::Hdr, PipelineMode::Direct] {
+        let (_, frame) = blends_frame(&mut harness, OverlayBlend::Difference, mode);
+        let c = pixel(&render(&mut harness, &frame), UNDER_DISC.0, UNDER_DISC.1);
+        assert!(
+            c[2] > c[0] + 100,
+            "{mode:?}: the disc should invert the sprite, got {c:?}"
+        );
+        let (_, frame) = blends_frame(&mut harness, OverlayBlend::SourceOver, mode);
+        let c = pixel(&render(&mut harness, &frame), UNDER_DISC.0, UNDER_DISC.1);
+        assert!(
+            c[0] > 200 && c[1] > 200 && c[2] > 200,
+            "{mode:?}: source-over draws the disc white, got {c:?}"
+        );
+    }
+}
+
+/// In a host-owned pass the world layer cannot be broken: the disc draws
+/// source-over, the backdrops are skipped, and a notice says so.
+#[test]
+fn a_host_pass_draws_world_destination_reads_source_over() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (_, frame) = blends_frame(&mut harness, OverlayBlend::Difference, PipelineMode::Direct);
+    let _ = harness.renderer.take_notices();
+    let _ = paint_host(&mut harness, &frame);
+    let bgra = paint_host(&mut harness, &frame);
+    let i = ((UNDER_DISC.1 * W + UNDER_DISC.0) * 4) as usize;
+    let c = [bgra[i + 2], bgra[i + 1], bgra[i]];
+    assert!(
+        c[0] > 200 && c[1] > 200 && c[2] > 200,
+        "the disc draws source-over, got {c:?}"
+    );
+    assert!(
+        harness
+            .renderer
+            .take_notices()
+            .into_iter()
+            .any(|n| matches!(n.detail, NoticeDetail::OverlayDestinationReadsOnPath)),
+        "the fallback is reported"
+    );
+}
+
+/// Draw `frame` through the single-viewport host-owned pass path and read
+/// the target back (in the target's BGRA order).
+fn paint_host(h: &mut Harness, frame: &FrameData) -> Vec<u8> {
+    let device = h.device.clone();
+    let queue = h.queue.clone();
+    let target = |format: wgpu::TextureFormat| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("world_overlay_host_target"),
+            size: wgpu::Extent3d {
+                width: W,
+                height: H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    };
+    let r = &mut h.renderer;
+    let colour = target(Harness::DEFAULT_TARGET_FORMAT);
+    let depth = target(r.scene_depth_format());
+    let (colour_view, depth_view) = (
+        colour.create_view(&Default::default()),
+        depth.create_view(&Default::default()),
+    );
+    let pre = r.pass().prepare(&device, &queue, frame);
+    queue.submit(pre);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("world_overlay_host_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &colour_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(viewport_lib::plugin_api::depth::DEPTH_CLEAR),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            // The tail fields differ between the wgpu legs.
+            ..Default::default()
+        });
+        r.pass_view().paint(&mut rp, frame);
+    }
+    queue.submit([encoder.finish()]);
+    let row =
+        (W * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("world_overlay_host_readback"),
+        size: (row * H) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        colour.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(H),
+            },
+        },
+        wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    let mapped = viewport_lib::gpu::mapped_range(slice);
+    let mut out = Vec::with_capacity((W * H * 4) as usize);
+    for y in 0..H as usize {
+        let start = y * row as usize;
+        out.extend_from_slice(&mapped[start..start + (W * 4) as usize]);
+    }
+    out
 }

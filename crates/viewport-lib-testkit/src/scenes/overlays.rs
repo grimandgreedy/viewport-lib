@@ -66,6 +66,7 @@ pub fn scenes() -> Vec<NamedScene> {
         scene("overlay_text_subpixel", build_text_subpixel),
         scene("overlay_layers", build_layers),
         scene("overlay_mesh", build_mesh),
+        scene("overlay_layers_nested", build_layers_nested),
     ]
 }
 
@@ -1356,6 +1357,129 @@ fn build_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     grey.style.colour_matrix = Some(ColourMatrix::greyscale());
     ovl.shapes.push(coloured);
     ovl.shapes.push(grey);
+
+    backdrop(ctx, ovl)
+}
+
+/// Nested layers: layers inside layers, each composited into the target of
+/// the layer around it.
+///
+/// Top left, a blurred group holding a panel, two discs and a faded card of
+/// two overlapping rects: the card is faded as one inside the group, then
+/// the whole group blurs. Top right, a faded layer of coloured bars with a
+/// white disc composited by `Difference` inside it: the disc inverts the
+/// bars it covers, not the scene under the layer. Along the bottom, three
+/// levels: a shadowed group around a faded layer of bars, inside which a
+/// frosted card (a layer with a backdrop blur clipped to a rounded mask)
+/// blurs the bars the faded layer has drawn under it, and a plain item with
+/// a backdrop blur does the same over the bars' feet.
+fn build_layers_nested(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let rect = |at: [f32; 2], size: [f32; 2], r: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: r }, at, size)
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let disc = |at: [f32; 2], d: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Circle, at, [d, d])
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let red = Colour::srgb(0.9, 0.2, 0.2, 1.0);
+    let green = Colour::srgb(0.2, 0.75, 0.3, 1.0);
+    let blue = Colour::srgb(0.2, 0.4, 0.95, 1.0);
+    let yellow = Colour::srgb(0.95, 0.85, 0.2, 1.0);
+    let mut ovl = OverlayFrame::default();
+
+    // A faded card inside a blurred group.
+    let group = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [14.0, 14.0],
+        [170.0, 120.0],
+        12.0,
+        Colour::srgb(0.15, 0.17, 0.22, 1.0),
+    ));
+    ovl.shapes.push(disc([28.0, 30.0], 60.0, red));
+    ovl.shapes.push(disc([62.0, 50.0], 60.0, blue));
+    let card = ovl.layer_mark();
+    ovl.shapes
+        .push(rect([96.0, 36.0], [76.0, 60.0], 8.0, Colour::WHITE));
+    ovl.shapes
+        .push(rect([84.0, 70.0], [76.0, 46.0], 8.0, yellow));
+    ovl.push_layer(card, OverlayLayerStyle::default().with_opacity(0.5));
+    ovl.push_layer(group, OverlayLayerStyle::default().with_blur(2.0));
+
+    // A difference disc inside a faded layer of bars.
+    let faded = ovl.layer_mark();
+    for (i, colour) in [red, green, blue, yellow].into_iter().enumerate() {
+        ovl.shapes.push(rect(
+            [212.0 + i as f32 * 44.0, 14.0],
+            [44.0, 120.0],
+            0.0,
+            colour,
+        ));
+    }
+    ovl.shapes
+        .push(disc([248.0, 30.0], 90.0, Colour::WHITE).with_blend(OverlayBlend::Difference));
+    ovl.push_layer(faded, OverlayLayerStyle::default().with_opacity(0.7));
+
+    // Three levels: a shadowed group, a faded layer of bars, a frosted card.
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect {
+                corner_radius: 14.0,
+            },
+            [120.0, 180.0],
+            [160.0, 70.0],
+        )
+        .provides_mask(51),
+    );
+    let shadowed = ovl.layer_mark();
+    let bars = ovl.layer_mark();
+    for (i, colour) in [red, yellow, green, blue, red, yellow, green, blue]
+        .into_iter()
+        .enumerate()
+    {
+        ovl.shapes.push(rect(
+            [40.0 + i as f32 * 42.0, 166.0],
+            [24.0, 110.0],
+            0.0,
+            colour,
+        ));
+    }
+    let frosted = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [120.0, 180.0],
+        [160.0, 70.0],
+        14.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.25),
+    ));
+    ovl.shapes.push(rect(
+        [140.0, 206.0],
+        [120.0, 18.0],
+        9.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.6),
+    ));
+    let card = ovl.push_layer(
+        frosted,
+        OverlayLayerStyle::default().with_backdrop(BackdropEffects::default().with_blur(6.0)),
+    );
+    card.clip = OverlayClip::mask(51);
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 7.0 },
+            [36.0, 258.0],
+            [120.0, 14.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.15, 0.3)))
+        .with_backdrop_blur(4.0),
+    );
+    ovl.push_layer(bars, OverlayLayerStyle::default().with_opacity(0.9));
+    ovl.push_layer(
+        shadowed,
+        OverlayLayerStyle::default().with_shadow(ShadowLayer::new(
+            Colour::srgb(0.0, 0.0, 0.0, 0.7),
+            6.0,
+            [6.0, 6.0],
+        )),
+    );
 
     backdrop(ctx, ovl)
 }

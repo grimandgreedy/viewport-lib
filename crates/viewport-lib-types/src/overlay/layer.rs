@@ -19,6 +19,9 @@ use crate::overlay::{BackdropEffects, ColourMatrix, OverlayBlend, OverlayClip, S
 /// with a single immediate member and no blur, shadow, backdrop or
 /// destination-reading blend draws that member with the layer's opacity,
 /// blend and colour matrix applied to it. Neither allocates a scratch target.
+/// The same holds for a layer inside another, and a layer whose one member is
+/// another layer, with opacity as its only effect, passes that opacity to the
+/// inner layer instead of drawing through a target of its own.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayLayerStyle {
@@ -218,9 +221,27 @@ pub struct OverlayLayerMark {
 /// A layer: overlay items drawn together and composited as one.
 ///
 /// Members keep their own `z_order` among themselves; the layer as a whole
-/// sits at `z_order` in the frame's paint order and, at an equal `z_order`,
-/// over the shapes and the text stream. An item belongs to the first layer
-/// whose ranges name it; layers do not nest.
+/// sits at `z_order` in the paint order of what it is drawn into (the frame,
+/// or the layer it sits in) and, at an equal `z_order`, over the shapes and
+/// the text stream.
+///
+/// Layers nest. A layer whose ranges all lie inside another's draws inside
+/// it: its members draw into a target of its own, which composites into the
+/// outer layer's target with its own style, and an item belongs to the
+/// innermost layer that names it. Of two layers naming exactly the same items,
+/// the later in `OverlayFrame::layers` is the outer one, which is the order
+/// [`OverlayFrame::push_layer`] leaves nested layers in. Inside a layer, a
+/// member's destination-reading blend and backdrop read what the layer has
+/// drawn under the member, not what is under the layer; a layer whose only
+/// member reads the destination takes that member's blend when it has none of
+/// its own. Layers composite up to eight deep, and a layer deeper than that
+/// draws flat: its opacity, blend and colour matrix apply to each member and
+/// its blur, shadow and backdrop are not drawn.
+///
+/// Two layers whose ranges share items without one holding the other cannot
+/// both be drawn: the earlier in `OverlayFrame::layers` wins, the later is
+/// ignored as if it were not in the list, and the renderer reports
+/// `NoticeDetail::OverlayLayersOverlap`.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct OverlayLayer {

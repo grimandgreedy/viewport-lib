@@ -162,6 +162,28 @@ pub enum NoticeDetail {
         /// The reason the backend gave.
         reason: String,
     },
+    /// Two overlay layers in one frame name some of the same items without one
+    /// containing the other, so the later one was ignored and its items drew
+    /// as if it were not there.
+    OverlayLayersOverlap {
+        /// Index in `OverlayFrame::layers` of the layer that was ignored.
+        ignored: u32,
+        /// Index of the earlier layer it overlaps, which was kept.
+        kept: u32,
+    },
+    /// Overlay layers were nested deeper than the renderer composites; the
+    /// layers past the limit drew flat, their style applied to each member.
+    OverlayLayersTooDeep {
+        /// How deep the renderer nests layers.
+        limit: u32,
+        /// Layers this frame that drew flat.
+        flattened: u32,
+    },
+    /// The frame's overlays read the destination (a destination-reading blend
+    /// or a backdrop blur), but it was drawn into a host-owned render pass,
+    /// which cannot be ended to copy the destination; those blends drew as
+    /// source-over and the backdrops were not drawn.
+    OverlayDestinationReadsOnPath,
     /// A notice reported by a plugin.
     Plugin {
         /// The key the plugin reported it under; repeats of one key coalesce.
@@ -278,6 +300,24 @@ impl fmt::Display for NoticeDetail {
                  ViewportRenderer::recommended_device_features) to use {requested}."
             ),
             Self::DeviceLost { reason } => write!(f, "GPU device lost: {reason}"),
+            Self::OverlayLayersOverlap { ignored, kept } => write!(
+                f,
+                "overlay layer {ignored} names some of layer {kept}'s items without containing \
+                 them or lying inside them, so layer {ignored} was ignored. Nest layers so that \
+                 each one's ranges either hold another's or miss it."
+            ),
+            Self::OverlayLayersTooDeep { limit, flattened } => write!(
+                f,
+                "{flattened} overlay layers sit more than {limit} deep and drew flat: their \
+                 opacity, blend and colour filter were applied to each member, and their blur, \
+                 shadow and backdrop were not drawn."
+            ),
+            Self::OverlayDestinationReadsOnPath => f.write_str(
+                "overlays that read the destination were drawn into a host-owned render pass \
+                 (paint()/paint_viewport()), which cannot be ended to copy it: \
+                 destination-reading blends drew as source-over and backdrops were not drawn. \
+                 Use an owned-encoder render path.",
+            ),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),
         }
     }
