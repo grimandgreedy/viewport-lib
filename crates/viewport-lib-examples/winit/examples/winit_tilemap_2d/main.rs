@@ -336,7 +336,11 @@ fn main() {
                     let mut far = TilemapItem::new(layers.hills[which]);
                     far.cell_size = [CELL * 2.0, CELL * 2.0];
                     far.origin = [-200.0, -40.0];
-                    far.parallax = [1.0 / 3.0, 0.2];
+                    // A side view: the hills lag the camera across the screen
+                    // but keep step with it vertically, so they never float
+                    // above or sink under the ground when the view pans or
+                    // zooms.
+                    far.parallax = [1.0 / 3.0, 1.0];
                     far.elevation = -1.0;
                     far.pixel_snap = pixel_art;
                     let mut near = TilemapItem::new(layers.ground[which]);

@@ -537,6 +537,11 @@ pub struct TilemapItem {
     /// the camera's position on the plane: `1.0` is the world layer, `0.5`
     /// scrolls at half the camera's speed, `0.0` stays fixed to the camera.
     /// Default `[1.0, 1.0]`.
+    ///
+    /// Zooming about a cursor moves the camera, so a layer with a factor
+    /// below `1.0` shifts against the world layer under zoom as well as under
+    /// a pan. A side view usually keeps the vertical factor at `1.0` so a far
+    /// layer stays level with the ground.
     pub parallax: [f32; 2],
     /// Multiplied into every tile's colour. Default opaque white.
     pub tint: Colour,
