@@ -205,6 +205,33 @@ impl OverlayBlend {
     }
 }
 
+/// How an overlay item's outline meets the pixels around it.
+///
+/// [`AntiAliased`](Self::AntiAliased) ramps coverage across a one-pixel band
+/// inside the outline. Two items that touch each lay half-covered pixels along
+/// the shared edge, and the background shows through between them.
+/// [`Crisp`](Self::Crisp) covers a pixel fully when its centre is inside the
+/// outline and not at all otherwise, so a grid of touching cells (a heatmap, a
+/// table, a bar chart) covers every pixel in its area exactly once, at any
+/// fractional position. A pixel centre that falls exactly on an edge two
+/// axis-aligned rects share belongs to the rect on its right (or below).
+///
+/// Only an axis-aligned rect is exact: a curved, rotated or sheared outline
+/// drawn [`Crisp`](Self::Crisp) shows stair-stepped edges. Ask
+/// [`OverlayStyleSupport::crisp_edges`] which families draw it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum OverlayEdge {
+    /// A one-pixel coverage ramp inside the outline.
+    #[default]
+    AntiAliased,
+    /// Full coverage at pixel centres inside the outline, none outside. Shadow
+    /// layers with no blur (outlines and contours) step the same way; blurred
+    /// ones keep their fade.
+    Crisp,
+}
+
 /// Baked appearance shared by the four overlay item types: what the item is
 /// filled and layered with, as opposed to where it sits.
 ///
@@ -268,6 +295,10 @@ pub struct OverlayStyle {
     /// A colour filter applied to the item's fill colour, after its tint and
     /// opacity. Like `tint`, it does not reach the shadow layers.
     pub colour_matrix: Option<crate::overlay::ColourMatrix>,
+    /// How the outline meets the pixels around it. Defaults to
+    /// [`OverlayEdge::AntiAliased`]; [`OverlayEdge::Crisp`] draws touching
+    /// cells without a seam between them.
+    pub edge: OverlayEdge,
 }
 
 impl Default for OverlayStyle {
@@ -281,6 +312,7 @@ impl Default for OverlayStyle {
             opacity: 1.0,
             blend: OverlayBlend::SourceOver,
             colour_matrix: None,
+            edge: OverlayEdge::AntiAliased,
         }
     }
 }
@@ -341,6 +373,12 @@ impl OverlayStyle {
         self.colour_matrix = Some(matrix);
         self
     }
+
+    /// Set how the outline meets the pixels around it.
+    pub fn with_edge(mut self, edge: OverlayEdge) -> Self {
+        self.edge = edge;
+        self
+    }
 }
 
 /// Which [`OverlayStyle`] fields a given item actually draws.
@@ -375,6 +413,10 @@ pub struct OverlayStyleSupport {
     pub backdrop: bool,
     /// `shadows` and `inner_shadows` are drawn.
     pub shadows: bool,
+    /// An `edge` of [`OverlayEdge::Crisp`] draws hard edges. True for an
+    /// analytic shape, and for a mesh, whose triangles have no anti-aliasing
+    /// band to remove and are always crisp.
+    pub crisp_edges: bool,
 }
 
 /// Every fill kind.
@@ -391,6 +433,7 @@ impl OverlayStyleSupport {
         fill: ALL_FILLS,
         backdrop: true,
         shadows: true,
+        crisp_edges: true,
     };
 
     /// Nothing drawn.
@@ -398,17 +441,22 @@ impl OverlayStyleSupport {
         fill: &[],
         backdrop: false,
         shadows: false,
+        crisp_edges: false,
     };
 
     /// What an [`OverlayShapeItem`] draws. Every variant draws every fill kind
-    /// and the backdrop, `OverlayShape::Vector` included.
+    /// and the backdrop, `OverlayShape::Vector` included. Every variant but
+    /// `OverlayShape::Vector`, which is tessellated, draws a crisp edge.
     ///
     /// The query takes the shape so a lowering layer can ask where the item is
     /// built, and so a variant that cannot draw a field can say so.
     ///
     /// [`OverlayShapeItem`]: crate::overlay::OverlayShapeItem
-    pub const fn for_shape(_shape: &crate::overlay::OverlayShape) -> Self {
-        Self::ALL
+    pub const fn for_shape(shape: &crate::overlay::OverlayShape) -> Self {
+        Self {
+            crisp_edges: !matches!(shape, crate::overlay::OverlayShape::Vector { .. }),
+            ..Self::ALL
+        }
     }
 
     /// What an `OverlayPolylineItem` draws. Only a closed polyline has an
@@ -419,27 +467,31 @@ impl OverlayStyleSupport {
             fill: if closed { ALL_FILLS } else { &[] },
             backdrop: false,
             shadows: true,
+            crisp_edges: false,
         }
     }
 
     /// What a `LabelItem` or a `GlyphRunItem` draws: every fill kind, evaluated
-    /// per pixel over the glyph coverage, but no backdrop.
+    /// per pixel over the glyph coverage, but no backdrop and no crisp edge.
     pub const fn for_glyphs() -> Self {
         Self {
             fill: ALL_FILLS,
             backdrop: false,
             shadows: true,
+            crisp_edges: false,
         }
     }
 
     /// What an `OverlayMeshItem` draws: every fill kind, multiplied over its
     /// vertex colours, but no backdrop. A mesh has no edge to grow a shadow
     /// layer from, so its `shadows` and `inner_shadows` are not drawn either.
+    /// Its edges are always crisp, so `edge` changes nothing.
     pub const fn for_mesh() -> Self {
         Self {
             fill: ALL_FILLS,
             backdrop: false,
             shadows: false,
+            crisp_edges: true,
         }
     }
 
@@ -470,6 +522,9 @@ impl OverlayStyleSupport {
         }
         if !self.shadows && !style.inner_shadows.is_empty() {
             out.push("inner_shadows");
+        }
+        if !self.crisp_edges && style.edge == OverlayEdge::Crisp {
+            out.push("edge");
         }
         out
     }
@@ -521,6 +576,36 @@ mod tests {
                 .is_empty()
         );
         assert!(OverlayStyleSupport::NONE.inert_fields(&style).is_empty());
+    }
+
+    #[test]
+    fn crisp_edges_are_reported_where_they_are_drawn() {
+        let style = OverlayStyle::solid(Colour::WHITE).with_edge(OverlayEdge::Crisp);
+        let rect = OverlayShape::Rect { corner_radius: 0.0 };
+        assert!(
+            OverlayStyleSupport::for_shape(&rect)
+                .inert_fields(&style)
+                .is_empty()
+        );
+        let vector = OverlayShape::Vector {
+            subpaths: Vec::new(),
+            fill_rule: crate::overlay::FillRule::NonZero,
+            stroke: None,
+            inverse: false,
+        };
+        assert_eq!(
+            OverlayStyleSupport::for_shape(&vector).inert_fields(&style),
+            vec!["edge"]
+        );
+        assert_eq!(
+            OverlayStyleSupport::for_glyphs().inert_fields(&style),
+            vec!["edge"]
+        );
+        assert!(
+            OverlayStyleSupport::for_mesh()
+                .inert_fields(&style)
+                .is_empty()
+        );
     }
 
     #[test]

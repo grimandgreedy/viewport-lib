@@ -1198,8 +1198,8 @@ pub(crate) struct OverlayShapeInstance {
     /// offset from its centre, and the item's uniform scale, which its shadow
     /// offsets are given in.
     pub misc: [f32; 4],
-    /// `[fill_index, 0, 0, 0]`: the first texel of the shape's record in the
-    /// fill table, or `-1` to draw `fill_colour`.
+    /// `[fill_index, crisp, 0, 0]`: the first texel of the shape's record in
+    /// the fill table, or `-1` to draw `fill_colour`; `1` for a crisp edge.
     pub fill: [f32; 4],
 }
 
@@ -1281,8 +1281,8 @@ pub(crate) struct OverlayBackdropVertex {
     /// `local_pos` (a pixel offset from the pivot) into the shape's own frame.
     /// Identity for a tessellated path, whose triangles are already placed.
     pub linv: [f32; 4],
-    /// `[item_scale, 0, 0, 0]`: the uniform scale the shadow offsets are given
-    /// in.
+    /// `[item_scale, crisp, 0, 0]`: the uniform scale the shadow offsets are
+    /// given in, and `1` for a crisp edge.
     pub item_params: [f32; 4],
 }
 

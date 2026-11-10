@@ -15,6 +15,9 @@
 // Soft clip coverage over `clip_shapes` and `eval_sdf` below.
 // #include "helpers/overlay_clip.wgsl"
 
+// Fill coverage at the outline, anti-aliased or crisp.
+// #include "helpers/overlay_edge.wgsl"
+
 // Nine instance attributes and no vertex stream, inside the 16 WebGL2 allows.
 struct ShapeInstance {
     @location(0) quad:        vec4<f32>,  // xy = quad centre (logical px), zw = quad half-extents
@@ -25,7 +28,7 @@ struct ShapeInstance {
     @location(5) shadow_meta: vec4<f32>,  // base_index, outer_ct, inner_ct, shape_type
     @location(6) clip_rect:   vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
     @location(7) misc:        vec4<f32>,  // clip-shape index (or -1), pivot in the shape frame xy, item scale
-    @location(8) fill:        vec4<f32>,  // x = fill record index, or -1 for the flat colour
+    @location(8) fill:        vec4<f32>,  // x = fill record index, or -1 for the flat colour; y = 1 for a crisp edge
 };
 
 // One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
@@ -182,7 +185,7 @@ struct VertexOutput {
     // shape half-extents xy, the anti-aliasing band in shape units, item scale.
     @location(6) @interpolate(flat) half_aa:     vec4<f32>,
     @location(7) @interpolate(flat) clip_rect:   vec4<f32>,
-    // x = fill record index, or -1 for `fill_colour`.
+    // x = fill record index, or -1 for `fill_colour`; y = 1 for a crisp edge.
     @location(8) @interpolate(flat) fill:        vec4<f32>,
     // The group's tint, applied to a fill record's colour.
     @location(9) @interpolate(flat) group_tint:  vec4<f32>,
@@ -532,8 +535,12 @@ fn shade(in: VertexOutput) -> vec4<f32> {
 
     // Anti-aliasing: a one framebuffer pixel band at the boundary, in shape
     // units: one unit covers `aa_scale` pixels after the group transform. An
-    // immediate shape and an unscaled group both land on exactly 1.0.
+    // immediate shape and an unscaled group both land on exactly 1.0. A crisp
+    // edge steps at pixel centres instead, and so do its zero-blur shadow
+    // layers (`band`).
     let aa = in.half_aa.z;
+    let crisp = in.fill.y > 0.5;
+    let band = overlay_edge_band(aa, crisp);
     // Shadow offsets are authored in screen-aligned shape units scaled by the
     // item's uniform scale, so they are taken off in the item's pixel space
     // before the map into the shape frame.
@@ -560,7 +567,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
             let sd = eval_sdf(sp, hs, shape_type, in.radii);
             let a = layer.colour.a
                 * group_opacity
-                * shadow_coverage(sd, sspread, sr, sfall, aa);
+                * shadow_coverage(sd, sspread, sr, sfall, band);
             let src = vec4<f32>(layer.colour.rgb, a);
             shadow_col = vec4<f32>(
                 mix(shadow_col.rgb, src.rgb, src.a),
@@ -569,7 +576,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         }
     }
 
-    let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
+    let fill_alpha = overlay_fill_coverage(d, p, hs, shape_type, aa, crisp);
 
     // Clip the outer shadow to outside the silhouette, the way CSS clips an
     // outer box-shadow to outside the border box. Without this a translucent
@@ -634,7 +641,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
                 // the same way it does an outer layer.
                 let inner_alpha = layer.colour.a
                     * group_opacity
-                    * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
+                    * inner_shadow_coverage(inner_sd, sspread, sr, sfall, band);
                 if (inner_alpha > 0.0) {
                     let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
                     colour = vec4<f32>(

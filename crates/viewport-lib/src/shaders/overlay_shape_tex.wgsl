@@ -14,6 +14,9 @@
 // Soft clip coverage over `clip_shapes` and `eval_sdf` below.
 // #include "helpers/overlay_clip.wgsl"
 
+// Fill coverage at the outline, anti-aliased or crisp.
+// #include "helpers/overlay_edge.wgsl"
+
 struct VertexInput {
     @location(0) position:     vec2<f32>,  // logical pixels
     @location(1) local_pos:    vec2<f32>,  // pixels from the shape pivot (or the path's centre)
@@ -25,7 +28,7 @@ struct VertexInput {
     @location(7) shadow_index: vec3<f32>,  // base_index, outer_count, inner_count
     @location(8) filters:      vec4<f32>,  // y=saturation, z=brightness, w=hue shift
     @location(9) linv:         vec4<f32>,  // inverse item linear map, row-major a b c d
-    @location(10) item_params: vec4<f32>,  // x=item scale (shadow offsets)
+    @location(10) item_params: vec4<f32>,  // x=item scale (shadow offsets), y=1 for a crisp edge
 }
 
 // One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
@@ -329,6 +332,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let d = eval_sdf(p, hs, shape_type, in.radii);
 
     let aa = 1.0;
+    let crisp = in.item_params.y > 0.5;
+    let band = overlay_edge_band(aa, crisp);
 
     // shadow_index: (base_index, outer_count, inner_count).
     let base_index = i32(in.shadow_index.x + 0.5);
@@ -346,7 +351,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
             let sp = to_shape_frame(in.local_pos - soff * item_scale, in.linv, pivot);
             let sd = eval_sdf(sp, hs, shape_type, in.radii);
-            let a = layer.colour.a * shadow_coverage(sd, sspread, sr, sfall, aa);
+            let a = layer.colour.a * shadow_coverage(sd, sspread, sr, sfall, band);
             let src = vec4<f32>(layer.colour.rgb, a);
             shadow_col = vec4<f32>(
                 mix(shadow_col.rgb, src.rgb, src.a),
@@ -355,7 +360,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
+    let fill_alpha = overlay_fill_coverage(d, p, hs, shape_type, aa, crisp);
 
     // Clip the outer layers to outside the silhouette, as the solid path does.
     shadow_col = vec4<f32>(shadow_col.rgb, shadow_col.a * (1.0 - fill_alpha));
@@ -412,7 +417,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let sp = to_shape_frame(in.local_pos - soff * item_scale, in.linv, pivot);
                 let inner_sd = eval_sdf(sp, hs, shape_type, in.radii);
                 let inner_alpha =
-                    layer.colour.a * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
+                    layer.colour.a * inner_shadow_coverage(inner_sd, sspread, sr, sfall, band);
                 if (inner_alpha > 0.0) {
                     let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
                     colour = vec4<f32>(

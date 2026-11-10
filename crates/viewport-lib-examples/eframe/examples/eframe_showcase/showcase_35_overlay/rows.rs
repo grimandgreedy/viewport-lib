@@ -1634,7 +1634,11 @@ fn row_meshes(ovl: &mut OverlayFrame, input: &PageInput<'_>, top: f32) {
                         [shapes_x + i as f32 * CELL, top + j as f32 * CELL],
                         [CELL, CELL],
                     )
-                    .with_fill(OverlayFill::Solid(heat(i, j, t)))
+                    // A grid of touching cells is drawn crisp, so no
+                    // background shows between them.
+                    .with_style(
+                        vpl::OverlayStyle::solid(heat(i, j, t)).with_edge(vpl::OverlayEdge::Crisp),
+                    )
                     .with_z_order((j * COLS + i) as i32),
                 );
             }

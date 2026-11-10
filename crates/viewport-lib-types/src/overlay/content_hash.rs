@@ -458,6 +458,7 @@ impl OverlayContentHash for OverlayStyle {
             opacity,
             blend,
             colour_matrix,
+            edge,
         } = self;
         fill.content_hash_at(origin, state);
         shadows.content_hash_at(origin, state);
@@ -467,6 +468,10 @@ impl OverlayContentHash for OverlayStyle {
         hash_f32(state, *opacity);
         std::hash::Hash::hash(blend, state);
         colour_matrix.content_hash_at(origin, state);
+        state.write_u8(match edge {
+            crate::overlay::OverlayEdge::AntiAliased => 0,
+            crate::overlay::OverlayEdge::Crisp => 1,
+        });
     }
 }
 
@@ -1055,6 +1060,18 @@ mod tests {
         }
     }
 
+    /// A compiled group keyed on the hash has to recompile when the edge mode
+    /// changes: the mode is baked into the instance records.
+    #[test]
+    fn edge_modes_hash_apart() {
+        let crisp = shape().with_style(shape().style.with_edge(crate::overlay::OverlayEdge::Crisp));
+        assert_ne!(hash(&shape()), hash(&crisp));
+        assert_eq!(hash(&crisp), hash(&crisp.clone()));
+        let mut h = Bytes::default();
+        crisp.style.content_hash(&mut h);
+        assert_eq!(h.0.last(), Some(&1));
+    }
+
     #[test]
     fn negative_zero_hashes_like_zero() {
         let a = label().with_position([0.0, 0.0]);
@@ -1074,6 +1091,9 @@ mod tests {
         assert_ne!(hash(&s), base);
         let mut s = shape();
         s.z_order = 3;
+        assert_ne!(hash(&s), base);
+        let mut s = shape();
+        s.style.edge = crate::overlay::OverlayEdge::Crisp;
         assert_ne!(hash(&s), base);
         let mut s = shape();
         s.animations = Some(Box::new(

@@ -31,7 +31,7 @@
 //!     group, and a greyscale colour-matrix twin.
 //! 11. Text: quarter-pixel pen positions, a scaled label re-rasterised at its
 //!     drawn size, a texture-filled label, a tinted glyph run, colour emoji.
-//! 12. Meshes: a heatmap as one mesh beside the same cells as shapes.
+//! 12. Meshes: a heatmap as one mesh beside the same cells as crisp-edged shapes.
 //!
 //! Both sheets end with a strip of the previous frame's overlay counters.
 

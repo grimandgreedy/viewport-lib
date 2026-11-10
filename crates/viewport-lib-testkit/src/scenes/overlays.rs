@@ -1526,8 +1526,8 @@ fn heat(i: usize, j: usize) -> Colour {
     )
 }
 
-/// Meshes: a heatmap as one mesh beside the same cells as shapes (the two
-/// should match wherever cells abut), a textured mesh over UVs, a rect with a
+/// Meshes: a heatmap as one mesh beside the same cells as crisp-edged shapes
+/// (the two match wherever cells abut, with no seam between shape cells), a textured mesh over UVs, a rect with a
 /// registered hatching fill, and a mesh compiled into a retained group.
 fn build_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     const COLS: usize = 8;
@@ -1566,7 +1566,10 @@ fn build_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                     [150.0 + i as f32 * CELL, 20.0 + j as f32 * CELL],
                     [CELL, CELL],
                 )
-                .with_fill(OverlayFill::Solid(heat(i, j))),
+                .with_style(
+                    viewport_lib::OverlayStyle::solid(heat(i, j))
+                        .with_edge(viewport_lib::OverlayEdge::Crisp),
+                ),
             );
         }
     }

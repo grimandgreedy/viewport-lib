@@ -3230,7 +3230,12 @@ impl ViewportRenderer {
                             shape.style.backdrop.hue_shift,
                         ],
                         linv: shape_frame.linv,
-                        item_params: [shape_frame.item_scale, 0.0, 0.0, 0.0],
+                        item_params: [
+                            shape_frame.item_scale,
+                            super::overlay_compile::crisp_lane(&shape.style),
+                            0.0,
+                            0.0,
+                        ],
                     });
                 }
                 continue;
@@ -3264,7 +3269,12 @@ impl ViewportRenderer {
                     pivot_local[1],
                     shape_frame.item_scale,
                 ],
-                fill: [fill_index, 0.0, 0.0, 0.0],
+                fill: [
+                    fill_index,
+                    super::overlay_compile::crisp_lane(&shape.style),
+                    0.0,
+                    0.0,
+                ],
             };
             let fill = match image {
                 Some((tex_id, _)) => {

@@ -630,6 +630,16 @@ pub(super) fn emit_group_verts(
 /// anchor resolution, and no internal clip mask (a retained group's outer clip is
 /// carried by its text stream). Textured and backdrop-blur shapes are skipped: a
 /// compiled group binds no image and runs no backdrop pass.
+/// The instance lane that selects a crisp edge in the shape shaders: `1.0` for
+/// [`OverlayEdge::Crisp`](crate::renderer::types::OverlayEdge::Crisp).
+pub(super) fn crisp_lane(style: &crate::renderer::types::OverlayStyle) -> f32 {
+    if style.edge == crate::renderer::types::OverlayEdge::Crisp {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 fn emit_sdf_shape(
     shape: &crate::renderer::types::OverlayShapeItem,
     out_verts: &mut Vec<crate::resources::OverlayShapeInstance>,
@@ -793,7 +803,7 @@ fn emit_sdf_shape(
         ],
         clip_rect: [0.0; 4],
         misc: [-1.0, pivot_local[0], pivot_local[1], frame.item_scale],
-        fill: [fill_index, 0.0, 0.0, 0.0],
+        fill: [fill_index, crisp_lane(&shape.style), 0.0, 0.0],
     });
     bake_shape_clip_rect(out_verts, &shape.clip, item_start, ppp);
 }

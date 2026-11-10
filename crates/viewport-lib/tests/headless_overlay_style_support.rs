@@ -16,9 +16,9 @@ mod common;
 use common::*;
 
 use viewport_lib::{
-    BackdropEffects, Colour, GlyphRunItem, GradientStop, LabelItem, OverlayFill, OverlayFrame,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStyle, OverlayStyleSupport,
-    PositionedGlyph, ShadowLayer, SubPath,
+    BackdropEffects, Colour, GlyphRunItem, GradientStop, LabelItem, OverlayEdge, OverlayFill,
+    OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStyle,
+    OverlayStyleSupport, PositionedGlyph, ShadowLayer, SubPath,
 };
 
 const SIZE: u32 = 96;
@@ -37,13 +37,18 @@ fn base_frame() -> FrameData {
 /// The style fields the table reports on, each as "the non-default value to
 /// try". `texture_transform` rides `texture` and is not separately queryable.
 fn probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
-    vec![("fill", |s: &mut OverlayStyle| {
-        s.fill = OverlayFill::linear_gradient(
-            Colour::srgb(1.0, 0.0, 0.0, 1.0),
-            Colour::srgb(0.0, 0.0, 1.0, 1.0),
-            0.0,
-        );
-    })]
+    vec![
+        ("fill", |s: &mut OverlayStyle| {
+            s.fill = OverlayFill::linear_gradient(
+                Colour::srgb(1.0, 0.0, 0.0, 1.0),
+                Colour::srgb(0.0, 0.0, 1.0, 1.0),
+                0.0,
+            );
+        }),
+        ("edge", |s: &mut OverlayStyle| {
+            s.edge = OverlayEdge::Crisp;
+        }),
+    ]
 }
 
 /// The two shadow lists, which every family draws. An inner layer needs a
@@ -66,6 +71,7 @@ fn shadow_probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
 fn supported(support: &OverlayStyleSupport, field: &str, style: &OverlayStyle) -> bool {
     match field {
         "fill" => support.draws_fill(&style.fill),
+        "edge" => support.crisp_edges,
         other => panic!("unknown probe field {other}"),
     }
 }
