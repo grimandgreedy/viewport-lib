@@ -76,6 +76,7 @@ mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
 mod showcase_59_vector_art;
 mod showcase_60_glass_and_layers;
+mod showcase_61_2d_world;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
@@ -264,6 +265,7 @@ fn main() -> eframe::Result {
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 va_state: showcase_59_vector_art::VectorArtState::default(),
                 glass_state: showcase_60_glass_and_layers::GlassState::default(),
+                world2d_state: showcase_61_2d_world::World2dState::default(),
                 cut_state: showcase_18_cuts::CutViewsState::default(),
                 last_cluster_stats: None,
             }))
@@ -336,6 +338,7 @@ enum ShowcaseMode {
     PhysicallyBasedSurfaces,
     VectorArt,
     GlassAndLayers,
+    World2d,
 }
 
 // `ShowcaseMode::label` and the menu order live in `registry.rs`.
@@ -560,6 +563,7 @@ pub(crate) struct App {
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
     pub(crate) va_state: showcase_59_vector_art::VectorArtState,
     pub(crate) glass_state: showcase_60_glass_and_layers::GlassState,
+    pub(crate) world2d_state: showcase_61_2d_world::World2dState,
     pub(crate) cut_state: showcase_18_cuts::CutViewsState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
