@@ -4,8 +4,8 @@
 //!
 //! Submit one [`Lighting2dItem`] a frame. It names the plane (the same two
 //! planes as the tilemap and `Camera2d`), the ambient light, how many lights
-//! to draw and the occluders: rects, closed outlines and free segments in
-//! plane coordinates, built by hand or with [`occluders_from_tilemap`] and
+//! to draw and the occluders: rects, closed outlines, one-sided edges and free
+//! segments in plane coordinates, built by hand or with [`occluders_from_tilemap`] and
 //! [`occluders_from_sprites`]. The lights are the frame's point lights
 //! (`EffectsFrame::lighting.lights`), each projected onto the plane with its
 //! `range` as the radius and its colour times its intensity as the brightness
@@ -120,6 +120,23 @@ pub enum Occluder2d {
         /// The other end.
         b: [f32; 2],
     },
+    /// Boundary edges of solid regions, each casting from one side only.
+    /// They need not join into closed outlines, so a region with holes, or
+    /// many regions, can be one occluder. [`occluders_from_tilemap`] builds
+    /// one.
+    Edges(Vec<OccluderEdge>),
+}
+
+/// One edge of an [`Occluder2d::Edges`] occluder. The solid lies to the left
+/// of `a -> b` and its outside to the right, so the winding gives the outward
+/// normal: an outer boundary runs counter-clockwise and the edges around a
+/// hole run clockwise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OccluderEdge {
+    /// First end.
+    pub a: [f32; 2],
+    /// Second end.
+    pub b: [f32; 2],
 }
 
 /// One occluder edge as the shadow pass draws it: the two ends, and whether
@@ -155,6 +172,11 @@ impl Occluder2d {
                 b: Vec2::from(*b),
                 one_sided: false,
             }),
+            Occluder2d::Edges(edges) => out.extend(edges.iter().map(|e| ShadowEdge {
+                a: Vec2::from(e.a),
+                b: Vec2::from(e.b),
+                one_sided: true,
+            })),
         }
     }
 }
@@ -225,10 +247,16 @@ fn in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
     !(neg && pos)
 }
 
-/// Rects covering the cells of `map` for which `solid` holds, for a layer drawn
-/// with its cell (0, 0) corner at plane position `origin` and cells
-/// `cell_size` across. Runs of solid cells along a row merge into one rect, so
-/// a wall casts from its outline rather than from every tile edge.
+/// The boundary of the cells of `map` for which `solid` holds, for a layer
+/// drawn with its cell (0, 0) corner at plane position `origin` and cells
+/// `cell_size` across, as one [`Occluder2d::Edges`] (none when no cell is
+/// solid).
+///
+/// A cell side is an edge only where a solid cell meets a cell that is not
+/// solid or the edge of the map, facing out of the solid, and consecutive
+/// sides along a row or column line merge into one edge. A wall several cells
+/// thick therefore casts from its outline alone, with no edges inside it to
+/// shadow its own face, and the inside of a hole casts outward into the hole.
 pub fn occluders_from_tilemap(
     map: &Tilemap,
     origin: [f32; 2],
@@ -236,26 +264,66 @@ pub fn occluders_from_tilemap(
     solid: impl Fn(Tile) -> bool,
 ) -> Vec<Occluder2d> {
     let [cols, rows] = map.size();
-    let mut out = Vec::new();
-    for row in 0..rows {
-        let mut col = 0;
-        while col < cols {
-            if !map.get(col, row).is_some_and(&solid) {
-                col += 1;
+    let is_solid = |col: i64, row: i64| {
+        col >= 0 && row >= 0 && map.get(col as u32, row as u32).is_some_and(|t| solid(t))
+    };
+    let x = |col: u32| origin[0] + col as f32 * cell_size[0];
+    let y = |row: u32| origin[1] + row as f32 * cell_size[1];
+    let mut edges = Vec::new();
+    // Runs of cell sides along one line: `side(i)` is `Some(true)` where the
+    // solid is on the line's positive side, `Some(false)` where it is on the
+    // negative side, `None` where there is no edge. `emit` gets the run's
+    // start, end and which side the solid is on.
+    fn runs(len: u32, side: impl Fn(u32) -> Option<bool>, mut emit: impl FnMut(u32, u32, bool)) {
+        let mut i = 0;
+        while i < len {
+            let Some(s) = side(i) else {
+                i += 1;
                 continue;
+            };
+            let start = i;
+            while i < len && side(i) == Some(s) {
+                i += 1;
             }
-            let start = col;
-            while col < cols && map.get(col, row).is_some_and(&solid) {
-                col += 1;
-            }
-            let y0 = origin[1] + row as f32 * cell_size[1];
-            out.push(Occluder2d::Rect {
-                min: [origin[0] + start as f32 * cell_size[0], y0],
-                max: [origin[0] + col as f32 * cell_size[0], y0 + cell_size[1]],
-            });
+            emit(start, i, s);
         }
     }
-    out
+    let face = |below: bool, above: bool| (below != above).then_some(above);
+    // Horizontal lines between rows. With the solid above, the edge runs
+    // towards +x; with it below, towards -x.
+    for row in 0..=rows {
+        let side = |col: u32| {
+            face(
+                is_solid(col as i64, row as i64 - 1),
+                is_solid(col as i64, row as i64),
+            )
+        };
+        runs(cols, side, |c0, c1, above| {
+            let (l, r) = ([x(c0), y(row)], [x(c1), y(row)]);
+            let (a, b) = if above { (l, r) } else { (r, l) };
+            edges.push(OccluderEdge { a, b });
+        });
+    }
+    // Vertical lines between columns. With the solid to the right, the edge
+    // runs towards -y; with it to the left, towards +y.
+    for col in 0..=cols {
+        let side = |row: u32| {
+            face(
+                is_solid(col as i64 - 1, row as i64),
+                is_solid(col as i64, row as i64),
+            )
+        };
+        runs(rows, side, |r0, r1, right| {
+            let (lo, hi) = ([x(col), y(r0)], [x(col), y(r1)]);
+            let (a, b) = if right { (hi, lo) } else { (lo, hi) };
+            edges.push(OccluderEdge { a, b });
+        });
+    }
+    if edges.is_empty() {
+        Vec::new()
+    } else {
+        vec![Occluder2d::Edges(edges)]
+    }
 }
 
 /// One outline per sprite of a world-space sprite batch drawn on `plane`
@@ -371,28 +439,117 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tilemap_rows_merge_into_runs() {
+    /// A map of `cols` x `rows` unit cells with `solid` cells set to 1.
+    fn map(cols: u32, rows: u32, solid: &[(u32, u32)]) -> Tilemap {
         let mut map = Tilemap::new(
             super::super::tilemap::Tileset::new(None, [16, 16], 4),
-            [4, 2],
+            [cols, rows],
         );
-        for col in [0, 1, 3] {
-            map.set(col, 0, Tile::new(1));
+        for &(col, row) in solid {
+            map.set(col, row, Tile::new(1));
         }
-        let rects = occluders_from_tilemap(&map, [0.0, 0.0], [16.0, 16.0], |t| t.index == 1);
-        assert_eq!(
-            rects,
-            vec![
-                Occluder2d::Rect {
-                    min: [0.0, 0.0],
-                    max: [32.0, 16.0]
-                },
-                Occluder2d::Rect {
-                    min: [48.0, 0.0],
-                    max: [64.0, 16.0]
-                },
-            ]
-        );
+        map
+    }
+
+    fn tile_edges(map: &Tilemap) -> Vec<OccluderEdge> {
+        match occluders_from_tilemap(map, [0.0, 0.0], [1.0, 1.0], |t| t.index == 1).as_slice() {
+            [Occluder2d::Edges(e)] => e.clone(),
+            [] => Vec::new(),
+            other => panic!("unexpected occluders {other:?}"),
+        }
+    }
+
+    /// The outward normal of a one-sided edge: to the right of `a -> b`.
+    fn outward(e: &OccluderEdge) -> Vec2 {
+        let d = Vec2::from(e.b) - Vec2::from(e.a);
+        Vec2::new(d.y, -d.x).normalize()
+    }
+
+    fn block(c0: u32, r0: u32, c1: u32, r1: u32) -> Vec<(u32, u32)> {
+        (c0..c1)
+            .flat_map(|c| (r0..r1).map(move |r| (c, r)))
+            .collect()
+    }
+
+    #[test]
+    fn a_solid_block_gives_its_four_sides() {
+        let e = tile_edges(&map(5, 5, &block(1, 1, 4, 4)));
+        assert_eq!(e.len(), 4);
+        for edge in &e {
+            // Every edge lies on the block's outline, facing out of it.
+            let mid = (Vec2::from(edge.a) + Vec2::from(edge.b)) * 0.5;
+            let on_x = mid.x == 1.0 || mid.x == 4.0;
+            let on_y = mid.y == 1.0 || mid.y == 4.0;
+            assert!(on_x || on_y, "{edge:?} inside the block");
+            assert!((Vec2::from(edge.a) - Vec2::from(edge.b)).length() == 3.0);
+            let out = mid + outward(edge) * 0.5;
+            assert!(
+                !(1.0..4.0).contains(&out.x) || !(1.0..4.0).contains(&out.y),
+                "{edge:?} faces into the block"
+            );
+        }
+        // The same block against the map's edge is closed by the map's extent.
+        assert_eq!(tile_edges(&map(3, 3, &block(0, 0, 3, 3))).len(), 4);
+        assert!(tile_edges(&map(3, 3, &[])).is_empty());
+    }
+
+    #[test]
+    fn an_l_shape_gives_six_edges() {
+        let mut cells = block(0, 0, 3, 1);
+        cells.extend(block(0, 1, 1, 3));
+        assert_eq!(tile_edges(&map(4, 4, &cells)).len(), 6);
+    }
+
+    #[test]
+    fn a_hole_casts_into_itself() {
+        let cells: Vec<_> = block(0, 0, 3, 3)
+            .into_iter()
+            .filter(|&c| c != (1, 1))
+            .collect();
+        let e = tile_edges(&map(3, 3, &cells));
+        assert_eq!(e.len(), 8);
+        let hole_centre = Vec2::splat(1.5);
+        let inner: Vec<_> = e
+            .iter()
+            .filter(|edge| {
+                let mid = (Vec2::from(edge.a) + Vec2::from(edge.b)) * 0.5;
+                (mid - hole_centre).length() <= 0.5
+            })
+            .collect();
+        assert_eq!(inner.len(), 4);
+        for edge in inner {
+            let mid = (Vec2::from(edge.a) + Vec2::from(edge.b)) * 0.5;
+            assert!(
+                outward(edge).dot(hole_centre - mid) > 0.0,
+                "{edge:?} faces out of the hole"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tall_wall_does_not_shadow_its_own_face() {
+        // A wall one cell wide and six tall, lit from above and to its left.
+        let cells = block(5, 0, 6, 6);
+        let wall = occluders_from_tilemap(&map(10, 8, &cells), [0.0, 0.0], [1.0, 1.0], |t| {
+            t.index == 1
+        });
+        let e = edges(&wall);
+        assert_eq!(e.len(), 4);
+        let light = Vec2::new(2.0, 10.0);
+        // On the wall's face, below its top row.
+        let face = Vec2::new(5.5, 4.5);
+        assert!(!in_shadow(light, 30.0, &e, face));
+        // Beside the wall on the lit side, and behind it.
+        assert!(!in_shadow(light, 30.0, &e, Vec2::new(4.0, 3.0)));
+        assert!(in_shadow(light, 30.0, &e, Vec2::new(8.0, 3.0)));
+        // One rect per row puts edges inside the wall, and the row above's
+        // lower edge shadows the face.
+        let rows: Vec<_> = (0..6)
+            .map(|r| Occluder2d::Rect {
+                min: [5.0, r as f32],
+                max: [6.0, r as f32 + 1.0],
+            })
+            .collect();
+        assert!(in_shadow(light, 30.0, &edges(&rows), face));
     }
 }
