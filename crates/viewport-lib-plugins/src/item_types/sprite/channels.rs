@@ -4,7 +4,8 @@
 //! per-sprite records, which are one interleaved 64-byte block each. Splitting
 //! them matters because a particle feed usually moves every sprite and recolours
 //! none of them, so the position write is a quarter of the traffic of a full
-//! update.
+//! update. A batch uploaded with effects has a third, its packed effect words,
+//! so a hit flash on one sprite writes four bytes.
 //!
 //! The record is not what a caller holds, so [`Sprite`] is the input and the
 //! write builds the record: a [`Colour`] becomes linear RGBA, and the defaults an
@@ -83,4 +84,28 @@ impl Channel for Sprites {
     type Id = SpriteSetId;
     type Input = Sprite;
     const NAME: &'static str = "sprites";
+}
+
+/// One sprite's effect values for a ranged write into a batch uploaded with
+/// [`SpriteItem::effects`](super::SpriteItem::effects) set.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SpriteEffect {
+    /// Flash amount in `0..=1`.
+    pub flash: f32,
+    /// Dissolve threshold in `0..=1`.
+    pub dissolve: f32,
+    /// Palette row.
+    pub palette_row: u16,
+}
+
+/// The per-sprite effect values: flash, dissolve and palette row. Present only
+/// on a batch uploaded with effects; a write to one without them fails with
+/// `ViewportError::ChannelNotPresent`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Effects;
+
+impl Channel for Effects {
+    type Id = SpriteSetId;
+    type Input = SpriteEffect;
+    const NAME: &'static str = "effects";
 }

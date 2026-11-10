@@ -8,21 +8,34 @@
 //! nearest-sampled, the camera shows three screen pixels per texel and snaps to
 //! the pixel grid, and the sprites snap too, so the art stays crisp.
 //!
+//! A torch follows the cursor: it is a point light in the frame's lighting,
+//! projected onto the plane by the 2D light layer, and two standing stones cast
+//! hard shadows from it over a dim ambient. Clicking a critter flashes it
+//! white; `D` dissolves the stones away with a burning rim, and again brings
+//! them back.
+//!
 //! Drag to pan, scroll or pinch to zoom.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use glam::Vec2;
+use glam::{DVec3, Vec2};
 
 use viewport_lib as vpl;
+use viewport_lib_plugins::item_types::lighting_2d::{Lighting2dItem, occluders_from_sprites};
 use viewport_lib_plugins::item_types::sprite::{
-    SpriteFlip, SpriteItem, SpriteOrder, SpriteSizeMode,
+    SpriteEffects, SpriteFlip, SpriteItem, SpriteOrder, SpriteSizeMode,
 };
+use viewport_lib_plugins::item_types::tilemap::TilemapPlane;
 use vpl::{
-    AppConfig, Camera2d, Camera2dController, Colour, ExtraId, Plane2d, TextureData, TextureFilter,
-    TextureId, ViewportApp, WindowConfig, planar_bindings,
+    Action, AppConfig, Camera2d, Camera2dController, Candela, Colour, ExtraId, KeyCode,
+    LightSource, Modifiers, ModifiersMatch, Plane2d, TextureData, TextureFilter, TextureId,
+    ViewportApp, ViewportBinding, ViewportGesture, WindowConfig, planar_bindings,
 };
+
+const TOGGLE_DISSOLVE: Action = Action::Custom(1);
+/// The two standing stones, at their feet.
+const STONES: [[f32; 2]; 2] = [[-40.0, -10.0], [50.0, 20.0]];
 
 /// How many critters wander the plane.
 const COUNT: usize = 300;
@@ -113,8 +126,8 @@ fn critters() -> Vec<Critter> {
         .collect()
 }
 
-/// This frame's sprite batch for the critters.
-fn sprites(atlas: TextureId, critters: &[Critter]) -> SpriteItem {
+/// This frame's sprite batch for the critters, each with its flash amount.
+fn sprites(atlas: TextureId, critters: &[Critter], flashes: &[f32]) -> SpriteItem {
     let mut item = SpriteItem::default();
     item.texture_id = Some(atlas);
     item.size_mode = SpriteSizeMode::WorldSpace;
@@ -141,6 +154,31 @@ fn sprites(atlas: TextureId, critters: &[Critter]) -> SpriteItem {
         item.sort_keys.push(-c.position.y);
         item.colours.push(c.tint);
     }
+    let mut effects = SpriteEffects::default();
+    effects.flash = flashes.to_vec();
+    item.effects = Some(effects);
+    item
+}
+
+/// The two stones, drawn with the critters in painter's order and dissolved
+/// by `dissolve`.
+fn stones(dissolve: f32) -> SpriteItem {
+    let mut item = SpriteItem::default();
+    item.positions = STONES.iter().map(|p| [p[0], p[1], 0.0]).collect();
+    item.sizes = vec![[14.0, 26.0]; STONES.len()];
+    item.default_pivot = [0.5, 0.0];
+    item.size_mode = SpriteSizeMode::WorldSpace;
+    item.default_colour = Colour::linear_rgb(0.35, 0.33, 0.38);
+    item.pixel_snap = true;
+    item.order = SpriteOrder::Painter {
+        layer: 0,
+        depth_test: false,
+    };
+    item.sort_keys = STONES.iter().map(|p| -p[1]).collect();
+    let mut effects = SpriteEffects::default();
+    effects.default_dissolve = dissolve;
+    effects.noise_scale = 2.0;
+    item.effects = Some(effects);
     item
 }
 
@@ -153,7 +191,11 @@ fn main() {
     camera.snap_to_pixels = true;
     let mut controller = Camera2dController::new_stateless();
     let mut critters = critters();
-    let mut extra: Option<ExtraId> = None;
+    let mut flashes = vec![0.0f32; COUNT];
+    let mut extras: Vec<ExtraId> = Vec::new();
+    let mut torch = Vec2::ZERO;
+    let mut dissolving = false;
+    let mut dissolve = 0.0f32;
 
     ViewportApp::new(AppConfig::default())
         .window_with_input(
@@ -173,7 +215,15 @@ fn main() {
                     .upload_texture(&device, &queue, atlas())
                     .expect("atlas upload");
                 setup_atlas.set(Some(atlas));
-                setup.set_bindings(planar_bindings());
+                let mut bindings = planar_bindings();
+                bindings.push(ViewportBinding::new(
+                    TOGGLE_DISSOLVE,
+                    ViewportGesture::KeyPress {
+                        key: KeyCode::D,
+                        modifiers: ModifiersMatch::Exact(Modifiers::NONE),
+                    },
+                ));
+                setup.set_bindings(bindings);
             },
             // Everything goes to the viewport: there is no UI over it.
             |input| {
@@ -186,6 +236,34 @@ fn main() {
                 camera.set_viewport_size(Vec2::from(size));
                 camera.pixels_per_point = ctx.surface_size()[0] as f32 / size[0].max(1.0);
                 let dt = ctx.dt();
+                let frame = ctx.action_frame().clone();
+
+                // The torch follows the cursor and stays where it was left.
+                if let Some(cursor) = frame.pointer.cursor {
+                    torch = camera.screen_to_world(cursor);
+                }
+                // A click flashes the critter under it, which fades over a
+                // quarter of a second.
+                for f in &mut flashes {
+                    *f = (*f - dt * 4.0).max(0.0);
+                }
+                if frame.pointer.clicked {
+                    let nearest = critters
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| (i, (c.position + Vec2::new(0.0, 4.0)).distance(torch)))
+                        .min_by(|a, b| a.1.total_cmp(&b.1));
+                    if let Some((i, d)) = nearest
+                        && d < 8.0
+                    {
+                        flashes[i] = 1.0;
+                    }
+                }
+                if frame.is_active(TOGGLE_DISSOLVE) {
+                    dissolving = !dissolving;
+                }
+                let target = if dissolving { 1.0 } else { 0.0 };
+                dissolve += (target - dissolve).clamp(-dt, dt);
 
                 for c in &mut critters {
                     c.position += c.velocity * dt;
@@ -202,14 +280,31 @@ fn main() {
                 // The setup callback runs again after a lost device, with a new
                 // atlas id and a new instance, so the batch is rebuilt each
                 // frame from the current id.
-                if let Some(atlas) = atlas_id.get() {
-                    if let Some(id) = extra.take() {
-                        ctx.remove_extra(id);
-                    }
-                    extra = Some(ctx.add_item(sprites(atlas, &critters)));
+                for id in extras.drain(..) {
+                    ctx.remove_extra(id);
                 }
+                if let Some(atlas) = atlas_id.get() {
+                    extras.push(ctx.add_item(sprites(atlas, &critters, &flashes)));
+                }
+                let stones = stones(dissolve);
+                let mut light = Lighting2dItem::default();
+                light.ambient = Colour::linear_rgb(0.12, 0.12, 0.16);
+                // A stone stops casting once it has mostly burned away.
+                if dissolve < 0.6 {
+                    light.occluders = occluders_from_sprites(&stones, TilemapPlane::Xy);
+                }
+                extras.push(ctx.add_item(stones));
+                extras.push(ctx.add_item(light));
 
-                let frame = ctx.action_frame().clone();
+                let mut lamp = LightSource::point_candela(
+                    DVec3::new(torch.x as f64, torch.y as f64, 10.0),
+                    Candela(1.4),
+                    120.0,
+                    0.0,
+                );
+                lamp.colour = Colour::linear_rgb(1.0, 0.75, 0.45);
+                ctx.effects_mut().lighting.lights = vec![lamp];
+
                 controller.apply(&mut camera, &frame, dt);
                 *ctx.camera_mut() = camera.camera();
             },

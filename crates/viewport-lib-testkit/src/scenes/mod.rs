@@ -19,6 +19,7 @@ pub mod far_origin;
 pub mod grading;
 pub mod item_types;
 pub mod light_transport;
+pub mod lighting_2d;
 pub mod materials;
 pub mod materials_ibl;
 pub mod meshes;
@@ -32,6 +33,7 @@ pub mod section_caps;
 pub mod shadows;
 pub mod skinning;
 pub mod sprites_2d;
+pub mod sprites_effects;
 pub mod textures;
 pub mod tilemap;
 pub mod tone_mapping;
@@ -106,6 +108,8 @@ pub struct BuiltScene {
     pub sprite_items: Vec<SpriteItem>,
     /// Tilemap layers, each naming a map the build uploaded.
     pub tilemaps: Vec<viewport_lib_plugins::item_types::tilemap::TilemapItem>,
+    /// The 2D light layer, lit by the scene's point lights.
+    pub lighting_2d: Vec<viewport_lib_plugins::item_types::lighting_2d::Lighting2dItem>,
     /// GPU particle systems advanced and drawn each frame. The simulation runs
     /// on the GPU and carries state between frames, so a scene using these is
     /// only reproducible because the emit RNG is seeded from a frame counter
@@ -263,6 +267,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.sprite_items.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::tilemap::TilemapItem>() =
         scene.tilemaps.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::lighting_2d::Lighting2dItem>() =
+        scene.lighting_2d.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>() =
         scene.gpu_particle_systems.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::volume::VolumeItem>() = scene.volumes.clone();
@@ -1109,7 +1115,9 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(tone_mapping::scenes());
     scenes.extend(occlusion::scenes());
     scenes.extend(sprites_2d::scenes());
+    scenes.extend(sprites_effects::scenes());
     scenes.extend(tilemap::scenes());
+    scenes.extend(lighting_2d::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

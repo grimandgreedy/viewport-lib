@@ -161,6 +161,7 @@ pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
 pub mod uploads;
+pub mod wgsl_compose;
 pub mod writes;
 
 pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;

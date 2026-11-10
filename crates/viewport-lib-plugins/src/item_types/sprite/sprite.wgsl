@@ -28,6 +28,7 @@ struct VertexIn {
     @location(0)             position:       vec3<f32>,
     @builtin(vertex_index)   vertex_index:   u32,
     @builtin(instance_index) instance_index: u32,
+    // <sprite-fx:vertex-in>
 };
 
 struct VertexOut {
@@ -36,6 +37,7 @@ struct VertexOut {
     @location(1)       world_pos:     vec3<f32>,
     @location(2)       uv:            vec2<f32>,
     @location(3) @interpolate(flat) soft_distance: f32,
+    // <sprite-fx:varyings>
 };
 
 @vertex
@@ -153,6 +155,8 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     if sprite_ub.has_texture != 0u {
         colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
     }
+    // <sprite-fx:base>
+    // <sprite-fx:shaded>
 
     // Soft-particle fade: when the sprite fragment approaches opaque scene
     // geometry behind it, ramp alpha to zero over a configurable world-space

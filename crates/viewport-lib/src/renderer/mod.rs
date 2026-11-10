@@ -2655,6 +2655,7 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
+                    lights: &frame.effects.lighting.lights,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
@@ -2713,6 +2714,7 @@ impl ViewportRenderer {
                 outline_selected: frame.interaction.outline_selected,
                 sub_selection: frame.interaction.sub_selection.as_ref(),
                 clip_objects: &frame.effects.clip.objects,
+                lights: &frame.effects.lighting.lights,
                 quality_reduced: self.degradation_volume_quality_reduced,
                 collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
                 world_origin: self.origin.origin(),
@@ -2833,8 +2835,8 @@ impl ViewportRenderer {
         !frame.scene.foreground_items.is_empty()
             || self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_foreground()
-                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                        .is_some_and(|items| !items.is_empty())
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
             })
     }
 
@@ -2883,8 +2885,8 @@ impl ViewportRenderer {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_depth_read()
-                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                        .is_some_and(|items| !items.is_empty())
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
             })
     }
 
@@ -3139,6 +3141,7 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
+                    lights: &frame.effects.lighting.lights,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,

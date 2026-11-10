@@ -321,6 +321,11 @@ pub struct ItemFrameContext<'a> {
     /// own, which a ray-marcher generally must, since it tests along the ray
     /// rather than per fragment.
     pub clip_objects: &'a [crate::renderer::ClipObject],
+    /// The frame's light sources (`EffectsFrame::lighting.lights`), in world
+    /// coordinates and in submission order, before the renderer ranks or caps
+    /// them. For an item type that lights its own content from the scene's
+    /// lights rather than through the group-0 light list.
+    pub lights: &'a [crate::LightSource],
     /// `true` when the frame budget asked for reduced quality this frame
     /// (reported as `FrameStats::volume_quality_reduced`). A plugin with a
     /// cost knob, such as a march step count or a sample budget, should turn

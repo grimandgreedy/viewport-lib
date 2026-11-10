@@ -27,8 +27,8 @@ impl SpriteDepth {
     const ALL: [Self; 3] = [Self::Write, Self::Test, Self::Off];
 }
 
-/// Sprite pipeline variant axes: depth use, blend mode, and unlit vs
-/// `apply_scene_lighting`-lit shading. Kept separate from the mesh family's
+/// Sprite pipeline variant axes: depth use, blend mode, unlit vs
+/// `apply_scene_lighting`-lit shading, and the effect family. Kept separate from the mesh family's
 /// `PipelineKey` -- sprite's axes don't map onto `two_sided` / `cutout` /
 /// `no_discard_eligible`, and `blend` is five-valued, not boolean, so
 /// reusing that type would just be confusing field names for an unrelated
@@ -38,6 +38,11 @@ pub(crate) struct SpriteKey {
     pub depth: SpriteDepth,
     pub blend: viewport_lib::renderer::SpriteBlend,
     pub lit: bool,
+    /// `None` for the plain shaders; `Some(0)` for the built-in effects and
+    /// `Some(1 + i)` for sprite material `i`. Each family is its own set of
+    /// pipelines over the other three axes, so a frame with no effects never
+    /// builds or binds one.
+    pub fx: Option<u32>,
 }
 
 /// Every blend a sprite pipeline is built for, in slot order.
@@ -64,6 +69,7 @@ impl SpriteKey {
             depth,
             blend: sprite.blend,
             lit: sprite.lit,
+            fx: sprite.fx.as_ref().map(|fx| fx.family),
         }
     }
 
@@ -74,28 +80,38 @@ impl SpriteKey {
             .expect("every blend has a slot")
     }
 
-    /// Every axis combination.
+    /// Every combination of the depth, blend and lit axes, in the plain family.
     pub fn all() -> impl Iterator<Item = SpriteKey> {
         BLENDS.into_iter().flat_map(|blend| {
             [false, true].into_iter().flat_map(move |lit| {
-                SpriteDepth::ALL
-                    .into_iter()
-                    .map(move |depth| SpriteKey { depth, blend, lit })
+                SpriteDepth::ALL.into_iter().map(move |depth| SpriteKey {
+                    depth,
+                    blend,
+                    lit,
+                    fx: None,
+                })
             })
         })
     }
 
-    /// Dense index in `0..KEY_COUNT`, stable across calls.
+    /// This key in effect family `fx`.
+    pub fn in_family(self, fx: Option<u32>) -> Self {
+        Self { fx, ..self }
+    }
+
+    /// Dense index in `0..KEY_COUNT` within the key's family, stable across
+    /// calls.
     fn slot(self) -> usize {
         self.depth as usize + 3 * self.blend_index() + 3 * BLENDS.len() * (self.lit as usize)
     }
 
-    /// The key at `slot`; the inverse of [`slot`](Self::slot).
+    /// The plain-family key at `slot`; the inverse of [`slot`](Self::slot).
     fn from_slot(slot: usize) -> Self {
         Self {
             depth: SpriteDepth::ALL[slot % 3],
             blend: BLENDS[(slot / 3) % BLENDS.len()],
             lit: slot >= 3 * BLENDS.len(),
+            fx: None,
         }
     }
 }
@@ -117,6 +133,22 @@ fn position_layout() -> viewport_lib::gpu::VertexBufferLayout<'static> {
     }
 }
 
+/// The packed effect word, one `u32` per sprite with instance stepping, as the
+/// effect pipelines bind it at slot 1.
+const FX_ATTRS: [viewport_lib::gpu::VertexAttribute; 1] = [viewport_lib::gpu::VertexAttribute {
+    offset: 0,
+    shader_location: 1,
+    format: viewport_lib::gpu::VertexFormat::Uint32,
+}];
+
+fn fx_layout() -> viewport_lib::gpu::VertexBufferLayout<'static> {
+    viewport_lib::gpu::VertexBufferLayout {
+        array_stride: super::effects::FX_STRIDE as u64,
+        step_mode: viewport_lib::gpu::VertexStepMode::Instance,
+        attributes: &FX_ATTRS,
+    }
+}
+
 /// What a sprite colour pipeline build reads: the unlit and lit shader and
 /// layout pairs, and the LDR target.
 pub(super) struct SpriteRecipe {
@@ -128,6 +160,8 @@ pub(super) struct SpriteRecipe {
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
     depth_format: viewport_lib::gpu::TextureFormat,
+    /// An effect family: the shaders read the effect stream at slot 1.
+    fx: bool,
 }
 
 /// The pass a sprite colour pipeline draws into. The HDR scene pass has the
@@ -157,7 +191,10 @@ pub(super) fn sprite_index(key: SpriteKey, pass: SpritePass) -> usize {
 fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     let key = SpriteKey::from_slot(i / 3);
     let pass = SpritePass::ALL[i % 3];
-    let vertex_buffers = [position_layout()];
+    let plain = [position_layout()];
+    let with_fx = [position_layout(), fx_layout()];
+    let vertex_buffers: &[viewport_lib::gpu::VertexBufferLayout<'_>] =
+        if r.fx { &with_fx } else { &plain };
     let blend = match key.blend {
         viewport_lib::renderer::SpriteBlend::AlphaBlend => {
             viewport_lib::gpu::BlendState::ALPHA_BLENDING
@@ -173,14 +210,19 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
         viewport_lib::renderer::SpriteBlend::Multiply => MULTIPLY_BLEND,
         viewport_lib::renderer::SpriteBlend::Screen => SCREEN_BLEND,
     };
-    let (layout, shader, label) = if key.lit {
-        (
+    let (layout, shader, label) = match (key.lit, r.fx) {
+        (true, false) => (
             &r.lit_layout,
             r.lit_shader.get(),
             "sprite_lit_pipeline_variant",
-        )
-    } else {
-        (&r.layout, r.shader.get(), "sprite_pipeline_variant")
+        ),
+        (false, false) => (&r.layout, r.shader.get(), "sprite_pipeline_variant"),
+        (true, true) => (
+            &r.lit_layout,
+            r.lit_shader.get(),
+            "sprite_lit_fx_pipeline_variant",
+        ),
+        (false, true) => (&r.layout, r.shader.get(), "sprite_fx_pipeline_variant"),
     };
     viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
         &r.device,
@@ -190,7 +232,7 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
             shader,
             vertex_entry: "vs_main",
             fragment_entry: "fs_main",
-            vertex_buffers: &vertex_buffers,
+            vertex_buffers,
             blend: Some(blend),
             topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
@@ -499,6 +541,12 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
 /// time a draw needs them.
 pub(super) struct SpriteGpu {
     pub(super) pipelines: SpritePipelines,
+    /// The effect families, by family index: the built-in effects first,
+    /// then one per registered sprite material, each built the first frame
+    /// one of its batches is prepared.
+    pub(super) fx_families: Vec<Option<SpritePipelines>>,
+    /// What an effect family's build reads beyond its shaders and layout.
+    fx_base: FxFamilyBase,
     pub(super) passes: SpritePassPipelines,
     pub(super) refraction_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) refraction_sampler: viewport_lib::gpu::Sampler,
@@ -511,7 +559,85 @@ pub(super) struct SpriteGpu {
     pub(super) lit_fallback_bg: viewport_lib::gpu::BindGroup,
 }
 
+/// The pieces every effect family shares.
+struct FxFamilyBase {
+    group0: viewport_lib::gpu::BindGroupLayout,
+    bgl: viewport_lib::gpu::BindGroupLayout,
+    soft_bgl: viewport_lib::gpu::BindGroupLayout,
+    fx_bgl: viewport_lib::gpu::BindGroupLayout,
+    sample_count: u32,
+    ldr_format: viewport_lib::gpu::TextureFormat,
+    depth_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// Build the colour pipelines of one effect family: the built-in effects, or
+/// the built-in effects with `material`.
+fn fx_family(
+    device: &viewport_lib::gpu::Device,
+    resources: &DeviceResources,
+    base: &FxFamilyBase,
+    material: Option<&super::effects::SpriteMaterialEntry>,
+) -> SpritePipelines {
+    let (unlit, lit) = super::effects::base_sources();
+    let source = material.map(|m| m.source());
+    // Composition of the built-in family is checked by the unit tests and a
+    // material's at registration, so it cannot fail here.
+    let compose = |base: &str, lit: bool| {
+        super::effects::compose(base, lit, source.as_ref()).expect("sprite effect shader composes")
+    };
+    let name = material.map_or("sprite_fx", |m| m.name.as_str());
+    let shader = resources.lazy_module(device, &format!("{name}_shader"), compose(&unlit, false));
+    let lit_shader =
+        resources.lazy_module(device, &format!("{name}_lit_shader"), compose(&lit, true));
+    let layout = viewport_lib::plugin_api::builders::pipeline_layout(
+        device,
+        "sprite_fx_pipeline_layout",
+        &[&base.group0, &base.bgl, &base.soft_bgl, &base.fx_bgl],
+    );
+    resources.lazy_pipelines(
+        SpriteRecipe {
+            device: device.clone(),
+            layout: layout.clone(),
+            shader,
+            lit_layout: layout,
+            lit_shader,
+            sample_count: base.sample_count,
+            ldr_format: base.ldr_format,
+            depth_format: base.depth_format,
+            fx: true,
+        },
+        build_sprite,
+    )
+}
+
 impl SpriteGpu {
+    /// The colour pipelines of effect family `fx`, or the plain ones for
+    /// `None`. `None` too for a family not built yet.
+    pub(super) fn colour_pipelines(&self, fx: Option<u32>) -> Option<&SpritePipelines> {
+        match fx {
+            None => Some(&self.pipelines),
+            Some(f) => self.fx_families.get(f as usize)?.as_ref(),
+        }
+    }
+
+    /// Build the family of every registered material that has none yet.
+    pub(super) fn ensure_material_families(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &DeviceResources,
+        materials: &[super::effects::SpriteMaterialEntry],
+    ) {
+        while self.fx_families.len() < materials.len() + 1 {
+            self.fx_families.push(None);
+        }
+        for (i, m) in materials.iter().enumerate() {
+            if self.fx_families[i + 1].is_none() {
+                self.fx_families[i + 1] =
+                    Some(fx_family(device, resources, &self.fx_base, Some(m)));
+            }
+        }
+    }
+
     pub(super) fn new(
         device: &viewport_lib::gpu::Device,
         resources: &DeviceResources,
@@ -742,9 +868,20 @@ impl SpriteGpu {
                 sample_count,
                 ldr_format: resources.target_format(),
                 depth_format: resources.scene_depth_format(),
+                fx: false,
             },
             build_sprite,
         );
+        let fx_base = FxFamilyBase {
+            group0: group0.clone(),
+            bgl: bgl.clone(),
+            soft_bgl: soft_bgl.clone(),
+            fx_bgl: layouts.fx_bgl.clone(),
+            sample_count,
+            ldr_format: resources.target_format(),
+            depth_format: resources.scene_depth_format(),
+        };
+        let builtin = fx_family(device, resources, &fx_base, None);
         let passes: SpritePassPipelines = resources.lazy_pipelines(
             SpritePassRecipe {
                 device: device.clone(),
@@ -768,6 +905,8 @@ impl SpriteGpu {
 
         Self {
             pipelines,
+            fx_families: vec![Some(builtin)],
+            fx_base,
             passes,
             refraction_bgl,
             refraction_sampler,
@@ -783,9 +922,11 @@ impl SpriteGpu {
     /// so a batch is never outlined, stamped or picked before it is drawn.
     pub(super) fn drawn(&self, sprite: &super::store::SpriteGpuData) -> bool {
         let key = SpriteKey::of(sprite);
-        let colour = SpritePass::ALL
-            .into_iter()
-            .any(|pass| self.pipelines.available(sprite_index(key, pass)));
+        let colour = self.colour_pipelines(key.fx).is_some_and(|family| {
+            SpritePass::ALL
+                .into_iter()
+                .any(|pass| family.available(sprite_index(key, pass)))
+        });
         if sprite.refraction_strength > 0.0 {
             self.passes.available(REFRACTION)
         } else if sprite.oit_eligible {

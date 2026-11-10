@@ -1,4 +1,4 @@
-//! Item types: point clouds, sprites, tilemaps, curves, volumes, vector and tensor
+//! Item types: point clouds, sprites, tilemaps, 2D lighting, curves, volumes, vector and tensor
 //! fields and the rest.
 //!
 //! Each type is an [`ItemTypePlugin`](viewport_lib::plugin_api::ItemTypePlugin)
@@ -165,6 +165,7 @@ pub mod gpu_implicit;
 pub mod gpu_marching_cubes;
 pub mod gpu_particles;
 pub mod image_slice;
+pub mod lighting_2d;
 pub mod point_cloud;
 pub mod scatter_volume;
 pub mod sprite;
@@ -202,6 +203,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(gpu_marching_cubes::shader_sources());
     all.extend(gpu_particles::shader_sources());
     all.extend(image_slice::shader_sources());
+    all.extend(lighting_2d::shader_sources());
     all.extend(point_cloud::shader_sources());
     all.extend(scatter_volume::shader_sources());
     all.extend(sprite::shader_sources());
@@ -274,6 +276,9 @@ pub fn install(
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.
     register(Box::new(scatter_volume::ScatterVolumePlugin::default()));
+    // The 2D light layer multiplies over everything drawn before it, so it
+    // registers last.
+    register(Box::new(lighting_2d::Lighting2dPlugin::default()));
     declined
 }
 

@@ -12,7 +12,7 @@ use crate::item_types::{cast_bytes, host, plugin_mut};
 /// interleaved record, so a particle feed that only moves its sprites writes a
 /// quarter of the bytes a full update would.
 macro_rules! sprite_writes {
-    ($marker:ty, positions = $positions:expr, encode = $encode:expr) => {
+    ($marker:ty, channel = $channel:expr, encode = $encode:expr) => {
         impl viewport_lib::plugin_api::Writes<$marker> for ViewportRenderer {
             fn write_range(
                 &mut self,
@@ -26,7 +26,7 @@ macro_rules! sprite_writes {
                 plugin_mut::<SpritePlugin>(self, TYPE_NAME)?.write_set_channel(
                     queue,
                     id,
-                    $positions,
+                    $channel,
                     first_element,
                     &bytes,
                 )
@@ -59,17 +59,26 @@ macro_rules! sprite_writes {
                 id: SpriteSetId,
             ) -> Option<viewport_lib::plugin_api::Extent> {
                 self.item_type_plugin::<SpritePlugin>(TYPE_NAME)?
-                    .set_extent(id, $positions)
+                    .set_extent(id, $channel)
             }
         }
     };
 }
 
-sprite_writes!(channels::Positions, positions = true, encode = cast_bytes);
+sprite_writes!(
+    channels::Positions,
+    channel = store::SpriteChannel::Positions,
+    encode = cast_bytes
+);
 sprite_writes!(
     channels::Sprites,
-    positions = false,
+    channel = store::SpriteChannel::Sprites,
     encode = encode_sprites
+);
+sprite_writes!(
+    channels::Effects,
+    channel = store::SpriteChannel::Effects,
+    encode = effects::encode_effects
 );
 
 /// Sprites keep two stores behind one item struct: a batch drawn as one set,
@@ -209,5 +218,94 @@ impl viewport_lib::plugin_api::Handles<SpriteInstanceSetId> for ViewportRenderer
 
     fn release(&mut self, id: SpriteInstanceSetId) -> bool {
         plugin_mut::<SpritePlugin>(self, TYPE_NAME).is_ok_and(|p| p.drop_instance_set(id))
+    }
+}
+
+/// Custom sprite materials: a [`MaterialPlugin`](viewport_lib::MaterialPlugin)
+/// whose body draws a sprite's fragment rather than a mesh surface.
+///
+/// The body follows the particle fragment-hook contract, so one body draws
+/// both. It defines
+///
+/// ```text
+/// fn shade_sprite(f: SpriteFragment) -> vec4<f32>
+/// ```
+///
+/// plus any helpers, and returns the sprite's base colour as straight-alpha
+/// linear RGBA in place of `tint * texel`. The flash, outline and dissolve
+/// apply after it, and lighting too for a lit batch. `SpriteFragment` starts
+/// with the fields of the particle hook's `ParticleFragment`:
+///
+/// ```text
+/// struct SpriteFragment {
+///     uv:          vec2<f32>, // atlas UV
+///     texel:       vec4<f32>, // the texture at uv, palette-swapped if the batch swaps
+///     colour:      vec4<f32>, // the sprite's tint
+///     age:         f32,       // always 0 for a sprite
+///     age_sec:     f32,       // always 0 for a sprite
+///     world:       vec3<f32>,
+///     time:        f32,       // seconds, from the frame time
+///     local_uv:    vec2<f32>, // 0..1 across the quad
+///     uv_rect:     vec4<f32>, // the sprite's atlas rect
+///     flash:       f32,       // this sprite's flash, dissolve and palette row
+///     dissolve:    f32,
+///     palette_row: u32,
+///     uv_ddx:      vec2<f32>, // derivatives of uv, for textureSampleGrad
+///     uv_ddy:      vec2<f32>,
+/// };
+/// ```
+///
+/// The bindings are the particle hook's too: up to four textures as
+/// `htex0..htex3` (the plugin's `texture_count`, each item binding its own in
+/// [`SpriteMaterial::textures`](super::SpriteMaterial)) read through
+/// `sprite_samp` (the plugin's `sampler()`), and parameters in
+/// `hook_params.lanes`, lane 0 reserved with the time in `.w` and parameter
+/// `i` of the plugin's `param_layout` in lane `1 + i`. Declared parameters can
+/// also be read by name as `params.<name>`; each item sets its values in
+/// [`SpriteMaterial::params`](super::SpriteMaterial). At most seven
+/// parameters. Every top-level identifier in the body is prefixed with the
+/// plugin's name, and the body may read `camera`. It runs after
+/// per-fragment discards, so sample with `textureSampleGrad` or
+/// `textureSampleLevel`. `needs_back_hemisphere` and
+/// `reads_vertex_attribute` do not apply to sprites and are ignored.
+///
+/// A batch selects a material through
+/// [`SpriteEffects::material`](super::SpriteEffects::material).
+pub trait SpriteMaterials {
+    /// Register `plugin` as a sprite material, validating its body against
+    /// the sprite and lit sprite shaders.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::ShadeNameTaken`](viewport_lib::error::ViewportError::ShadeNameTaken)
+    /// when a sprite material of that name exists;
+    /// [`ViewportError::ShadeShaderInvalid`](viewport_lib::error::ViewportError::ShadeShaderInvalid)
+    /// when the name or a parameter is not a WGSL identifier, the body
+    /// defines no `shade_sprite`, too many parameters or textures are
+    /// declared, or a composed module fails validation.
+    fn register_sprite_material(
+        &mut self,
+        device: &gpu::Device,
+        plugin: &dyn viewport_lib::MaterialPlugin,
+    ) -> viewport_lib::error::ViewportResult<SpriteMaterialId>;
+
+    /// The sprite material registered as `name`.
+    fn sprite_material_id(&self, name: &str) -> Option<SpriteMaterialId>;
+}
+
+impl SpriteMaterials for ViewportRenderer {
+    fn register_sprite_material(
+        &mut self,
+        device: &gpu::Device,
+        plugin: &dyn viewport_lib::MaterialPlugin,
+    ) -> viewport_lib::error::ViewportResult<SpriteMaterialId> {
+        let host = host::<SpritePlugin>(self, TYPE_NAME)?;
+        host.plugin
+            .register_material(device, host.resources, plugin)
+    }
+
+    fn sprite_material_id(&self, name: &str) -> Option<SpriteMaterialId> {
+        self.item_type_plugin::<SpritePlugin>(TYPE_NAME)?
+            .material_id(name)
     }
 }

@@ -20,18 +20,25 @@
 //!   LDR path, which has no such pass, they draw in `paint` after the
 //!   depth-writing batches.
 //!
+//! A batch with [`SpriteEffects`] (flash, dissolve, palette swap, outline, or a
+//! custom material registered through [`SpriteMaterials`]) draws through effect
+//! pipelines composed from the plain shaders, in the same place it would draw
+//! otherwise except that it never goes through order-independent transparency.
+//! A frame without effects never builds or binds them.
+//!
 //! The data types here build without the `gpu` feature; the plugin and its
 //! upload calls need it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
 //! [`EncoderScope::AfterOpaque`]: viewport_lib::plugin_api::EncoderScope::AfterOpaque
+//! [`SpriteMaterials`]: crate::item_types::sprite::SpriteMaterials
 
 mod types;
 
 pub use types::{
-    SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrder, SpriteOrientation, SpriteSetId, SpriteSetRefItem,
-    SpriteSizeMode,
+    PaletteIndex, SpriteEffects, SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteLitParams, SpriteMaterial, SpriteMaterialId, SpriteNormalMode, SpriteOrder,
+    SpriteOrientation, SpriteOutline, SpritePalette, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
 };
 
 /// Stable name this item type submits and registers under.
@@ -44,6 +51,8 @@ const SPRITE_COMMON: &str = crate::item_types::shader::wgsl_source!("sprite_comm
 
 #[cfg(feature = "gpu")]
 pub mod channels;
+#[cfg(feature = "gpu")]
+mod effects;
 #[cfg(feature = "gpu")]
 mod pipeline;
 #[cfg(feature = "gpu")]
@@ -60,4 +69,4 @@ pub(crate) use plugin::shader_sources;
 #[cfg(feature = "gpu")]
 pub(crate) use store::{encode_sprites, painter_batch_order};
 #[cfg(feature = "gpu")]
-pub use uploads::SpriteInstanceUploads;
+pub use uploads::{SpriteInstanceUploads, SpriteMaterials};

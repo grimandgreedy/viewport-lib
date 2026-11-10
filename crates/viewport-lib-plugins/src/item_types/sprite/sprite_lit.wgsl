@@ -26,6 +26,12 @@ struct Camera {
     exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
+    proj:          mat4x4<f32>,
+    inv_proj:      mat4x4<f32>,
+    viewport:      vec4<f32>,
+    clip:          vec4<f32>,
+    // Seconds as f32, the f64 remainder, delta seconds, frame index.
+    time:          vec4<f32>,
 };
 
 struct ClipPlanes {
@@ -86,6 +92,7 @@ struct VertexIn {
     @location(0)             position:       vec3<f32>,
     @builtin(vertex_index)   vertex_index:   u32,
     @builtin(instance_index) instance_index: u32,
+    // <sprite-fx:vertex-in>
 };
 
 struct VertexOut {
@@ -98,6 +105,7 @@ struct VertexOut {
     @location(5)       tangent_world:  vec3<f32>,
     @location(6)       bitangent_world:vec3<f32>,
     @location(7)       facing_world:   vec3<f32>,
+    // <sprite-fx:varyings>
 };
 
 @vertex
@@ -241,6 +249,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     if sprite_ub.has_texture != 0u {
         colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
     }
+    // <sprite-fx:base>
 
     if sprite_ub.lit != 0u {
         let n = build_normal(
@@ -285,6 +294,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
             colour = vec4<f32>(lit_rgb, colour.a);
         }
     }
+    // <sprite-fx:shaded>
 
     var soft_dist = sprite_ub.soft_particle_distance;
     if in.soft_distance > 0.0 {

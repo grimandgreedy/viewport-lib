@@ -28,6 +28,9 @@ pub(super) struct SpriteLayouts {
     pub(super) bgl: viewport_lib::gpu::BindGroupLayout,
     /// Group 3 layout for the optional lit normal map (texture + sampler).
     pub(super) lit_bgl: viewport_lib::gpu::BindGroupLayout,
+    /// Group 3 layout of every effect pipeline: the lit normal map, the effect
+    /// block, the noise and the palette, and a material's sampler and textures.
+    pub(super) fx_bgl: viewport_lib::gpu::BindGroupLayout,
 }
 
 impl SpriteLayouts {
@@ -89,7 +92,13 @@ impl SpriteLayouts {
             viewport_lib::gpu::ShaderStages::FRAGMENT,
         );
 
-        Self { bgl, lit_bgl }
+        let fx_bgl = super::effects::fx_layout(device);
+
+        Self {
+            bgl,
+            lit_bgl,
+            fx_bgl,
+        }
     }
 }
 
@@ -109,6 +118,8 @@ pub(super) struct SpriteBindings {
     sampler: viewport_lib::gpu::Sampler,
     bgl: viewport_lib::gpu::BindGroupLayout,
     lit_bgl: viewport_lib::gpu::BindGroupLayout,
+    /// The group-3 effect bindings, when the batch has effects.
+    fx: Option<super::effects::FxBindings>,
 }
 
 /// Resolve the albedo and normal-map views an item names, reporting either
@@ -119,15 +130,18 @@ pub(super) fn resolve_bindings(
     device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     layouts: &SpriteLayouts,
+    materials: &[super::effects::SpriteMaterialEntry],
     item: &super::types::SpriteItem,
 ) -> SpriteBindings {
     resolve_bindings_for(
         device,
         resources,
         layouts,
+        materials,
         item.texture_id,
         item.normal_texture_id,
         item.filter,
+        item.effects.as_ref(),
         true,
     )
 }
@@ -139,21 +153,27 @@ pub(super) fn resolve_bindings(
 /// `report` is false on that path: the colour-space mismatch was already
 /// reported when the batch was uploaded, and repeating it on every
 /// revalidation would spam the log.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_bindings_for(
     device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     layouts: &SpriteLayouts,
+    materials: &[super::effects::SpriteMaterialEntry],
     texture_id: Option<viewport_lib::resources::TextureId>,
     normal_texture_id: Option<viewport_lib::resources::TextureId>,
     filter: viewport_lib::TextureFilter,
+    effects: Option<&super::types::SpriteEffects>,
     report: bool,
 ) -> SpriteBindings {
     use viewport_lib::resources::TextureRequirement;
     if report {
-        resources.check_texture_slot(
-            texture_id,
-            TextureRequirement::colour("SpriteItem::texture_id"),
-        );
+        // A palette-swapped sprite's texture holds indices, not colour.
+        let requirement = if effects.is_some_and(|fx| fx.palette.is_some()) {
+            TextureRequirement::linear("SpriteItem::texture_id")
+        } else {
+            TextureRequirement::colour("SpriteItem::texture_id")
+        };
+        resources.check_texture_slot(texture_id, requirement);
         resources.check_texture_slot(
             normal_texture_id,
             TextureRequirement::normal_map("SpriteItem::normal_texture_id"),
@@ -191,6 +211,8 @@ pub(super) fn resolve_bindings_for(
         },
         bgl: layouts.bgl.clone(),
         lit_bgl: layouts.lit_bgl.clone(),
+        fx: effects
+            .map(|fx| super::effects::resolve(resources, &layouts.fx_bgl, materials, fx, report)),
     }
 }
 
@@ -484,6 +506,47 @@ pub(super) fn build_sprite(
             None
         };
 
+        // The effect stream, block and group 3, for a batch with effects.
+        let mut fx_stream = None;
+        let fx = match (&binds.fx, &item.effects) {
+            (Some(fxb), Some(effects)) => {
+                let words = super::effects::instance_words(effects, item.positions.len(), source);
+                let mut stream = ContentBuffer::new(
+                    device,
+                    "sprite_fx_stream",
+                    viewport_lib::gpu::BufferUsages::VERTEX,
+                    super::effects::FX_STRIDE,
+                    capacity,
+                );
+                let _ = stream.write_range(queue, 0, bytemuck::cast_slice(&words));
+                let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+                    label: Some("sprite_fx_uniform_buf"),
+                    size: std::mem::size_of::<super::effects::SpriteFxUniform>() as u64,
+                    usage: viewport_lib::gpu::BufferUsages::UNIFORM
+                        | viewport_lib::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&fxb.uniform));
+                let bind_group = super::effects::bind_group(
+                    device,
+                    fxb,
+                    normal_view,
+                    &binds.sampler,
+                    &uniform_buf,
+                );
+                let draw = SpriteFxDraw {
+                    family: fxb.family,
+                    bind_group,
+                    stream: stream.buffer().clone(),
+                    uniform_buf,
+                    effects: std::sync::Arc::new(effects.clone()),
+                };
+                fx_stream = Some(stream);
+                Some(draw)
+            }
+            _ => None,
+        };
+
         let oit_eligible = matches!(
             item.blend,
             viewport_lib::renderer::SpriteBlend::AlphaBlend
@@ -492,7 +555,8 @@ pub(super) fn build_sprite(
             && painter.is_none()
             && item.soft_particle_distance.is_none_or(|d| d <= 0.0)
             && item.soft_particle_distances.is_empty()
-            && item.refraction_strength.is_none_or(|s| s <= 0.0);
+            && item.refraction_strength.is_none_or(|s| s <= 0.0)
+            && fx.is_none();
 
         let draw = SpriteGpuData {
             vertex_buffer: positions.buffer().clone(),
@@ -513,11 +577,13 @@ pub(super) fn build_sprite(
             lit: item.lit,
             lit_normal_bg,
             oit_eligible,
+            fx,
             _uniform_buf: uniform_buf,
         };
         StoredSprite {
             positions,
             sprites,
+            fx_stream,
             binds: binds.clone(),
             draw,
             model: item.model,
@@ -537,6 +603,8 @@ pub(super) fn build_sprite(
 pub(crate) struct StoredSprite {
     positions: ContentBuffer,
     sprites: ContentBuffer,
+    /// The packed effect words, on a batch with effects.
+    fx_stream: Option<ContentBuffer>,
     binds: SpriteBindings,
     pub(crate) draw: SpriteGpuData,
     /// The batch's model matrix in world coordinates.
@@ -561,20 +629,29 @@ impl StoredSprite {
         );
     }
 
-    /// Write positions or records at a sprite offset, keeping the draw count in
-    /// step with the positions.
+    /// Write positions, records or effect words at a sprite offset, keeping
+    /// the draw count in step with the positions.
     pub(crate) fn write_channel(
         &mut self,
         queue: &viewport_lib::gpu::Queue,
-        positions: bool,
+        channel: SpriteChannel,
         first_element: u32,
         data: &[u8],
     ) -> ViewportResult<()> {
-        if positions {
-            self.positions.write_range(queue, first_element, data)?;
-            self.draw.sprite_count = self.positions.len();
-        } else {
-            self.sprites.write_range(queue, first_element, data)?;
+        match channel {
+            SpriteChannel::Positions => {
+                self.positions.write_range(queue, first_element, data)?;
+                self.draw.sprite_count = self.positions.len();
+            }
+            SpriteChannel::Sprites => self.sprites.write_range(queue, first_element, data)?,
+            SpriteChannel::Effects => self
+                .fx_stream
+                .as_mut()
+                .ok_or(viewport_lib::error::ViewportError::ChannelNotPresent {
+                    type_name: super::TYPE_NAME,
+                    channel: "effects",
+                })?
+                .write_range(queue, first_element, data)?,
         }
         Ok(())
     }
@@ -590,8 +667,14 @@ impl StoredSprite {
     ) -> bool {
         let mut moved = self.positions.reserve(device, queue, capacity);
         moved |= self.sprites.reserve(device, queue, capacity);
+        if let Some(stream) = &mut self.fx_stream {
+            moved |= stream.reserve(device, queue, capacity);
+        }
         if moved {
             self.draw.vertex_buffer = self.positions.buffer().clone();
+            if let (Some(fx), Some(stream)) = (&mut self.draw.fx, &self.fx_stream) {
+                fx.stream = stream.buffer().clone();
+            }
             self.draw.bind_group = build_bind_group(
                 device,
                 &self.binds,
@@ -606,21 +689,25 @@ impl StoredSprite {
     pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
         self.positions.set_len(len)?;
         self.sprites.set_len(len)?;
+        if let Some(stream) = &mut self.fx_stream {
+            stream.set_len(len)?;
+        }
         self.draw.sprite_count = len;
         Ok(())
     }
 
-    /// What one channel holds and how much of it draws.
-    pub(crate) fn extent(&self, positions: bool) -> Extent {
-        let cb = if positions {
-            &self.positions
-        } else {
-            &self.sprites
+    /// What one channel holds and how much of it draws. `None` for the
+    /// effects channel of a batch without effects.
+    pub(crate) fn extent(&self, channel: SpriteChannel) -> Option<Extent> {
+        let cb = match channel {
+            SpriteChannel::Positions => &self.positions,
+            SpriteChannel::Sprites => &self.sprites,
+            SpriteChannel::Effects => self.fx_stream.as_ref()?,
         };
-        Extent {
+        Some(Extent {
             capacity: cb.capacity(),
             len: cb.len(),
-        }
+        })
     }
 }
 
@@ -677,6 +764,8 @@ impl viewport_lib::resources::handle::GpuByteSize for StoredSprite {
     fn gpu_bytes(&self) -> u64 {
         self.positions.allocated_bytes()
             + self.sprites.allocated_bytes()
+            + self.fx_stream.as_ref().map_or(0, |s| s.allocated_bytes())
+            + self.draw.fx.as_ref().map_or(0, |fx| fx.uniform_buf.size())
             + self.draw._uniform_buf.size()
     }
 }
@@ -739,8 +828,32 @@ pub(crate) struct SpriteGpuData {
     /// sprite item type to route the batch through the OIT pass instead of the
     /// ordinary sprite draws.
     pub(crate) oit_eligible: bool,
+    /// The effect draw state, on a batch with effects.
+    pub(crate) fx: Option<SpriteFxDraw>,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
+}
+
+/// One effect batch's draw state.
+#[derive(Clone)]
+pub(crate) struct SpriteFxDraw {
+    /// The pipeline family: 0 for the built-in effects, `1 + i` for material `i`.
+    pub(crate) family: u32,
+    /// Group 3: the normal map, the effect block and the effect textures.
+    pub(crate) bind_group: viewport_lib::gpu::BindGroup,
+    /// The packed effect words, one per sprite, instance-stepped at slot 1.
+    pub(crate) stream: viewport_lib::gpu::Buffer,
+    pub(crate) uniform_buf: viewport_lib::gpu::Buffer,
+    /// The effects the batch was built from, for a rebind.
+    pub(crate) effects: std::sync::Arc<super::types::SpriteEffects>,
+}
+
+/// One of a stored batch's writable channels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SpriteChannel {
+    Positions,
+    Sprites,
+    Effects,
 }
 
 /// Where a painter batch sits in the painter sequence and how it tests depth.
@@ -805,9 +918,14 @@ pub(super) fn textures_resident(
     resources: &viewport_lib::resources::DeviceResources,
 ) -> bool {
     let data = &stored.draw;
+    let fx = data
+        .fx
+        .iter()
+        .flat_map(|fx| super::effects::texture_ids(&fx.effects));
     [data.texture_id, data.normal_texture_id]
         .into_iter()
         .flatten()
+        .chain(fx)
         .all(|id| resources.has_texture(id))
 }
 
@@ -834,6 +952,17 @@ pub(super) fn rebind_sprite(
     // The batch keeps the views it just rebound, so a later grow rebuilds the
     // group against the same ones rather than the ones it was uploaded with.
     stored.binds = binds.clone();
+
+    if let (Some(fx), Some(fxb)) = (&mut data.fx, &binds.fx) {
+        queue.write_buffer(&fx.uniform_buf, 0, bytemuck::bytes_of(&fxb.uniform));
+        fx.bind_group = super::effects::bind_group(
+            device,
+            fxb,
+            &binds.normal_view,
+            &binds.sampler,
+            &fx.uniform_buf,
+        );
+    }
 
     // Only a lit batch has the group-3 binding; an unlit one never built it
     // and the normal map it named, if any, is bound nowhere.

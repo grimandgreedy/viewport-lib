@@ -55,6 +55,14 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
             "sprite_lit_oit.wgsl",
             lit_shader(&lit_extra, wgsl_source!("sprite_lit_oit")),
         ),
+        ("sprite_fx.wgsl", {
+            let (unlit, _) = super::effects::base_sources();
+            super::effects::compose(&unlit, false, None).expect("sprite effect shader composes")
+        }),
+        ("sprite_lit_fx.wgsl", {
+            let (_, lit) = super::effects::base_sources();
+            super::effects::compose(&lit, true, None).expect("sprite effect shader composes")
+        }),
     ]
 }
 
@@ -118,6 +126,8 @@ pub struct SpritePlugin {
     frame_settings: Vec<viewport_lib::ItemSettings>,
     /// Per-batch group-2 pick-id bind groups, parallel to `frame`.
     pick_bind_groups: Vec<Option<viewport_lib::gpu::BindGroup>>,
+    /// Registered sprite materials, by [`SpriteMaterialId`] index.
+    materials: Vec<super::effects::SpriteMaterialEntry>,
     /// Scene-colour resolve targets for the refractive pass, one per viewport.
     /// Behind a lock because `encode` takes `&self` but the target has to be
     /// allocated the first time a viewport draws a refractive sprite, and
@@ -148,8 +158,36 @@ impl SpritePlugin {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
-        let binds = resolve_bindings(device, resources, layouts, item);
+        let binds = resolve_bindings(device, resources, layouts, &self.materials, item);
         build_sprite(device, queue, &binds, item, capacity)
+    }
+
+    /// Register a sprite material: validate its body against both effect
+    /// shaders and keep it for the batches that name it.
+    pub(crate) fn register_material(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::resources::DeviceResources,
+        plugin: &dyn viewport_lib::MaterialPlugin,
+    ) -> viewport_lib::error::ViewportResult<SpriteMaterialId> {
+        let entry = super::effects::validate_material(device, resources, &self.materials, plugin)?;
+        self.materials.push(entry);
+        Ok(SpriteMaterialId(self.materials.len() as u32 - 1))
+    }
+
+    /// How many of the last prepared frame's batches draw through the effect
+    /// pipelines. Zero for a frame with no [`SpriteItem::effects`], which draws
+    /// through the plain sprite pipelines alone.
+    pub fn effect_batch_count(&self) -> usize {
+        self.frame.iter().filter(|s| s.fx.is_some()).count()
+    }
+
+    /// The material registered as `name`.
+    pub(crate) fn material_id(&self, name: &str) -> Option<SpriteMaterialId> {
+        self.materials
+            .iter()
+            .position(|m| m.name == name)
+            .map(|i| SpriteMaterialId(i as u32))
     }
 
     /// Pre-upload a static sprite batch and return its handle.
@@ -184,14 +222,14 @@ impl SpritePlugin {
         &mut self,
         queue: &viewport_lib::gpu::Queue,
         id: SpriteSetId,
-        positions: bool,
+        channel: store::SpriteChannel,
         first_element: u32,
         data: &[u8],
     ) -> viewport_lib::error::ViewportResult<()> {
         let Some(stored) = self.sets.get_mut(id) else {
             return Err(self.sets.stale(id));
         };
-        stored.write_channel(queue, positions, first_element, data)
+        stored.write_channel(queue, channel, first_element, data)
     }
 
     /// Grow a stored batch to hold at least `capacity` sprites.
@@ -228,9 +266,9 @@ impl SpritePlugin {
     pub(crate) fn set_extent(
         &self,
         id: SpriteSetId,
-        positions: bool,
+        channel: store::SpriteChannel,
     ) -> Option<viewport_lib::plugin_api::Extent> {
-        self.sets.get(id).map(|stored| stored.extent(positions))
+        self.sets.get(id).and_then(|stored| stored.extent(channel))
     }
 
     /// Drop a stored batch. `false` when the handle does not resolve.
@@ -306,7 +344,7 @@ impl SpritePlugin {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
-        let binds = resolve_bindings(device, resources, layouts, &item);
+        let binds = resolve_bindings(device, resources, layouts, &self.materials, &item);
         let device = device.clone();
         let queue = queue.clone();
         jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item, 0))
@@ -341,19 +379,29 @@ impl SpritePlugin {
         let sets = self.sets.iter_mut().map(|(_, gpu)| gpu);
         let instance_sets = self.instance_sets.iter_mut().map(|(_, gpu)| gpu);
         for stored in sets.chain(instance_sets) {
-            if stored.draw.texture_id.is_none() && stored.draw.normal_texture_id.is_none() {
+            if stored.draw.texture_id.is_none()
+                && stored.draw.normal_texture_id.is_none()
+                && stored
+                    .draw
+                    .fx
+                    .as_ref()
+                    .is_none_or(|fx| super::effects::texture_ids(&fx.effects).next().is_none())
+            {
                 continue;
             }
             if action == Revalidate::CheckEach && store::textures_resident(stored, resources) {
                 continue;
             }
+            let effects = stored.draw.fx.as_ref().map(|fx| fx.effects.clone());
             let binds = store::resolve_bindings_for(
                 device,
                 resources,
                 layouts,
+                &self.materials,
                 stored.draw.texture_id,
                 stored.draw.normal_texture_id,
                 stored.draw.filter,
+                effects.as_deref(),
                 false,
             );
             store::rebind_sprite(device, queue, &binds, stored);
@@ -405,31 +453,39 @@ impl SpritePlugin {
         wanted: impl Fn(&SpriteGpuData) -> bool,
     ) {
         let Some(gpu) = &self.gpu else { return };
+        // The effect families the wanted batches use, plain first. A frame
+        // with no effects has only `None` here and draws as it always has.
+        let mut families: Vec<Option<u32>> = vec![None];
+        for sprite in self.frame.iter().filter(|s| wanted(s)) {
+            let fx = sprite.fx.as_ref().map(|fx| fx.family);
+            if !families.contains(&fx) {
+                families.push(fx);
+            }
+        }
+        families.sort();
         for key in pipeline::SpriteKey::all() {
-            let mut bound = false;
-            for sprite in self.frame.iter().filter(|s| wanted(s)) {
-                if pipeline::SpriteKey::of(sprite) != key {
-                    continue;
+            for &fx in &families {
+                let key = key.in_family(fx);
+                let mut bound = false;
+                for sprite in self.frame.iter().filter(|s| wanted(s)) {
+                    if pipeline::SpriteKey::of(sprite) != key {
+                        continue;
+                    }
+                    if !bound {
+                        // Still compiling: this key's sprites draw next frame.
+                        let Some(pl) = gpu
+                            .colour_pipelines(fx)
+                            .and_then(|f| f.get(pipeline::sprite_index(key, target)))
+                        else {
+                            break;
+                        };
+                        pass.set_pipeline(pl);
+                        pass.set_bind_group(2, group2, &[]);
+                        bound = true;
+                    }
+                    bind_sprite(pass, gpu, sprite, key);
+                    pass.draw(0..6, 0..sprite.sprite_count);
                 }
-                if !bound {
-                    // Still compiling: this key's sprites draw next frame.
-                    let Some(pl) = gpu.pipelines.get(pipeline::sprite_index(key, target)) else {
-                        break;
-                    };
-                    pass.set_pipeline(pl);
-                    pass.set_bind_group(2, group2, &[]);
-                    bound = true;
-                }
-                pass.set_bind_group(1, &sprite.bind_group, &[]);
-                if key.lit {
-                    let normal_bg = sprite
-                        .lit_normal_bg
-                        .as_ref()
-                        .unwrap_or(&gpu.lit_fallback_bg);
-                    pass.set_bind_group(3, normal_bg, &[]);
-                }
-                pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                pass.draw(0..6, 0..sprite.sprite_count);
             }
         }
     }
@@ -450,28 +506,41 @@ impl SpritePlugin {
                 continue;
             }
             let key = pipeline::SpriteKey::of(sprite);
-            let member = pipeline::sprite_index(key, target);
+            let member = (key.fx, pipeline::sprite_index(key, target));
             if bound != Some(member) {
                 // Still compiling: this batch draws next frame.
-                let Some(pl) = gpu.pipelines.get(member) else {
+                let Some(pl) = gpu.colour_pipelines(key.fx).and_then(|f| f.get(member.1)) else {
                     continue;
                 };
                 pass.set_pipeline(pl);
                 pass.set_bind_group(2, group2, &[]);
                 bound = Some(member);
             }
-            pass.set_bind_group(1, &sprite.bind_group, &[]);
-            if key.lit {
-                let normal_bg = sprite
-                    .lit_normal_bg
-                    .as_ref()
-                    .unwrap_or(&gpu.lit_fallback_bg);
-                pass.set_bind_group(3, normal_bg, &[]);
-            }
-            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+            bind_sprite(pass, gpu, sprite, key);
             pass.draw(0..6, 0..sprite.sprite_count);
         }
     }
+}
+
+/// Bind one batch's groups 1 and 3 and its vertex streams for a colour draw.
+fn bind_sprite(
+    pass: &mut viewport_lib::gpu::RenderPass<'_>,
+    gpu: &pipeline::SpriteGpu,
+    sprite: &SpriteGpuData,
+    key: pipeline::SpriteKey,
+) {
+    pass.set_bind_group(1, &sprite.bind_group, &[]);
+    if let Some(fx) = &sprite.fx {
+        pass.set_bind_group(3, &fx.bind_group, &[]);
+        pass.set_vertex_buffer(1, fx.stream.slice(..));
+    } else if key.lit {
+        let normal_bg = sprite
+            .lit_normal_bg
+            .as_ref()
+            .unwrap_or(&gpu.lit_fallback_bg);
+        pass.set_bind_group(3, normal_bg, &[]);
+    }
+    pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
 }
 
 /// Take a finished upload job's batch, mapping the runner's states onto the
@@ -519,6 +588,12 @@ impl ItemTypePlugin for SpritePlugin {
             .get_or_insert_with(|| pipeline::SpriteGpu::new(device, resources, layouts));
         gpu.pipelines.request_all();
         gpu.passes.request_all();
+        // The built-in effects, so a flash or an outline turned on mid-game
+        // draws on its first frame. Material families build with their first
+        // batch.
+        if let Some(Some(builtin)) = gpu.fx_families.first() {
+            builtin.request_all();
+        }
     }
 
     fn resident_bytes(&self) -> u64 {
@@ -558,6 +633,7 @@ impl ItemTypePlugin for SpritePlugin {
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::SpriteGpu::new(device, ctx.resources, layouts));
+        gpu.ensure_material_families(device, ctx.resources, &self.materials);
 
         // Inline items. `outlines` indexes into `frame`, not into the
         // submitted items, so a hidden batch earlier in the frame cannot shift
@@ -566,7 +642,7 @@ impl ItemTypePlugin for SpritePlugin {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
-            let binds = resolve_bindings(device, ctx.resources, layouts, item);
+            let binds = resolve_bindings(device, ctx.resources, layouts, &self.materials, item);
             let mut stored = build_sprite(device, queue, &binds, item, 0);
             stored.rebase(queue, ctx.world_origin());
             let mut gd = stored.draw;
@@ -972,7 +1048,9 @@ impl ItemTypePlugin for SpritePlugin {
             if !wants_instance {
                 hit.sub_object = None;
             }
-            let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
+            let toi = (hit.world_pos.as_vec3() - ray.origin)
+                .dot(ray.direction)
+                .max(0.0);
             if best.as_ref().is_none_or(|(t, _)| toi < *t) {
                 best = Some((toi, hit));
             }

@@ -113,6 +113,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             outline_selected: false,
             sub_selection: None,
             clip_objects: &[],
+            lights: &[],
             quality_reduced: false,
             collections: &collections,
             world_origin: glam::DVec3::ZERO,

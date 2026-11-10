@@ -31,8 +31,8 @@ impl ViewportRenderer {
         // Report each dropped feature instead of silently omitting it.
         for (name, plugin) in self.item_type_plugins.iter() {
             let skipped = !plugin.draws_ldr()
-                && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                    .is_some_and(|items| !items.is_empty());
+                && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                    .any(|items| !items.is_empty());
             if skipped {
                 self.resources.notices.report(
                     crate::notice::NoticeKey::new(

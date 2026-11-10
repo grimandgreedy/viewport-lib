@@ -1,5 +1,7 @@
 use viewport_lib_types::colour::Colour;
+use viewport_lib_types::ids::TextureId;
 use viewport_lib_types::material::{ItemSettings, TextureFilter};
+use viewport_lib_types::plugin::material::ParamValue;
 use viewport_lib_types::render_item::SpriteBlend;
 
 viewport_lib_types::slot_handle! {
@@ -169,6 +171,11 @@ pub struct SpriteItem {
     /// The batch is sorted when it is built: an uploaded set is sorted once,
     /// and later ranged writes into it are not re-sorted.
     pub sort_keys: Vec<f32>,
+    /// Flash, dissolve, palette swap, outline and a custom sprite material.
+    /// `None` (the default) draws through the plain sprite pipelines and costs
+    /// nothing; `Some` draws through the effect pipelines. See
+    /// [`SpriteEffects`].
+    pub effects: Option<SpriteEffects>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -349,6 +356,7 @@ impl Default for SpriteItem {
             pixel_snap: false,
             order: SpriteOrder::Depth,
             sort_keys: Vec::new(),
+            effects: None,
             settings: ItemSettings::default(),
         }
     }
@@ -457,5 +465,233 @@ impl SpriteInstanceSetRefItem {
             source: id,
             settings: ItemSettings::default(),
         }
+    }
+}
+
+/// Effects drawn over a sprite batch: a flash towards a colour, a dissolve
+/// against a noise texture with a burning rim, a palette swap, an outline, and
+/// a custom [`SpriteMaterial`].
+///
+/// The flash amount, the dissolve threshold and the palette row are per
+/// sprite, each from a list that falls back to a batch default where it is
+/// empty or short, so one enemy in a batch can flash while the rest do not.
+/// The colours, the textures and the outline are per batch.
+///
+/// The order is fixed: the palette swap replaces the sampled texel, the tint
+/// multiplies it, then (after lighting, for a lit batch) the flash mixes the
+/// colour towards `flash_colour`, the dissolve cuts it away, the outline draws
+/// behind it and the material's `shade_sprite` runs last.
+///
+/// A batch with effects draws after the opaque scene in submission order (or
+/// in painter's order, or in the opaque pass when it writes depth), never
+/// through order-independent transparency.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct SpriteEffects {
+    /// Per-sprite flash amounts in `0..=1`: `0` leaves the colour alone, `1`
+    /// draws the sprite's shape in `flash_colour`. Empty = `default_flash`.
+    pub flash: Vec<f32>,
+    /// Flash amount for sprites past the end of `flash`. Default `0`.
+    pub default_flash: f32,
+    /// What a flash mixes towards. Default white.
+    pub flash_colour: Colour,
+    /// Per-sprite dissolve thresholds in `0..=1`: texels whose noise value is
+    /// below the threshold are cut away, so `0` shows the whole sprite and `1`
+    /// none of it. Empty = `default_dissolve`.
+    pub dissolve: Vec<f32>,
+    /// Dissolve threshold for sprites past the end of `dissolve`. Default `0`.
+    pub default_dissolve: f32,
+    /// Noise the dissolve thresholds against, read from its red channel across
+    /// the sprite's quad (not its atlas cell). Upload it linear
+    /// ([`TextureData::linear`](viewport_lib_types::data::texture::TextureData::linear)).
+    /// `None` uses a built-in value noise.
+    pub dissolve_noise: Option<TextureId>,
+    /// How many times the noise repeats across the quad. Default `1`.
+    pub noise_scale: f32,
+    /// Colour of the rim a dissolve leaves, drawn where the noise is within
+    /// `dissolve_edge_width` above the threshold. Default orange.
+    pub dissolve_edge_colour: Colour,
+    /// Width of the rim in noise units (`0..1`). `0` draws no rim. Default
+    /// `0.05`.
+    pub dissolve_edge_width: f32,
+    /// Palette swap: when set, each texel's index picks a column of the
+    /// palette texture and the sprite's palette row picks the row. `None`
+    /// samples the texture as colour.
+    pub palette: Option<SpritePalette>,
+    /// Per-sprite palette rows. Empty = `default_palette_row`.
+    pub palette_rows: Vec<u16>,
+    /// Palette row for sprites past the end of `palette_rows`. Default `0`.
+    pub default_palette_row: u16,
+    /// An outline around the sprite's opaque texels. `None` draws none.
+    pub outline: Option<SpriteOutline>,
+    /// A custom fragment stage registered with
+    /// [`SpriteMaterials::register_sprite_material`](crate::item_types::sprite::SpriteMaterials::register_sprite_material).
+    pub material: Option<SpriteMaterial>,
+}
+
+impl Default for SpriteEffects {
+    fn default() -> Self {
+        Self {
+            flash: Vec::new(),
+            default_flash: 0.0,
+            flash_colour: Colour::WHITE,
+            dissolve: Vec::new(),
+            default_dissolve: 0.0,
+            dissolve_noise: None,
+            noise_scale: 1.0,
+            dissolve_edge_colour: Colour::linear(1.0, 0.45, 0.05, 1.0),
+            dissolve_edge_width: 0.05,
+            palette: None,
+            palette_rows: Vec::new(),
+            default_palette_row: 0,
+            outline: None,
+            material: None,
+        }
+    }
+}
+
+impl SpriteEffects {
+    /// The packed per-sprite word the effect shaders read for sprite `i`:
+    /// flash in bits 0-7 and dissolve in bits 8-15 (both unorm8), palette row
+    /// in bits 16-31.
+    #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+    pub(crate) fn instance_word(&self, i: usize) -> u32 {
+        pack_effect_word(
+            self.flash.get(i).copied().unwrap_or(self.default_flash),
+            self.dissolve
+                .get(i)
+                .copied()
+                .unwrap_or(self.default_dissolve),
+            self.palette_rows
+                .get(i)
+                .copied()
+                .unwrap_or(self.default_palette_row),
+        )
+    }
+}
+
+/// Pack one sprite's flash, dissolve and palette row the way the effect
+/// shaders unpack them.
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+pub(crate) fn pack_effect_word(flash: f32, dissolve: f32, palette_row: u16) -> u32 {
+    let unorm8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    unorm8(flash) | (unorm8(dissolve) << 8) | ((palette_row as u32) << 16)
+}
+
+/// A palette texture for [`SpriteEffects::palette`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpritePalette {
+    /// The palette: one palette per row, one colour per column. Colour, so
+    /// upload it sRGB.
+    pub texture: TextureId,
+    /// What in the sprite's texel picks the column.
+    pub index: PaletteIndex,
+}
+
+/// How a palette-swapped sprite's texel picks its palette column. A value `v`
+/// in `0..=1` picks column `round(v * (width - 1))`, so an index map for a
+/// 16-colour palette stores `i / 15`. Upload the index map linear so the value
+/// reads back as stored, and draw it with `TextureFilter::Nearest` so
+/// neighbouring indices are not blended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PaletteIndex {
+    /// The red channel.
+    #[default]
+    Red,
+    /// Rec. 709 luminance of the RGB channels.
+    Luminance,
+}
+
+/// An outline around a sprite's opaque texels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpriteOutline {
+    /// Outline colour; its alpha scales the outline's coverage.
+    pub colour: Colour,
+    /// Width in device pixels, whatever the sprite's size, the camera's zoom
+    /// or `pixel_snap`. The quad grows by this much on each side so the
+    /// outline is not cut off at its edge.
+    pub width_px: f32,
+}
+
+impl SpriteOutline {
+    /// An outline of `colour`, `width_px` device pixels wide.
+    pub fn new(colour: Colour, width_px: f32) -> Self {
+        Self { colour, width_px }
+    }
+}
+
+/// Handle to a sprite material registered with
+/// [`SpriteMaterials::register_sprite_material`](crate::item_types::sprite::SpriteMaterials::register_sprite_material).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SpriteMaterialId(pub(crate) u32);
+
+impl SpriteMaterialId {
+    /// Registry index.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// A batch's custom sprite material: the registered plugin and the values of
+/// the parameters and textures it declares.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpriteMaterial {
+    /// The registered material.
+    pub id: SpriteMaterialId,
+    /// Parameter values by name. Parameters not named take the defaults the
+    /// plugin declares.
+    pub params: Vec<(String, ParamValue)>,
+    /// Texture per declared slot, `material_texture_0..N`. A missing or `None`
+    /// slot binds 1x1 white.
+    pub textures: Vec<Option<TextureId>>,
+}
+
+impl SpriteMaterial {
+    /// The material `id` with every parameter at its default and no textures.
+    pub fn new(id: SpriteMaterialId) -> Self {
+        Self {
+            id,
+            params: Vec::new(),
+            textures: Vec::new(),
+        }
+    }
+
+    /// Set parameter `name`.
+    pub fn with_param(mut self, name: impl Into<String>, value: impl Into<ParamValue>) -> Self {
+        let name = name.into();
+        let value = value.into();
+        match self.params.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = value,
+            None => self.params.push((name, value)),
+        }
+        self
+    }
+
+    /// Bind `texture` to slot `slot`.
+    pub fn with_texture(mut self, slot: usize, texture: TextureId) -> Self {
+        if self.textures.len() <= slot {
+            self.textures.resize(slot + 1, None);
+        }
+        self.textures[slot] = Some(texture);
+        self
+    }
+}
+
+#[cfg(test)]
+mod effect_tests {
+    use super::*;
+
+    #[test]
+    fn effect_word_packs_flash_dissolve_and_row() {
+        assert_eq!(pack_effect_word(0.0, 0.0, 0), 0);
+        assert_eq!(pack_effect_word(1.0, 0.0, 0), 0xff);
+        assert_eq!(pack_effect_word(0.0, 1.0, 3), 0xff00 | (3 << 16));
+        let fx = SpriteEffects {
+            flash: vec![0.5],
+            default_dissolve: 1.0,
+            ..SpriteEffects::default()
+        };
+        assert_eq!(fx.instance_word(0), 128 | (255 << 8));
+        assert_eq!(fx.instance_word(1), 255 << 8);
     }
 }

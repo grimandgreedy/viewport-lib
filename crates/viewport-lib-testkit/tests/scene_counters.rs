@@ -221,8 +221,13 @@ fn expected(name: &str) -> Option<Expected> {
         // Three unlit quads under the sprites: two for the multiply and screen
         // sprites to blend over, one nearer the camera than two painter sprites.
         "sprites_2d" => e(3, 3, 3, 3, 6),
+        // Sprites only: no mesh-family draws.
+        "sprites_effects" => e(0, 0, 0, 0, 0),
         // Tilemap layers only: no mesh-family draws.
         "tilemap" => e(0, 0, 0, 0, 0),
+        // A tilemap room, crate sprites and the light layer: no mesh-family
+        // draws.
+        "lighting_2d" => e(0, 0, 0, 0, 0),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),
