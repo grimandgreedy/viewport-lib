@@ -80,11 +80,13 @@ struct ClipShape {
 // fills a 16 KiB uniform binding); a frame's later masks are dropped.
 @group(1) @binding(0) var<uniform> clip_shapes: array<ClipShape, 256>;
 
-// Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
-// positions to NDC so overlay geometry is independent of the viewport size.
+// Viewport size in logical pixels and the frame's pixels per point. The size
+// maps local-pixel vertex positions to NDC so overlay geometry is independent
+// of the viewport size; `ppp` takes them to framebuffer pixels for the clips.
 struct Viewport {
     size: vec2<f32>,
-    pad:  vec2<f32>,
+    ppp:  f32,
+    pad:  f32,
 };
 @group(1) @binding(1) var<uniform> viewport: Viewport;
 
@@ -124,12 +126,16 @@ struct VertexOutput {
     @location(8) @interpolate(flat) shape_meta: vec4<f32>,
     @location(9) @interpolate(flat) linv:       vec4<f32>,
     @location(10) @interpolate(flat) item_params: vec4<f32>,
+    // The position in framebuffer pixels from the viewport's top-left corner,
+    // for the clip tests.
+    @location(11) frag_px: vec2<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
+    out.frag_px       = in.position * viewport.ppp;
     out.local_pos     = in.local_pos;
     out.tint          = in.tint;
     out.half_size     = in.half_size;
@@ -309,9 +315,10 @@ fn apply_backdrop_filters(rgb: vec3<f32>, sat: f32, bright: f32, hue: f32) -> ve
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Clip: the bounding box (exact for rectangular masks), then the mask SDF
-    // and its parent chain, each as a coverage. `clip_rect`/`clip_position.xy`
-    // are in framebuffer pixels (top-left origin), same as the solid shape path.
-    let fp = in.clip_position.xy;
+    // and its parent chain, each as a coverage. `clip_rect` and `fp` are in
+    // framebuffer pixels from the viewport's top-left corner, same as the solid
+    // shape path.
+    let fp = overlay_pixel_centre(in.frag_px);
     var clip = overlay_rect_coverage(fp, in.clip_rect);
     let clip_index = in.shape_meta.y;
     if (clip_index >= 0.0 && clip > 0.0) {

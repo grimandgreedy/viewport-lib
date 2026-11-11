@@ -1097,6 +1097,7 @@ impl ViewportRenderer {
             ov.layer_targets.targets_used,
             ov.layer_targets.allocations,
         );
+        let overlay_stream_uploads = ov.overlay_stream_uploads;
         self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
         drop(overlay_span);
@@ -1120,6 +1121,7 @@ impl ViewportRenderer {
         self.last_stats.overlay_glyph_rasters =
             (self.resources.content.glyph_atlas.rasters() - glyph_rasters_before) as u32;
         self.last_stats.overlay_tessellations = self.overlay_tess_cache.tessellations;
+        self.last_stats.overlay_stream_uploads = overlay_stream_uploads;
         self.prepare_world_overlays(device, queue, frame, sink);
     }
 

@@ -4,6 +4,7 @@
 
 ### Breaking
 
+- **Item-type plugin queries name the viewport** - `ItemTypePlugin::draws_transparent`, `draws_depth_read`, `draws_painter` and `painter_batches` take the `viewport_index` they answer for. Add the parameter to overrides; a plugin whose frame state is the same in every viewport can ignore it.
 - **`ViewportApp` setup callbacks take a `SetupCtx`** - `window`, `window_with_input`, `window_with_paint` and `FrameCtx::open_window` take `FnMut(&mut SetupCtx)` instead of `FnMut(&mut ViewportInstance, &Device)`. `SetupCtx` derefs to the window's `ViewportInstance` and has `device()`, `queue()` and `device_rebuilt()`, so a setup callback can attach a runtime and install features.
 - **`ViewportApp` steps the runtime before the frame callback** - the callback reads this frame's output from `FrameCtx::runtime_output_mut`, and scene edits it makes reach the runtime on the next frame instead of the current one.
 - **`ViewportInstance` runs an attached runtime's GPU plugins** - `render` and `prepare` call `pre_prepare` before the frame, submitting its buffers on the queue they are given, and `post_paint` after it with the scene colour and depth. Remove any `pre_prepare` or `post_paint` calls a host makes itself on a runtime attached to an instance, or every plugin runs twice. When `post_paint` returns work, `render` submits the frame itself and returns an empty command buffer.
@@ -20,6 +21,9 @@
 
 ### Features
 
+- **`OverlayContentHash` for `OverlayFrame`, `OverlayLayer` and `OverlayLayerMembers`** - hash a whole overlay frame, its layers included. The frame's `time` is hashed only when an item has animations.
+- **`FrameStats::overlay_stream_uploads`** - how many of the overlay's two vertex streams the last prepare uploaded; an unchanged overlay reads zero.
+- **`plugin_api::PerViewport`** - one value per viewport index, for the state an item-type plugin's `prepare` and `cull` build from a viewport's camera and frame.
 - **`ViewportInstance::set_runtime`, `take_runtime`, `install_plugin` and `uninstall_plugin`** - attach, swap or detach a runtime after construction, and install a `PluginInstaller` feature with the instance's renderer and attached runtime in one call.
 - **`ViewportInstance::step_runtime` returns the step's `RuntimeOutput`** - read or drain its events (skinned pose updates for a `SkinnedMeshHandle`, the camera follow target and commands) as after `ViewportRuntime::step`. Calls that ignore the result compile unchanged.
 - **`FrameCtx::runtime_output_mut`** - a `ViewportApp` frame callback drains the window's runtime events there; the runner applies none of them itself.
@@ -89,6 +93,11 @@
 
 ### Fixes
 
+- **Overlay clips in an offset viewport** - clip rects and clip masks on overlay shapes, text, backdrop blurs and layers are measured from the viewport's corner instead of the framebuffer's, so overlays painted into a viewport that does not start at the target's origin (an egui paint callback, `paint_viewport` with several viewports in one pass) clip where they should.
+- **Blended sprites on the LDR path** - sprites the HDR path draws through OIT (alpha and premultiplied blends) or its read-only-depth pass (soft, additive, screen and multiply) drew nothing on the LDR path; they now draw there after the depth-writing sprites, in submission order and without the soft fade.
+- **Item-type plugin state across viewports** - sprites, tilemaps and the 2D light layer keep what `prepare` and `cull` build for each viewport, so when several viewports are prepared before any paints, each draws its own chunk cull, wireframe state and lights instead of the last viewport's.
+- **Unchanged overlay geometry is not uploaded again** - the overlay shape and text streams skip the GPU upload when nothing they are built from changed since the last upload: the items, the viewport size and pixels per point, the camera when an item is anchored in the world or sized in world units, the clock when an item animates, and the textures, glyphs and cached tessellations they draw from. `FrameStats::overlay_stream_uploads` counts the uploads.
+- **Screen and multiply sprites over the empty background on the HDR path** - sprites with `SpriteBlend::Screen` or `SpriteBlend::Multiply` that do not write depth drew nothing where no other geometry was behind them; they now write their coverage, so the background is composited under them. Over the empty background the result is the sprite's blend against black, faded in by its alpha, rather than a screen or multiply of the background colour.
 - **Axes indicator order** - the bottom-left orientation indicator draws above every overlay shape the frame submits, instead of sorting between them by `z_order`.
 - **Item-type draw calls in `FrameStats::plugin_draw_calls`** - the built-in item types reported no draws, so the figure left out everything they drew. Every built-in item type now reports the colour draws it issued, the figure is read after the frame has painted, and a type with no items in the frame counts zero rather than what it drew last.
 - **Reference-only frames skipped the read-only-depth and foreground passes** - a frame whose first collection for an item type was empty (an empty `SpriteItem` list ahead of `SpriteSetRefItem`s) left out that type's depth-read and foreground draws; every collection is now checked.

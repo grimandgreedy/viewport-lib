@@ -800,6 +800,12 @@ impl GlyphAtlas {
         self.rasters
     }
 
+    /// Fonts uploaded, the built-in one included. A font is never replaced,
+    /// so text laid out against the same count used the same fonts.
+    pub(crate) fn font_count(&self) -> usize {
+        self.font_bytes.len()
+    }
+
     /// The coverage page, sampled for coverage glyphs and shadow cells.
     pub(crate) fn coverage_view(&self) -> &crate::gpu::TextureView {
         &self.coverage.view

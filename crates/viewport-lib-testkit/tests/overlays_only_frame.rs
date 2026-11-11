@@ -389,3 +389,41 @@ fn host_pass_and_split_paths_draw_what_the_scene_path_draws() {
         }
     }
 }
+
+/// The `k`-th `W`-wide column of an image `n` viewports wide.
+fn column(img: &[u8], n: u32, k: u32) -> Vec<u8> {
+    let row = (W * n * 4) as usize;
+    let (x0, x1) = ((k * W * 4) as usize, ((k + 1) * W * 4) as usize);
+    img.chunks_exact(row)
+        .flat_map(|r| r[x0..x1].iter().copied())
+        .collect()
+}
+
+/// Clip rects and clip masks follow the viewport a host paints into: the
+/// same clipped frame painted into a viewport that does not start at the
+/// framebuffer origin draws what it draws at the origin, on the scene path
+/// and the overlays-only path.
+#[test]
+fn clips_follow_an_offset_viewport() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let item = hidden_item(&mut h);
+    for name in ["overlay_clipping", "overlay_layers"] {
+        for scene_path in [false, true] {
+            let make = |h: &mut Harness| {
+                let f = empty_frame(h, name);
+                if scene_path { with_item(f, &item) } else { f }
+            };
+            let mut frames = [make(&mut h), make(&mut h)];
+            let img = paint_side_by_side(&mut h, &mut frames);
+            let (left, right) = (column(&img, 2, 0), column(&img, 2, 1));
+            assert_same(
+                &format!("{name} offset viewport (scene path {scene_path})"),
+                &left,
+                &right,
+            );
+        }
+    }
+}

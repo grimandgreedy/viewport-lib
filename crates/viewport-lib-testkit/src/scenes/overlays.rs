@@ -67,6 +67,7 @@ pub fn scenes() -> Vec<NamedScene> {
         scene("overlay_layers", build_layers),
         scene("overlay_mesh", build_mesh),
         scene("overlay_layers_nested", build_layers_nested),
+        scene("overlay_ordering", build_ordering),
     ]
 }
 
@@ -1655,6 +1656,105 @@ fn build_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     );
     ovl.retained
         .push(RetainedOverlay::new(id).with_position([250.0, 115.0]));
+
+    backdrop(ctx, ovl)
+}
+
+/// Draw order across pipelines and backdrop reads.
+///
+/// Left, a chain of overlapping items at one `z_order`, alternating a textured
+/// fill, a solid fill and a tessellated vector shape: each must cover the one
+/// submitted before it, although they draw through different pipelines and
+/// bindings. Right, over a row of coloured bars, three overlapping items
+/// submitted out of `z_order`: a frosted rect at 3, a frosted disc at 1 and a
+/// solid rect at 2. The disc blurs only the bars, the solid rect covers the
+/// disc, and the top rect blurs both of them.
+fn build_ordering(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut checker = |a: [u8; 4], b: [u8; 4]| {
+        let mut px = Vec::with_capacity(4 * 4 * 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                px.extend_from_slice(if (x + y) % 2 == 0 { &a } else { &b });
+            }
+        }
+        ctx.renderer
+            .resources_mut()
+            .upload_overlay_texture(
+                ctx.device,
+                ctx.queue,
+                viewport_lib::TextureData::srgb(4, 4, px),
+            )
+            .expect("a well-formed sRGB image")
+    };
+    let warm = checker([240, 150, 40, 255], [120, 40, 160, 255]);
+    let cool = checker([40, 200, 220, 255], [250, 250, 250, 255]);
+    let rect = |at: [f32; 2], size: [f32; 2], fill: OverlayFill| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 6.0 }, at, size).with_fill(fill)
+    };
+    let solid = |r: f32, g: f32, b: f32| OverlayFill::Solid(Colour::srgb(r, g, b, 1.0));
+    let mut ovl = OverlayFrame::default();
+
+    // One z_order, submission order alone decides what is on top.
+    let size = [70.0, 50.0];
+    let step = [26.0, 30.0];
+    let at = |k: f32| [20.0 + step[0] * k, 24.0 + step[1] * k];
+    ovl.shapes
+        .push(rect(at(0.0), size, OverlayFill::texture(warm)));
+    ovl.shapes.push(rect(at(1.0), size, solid(0.2, 0.75, 0.3)));
+    ovl.shapes
+        .push(rect(at(2.0), size, OverlayFill::texture(cool)));
+    ovl.shapes.push(
+        OverlayShapeItem::vector(
+            vec![SubPath::polygon(&[
+                [0.0, size[1]],
+                [size[0] * 0.5, 0.0],
+                [size[0], size[1]],
+            ])],
+            FillRule::NonZero,
+            at(3.0),
+            size,
+        )
+        .with_fill(solid(0.95, 0.85, 0.2)),
+    );
+    ovl.shapes.push(rect(at(4.0), size, solid(0.2, 0.4, 0.95)));
+    ovl.shapes
+        .push(rect(at(5.0), size, OverlayFill::texture(warm)));
+
+    // Bars under three items submitted out of z_order.
+    for (i, (r, g, b)) in [
+        (0.9, 0.2, 0.2),
+        (0.95, 0.85, 0.2),
+        (0.2, 0.75, 0.3),
+        (0.2, 0.4, 0.95),
+        (0.9, 0.2, 0.2),
+        (0.95, 0.85, 0.2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        ovl.shapes.push(rect(
+            [228.0 + i as f32 * 26.0, 30.0],
+            [14.0, 220.0],
+            solid(r, g, b),
+        ));
+    }
+    ovl.shapes.push(
+        rect(
+            [250.0, 120.0],
+            [120.0, 90.0],
+            OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.25)),
+        )
+        .with_backdrop_blur(6.0)
+        .with_z_order(3),
+    );
+    ovl.shapes.push(
+        OverlayShapeItem::new(OverlayShape::Circle, [214.0, 60.0], [100.0, 100.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.15, 0.3)))
+            .with_backdrop_blur(5.0)
+            .with_z_order(1),
+    );
+    ovl.shapes
+        .push(rect([270.0, 90.0], [50.0, 70.0], solid(0.85, 0.3, 0.6)).with_z_order(2));
 
     backdrop(ctx, ovl)
 }

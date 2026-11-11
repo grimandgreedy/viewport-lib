@@ -125,6 +125,9 @@ struct VertexOutput {
     // Edge coverage from an anti-aliasing fringe: 1 inside, ramping to 0
     // across the outer device pixel.
     @location(10)                   coverage:    f32,
+    // The position in framebuffer pixels from the viewport's top-left corner,
+    // for the clip tests.
+    @location(11)                   frag_px:     vec2<f32>,
 };
 
 // Map a local logical-pixel position to NDC using the viewport size.
@@ -193,7 +196,9 @@ fn vs_main(in: VertexInput, instance: InstanceInput) -> VertexOutput {
     // and vector fills together.
     let placed = place_fringe(in.position, in.aa, inst);
     out.coverage      = placed.z;
-    out.clip_position = vec4<f32>(px_to_ndc(group_apply(placed.xy, inst)), 0.0, 1.0);
+    let screen_px = group_apply(placed.xy, inst);
+    out.clip_position = vec4<f32>(px_to_ndc(screen_px), 0.0, 1.0);
+    out.frag_px       = screen_px * viewport.ppp;
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;
@@ -424,8 +429,9 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // parent chain, and a retained group's per-frame outer box (the scroll
     // viewport; zero for immediate draws, which is no clip). Each is a
     // coverage, so a clip edge is anti-aliased; a pixel none of it keeps is
-    // dropped. `clip_rect`/`clip_position.xy` are framebuffer pixels.
-    let fp = in.clip_position.xy;
+    // dropped. The boxes and `fp` are framebuffer pixels from the viewport's
+    // top-left corner.
+    let fp = overlay_pixel_centre(in.frag_px);
     var clip = overlay_rect_coverage(fp, in.clip_rect) * overlay_rect_coverage(fp, in.outer_clip);
     if (in.clip_index >= 0.0 && clip > 0.0) {
         clip = clip * overlay_mask_coverage(fp, in.clip_index);

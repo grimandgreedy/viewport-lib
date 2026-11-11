@@ -1274,9 +1274,13 @@ pub(crate) struct LayerFrame {
     /// composites draw into.
     pub composite_pass: (crate::gpu::TextureFormat, u32),
     /// For a world layer: the pass its members draw into inside a layer
-    /// target, and the screen viewport's logical size, which the composites
-    /// draw over.
-    pub world: Option<(crate::resources::overlay::world::WorldPassKey, [f32; 2])>,
+    /// target, and the screen viewport's logical size and pixels per point,
+    /// which the composites draw over.
+    pub world: Option<(
+        crate::resources::overlay::world::WorldPassKey,
+        [f32; 2],
+        f32,
+    )>,
 }
 
 /// Emit `ranges` of `ov`'s segments in one pass over `colour`, cleared first
@@ -1617,7 +1621,7 @@ impl crate::renderer::ViewportRenderer {
             ),
         };
         let vp_buf = match lf.world {
-            Some((_, screen)) => {
+            Some((_, screen, screen_ppp)) => {
                 let buf = ov
                     .layer_targets
                     .composite_viewport
@@ -1634,7 +1638,7 @@ impl crate::renderer::ViewportRenderer {
                 queue.write_buffer(
                     &buf,
                     0,
-                    bytemuck::cast_slice(&[screen[0], screen[1], 0.0, 0.0]),
+                    bytemuck::cast_slice(&[screen[0], screen[1], screen_ppp, 0.0]),
                 );
                 Some(buf)
             }
@@ -1705,7 +1709,7 @@ impl crate::renderer::ViewportRenderer {
         let emit = crate::renderer::render::OverlayEmit {
             dst: true,
             backdrop: lt.inner_backdrop_bg(),
-            world: lf.world.map(|(key, _)| key),
+            world: lf.world.map(|(key, _, _)| key),
         };
         let top = lt.draws.iter().map(|d| d.level).max().unwrap_or(0);
         let mut ranges: Vec<std::ops::Range<u32>> = Vec::new();

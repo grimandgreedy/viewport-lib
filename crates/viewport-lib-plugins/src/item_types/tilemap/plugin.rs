@@ -7,7 +7,7 @@ use super::store::{
 use super::*;
 use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PainterBatch, PainterContext,
-    PickContext, PickPassContext, PickRay, PluginItem,
+    PerViewport, PickContext, PickPassContext, PickRay, PluginItem,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, SubObjectRef};
 
@@ -53,6 +53,29 @@ impl FrameLayer {
     }
 }
 
+/// One viewport's layers and their uniforms, rebuilt by each prepare for
+/// that viewport and narrowed by its cull.
+#[derive(Default)]
+struct TilemapView {
+    frame: Vec<FrameLayer>,
+    /// Indices into `frame` of the blended layers, in the order they draw.
+    painter_sequence: Vec<usize>,
+    layer_buf: Option<viewport_lib::gpu::Buffer>,
+    layer_bg: Option<viewport_lib::gpu::BindGroup>,
+    /// The camera position, for the CPU pick.
+    eye: glam::DVec3,
+}
+
+impl TilemapView {
+    fn cutout_layers(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.frame.len()).filter(|&i| self.frame[i].painter().is_none())
+    }
+
+    fn drawn_chunks(&self) -> u32 {
+        self.frame.iter().map(|l| l.visible.len() as u32).sum()
+    }
+}
+
 /// Draws [`TilemapItem`]s. Register it with
 /// `renderer.with_item_type_plugin(device, Box::new(TilemapPlugin::default()))`
 /// or through `item_types::install`.
@@ -62,13 +85,9 @@ pub struct TilemapPlugin {
     deps_gate: viewport_lib::resources::ResourceGate,
     layouts: Option<TilemapLayouts>,
     gpu: Option<pipeline::TilemapGpu>,
-    frame: Vec<FrameLayer>,
-    /// Indices into `frame` of the blended layers, in the order they draw.
-    painter_sequence: Vec<usize>,
-    layer_buf: Option<viewport_lib::gpu::Buffer>,
-    layer_bg: Option<viewport_lib::gpu::BindGroup>,
-    /// The camera position of the last prepare, for the CPU pick.
-    eye: glam::DVec3,
+    views: PerViewport<TilemapView>,
+    /// The viewport prepared or culled last, for the queries that name none.
+    last_viewport: usize,
     drawn_chunks: u32,
     upload_bytes: u64,
 }
@@ -262,23 +281,21 @@ impl TilemapPlugin {
         }
     }
 
-    fn count_drawn(&mut self) {
-        self.drawn_chunks = self.frame.iter().map(|l| l.visible.len() as u32).sum();
-    }
-
-    /// Draw `layers` (indices into `frame`) with `member`, binding per layer.
+    /// Draw `layers` (indices into the view's `frame`) with `member`, binding
+    /// per layer.
     fn draw_layers(
         &self,
+        view: &TilemapView,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
         layers: impl Iterator<Item = usize>,
         member: impl Fn(&FrameLayer) -> usize,
     ) {
-        let (Some(gpu), Some(layer_bg)) = (&self.gpu, &self.layer_bg) else {
+        let (Some(gpu), Some(layer_bg)) = (&self.gpu, &view.layer_bg) else {
             return;
         };
         let mut bound = None;
         for i in layers {
-            let layer = &self.frame[i];
+            let layer = &view.frame[i];
             let Some(stored) = self.maps.get(layer.item.source) else {
                 continue;
             };
@@ -302,10 +319,6 @@ impl TilemapPlugin {
                 pass.draw(0..6, 0..chunk.count);
             }
         }
-    }
-
-    fn cutout_layers(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.frame.len()).filter(|&i| self.frame[i].painter().is_none())
     }
 }
 
@@ -359,11 +372,13 @@ impl ItemTypePlugin for TilemapPlugin {
         ctx: &ItemFrameContext<'_>,
         _items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
-        self.frame.clear();
-        self.painter_sequence.clear();
         self.upload_bytes = 0;
         self.revalidate_stores(device, queue, ctx.resources);
-        self.eye = ctx.camera.eye_position();
+        self.last_viewport = ctx.viewport_index;
+        let view = self.views.get_mut(ctx.viewport_index);
+        view.frame.clear();
+        view.painter_sequence.clear();
+        view.eye = ctx.camera.eye_position();
         for (_, stored) in self.maps.iter_mut() {
             self.upload_bytes += std::mem::take(&mut stored.uploaded_bytes);
         }
@@ -384,14 +399,14 @@ impl ItemTypePlugin for TilemapPlugin {
             let visible = (0..stored.chunks.len() as u32)
                 .filter(|&c| stored.chunks[c as usize].count > 0)
                 .collect();
-            self.frame.push(FrameLayer {
+            view.frame.push(FrameLayer {
                 item: item.clone(),
                 offset,
                 visible,
             });
         }
-        if self.frame.is_empty() {
-            self.count_drawn();
+        if view.frame.is_empty() {
+            self.drawn_chunks = 0;
             return Vec::new();
         }
 
@@ -401,7 +416,7 @@ impl ItemTypePlugin for TilemapPlugin {
         self.gpu
             .get_or_insert_with(|| pipeline::TilemapGpu::new(device, ctx.resources, layouts));
         let needed = uniforms.len() as u64;
-        if self.layer_buf.as_ref().is_none_or(|b| b.size() < needed) {
+        if view.layer_buf.as_ref().is_none_or(|b| b.size() < needed) {
             let size = needed.next_power_of_two().max(LAYER_STRIDE * 4);
             let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("tilemap_layer_buf"),
@@ -410,7 +425,7 @@ impl ItemTypePlugin for TilemapPlugin {
                     | viewport_lib::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.layer_bg = Some(device.create_bind_group(
+            view.layer_bg = Some(device.create_bind_group(
                 &viewport_lib::gpu::BindGroupDescriptor {
                     label: Some("tilemap_layer_bg"),
                     layout: &layouts.layer,
@@ -429,25 +444,25 @@ impl ItemTypePlugin for TilemapPlugin {
                     }],
                 },
             ));
-            self.layer_buf = Some(buf);
+            view.layer_buf = Some(buf);
         }
-        if let Some(buf) = &self.layer_buf {
+        if let Some(buf) = &view.layer_buf {
             queue.write_buffer(buf, 0, &uniforms);
         }
         self.upload_bytes += needed;
 
-        let painters: Vec<(usize, u32)> = self
+        let painters: Vec<(usize, u32)> = view
             .frame
             .iter()
             .enumerate()
             .filter_map(|(i, l)| l.painter().map(|(layer, _)| (i, layer)))
             .collect();
-        self.painter_sequence =
+        view.painter_sequence =
             crate::item_types::sprite::painter_batch_order(painters.iter().map(|&(_, l)| l))
                 .into_iter()
                 .map(|k| painters[k].0)
                 .collect();
-        self.count_drawn();
+        self.drawn_chunks = view.drawn_chunks();
         Vec::new()
     }
 
@@ -458,7 +473,9 @@ impl ItemTypePlugin for TilemapPlugin {
         _items: &ItemCollections<'_>,
     ) {
         let eye = ctx.camera.eye_position();
-        for layer in &mut self.frame {
+        self.last_viewport = ctx.viewport_index;
+        let view = self.views.get_mut(ctx.viewport_index);
+        for layer in &mut view.frame {
             let Some(stored) = self.maps.get(layer.item.source) else {
                 layer.visible.clear();
                 continue;
@@ -471,7 +488,7 @@ impl ItemTypePlugin for TilemapPlugin {
                 })
                 .collect();
         }
-        self.count_drawn();
+        self.drawn_chunks = view.drawn_chunks();
     }
 
     fn paint(
@@ -480,26 +497,35 @@ impl ItemTypePlugin for TilemapPlugin {
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        if ctx.is_hdr_pass() {
-            self.draw_layers(pass, self.cutout_layers(), |_| pipeline::CUTOUT_SCENE);
+        let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
-        }
-        self.draw_layers(pass, self.cutout_layers(), |_| pipeline::CUTOUT_LDR);
+        };
+        let member = if ctx.is_hdr_pass() {
+            pipeline::CUTOUT_SCENE
+        } else {
+            pipeline::CUTOUT_LDR
+        };
+        self.draw_layers(view, pass, view.cutout_layers(), |_| member);
     }
 
     fn draws_ldr(&self) -> bool {
         true
     }
 
-    fn draws_painter(&self) -> bool {
-        !self.painter_sequence.is_empty()
+    fn draws_painter(&self, viewport_index: usize) -> bool {
+        self.views
+            .get(viewport_index)
+            .is_some_and(|v| !v.painter_sequence.is_empty())
     }
 
     /// One batch per blended layer, at sort key `0.0`, handle its index into
     /// the frame's layers.
-    fn painter_batches(&self, out: &mut Vec<PainterBatch>) {
-        for &i in &self.painter_sequence {
-            if let Some((layer, _)) = self.frame[i].painter() {
+    fn painter_batches(&self, viewport_index: usize, out: &mut Vec<PainterBatch>) {
+        let Some(view) = self.views.get(viewport_index) else {
+            return;
+        };
+        for &i in &view.painter_sequence {
+            if let Some((layer, _)) = view.frame[i].painter() {
                 out.push(PainterBatch::new(layer, 0.0, i as u32));
             }
         }
@@ -511,8 +537,11 @@ impl ItemTypePlugin for TilemapPlugin {
         ctx: &PainterContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         let in_range = |i: &usize| {
-            self.frame[*i]
+            view.frame[*i]
                 .painter()
                 .is_some_and(|(layer, _)| ctx.includes(layer))
         };
@@ -521,18 +550,18 @@ impl ItemTypePlugin for TilemapPlugin {
                 batches
                     .iter()
                     .map(|&b| b as usize)
-                    .filter(|&i| i < self.frame.len()),
+                    .filter(|&i| i < view.frame.len()),
             ),
-            None => Box::new(self.painter_sequence.iter().copied().filter(in_range)),
+            None => Box::new(view.painter_sequence.iter().copied().filter(in_range)),
         };
 
         if ctx.is_hdr_pass() {
-            self.draw_layers(pass, layers, |l| match l.painter() {
+            self.draw_layers(view, pass, layers, |l| match l.painter() {
                 Some((_, false)) => pipeline::BLEND_OFF_DEPTH_READ,
                 _ => pipeline::BLEND_TEST_DEPTH_READ,
             });
         } else {
-            self.draw_layers(pass, layers, |l| match l.painter() {
+            self.draw_layers(view, pass, layers, |l| match l.painter() {
                 Some((_, false)) => pipeline::BLEND_OFF_LDR,
                 _ => pipeline::BLEND_TEST_LDR,
             });
@@ -548,14 +577,17 @@ impl ItemTypePlugin for TilemapPlugin {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
             return;
         }
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         // Cutout layers first, then the blended ones in the order they drew.
-        let pickable = |i: &usize| self.frame[*i].item.settings.pick_id != PickId::NONE;
-        let order = self
+        let pickable = |i: &usize| view.frame[*i].item.settings.pick_id != PickId::NONE;
+        let order = view
             .cutout_layers()
-            .chain(self.painter_sequence.iter().copied())
+            .chain(view.painter_sequence.iter().copied())
             .filter(pickable)
             .collect::<Vec<_>>();
-        self.draw_layers(pass, order.into_iter(), |l| match l.painter() {
+        self.draw_layers(view, pass, order.into_iter(), |l| match l.painter() {
             None => pipeline::PICK,
             Some((_, true)) => pipeline::PICK_PAINTER,
             Some((_, false)) => pipeline::PICK_PAINTER_NO_TEST,
@@ -573,6 +605,8 @@ impl ItemTypePlugin for TilemapPlugin {
             return None;
         }
         let layer = self
+            .views
+            .get(self.last_viewport)?
             .frame
             .iter()
             .find(|l| l.item.settings.pick_id == pick_id)?;
@@ -588,8 +622,9 @@ impl ItemTypePlugin for TilemapPlugin {
         }
         let origin = ray.origin.as_dvec3();
         let dir = ray.direction.as_dvec3().normalize_or_zero();
+        let view = self.views.get(self.last_viewport)?;
         let mut best: Option<(f32, PickHit)> = None;
-        for layer in &self.frame {
+        for layer in &view.frame {
             let item = &layer.item;
             if item.settings.pick_id == PickId::NONE {
                 continue;
@@ -608,7 +643,7 @@ impl ItemTypePlugin for TilemapPlugin {
                 continue;
             }
             let hit = origin + dir * t;
-            let local = plane.to_plane(hit) - item.drawn_origin(plane.to_plane(self.eye));
+            let local = plane.to_plane(hit) - item.drawn_origin(plane.to_plane(view.eye));
             let col = (local.x / item.cell_size[0] as f64).floor();
             let row = (local.y / item.cell_size[1] as f64).floor();
             if col < 0.0 || row < 0.0 {

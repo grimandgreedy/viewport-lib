@@ -16,9 +16,13 @@
 //! - anything else transparent, and every batch in painter's order: the
 //!   read-only-depth pass, through `paint_depth_read`, which is the only one
 //!   of the four that can sample scene depth for the soft fade. Painter
-//!   batches draw there last, sorted by layer and then by sort key; on the
-//!   LDR path, which has no such pass, they draw in `paint` after the
-//!   depth-writing batches.
+//!   batches draw there last, sorted by layer and then by sort key.
+//!
+//! The LDR path has neither the OIT pass nor the read-only-depth pass. There
+//! the blended batches those two draw go in `paint` after the depth-writing
+//! batches, in submission order, testing depth without writing it and with no
+//! soft fade; painter batches follow them in their own order. Refractive
+//! batches draw on the HDR path only.
 //!
 //! A batch with [`SpriteEffects`] (flash, dissolve, palette swap, outline, or a
 //! custom material registered through [`SpriteMaterials`]) draws through effect

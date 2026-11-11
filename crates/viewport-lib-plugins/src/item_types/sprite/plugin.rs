@@ -10,8 +10,8 @@ use store::{
 };
 use viewport_lib::plugin_api::{
     DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext,
-    ItemTypePlugin, OutlineMaskContext, PaintContext, PainterBatch, PainterContext, PickContext,
-    PickPassContext, PickRay, PluginItem, RectPickContext,
+    ItemTypePlugin, OutlineMaskContext, PaintContext, PainterBatch, PainterContext, PerViewport,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
 
@@ -97,6 +97,23 @@ struct SpriteOutline {
     instances: Option<Vec<u32>>,
 }
 
+/// One viewport's batches, rebuilt by each prepare for that viewport.
+#[derive(Default)]
+struct SpriteView {
+    /// Per drawn batch: inline items first, then the two reference forms, the
+    /// order the upload loop used before they met here.
+    frame: Vec<SpriteGpuData>,
+    /// Selection-outline coverage.
+    outlines: Vec<SpriteOutline>,
+    /// The painter batches in the order they draw, split where batches on one
+    /// layer interleave by key. `batch` indexes `frame`.
+    painter_pieces: Vec<store::PainterPiece>,
+    /// Each batch's item settings, parallel to `frame`, for the surface mask.
+    frame_settings: Vec<viewport_lib::ItemSettings>,
+    /// Per-batch group-2 pick-id bind groups, parallel to `frame`.
+    pick_bind_groups: Vec<Option<viewport_lib::gpu::BindGroup>>,
+}
+
 #[derive(Default)]
 pub struct SpritePlugin {
     /// The pre-uploaded batches, owned by the type that draws them. Two handle
@@ -111,22 +128,15 @@ pub struct SpritePlugin {
     /// registration, because an upload can arrive before the first frame.
     layouts: Option<SpriteLayouts>,
     gpu: Option<pipeline::SpriteGpu>,
-    /// Per drawn batch, rebuilt each prepare: inline items first, then the two
-    /// reference forms, the order the upload loop used before they met here.
-    frame: Vec<SpriteGpuData>,
+    /// What each viewport's last prepare built. The wireframe toggle and the
+    /// selection outlines come from the viewport's own frame.
+    views: PerViewport<SpriteView>,
+    /// The viewport prepared last, for the queries that name none.
+    last_viewport: usize,
     /// Every inline item from the last prepared frame, for the CPU pick. The
     /// reference forms are not here: their positions live on the GPU, so they
     /// answer the GPU pick only.
     pick_items: Vec<SpriteItem>,
-    /// Selection-outline coverage for this frame.
-    outlines: Vec<SpriteOutline>,
-    /// The painter batches in the order they draw, split where batches on one
-    /// layer interleave by key. `batch` indexes `frame`.
-    painter_pieces: Vec<store::PainterPiece>,
-    /// Each batch's item settings, parallel to `frame`, for the surface mask.
-    frame_settings: Vec<viewport_lib::ItemSettings>,
-    /// Per-batch group-2 pick-id bind groups, parallel to `frame`.
-    pick_bind_groups: Vec<Option<viewport_lib::gpu::BindGroup>>,
     /// Registered sprite materials, by [`SpriteMaterialId`] index.
     materials: Vec<super::effects::SpriteMaterialEntry>,
     /// Scene-colour resolve targets for the refractive pass, one per viewport.
@@ -184,7 +194,9 @@ impl SpritePlugin {
     /// pipelines. Zero for a frame with no [`SpriteItem::effects`], which draws
     /// through the plain sprite pipelines alone.
     pub fn effect_batch_count(&self) -> usize {
-        self.frame.iter().filter(|s| s.fx.is_some()).count()
+        self.views
+            .get(self.last_viewport)
+            .map_or(0, |v| v.frame.iter().filter(|s| s.fx.is_some()).count())
     }
 
     /// The material registered as `name`.
@@ -452,6 +464,7 @@ impl SpritePlugin {
     /// once and only for the keys the frame actually uses.
     fn draw_bucket(
         &self,
+        view: &SpriteView,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
         target: pipeline::SpritePass,
         group2: &viewport_lib::gpu::BindGroup,
@@ -461,7 +474,7 @@ impl SpritePlugin {
         // The effect families the wanted batches use, plain first. A frame
         // with no effects has only `None` here and draws as it always has.
         let mut families: Vec<Option<u32>> = vec![None];
-        for sprite in self.frame.iter().filter(|s| wanted(s)) {
+        for sprite in view.frame.iter().filter(|s| wanted(s)) {
             let fx = sprite.fx.as_ref().map(|fx| fx.family);
             if !families.contains(&fx) {
                 families.push(fx);
@@ -472,7 +485,7 @@ impl SpritePlugin {
             for &fx in &families {
                 let key = key.in_family(fx);
                 let mut bound = false;
-                for sprite in self.frame.iter().filter(|s| wanted(s)) {
+                for sprite in view.frame.iter().filter(|s| wanted(s)) {
                     if pipeline::SpriteKey::of(sprite) != key {
                         continue;
                     }
@@ -501,6 +514,7 @@ impl SpritePlugin {
     /// given, switching pipeline only where consecutive pieces differ.
     fn draw_painter(
         &self,
+        view: &SpriteView,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
         target: pipeline::SpritePass,
         group2: &viewport_lib::gpu::BindGroup,
@@ -509,10 +523,10 @@ impl SpritePlugin {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = None;
         for piece in pieces {
-            let Some(piece) = self.painter_pieces.get(piece) else {
+            let Some(piece) = view.painter_pieces.get(piece) else {
                 continue;
             };
-            let sprite = &self.frame[piece.batch];
+            let sprite = &view.frame[piece.batch];
             if !is_painter(sprite) {
                 continue;
             }
@@ -534,11 +548,44 @@ impl SpritePlugin {
         }
     }
 
+    /// Draw the wanted batches whole in submission order, switching pipeline
+    /// only where consecutive batches differ.
+    fn draw_in_order(
+        &self,
+        view: &SpriteView,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        target: pipeline::SpritePass,
+        group2: &viewport_lib::gpu::BindGroup,
+        wanted: impl Fn(&SpriteGpuData) -> bool,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = None;
+        for sprite in view.frame.iter().filter(|s| wanted(s)) {
+            let key = pipeline::SpriteKey::of(sprite);
+            let member = (key.fx, pipeline::sprite_index(key, target));
+            if bound != Some(member) {
+                // Still compiling: this batch draws next frame.
+                let Some(pl) = gpu.colour_pipelines(key.fx).and_then(|f| f.get(member.1)) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
+                pass.set_bind_group(2, group2, &[]);
+                bound = Some(member);
+            }
+            bind_sprite(pass, gpu, sprite, key);
+            pass.draw(0..6, 0..sprite.sprite_count);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     /// The batch and drawn-sprite range of painter batch handle `batch`, as
     /// reported through `painter_batches`. For tests of the draw order.
     #[doc(hidden)]
     pub fn debug_painter_piece(&self, batch: u32) -> Option<(usize, std::ops::Range<u32>)> {
-        self.painter_pieces
+        self.views
+            .get(self.last_viewport)?
+            .painter_pieces
             .get(batch as usize)
             .map(|p| (p.batch, p.instances.clone()))
     }
@@ -634,12 +681,14 @@ impl ItemTypePlugin for SpritePlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         *self.issued.get_mut() = 0;
-        self.frame.clear();
-        self.frame_settings.clear();
-        self.outlines.clear();
-        self.painter_pieces.clear();
-        self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
+        self.last_viewport = ctx.viewport_index;
+        let view = self.views.get_mut(ctx.viewport_index);
+        view.frame.clear();
+        view.frame_settings.clear();
+        view.outlines.clear();
+        view.painter_pieces.clear();
+        view.pick_bind_groups.clear();
         let origin = ctx.world_origin();
         let sets = self.sets.iter_mut().map(|(_, s)| s);
         for stored in sets.chain(self.instance_sets.iter_mut().map(|(_, s)| s)) {
@@ -674,12 +723,12 @@ impl ItemTypePlugin for SpritePlugin {
             stored.rebase(queue, ctx.world_origin());
             let mut gd = stored.draw;
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
-            let frame_index = self.frame.len();
-            self.frame.push(gd);
-            self.frame_settings.push(item.settings);
+            let frame_index = view.frame.len();
+            view.frame.push(gd);
+            view.frame_settings.push(item.settings);
             if ctx.outline_selected {
                 if item.settings.selected {
-                    self.outlines.push(SpriteOutline {
+                    view.outlines.push(SpriteOutline {
                         frame_index,
                         instances: None,
                     });
@@ -694,10 +743,10 @@ impl ItemTypePlugin for SpritePlugin {
                             }
                             _ => None,
                         })
-                        .filter_map(|idx| self.frame[frame_index].drawn_index(idx))
+                        .filter_map(|idx| view.frame[frame_index].drawn_index(idx))
                         .collect();
                     if !instances.is_empty() {
-                        self.outlines.push(SpriteOutline {
+                        view.outlines.push(SpriteOutline {
                             frame_index,
                             instances: Some(instances),
                         });
@@ -717,8 +766,8 @@ impl ItemTypePlugin for SpritePlugin {
             };
             let mut gd = entry.draw.clone();
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
-            self.frame.push(gd);
-            self.frame_settings.push(ref_item.settings);
+            view.frame.push(gd);
+            view.frame_settings.push(ref_item.settings);
         }
 
         // Pre-uploaded instance sets.
@@ -731,17 +780,17 @@ impl ItemTypePlugin for SpritePlugin {
             };
             let mut gd = entry.draw.clone();
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
-            self.frame.push(gd);
-            self.frame_settings.push(ref_item.settings);
+            view.frame.push(gd);
+            view.frame_settings.push(ref_item.settings);
         }
 
-        let painters: Vec<usize> = (0..self.frame.len())
-            .filter(|&i| self.frame[i].painter.is_some())
+        let painters: Vec<usize> = (0..view.frame.len())
+            .filter(|&i| view.frame[i].painter.is_some())
             .collect();
         let inputs: Vec<store::PainterInput<'_>> = painters
             .iter()
             .map(|&i| {
-                let s = &self.frame[i];
+                let s = &view.frame[i];
                 store::PainterInput {
                     layer: s.painter.map_or(0, |p| p.layer),
                     count: s.sprite_count,
@@ -753,10 +802,10 @@ impl ItemTypePlugin for SpritePlugin {
         for piece in &mut pieces {
             piece.batch = painters[piece.batch];
         }
-        self.painter_pieces = pieces;
+        view.painter_pieces = pieces;
 
         // Group-2 pick-id bind groups, one per pickable batch.
-        self.pick_bind_groups = self
+        view.pick_bind_groups = view
             .frame
             .iter()
             .map(|s| {
@@ -775,12 +824,16 @@ impl ItemTypePlugin for SpritePlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         // The depth attachment is writable in this pass and is the same buffer
         // the soft fade would sample, so group 2 gets the 1x1 fallback. A
         // depth-writing batch has no soft fade to lose by it.
         if ctx.is_hdr_pass() {
-            if self.frame.iter().any(is_opaque) {
+            if view.frame.iter().any(is_opaque) {
                 self.draw_bucket(
+                    view,
                     pass,
                     pipeline::SpritePass::Scene,
                     &gpu.soft_fallback_bg,
@@ -789,12 +842,26 @@ impl ItemTypePlugin for SpritePlugin {
             }
             return;
         }
-        if self.frame.iter().any(is_opaque) {
+        if view.frame.iter().any(is_opaque) {
             self.draw_bucket(
+                view,
                 pass,
                 pipeline::SpritePass::Ldr,
                 &gpu.soft_fallback_bg,
                 is_opaque,
+            );
+        }
+        // This path has neither the read-only-depth pass nor OIT, so the
+        // blended batches those draw on the HDR path draw here, after the
+        // opaque ones, testing depth without writing it. Without the scene
+        // depth to sample there is no soft fade.
+        if view.frame.iter().any(is_ldr_blended) {
+            self.draw_in_order(
+                view,
+                pass,
+                pipeline::SpritePass::Ldr,
+                &gpu.soft_fallback_bg,
+                is_ldr_blended,
             );
         }
     }
@@ -803,19 +870,26 @@ impl ItemTypePlugin for SpritePlugin {
         true
     }
 
-    fn draws_depth_read(&self) -> bool {
-        self.frame.iter().any(is_soft)
+    fn draws_depth_read(&self, viewport_index: usize) -> bool {
+        self.views
+            .get(viewport_index)
+            .is_some_and(|v| v.frame.iter().any(is_soft))
     }
 
-    fn draws_painter(&self) -> bool {
-        !self.painter_pieces.is_empty()
+    fn draws_painter(&self, viewport_index: usize) -> bool {
+        self.views
+            .get(viewport_index)
+            .is_some_and(|v| !v.painter_pieces.is_empty())
     }
 
     /// One batch per piece: a painter batch whole, or the part of it between
     /// two keys of another batch on its layer.
-    fn painter_batches(&self, out: &mut Vec<PainterBatch>) {
-        for (i, piece) in self.painter_pieces.iter().enumerate() {
-            if is_painter(&self.frame[piece.batch]) {
+    fn painter_batches(&self, viewport_index: usize, out: &mut Vec<PainterBatch>) {
+        let Some(view) = self.views.get(viewport_index) else {
+            return;
+        };
+        for (i, piece) in view.painter_pieces.iter().enumerate() {
+            if is_painter(&view.frame[piece.batch]) {
                 out.push(PainterBatch::new(piece.layer, piece.key, i as u32));
             }
         }
@@ -828,19 +902,25 @@ impl ItemTypePlugin for SpritePlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         // Painter batches in their own order: after every opaque draw and
         // before transparency and post effects. In the read-only-depth pass
         // the live scene depth is bound for the soft fade; the LDR scene pass
         // gets the 1x1 fallback.
         let all =
-            (0..self.painter_pieces.len()).filter(|&i| ctx.includes(self.painter_pieces[i].layer));
+            (0..view.painter_pieces.len()).filter(|&i| ctx.includes(view.painter_pieces[i].layer));
         let pieces: Box<dyn Iterator<Item = usize> + '_> = match ctx.batches {
             Some(batches) => Box::new(batches.iter().map(|&b| b as usize)),
             None => Box::new(all),
         };
         match ctx.scene_depth_bind_group {
-            Some(depth) => self.draw_painter(pass, pipeline::SpritePass::DepthRead, depth, pieces),
+            Some(depth) => {
+                self.draw_painter(view, pass, pipeline::SpritePass::DepthRead, depth, pieces)
+            }
             None => self.draw_painter(
+                view,
                 pass,
                 pipeline::SpritePass::Ldr,
                 &gpu.soft_fallback_bg,
@@ -849,8 +929,10 @@ impl ItemTypePlugin for SpritePlugin {
         }
     }
 
-    fn draws_transparent(&self) -> bool {
-        self.frame.iter().any(|s| s.oit_eligible && !s.wireframe)
+    fn draws_transparent(&self, viewport_index: usize) -> bool {
+        self.views
+            .get(viewport_index)
+            .is_some_and(|v| v.frame.iter().any(|s| s.oit_eligible && !s.wireframe))
     }
 
     fn paint_depth_read(
@@ -862,10 +944,14 @@ impl ItemTypePlugin for SpritePlugin {
         if self.gpu.is_none() {
             return;
         }
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         // The depth attachment is read-only here, so the live scene depth can
         // be sampled for the soft fade. The ready-made group matches the layout
         // these pipelines were built against.
         self.draw_bucket(
+            view,
             pass,
             pipeline::SpritePass::DepthRead,
             ctx.scene_depth_bind_group,
@@ -876,11 +962,14 @@ impl ItemTypePlugin for SpritePlugin {
     fn paint_transparent(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
-        _ctx: &PaintContext<'_>,
+        ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        for sprite in self.frame.iter().filter(|s| s.oit_eligible && !s.wireframe) {
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
+        for sprite in view.frame.iter().filter(|s| s.oit_eligible && !s.wireframe) {
             // Still compiling: this batch draws next frame.
             let member = pipeline::oit_index(sprite.lit, sprite.blend);
             let Some(pl) = gpu.passes.get(member) else {
@@ -905,11 +994,14 @@ impl ItemTypePlugin for SpritePlugin {
     fn outline_mask(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
-        _ctx: &OutlineMaskContext<'_>,
+        ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        if self.outlines.is_empty() {
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
+        if view.outlines.is_empty() {
             return;
         }
         // The billboard quads themselves go into the mask, so the outline
@@ -918,8 +1010,8 @@ impl ItemTypePlugin for SpritePlugin {
             return;
         };
         pass.set_pipeline(pl);
-        for outline in &self.outlines {
-            let Some(sprite) = self.frame.get(outline.frame_index) else {
+        for outline in &view.outlines {
+            let Some(sprite) = view.frame.get(outline.frame_index) else {
                 continue;
             };
             if !gpu.drawn(sprite) {
@@ -945,9 +1037,12 @@ impl ItemTypePlugin for SpritePlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         let mut bound = false;
         // Only batches that wrote depth own pixels a decal could land on.
-        for (sprite, settings) in self.frame.iter().zip(&self.frame_settings) {
+        for (sprite, settings) in view.frame.iter().zip(&view.frame_settings) {
             if !is_opaque(sprite) || !gpu.drawn(sprite) {
                 continue;
             }
@@ -983,7 +1078,10 @@ impl ItemTypePlugin for SpritePlugin {
         _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
-        if !self
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
+        if !view
             .frame
             .iter()
             .any(|s| s.refraction_strength > 0.0 && !s.wireframe)
@@ -1082,7 +1180,7 @@ impl ItemTypePlugin for SpritePlugin {
         pass.set_pipeline(refraction_pipeline);
         pass.set_bind_group(0, ctx.camera_bind_group, &[]);
         pass.set_bind_group(2, &bind_group, &[]);
-        for sprite in &self.frame {
+        for sprite in &view.frame {
             if sprite.refraction_strength <= 0.0 || sprite.wireframe {
                 continue;
             }
@@ -1184,21 +1282,24 @@ impl ItemTypePlugin for SpritePlugin {
             return;
         }
         let Some(gpu) = &self.gpu else { return };
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
         // Depth-ordered batches first, then the painter pieces in the order
         // they were drawn, each through a pipeline that lets the later of two
         // sprites at one depth win, as it did on screen.
-        let depth_ordered = (0..self.frame.len())
-            .filter(|&i| self.frame[i].painter.is_none())
-            .map(|i| (i, 0..self.frame[i].sprite_count));
-        let painter = self
+        let depth_ordered = (0..view.frame.len())
+            .filter(|&i| view.frame[i].painter.is_none())
+            .map(|i| (i, 0..view.frame[i].sprite_count));
+        let painter = view
             .painter_pieces
             .iter()
             .map(|p| (p.batch, p.instances.clone()));
         let order = depth_ordered.chain(painter);
         let mut bound = None;
         for (i, instances) in order {
-            let sprite = &self.frame[i];
-            let Some(pick_bg) = &self.pick_bind_groups[i] else {
+            let sprite = &view.frame[i];
+            let Some(pick_bg) = &view.pick_bind_groups[i] else {
                 continue;
             };
             if !gpu.drawn(sprite) {
@@ -1265,8 +1366,10 @@ impl ItemTypePlugin for SpritePlugin {
         // channel; no device feature involved. A painter batch sorted by key
         // draws its sprites out of the caller's order, so map back.
         let index = self
-            .frame
-            .iter()
+            .views
+            .get(self.last_viewport)
+            .into_iter()
+            .flat_map(|v| v.frame.iter())
             .find(|s| s.pick_id == pick_id)
             .map_or(primitive_index, |s| s.source_index(primitive_index));
         mask.intersects(PickMask::INSTANCE)
@@ -1287,6 +1390,12 @@ fn is_soft(s: &SpriteGpuData) -> bool {
         && s.refraction_strength <= 0.0
         && !s.oit_eligible
         && s.painter.is_none()
+}
+
+/// Batches that draw on the LDR path after the opaque ones, in submission
+/// order: the soft batches and the ones the HDR path draws through OIT.
+fn is_ldr_blended(s: &SpriteGpuData) -> bool {
+    !s.wireframe && !s.depth_write && s.refraction_strength <= 0.0 && s.painter.is_none()
 }
 
 /// Batches that draw in painter's order: in the read-only-depth pass on the

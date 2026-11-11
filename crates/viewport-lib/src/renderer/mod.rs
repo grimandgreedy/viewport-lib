@@ -302,6 +302,9 @@ pub(crate) struct ViewportOverlay {
     /// The same in draw order, as uploaded. Kept to reuse the allocations.
     pub overlay_sorted_shapes: Vec<crate::resources::OverlayShapeInstance>,
     pub overlay_sorted_text: Vec<crate::resources::OverlayTextVertex>,
+    /// How many of the shape and text streams the last prepare uploaded: a
+    /// stream whose inputs match what its buffer was written from is not.
+    pub overlay_stream_uploads: u32,
     /// Scratch for ranking and sorting the overlay items.
     pub overlay_order_scratch: overlay_draw_order::OverlayOrderScratch,
     /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
@@ -388,6 +391,7 @@ impl ViewportOverlay {
             overlay_text_verts: Vec::new(),
             overlay_sorted_shapes: Vec::new(),
             overlay_sorted_text: Vec::new(),
+            overlay_stream_uploads: 0,
             overlay_order_scratch: Default::default(),
             layer_plan: Default::default(),
             layer_targets: overlay_layers::OverlayLayerTargets::new(),
@@ -2866,7 +2870,7 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_draws_transparent(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
-                plugin.draws_transparent()
+                plugin.draws_transparent(frame.camera.viewport_index)
                     && crate::renderer::item_plugins::plugin_collections_for(frame, name)
                         .any(|items| !items.is_empty())
             })
@@ -2928,7 +2932,7 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_draws_depth_read(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
-                plugin.draws_depth_read()
+                plugin.draws_depth_read(frame.camera.viewport_index)
                     && crate::renderer::item_plugins::plugin_collections_for(frame, name)
                         .any(|items| !items.is_empty())
             })
@@ -2939,7 +2943,7 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_draws_painter(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
-                plugin.draws_painter()
+                plugin.draws_painter(frame.camera.viewport_index)
                     && crate::renderer::item_plugins::plugin_collections_for(frame, name)
                         .any(|items| !items.is_empty())
             })
@@ -2981,7 +2985,8 @@ impl ViewportRenderer {
         let mut unsequenced: Vec<&'static str> = Vec::new();
         let mut reported = Vec::new();
         for (plugin, (name, p)) in self.item_type_plugins.iter().enumerate() {
-            if !p.draws_painter() || (!hdr && !p.draws_ldr()) {
+            let vp = frame.camera.viewport_index;
+            if !p.draws_painter(vp) || (!hdr && !p.draws_ldr()) {
                 continue;
             }
             if crate::renderer::item_plugins::plugin_collections_for(frame, name)
@@ -2990,7 +2995,7 @@ impl ViewportRenderer {
                 continue;
             }
             reported.clear();
-            p.painter_batches(&mut reported);
+            p.painter_batches(vp, &mut reported);
             if reported.is_empty() {
                 unsequenced.push(name);
             }
@@ -3398,7 +3403,7 @@ impl ViewportRenderer {
             scene_depth_bind_group,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if !plugin.draws_depth_read() {
+            if !plugin.draws_depth_read(frame.camera.viewport_index) {
                 continue;
             }
             let items = crate::plugin_api::ItemCollections::new(

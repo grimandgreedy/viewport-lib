@@ -253,6 +253,7 @@ fn expected(name: &str) -> Option<Expected> {
         "overlay_layers" => e(1, 1, 1, 1, 960),
         "overlay_mesh" => e(1, 1, 1, 1, 960),
         "overlay_layers_nested" => e(1, 1, 1, 1, 960),
+        "overlay_ordering" => e(1, 1, 1, 1, 960),
         _ => return None,
     })
 }

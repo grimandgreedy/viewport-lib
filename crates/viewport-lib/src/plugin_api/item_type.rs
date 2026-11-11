@@ -1130,6 +1130,15 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ///
     /// If no collection has been submitted, the renderer skips this
     /// method for the frame.
+    ///
+    /// With several viewports over one scene, this runs once per viewport
+    /// (`prepare_viewport`), each with that viewport's camera, viewport and
+    /// interaction state, before any of them paints. State built from those,
+    /// and anything [`cull`](Self::cull) narrows, has to be kept per
+    /// [`ItemFrameContext::viewport_index`] and read back by the draw hooks
+    /// from their own context's `viewport_index`, or the first viewport
+    /// paints what the last one prepared.
+    /// [`PerViewport`](crate::plugin_api::PerViewport) holds such state.
     fn prepare(
         &mut self,
         _device: &crate::gpu::Device,
@@ -1204,24 +1213,26 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     }
 
     /// `false` when this frame's items have nothing for
-    /// [`paint_transparent`](Self::paint_transparent).
+    /// [`paint_transparent`](Self::paint_transparent) in the viewport
+    /// `viewport_index`.
     ///
     /// Read after [`prepare`](Self::prepare). The renderer runs the OIT pass
     /// when any plugin with items says `true`, so the default keeps a plugin
     /// that never overrides this drawing there; a plugin that knows its frame
     /// has no OIT draws returns `false` and, when nothing else is transparent,
     /// the frame skips the pass and its composite.
-    fn draws_transparent(&self) -> bool {
+    fn draws_transparent(&self, _viewport_index: usize) -> bool {
         true
     }
 
-    /// `true` when this plugin draws in the read-only-depth pass.
+    /// `true` when this plugin draws in the read-only-depth pass of the
+    /// viewport `viewport_index`.
     ///
     /// The renderer opens that pass only when some plugin opts in;
     /// implementing [`paint_depth_read`](Self::paint_depth_read) without
     /// overriding this to `true` means the hook is never called, and a frame
     /// with no opted-in plugin issues no extra pass.
-    fn draws_depth_read(&self) -> bool {
+    fn draws_depth_read(&self, _viewport_index: usize) -> bool {
         false
     }
 
@@ -1257,17 +1268,18 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     }
 
     /// `true` when this frame's items have painter's-order draws for
-    /// [`paint_painter`](Self::paint_painter).
+    /// [`paint_painter`](Self::paint_painter) in the viewport `viewport_index`.
     ///
     /// Read after [`prepare`](Self::prepare). A frame where some plugin says
     /// `true` draws them on the HDR path inside the read-only-depth pass (which
     /// opens for it) and on the LDR path in the scene pass, after every
     /// plugin's [`paint`](Self::paint).
-    fn draws_painter(&self) -> bool {
+    fn draws_painter(&self, _viewport_index: usize) -> bool {
         false
     }
 
-    /// This frame's painter's-order draws, pushed onto `out`, so they take
+    /// This frame's painter's-order draws in the viewport `viewport_index`,
+    /// pushed onto `out`, so they take
     /// their place in the sequence the renderer sorts across every plugin.
     ///
     /// Read after [`prepare`](Self::prepare) and [`cull`](Self::cull), only
@@ -1277,7 +1289,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// consecutive batches of this plugin, naming them in
     /// [`PainterContext::batches`]. Pushing nothing, the default, keeps the
     /// plugin out of the sequence: see `paint_painter` for where it draws then.
-    fn painter_batches(&self, _out: &mut Vec<PainterBatch>) {}
+    fn painter_batches(&self, _viewport_index: usize, _out: &mut Vec<PainterBatch>) {}
 
     /// Issue this frame's painter's-order draws.
     ///
@@ -1562,7 +1574,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
 
     /// Update internal culling state for the current camera frustum.
     ///
-    /// Called once per frame before `paint`. The plugin records which
+    /// Called once per frame and viewport, after `prepare` and before
+    /// `paint`. Keep the result per [`ItemFrameContext::viewport_index`] (see
+    /// [`prepare`](Self::prepare)). The plugin records which
     /// items are inside the frustum so subsequent `paint` /
     /// `paint_transparent` / `cast_shadow_pass` calls can skip culled
     /// entries. The lib does not pre-filter the collection; the plugin

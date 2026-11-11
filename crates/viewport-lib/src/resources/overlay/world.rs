@@ -5,9 +5,9 @@
 //! places only: the vertex stage maps a layer position through the camera's
 //! view-projection (folded with the layer's basis) instead of the viewport's
 //! pixels-to-NDC map, and the clip tests read the fragment's position on the
-//! layer, in device pixels of the layer, instead of `@builtin(position)`. The
-//! world sources are made from the screen ones by those substitutions, so the
-//! two can never drift.
+//! layer, in device pixels of the layer, as it is interpolated rather than
+//! snapped to the screen's pixel centres. The world sources are made from the
+//! screen ones by those substitutions, so the two can never drift.
 
 /// The uniform a world layer binds where the screen overlays bind the
 /// viewport size: the same first 16 bytes (`size`, `ppp`), then the map from
@@ -35,9 +35,8 @@ pub(crate) const WORLD_VIEWPORT_BYTES: u64 = 96;
 #[derive(Debug)]
 pub(crate) struct MissingLine(pub &'static str);
 
-/// The world variant of an overlay shader source. `fp_location` is a free
-/// inter-stage location for the layer position varying.
-pub(crate) fn world_variant(src: &str, fp_location: u32) -> Result<String, MissingLine> {
+/// The world variant of an overlay shader source.
+pub(crate) fn world_variant(src: &str) -> Result<String, MissingLine> {
     let mut s = src.to_string();
 
     // The viewport uniform: the world struct in place of the screen one.
@@ -47,19 +46,9 @@ pub(crate) fn world_variant(src: &str, fp_location: u32) -> Result<String, Missi
     s.replace_range(at..at + decl.len(), "var<uniform> viewport: WorldViewport;");
     s.insert_str(line_start, WORLD_VIEWPORT_WGSL);
 
-    // The layer position varying, next to the clip position.
-    let builtin = "@builtin(position) clip_position: vec4<f32>,";
-    if s.matches(builtin).count() != 1 {
-        return Err(MissingLine(builtin));
-    }
-    s = s.replacen(
-        builtin,
-        &format!("{builtin}\n    @location({fp_location}) layer_fp: vec2<f32>,"),
-        1,
-    );
-
-    // The vertex position through the camera, and the layer position in
-    // device pixels for the clip tests.
+    // The vertex position through the camera. The screen shader's `frag_px`,
+    // its position times `viewport.ppp`, is the position on the layer in
+    // device pixels unchanged.
     let head = "out.clip_position = vec4<f32>(px_to_ndc(";
     let tail = "), 0.0, 1.0);";
     let a = s.find(head).ok_or(MissingLine(head))?;
@@ -69,16 +58,15 @@ pub(crate) fn world_variant(src: &str, fp_location: u32) -> Result<String, Missi
         a..b + tail.len(),
         &format!(
             "let world_px = {expr};\n    \
-             out.clip_position = viewport.layer_to_clip * vec4<f32>(world_px, 0.0, 1.0);\n    \
-             out.layer_fp = world_px * viewport.ppp;"
+             out.clip_position = viewport.layer_to_clip * vec4<f32>(world_px, 0.0, 1.0);"
         ),
     );
 
-    let fp = "let fp = in.clip_position.xy;";
+    let fp = "let fp = overlay_pixel_centre(in.frag_px);";
     if !s.contains(fp) {
         return Err(MissingLine(fp));
     }
-    s = s.replace(fp, "let fp = in.layer_fp;");
+    s = s.replace(fp, "let fp = in.frag_px;");
 
     // The shape shader's edge band: one device pixel of the layer, where the
     // screen shader takes one logical pixel.
@@ -93,7 +81,7 @@ pub(crate) fn world_variant(src: &str, fp_location: u32) -> Result<String, Missi
 /// edge band one device pixel of the layer and the blurred destination read
 /// at the fragment's place on the target rather than its layer position.
 pub(crate) fn world_backdrop_variant(src: &str) -> Result<String, MissingLine> {
-    let mut s = world_variant(src, BACKDROP_FP_LOCATION)?;
+    let mut s = world_variant(src)?;
     let aa = "let aa = 1.0;";
     if !s.contains(aa) {
         return Err(MissingLine(aa));
@@ -109,14 +97,6 @@ pub(crate) fn world_backdrop_variant(src: &str) -> Result<String, MissingLine> {
     );
     Ok(s)
 }
-
-/// The inter-stage location the backdrop shader's world variant adds.
-pub(crate) const BACKDROP_FP_LOCATION: u32 = 11;
-
-/// The inter-stage location the shape shader's world variant adds.
-pub(crate) const SHAPE_FP_LOCATION: u32 = 10;
-/// The inter-stage location the text shader's world variant adds.
-pub(crate) const TEXT_FP_LOCATION: u32 = 11;
 
 /// Which overlay pipeline a world draw goes through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -228,12 +208,12 @@ impl crate::resources::DeviceResources {
         let shader = match shader {
             Some(s) => s,
             None => {
-                let (name, location) = match pipe {
-                    WorldPipe::Shape => ("overlay_shape", SHAPE_FP_LOCATION),
-                    _ => ("overlay_text", TEXT_FP_LOCATION),
+                let name = match pipe {
+                    WorldPipe::Shape => "overlay_shape",
+                    _ => "overlay_text",
                 };
                 let src = self.overlay_fill_shader_source(name);
-                let world = match world_variant(&src, location) {
+                let world = match world_variant(&src) {
                     Ok(world) => world,
                     Err(MissingLine(line)) => {
                         tracing::warn!("{name}: no world variant, missing `{line}`");
@@ -404,30 +384,21 @@ impl crate::resources::DeviceResources {
 mod tests {
     use super::*;
 
-    fn sources() -> [(&'static str, &'static str, u32); 2] {
+    fn sources() -> [(&'static str, &'static str); 2] {
         use crate::resources::overlay::custom_fill::fill_shader;
         [
-            (
-                "overlay_shape",
-                fill_shader("overlay_shape"),
-                SHAPE_FP_LOCATION,
-            ),
-            (
-                "overlay_text",
-                fill_shader("overlay_text"),
-                TEXT_FP_LOCATION,
-            ),
+            ("overlay_shape", fill_shader("overlay_shape")),
+            ("overlay_text", fill_shader("overlay_text")),
         ]
     }
 
     #[test]
     fn the_world_variants_are_made_and_validate() {
-        for (name, src, location) in sources() {
-            let world = world_variant(src, location)
-                .unwrap_or_else(|e| panic!("{name}: no line {:?}", e.0));
+        for (name, src) in sources() {
+            let world = world_variant(src).unwrap_or_else(|e| panic!("{name}: no line {:?}", e.0));
             assert!(world.contains("layer_to_clip *"), "{name}");
-            assert!(world.contains("let fp = in.layer_fp;"), "{name}");
-            assert!(!world.contains("px_to_ndc(group_apply"), "{name}");
+            assert!(world.contains("let fp = in.frag_px;"), "{name}");
+            assert!(!world.contains("px_to_ndc(screen_px)"), "{name}");
             let module = naga::front::wgsl::parse_str(&world)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&world)));
             naga::valid::Validator::new(
@@ -444,6 +415,7 @@ mod tests {
         let src = include_str!(concat!(env!("OUT_DIR"), "/overlay_shape_tex.wgsl"));
         let world = world_backdrop_variant(src).unwrap_or_else(|e| panic!("no line {:?}", e.0));
         assert!(world.contains("in.clip_position.xy / viewport.target_px"));
+        assert!(world.contains("let fp = in.frag_px;"));
         let module = naga::front::wgsl::parse_str(&world)
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&world)));
         naga::valid::Validator::new(
@@ -452,23 +424,6 @@ mod tests {
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("backdrop world variant: {e:?}"));
-        let start = src.find("struct VertexOutput {").expect("VertexOutput");
-        let end = start + src[start..].find("};").expect("end of VertexOutput");
-        assert!(!src[start..end].contains(&format!("@location({BACKDROP_FP_LOCATION})")));
-    }
-
-    /// The location the world variant adds is not one the vertex stage
-    /// already writes.
-    #[test]
-    fn the_layer_location_is_free_in_each_shader() {
-        for (name, src, location) in sources() {
-            let start = src.find("struct VertexOutput {").expect("VertexOutput");
-            let end = start + src[start..].find("};").expect("end of VertexOutput");
-            assert!(
-                !src[start..end].contains(&format!("@location({location})")),
-                "{name} already writes location {location}"
-            );
-        }
     }
 
     #[test]

@@ -264,7 +264,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         pass.draw(0..3, 0..1);
     }
 
-    fn draws_depth_read(&self) -> bool {
+    fn draws_depth_read(&self, _viewport_index: usize) -> bool {
         true
     }
 

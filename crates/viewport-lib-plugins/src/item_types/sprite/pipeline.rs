@@ -256,6 +256,15 @@ fn build_sprite(r: &SpriteRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline
     )
 }
 
+/// The alpha of the multiply and screen blends: the sprite's coverage over
+/// the destination's, as alpha blending writes it. Where nothing else drew,
+/// the HDR path composites the background under the scene by this alpha.
+const COVERAGE: viewport_lib::gpu::BlendComponent = viewport_lib::gpu::BlendComponent {
+    src_factor: viewport_lib::gpu::BlendFactor::One,
+    dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+    operation: viewport_lib::gpu::BlendOperation::Add,
+};
+
 /// `dst * src`: the fragment has already mixed its colour towards white by
 /// `1 - alpha`, so a transparent texel leaves the destination unchanged.
 const MULTIPLY_BLEND: viewport_lib::gpu::BlendState = viewport_lib::gpu::BlendState {
@@ -264,11 +273,7 @@ const MULTIPLY_BLEND: viewport_lib::gpu::BlendState = viewport_lib::gpu::BlendSt
         dst_factor: viewport_lib::gpu::BlendFactor::Src,
         operation: viewport_lib::gpu::BlendOperation::Add,
     },
-    alpha: viewport_lib::gpu::BlendComponent {
-        src_factor: viewport_lib::gpu::BlendFactor::Zero,
-        dst_factor: viewport_lib::gpu::BlendFactor::One,
-        operation: viewport_lib::gpu::BlendOperation::Add,
-    },
+    alpha: COVERAGE,
 };
 
 /// `src + dst * (1 - src)`: the fragment has already premultiplied its colour
@@ -279,11 +284,7 @@ const SCREEN_BLEND: viewport_lib::gpu::BlendState = viewport_lib::gpu::BlendStat
         dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrc,
         operation: viewport_lib::gpu::BlendOperation::Add,
     },
-    alpha: viewport_lib::gpu::BlendComponent {
-        src_factor: viewport_lib::gpu::BlendFactor::Zero,
-        dst_factor: viewport_lib::gpu::BlendFactor::One,
-        operation: viewport_lib::gpu::BlendOperation::Add,
-    },
+    alpha: COVERAGE,
 };
 
 /// Members of [`SpritePassPipelines`].

@@ -697,6 +697,17 @@ pub struct FrameStats {
     /// frame, and a value that tracks the item count every frame means their
     /// shape, style or transform changes every frame.
     pub overlay_tessellations: u32,
+    /// Overlay vertex streams uploaded this frame, for the most recently
+    /// prepared viewport: 0, 1 or 2, for its shape instances and its text and
+    /// geometry vertices.
+    ///
+    /// A stream is uploaded only when something it is built from changed:
+    /// an item, the viewport size or pixels per point, the camera when an
+    /// item is anchored in the world or sized in world units, the clock when
+    /// an item animates, a fill texture's size, or a glyph, coverage cell or
+    /// cached tessellation it draws from. So an unchanged overlay reads zero
+    /// after its first frame.
+    pub overlay_stream_uploads: u32,
     /// Overlay layers composited from a scratch target this frame, for the
     /// most recently prepared viewport: each `OverlayLayer` and retained-group
     /// layer that could not fold into its members, and each item whose blend

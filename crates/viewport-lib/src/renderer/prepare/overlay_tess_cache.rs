@@ -51,6 +51,10 @@ pub(crate) struct TessellationCache {
     pass: u64,
     /// Items tessellated in the current overlay pass: the misses.
     pub(crate) tessellations: u32,
+    /// Entries recorded since the cache was created. A replay can differ from
+    /// the tessellation it stands for by rounding, so geometry built from the
+    /// cache is the same as before only while this has not moved.
+    recorded: u64,
 }
 
 impl TessellationCache {
@@ -116,6 +120,7 @@ impl TessellationCache {
         atlas_quad: Option<usize>,
         aux: u64,
     ) {
+        self.recorded += 1;
         self.entries.insert(
             key,
             Entry {
@@ -128,6 +133,11 @@ impl TessellationCache {
                 last_used: self.pass,
             },
         );
+    }
+
+    /// Entries recorded since the cache was created.
+    pub(super) fn recorded(&self) -> u64 {
+        self.recorded
     }
 
     /// Count an item that was tessellated, whether or not it was recorded.

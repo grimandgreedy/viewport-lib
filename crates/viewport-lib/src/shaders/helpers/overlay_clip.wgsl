@@ -6,6 +6,16 @@
 // The including shader declares `clip_shapes` (the frame's mask array, with
 // `ClipShape` entries in framebuffer pixels) and `eval_sdf`.
 
+// The fragment's place for the clip tests, in framebuffer pixels from the
+// viewport's top-left corner: `frag_px`, the vertex position in those pixels
+// interpolated across the primitive, snapped to the pixel centre where
+// `@builtin(position)` lies. The builtin itself counts from the framebuffer's
+// corner, which is not the viewport's when a host paints into a viewport offset
+// in its target.
+fn overlay_pixel_centre(frag_px: vec2<f32>) -> vec2<f32> {
+    return floor(frag_px) + vec2<f32>(0.5);
+}
+
 // How much of the one-pixel square at `fp` the box `r` (x0, y0, x1, y1) covers.
 // A box without area is no clip and keeps everything. An edge on a pixel
 // boundary keeps or drops whole pixels, as a hard test at pixel centres would.

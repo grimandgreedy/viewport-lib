@@ -45,10 +45,11 @@ struct ClipShape {
 // other overlay pipelines.
 @group(1) @binding(0) var<uniform> clip_shapes: array<ClipShape, 256>;
 
-// Viewport size in logical pixels (xy).
+// Viewport size in logical pixels and the frame's pixels per point.
 struct Viewport {
     size: vec2<f32>,
-    pad:  vec2<f32>,
+    ppp:  f32,
+    pad:  f32,
 };
 @group(1) @binding(1) var<uniform> viewport: Viewport;
 
@@ -342,8 +343,11 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
 }
 
 // How much of the pixel the layer's clip keeps.
+// `clip_rect` and `fp` are framebuffer pixels from the viewport's top-left
+// corner, found from `uv` rather than `@builtin(position)`, which counts from
+// the framebuffer's.
 fn layer_clip(in: VertexOutput) -> f32 {
-    let fp = in.clip_position.xy;
+    let fp = overlay_pixel_centre(in.uv * viewport.size * viewport.ppp);
     var c = overlay_rect_coverage(fp, in.clip_rect);
     if (in.clip.x >= 0.0 && c > 0.0) {
         c = c * overlay_mask_coverage(fp, in.clip.x);

@@ -98,11 +98,13 @@ struct ClipShape {
 // fills a 16 KiB uniform binding); a frame's later masks are dropped.
 @group(0) @binding(1) var<uniform> clip_shapes: array<ClipShape, 256>;
 
-// Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
-// positions to NDC so overlay geometry is independent of the viewport size.
+// Viewport size in logical pixels and the frame's pixels per point. The size
+// maps local-pixel vertex positions to NDC so overlay geometry is independent
+// of the viewport size; `ppp` takes them to framebuffer pixels for the clips.
 struct Viewport {
     size: vec2<f32>,
-    pad:  vec2<f32>,
+    ppp:  f32,
+    pad:  f32,
 };
 @group(0) @binding(2) var<uniform> viewport: Viewport;
 
@@ -189,6 +191,9 @@ struct VertexOutput {
     @location(8) @interpolate(flat) fill:        vec4<f32>,
     // The group's tint, applied to a fill record's colour.
     @location(9) @interpolate(flat) group_tint:  vec4<f32>,
+    // The position in framebuffer pixels from the viewport's top-left corner,
+    // for the clip tests.
+    @location(10) frag_px: vec2<f32>,
 };
 
 @vertex
@@ -204,7 +209,9 @@ fn vs_main(@builtin(vertex_index) vi: u32, in: ShapeInstance) -> VertexOutput {
     // band is `1 / aa_scale` shape units, one framebuffer pixel after the
     // group's mean scale.
     let q = in.quad.xy + quad_corner(vi) * in.quad.zw;
-    out.clip_position = vec4<f32>(px_to_ndc(group_apply(q, inst)), 0.0, 1.0);
+    let screen_px = group_apply(q, inst);
+    out.clip_position = vec4<f32>(px_to_ndc(screen_px), 0.0, 1.0);
+    out.frag_px       = screen_px * viewport.ppp;
     out.local_pos     = q - in.pivot_half.xy;
     // Fold the per-draw opacity and colour tint into the flat colour (identity
     // for immediate draws). The tint does not reach the SDF shadow layers (read
@@ -512,9 +519,9 @@ fn to_shape_frame(local: vec2<f32>, linv: vec4<f32>, pivot: vec2<f32>) -> vec2<f
 fn shade(in: VertexOutput) -> vec4<f32> {
     // Clip: the bounding box (exact for rectangular masks), then the mask's SDF
     // and its parent chain for shape-accurate and nested clipping, each as a
-    // coverage so the clip edge is anti-aliased. `clip_rect`/`clip_position.xy`
-    // are in framebuffer pixels (top-left origin).
-    let fp = in.clip_position.xy;
+    // coverage so the clip edge is anti-aliased. `clip_rect` and `fp` are in
+    // framebuffer pixels from the viewport's top-left corner.
+    let fp = overlay_pixel_centre(in.frag_px);
     var clip = overlay_rect_coverage(fp, in.clip_rect);
     let clip_index = in.misc.x;
     if (clip_index >= 0.0 && clip > 0.0) {

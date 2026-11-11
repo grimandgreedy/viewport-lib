@@ -3478,6 +3478,107 @@ impl ViewportRenderer {
         }
     }
 
+    /// The key the shape and text streams of the overlay prepared in `space`
+    /// are uploaded under: a hash of everything they are built from. That is
+    /// the items and the space they are laid out in, the size of each texture
+    /// a fill reads, and the caches the geometry comes from, through counters
+    /// that move whenever a glyph cell, coverage cell or cached tessellation
+    /// could have changed. Taken once the items are prepared, so the counters
+    /// take in this frame's misses.
+    fn overlay_stream_key(&self, space: &OverlaySpace<'_>) -> u64 {
+        use crate::renderer::types::OverlayContentHash;
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let o = space.overlays;
+        o.content_hash(&mut h);
+        let textures = &self.resources.content.overlay_textures;
+        let fills = (o.shapes.iter().map(|i| &i.style.fill))
+            .chain(o.labels.iter().map(|i| &i.style.fill))
+            .chain(o.glyph_runs.iter().map(|i| &i.style.fill))
+            .chain(o.polylines.iter().map(|i| &i.style.fill))
+            .chain(o.meshes.iter().map(|i| &i.style.fill));
+        for fill in fills {
+            if let Some(id) = fill.texture_id() {
+                hash_image_size(&mut h, Some(textures.get(id).map(|t| t.size)));
+            }
+        }
+        for v in space.size {
+            h.write_u32(v.to_bits());
+        }
+        h.write_u32(space.ppp.to_bits());
+        // The camera reaches the streams through world anchors and
+        // world-sized text only, so a screen overlay over a moving camera
+        // keeps its key.
+        use crate::renderer::types::{OverlayOrigin, TextSizing};
+        let world = |a: &crate::renderer::types::OverlayAnchoring| {
+            matches!(a.origin, OverlayOrigin::World(_))
+        };
+        let reads_camera = o.shapes.iter().any(|i| world(&i.anchoring))
+            || o.polylines.iter().any(|i| world(&i.anchoring))
+            || o.meshes.iter().any(|i| world(&i.anchoring))
+            || o.retained
+                .iter()
+                .any(|i| i.anchoring.as_ref().is_some_and(world))
+            || o.labels.iter().any(|i| {
+                world(&i.anchoring) || matches!(i.text_style.sizing, TextSizing::World(_))
+            })
+            || o.glyph_runs.iter().any(|i| {
+                world(&i.anchoring) || matches!(i.text_style.sizing, TextSizing::World(_))
+            });
+        h.write_u8(reads_camera as u8);
+        if reads_camera {
+            for v in space.view.to_cols_array() {
+                h.write_u32(v.to_bits());
+            }
+            for v in space.proj.to_cols_array() {
+                h.write_u32(v.to_bits());
+            }
+            for v in space.world_origin.to_array() {
+                h.write_u64(v.to_bits());
+            }
+        }
+        match space.axes {
+            Some(q) => {
+                h.write_u8(1);
+                for v in q.to_array() {
+                    h.write_u32(v.to_bits());
+                }
+            }
+            None => h.write_u8(0),
+        }
+        match &space.world {
+            Some(w) => {
+                h.write_u8(1);
+                for v in w.map.layer_to_clip.to_cols_array() {
+                    h.write_u32(v.to_bits());
+                }
+                for v in [w.map.device_size[0], w.map.device_size[1]] {
+                    h.write_u32(v.to_bits());
+                }
+                h.write_u32(w.map.screen_ppp.to_bits());
+                h.write_u32(w.map.ppp.to_bits());
+                std::hash::Hash::hash(&w.pass, &mut h);
+                for v in w.screen_size {
+                    h.write_u32(v.to_bits());
+                }
+            }
+            None => h.write_u8(0),
+        }
+        h.write_u32(space.screen_ppp.to_bits());
+        // A glyph or coverage cell moves only when its page grows or is
+        // cleared (the version) or when a cell is packed, which follows a
+        // rasterisation. Fonts are only ever added.
+        let glyphs = &self.resources.content.glyph_atlas;
+        h.write_u64(glyphs.version());
+        h.write_u64(glyphs.rasters());
+        h.write_usize(glyphs.font_count());
+        let coverage = &self.resources.content.coverage_atlas;
+        h.write_u64(coverage.version());
+        h.write_u64(coverage.rasters());
+        h.write_u64(self.overlay_tess_cache.recorded());
+        h.finish()
+    }
+
     /// Build the overlay draw list from the items the family passes recorded,
     /// upload the shape instances and text vertices in draw order, and build
     /// the pipeline variant for every blend mode the list draws with.
@@ -3692,13 +3793,24 @@ impl ViewportRenderer {
                 self.resources.ensure_overlay_text_blend(device, seg.blend);
             }
         }
+        // Each stream is uploaded unless its buffer was written under the same
+        // key, which covers everything the stream is built from.
+        let key = self.overlay_stream_key(space);
+        ov.overlay_stream_uploads = 0;
         if let Some(sd) = ov.overlay_shape_gpu_data.as_mut() {
-            sd.instance_buf =
-                (!shapes.is_empty()).then(|| ov.overlay_shape_vbuf.write(device, queue, &shapes));
+            sd.instance_buf = (!shapes.is_empty()).then(|| {
+                let (buf, uploaded) = ov
+                    .overlay_shape_vbuf
+                    .write_keyed(device, queue, &shapes, key);
+                ov.overlay_stream_uploads += uploaded as u32;
+                buf
+            });
         }
         if let Some(ld) = ov.label_gpu_data.as_mut() {
             // A frame with only retained groups still binds a buffer here.
-            ld.vertex_buf = Some(ov.overlay_text_vbuf.write(device, queue, &text));
+            let (buf, uploaded) = ov.overlay_text_vbuf.write_keyed(device, queue, &text, key);
+            ov.overlay_stream_uploads += uploaded as u32;
+            ld.vertex_buf = Some(buf);
         }
         ov.overlay_sorted_shapes = shapes;
         ov.overlay_sorted_text = text;
@@ -3745,6 +3857,7 @@ impl ViewportRenderer {
                         depth_test: false,
                     },
                     w.screen_size,
+                    space.screen_ppp,
                 )),
             ),
             None => (
@@ -3753,7 +3866,7 @@ impl ViewportRenderer {
                 None,
             ),
         };
-        if let Some((key, _)) = world {
+        if let Some((key, _, _)) = world {
             // The world pipelines the members draw with inside a layer target.
             for k in ov.overlay_main_segments as usize..ov.overlay_draw_segments.len() {
                 let seg = ov.overlay_draw_segments[k];

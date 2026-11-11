@@ -1137,8 +1137,9 @@ pub(crate) struct OverlayShadowLayerGpu {
 }
 
 /// One clip-mask shape as uploaded to the clip uniform, shared by the shape
-/// and text pipelines. All geometry is in framebuffer pixels so the fragment shader
-/// can evaluate the mask's SDF directly against `clip_position.xy`. An item's
+/// and text pipelines. All geometry is in framebuffer pixels from the viewport's
+/// corner so the fragment shader can evaluate the mask's SDF directly against the
+/// fragment's place in the viewport. An item's
 /// `clip_index` selects its entry; `params.z` chains to a parent entry (or `-1`),
 /// so nested masks compose by intersection.
 #[repr(C)]

@@ -4,7 +4,7 @@
 use super::*;
 use viewport_lib::plugin_api::{
     EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext, ItemTypePlugin,
-    PluginItem,
+    PerViewport, PluginItem,
 };
 
 /// This type's shaders, as the pipelines compile them.
@@ -83,10 +83,13 @@ struct PlaneLight {
     colour: [f32; 3],
 }
 
-/// What the frame's light layer draws, built in `prepare`.
+/// What a viewport's light layer draws, built in `prepare` for that viewport:
+/// the lights come from the viewport's frame.
 #[derive(Default)]
 struct FrameLayer {
     lights: Vec<PlaneLight>,
+    edges: Option<viewport_lib::gpu::Buffer>,
+    edge_capacity: u32,
     edge_count: u32,
     ambient: [f32; 3],
     plane_origin: glam::DVec3,
@@ -132,9 +135,7 @@ pub struct Lighting2dPlugin {
     layouts: Option<Layouts>,
     /// One set per scene target format the layer has composed over.
     pipelines: std::sync::Mutex<Vec<std::sync::Arc<Pipelines>>>,
-    frame: FrameLayer,
-    edges: Option<viewport_lib::gpu::Buffer>,
-    edge_capacity: u32,
+    frame: PerViewport<FrameLayer>,
     viewports: std::sync::Mutex<Vec<Option<ViewportLayer>>>,
     stats: std::sync::Mutex<Lighting2dStats>,
     /// Draws encoded since the last prepare, across every viewport: each
@@ -524,7 +525,9 @@ impl ItemTypePlugin for Lighting2dPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
-        self.frame = FrameLayer::default();
+        let frame = self.frame.get_mut(ctx.viewport_index);
+        frame.lights.clear();
+        frame.edge_count = 0;
         *self.stats.get_mut().unwrap() = Lighting2dStats::default();
         *self.issued.get_mut() = 0;
         let items: Vec<&Lighting2dItem> = items
@@ -571,30 +574,28 @@ impl ItemTypePlugin for Lighting2dPlugin {
             .collect();
         if !gpu_edges.is_empty() {
             let count = gpu_edges.len() as u32;
-            if self.edges.is_none() || self.edge_capacity < count {
-                self.edge_capacity = count.next_power_of_two().max(64);
-                self.edges = Some(device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+            if frame.edges.is_none() || frame.edge_capacity < count {
+                frame.edge_capacity = count.next_power_of_two().max(64);
+                frame.edges = Some(device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                     label: Some("lighting_2d_edges"),
-                    size: self.edge_capacity as u64 * std::mem::size_of::<GpuEdge>() as u64,
+                    size: frame.edge_capacity as u64 * std::mem::size_of::<GpuEdge>() as u64,
                     usage: viewport_lib::gpu::BufferUsages::VERTEX
                         | viewport_lib::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }));
             }
-            if let Some(buf) = &self.edges {
+            if let Some(buf) = &frame.edges {
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(&gpu_edges));
             }
         }
 
         let [r, g, b, _] = first.ambient.to_linear_rgba();
-        self.frame = FrameLayer {
-            lights,
-            edge_count: gpu_edges.len() as u32,
-            ambient: [r, g, b],
-            plane_origin,
-            x_axis,
-            y_axis,
-        };
+        frame.lights = lights;
+        frame.edge_count = gpu_edges.len() as u32;
+        frame.ambient = [r, g, b];
+        frame.plane_origin = plane_origin;
+        frame.x_axis = x_axis;
+        frame.y_axis = y_axis;
         Vec::new()
     }
 
@@ -603,7 +604,9 @@ impl ItemTypePlugin for Lighting2dPlugin {
     }
 
     fn encoder_scopes(&self) -> &[EncoderScope] {
-        if self.frame.lights.is_empty() {
+        // Asked without a viewport: declared when any viewport has lights,
+        // and `encode` draws nothing for a viewport without.
+        if self.frame.iter().all(|f| f.lights.is_empty()) {
             &[]
         } else {
             SCOPES
@@ -625,7 +628,9 @@ impl ItemTypePlugin for Lighting2dPlugin {
         _items: &ItemCollections<'_>,
     ) {
         use viewport_lib::gpu;
-        let frame = &self.frame;
+        let Some(frame) = self.frame.get(ctx.viewport_index) else {
+            return;
+        };
         let (Some(layouts), false) = (&self.layouts, frame.lights.is_empty()) else {
             *self.stats.lock().unwrap() = Lighting2dStats::default();
             return;
@@ -712,7 +717,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
                 // clearing before the next.
                 pass.set_bind_group(0, &layer.light_bg, &[i * BLOCK_STRIDE as u32]);
                 pass.set_stencil_reference(i + 1);
-                if let (Some(edges), true) = (&self.edges, frame.edge_count > 0) {
+                if let (Some(edges), true) = (&frame.edges, frame.edge_count > 0) {
                     pass.set_pipeline(&pipelines.shadow);
                     pass.set_vertex_buffer(0, edges.slice(..));
                     pass.draw(0..6, 0..frame.edge_count);

@@ -155,6 +155,7 @@ pub mod depth;
 pub mod install;
 pub mod item_type;
 pub mod overlay_fill;
+mod per_viewport;
 pub mod pick_helpers;
 mod plugin_resources;
 pub mod post_effect;
@@ -179,6 +180,7 @@ pub use item_type::{
     SurfaceMaskContext, surface_mask_bits,
 };
 pub use overlay_fill::OverlayFillDesc;
+pub use per_viewport::PerViewport;
 pub use plugin_resources::PluginResources;
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,

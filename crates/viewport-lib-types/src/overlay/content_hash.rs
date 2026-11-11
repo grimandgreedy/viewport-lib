@@ -7,12 +7,12 @@ use crate::overlay::Alignment;
 use crate::overlay::{
     AnchorX, AnchorY, AnimTrack, BackdropEffects, ColourMatrix, FillRule, FontHandle, GlyphRunItem,
     GradientStop, LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId,
-    OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem, OverlayOrigin, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
-    OverlayTransform, PathSegment, PositionedGlyph, RepeatMode, RetainedOverlay, ShadowLayer,
-    StrokePattern, SubPath, TextSizing, TextStyle, TextureTransform, TileMode, TriangleDirection,
-    WorldPlane, WorldTextSize,
+    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
+    OverlayLayer, OverlayLayerMembers, OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem,
+    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
+    OverlayStyle, OverlayTextureId, OverlayTransform, PathSegment, PositionedGlyph, RepeatMode,
+    RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TextSizing, TextStyle, TextureTransform,
+    TileMode, TriangleDirection, WorldPlane, WorldTextSize,
 };
 
 /// Feeds everything that affects how an overlay value draws into a hasher, so
@@ -999,6 +999,72 @@ impl OverlayContentHash for RetainedOverlay {
     }
 }
 
+impl OverlayContentHash for OverlayLayerMembers {
+    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
+        let Self {
+            shapes,
+            labels,
+            glyph_runs,
+            polylines,
+            meshes,
+            retained,
+        } = self;
+        for r in [shapes, labels, glyph_runs, polylines, meshes, retained] {
+            put_u64(state, r.start as u64);
+            put_u64(state, r.end as u64);
+        }
+    }
+}
+
+impl OverlayContentHash for OverlayLayer {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            members,
+            z_order,
+            clip,
+            style,
+        } = self;
+        members.content_hash_at(origin, state);
+        put_i32(state, *z_order);
+        clip.content_hash_at(origin, state);
+        style.content_hash_at(origin, state);
+    }
+}
+
+/// `time` is hashed only when an item has animations, since nothing else
+/// reads it: a still frame keeps its hash as the clock runs.
+impl OverlayContentHash for OverlayFrame {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            time,
+            shapes,
+            labels,
+            glyph_runs,
+            polylines,
+            meshes,
+            retained,
+            layers,
+        } = self;
+        let animated = shapes.iter().any(|i| i.animations.is_some())
+            || labels.iter().any(|i| i.animations.is_some())
+            || glyph_runs.iter().any(|i| i.animations.is_some())
+            || polylines.iter().any(|i| i.animations.is_some())
+            || meshes.iter().any(|i| i.animations.is_some())
+            || retained.iter().any(|i| i.animations.is_some());
+        hash_bool(state, animated);
+        if animated {
+            hash_f64(state, *time);
+        }
+        shapes.content_hash_at(origin, state);
+        labels.content_hash_at(origin, state);
+        glyph_runs.content_hash_at(origin, state);
+        polylines.content_hash_at(origin, state);
+        meshes.content_hash_at(origin, state);
+        retained.content_hash_at(origin, state);
+        layers.content_hash_at(origin, state);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1070,6 +1136,37 @@ mod tests {
         let mut h = Bytes::default();
         crisp.style.content_hash(&mut h);
         assert_eq!(h.0.last(), Some(&1));
+    }
+
+    #[test]
+    fn a_frame_hashes_its_time_only_when_something_animates() {
+        let mut frame = OverlayFrame::default();
+        frame.shapes.push(shape());
+        let still = hash(&frame);
+        frame.time = 2.0;
+        assert_eq!(hash(&frame), still);
+        frame.shapes[0].animations = Some(Box::new(
+            OverlayAnimations::default().with_opacity(AnimTrack::new(0.0, 1.0, 0.0, 1.0)),
+        ));
+        let at_two = hash(&frame);
+        frame.time = 3.0;
+        assert_ne!(hash(&frame), at_two);
+    }
+
+    #[test]
+    fn a_frame_hashes_its_layers() {
+        let mut frame = OverlayFrame::default();
+        frame.shapes.push(shape());
+        let plain = hash(&frame);
+        let mark = frame.layer_mark();
+        frame.shapes.push(shape());
+        let with_shape = hash(&frame);
+        assert_ne!(with_shape, plain);
+        frame.push_layer(mark, OverlayLayerStyle::default());
+        let layered = hash(&frame);
+        assert_ne!(layered, with_shape);
+        frame.layers[0].style.opacity = 0.5;
+        assert_ne!(hash(&frame), layered);
     }
 
     #[test]

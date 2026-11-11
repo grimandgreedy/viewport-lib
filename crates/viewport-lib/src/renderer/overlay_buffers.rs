@@ -25,6 +25,9 @@ pub(crate) struct GrowBuffer {
     min_capacity: u64,
     /// The bytes last written, kept by `write_changed` to skip identical writes.
     written: Vec<u8>,
+    /// The key the buffer's contents were last written under by
+    /// `write_keyed`, or `None` once anything else has written it.
+    key: Option<u64>,
 }
 
 impl GrowBuffer {
@@ -56,6 +59,7 @@ impl GrowBuffer {
             usage: usage | crate::gpu::BufferUsages::COPY_DST,
             min_capacity: 0,
             written: Vec::new(),
+            key: None,
         }
     }
 
@@ -85,6 +89,28 @@ impl GrowBuffer {
         buf
     }
 
+    /// Like `write`, but skips the upload when the buffer was last written
+    /// under the same `key`. The caller derives `key` from everything `data`
+    /// is built from, so data that stays the same from frame to frame costs
+    /// neither a copy nor a comparison of the bytes. Also returns whether the
+    /// data was uploaded.
+    pub(crate) fn write_keyed<T: bytemuck::Pod>(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: &[T],
+        key: u64,
+    ) -> (crate::gpu::Buffer, bool) {
+        if self.key == Some(key)
+            && let Some(buf) = &self.buf
+        {
+            return (buf.clone(), false);
+        }
+        let buf = self.write(device, queue, data);
+        self.key = Some(key);
+        (buf, true)
+    }
+
     /// Ensure capacity for `verts`, upload them at offset 0, and return a handle
     /// to the buffer. Reallocates only when the current buffer is too small;
     /// otherwise the existing allocation is reused and overwritten. The tail past
@@ -111,6 +137,7 @@ impl GrowBuffer {
         let buf = self.buf.as_ref().unwrap();
         queue.write_buffer(buf, 0, bytes);
         self.written.clear();
+        self.key = None;
         buf.clone()
     }
 }
