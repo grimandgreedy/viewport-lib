@@ -17,15 +17,26 @@
 //!   test.
 //! - The player: walked with the keyboard (or by the autopilot), outlined,
 //!   flashing when hit, followed by the camera with a dead zone.
-//! - Twelve point lights (eight torches, the player's lantern, three wisps)
-//!   through `Lighting2dItem`, with hard shadows from the walls, the plank
-//!   platforms and three standing-stone sprites.
+//! - A guard pacing the back lane, made of a spear sprite, a body sprite and
+//!   a shield mesh keyed with `painter_key` at one sort value, so the
+//!   critters walk in front of it and behind it as one unit.
+//! - An isometric map sheet above the start: Tiled's isometric layout, its
+//!   trees as tall tiles in a layer sorted by row, and a figure walking
+//!   between the rows.
+//! - Eight torches and three wisps as frame point lights through
+//!   `Lighting2dItem`, with hard shadows from the walls, the plank platforms
+//!   and three standing-stone sprites; the player's lantern as a cone light;
+//!   and a violet light over the guard restricted to the actors' painter
+//!   layer, so it lights them and not the tiles.
 //! - GPU particles with additive blend for the torch flames.
 //! - Bloom and vignette.
-//! - A HUD of screen overlays (health bar shapes, a score label, a minimap
-//!   mesh), a shop sign of vector art and a glowing trail on world overlay
-//!   layers, a world-sized name tag with a minimum size, and floating damage
-//!   numbers.
+//! - A HUD of screen overlays (health bar shapes, HP and score labels in a
+//!   bitmap font face built in code, a minimap mesh), a shop sign of vector
+//!   art and a glowing trail on world overlay layers, a world-sized name tag
+//!   with a minimum size, and floating damage numbers.
+//! - A switch to draw the scene at a 480 x 270 reference size, scaled up by
+//!   the largest whole multiple with bars, the HUD staying at the window's
+//!   resolution.
 //!
 //! The world itself is in `world.rs` and builds its frame without egui; this
 //! file maps the keys and the controls panel onto it.
@@ -82,6 +93,24 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut o.hud, "HUD");
     ui.checkbox(&mut o.autopilot, "Autopilot")
         .on_hover_text("Walks the player until a movement key is pressed");
+    ui.checkbox(&mut o.reference, "Reference size 480 x 270").on_hover_text(
+        "Draws the scene at 480 x 270 and scales it up by the largest whole multiple, with bars; the HUD stays at the window's resolution",
+    );
+
+    ui.separator();
+    ui.label(egui::RichText::new("Sorting, lights and text").strong());
+    ui.checkbox(&mut o.guard, "Guard: two sprites and a mesh")
+        .on_hover_text("Spear, body and shield keyed with painter_key at one sort value, so critters pass in front and behind as one unit");
+    ui.checkbox(&mut o.iso_sheet, "Isometric map sheet")
+        .on_hover_text("Above the start: trees as tall tiles sorted by row, and a figure walking between the rows");
+    ui.checkbox(&mut o.cone_lantern, "Cone lantern")
+        .on_hover_text("The player's lantern as a 2D cone light facing the way they walk; off, a point light. Clearest at night");
+    ui.add_enabled(o.guard, egui::Checkbox::new(&mut o.actor_light, "Actor-only light"))
+        .on_hover_text("A violet light over the guard that lights painter layer 1 (the actors) and not the tiles. Clearest at night");
+    ui.checkbox(&mut o.bitmap_hud, "Bitmap-font HUD")
+        .on_hover_text(
+            "HP and score in a 5 x 7 bitmap face, drawn at a whole multiple of its size",
+        );
     ui.horizontal(|ui| {
         if ui.button("Shake (G)").clicked() {
             st.pending.shake = true;

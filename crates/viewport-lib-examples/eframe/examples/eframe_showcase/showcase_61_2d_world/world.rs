@@ -13,20 +13,28 @@
 //! | y    | what                                                   |
 //! |------|--------------------------------------------------------|
 //! | +1.0 | the far hills (tilemap elevation -1)                   |
-//! | +0.5 | the critters, depth-tested so walls cover them         |
+//! | +0.8 | the isometric map sheet (tilemap elevation -0.8)       |
+//! | +0.5 | the critters and the guard, depth-tested so walls cover them |
 //! |  0.0 | the ground and walls (tilemap elevation 0)             |
 //! | -0.5 | the sign (world overlay elevation 0.5) and the stones  |
 //! | -1.0 | the player                                             |
 //! | -2.0 | the torch flames (GPU particles)                       |
 //!
-//! Sprites sort for the side view: the critters, the stones and the player
-//! share one painter layer with `-z` (the height of the feet) as the key, so
-//! whoever's feet are lower on screen stands nearer and covers the ones behind
-//! it, across the three batches. At equal keys the later batch draws on top:
-//! the player standing on the ground is in front of a stone, and behind it in
-//! the air.
+//! Sprites sort for the side view: the critters, the guard, the stones and
+//! the player share one painter layer, each keyed by `painter_key` from `-z`
+//! (the height of the feet) and a member index, so whoever's feet are lower
+//! on screen stands nearer and covers the ones behind it, across batches and
+//! item types. The guard is three parts at one sort value: a spear sprite
+//! (member 0), a body sprite (1) and a shield mesh (2), so it moves as one
+//! unit and critters walk in front of it and behind it. A stone is member 0
+//! and the player member 1, so the player standing on the ground is in front
+//! of a stone, and behind it in the air.
+//!
+//! The isometric map sheet is its own painter layer under the actors: a
+//! ground layer and a tree layer sorted by row, with a figure walking between
+//! the rows keyed `-feet y` like them.
 
-use glam::{DVec3, Vec2};
+use glam::{DVec2, DVec3, Mat4, Vec2, Vec3};
 
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
@@ -35,21 +43,25 @@ use viewport_lib_plugins::item_types::gpu_particles::{
     GpuParticleSystems, ParticleRender, SpawnShape, VelocityDist,
 };
 use viewport_lib_plugins::item_types::lighting_2d::{
-    Lighting2dItem, Lighting2dStats, Occluder2d, occluders_from_sprites, occluders_from_tilemap,
+    Light2d, Lighting2dItem, Lighting2dStats, Occluder2d, occluders_from_sprites,
+    occluders_from_tilemap,
 };
 use viewport_lib_plugins::item_types::sprite::{
     SpriteEffects, SpriteFlip, SpriteItem, SpriteLitParams, SpriteOrder, SpriteOutline,
     SpriteSizeMode,
 };
 use viewport_lib_plugins::item_types::tilemap::{
-    Tile, Tilemap, TilemapId, TilemapItem, TilemapPlane, Tileset,
+    Tile, TileOrientation, TileSize, Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPainter,
+    TilemapPlane, Tileset,
 };
 use vpl::{
-    ActionFrame, Alignment, AnchorX, AnchorY, Camera2d, Camera2dController, CameraFrame, Candela,
-    Colour, FillRule, FrameData, FrameStats, LabelItem, LightSource, LineCap, OverlayBlend,
-    OverlayFill, OverlayFrame, OverlayMeshItem, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, Plane2d, Rect2d, ShadowLayer, SpriteBlend, SubPath,
+    ActionFrame, Alignment, AnchorX, AnchorY, BitmapFont, BitmapFontGlyph, Camera2d,
+    Camera2dController, CameraFrame, Candela, Colour, FillRule, FontHandle, FrameData, FrameStats,
+    LabelItem, LightSource, LineCap, MeshId, MeshInstanceItem, OverlayBlend, OverlayFill,
+    OverlayFrame, OverlayMeshItem, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, Plane2d, Presentation, Rect2d, ReferenceFit, ShadowLayer, SpriteBlend, SubPath,
     TextureData, TextureFilter, TextureId, WorldOverlayLayer, WorldPlane, WorldTextSize,
+    painter_key,
 };
 
 /// World units per ground cell. One texel of art is one world unit.
@@ -65,7 +77,8 @@ const SIDE_LAYER: u32 = 1;
 pub(crate) const CRITTERS: usize = 300;
 
 // Atlas cells, eight to a row. Row 0 holds the tiles, row 1 the critter walk
-// cycle and the wisp, rows 2 and 3 the player's 8 x 16 frames and the stone.
+// cycle and the wisp, rows 2 and 3 the player's 8 x 16 frames, the stone and
+// the guard's spear.
 const GRASS: u32 = 0;
 const DIRT: u32 = 1;
 const STONE: u32 = 2;
@@ -103,6 +116,35 @@ const GRAVITY: f32 = 560.0;
 
 /// How long a damage number floats, in seconds.
 const DAMAGE_LIFE: f32 = 1.1;
+
+/// The size the scene draws at under the reference presentation, and the
+/// zoom it opens at there: two reference pixels per texel.
+const REFERENCE_SIZE: [u32; 2] = [480, 270];
+const REFERENCE_ZOOM: f32 = 0.5;
+
+/// The guard's lane, in the middle of the critters' lane, and its patrol.
+const GUARD_Z: f32 = GROUND_Z + 3.5;
+const GUARD_PATROL: (f32, f32) = (150.0, 300.0);
+const GUARD_SPEED: f32 = 16.0;
+
+/// The isometric map sheet: its painter layer (under the actors), its size in
+/// cells, its tile size in texels (one texel per world unit), and the plane
+/// position of its top-left corner.
+const ISO_LAYER: u32 = 0;
+const ISO_COLS: i32 = 6;
+const ISO_ROWS: i32 = 6;
+const ISO_TILE: [u32; 2] = [16, 8];
+const ISO_TOP_LEFT: Vec2 = Vec2::new(160.0, 125.0);
+// Slots of the isometric atlas: two ground diamonds, and a tree two cells
+// tall in slot 3.
+const ISO_LIGHT: u32 = 0;
+const ISO_DARK: u32 = 1;
+const ISO_TREE: u32 = 3;
+/// Trees on the sheet, as Tiled's `(x, y)` with row 0 at the top.
+const ISO_TREES: [(i32, i32); 6] = [(1, 1), (3, 1), (2, 3), (4, 3), (1, 5), (4, 5)];
+/// The figure's walk round the sheet, through Tiled cells.
+const ISO_WALK: [(i32, i32); 4] = [(0, 2), (5, 2), (5, 4), (0, 4)];
+const ISO_WALK_SPEED: f32 = 10.0;
 
 // ---------------------------------------------------------------------------
 // Input and options
@@ -144,6 +186,20 @@ pub(crate) struct WorldOptions {
     pub outline: bool,
     /// Walk, jump and fight on a script until a movement key is pressed.
     pub autopilot: bool,
+    /// Draw the scene at [`REFERENCE_SIZE`] and scale it up by the largest
+    /// whole multiple that fits, with bars; off draws at the window's size.
+    pub reference: bool,
+    /// The guard: two sprites and a mesh sorted as one by composed keys.
+    pub guard: bool,
+    /// The isometric map sheet.
+    pub iso_sheet: bool,
+    /// The player's lantern as a 2D cone light facing the way they walk;
+    /// off, a frame point light.
+    pub cone_lantern: bool,
+    /// A light over the guard that lights the actors' painter layer only.
+    pub actor_light: bool,
+    /// The HP and score labels in a bitmap font face.
+    pub bitmap_hud: bool,
 }
 
 impl Default for WorldOptions {
@@ -158,6 +214,12 @@ impl Default for WorldOptions {
             hud: true,
             outline: true,
             autopilot: true,
+            reference: false,
+            guard: true,
+            iso_sheet: true,
+            cone_lantern: true,
+            actor_light: true,
+            bitmap_hud: true,
         }
     }
 }
@@ -175,13 +237,18 @@ pub(crate) struct WorldStats {
 
 /// What [`build_assets`] uploads: the atlas, each tilemap once per filter so
 /// the pixel-art switch picks a handle rather than re-uploading, a glow
-/// texture, and one particle system per torch.
+/// texture, one particle system per torch, the guard's shield mesh and the
+/// HUD's bitmap face.
 pub(crate) struct WorldAssets {
     pub atlas: TextureId,
     /// Nearest, then linear.
     pub ground: [TilemapId; 2],
     pub hills: [TilemapId; 2],
+    pub iso_ground: [TilemapId; 2],
+    pub iso_trees: [TilemapId; 2],
     pub torches: Vec<GpuParticleSystemId>,
+    pub shield: Option<MeshId>,
+    pub hud_font: Option<FontHandle>,
 }
 
 /// Upload the world's textures and maps and create its particle systems.
@@ -198,6 +265,10 @@ pub(crate) fn build_assets(
         .resources_mut()
         .upload_texture(device, queue, glow_texture())
         .expect("the glow is a well-formed sRGB image");
+    let iso_atlas = renderer
+        .resources_mut()
+        .upload_texture(device, queue, iso_atlas())
+        .expect("the isometric atlas is a well-formed sRGB image");
     let filters = [TextureFilter::Nearest, TextureFilter::Linear];
     let mut upload = |map: Tilemap| {
         renderer
@@ -206,6 +277,13 @@ pub(crate) fn build_assets(
     };
     let ground = filters.map(|f| upload(ground_map(tileset(Some(atlas), f))));
     let hills = filters.map(|f| upload(hills_map(tileset(Some(atlas), f))));
+    let iso_ground = filters.map(|f| upload(iso_ground_map(iso_tileset(Some(iso_atlas), f))));
+    let iso_trees = filters.map(|f| upload(iso_trees_map(iso_tileset(Some(iso_atlas), f))));
+    let shield = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &vpl::primitives::disk(3.0, 20))
+        .ok();
+    let hud_font = renderer.resources_mut().upload_bitmap_font(hud_font()).ok();
 
     let mut config = GpuParticleSystemConfig::default();
     config.capacity = 512;
@@ -231,7 +309,11 @@ pub(crate) fn build_assets(
         atlas,
         ground,
         hills,
+        iso_ground,
+        iso_trees,
         torches,
+        shield,
+        hud_font,
     }
 }
 
@@ -306,6 +388,12 @@ const STONE_ART: [&str; 16] = [
     "xxxxxxxx", "xxxXxxxx", "xxxxxxmx", "xXxxxxxx", "xxxxxxxx", "mxxxXxxm", "mmxxxxmm", "mmmxxmmm",
 ];
 
+/// The guard's spear, held upright beside the body.
+const SPEAR_ART: [&str; 16] = [
+    "...s....", "..sss...", "..sss...", "...s....", "..kwk...", "...w....", "...w....", "...w....",
+    "...w....", "...w....", "...w....", "...w....", "...w....", "...w....", "...w....", "...w....",
+];
+
 fn palette(c: char) -> [u8; 4] {
     match c {
         'g' => [120, 205, 95, 255],
@@ -367,6 +455,7 @@ fn atlas() -> TextureData {
         paint(f, 2, &rows);
     }
     paint(4, 2, &STONE_ART);
+    paint(5, 2, &SPEAR_ART);
     // The wisp: a soft round glow in cell (4, 1).
     for y in 0..8 {
         for x in 0..8 {
@@ -391,6 +480,192 @@ fn glow_texture() -> TextureData {
         }
     }
     TextureData::srgb(n as u32, n as u32, pixels)
+}
+
+/// The isometric sheet's atlas, four 16 x 8 slots to a row over two rows:
+/// a light and a dark grass diamond, and in slot 3 (running into slot 7) a
+/// tree two cells tall whose trunk stands on the diamond's centre.
+fn iso_atlas() -> TextureData {
+    let [tw, th] = ISO_TILE.map(|s| s as usize);
+    let (w, h) = (tw * 4, th * 2);
+    let mut pixels = vec![0u8; w * h * 4];
+    let mut put = |x: usize, y: usize, rgba: [u8; 4]| {
+        let at = (y * w + x) * 4;
+        pixels[at..at + 4].copy_from_slice(&rgba);
+    };
+    for (slot, base) in [[118, 190, 96, 255], [84, 150, 74, 255]]
+        .into_iter()
+        .enumerate()
+    {
+        for y in 0..th {
+            for x in 0..tw {
+                let d = ((x as f32 + 0.5) - tw as f32 * 0.5).abs() / (tw as f32 * 0.5)
+                    + ((y as f32 + 0.5) - th as f32 * 0.5).abs() / (th as f32 * 0.5);
+                if d > 1.0 {
+                    continue;
+                }
+                let rgba = if d > 0.8 { [52, 98, 50, 255] } else { base };
+                put(slot * tw + x, y, rgba);
+            }
+        }
+    }
+    // The tree's foot is half a cell above the bottom of its image, where the
+    // diamond's centre is.
+    let foot = (2 * th) as f32 - th as f32 * 0.5;
+    for y in 0..2 * th {
+        for x in 0..tw {
+            let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+            let canopy = Vec2::new(tw as f32 * 0.5, 5.0);
+            let r = (p - canopy).length();
+            let rgba = if r < 5.0 {
+                if r < 3.2 {
+                    [52, 132, 62, 255]
+                } else {
+                    [36, 96, 46, 255]
+                }
+            } else if (p.x - tw as f32 * 0.5).abs() < 1.0 && p.y < foot && p.y > canopy.y {
+                [112, 76, 46, 255]
+            } else {
+                continue;
+            };
+            put(ISO_TREE as usize * tw + x, y, rgba);
+        }
+    }
+    TextureData::srgb(w as u32, h as u32, pixels)
+}
+
+/// The HUD's bitmap face: 5 x 7 capitals and digits on an 8-pixel size, white
+/// on transparent so the label colour fills them.
+const HUD_GLYPHS: &[(char, [&str; 7])] = &[
+    (
+        '0',
+        [
+            ".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###.",
+        ],
+    ),
+    (
+        '1',
+        [
+            "..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###.",
+        ],
+    ),
+    (
+        '2',
+        [
+            ".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####",
+        ],
+    ),
+    (
+        '3',
+        [
+            "####.", "....#", "....#", ".###.", "....#", "....#", "####.",
+        ],
+    ),
+    (
+        '4',
+        [
+            "...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#.",
+        ],
+    ),
+    (
+        '5',
+        [
+            "#####", "#....", "####.", "....#", "....#", "#...#", ".###.",
+        ],
+    ),
+    (
+        '6',
+        [
+            ".###.", "#....", "#....", "####.", "#...#", "#...#", ".###.",
+        ],
+    ),
+    (
+        '7',
+        [
+            "#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#...",
+        ],
+    ),
+    (
+        '8',
+        [
+            ".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###.",
+        ],
+    ),
+    (
+        '9',
+        [
+            ".###.", "#...#", "#...#", ".####", "....#", "....#", ".###.",
+        ],
+    ),
+    (
+        'C',
+        [
+            ".###.", "#...#", "#....", "#....", "#....", "#...#", ".###.",
+        ],
+    ),
+    (
+        'E',
+        [
+            "#####", "#....", "#....", "####.", "#....", "#....", "#####",
+        ],
+    ),
+    (
+        'H',
+        [
+            "#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#",
+        ],
+    ),
+    (
+        'O',
+        [
+            ".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###.",
+        ],
+    ),
+    (
+        'P',
+        [
+            "####.", "#...#", "#...#", "####.", "#....", "#....", "#....",
+        ],
+    ),
+    (
+        'R',
+        [
+            "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#",
+        ],
+    ),
+    (
+        'S',
+        [
+            ".####", "#....", "#....", ".###.", "....#", "....#", "####.",
+        ],
+    ),
+];
+
+/// The HUD face as a `BitmapFont`: one page, each glyph six pixels from the
+/// next, a space, and a line of nine pixels with the baseline at seven.
+fn hud_font() -> BitmapFont {
+    let (pw, ph) = (128u32, 8u32);
+    let mut page = vec![0u8; (pw * ph * 4) as usize];
+    for (i, (_, rows)) in HUD_GLYPHS.iter().enumerate() {
+        let x0 = i as u32 * 6;
+        for (y, row) in rows.iter().enumerate() {
+            for (x, ch) in row.chars().enumerate() {
+                if ch == '#' {
+                    let at = ((y as u32 * pw + x0 + x as u32) * 4) as usize;
+                    page[at..at + 4].copy_from_slice(&[255; 4]);
+                }
+            }
+        }
+    }
+    let mut font = BitmapFont::new(8, 9, 7, vec![TextureData::srgb(pw, ph, page)])
+        .with_glyph(' ' as u32, BitmapFontGlyph::new(0, [0, 0, 0, 0], [0, 0], 4));
+    for (i, (c, _)) in HUD_GLYPHS.iter().enumerate() {
+        font = font.with_glyph(
+            *c as u32,
+            BitmapFontGlyph::new(0, [i as u32 * 6, 0, 5, 7], [0, 0], 6),
+        );
+    }
+    font
 }
 
 /// The UV rect of an atlas cell `w` x `h` cells from `(col, row)`, with row 0
@@ -473,6 +748,56 @@ fn hills_map(set: Tileset) -> Tilemap {
     map
 }
 
+/// The isometric sheet's grid: Tiled's isometric layout on 16 x 8 cells.
+fn iso_tileset(atlas: Option<TextureId>, filter: TextureFilter) -> Tileset {
+    let mut set = Tileset::new(atlas, ISO_TILE, 4);
+    set.filter = filter;
+    set.orientation = TileOrientation::Isometric;
+    set.tile_sizes.push(TileSize::new(ISO_TREE, [16, 16]));
+    set
+}
+
+/// The sheet's ground: a checker of diamonds, Tiled's cell `(x, y)` stored
+/// at `(x, -y)` so row 0 is the top of the sheet.
+fn iso_ground_map(set: Tileset) -> Tilemap {
+    let mut map = Tilemap::sparse(set, 8);
+    for y in 0..ISO_ROWS {
+        for x in 0..ISO_COLS {
+            let tile = if (x + y) % 2 == 0 {
+                ISO_LIGHT
+            } else {
+                ISO_DARK
+            };
+            map.set(x, -y, Tile::new(tile));
+        }
+    }
+    map
+}
+
+/// The sheet's trees, each a tall tile standing on its cell.
+fn iso_trees_map(set: Tileset) -> Tilemap {
+    let mut map = Tilemap::sparse(set, 8);
+    for (x, y) in ISO_TREES {
+        map.set(x, -y, Tile::new(ISO_TREE));
+    }
+    map
+}
+
+/// The origin that puts the sheet's bounding box's top-left corner at
+/// [`ISO_TOP_LEFT`], one world unit per texel.
+fn iso_origin(set: &Tileset) -> Vec2 {
+    let (mut min_x, mut max_y) = (f64::MAX, f64::MIN);
+    for y in 0..ISO_ROWS {
+        for x in 0..ISO_COLS {
+            let o = set.cell_origin(x, -y);
+            min_x = min_x.min(o.x);
+            max_y = max_y.max(o.y + 1.0);
+        }
+    }
+    let [tw, th] = ISO_TILE.map(|s| s as f32);
+    ISO_TOP_LEFT - Vec2::new(min_x as f32 * tw, max_y as f32 * th)
+}
+
 fn solid(tile: Tile) -> bool {
     matches!(tile.index, GRASS | DIRT | STONE | PLANK)
 }
@@ -509,6 +834,14 @@ struct Player {
     health: f32,
 }
 
+/// The guard pacing the back lane.
+struct Guard {
+    x: f32,
+    /// `1.0` walking right, `-1.0` left.
+    dir: f32,
+    phase: f32,
+}
+
 struct Damage {
     at: Vec2,
     age: f32,
@@ -530,14 +863,28 @@ pub(crate) struct World {
     pub options: WorldOptions,
     pub camera: Camera2d,
     controller: Camera2dController,
+    /// The viewport's size in logical pixels and its pixels per point; under
+    /// the reference presentation the camera draws at the reference size
+    /// instead.
+    window_size: Vec2,
     pixels_per_point: f32,
+    /// Whether the camera is set up for the reference presentation, and the
+    /// zoom kept for the other presentation.
+    presented_reference: bool,
+    other_zoom: f32,
     time: f32,
     dt: f32,
     map: Tilemap,
     wall_occluders: Vec<Occluder2d>,
     minimap: OverlayMeshItem,
     critters: Vec<Critter>,
+    guard: Guard,
     player: Player,
+    /// The isometric sheet's grid (no texture), its origin, and how far the
+    /// figure has walked round it.
+    iso_set: Tileset,
+    iso_origin: Vec2,
+    iso_walked: f32,
     autopilot: Autopilot,
     damage: Vec<Damage>,
     score: u32,
@@ -551,6 +898,7 @@ impl World {
             matches!(t.index, STONE | PLANK)
         });
         let minimap = minimap_mesh(&map);
+        let iso_set = iso_tileset(None, TextureFilter::Nearest);
         let mut seed = 0x2D5E_ED01;
         let extent = COLS as f32 * CELL;
         let critters = (0..CRITTERS)
@@ -585,13 +933,24 @@ impl World {
             options: WorldOptions::default(),
             camera,
             controller: Camera2dController::new_stateless(),
+            window_size: Vec2::ONE,
             pixels_per_point: 1.0,
+            presented_reference: false,
+            other_zoom: REFERENCE_ZOOM,
             time: 0.0,
             dt: 0.0,
             map,
             wall_occluders,
             minimap,
             critters,
+            guard: Guard {
+                x: GUARD_PATROL.0,
+                dir: 1.0,
+                phase: 0.0,
+            },
+            iso_origin: iso_origin(&iso_set),
+            iso_set,
+            iso_walked: 0.0,
             player: Player {
                 position: start,
                 velocity: Vec2::ZERO,
@@ -637,6 +996,8 @@ impl World {
         }
         self.step_player(&input, dt);
         self.step_critters(dt);
+        self.step_guard(dt);
+        self.iso_walked += ISO_WALK_SPEED * dt;
         if input.attack {
             self.attack();
         }
@@ -651,13 +1012,29 @@ impl World {
         }
         self.damage.retain(|d| d.age < DAMAGE_LIFE);
 
+        // Under the reference presentation the scene draws at the reference
+        // size with one pixel per point; each presentation keeps its own zoom.
+        self.window_size = viewport.max(Vec2::ONE);
+        self.pixels_per_point = pixels_per_point.max(0.25);
+        let camera = &mut self.camera;
+        if self.options.reference != self.presented_reference {
+            self.presented_reference = self.options.reference;
+            let zoom = camera.units_per_pixel();
+            camera.set_units_per_pixel(self.other_zoom);
+            self.other_zoom = zoom;
+        }
+        if self.options.reference {
+            let [w, h] = REFERENCE_SIZE;
+            camera.set_viewport_size(Vec2::new(w as f32, h as f32));
+            camera.pixels_per_point = 1.0;
+        } else {
+            camera.set_viewport_size(self.window_size);
+            camera.pixels_per_point = self.pixels_per_point;
+        }
+
         // Follow the player's chest with pan and zoom on top. For pixel art
         // the camera draws at a whole number of pixels per texel and snaps
         // its position, while keeping the unsnapped zoom the wheel moves.
-        self.pixels_per_point = pixels_per_point.max(0.25);
-        let camera = &mut self.camera;
-        camera.set_viewport_size(viewport.max(Vec2::ONE));
-        camera.pixels_per_point = self.pixels_per_point;
         camera.snap_to_pixels = self.options.pixel_art;
         camera.snap_zoom_to_texel = self.options.pixel_art.then_some(1.0);
         camera.follow(self.player.position + Vec2::new(0.0, 12.0));
@@ -769,6 +1146,37 @@ impl World {
         }
     }
 
+    fn step_guard(&mut self, dt: f32) {
+        let g = &mut self.guard;
+        g.x += g.dir * GUARD_SPEED * dt;
+        if g.x > GUARD_PATROL.1 {
+            g.dir = -1.0;
+        } else if g.x < GUARD_PATROL.0 {
+            g.dir = 1.0;
+        }
+        g.phase = (g.phase + dt * 6.0) % 4.0;
+    }
+
+    /// The plane position of the isometric figure's feet, and whether it is
+    /// walking left.
+    fn iso_figure(&self, item: &TilemapItem) -> (Vec2, bool) {
+        let corners = ISO_WALK.map(|(x, y)| {
+            let p = item.cell_to_world(&self.iso_set, x, -y, DVec2::ZERO);
+            Vec2::new(p.x as f32, p.z as f32)
+        });
+        let lengths =
+            std::array::from_fn::<f32, 4, _>(|i| corners[i].distance(corners[(i + 1) % 4]));
+        let mut d = self.iso_walked % lengths.iter().sum::<f32>();
+        for i in 0..4 {
+            let (a, b) = (corners[i], corners[(i + 1) % 4]);
+            if d <= lengths[i] {
+                return (a.lerp(b, d / lengths[i]), b.x < a.x);
+            }
+            d -= lengths[i];
+        }
+        (corners[0], false)
+    }
+
     /// Hit the critter nearest the player's front, if one is close.
     fn attack(&mut self) {
         let p = &self.player;
@@ -855,9 +1263,11 @@ impl World {
     // The frame
     // -----------------------------------------------------------------------
 
-    /// The camera this frame draws through.
+    /// The camera this frame draws through. The frame's viewport is the
+    /// window's even under the reference presentation; the camera's aspect is
+    /// the size the scene draws at.
     pub(crate) fn camera_frame(&self) -> CameraFrame {
-        let size = self.camera.viewport_size();
+        let size = self.window_size;
         CameraFrame::from_camera(&self.camera.camera(), [size.x, size.y])
             .with_pixels_per_point(self.pixels_per_point)
     }
@@ -869,6 +1279,14 @@ impl World {
         fd.camera = self.camera_frame();
         fd.viewport.show_axes_indicator = false;
         fd.viewport.show_grid = false;
+        if o.reference {
+            fd.viewport.presentation = Presentation::reference(
+                REFERENCE_SIZE,
+                ReferenceFit::IntegerBars {
+                    colour: Colour::srgb(0.03, 0.03, 0.05, 1.0),
+                },
+            );
+        }
         fd.viewport.background_colour = Some(if o.night {
             Colour::srgb(0.02, 0.03, 0.08, 1.0)
         } else {
@@ -902,9 +1320,15 @@ impl World {
         near.cell_size = [CELL, CELL];
         near.time = self.time;
         near.pixel_snap = o.pixel_art;
+        let (iso_ground, iso_trees) = self.iso_items(assets, o);
+        let iso_figure = self.iso_figure_item(&iso_ground, assets.atlas, o);
         let tilemaps = fd.scene.items_mut::<TilemapItem>();
         tilemaps.push(far);
         tilemaps.push(near);
+        if o.iso_sheet {
+            tilemaps.push(iso_ground);
+            tilemaps.push(iso_trees);
+        }
 
         let stones = self.stones_item(assets.atlas, o);
         let mut light = Lighting2dItem::default();
@@ -921,6 +1345,7 @@ impl World {
         light
             .occluders
             .extend(occluders_from_sprites(&stones, TilemapPlane::Xz));
+        light.lights = self.plane_lights(o);
         fd.scene.items_mut::<Lighting2dItem>().push(light);
 
         let sprites = fd.scene.items_mut::<SpriteItem>();
@@ -928,6 +1353,15 @@ impl World {
         sprites.push(stones);
         sprites.push(self.player_item(assets.atlas, o));
         sprites.push(self.wisps_item(assets.atlas, o));
+        if o.guard {
+            sprites.push(self.guard_item(assets.atlas, o));
+        }
+        if o.iso_sheet {
+            sprites.push(iso_figure);
+        }
+        if let (true, Some(shield)) = (o.guard, assets.shield) {
+            fd.scene.mesh_instances.push(self.shield_item(shield));
+        }
 
         let particles = fd.scene.items_mut::<GpuParticleSystemItem>();
         for (i, (&id, &(col, row))) in assets.torches.iter().zip(TORCHES.iter()).enumerate() {
@@ -952,15 +1386,44 @@ impl World {
             particles.push(item);
         }
 
-        fd.effects.lighting.lights = self.lights();
+        fd.effects.lighting.lights = self.lights(o);
         fd.scene.world_overlays.push(shop_sign(self.time));
         fd.scene.world_overlays.push(ley_line(self.time));
-        fd.overlays = self.overlays(stats);
+        let hud_font = assets.hud_font.filter(|_| o.bitmap_hud);
+        fd.overlays = self.overlays(stats, hud_font);
     }
 
-    /// The frame's point lights: the torches, the player's lantern and the
-    /// wisps, each placed on the plane in front of the ground.
-    fn lights(&self) -> Vec<LightSource> {
+    /// The light item's own lights, in plane coordinates: the player's
+    /// lantern as a cone facing the way they walk, and a violet glow over the
+    /// guard that lights only the actors' painter layer, so the tiles behind
+    /// it stay dark.
+    fn plane_lights(&self, o: WorldOptions) -> Vec<Light2d> {
+        let mut lights = Vec::new();
+        if o.cone_lantern {
+            let p = &self.player;
+            let dir = if p.facing_left { -1.0 } else { 1.0 };
+            let at = p.position + Vec2::new(0.0, 9.0);
+            lights.push(
+                Light2d::cone([at.x, at.y], 110.0, [dir, -0.2], 0.3, 0.6)
+                    .with_colour(Colour::linear_rgb(1.0, 0.92, 0.75))
+                    .with_intensity(1.4),
+            );
+        }
+        if o.guard && o.actor_light {
+            lights.push(
+                Light2d::point([self.guard.x, GUARD_Z + 9.0], 40.0)
+                    .with_colour(Colour::linear_rgb(0.75, 0.3, 1.0))
+                    .with_intensity(2.0)
+                    .with_layers(SIDE_LAYER..=SIDE_LAYER),
+            );
+        }
+        lights
+    }
+
+    /// The frame's point lights: the torches, the player's lantern unless it
+    /// is the cone, and the wisps, each placed on the plane in front of the
+    /// ground.
+    fn lights(&self, o: WorldOptions) -> Vec<LightSource> {
         let t = self.time;
         let at = |p: Vec2| DVec3::new(p.x as f64, -4.0, p.y as f64);
         let mut lights = Vec::new();
@@ -976,14 +1439,16 @@ impl World {
             l.colour = Colour::linear_rgb(1.0, 0.62, 0.3);
             lights.push(l);
         }
-        let mut lantern = LightSource::point_candela(
-            at(self.player.position + Vec2::new(0.0, 9.0)),
-            Candela(1.0),
-            60.0,
-            0.0,
-        );
-        lantern.colour = Colour::linear_rgb(1.0, 0.92, 0.75);
-        lights.push(lantern);
+        if !o.cone_lantern {
+            let mut lantern = LightSource::point_candela(
+                at(self.player.position + Vec2::new(0.0, 9.0)),
+                Candela(1.0),
+                60.0,
+                0.0,
+            );
+            lantern.colour = Colour::linear_rgb(1.0, 0.92, 0.75);
+            lights.push(lantern);
+        }
         for p in self.wisps() {
             let mut l = LightSource::point_candela(at(p), Candela(0.9), 50.0, 0.0);
             l.colour = Colour::linear_rgb(0.35, 0.85, 1.0);
@@ -1011,7 +1476,8 @@ impl World {
                 SpriteFlip::NONE
             });
             // Feet lower on screen stand nearer, so they draw later.
-            item.sort_keys.push(-c.position.y);
+            item.sort_keys
+                .push(painter_key(SIDE_LAYER, -c.position.y, 0).key);
             item.colours.push(c.tint);
             effects.flash.push(c.flash);
         }
@@ -1029,7 +1495,8 @@ impl World {
             item.positions.push([x, -0.5, GROUND_Z]);
             item.sizes.push([8.0, 16.0]);
             item.uv_rects.push(cell_uv(4, 2, 1, 2));
-            item.sort_keys.push(-GROUND_Z);
+            item.sort_keys
+                .push(painter_key(SIDE_LAYER, -GROUND_Z, 0).key);
         }
         item
     }
@@ -1043,7 +1510,8 @@ impl World {
         };
         let frame = if p.on_ground { p.phase as usize % 4 } else { 3 };
         item.positions.push([p.position.x, -1.0, p.position.y]);
-        item.sort_keys.push(-p.position.y);
+        item.sort_keys
+            .push(painter_key(SIDE_LAYER, -p.position.y, 1).key);
         item.sizes.push([8.0, 16.0]);
         item.uv_rects.push(cell_uv(frame, 2, 1, 2));
         item.flips.push(if p.facing_left {
@@ -1057,6 +1525,107 @@ impl World {
             effects.outline = Some(SpriteOutline::new(Colour::srgb(0.1, 0.06, 0.04, 1.0), 2.0));
         }
         item.effects = Some(effects);
+        item
+    }
+
+    /// The guard's spear (member 0, behind) and body (member 1), keyed at the
+    /// guard's sort value so the critters' keys fall either side of the
+    /// whole guard. Behind the walls like the critters.
+    fn guard_item(&self, atlas: TextureId, o: WorldOptions) -> SpriteItem {
+        let g = &self.guard;
+        let mut item = pixel_sprites(Some(atlas), o);
+        item.order = SpriteOrder::Painter {
+            layer: SIDE_LAYER,
+            depth_test: true,
+        };
+        let flip = if g.dir < 0.0 {
+            SpriteFlip::HORIZONTAL
+        } else {
+            SpriteFlip::NONE
+        };
+        let frame = g.phase as usize % 4;
+        let parts = [
+            (g.x + g.dir * 4.0, cell_uv(5, 2, 1, 2), 0),
+            (g.x, cell_uv(frame, 2, 1, 2), 1),
+        ];
+        for (x, uv, member) in parts {
+            item.positions.push([x, 0.5, GUARD_Z]);
+            item.sizes.push([8.0, 16.0]);
+            item.uv_rects.push(uv);
+            item.flips.push(flip);
+            item.sort_keys
+                .push(painter_key(SIDE_LAYER, -GUARD_Z, member).key);
+        }
+        // Grey armour where the player wears blue.
+        item.colours = vec![Colour::WHITE, Colour::srgb(0.8, 0.7, 0.7, 1.0)];
+        item
+    }
+
+    /// The guard's round shield, a flat mesh in front of the body (member 2).
+    /// The disc lies on the XY plane, so it is turned to face the camera.
+    fn shield_item(&self, mesh: MeshId) -> MeshInstanceItem {
+        let g = &self.guard;
+        let at = Vec3::new(g.x + g.dir * 2.5, 0.45, GUARD_Z + 6.0);
+        let mut item = MeshInstanceItem::default();
+        item.mesh_id = mesh;
+        item.transforms = vec![
+            (Mat4::from_translation(at) * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2))
+                .to_cols_array_2d(),
+        ];
+        item.colours = vec![Colour::srgb(0.95, 0.72, 0.22, 1.0)];
+        item.painter = Some(painter_key(SIDE_LAYER, -GUARD_Z, 2));
+        item
+    }
+
+    /// The isometric sheet's ground (cutout) and trees (blended, one painter
+    /// batch per row at key `-y`).
+    fn iso_items(&self, assets: &WorldAssets, o: WorldOptions) -> (TilemapItem, TilemapItem) {
+        let which = if o.pixel_art { 0 } else { 1 };
+        let place = |id: TilemapId| {
+            let mut item = TilemapItem::new(id);
+            item.plane = TilemapPlane::Xz;
+            item.origin = self.iso_origin.to_array();
+            item.cell_size = ISO_TILE.map(|s| s as f32);
+            item.elevation = -0.8;
+            item.pixel_snap = o.pixel_art;
+            item
+        };
+        let ground = place(assets.iso_ground[which]);
+        let mut trees = place(assets.iso_trees[which]);
+        trees.draw = TilemapDraw::Blended {
+            layer: ISO_LAYER,
+            depth_test: false,
+            painter: TilemapPainter::PerRow { offset: 0.0 },
+        };
+        (ground, trees)
+    }
+
+    /// The figure walking round the sheet, keyed `-feet y` like the tree
+    /// rows, so a tree whose row is lower on the sheet covers it and one
+    /// higher up stands behind it.
+    fn iso_figure_item(
+        &self,
+        ground: &TilemapItem,
+        atlas: TextureId,
+        o: WorldOptions,
+    ) -> SpriteItem {
+        let (feet, left) = self.iso_figure(ground);
+        let mut item = pixel_sprites(Some(atlas), o);
+        item.order = SpriteOrder::Painter {
+            layer: ISO_LAYER,
+            depth_test: false,
+        };
+        item.positions.push([feet.x, 0.7, feet.y]);
+        item.sizes.push([8.0, 16.0]);
+        let frame = (self.iso_walked * 0.6) as usize % 4;
+        item.uv_rects.push(cell_uv(frame, 2, 1, 2));
+        item.flips.push(if left {
+            SpriteFlip::HORIZONTAL
+        } else {
+            SpriteFlip::NONE
+        });
+        item.colours.push(Colour::srgb(0.6, 1.0, 0.6, 1.0));
+        item.sort_keys.push(-feet.y);
         item
     }
 
@@ -1081,7 +1650,8 @@ impl World {
     // -----------------------------------------------------------------------
 
     /// The screen overlays: the HUD, the name tag and the damage numbers.
-    fn overlays(&self, stats: &WorldStats) -> OverlayFrame {
+    /// `hud_font` draws the HP and score labels in a bitmap face.
+    fn overlays(&self, stats: &WorldStats, hud_font: Option<FontHandle>) -> OverlayFrame {
         let mut ovl = OverlayFrame::default();
         ovl.time = self.time as f64;
         let p = &self.player;
@@ -1112,13 +1682,21 @@ impl World {
             );
         }
         if self.options.hud {
-            self.hud(&mut ovl, stats);
+            self.hud(&mut ovl, stats, hud_font);
         }
         ovl
     }
 
-    fn hud(&self, ovl: &mut OverlayFrame, stats: &WorldStats) {
-        let size = self.camera.viewport_size();
+    /// The HUD, laid out in the window's logical pixels: screen overlays draw
+    /// over the scaled scene at the window's resolution under either
+    /// presentation.
+    fn hud(&self, ovl: &mut OverlayFrame, stats: &WorldStats, hud_font: Option<FontHandle>) {
+        let size = self.window_size;
+        // A bitmap face draws at whole multiples of its 8-pixel size.
+        let face = |label: LabelItem| match hud_font {
+            Some(font) => label.with_font(font),
+            None => label,
+        };
         let panel = Colour::srgb(0.05, 0.06, 0.1, 0.72);
         let rim = OverlayStroke::new(1.0, Colour::srgb(0.75, 0.8, 0.95, 0.6));
 
@@ -1132,14 +1710,14 @@ impl World {
             .with_fill(OverlayFill::Solid(panel))
             .with_stroke(rim.clone()),
         );
-        ovl.labels.push(
+        ovl.labels.push(face(
             LabelItem::new("HP")
                 .with_position([28.0, 34.0])
                 .with_align_y(AnchorY::Middle)
                 .with_font_size(14.0)
                 .with_colour(Colour::srgb(1.0, 0.85, 0.8, 1.0))
                 .with_z_order(2),
-        );
+        ));
         let frac = self.player.health / 100.0;
         let (bx, by, bw, bh) = (56.0, 27.0, 180.0, 14.0);
         ovl.shapes.push(
@@ -1177,14 +1755,14 @@ impl World {
             .with_fill(OverlayFill::Solid(panel))
             .with_stroke(rim.clone()),
         );
-        ovl.labels.push(
+        ovl.labels.push(face(
             LabelItem::new(format!("SCORE {:06}", self.score))
                 .with_position([size.x - 28.0, 31.0])
                 .with_align(Alignment::new(AnchorX::Right, AnchorY::Middle))
                 .with_font_size(16.0)
                 .with_colour(Colour::srgb(1.0, 0.9, 0.45, 1.0))
                 .with_z_order(2),
-        );
+        ));
 
         // The minimap: the map as one mesh, the view as a stroked rect, and
         // the player and torches as dots.

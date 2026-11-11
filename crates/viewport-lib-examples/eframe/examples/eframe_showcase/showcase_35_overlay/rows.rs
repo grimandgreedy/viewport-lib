@@ -49,6 +49,8 @@ pub(crate) struct PageAssets {
     pub colour_wheel: Option<vpl::OverlayTextureId>,
     pub portrait: Option<vpl::OverlayTextureId>,
     pub nine_slice: Option<vpl::OverlayTextureId>,
+    /// A 9 x 9 pixel-art frame for the nearest-sampled nine-slice.
+    pub pixel_frame: Option<vpl::OverlayTextureId>,
     pub hairline_grid: Option<vpl::OverlayGeometryId>,
     pub hatch: Option<vpl::CustomFillId>,
     pub emoji_font: Option<vpl::FontHandle>,
@@ -126,6 +128,7 @@ pub(crate) fn build_assets(
     ));
     let (nw, nh, button) = build_nine_slice_texture();
     let nine_slice = Some(upload(nw, nh, button));
+    let pixel_frame = Some(upload(9, 9, build_pixel_frame_texture()));
 
     // Lines every 6 units over a 24-unit square, each a zero-width stroke.
     let grid: Vec<OverlayPolylineItem> = (0..=4)
@@ -155,6 +158,7 @@ pub(crate) fn build_assets(
         colour_wheel,
         portrait,
         nine_slice,
+        pixel_frame,
         hairline_grid,
         hatch,
         emoji_font: None,
@@ -1175,7 +1179,8 @@ fn figure_eight(t: f32, cx: f32, cy: f32) -> [f32; 2] {
 
 /// Masks and polylines: a sweep-gradient disc clipped by a turning rounded
 /// rect mask, its rotated edge anti-aliased; a button texture stretched
-/// plainly and as a nine-slice; a closed polyline with a gradient fill; a
+/// plainly and as a nine-slice; a pixel-art frame as a nine-slice at 3x,
+/// sampled nearest with crisp edges; a closed polyline with a gradient fill; a
 /// blob resampled from a closure every frame; and two thin zigzags (1 and 1.5
 /// px) each beside a quarter-size copy drawn at four times the scale, the
 /// edge fringe one device pixel either way.
@@ -1211,6 +1216,24 @@ fn row_masks_and_polylines(ovl: &mut OverlayFrame, input: &PageInput<'_>, top: f
                 OverlayFill::texture(button)
                     .with_nine_slice(vpl::NineSlice::new([10.0, 10.0, 10.0, 10.0])),
             ),
+        );
+    }
+
+    // A pixel-art frame as a nine-slice drawn at 3x about its centre, sampled
+    // nearest with crisp edges so every texel stays a hard 3 px block.
+    if let Some(frame) = input.assets.pixel_frame {
+        let at = row.place(72.0, 48.0);
+        let fill = OverlayFill::texture(frame)
+            .with_nine_slice(vpl::NineSlice::new([3.0; 4]))
+            .with_texture_filter(vpl::TextureFilter::Nearest);
+        ovl.shapes.push(
+            shape(rect(0.0), [at[0] + 24.0, at[1] + 16.0], [24.0, 16.0])
+                .with_style(
+                    vpl::OverlayStyle::default()
+                        .with_fill(fill)
+                        .with_edge(vpl::OverlayEdge::Crisp),
+                )
+                .with_scale(3.0),
         );
     }
 
@@ -1276,7 +1299,10 @@ fn row_masks_and_polylines(ovl: &mut OverlayFrame, input: &PageInput<'_>, top: f
 /// the fixed-function additive, multiply and screen; difference, overlay and
 /// hue, which read the destination and composite by formula; and a card in a
 /// shadowed layer with a disc punched out of it by destination-out, the hole
-/// showing the plate through the card and its shadow.
+/// showing the plate through the card and its shadow; and a card with a
+/// keyhole cut by destination-out in a layer that does nothing as a whole
+/// but is isolated, so the keyhole shows the plates rather than punching
+/// through them.
 fn row_blend_modes(ovl: &mut OverlayFrame, _input: &PageInput<'_>, top: f32) {
     let mut row = Row::new(top, 70.0);
     let grey = srgb(0.5, 0.5, 0.5, 1.0);
@@ -1293,6 +1319,11 @@ fn row_blend_modes(ovl: &mut OverlayFrame, _input: &PageInput<'_>, top: f32) {
             OverlayBlend::DestinationOut,
             Colour::WHITE,
         ),
+        (
+            "Isolated layer",
+            OverlayBlend::DestinationOut,
+            Colour::BLACK,
+        ),
     ];
     for (name, blend, colour) in cells {
         let x = row.take(84.0);
@@ -1306,7 +1337,31 @@ fn row_blend_modes(ovl: &mut OverlayFrame, _input: &PageInput<'_>, top: f32) {
                     .with_fill(OverlayFill::Solid(plate)),
             );
         }
-        if blend == OverlayBlend::DestinationOut {
+        if name == "Isolated layer" {
+            // A layer with nothing to do as a whole would fold away and the
+            // mask would punch through the plates; isolated, it keeps its own
+            // target, so the destination-out keyhole cuts only the card.
+            let mark = ovl.layer_mark();
+            ovl.shapes.push(
+                shape(rect(8.0), [x, plate_top + 6.0], [84.0, 44.0])
+                    .with_fill(OverlayFill::Solid(srgb(0.95, 0.8, 0.35, 1.0))),
+            );
+            ovl.shapes.push(
+                shape(
+                    OverlayShape::Circle,
+                    [x + 32.0, plate_top + 12.0],
+                    [20.0, 20.0],
+                )
+                .with_fill(OverlayFill::Solid(colour))
+                .with_blend(blend),
+            );
+            ovl.shapes.push(
+                shape(rect(2.0), [x + 38.0, plate_top + 28.0], [8.0, 16.0])
+                    .with_fill(OverlayFill::Solid(colour))
+                    .with_blend(blend),
+            );
+            ovl.push_layer(mark, OverlayLayerStyle::default().with_isolated(true));
+        } else if blend == OverlayBlend::DestinationOut {
             // The layer's scratch target keeps the hole inside the card, and
             // its shadow falls from the punched card.
             let mark = ovl.layer_mark();
@@ -1739,6 +1794,29 @@ fn build_colour_wheel() -> (u32, u32, Vec<u8>) {
 /// vertical gradient body, a dark rim and a bright bevel along the top.
 /// Stretched plainly its corners elongate into ovals; as a nine-slice with
 /// 10 px insets they keep their size and only the centre stretches.
+/// A 9 x 9 pixel-art frame: a dark border, a light bevel and a checkered
+/// centre, so nearest and linear sampling read apart when it is scaled up.
+fn build_pixel_frame_texture() -> Vec<u8> {
+    let mut px = Vec::with_capacity(9 * 9 * 4);
+    for y in 0..9 {
+        for x in 0..9 {
+            let edge = x == 0 || y == 0 || x == 8 || y == 8;
+            let bevel = x == 1 || y == 1 || x == 7 || y == 7;
+            let c: [u8; 4] = if edge {
+                [30, 20, 60, 255]
+            } else if bevel {
+                [230, 210, 120, 255]
+            } else if (x + y) % 2 == 0 {
+                [90, 140, 200, 255]
+            } else {
+                [60, 100, 170, 255]
+            };
+            px.extend_from_slice(&c);
+        }
+    }
+    px
+}
+
 fn build_nine_slice_texture() -> (u32, u32, Vec<u8>) {
     let w: u32 = 64;
     let h: u32 = 32;

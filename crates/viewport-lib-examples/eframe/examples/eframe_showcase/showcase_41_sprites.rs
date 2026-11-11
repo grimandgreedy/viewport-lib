@@ -1293,7 +1293,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
                 item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-                item.default_size = 14.0;
+                item.default_size = 7.0;
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
                 items.push(item);
@@ -1328,7 +1328,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                     // phase=TAU is the tail (dim, small) just behind the head.
                     let t = phase / std::f32::consts::TAU;
                     let alpha = (1.0 - t).powf(1.4) * 0.90 + 0.05;
-                    let size = 6.0 + (1.0 - t) * 14.0; // head=20, tail=6
+                    let size = 3.0 + (1.0 - t) * 7.0; // head=10, tail=3
 
                     let [r, g, b] = ring.colour;
                     colours.push([r, g, b, alpha]);
@@ -1549,7 +1549,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             item.texture_id = Some(app.sprite_state.glow_tex);
             item.positions = positions;
             item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-            item.default_size = 24.0;
+            item.default_size = 12.0;
             item.size_mode = SpriteSizeMode::ScreenSpace;
             item.blend = SpriteBlend::Additive;
             item.depth_write = false;
@@ -1942,7 +1942,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             points.texture_id = Some(app.sprite_state.glow_tex);
             points.positions = positions;
             points.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-            points.default_size = 9.0;
+            points.default_size = 4.5;
             points.size_mode = SpriteSizeMode::ScreenSpace;
             points.blend = SpriteBlend::Additive;
             points.depth_write = false;
@@ -1996,7 +1996,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             item.positions = app.sprite_state.rain_positions.clone();
             item.velocities = app.sprite_state.rain_velocities.clone();
             item.default_colour = Colour::linear(0.75, 0.85, 1.0, 0.85);
-            item.default_size = 18.0;
+            item.default_size = 9.0;
             item.size_mode = SpriteSizeMode::ScreenSpace;
             item.blend = SpriteBlend::AlphaBlend;
             item.orientation = SpriteOrientation::VelocityStretched;

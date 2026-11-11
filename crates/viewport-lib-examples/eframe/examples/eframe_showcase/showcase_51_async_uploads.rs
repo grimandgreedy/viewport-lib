@@ -1387,7 +1387,7 @@ fn demo_sprite_set() -> SpriteItem {
         positions.push([r * theta.cos(), 0.0, r * theta.sin()]);
     }
     item.positions = positions;
-    item.default_size = 16.0;
+    item.default_size = 8.0;
     item.default_colour = Colour::linear(0.95, 0.7, 0.4, 1.0);
     item
 }
@@ -1401,7 +1401,7 @@ fn demo_sprite_instance_set() -> SpriteItem {
         positions.push([x, 0.5, 0.0]);
     }
     item.positions = positions;
-    item.default_size = 12.0;
+    item.default_size = 6.0;
     item.default_colour = Colour::linear(0.5, 0.85, 0.95, 1.0);
     item
 }

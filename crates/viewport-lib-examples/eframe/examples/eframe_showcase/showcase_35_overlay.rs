@@ -22,10 +22,12 @@
 //!
 //! Sheet 2, compositing, text and meshes:
 //! 8. Masks and polylines: a soft rotated mask clip, nine-slice against a
-//!    plain stretch, a gradient-filled closed polyline, a per-frame blob, and
-//!    1 and 1.5 px strokes beside 4x copies.
+//!    plain stretch, a pixel-art nine-slice sampled nearest at 3x, a
+//!    gradient-filled closed polyline, a per-frame blob, and 1 and 1.5 px
+//!    strokes beside 4x copies.
 //! 9. Blend modes: additive, multiply and screen; difference, overlay and hue
-//!    (destination-reading); destination-out inside a layer.
+//!    (destination-reading); destination-out inside a shadowed layer, and a
+//!    keyhole cut by destination-out inside an isolated layer.
 //! 10. Layers: a faded group beside the same items faded singly, a group
 //!     shadow, a frosted backdrop-blur card and a filtered backdrop, a blurred
 //!     group, and a greyscale colour-matrix twin.
