@@ -212,6 +212,12 @@ pub struct SpriteItem {
     /// How blended sprites in this batch are ordered against other blended
     /// content. Default [`SpriteOrder::Depth`].
     pub order: SpriteOrder,
+    /// For a [`SpriteOrder::Painter`] batch: drawn after the 2D light layer
+    /// of the painter range its layer lies in, so the 2D lighting leaves it
+    /// as drawn (an emissive sprite, a glow). It then draws over the range's
+    /// lit content. Unrelated to [`lit`](Self::lit), which shades with the
+    /// scene's 3D lights. Ignored by `SpriteOrder::Depth`. Default `false`.
+    pub unlit: bool,
     /// Per-instance sort keys for [`SpriteOrder::Painter`]: lower keys draw
     /// first and higher keys draw on top, within the batch and across the
     /// painter batches on the same layer, of this type or another (a blended
@@ -435,6 +441,7 @@ impl Default for SpriteItem {
             filter: TextureFilter::Linear,
             pixel_snap: false,
             order: SpriteOrder::Depth,
+            unlit: false,
             sort_keys: Vec::new(),
             effects: None,
             pick_alpha_threshold: None,

@@ -192,6 +192,14 @@ pub enum NoticeDetail {
         /// size.
         batches: u32,
     },
+    /// Two 2D lighting items in one frame light some of the same painter
+    /// layers, so the later one was ignored.
+    OverlappingLightRanges {
+        /// Index of the lighting item that was ignored, in submission order.
+        ignored: u32,
+        /// Index of the earlier item it overlaps, which was kept.
+        kept: u32,
+    },
     /// A notice reported by a plugin.
     Plugin {
         /// The key the plugin reported it under; repeats of one key coalesce.
@@ -331,6 +339,11 @@ impl fmt::Display for NoticeDetail {
                 "{batches} sprite batches in painter's order have a screen-space size, so they \
                  stay the same size on screen at any zoom; set size_mode to \
                  SpriteSizeMode::WorldSpace for sprites that belong to a 2D scene"
+            ),
+            Self::OverlappingLightRanges { ignored, kept } => write!(
+                f,
+                "2D lighting item {ignored} lights painter layers that item {kept} already \
+                 lights, so it was ignored; give each item its own layer range"
             ),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),
         }

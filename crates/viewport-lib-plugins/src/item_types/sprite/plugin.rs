@@ -1045,8 +1045,10 @@ impl ItemTypePlugin for SpritePlugin {
             return;
         };
         for (i, piece) in view.painter_pieces.iter().enumerate() {
-            if is_painter(&view.frame[piece.batch]) {
-                out.push(PainterBatch::new(piece.layer, piece.key, i as u32));
+            let batch = &view.frame[piece.batch];
+            if is_painter(batch) {
+                let unlit = batch.painter.is_some_and(|p| p.unlit);
+                out.push(PainterBatch::new(piece.layer, piece.key, i as u32).with_unlit(unlit));
             }
         }
     }

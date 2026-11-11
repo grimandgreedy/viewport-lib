@@ -426,6 +426,8 @@ pub(crate) struct WorldOverlayDraw {
     pub ov: ViewportOverlay,
     pub order: u32,
     pub depth_test: bool,
+    /// Drawn after the light layer of its range.
+    pub unlit: bool,
 }
 
 /// A viewport's world overlay layers. The states are kept across frames to
@@ -2756,6 +2758,7 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
+                    pixels_per_point: frame.scene_ppp(),
                     lights: &frame.effects.lighting.lights,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
@@ -2816,6 +2819,7 @@ impl ViewportRenderer {
                 outline_selected: frame.interaction.outline_selected,
                 sub_selection: frame.interaction.sub_selection.as_ref(),
                 clip_objects: &frame.effects.clip.objects,
+                pixels_per_point: frame.scene_ppp(),
                 lights: &frame.effects.lighting.lights,
                 quality_reduced: self.degradation_volume_quality_reduced,
                 collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
@@ -3024,43 +3028,42 @@ impl ViewportRenderer {
     /// Batches reported through `painter_batches` sort by layer, then sort key,
     /// then plugin registration order, then report order, and draw as runs of
     /// consecutive batches of one plugin. The renderer's own painter meshes
-    /// sort as if registered before every plugin. Layers between world overlay
-    /// layers form runs: a run draws its sequenced batches, then once each
-    /// plugin that reported no batches (for the run's layers), then the world
-    /// layers at the run's top layer.
+    /// sort as if registered before every plugin. A world layer draws after
+    /// the batches at and below its order. A light layer draws at the top of
+    /// its range, after the range's batches and world layers, and the range's
+    /// unlit batches and world layers follow it. World layers and light layers
+    /// cut the sequence into runs: a run draws its sequenced content, then
+    /// once each plugin that reported no batches (for the run's layers).
     pub(crate) fn painter_plan(&self, frame: &FrameData, hdr: bool) -> PainterPlan {
+        enum What {
+            Batch { name: &'static str, batch: u32 },
+            World(usize),
+        }
+        /// An entry's place: the layer it draws at (`slot`, the top of its
+        /// range for a light layer and the content it lifts) and `phase`
+        /// (`0` in place, `1` the light layer, `2` unlit content after it),
+        /// then its own layer, world layers after batches, the key and the
+        /// tiebreaks.
         struct Entry {
+            slot: u32,
+            phase: u8,
             layer: u32,
+            world: bool,
             key: f32,
             plugin: usize,
             report: usize,
-            name: &'static str,
-            batch: u32,
+            what: What,
         }
         let mut plan = PainterPlan::default();
-        let mut entries: Vec<Entry> = Vec::new();
+        let mut reported_all: Vec<(usize, &'static str, crate::plugin_api::PainterBatch)> =
+            Vec::new();
         let mut unsequenced: Vec<&'static str> = Vec::new();
         let mut reported = Vec::new();
-        let push = |entries: &mut Vec<Entry>,
-                    plan: &mut PainterPlan,
-                    reported: &[crate::plugin_api::PainterBatch],
-                    plugin: usize,
-                    name: &'static str| {
-            plan.counts.push((name, reported.len() as u32));
-            for (report, b) in reported.iter().enumerate() {
-                entries.push(Entry {
-                    layer: b.layer,
-                    key: b.sort_key,
-                    plugin,
-                    report,
-                    name,
-                    batch: b.batch,
-                });
-            }
-        };
         self.core_painter_batches(frame, &mut reported);
         if !reported.is_empty() {
-            push(&mut entries, &mut plan, &reported, 0, painter::CORE_PAINTER);
+            plan.counts
+                .push((painter::CORE_PAINTER, reported.len() as u32));
+            reported_all.extend(reported.iter().map(|b| (0, painter::CORE_PAINTER, *b)));
         }
         for (plugin, (name, p)) in self.item_type_plugins.iter().enumerate() {
             let vp = frame.camera.viewport_index;
@@ -3077,58 +3080,141 @@ impl ViewportRenderer {
             if reported.is_empty() {
                 unsequenced.push(name);
             }
-            push(&mut entries, &mut plan, &reported, plugin + 1, name);
+            plan.counts.push((name, reported.len() as u32));
+            reported_all.extend(reported.iter().map(|b| (plugin + 1, name, *b)));
+        }
+
+        // The light layers' ranges, the first reported winning where two
+        // overlap.
+        let ranges: Vec<[u32; 2]> = reported_all
+            .iter()
+            .filter_map(|(_, _, b)| b.light_layers)
+            .collect();
+        let place = |layer: u32, unlit: bool, light: Option<[u32; 2]>| -> (u32, u8) {
+            if let Some([_, last]) = light {
+                return (last, 1);
+            }
+            if unlit && let Some([_, last]) = ranges.iter().find(|r| r[0] <= layer && layer <= r[1])
+            {
+                return (*last, 2);
+            }
+            (layer, 0)
+        };
+        let mut entries: Vec<Entry> = Vec::with_capacity(reported_all.len());
+        for (report, (plugin, name, b)) in reported_all.iter().enumerate() {
+            let (slot, phase) = place(b.layer, b.unlit, b.light_layers);
+            entries.push(Entry {
+                slot,
+                phase,
+                layer: b.layer,
+                world: false,
+                key: b.sort_key,
+                plugin: *plugin,
+                report,
+                what: What::Batch {
+                    name,
+                    batch: b.batch,
+                },
+            });
+        }
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        if let Some(w) = worlds {
+            for (k, &i) in w.sequence.iter().enumerate() {
+                let draw = &w.layers[i];
+                let (slot, phase) = place(draw.order, draw.unlit, None);
+                entries.push(Entry {
+                    slot,
+                    phase,
+                    layer: draw.order,
+                    world: true,
+                    key: 0.0,
+                    plugin: 0,
+                    report: k,
+                    what: What::World(i),
+                });
+            }
         }
         entries.sort_by(|a, b| {
-            a.layer
-                .cmp(&b.layer)
+            a.slot
+                .cmp(&b.slot)
+                .then(a.phase.cmp(&b.phase))
+                .then(a.layer.cmp(&b.layer))
+                .then(a.world.cmp(&b.world))
                 .then(a.key.total_cmp(&b.key))
                 .then(a.plugin.cmp(&b.plugin))
                 .then(a.report.cmp(&b.report))
         });
 
-        let worlds = self
-            .viewport_slots
-            .get(frame.camera.viewport_index)
-            .map(|s| &s.world_overlays);
-        let sequence: &[usize] = worlds.map_or(&[], |w| &w.sequence);
-        let order_of = |k: usize| worlds.map_or(0, |w| w.layers[sequence[k]].order);
-        let (mut e, mut k, mut lo) = (0, 0, 0u32);
-        loop {
-            let top = (k < sequence.len()).then(|| order_of(k));
-            let hi = top.unwrap_or(u32::MAX);
-            while e < entries.len() && entries[e].layer <= hi {
-                let first = e;
-                let name = entries[e].name;
-                while e < entries.len() && entries[e].layer <= hi && entries[e].name == name {
-                    e += 1;
+        // The plugins that report no batches draw once per run, for the
+        // layers from the end of the last run to the cut.
+        let mut lo = Some(0u32);
+        let flush = |plan: &mut PainterPlan, lo: &mut Option<u32>, hi: u32| {
+            if let Some(from) = *lo
+                && from <= hi
+            {
+                for &name in &unsequenced {
+                    plan.steps.push(PainterStep::Layers {
+                        plugin: name,
+                        layers: from..=hi,
+                    });
                 }
-                let at = plan.batches.len();
-                plan.batches
-                    .extend(entries[first..e].iter().map(|entry| entry.batch));
-                plan.steps.push(PainterStep::Batches {
-                    plugin: name,
-                    layers: entries[first].layer..=entries[e - 1].layer,
-                    batches: at..plan.batches.len(),
-                });
+                *lo = hi.checked_add(1);
             }
-            for &name in &unsequenced {
-                plan.steps.push(PainterStep::Layers {
-                    plugin: name,
-                    layers: lo..=hi,
-                });
-            }
-            let Some(order) = top else { break };
-            let from = k;
-            while k < sequence.len() && order_of(k) == order {
-                k += 1;
-            }
-            plan.steps.push(PainterStep::World { layers: from..k });
-            match order.checked_add(1) {
-                Some(next) => lo = next,
-                None => break,
+        };
+        let mut e = 0;
+        while e < entries.len() {
+            let first = e;
+            match entries[e].what {
+                What::Batch { name, .. } => {
+                    if entries[e].phase == 1 {
+                        flush(&mut plan, &mut lo, entries[e].slot);
+                    }
+                    e += 1;
+                    while e < entries.len()
+                        && entries[e].phase != 1
+                        && matches!(entries[e].what, What::Batch { name: n, .. } if n == name)
+                    {
+                        e += 1;
+                    }
+                    let at = plan.batches.len();
+                    let (mut min, mut max) = (u32::MAX, 0);
+                    for entry in &entries[first..e] {
+                        if let What::Batch { batch, .. } = entry.what {
+                            plan.batches.push(batch);
+                        }
+                        min = min.min(entry.layer);
+                        max = max.max(entry.layer);
+                    }
+                    plan.steps.push(PainterStep::Batches {
+                        plugin: name,
+                        layers: min..=max,
+                        batches: at..plan.batches.len(),
+                    });
+                }
+                What::World(_) => {
+                    let (slot, phase, order) =
+                        (entries[e].slot, entries[e].phase, entries[e].layer);
+                    flush(&mut plan, &mut lo, slot);
+                    let at = plan.worlds.len();
+                    while e < entries.len()
+                        && entries[e].slot == slot
+                        && entries[e].phase == phase
+                        && entries[e].layer == order
+                        && let What::World(i) = entries[e].what
+                    {
+                        plan.worlds.push(i);
+                        e += 1;
+                    }
+                    plan.steps.push(PainterStep::World {
+                        layers: at..plan.worlds.len(),
+                    });
+                }
             }
         }
+        flush(&mut plan, &mut lo, u32::MAX);
         plan
     }
 
@@ -3233,7 +3319,7 @@ impl ViewportRenderer {
                     let _span =
                         tracing::debug_span!(target: "viewport_lib::frame", "world_overlay")
                             .entered();
-                    for &i in &worlds.sequence[layers.clone()] {
+                    for &i in &plan.worlds[layers.clone()] {
                         let draw = &worlds.layers[i];
                         if let Some(pass_key) = worlds.pass {
                             crate::renderer::render::emit_overlay_segments(
@@ -3331,7 +3417,7 @@ impl ViewportRenderer {
                 units.push(Unit::Step(k));
                 continue;
             };
-            for &i in &worlds.sequence[layers.clone()] {
+            for &i in &plan.worlds[layers.clone()] {
                 let ov = &worlds.layers[i].ov;
                 let mut start = 0;
                 for b in &ov.overlay_breaks {
@@ -3465,11 +3551,11 @@ impl ViewportRenderer {
                 PainterStep::Layers { plugin, layers } => (*plugin, layers.clone(), Vec::new()),
                 PainterStep::World { layers } => {
                     let w = worlds.expect("world steps come from the slot's world layers");
-                    let order = w.layers[w.sequence[layers.start]].order;
+                    let order = w.layers[plan.worlds[layers.start]].order;
                     (
                         "world_overlay",
                         order..=order,
-                        w.sequence[layers.clone()]
+                        plan.worlds[layers.clone()]
                             .iter()
                             .map(|&i| i as u32)
                             .collect(),
@@ -3749,6 +3835,7 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
+                    pixels_per_point: frame.scene_ppp(),
                     lights: &frame.effects.lighting.lights,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
@@ -5016,7 +5103,8 @@ pub(crate) enum PainterStep {
         plugin: &'static str,
         layers: std::ops::RangeInclusive<u32>,
     },
-    /// World overlay layers: `world_overlays.sequence[layers]`.
+    /// World overlay layers: `world_overlays.layers[i]` for each `i` in
+    /// `PainterPlan::worlds[layers]`.
     World { layers: std::ops::Range<usize> },
 }
 
@@ -5026,6 +5114,8 @@ pub(crate) enum PainterStep {
 pub(crate) struct PainterPlan {
     pub(crate) steps: Vec<PainterStep>,
     pub(crate) batches: Vec<u32>,
+    /// The world layers' indices, in draw order.
+    pub(crate) worlds: Vec<usize>,
     /// How many batches each participant reported, in report order.
     pub(crate) counts: Vec<(&'static str, u32)>,
 }

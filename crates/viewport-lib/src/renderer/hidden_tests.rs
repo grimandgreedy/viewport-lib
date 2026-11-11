@@ -114,6 +114,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             outline_selected: false,
             sub_selection: None,
             clip_objects: &[],
+            pixels_per_point: 1.0,
             lights: &[],
             quality_reduced: false,
             collections: &collections,

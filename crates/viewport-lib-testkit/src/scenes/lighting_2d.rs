@@ -1,22 +1,37 @@
-//! 2D lighting over a tilemap room on the XY plane under an orthographic
-//! `Camera2d`, one world unit to one pixel of the 400 x 300 golden.
+//! 2D lighting on the XY plane under an orthographic `Camera2d`, one world
+//! unit to one pixel of the 400 x 300 goldens.
 //!
-//! A stone floor with two brick walls, one upright and one across, and two
-//! crate sprites. Three coloured point lights (warm, green and blue) are
-//! projected onto the plane; the walls and both crates cast hard shadows from
-//! each light, and the ambient light is 0.2, so the corners no light reaches
-//! keep a fifth of their colour.
+//! `lighting_2d`: a tilemap room, a stone floor with two brick walls, one
+//! upright and one across, and two crate sprites. Three coloured point lights
+//! (warm, green and blue) are projected onto the plane; the walls and both
+//! crates cast hard shadows from each light, and the ambient light is 0.2, so
+//! the corners no light reaches keep a fifth of their colour.
+//!
+//! `lighting_2d_kinds`: the item's own lights over a grey floor. A white cone
+//! from the top left with a block in its wedge, a faint blue global light, a
+//! warm directional light casting parallel shadows from two blocks, a green
+//! textured ring at the top right and a magenta polygon light at the bottom
+//! left. A warm point light lights layers 1 and 2 only: the white square on
+//! layer 1 beside it is lit, the one on layer 3 is left at the ambient level.
+//! On layer 3 too, a yellow square and a row of orange particles are unlit
+//! and keep their colour. The global and directional lights light layers 0
+//! to 2, so the range splits in three parts, each multiplying what is drawn
+//! below it.
 
 use glam::{DVec3, Vec2};
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
-    Camera2d, Candela, Colour, LightSource, LightingSettings, Plane2d, TextureData, TextureFilter,
-    TextureId,
+    Camera2d, Candela, Colour, LightSource, LightingSettings, PainterPlacement, Plane2d,
+    SpriteBlend, TextureData, TextureFilter, TextureId,
+};
+use viewport_lib_plugins::item_types::gpu_particles::{
+    GpuParticleSystemConfig, GpuParticleSystemItem, GpuParticleSystems, ParticleRender, SpawnShape,
+    VelocityDist,
 };
 use viewport_lib_plugins::item_types::lighting_2d::{
-    Lighting2dItem, occluders_from_sprites, occluders_from_tilemap,
+    Falloff, Light2d, Lighting2dItem, Occluder2d, occluders_from_sprites, occluders_from_tilemap,
 };
-use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteSizeMode};
+use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteOrder, SpriteSizeMode};
 use viewport_lib_plugins::item_types::tilemap::{
     Tile, Tilemap, TilemapItem, TilemapPlane, Tileset,
 };
@@ -26,17 +41,27 @@ use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene};
 
 /// The 2D lighting scene appended to the catalogue.
 pub fn scenes() -> Vec<NamedScene> {
-    vec![NamedScene {
-        name: "lighting_2d",
-        cameras: vec![NamedCamera {
+    let top = || {
+        vec![NamedCamera {
             name: "top",
             camera: Camera2d::new(Plane2d::Xy)
                 .with_units_per_pixel(1.0)
                 .with_viewport_size(Vec2::new(400.0, 300.0))
                 .camera(),
-        }],
-        build: build_lighting_2d,
-    }]
+        }]
+    };
+    vec![
+        NamedScene {
+            name: "lighting_2d",
+            cameras: top(),
+            build: build_lighting_2d,
+        },
+        NamedScene {
+            name: "lighting_2d_kinds",
+            cameras: top(),
+            build: build_lighting_2d_kinds,
+        },
+    ]
 }
 
 const FLOOR: u32 = 0;
@@ -151,6 +176,133 @@ fn build_lighting_2d(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         sprite_items: vec![crates],
         lighting_2d: vec![lighting_2d],
         lighting,
+        background: Some([0.05, 0.05, 0.06, 1.0]),
+        ..Default::default()
+    }
+}
+
+/// Painter squares on `layer`, `size` units across.
+fn painter_squares(layer: u32, size: f32, at: &[[f32; 2]], colour: Colour) -> SpriteItem {
+    let mut item = SpriteItem::default();
+    item.positions = at.iter().map(|p| [p[0], p[1], 0.0]).collect();
+    item.default_colour = colour;
+    item.default_size = size;
+    item.size_mode = SpriteSizeMode::WorldSpace;
+    item.order = SpriteOrder::Painter {
+        layer,
+        depth_test: false,
+    };
+    item
+}
+
+/// A white ring on a clear 32 x 32 texture, for a textured light.
+fn ring(ctx: &mut BuildCtx<'_>) -> TextureId {
+    let n = 32u32;
+    let pixels: Vec<u8> = (0..n * n)
+        .flat_map(|i| {
+            let (x, y) = ((i % n) as f32 + 0.5, (i / n) as f32 + 0.5);
+            let r = Vec2::new(x, y).distance(Vec2::splat(n as f32 * 0.5)) / (n as f32 * 0.5);
+            let a = if (0.55..0.9).contains(&r) { 255 } else { 0 };
+            [255, 255, 255, a]
+        })
+        .collect();
+    ctx.renderer
+        .resources_mut()
+        .upload_texture(ctx.device, ctx.queue, TextureData::srgb(n, n, pixels))
+        .expect("ring upload")
+}
+
+fn build_lighting_2d_kinds(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let ring = ring(ctx);
+    let floor = {
+        let mut f = painter_squares(0, 1.0, &[[0.0, 0.0]], Colour::linear_rgb(0.6, 0.6, 0.6));
+        f.sizes = vec![[400.0, 300.0]];
+        f
+    };
+    let blocks = painter_squares(
+        0,
+        24.0,
+        &[[-90.0, 50.0], [30.0, 0.0], [-20.0, 40.0]],
+        Colour::linear_rgb(0.3, 0.25, 0.2),
+    );
+    let lit = painter_squares(1, 26.0, &[[100.0, -95.0]], Colour::WHITE);
+    let above = painter_squares(3, 26.0, &[[140.0, -95.0]], Colour::WHITE);
+    let mut emissive = painter_squares(
+        3,
+        26.0,
+        &[[-10.0, -120.0]],
+        Colour::linear_rgb(1.0, 0.85, 0.1),
+    );
+    emissive.unlit = true;
+
+    let lower = 0..=2;
+    let mut item = Lighting2dItem::default();
+    item.ambient = Colour::linear_rgb(0.4, 0.4, 0.4);
+    item.use_frame_lights = false;
+    item.occluders = occluders_from_sprites(&blocks, TilemapPlane::Xy);
+    item.occluders.push(Occluder2d::Segment {
+        a: [60.0, 60.0],
+        b: [90.0, 30.0],
+    });
+    item.lights = vec![
+        Light2d::cone([-170.0, 130.0], 240.0, [1.0, -0.8], 0.2, 0.4)
+            .with_colour(Colour::linear_rgb(1.0, 1.0, 0.95))
+            .with_intensity(1.4),
+        Light2d::global()
+            .with_colour(Colour::linear_rgb(0.1, 0.12, 0.3))
+            .with_layers(lower.clone()),
+        Light2d::directional([0.8, -0.6])
+            .with_colour(Colour::linear_rgb(0.45, 0.35, 0.2))
+            .with_layers(lower),
+        Light2d::textured(ring, [130.0, 80.0], [110.0, 110.0], 0.4)
+            .with_colour(Colour::linear_rgb(0.3, 1.0, 0.4))
+            .with_intensity(1.2),
+        Light2d::polygon(
+            [-120.0, -80.0],
+            vec![[-45.0, -35.0], [45.0, -35.0], [0.0, 45.0]],
+            18.0,
+        )
+        .with_colour(Colour::linear_rgb(1.0, 0.3, 0.8))
+        .with_falloff(Falloff::Linear),
+        Light2d::point([120.0, -95.0], 70.0)
+            .with_colour(Colour::linear_rgb(1.0, 0.6, 0.2))
+            .with_intensity(4.0)
+            .with_falloff(Falloff::InverseSquare)
+            .with_layers(1..=2),
+    ];
+
+    // A row of orange particles on layer 3, unlit.
+    let mut config = GpuParticleSystemConfig::default();
+    config.capacity = 64;
+    config.render = ParticleRender::Sprite {
+        texture_id: None,
+        blend: SpriteBlend::AlphaBlend,
+        size_mode: SpriteSizeMode::WorldSpace,
+        depth_write: false,
+        lit: false,
+        lit_params: Default::default(),
+        normal_texture_id: None,
+    };
+    let system = ctx
+        .renderer
+        .create_gpu_particle_system(ctx.device, ctx.queue, &config)
+        .expect("gpu particles are registered");
+    let mut particles = GpuParticleSystemItem::new(system, 0.25);
+    particles.emitter.rate = 120.0;
+    particles.emitter.lifetime = (20.0, 20.0);
+    particles.emitter.size = 6.0;
+    particles.emitter.colour = Colour::linear(1.0, 0.5, 0.1, 1.0);
+    particles.emitter.spawn_shape = SpawnShape::Box {
+        min: [-60.0, -140.0, 0.0],
+        max: [60.0, -132.0, 0.0],
+    };
+    particles.emitter.initial_velocity = VelocityDist::Fixed([0.0, 0.0, 0.0]);
+    particles.painter = Some(PainterPlacement::new(3, 0.0).with_unlit(true));
+
+    BuiltScene {
+        sprite_items: vec![floor, blocks, lit, above, emissive],
+        gpu_particle_systems: vec![particles],
+        lighting_2d: vec![item],
         background: Some([0.05, 0.05, 0.06, 1.0]),
         ..Default::default()
     }

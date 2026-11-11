@@ -422,9 +422,11 @@ pub(super) fn build_sprite(
         let count = item.positions.len() as u32;
         let capacity = capacity.max(count);
         let painter = match item.order {
-            super::types::SpriteOrder::Painter { layer, depth_test } => {
-                Some(PainterOrder { layer, depth_test })
-            }
+            super::types::SpriteOrder::Painter { layer, depth_test } => Some(PainterOrder {
+                layer,
+                depth_test,
+                unlit: item.unlit,
+            }),
             super::types::SpriteOrder::Depth => None,
         };
         // A painter batch is drawn in sort-key order, so its records are
@@ -1462,6 +1464,8 @@ pub(crate) enum SpriteChannel {
 pub(crate) struct PainterOrder {
     pub(crate) layer: u32,
     pub(crate) depth_test: bool,
+    /// Drawn after the 2D light layer of its range.
+    pub(crate) unlit: bool,
 }
 
 impl SpriteGpuData {

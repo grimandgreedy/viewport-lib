@@ -34,6 +34,10 @@
 - **`SubObjectRef::Tile` names the cell** - the variant is `Tile { col, row }` instead of `Tile { chunk, tile }`.
 - **Tile picks answer `PickMask::TILE`** - tile sub-objects come back under the new `TILE` bit (part of `FACE_LIKE`) instead of `INSTANCE`, and a pick for `INSTANCE` alone no longer hits tile layers. Ask for `OBJECT | TILE` where `OBJECT | INSTANCE` picked tiles before.
 - **A tilemap in wireframe draws its cell outlines** - in wireframe mode, or with `settings.wireframe`, a tile layer draws the outline of each occupied cell instead of its tiles, and still picks.
+- **The 2D light layer runs whenever a `Lighting2dItem` is submitted** - ambient now darkens a scene with no lights at all instead of the layer being skipped; submit no item for no effect. The background colour is still left as it is on the HDR path.
+- **Each `Lighting2dItem` is its own light layer** - an item lights its `layers` range (every layer by default) with its own plane, ambient, lights and occluders, instead of the first item's settings and every item's occluders making one layer. Put all the occluders for a range on its one item; a second item whose range overlaps is ignored and raises `NoticeDetail::OverlappingLightRanges`.
+- **The 2D light multiply is a painter batch** - `Lighting2dPlugin` accumulates its lights before the frame and multiplies at the top of its painter range in the painter pass instead of in an `EncoderScope::AfterTransparent` pass, so painter content in a higher range draws after it and is not lit by it. `Lighting2dStats::passes` counts one pass per light layer.
+- **`PainterPlacement` has an `unlit` field** - a struct literal needs it; `PainterPlacement::new` and `painter_key` set it to `false`.
 
 ### Features
 
@@ -134,6 +138,10 @@
 - **Encoder scopes only with items** - a scope pass runs only when a plugin with items this frame lists it, and the scene depth copy taken before a scope on GL only when one of those plugins reads depth: `ItemTypePlugin::encode_reads_depth` returns `false` for a plugin that never does.
 
 - **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
+- **2D light kinds** - `Lighting2dItem::lights` takes `Light2d`s of kind `Point`, `Cone`, `Directional` (parallel shadows, no falloff), `Global` (no shadows), `Textured` (a texture as the light's shape) and `Polygon` (a freeform outline with a fade), each with colour, intensity, a `Falloff` (`Linear`, `Smooth`, `InverseSquare`, `Exponent`), a height and the painter layers it lights. `use_frame_lights` (default on) still maps the frame's point and spot lights in as point and cone lights.
+- **2D light ranges** - `Lighting2dItem::layers` and `Light2d::layers` place each light layer at the top of its painter range, so background, world and foreground can be lit by different items; a light over part of an item's range splits it into a layer per part. Each multiply scales everything drawn before it.
+- **Unlit painter content** - `SpriteItem::unlit`, `PainterPlacement::unlit` (meshes, mesh instances and GPU particle systems) and `WorldOverlayLayer::unlit` draw content after the light layer of its range so 2D lighting leaves it as drawn.
+- **Light layers in the plugin API** - `PainterBatch::light_layer` reports a batch drawn at the top of a painter range after its other content, and `PainterBatch::unlit` moves a batch to after the light layer of its range. `ItemFrameContext::pixels_per_point` gives the scene's device size in `prepare`, and `DeviceResources::has_hdr_path` says whether float render targets are available.
 
 ### Fixes
 

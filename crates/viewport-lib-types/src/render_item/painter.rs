@@ -42,12 +42,29 @@ pub struct PainterPlacement {
     /// Order within the layer: lower keys draw first. Compared with
     /// `f32::total_cmp`.
     pub key: f32,
+    /// Drawn after the 2D light layer of the painter range `layer` lies in,
+    /// so 2D lighting leaves it as drawn: an emissive part, a glow. It then
+    /// draws over the range's lit content, whatever their layers and keys,
+    /// in its own layer and key order among the range's other unlit content.
+    /// Outside every light range it draws in its place. Default `false`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub unlit: bool,
 }
 
 impl PainterPlacement {
     /// A placement on `layer` at `key`.
     pub const fn new(layer: u32, key: f32) -> Self {
-        Self { layer, key }
+        Self {
+            layer,
+            key,
+            unlit: false,
+        }
+    }
+
+    /// This placement with [`unlit`](Self::unlit) set to `unlit`.
+    pub const fn with_unlit(mut self, unlit: bool) -> Self {
+        self.unlit = unlit;
+        self
     }
 }
 
@@ -132,10 +149,7 @@ pub fn painter_key(layer: u32, sort: f32, member: u32) -> PainterPlacement {
     } else {
         !composed
     };
-    PainterPlacement {
-        layer,
-        key: f32::from_bits(bits),
-    }
+    PainterPlacement::new(layer, f32::from_bits(bits))
 }
 
 #[cfg(test)]

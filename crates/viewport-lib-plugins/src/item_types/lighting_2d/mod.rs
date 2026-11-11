@@ -1,24 +1,41 @@
-//! 2D lighting as an [`ItemTypePlugin`]: the scene's point lights projected
-//! onto a world plane, hard shadows cast by occluders, and a light layer
-//! multiplied over the scene.
+//! 2D lighting as an [`ItemTypePlugin`]: lights on a world plane, hard
+//! shadows cast by occluders, and a light layer multiplied over the painter
+//! content it lights.
 //!
-//! Submit one [`Lighting2dItem`] a frame. It names the plane (the same two
-//! planes as the tilemap and `Camera2d`), the ambient light, how many lights
-//! to draw and the occluders: rects, closed outlines, one-sided edges and free
-//! segments in plane coordinates, built by hand or with [`occluders_from_tilemap`] and
-//! [`occluders_from_sprites`]. The lights are the frame's point lights
-//! (`EffectsFrame::lighting.lights`), each projected onto the plane with its
-//! `range` as the radius and its colour times its intensity as the brightness
-//! at its centre.
+//! Submit a [`Lighting2dItem`] a frame. It names the plane (the same two
+//! planes as the tilemap and `Camera2d`), the ambient light, the lights and
+//! the occluders: rects, closed outlines, one-sided edges and free segments in
+//! plane coordinates, built by hand or with [`occluders_from_tilemap`] and
+//! [`occluders_from_sprites`]. The lights are the item's own
+//! [`Light2d`]s (points, cones, directional and global lights, textured
+//! and freeform shapes) and, unless [`Lighting2dItem::use_frame_lights`] is
+//! off, the frame's point and spot lights (`EffectsFrame::lighting.lights`)
+//! projected onto the plane.
 //!
 //! The light layer is a target the size of the scene, cleared to the ambient
 //! colour. Each light draws its occluders' shadows into the stencil and then
-//! adds its falloff where its shadow is not, so a light costs two draws and
-//! no extra pass. A full-screen pass then multiplies the layer over the scene
-//! colour. Both passes run after the scene and its transparency, before bloom,
-//! tone mapping and the rest of the post chain, so a lit highlight still
-//! blooms; overlays draw later and are not lit. With no point lights the
-//! layer is skipped and the scene draws as it would without it.
+//! adds its light where its shadow is not, so a light costs two draws; this
+//! runs before the frame's passes. The multiply is a painter batch at the top
+//! of the item's painter layer range ([`Lighting2dItem::layers`], every layer
+//! by default): it draws after the range's painter content and world overlay
+//! layers and before the next range's, and multiplies everything drawn by
+//! then, the opaque scene included. Content marked unlit (a
+//! [`PainterBatch`] with `unlit`, a painter sprite with
+//! [`unlit`](super::sprite::SpriteItem::unlit), a placement or world overlay
+//! layer with `unlit`) moves to after the multiply of its range and keeps its
+//! colour. Bloom and the rest of the post chain run after it, so a lit
+//! highlight still blooms; screen overlays draw later and are not lit.
+//!
+//! A light whose [`layers`](Light2d::layers) cover only part of the item's
+//! range splits the range: each part where a different set of lights applies
+//! gets its own layer and its own multiply at the top of that part. Every
+//! multiply scales all that is drawn before it, so content below the top part
+//! is scaled once per part above it as well.
+//!
+//! The layer runs whenever an item is submitted, lights or not, so the
+//! ambient light darkens a scene with every light off. On the HDR path the
+//! background colour is composited after the scene and is not darkened; on
+//! the LDR path it is the target's clear colour and is.
 //!
 //! Shadows are geometry: each occluder edge is drawn as the quad it casts,
 //! its ends pushed away from the light past the light's reach. That needs one
@@ -28,16 +45,16 @@
 //! they face away from the light, so a wall's lit face is lit; a free segment
 //! casts from both sides.
 //!
-//! The layer runs on the HDR path only, so it registers on the full tier: the
-//! direct (LDR) path, the only one below it, has no point after the scene to
-//! multiply it in.
-//!
 //! The data types here build without the `gpu` feature; the plugin needs it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
+//! [`PainterBatch`]: viewport_lib::plugin_api::PainterBatch
+
+use std::ops::RangeInclusive;
 
 use glam::Vec2;
 use viewport_lib_types::colour::Colour;
+use viewport_lib_types::ids::TextureId;
 use viewport_lib_types::material::ItemSettings;
 
 use super::tilemap::{Tile, Tilemap, TilemapPlane};
@@ -45,8 +62,12 @@ use super::tilemap::{Tile, Tilemap, TilemapPlane};
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.lighting_2d";
 
-/// Most lights one frame draws: each takes a stencil value.
+/// Most lights one light layer draws: each takes a stencil value.
 pub const MAX_LIGHTS_2D: u32 = 255;
+
+/// Most outline points a [`Light2dKind::Polygon`] light keeps; the rest are
+/// dropped.
+pub const MAX_POLYGON_LIGHT_POINTS: usize = 64;
 
 #[cfg(feature = "gpu")]
 mod plugin;
@@ -56,11 +77,12 @@ pub(crate) use plugin::shader_sources;
 #[cfg(feature = "gpu")]
 pub use plugin::{Lighting2dPlugin, Lighting2dStats};
 
-/// One frame's 2D lighting: the plane, the ambient light, the light cap and
-/// the occluders.
+/// One frame's 2D lighting over a range of painter layers: the plane, the
+/// ambient light, the lights and the occluders.
 ///
-/// The frame draws one light layer. When several items are submitted their
-/// occluders are combined and the first visible item's other fields are used.
+/// Submit one item per range to light background, world and foreground
+/// differently. Items whose [`layers`](Self::layers) overlap raise
+/// `NoticeDetail::OverlappingLightRanges` and the later one is ignored.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Lighting2dItem {
@@ -75,13 +97,25 @@ pub struct Lighting2dItem {
     pub ambient: Colour,
     /// Multiplier on every light's brightness. Default `1.0`.
     pub intensity: f32,
-    /// Most lights drawn, in the order the frame lists them; the rest are
-    /// left out. Clamped to [`MAX_LIGHTS_2D`]. Default 32.
+    /// Most lights drawn: the item's [`lights`](Self::lights) first, then the
+    /// frame's, in order; the rest are left out. Clamped to
+    /// [`MAX_LIGHTS_2D`]. Default 32.
     pub max_lights: u32,
     /// Whether occluders cast shadows. Default `true`.
     pub shadows: bool,
     /// What casts shadows, in plane coordinates.
     pub occluders: Vec<Occluder2d>,
+    /// The item's own lights, in plane coordinates. Default empty.
+    pub lights: Vec<Light2d>,
+    /// Whether the frame's point and spot lights (`EffectsFrame::lighting`)
+    /// join [`lights`](Self::lights), projected onto the plane as
+    /// [`Light2dKind::Point`] and [`Light2dKind::Cone`] lights over every
+    /// layer, with their `range` as the radius and their colour times their
+    /// intensity as the brightness at the centre. Default `true`.
+    pub use_frame_lights: bool,
+    /// The painter layers this item lights. Its multiply draws at the top of
+    /// the range, after the range's content. Default every layer.
+    pub layers: RangeInclusive<u32>,
     /// Visibility. A hidden item draws no layer.
     pub settings: ItemSettings,
 }
@@ -96,9 +130,248 @@ impl Default for Lighting2dItem {
             max_lights: 32,
             shadows: true,
             occluders: Vec::new(),
+            lights: Vec::new(),
+            use_frame_lights: true,
+            layers: 0..=u32::MAX,
             settings: ItemSettings::default(),
         }
     }
+}
+
+/// A light on the 2D plane, as [`Lighting2dItem::lights`] holds it.
+///
+/// `position` and `radius` place and size the kinds that need them; each kind
+/// says which it reads. Shadows are cast from `position`, except by a
+/// directional light, whose shadows are parallel, and a global light, which
+/// casts none.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Light2d {
+    /// What the light lights.
+    pub kind: Light2dKind,
+    /// Plane position of the light.
+    pub position: [f32; 2],
+    /// Reach of a point or cone light, where its falloff reaches zero; the
+    /// width of a polygon light's fade outside its outline.
+    pub radius: f32,
+    /// Light colour. Default white.
+    pub colour: Colour,
+    /// Multiplier on the colour. Default `1.0`.
+    pub intensity: f32,
+    /// How a point, cone or polygon light fades. Default [`Falloff::Smooth`].
+    pub falloff: Falloff,
+    /// Height of the light above the plane, in plane units. Content lit flat
+    /// ignores it. Default `0.0`.
+    pub height: f32,
+    /// The painter layers the light lights, within its item's range. Default
+    /// every layer.
+    pub layers: RangeInclusive<u32>,
+}
+
+impl Light2d {
+    fn with_kind(kind: Light2dKind, position: [f32; 2], radius: f32) -> Self {
+        Self {
+            kind,
+            position,
+            radius,
+            colour: Colour::WHITE,
+            intensity: 1.0,
+            falloff: Falloff::Smooth,
+            height: 0.0,
+            layers: 0..=u32::MAX,
+        }
+    }
+
+    /// A point light at `position` reaching `radius`.
+    pub fn point(position: [f32; 2], radius: f32) -> Self {
+        Self::with_kind(Light2dKind::Point, position, radius)
+    }
+
+    /// A cone light at `position` reaching `radius`, pointing along
+    /// `direction`, full within `inner` and fading to nothing at `outer`
+    /// (half-angles in radians).
+    pub fn cone(
+        position: [f32; 2],
+        radius: f32,
+        direction: [f32; 2],
+        inner: f32,
+        outer: f32,
+    ) -> Self {
+        Self::with_kind(
+            Light2dKind::Cone {
+                direction,
+                inner,
+                outer,
+            },
+            position,
+            radius,
+        )
+    }
+
+    /// A directional light travelling along `direction` over the whole plane.
+    pub fn directional(direction: [f32; 2]) -> Self {
+        Self::with_kind(Light2dKind::Directional { direction }, [0.0; 2], 0.0)
+    }
+
+    /// A global light over the whole plane, casting no shadows.
+    pub fn global() -> Self {
+        Self::with_kind(Light2dKind::Global, [0.0; 2], 0.0)
+    }
+
+    /// `texture` as the light's shape, centred on `position`, `size` plane
+    /// units across and turned `rotation` radians counter-clockwise.
+    pub fn textured(texture: TextureId, position: [f32; 2], size: [f32; 2], rotation: f32) -> Self {
+        Self::with_kind(
+            Light2dKind::Textured {
+                texture,
+                size,
+                rotation,
+            },
+            position,
+            0.0,
+        )
+    }
+
+    /// A freeform light filling the outline `points` (relative to
+    /// `position`), fading out over `radius` outside it.
+    pub fn polygon(position: [f32; 2], points: Vec<[f32; 2]>, radius: f32) -> Self {
+        Self::with_kind(Light2dKind::Polygon { points }, position, radius)
+    }
+
+    /// This light with `colour`.
+    pub fn with_colour(mut self, colour: Colour) -> Self {
+        self.colour = colour;
+        self
+    }
+
+    /// This light with `intensity`.
+    pub fn with_intensity(mut self, intensity: f32) -> Self {
+        self.intensity = intensity;
+        self
+    }
+
+    /// This light with `falloff`.
+    pub fn with_falloff(mut self, falloff: Falloff) -> Self {
+        self.falloff = falloff;
+        self
+    }
+
+    /// This light at `height` above the plane.
+    pub fn with_height(mut self, height: f32) -> Self {
+        self.height = height;
+        self
+    }
+
+    /// This light lighting only the painter layers `layers`.
+    pub fn with_layers(mut self, layers: RangeInclusive<u32>) -> Self {
+        self.layers = layers;
+        self
+    }
+}
+
+/// What a [`Light2d`] lights.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Light2dKind {
+    /// A disc around `position`, fading to nothing at `radius`.
+    Point,
+    /// The part of a point light's disc around `direction`: full within
+    /// `inner` of it, fading to nothing at `outer`. Shadows fall only where
+    /// the cone lights.
+    Cone {
+        /// The way the cone points, in plane coordinates. Need not be unit
+        /// length.
+        direction: [f32; 2],
+        /// Half-angle of the full-brightness cone, in radians.
+        inner: f32,
+        /// Half-angle where the light reaches zero, in radians.
+        outer: f32,
+    },
+    /// Light over the whole plane from far away, travelling along
+    /// `direction`: occluders cast parallel shadows away from it, and there
+    /// is no falloff. Reads neither `position` nor `radius`.
+    Directional {
+        /// The way the light travels, in plane coordinates.
+        direction: [f32; 2],
+    },
+    /// Light over the whole plane, with no shadows and no falloff. Reads
+    /// neither `position` nor `radius`.
+    Global,
+    /// A texture as the light's shape: centred on `position`, its colour
+    /// times its alpha scales the light, with texture row 0 at the top. No
+    /// falloff; `radius` is unused.
+    Textured {
+        /// The shape.
+        texture: TextureId,
+        /// Width and height on the plane.
+        size: [f32; 2],
+        /// Counter-clockwise turn, in radians.
+        rotation: f32,
+    },
+    /// A freeform shape: full brightness inside the outline, fading by the
+    /// falloff over `radius` outside it (a hard edge at `0.0`). At most
+    /// [`MAX_POLYGON_LIGHT_POINTS`] points are kept.
+    Polygon {
+        /// The outline, relative to `position`, in either winding.
+        points: Vec<[f32; 2]>,
+    },
+}
+
+/// How a light fades from its centre (or a polygon light from its outline)
+/// to nothing at its radius. `d` below is the distance over the radius.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Falloff {
+    /// `1 - d`.
+    Linear,
+    /// `(1 - d^2)^2`: flat near the centre, easing out at the edge.
+    #[default]
+    Smooth,
+    /// An inverse-square curve, `1 / (1 + 16 d^2)`, shifted and scaled to
+    /// reach zero at the radius: bright at the centre with a long tail.
+    InverseSquare,
+    /// `(1 - d)^e` for the given `e`.
+    Exponent(f32),
+}
+
+/// The parts of `range` where a different set of lights applies: each part
+/// with the indices of the lights, of those whose layers are in
+/// `light_layers`, that cover it. Adjacent parts lit by the same lights are
+/// one part. A light whose layers miss `range` lights no part.
+pub fn light_parts(
+    range: &RangeInclusive<u32>,
+    light_layers: &[RangeInclusive<u32>],
+) -> Vec<(RangeInclusive<u32>, Vec<usize>)> {
+    let (lo, hi) = (*range.start(), *range.end());
+    if lo > hi {
+        return Vec::new();
+    }
+    // Every layer where the set of lights can change, as a u64 so the end of
+    // the last layer fits.
+    let mut cuts: Vec<u64> = vec![lo as u64, hi as u64 + 1];
+    for l in light_layers {
+        let (a, b) = (*l.start().max(&lo), *l.end().min(&hi));
+        if a <= b {
+            cuts.push(a as u64);
+            cuts.push(b as u64 + 1);
+        }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut parts: Vec<(RangeInclusive<u32>, Vec<usize>)> = Vec::new();
+    for w in cuts.windows(2) {
+        let (first, last) = (w[0] as u32, (w[1] - 1) as u32);
+        let lit: Vec<usize> = light_layers
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| *l.start() <= first && last <= *l.end())
+            .map(|(i, _)| i)
+            .collect();
+        match parts.last_mut() {
+            Some((r, set)) if *set == lit => *r = *r.start()..=last,
+            _ => parts.push((first..=last, lit)),
+        }
+    }
+    parts
 }
 
 /// Something that casts a 2D shadow, in plane coordinates.
@@ -368,6 +641,35 @@ pub fn occluders_from_sprites(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lights_over_every_layer_make_one_part() {
+        let parts = light_parts(&(0..=u32::MAX), &[0..=u32::MAX, 0..=u32::MAX]);
+        assert_eq!(parts, vec![(0..=u32::MAX, vec![0, 1])]);
+        assert_eq!(light_parts(&(2..=5), &[]), vec![(2..=5, vec![])]);
+    }
+
+    #[test]
+    fn a_restricted_light_splits_the_range_where_it_starts_and_ends() {
+        let parts = light_parts(&(0..=u32::MAX), &[0..=u32::MAX, 1..=2]);
+        assert_eq!(
+            parts,
+            vec![
+                (0..=0, vec![0]),
+                (1..=2, vec![0, 1]),
+                (3..=u32::MAX, vec![0]),
+            ]
+        );
+        // Clipped to the item's range; a light outside it lights nothing.
+        let parts = light_parts(&(2..=6), &[0..=3, 9..=12]);
+        assert_eq!(parts, vec![(2..=3, vec![0]), (4..=6, vec![])]);
+        // Two lights over the same layers keep one part.
+        let parts = light_parts(&(0..=4), &[1..=2, 1..=2]);
+        assert_eq!(
+            parts,
+            vec![(0..=0, vec![]), (1..=2, vec![0, 1]), (3..=4, vec![])]
+        );
+    }
 
     fn edges(occluders: &[Occluder2d]) -> Vec<ShadowEdge> {
         let mut out = Vec::new();

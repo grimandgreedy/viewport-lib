@@ -327,6 +327,11 @@ pub struct ItemFrameContext<'a> {
     /// own, which a ray-marcher generally must, since it tests along the ray
     /// rather than per fragment.
     pub clip_objects: &'a [crate::renderer::ClipObject],
+    /// Device pixels per logical pixel of the scene target, so
+    /// `viewport_size * pixels_per_point` is the scene's size in device
+    /// pixels: the viewport's scale factor, or one under a reference
+    /// presentation.
+    pub pixels_per_point: f32,
     /// The frame's light sources (`EffectsFrame::lighting.lights`), in world
     /// coordinates and in submission order, before the renderer ranks or caps
     /// them. For an item type that lights its own content from the scene's
@@ -670,6 +675,12 @@ pub struct PainterMaskContext<'a> {
 /// before every plugin. A world overlay layer draws after every batch whose
 /// layer is at or below its `order`.
 ///
+/// A light layer (a batch built with [`light_layer`](Self::light_layer))
+/// draws after every other batch and world overlay layer of its range, and
+/// a batch marked [`unlit`](Self::unlit) on a layer in that range moves to
+/// after it: the unlit content of a range draws above its lit content, in
+/// its own layer and key order.
+///
 /// The sequence places each batch by its one key, so a batch must hold draws
 /// at a single key. A plugin whose draw covers several keys reports it as one
 /// batch per run of equal keys and draws consecutive batches of its own that
@@ -687,6 +698,14 @@ pub struct PainterBatch {
     /// The plugin's own handle for the batch, handed back in
     /// [`PainterContext::batches`].
     pub batch: u32,
+    /// Drawn after the light layer whose range holds `layer`, so 2D lighting
+    /// leaves it as drawn. With no light layer over `layer` it draws in its
+    /// place.
+    pub unlit: bool,
+    /// For a light layer: the first and last painter layer it lights. The
+    /// batch draws at the top of that range, after its other content, and
+    /// multiplies what is drawn by then. `None` for ordinary content.
+    pub light_layers: Option<[u32; 2]>,
 }
 
 impl PainterBatch {
@@ -696,12 +715,38 @@ impl PainterBatch {
             layer,
             sort_key,
             batch,
+            unlit: false,
+            light_layers: None,
         }
     }
 
-    /// A batch at `placement`, named `batch` by the plugin.
+    /// A batch at `placement`, named `batch` by the plugin, unlit when the
+    /// placement is.
     pub fn at(placement: crate::PainterPlacement, batch: u32) -> Self {
-        Self::new(placement.layer, placement.key, batch)
+        Self::new(placement.layer, placement.key, batch).with_unlit(placement.unlit)
+    }
+
+    /// This batch with [`unlit`](Self::unlit) set to `unlit`.
+    pub fn with_unlit(mut self, unlit: bool) -> Self {
+        self.unlit = unlit;
+        self
+    }
+
+    /// A light layer over the painter layers `layers`, named `batch` by the
+    /// plugin: placed at the range's last layer, after everything else drawn
+    /// in the range and before the unlit content of the range.
+    ///
+    /// When two light layers name ranges that overlap, the sequence places
+    /// unlit content by the first one reported.
+    pub fn light_layer(layers: std::ops::RangeInclusive<u32>, batch: u32) -> Self {
+        let (first, last) = (*layers.start(), *layers.end());
+        Self {
+            layer: last,
+            sort_key: f32::INFINITY,
+            batch,
+            unlit: false,
+            light_layers: Some([first, last]),
+        }
     }
 }
 
@@ -1436,11 +1481,12 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// content interleaves with other plugins' by layer and sort key.
     ///
     /// A plugin that reports none is called once per run of layers between
-    /// world overlay layers, ascending, after the sequenced batches of that
-    /// run, and draws its content whose layer lies in
-    /// [`PainterContext::layers`]; then the world layers at the run's top
-    /// layer draw. A frame with no world layers makes one such call covering
-    /// every layer. Such plugins draw in registration order within a run.
+    /// world overlay layers and light layers, ascending, after the sequenced
+    /// batches of that run, and draws its content whose layer lies in
+    /// [`PainterContext::layers`]; then the world layers or the light layer
+    /// at the run's top layer draw. A frame with neither makes one such call
+    /// covering every layer. Such plugins draw in registration order within a
+    /// run, and their content is never unlit.
     ///
     /// The pass has the viewport's camera bind group at group 0 on entry.
     /// Only called when [`draws_painter`](Self::draws_painter) returns `true`,

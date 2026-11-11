@@ -1179,6 +1179,13 @@ impl DeviceResources {
         self.sample_count
     }
 
+    /// Whether the full tier's scene resources were built: the HDR path, and
+    /// with it blended `Rgba16Float` render targets, is available. `false` on
+    /// the compatibility tier, which draws every frame on the LDR path.
+    pub fn has_hdr_path(&self) -> bool {
+        self.scene_tier.is_built()
+    }
+
     /// The scene depth-stencil format every scene pipeline here was built
     /// with: `Depth24PlusStencil8` unless
     /// [`RendererConfig::scene_depth_format`](crate::RendererConfig::scene_depth_format)

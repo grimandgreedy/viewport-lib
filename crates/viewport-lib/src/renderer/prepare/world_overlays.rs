@@ -109,6 +109,7 @@ impl ViewportRenderer {
                 ov: crate::renderer::ViewportOverlay::new(),
                 order: 0,
                 depth_test: false,
+                unlit: false,
             });
         }
         worlds.layers.truncate(layers.len());
@@ -146,6 +147,7 @@ impl ViewportRenderer {
             let draw = &mut worlds.layers[i];
             draw.order = layer.order;
             draw.depth_test = layer.depth_test;
+            draw.unlit = layer.unlit;
             let ov = &mut draw.ov;
             ov.overlay_draw_segments.clear();
             ov.overlay_order_items.clear();
