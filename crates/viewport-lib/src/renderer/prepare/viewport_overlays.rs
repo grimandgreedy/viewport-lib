@@ -126,21 +126,50 @@ impl<'a> OverlaySpace<'a> {
         origin: &crate::renderer::origin::OriginState,
     ) -> Self {
         let camera = &frame.camera.render_camera;
+        let (size, ppp) = frame.overlay_space();
+        let mut proj = camera.projection();
+        // Overlays drawn over an upscaled reference target project world
+        // anchors through the scene's clip space onto where the target lands
+        // in the viewport.
+        if let (false, Some(p)) = (frame.overlays_in_scene(), frame.reference_placement()) {
+            proj = reference_clip_to_viewport_clip(&p) * proj;
+        }
         Self {
             overlays: &frame.overlays,
-            size: frame.camera.viewport_size,
-            ppp: frame.camera.pixels_per_point,
+            size,
+            ppp,
             view: origin.camera(camera).view(),
-            proj: camera.projection(),
+            proj,
             world_origin: origin.origin(),
             axes: frame
                 .viewport
                 .show_axes_indicator
                 .then(|| camera.orientation()),
             world: None,
-            screen_ppp: frame.camera.pixels_per_point,
+            screen_ppp: ppp,
         }
     }
+}
+
+/// The clip-space transform taking a point in the reference target's clip
+/// space to the viewport's, under the placement `p`.
+pub(crate) fn reference_clip_to_viewport_clip(
+    p: &crate::renderer::ReferencePlacement,
+) -> glam::Mat4 {
+    let [vw, vh] = [p.viewport_px[0] as f32, p.viewport_px[1] as f32];
+    let ext = [
+        p.reference_size[0] as f32 * p.scale[0],
+        p.reference_size[1] as f32 * p.scale[1],
+    ];
+    let sx = ext[0] / vw;
+    let sy = ext[1] / vh;
+    let ox = (2.0 * p.origin_px[0] + ext[0]) / vw - 1.0;
+    let oy = 1.0 - (2.0 * p.origin_px[1] + ext[1]) / vh;
+    glam::Mat4::from_scale_rotation_translation(
+        glam::Vec3::new(sx, sy, 1.0),
+        glam::Quat::IDENTITY,
+        glam::Vec3::new(ox, oy, 0.0),
+    )
 }
 
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the

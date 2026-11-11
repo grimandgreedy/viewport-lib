@@ -115,9 +115,12 @@ impl ViewportRenderer {
         );
         // The compatibility tier draws through the LDR path, which keeps the lit
         // term in [0, 1] and has no meter for an automatic exposure.
-        let mut camera_uniform = frame
-            .camera
-            .camera_uniform(&self.frame_clock.current(), &self.origin);
+        let mut camera_uniform = frame.camera.camera_uniform(
+            &self.frame_clock.current(),
+            &self.origin,
+            frame.scene_size(),
+            frame.scene_ppp(),
+        );
         camera_uniform.exposure = viewport_interaction::frame_exposure(frame);
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
@@ -198,11 +201,9 @@ impl ViewportRenderer {
         if !self.outline_active(frame) {
             return;
         }
-        let ppp = frame.camera.pixels_per_point;
-        let size = [
-            (frame.camera.viewport_size[0] * ppp).round() as u32,
-            (frame.camera.viewport_size[1] * ppp).round() as u32,
-        ];
+        let ppp = frame.scene_ppp();
+        let [sw, sh] = frame.scene_size();
+        let size = [(sw * ppp).round() as u32, (sh * ppp).round() as u32];
         self.encode_outline_passes(device, queue, frame, size, true, sink);
     }
 

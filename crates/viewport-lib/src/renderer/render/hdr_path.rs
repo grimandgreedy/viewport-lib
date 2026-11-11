@@ -345,7 +345,8 @@ impl ViewportRenderer {
         scene_items: &[SceneRenderItem],
         bg_colour: [f32; 4],
         ssaa_factor: u32,
-    ) -> crate::gpu::CommandBuffer {
+        mut encoder: crate::gpu::CommandEncoder,
+    ) -> crate::gpu::CommandEncoder {
         // HDR path. `bg_colour` is premultiplied linear RGBA; it reaches the
         // tone-map uniform below and is composited under transparent content
         // there, in display space, exactly once.
@@ -633,13 +634,6 @@ impl ViewportRenderer {
 
         self.ensure_transmission_target(device, vp_idx);
 
-        // -----------------------------------------------------------------------
-        // Build the command encoder.
-        // -----------------------------------------------------------------------
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("hdr_encoder"),
-        });
-
         // An automatic exposure lives on the GPU: copy the one the last frame
         // resolved into this viewport's camera copies ahead of every draw, so
         // the frame shades with it and the meter can divide it back out. The
@@ -786,7 +780,7 @@ impl ViewportRenderer {
             }
         }
 
-        encoder.finish()
+        encoder
     }
 
     fn hdr_surface_mask(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
@@ -2794,7 +2788,11 @@ impl ViewportRenderer {
         let device = ctx.device;
         let output_view = ctx.output_view;
         let vp_idx = ctx.vp_idx;
-        // Overlay shapes and the merged text batch (HDR path): drawn last.
+        // Overlay shapes and the merged text batch (HDR path): drawn last,
+        // here unless they draw over a reference presentation's upscale.
+        if !ctx.frame.overlays_in_scene() {
+            return;
+        }
         let ov = &self.viewport_slots[vp_idx].overlay;
         let has_overlay = ov.overlay_shape_gpu_data.is_some()
             || ov.label_gpu_data.is_some()
@@ -2817,7 +2815,7 @@ impl ViewportRenderer {
             self.scene_depth_store_op(),
             Some(&scene),
             None,
-            ctx.frame.camera.pixels_per_point,
+            ctx.frame.overlay_space().1,
             "overlay_pass",
         );
     }

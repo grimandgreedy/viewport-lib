@@ -97,11 +97,11 @@ impl ViewportRenderer {
         let tessellations = self.overlay_tess_cache.tessellations;
 
         let pass = self.world_overlay_pass(frame);
-        let screen_ppp = frame.camera.pixels_per_point.max(1.0e-6);
-        let device_size = [
-            frame.camera.viewport_size[0] * screen_ppp,
-            frame.camera.viewport_size[1] * screen_ppp,
-        ];
+        // World layers are part of the scene, so their screen is the
+        // target the scene draws into.
+        let screen_ppp = frame.scene_ppp().max(1.0e-6);
+        let screen_size = frame.scene_size();
+        let device_size = [screen_size[0] * screen_ppp, screen_size[1] * screen_ppp];
         let world_origin = self.origin.origin();
         let view_proj = self.origin.camera(&frame.camera.render_camera).view_proj();
         while worlds.layers.len() < layers.len() {
@@ -139,7 +139,7 @@ impl ViewportRenderer {
                         ppp: view.ppp,
                     },
                     pass: key,
-                    screen_size: frame.camera.viewport_size,
+                    screen_size,
                 }),
                 screen_ppp,
             };

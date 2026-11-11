@@ -41,7 +41,8 @@ pub struct RenderTuning {
     pub performance: PerformancePolicy,
     /// Manual render scale, applied only when adaptive resolution is off
     /// (`performance.allow_dynamic_resolution == false`); clamped to the policy
-    /// bounds. Default: `1.0`.
+    /// bounds. A frame under a reference presentation draws its reference
+    /// target at its own size whatever this is. Default: `1.0`.
     pub render_scale: f32,
     /// Runtime mode: `Interactive` (full quality), `Playback` (throttles
     /// picking), `Capture` (forces max render scale). Default: `Interactive`.

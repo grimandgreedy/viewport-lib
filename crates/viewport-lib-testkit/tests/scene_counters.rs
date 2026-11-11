@@ -232,6 +232,8 @@ fn expected(name: &str) -> Option<Expected> {
         // mesh-family draws.
         "overlay_world_layer" => e(0, 0, 0, 0, 0),
         "overlay_world_layer_blends" => e(0, 0, 0, 0, 0),
+        // A plate, three squares and a bar, drawn at a reference resolution.
+        "presentation_reference" => e(5, 5, 5, 5, 10),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),

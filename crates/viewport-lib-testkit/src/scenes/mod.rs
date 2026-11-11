@@ -26,6 +26,7 @@ pub mod meshes;
 pub mod normal_maps;
 pub mod occlusion;
 pub mod overlays;
+pub mod presentation;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
@@ -190,6 +191,9 @@ pub struct BuiltScene {
     /// World origin override, for a scene that draws far from zero. `None`
     /// leaves the renderer's own setting.
     pub world_origin: Option<viewport_lib::WorldOrigin>,
+    /// Presentation override, for a scene drawn at a reference resolution.
+    /// `None` presents at the viewport's own resolution.
+    pub presentation: Option<viewport_lib::Presentation>,
 }
 
 /// A catalogue entry: a name, the cameras to view it from, and a function that
@@ -320,6 +324,9 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         fd.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     }
     fd.overlays = scene.overlays.clone();
+    if let Some(presentation) = scene.presentation {
+        fd.viewport.presentation = presentation;
+    }
     fd.viewport.background_colour = Some(Colour::from_linear_array(
         scene.background.unwrap_or(TEST_BACKGROUND),
     ));
@@ -1123,6 +1130,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(tilemap::scenes());
     scenes.extend(lighting_2d::scenes());
     scenes.extend(world_overlay::scenes());
+    scenes.extend(presentation::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

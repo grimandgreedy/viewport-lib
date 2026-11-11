@@ -21,7 +21,8 @@ impl ViewportRenderer {
         bg_colour: [f32; 4],
         w: u32,
         h: u32,
-    ) -> crate::gpu::CommandBuffer {
+        mut encoder: crate::gpu::CommandEncoder,
+    ) -> crate::gpu::CommandEncoder {
         let _span =
             tracing::debug_span!(target: "viewport_lib::frame", "ldr_scene_pass", vp = vp_idx)
                 .entered();
@@ -69,15 +70,15 @@ impl ViewportRenderer {
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
         // Otherwise render directly to output_view.
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("ldr_encoder"),
-        });
 
         let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
         // Overlays that read the destination draw in passes of their own after
         // the scene, into a target they can copy from: the output when it
         // allows that, or an intermediate blitted to it at the end.
-        let has_breaks = self.viewport_slots[vp_idx].overlay.has_breaks();
+        // Screen overlays drawn over a reference presentation's upscale are
+        // not drawn here.
+        let overlays = frame.overlays_in_scene();
+        let has_breaks = overlays && self.viewport_slots[vp_idx].overlay.has_breaks();
         // Plugins that encode after the scene end the scene pass there; they
         // are handed a target they can copy from, so an output that cannot be
         // copied from routes the frame through the intermediate.
@@ -85,7 +86,7 @@ impl ViewportRenderer {
         // A world layer that reads what is drawn under it ends the scene pass
         // at its breaks, so it too needs a target it can copy from.
         let world_reads = self.resources.scene_tier.is_built() && self.world_overlays_read(vp_idx);
-        let needs_blur = self.ldr_overlay_intermediate(vp_idx, Some(output_view))
+        let needs_blur = self.ldr_overlay_intermediate(frame, vp_idx, Some(output_view))
             || ((scope || world_reads)
                 && !use_dyn_res
                 && !output_view
@@ -243,7 +244,7 @@ impl ViewportRenderer {
             }
             if !scope && !world_breaks {
                 // Overlays that read the destination are drawn after this pass.
-                self.paint_ldr_scene_finish(&mut render_pass, vp_idx, !has_breaks);
+                self.paint_ldr_scene_finish(&mut render_pass, vp_idx, overlays && !has_breaks);
             }
         }
         // -- End of scene render pass (dropped above). ---
@@ -279,7 +280,7 @@ impl ViewportRenderer {
             );
             if !scope {
                 let mut pass = begin_ldr_resume_pass(&mut encoder, colour, depth, depth_store);
-                self.paint_ldr_scene_finish(&mut pass, vp_idx, !has_breaks);
+                self.paint_ldr_scene_finish(&mut pass, vp_idx, overlays && !has_breaks);
             }
         }
 
@@ -311,7 +312,7 @@ impl ViewportRenderer {
                 size,
             );
             let mut pass = begin_ldr_resume_pass(&mut encoder, colour, depth, depth_store);
-            self.paint_ldr_scene_finish(&mut pass, vp_idx, !has_breaks);
+            self.paint_ldr_scene_finish(&mut pass, vp_idx, overlays && !has_breaks);
         }
 
         // Foreground pass: draw foreground items over the finished scene
@@ -529,7 +530,7 @@ impl ViewportRenderer {
                 crate::gpu::StoreOp::Discard,
                 scene.as_ref(),
                 None,
-                frame.camera.pixels_per_point,
+                frame.overlay_space().1,
                 "ldr_overlay_pass",
             );
         }
@@ -569,7 +570,7 @@ impl ViewportRenderer {
             self.blit_backdrop_intermediate(&mut encoder, device, output_view);
         }
 
-        return encoder.finish();
+        encoder
     }
 
     /// Whether an LDR frame of `frame` ends its scene pass for plugins that

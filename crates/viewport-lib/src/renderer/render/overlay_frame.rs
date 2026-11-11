@@ -117,7 +117,8 @@ impl ViewportRenderer {
         bg_colour: [f32; 4],
         w: u32,
         h: u32,
-    ) -> crate::gpu::CommandBuffer {
+        mut encoder: crate::gpu::CommandEncoder,
+    ) -> crate::gpu::CommandEncoder {
         let _span =
             tracing::debug_span!(target: "viewport_lib::frame", "overlay_frame", vp = vp_idx)
                 .entered();
@@ -126,10 +127,10 @@ impl ViewportRenderer {
         // must not reproject an older one.
         self.viewport_slots[vp_idx].cull.forget_hiz_prev_depth();
 
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("overlay_frame_encoder"),
-        });
-        let has_breaks = self.viewport_slots[vp_idx].overlay.has_breaks();
+        // Screen overlays drawn over a reference presentation's upscale are
+        // not drawn here.
+        let overlays = frame.overlays_in_scene();
+        let has_breaks = overlays && self.viewport_slots[vp_idx].overlay.has_breaks();
         // Overlays that read the destination of an output that cannot be
         // copied draw into the intermediate target, blitted to the output.
         let intermediate = has_breaks
@@ -162,7 +163,7 @@ impl ViewportRenderer {
                 crate::gpu::StoreOp::Discard,
                 scene.as_ref(),
                 Some(bg_colour),
-                frame.camera.pixels_per_point,
+                frame.overlay_space().1,
                 "overlay_frame_pass",
             );
         } else {
@@ -196,13 +197,15 @@ impl ViewportRenderer {
                 timestamp_writes: ts,
                 occlusion_query_set: None,
             });
-            let ov = &self.viewport_slots[vp_idx].overlay;
-            emit_overlay_2d!(self, ov, pass);
+            if overlays {
+                let ov = &self.viewport_slots[vp_idx].overlay;
+                emit_overlay_2d!(self, ov, pass);
+            }
         }
         self.resolve_prev_timestamps(&mut encoder);
         if intermediate {
             self.blit_backdrop_intermediate(&mut encoder, device, output_view);
         }
-        encoder.finish()
+        encoder
     }
 }

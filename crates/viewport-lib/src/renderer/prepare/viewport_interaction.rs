@@ -71,9 +71,12 @@ impl ViewportRenderer {
             }
 
             // Upload camera uniform to per-viewport slot buffer.
-            let mut camera_uniform = frame
-                .camera
-                .camera_uniform(&self.frame_clock.current(), &self.origin);
+            let mut camera_uniform = frame.camera.camera_uniform(
+                &self.frame_clock.current(),
+                &self.origin,
+                frame.scene_size(),
+                frame.scene_ppp(),
+            );
             // The camera the GPU draws with, relative to the frame's origin.
             let gpu_camera = self.origin.camera(&frame.camera.render_camera);
             // On the HDR path the lit term may exceed 1.0; bound it at f16 max
@@ -133,7 +136,7 @@ impl ViewportRenderer {
                         let vertical_depth = (eye.z - frame.viewport.grid_z).abs().max(1.0);
                         let world_per_pixel =
                             2.0 * (frame.camera.render_camera.fov_y() / 2.0).tan() * vertical_depth
-                                / frame.camera.viewport_size[1].max(1.0);
+                                / frame.scene_size()[1].max(1.0);
                         let target = (world_per_pixel * 60.0).max(1e-9_f32);
                         let mut s = 1.0_f32;
                         let mut iters = 0u32;
@@ -196,8 +199,7 @@ impl ViewportRenderer {
                         [up.x, up.y, up.z, 0.0_f32],
                         [back.x, back.y, back.z, 0.0_f32],
                     ];
-                    let aspect =
-                        frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
+                    let aspect = frame.scene_size()[0] / frame.scene_size()[1].max(1.0);
                     let tan_half_fov = (frame.camera.render_camera.fov_y() / 2.0).tan();
 
                     let uniform = GridUniform {
@@ -257,7 +259,7 @@ impl ViewportRenderer {
                 let right = orient * glam::Vec3::X;
                 let up = orient * glam::Vec3::Y;
                 let back = orient * glam::Vec3::Z;
-                let aspect = frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
+                let aspect = frame.scene_size()[0] / frame.scene_size()[1].max(1.0);
                 let tan_half_fov = (frame.camera.render_camera.fov_y() / 2.0).tan();
                 let vp = gpu_camera.view_proj().to_cols_array_2d();
                 // The tiles' phase at the origin, so the checker stays put in
@@ -599,9 +601,9 @@ impl ViewportRenderer {
             return;
         }
         let vp_idx = frame.camera.viewport_index;
-        let ppp = frame.camera.pixels_per_point;
-        let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
-        let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        let ppp = frame.scene_ppp();
+        let w = (frame.scene_size()[0] * ppp).round() as u32;
+        let h = (frame.scene_size()[1] * ppp).round() as u32;
         self.resources.ensure_outline_pipelines(device);
         // The mask tests against the LDR scene depth the HDR state holds.
         self.ensure_viewport_hdr(
@@ -611,7 +613,7 @@ impl ViewportRenderer {
             w.max(1),
             h.max(1),
             frame.effects.post_process.ssaa_factor.max(1),
-            self.current_render_scale,
+            self.render_scale_for(frame),
             crate::resources::TargetGroups::LDR_DEPTH,
         );
         let size = self.viewport_slots[vp_idx]
@@ -788,8 +790,8 @@ impl ViewportRenderer {
         // snapshot when the version has changed since the last frame.
         // ------------------------------------------------------------------
         {
-            let w = frame.camera.viewport_size[0];
-            let h = frame.camera.viewport_size[1];
+            let w = frame.scene_size()[0];
+            let h = frame.scene_size()[1];
 
             let has_sub_sel = frame.interaction.sub_selection.is_some();
 
@@ -887,15 +889,15 @@ pub(super) fn clip_uniforms(
         clip_vols_uniform.count += 1;
     }
 
-    let ppp = frame.camera.pixels_per_point;
+    let ppp = frame.scene_ppp();
     let clip_uniform = ClipPlanesUniform {
         planes,
         count,
         _pad0: 0,
         // Physical pixels: clip_pos in the fragment shader is in physical pixels,
         // so split-screen and pixel-inspector buffer stride must match.
-        viewport_width: (frame.camera.viewport_size[0] * ppp).max(1.0),
-        viewport_height: (frame.camera.viewport_size[1] * ppp).max(1.0),
+        viewport_width: (frame.scene_size()[0] * ppp).max(1.0),
+        viewport_height: (frame.scene_size()[1] * ppp).max(1.0),
     };
     (clip_uniform, clip_vols_uniform)
 }

@@ -9,9 +9,10 @@ impl ViewportRenderer {
             let vp_idx = frame.camera.viewport_index;
             // Physical pixels: the viewport size the debug readback is bounded
             // by is the one the HDR target was allocated at.
-            let ppp = frame.camera.pixels_per_point;
-            let vw = (frame.camera.viewport_size[0] * ppp).max(1.0) as u32;
-            let vh = (frame.camera.viewport_size[1] * ppp).max(1.0) as u32;
+            let ppp = frame.scene_ppp();
+            let [sw, sh] = frame.scene_size();
+            let vw = (sw * ppp).max(1.0) as u32;
+            let vh = (sh * ppp).max(1.0) as u32;
             let debug_active = frame.effects.debug.debug_vis.active;
 
             // Whether this frame will leave the debug quantity in the HDR
@@ -36,8 +37,8 @@ impl ViewportRenderer {
     ) {
         // Atlas blit uniform: compute NDC rect for the corner overlay.
         if viewport_fx.debug.show_shadow_atlas {
-            let vw = frame.camera.viewport_size[0].max(1.0);
-            let vh = frame.camera.viewport_size[1].max(1.0);
+            let vw = frame.scene_size()[0].max(1.0);
+            let vh = frame.scene_size()[1].max(1.0);
             let scale = viewport_fx.debug.atlas_viewer_scale.clamp(0.05, 1.0);
             // Atlas is square. Width in NDC = scale * 2. Height preserves pixel aspect.
             let ndc_w = scale * 2.0;

@@ -537,15 +537,27 @@ impl ViewportRenderer {
         // intervening frame. Flush before any sub-pass work submits.
         self.resources.geometry.flush(queue);
 
-        let ppp = frame.camera.pixels_per_point;
-        let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
-        let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        let ppp = frame.scene_ppp();
+        let scene_size = frame.scene_size();
+        let vp_w = (scene_size[0] * ppp).round() as u32;
+        let vp_h = (scene_size[1] * ppp).round() as u32;
+
+        // Under a reference presentation the pass draws the reference target
+        // and the cursor picks the reference pixel under it.
+        let Some(cursor) = frame.scene_point(cursor) else {
+            return PickBegin::Miss;
+        };
+        let cursor = if frame.reference_size().is_some() {
+            cursor.floor()
+        } else {
+            cursor
+        };
 
         // --- bounds check (logical coordinates match the logical cursor) ---
         if cursor.x < 0.0
             || cursor.y < 0.0
-            || cursor.x >= frame.camera.viewport_size[0]
-            || cursor.y >= frame.camera.viewport_size[1]
+            || cursor.x >= scene_size[0]
+            || cursor.y >= scene_size[1]
             || vp_w == 0
             || vp_h == 0
         {
@@ -718,7 +730,7 @@ impl ViewportRenderer {
             ready,
             submission,
             cursor,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             view_proj: self.origin.camera(&frame.camera.render_camera).view_proj(),
             origin: self.origin.origin(),
             mask,
@@ -996,7 +1008,10 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
         let time = frame.time.unwrap_or_else(|| self.frame_clock.current());
-        let camera_uniform = frame.camera.camera_uniform(&time, &self.origin);
+        let camera_uniform =
+            frame
+                .camera
+                .camera_uniform(&time, &self.origin, frame.scene_size(), frame.scene_ppp());
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_camera_buf"),
@@ -1229,14 +1244,18 @@ impl ViewportRenderer {
 
         let logical_lo = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
         let logical_hi = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
+        // Under a reference presentation the rectangle covers the reference
+        // pixels under it.
+        let logical_lo = frame.scene_point_clamped(logical_lo);
+        let logical_hi = frame.scene_point_clamped(logical_hi);
 
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
-        let ppp = frame.camera.pixels_per_point;
-        let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
-        let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        let ppp = frame.scene_ppp();
+        let vp_w = (frame.scene_size()[0] * ppp).round() as u32;
+        let vp_h = (frame.scene_size()[1] * ppp).round() as u32;
         if vp_w == 0 || vp_h == 0 {
             return crate::renderer::picking::PickRectResult {
                 objects: Vec::new(),
@@ -1514,12 +1533,16 @@ impl ViewportRenderer {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
-        let ppp = frame.camera.pixels_per_point;
-        let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
-        let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        let ppp = frame.scene_ppp();
+        let vp_w = (frame.scene_size()[0] * ppp).round() as u32;
+        let vp_h = (frame.scene_size()[1] * ppp).round() as u32;
         if vp_w == 0 || vp_h == 0 {
             return None;
         }
+        // Under a reference presentation the window is over the reference
+        // target, around the reference pixel under the cursor.
+        let cursor = frame.scene_point(cursor)?;
+        let radius_px = frame.scene_length(radius_px);
 
         // Physical window around the cursor, clamped to the viewport. The radius
         // is a logical (screen-point) tolerance, so it scales by `ppp` into the

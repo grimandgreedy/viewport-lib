@@ -22,7 +22,8 @@ mod warm;
 pub use config::RendererConfig;
 pub use warm::PipelineSet;
 mod paths;
-pub use blit::BlitTexture;
+pub use self::types::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
+pub use blit::{BlitFilter, BlitTexture};
 pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
 mod gpu_context;
@@ -242,6 +243,9 @@ pub(crate) struct ViewportSlot {
     /// Per-viewport intermediate render target for the HDR eframe callback path.
     /// `None` until the first `prepare_hdr_callback` call for this viewport.
     pub hdr_callback: Option<crate::resources::gpu::dyn_res::HdrCallbackTarget>,
+    /// The target the scene draws into under a reference presentation.
+    /// `None` until the first such frame for this viewport.
+    pub reference: Option<crate::resources::gpu::reference::ReferenceTarget>,
     /// Cached GPU data for sub-object highlight rendering.
     /// `None` when no sub-object selection is active and no volumes are selected.
     pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
@@ -736,6 +740,9 @@ pub struct ViewportRenderer {
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
+    /// The presentation and pixels per point of the frame the CPU pick caches
+    /// were taken from, which `pick()` and `pick_rect()` map positions through.
+    pick_presentation: (Presentation, f32),
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
@@ -1262,6 +1269,7 @@ impl ViewportRenderer {
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
             pick_volume_mesh_items: Vec::new(),
+            pick_presentation: (Presentation::Native, 1.0),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
             pending_snap: None,
@@ -2691,7 +2699,7 @@ impl ViewportRenderer {
                 // and the borrow only needs to live for this iteration.
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
-                    viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                    viewport_size: glam::Vec2::from(frame.scene_size()),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
                     time: self.frame_clock.current(),
@@ -2751,7 +2759,7 @@ impl ViewportRenderer {
             }
             let ctx = crate::plugin_api::ItemFrameContext {
                 camera: &frame.camera.render_camera,
-                viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                viewport_size: glam::Vec2::from(frame.scene_size()),
                 viewport_index: frame.camera.viewport_index,
                 frame_index: self.plugin_frame_index,
                 time: self.frame_clock.current(),
@@ -2771,13 +2779,9 @@ impl ViewportRenderer {
         }
         // The polyline item type draws them, through its own pipelines.
         if let Some(lines) = self.polyline_plugin_mut() {
-            lines.0.set_overlays(
-                device,
-                queue,
-                lines.1,
-                &polylines,
-                frame.camera.viewport_size,
-            );
+            lines
+                .0
+                .set_overlays(device, queue, lines.1, &polylines, frame.scene_size());
         }
     }
 
@@ -2817,7 +2821,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PaintContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: if is_hdr {
@@ -2905,7 +2909,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PaintContext {
             camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
@@ -3079,7 +3083,7 @@ impl ViewportRenderer {
         };
         let ctx = crate::plugin_api::PainterContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             layers,
@@ -3395,7 +3399,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::DepthReadContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             scene_depth,
@@ -3528,7 +3532,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PickPassContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             mask,
@@ -3559,7 +3563,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PaintContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
@@ -3632,7 +3636,7 @@ impl ViewportRenderer {
             if !items.is_empty() {
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
-                    viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                    viewport_size: glam::Vec2::from(frame.scene_size()),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
                     time: self.frame_clock.current(),
@@ -3698,7 +3702,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::OutlineMaskContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             meshes: crate::resources::MeshDraw::new(&self.resources),
@@ -4414,6 +4418,7 @@ impl ViewportRenderer {
                 draw_skybox: false,
                 dyn_res: None,
                 hdr_callback: None,
+                reference: None,
                 overlay: ViewportOverlay::new(),
                 world_overlays: WorldOverlays::default(),
                 ground_uniform_buf,

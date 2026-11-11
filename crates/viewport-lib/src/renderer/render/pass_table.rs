@@ -476,7 +476,11 @@ impl ViewportRenderer {
         table.declare(
             HdrPass::Overlay,
             "overlay",
-            slot.overlay.overlay_shape_gpu_data.is_some() || slot.overlay.label_gpu_data.is_some(),
+            // Overlays drawn over a reference presentation's upscale are not
+            // drawn in the scene's passes.
+            frame.overlays_in_scene()
+                && (slot.overlay.overlay_shape_gpu_data.is_some()
+                    || slot.overlay.label_gpu_data.is_some()),
             TargetSet::of(T::HdrDepth),
             TargetSet::of(T::Output),
         );

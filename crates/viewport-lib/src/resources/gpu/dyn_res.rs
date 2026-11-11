@@ -67,6 +67,9 @@ impl DeviceResources {
         self.post.dyn_res_upscale_bgl = Some(bgl);
         self.post.dyn_res_upscale_pipeline = Some(pipeline);
         self.post.dyn_res_linear_sampler = Some(sampler);
+        self.post.dyn_res_nearest_sampler = Some(
+            crate::resources::builders::clamp_nearest_sampler(device, "dyn_res_nearest_sampler"),
+        );
     }
 
     /// Ensure the compositing blit pipelines exist, creating them on first call.

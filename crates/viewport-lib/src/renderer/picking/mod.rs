@@ -54,9 +54,30 @@ impl ViewportRenderer {
             )
             .collect();
         self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
+        self.pick_presentation = (frame.viewport.presentation, frame.camera.pixels_per_point);
 
         // Refresh the revs that tell the surface pick BVH when to rebuild vs refit.
         self.update_pick_bvh_revs();
+    }
+
+    /// Where the reference target of the frame the CPU pick caches were taken
+    /// from lands in a viewport of `viewport_size`, or `None` when it presented
+    /// natively.
+    pub(crate) fn cached_pick_placement(
+        &self,
+        viewport_size: glam::Vec2,
+    ) -> Option<crate::renderer::ReferencePlacement> {
+        match self.pick_presentation.0 {
+            Presentation::Reference { size, fit, .. } => {
+                Some(crate::renderer::ReferencePlacement::new(
+                    size,
+                    fit,
+                    viewport_size.to_array(),
+                    self.pick_presentation.1,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Empty the CPU pick caches populated by `cache_pick_items`, freeing their
@@ -202,12 +223,18 @@ impl ViewportRenderer {
         } else {
             return None;
         };
-        let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
+        let viewport_size = glam::Vec2::from(frame.scene_size());
         let view_proj = frame.camera.render_camera.view_proj();
         let hit = match backend {
-            PickBackend::Cpu => {
-                self.pick_clipped(cursor, viewport_size, view_proj, mask, &frame.effects.clip.objects)
-            }
+            // Under a reference presentation the ray is cast through the
+            // reference pixel under the cursor.
+            PickBackend::Cpu => self.pick_clipped(
+                frame.scene_point(cursor)?,
+                viewport_size,
+                view_proj,
+                mask,
+                &frame.effects.clip.objects,
+            ),
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
         };
@@ -445,9 +472,15 @@ impl ViewportRenderer {
         };
         match backend {
             PickBackend::Cpu => {
-                let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
+                let viewport_size = glam::Vec2::from(frame.scene_size());
                 let view_proj = frame.camera.render_camera.view_proj();
-                self.pick_rect(rect_min, rect_max, viewport_size, view_proj, mask)
+                self.pick_rect_scene(
+                    frame.scene_point_clamped(rect_min),
+                    frame.scene_point_clamped(rect_max),
+                    viewport_size,
+                    view_proj,
+                    mask,
+                )
             }
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),

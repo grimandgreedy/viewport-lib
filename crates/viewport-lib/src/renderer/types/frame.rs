@@ -567,19 +567,21 @@ impl Default for CameraFrame {
 
 impl CameraFrame {
     /// The GPU camera uniform for this frame rendered at `time`: the render
-    /// camera's matrices relative to `origin`, plus the physical viewport size
-    /// and the frame time.
+    /// camera's matrices relative to `origin`, plus the physical size of the
+    /// target the scene draws into (`scene_size` logical pixels at
+    /// `scene_ppp`) and the frame time.
     pub(crate) fn camera_uniform(
         &self,
         time: &FrameTime,
         origin: &crate::renderer::origin::OriginState,
+        scene_size: [f32; 2],
+        scene_ppp: f32,
     ) -> CameraUniform {
         let mut u = origin.camera(&self.render_camera).camera_uniform();
         u.world_origin = origin.origin().as_vec3().to_array();
         u.origin_epoch = origin.epoch();
-        let ppp = self.pixels_per_point;
-        let w = (self.viewport_size[0] * ppp).round().max(1.0);
-        let h = (self.viewport_size[1] * ppp).round().max(1.0);
+        let w = (scene_size[0] * scene_ppp).round().max(1.0);
+        let h = (scene_size[1] * scene_ppp).round().max(1.0);
         u.viewport = [w, h, 1.0 / w, 1.0 / h];
         u.time = crate::renderer::frame_clock::pack_time(time);
         u
@@ -967,6 +969,19 @@ pub struct ViewportFrame {
     /// environment, or `background_colour` when there is none. Drawn only on
     /// the HDR pipeline.
     pub environment_background: EnvironmentBackground,
+    /// How the frame reaches the output. Default: [`Presentation::Native`].
+    ///
+    /// Under [`Presentation::Reference`] the scene draws into a target of the
+    /// reference size and is scaled into the viewport with nearest sampling.
+    /// `CameraFrame::viewport_size` and `pixels_per_point` stay the viewport's
+    /// own, and picks keep taking viewport positions: the renderer maps them
+    /// through the fit (see `ViewportRenderer::window_to_reference`).
+    ///
+    /// The scaled result needs a target of the renderer's own, so on the
+    /// `pass()` path a reference frame draws through `prepare` and `paint`
+    /// (or `prepare_hdr_viewport` and `paint_hdr_blit` for several
+    /// viewports), not `paint_viewport`.
+    pub presentation: Presentation,
 }
 
 impl Default for ViewportFrame {
@@ -981,6 +996,7 @@ impl Default for ViewportFrame {
             grid_colour: None,
             show_axes_indicator: true,
             environment_background: EnvironmentBackground::default(),
+            presentation: Presentation::Native,
         }
     }
 }
@@ -1063,6 +1079,12 @@ impl InteractionFrame {
         }
     }
 }
+
+// Presentation settings live in viewport-lib-types; re-exported so
+// `crate::renderer::types::*` paths hold.
+pub use viewport_lib_types::presentation::{
+    OverlayResolution, Presentation, ReferenceFit, ReferencePlacement,
+};
 
 // Ground-plane config (`GroundPlaneMode`, `GroundPlane`) lives in
 // viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.

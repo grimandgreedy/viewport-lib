@@ -6,7 +6,7 @@
 //! offscreen target, then draw the target into a sub-rect of the window surface:
 //!
 //! ```no_run
-//! # use viewport_lib::{OffscreenViewportTarget, ViewportRenderer, wgpu};
+//! # use viewport_lib::{BlitFilter, OffscreenViewportTarget, ViewportRenderer, wgpu};
 //! # fn compose(
 //! #     renderer: &mut ViewportRenderer,
 //! #     device: &wgpu::Device,
@@ -15,7 +15,7 @@
 //! #     rect: [f32; 4],
 //! # ) {
 //! // Once per target (rebuild when OffscreenViewportTarget::resize returns true):
-//! let blit = renderer.create_blit(device, offscreen.render_view());
+//! let blit = renderer.create_blit(device, offscreen.render_view(), BlitFilter::Linear);
 //! // Each frame, inside your surface render pass:
 //! let [x, y, w, h] = rect;
 //! rp.set_viewport(x, y, w, h, 0.0, 1.0);
@@ -37,6 +37,17 @@
 
 use super::ViewportRenderer;
 
+/// How a blit samples its source.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BlitFilter {
+    /// Bilinear: smooth when the source is scaled.
+    #[default]
+    Linear,
+    /// Nearest: each destination pixel takes the source texel under its
+    /// centre, so a whole-number upscale of pixel art keeps hard edges.
+    Nearest,
+}
+
 /// A colour texture prepared for [`ViewportRenderer::blit`].
 ///
 /// Build once with [`ViewportRenderer::create_blit`] and reuse it every frame.
@@ -47,22 +58,24 @@ pub struct BlitTexture {
 }
 
 impl ViewportRenderer {
-    /// Prepare `source` for blitting into a render pass.
+    /// Prepare `source` for blitting into a render pass, sampled with
+    /// `filter` wherever it is drawn.
     ///
-    /// `source` is sampled as linear. For an
+    /// `source` is sampled as linear colour. For an
     /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) pass its
     /// `render_view()` (the sRGB view), not `sample_view()`; see the module docs.
     pub fn create_blit(
         &mut self,
         device: &crate::gpu::Device,
         source: &crate::gpu::TextureView,
+        filter: BlitFilter,
     ) -> BlitTexture {
         // Ensure both blit pipeline variants exist so blit() and
         // blit_with_depth() are both usable. Both share dyn_res_upscale_bgl and
-        // the linear sampler; the ds variant needs the non-ds one built first.
+        // its samplers; the ds variant needs the non-ds one built first.
         self.resources.ensure_dyn_res_pipeline(device);
         self.resources.ensure_dyn_res_ds_pipeline(device);
-        self.blit_bind_group(device, source)
+        self.blit_bind_group(device, source, filter)
     }
 
     /// Prepare `source` for compositing with
@@ -70,7 +83,8 @@ impl ViewportRenderer {
     /// destination with [`blit`](Self::blit).
     ///
     /// The returned handle is the same kind of thing as [`create_blit`]'s and
-    /// works with either draw; the difference is which pipelines get built.
+    /// works with either draw, sampled with `filter`; the difference is which
+    /// pipelines get built.
     /// Compositing needs a blend state, and this is where that pipeline pair is
     /// compiled, so a consumer that only ever blits never pays for it.
     ///
@@ -83,12 +97,13 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         source: &crate::gpu::TextureView,
+        filter: BlitFilter,
     ) -> BlitTexture {
         // The composite pipelines reuse the plain blit's bind-group layout,
-        // sampler and shader, so that one has to exist first.
+        // samplers and shader, so that one has to exist first.
         self.resources.ensure_dyn_res_pipeline(device);
         self.resources.ensure_blit_composite_pipelines(device);
-        self.blit_bind_group(device, source)
+        self.blit_bind_group(device, source, filter)
     }
 
     /// The texture + sampler bind group both blit kinds use. Identical either
@@ -97,6 +112,7 @@ impl ViewportRenderer {
         &self,
         device: &crate::gpu::Device,
         source: &crate::gpu::TextureView,
+        filter: BlitFilter,
     ) -> BlitTexture {
         let bgl = self
             .resources
@@ -104,12 +120,12 @@ impl ViewportRenderer {
             .dyn_res_upscale_bgl
             .as_ref()
             .expect("ensure_dyn_res_pipeline builds dyn_res_upscale_bgl");
-        let sampler = self
-            .resources
-            .post
-            .dyn_res_linear_sampler
-            .as_ref()
-            .expect("ensure_dyn_res_pipeline builds dyn_res_linear_sampler");
+        let post = &self.resources.post;
+        let sampler = match filter {
+            BlitFilter::Linear => post.dyn_res_linear_sampler.as_ref(),
+            BlitFilter::Nearest => post.dyn_res_nearest_sampler.as_ref(),
+        }
+        .expect("ensure_dyn_res_pipeline builds the blit samplers");
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("viewport_blit_bg"),

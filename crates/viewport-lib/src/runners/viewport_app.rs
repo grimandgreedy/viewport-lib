@@ -764,7 +764,9 @@ impl<'rp> PaintCtx<'_, 'rp> {
     /// Build `blit` once per source with
     /// [`create_blit`](crate::ViewportRenderer::create_blit) (in the per-frame
     /// callback, via [`renderer_mut`](ViewportInstance::renderer_mut)), rebuilding it
-    /// when the source view changes.
+    /// when the source view changes. The [`BlitFilter`](crate::BlitFilter) given
+    /// there is how it samples here: `Nearest` with a rect a whole multiple of
+    /// the source's size upscales pixel art with hard edges.
     pub fn blit_rect(&mut self, blit: &BlitTexture, x: u32, y: u32, w: u32, h: u32) {
         self.rp
             .set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);

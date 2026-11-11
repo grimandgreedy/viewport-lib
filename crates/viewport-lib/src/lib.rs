@@ -342,7 +342,8 @@ pub use renderer::{
     WorldOverlayLayer, WorldPlane, WorldTextSize, aabb_wireframe_polyline, bake_view_transform_lut,
     obb_wireframe_polyline, sphere_wireframe_polyline,
 };
-pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use renderer::{BlitFilter, BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use renderer::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
 pub use resources::PipelineCompilation;
 
 pub use runners::{

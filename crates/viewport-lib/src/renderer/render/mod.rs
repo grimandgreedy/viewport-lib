@@ -310,6 +310,7 @@ mod ldr_path;
 mod overlay_frame;
 mod paint_direct;
 pub(crate) mod pass_table;
+mod reference;
 mod transmission;
 
 impl ViewportRenderer {
@@ -711,7 +712,9 @@ impl ViewportRenderer {
         if self.skip_frame_device_lost() {
             return Vec::new();
         }
-        if self.renders_hdr(frame) {
+        // A reference frame is scaled into a target of the renderer's own,
+        // which `paint` then copies into the host's pass, as an HDR frame is.
+        if self.renders_hdr(frame) || frame.reference_size().is_some() {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
         } else {
@@ -744,7 +747,7 @@ impl ViewportRenderer {
             return;
         }
         let vp_idx = frame.camera.viewport_index;
-        if self.renders_hdr(frame) {
+        if self.renders_hdr(frame) || frame.reference_size().is_some() {
             if self
                 .viewport_slots
                 .get(vp_idx)
@@ -922,9 +925,29 @@ impl ViewportRenderer {
             .store(0, std::sync::atomic::Ordering::Relaxed);
 
         let bg_colour = background_premultiplied(frame);
-        let ppp = frame.camera.pixels_per_point;
-        let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
-        let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        let ppp = frame.scene_ppp();
+        let [sw, sh] = frame.scene_size();
+        let w = (sw * ppp).round() as u32;
+        let h = (sh * ppp).round() as u32;
+
+        // Under a reference presentation the scene draws into the reference
+        // target, at render scale one, and is presented into `output_view`
+        // after it.
+        let reference = frame.reference_placement();
+        let saved_render_scale = self.current_render_scale;
+        self.current_render_scale = self.render_scale_for(frame);
+        let scene_view = match reference {
+            Some(p) => {
+                self.ensure_reference_target(device, vp_idx, p.reference_size);
+                self.viewport_slots[vp_idx]
+                    .reference
+                    .as_ref()
+                    .expect("just ensured")
+                    .view
+                    .clone()
+            }
+            None => output_view.clone(),
+        };
 
         // Ensure the per-viewport targets this frame draws into. The LDR path
         // needs its depth buffer and nothing else; the HDR path needs the
@@ -1006,8 +1029,13 @@ impl ViewportRenderer {
         }
         let path = self.frame_path(frame);
         self.last_stats.frame_path = path;
-        let cmd_buf = if path == crate::renderer::stats::FramePath::OverlaysOnly {
-            self.render_frame_overlays(device, output_view, vp_idx, frame, bg_colour, w, h)
+        let encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("frame_encoder"),
+        });
+        let output = output_view;
+        let output_view = &scene_view;
+        let mut encoder = if path == crate::renderer::stats::FramePath::OverlaysOnly {
+            self.render_frame_overlays(device, output_view, vp_idx, frame, bg_colour, w, h, encoder)
         } else if !self.renders_hdr(frame) {
             // The LDR path binds the LDR mesh family. Prepare has normally
             // built it; this covers a frame prepared for the other family.
@@ -1026,6 +1054,7 @@ impl ViewportRenderer {
                 bg_colour,
                 w,
                 h,
+                encoder,
             )
         } else {
             // The HDR path builds the post-chain pipelines it binds itself,
@@ -1039,8 +1068,14 @@ impl ViewportRenderer {
                 scene_items,
                 bg_colour,
                 ssaa_factor,
+                encoder,
             )
         };
+        self.current_render_scale = saved_render_scale;
+        if let Some(p) = reference {
+            self.encode_reference_present(&mut encoder, device, queue, output, vp_idx, frame, &p);
+        }
+        let cmd_buf = encoder.finish();
         // CPU time spent encoding the paint pass (draw-call recording), separate
         // from prepare. Latched so last_frame_stats() reflects it after render.
         self.last_stats.cpu_paint_ms = paint_start.elapsed().as_secs_f32() * 1000.0;
@@ -1070,6 +1105,16 @@ impl ViewportRenderer {
             .load(std::sync::atomic::Ordering::Relaxed);
         self.last_stats.feature_pipelines_built = self.resources.feature_sets() as u32;
         cmd_buf
+    }
+
+    /// The render scale `frame`'s scene draws at: the dynamic resolution
+    /// scale, or one for a reference target, which it does not apply to.
+    pub(crate) fn render_scale_for(&self, frame: &FrameData) -> f32 {
+        if frame.reference_size().is_some() {
+            1.0
+        } else {
+            self.current_render_scale
+        }
     }
 
     /// Whether `frame` draws through the HDR path. A frame that asks for it on
@@ -1113,7 +1158,9 @@ impl ViewportRenderer {
         frame: &FrameData,
         output_view: Option<&crate::gpu::TextureView>,
     ) -> Option<&'static str> {
-        if self.renders_hdr(frame) {
+        // A reference frame draws its scene into the reference target, which
+        // a plugin can read.
+        if self.renders_hdr(frame) || frame.reference_size().is_some() {
             return None;
         }
         let Some(output_view) = output_view else {
@@ -1129,7 +1176,7 @@ impl ViewportRenderer {
         if self.current_render_scale < 1.0 - 0.001 {
             return Some("the LDR frame was drawn at a reduced render scale");
         }
-        if self.ldr_overlay_intermediate(frame.camera.viewport_index, Some(output_view)) {
+        if self.ldr_overlay_intermediate(frame, frame.camera.viewport_index, Some(output_view)) {
             return Some("the LDR frame drew its overlays into an intermediate target");
         }
         None
@@ -1140,7 +1187,8 @@ impl ViewportRenderer {
     ///
     /// On an HDR frame these are the viewport's HDR colour target and its
     /// depth, the pair post effects read. On an LDR frame the colour is
-    /// `output_view` and the depth is the viewport's LDR depth target. `None`
+    /// `output_view` and the depth is the viewport's LDR depth target, or under
+    /// a reference presentation the reference target and its depth. `None`
     /// when the viewport has not drawn; on an LDR frame also when
     /// `output_view` is missing or its texture lacks `TEXTURE_BINDING`, and
     /// when the frame drew into an intermediate target (dynamic resolution,
@@ -1161,6 +1209,17 @@ impl ViewportRenderer {
                 hdr.hdr_texture.format(),
             ));
         }
+        let depth_view = || match &slot.hdr {
+            Some(hdr) => Some(&hdr.outline_depth_only_view),
+            None => slot.overlay_depth.as_ref().map(|d| &d.depth_only_view),
+        };
+        if frame.reference_size().is_some() {
+            return Some(crate::runtime::PostPaintTargets::new(
+                &slot.reference.as_ref()?.view,
+                depth_view()?,
+                self.resources.target_format,
+            ));
+        }
         let colour = output_view?;
         if !colour
             .texture()
@@ -1170,7 +1229,7 @@ impl ViewportRenderer {
             return None;
         }
         if self.current_render_scale < 1.0 - 0.001
-            || self.ldr_overlay_intermediate(vp_idx, Some(colour))
+            || self.ldr_overlay_intermediate(frame, vp_idx, Some(colour))
         {
             return None;
         }
@@ -1495,6 +1554,7 @@ impl ViewportRenderer {
     /// copied from at a break.
     fn ldr_overlay_intermediate(
         &self,
+        frame: &FrameData,
         vp_idx: usize,
         output: Option<&crate::gpu::TextureView>,
     ) -> bool {
@@ -1502,7 +1562,8 @@ impl ViewportRenderer {
             return false;
         };
         let ov = &slot.overlay;
-        ov.has_breaks()
+        frame.overlays_in_scene()
+            && ov.has_breaks()
             && self.current_render_scale >= 1.0 - 0.001
             && !output.is_some_and(|o| ov.layer_targets.can_snapshot(&o.texture()))
     }

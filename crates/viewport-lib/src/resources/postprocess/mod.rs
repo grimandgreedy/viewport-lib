@@ -70,6 +70,11 @@ pub(crate) struct PostProcessResources {
     pub(crate) blit_composite_ds_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) dyn_res_linear_sampler: Option<crate::gpu::Sampler>,
+    /// The nearest counterpart of `dyn_res_linear_sampler`, for nearest blits.
+    pub(crate) dyn_res_nearest_sampler: Option<crate::gpu::Sampler>,
+    /// Scales a reference target into the output with nearest sampling.
+    pub(crate) reference_present_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) reference_present_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 use crate::resources::pipeline_slot::LazyFamily;
@@ -2184,9 +2189,7 @@ impl DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 3,
-                            resource: crate::gpu::BindingResource::TextureView(
-                                &ssaa_fraction_view,
-                            ),
+                            resource: crate::gpu::BindingResource::TextureView(&ssaa_fraction_view),
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 4,
