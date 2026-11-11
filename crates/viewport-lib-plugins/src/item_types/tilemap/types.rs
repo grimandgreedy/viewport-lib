@@ -14,10 +14,6 @@ viewport_lib_types::slot_handle! {
 /// this many draw their first frame without animating.
 pub const MAX_TILE_ANIMATIONS: usize = 256;
 
-/// Most tiles along either side of a map: a tile's column and row each go to
-/// the GPU as 16 bits.
-pub const MAX_TILEMAP_SIDE: u32 = 1 << 16;
-
 /// The world plane a tilemap lies in. The same two planes as
 /// `viewport_lib::Plane2d` and `viewport_lib::WorldPlane`, with the same axes
 /// and elevation direction, so a map drawn on a plane lines up with a
@@ -276,6 +272,46 @@ impl TileAnimation {
     }
 }
 
+/// A tile drawn at a size other than the tileset's: a tree two cells tall, a
+/// wide roof. The quad is `size` texels of the atlas, scaled to world units
+/// as one tileset tile is to one cell, with its bottom-left corner at
+/// `anchor` of the cell, in cells from the cell's bottom-left corner.
+///
+/// The atlas rectangle starts at the tile's slot (its top-left texel stays
+/// where [`Tileset::tile_rect`] would put it) and runs `size` texels right
+/// and down, so a tall tile laid out over two atlas rows is named by the
+/// index of its top slot. Flips turn the image within the quad.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TileSize {
+    /// The tileset index this size applies to.
+    pub tile: u32,
+    /// Width and height of the tile's image, in texels.
+    pub size: [u32; 2],
+    /// Where the quad's bottom-left corner sits, in cells from the cell's
+    /// bottom-left corner. Default `[0.0, 0.0]`, so the quad stands on the
+    /// cell and grows up and to the right of it, as Tiled draws an oversized
+    /// tile.
+    pub anchor: [f32; 2],
+}
+
+impl TileSize {
+    /// Tile `tile` drawn `size` texels across, standing on its cell's
+    /// bottom-left corner.
+    pub const fn new(tile: u32, size: [u32; 2]) -> Self {
+        Self {
+            tile,
+            size,
+            anchor: [0.0, 0.0],
+        }
+    }
+
+    /// The same size anchored at `anchor` of the cell.
+    pub const fn with_anchor(mut self, anchor: [f32; 2]) -> Self {
+        self.anchor = anchor;
+        self
+    }
+}
+
 /// The atlas a tilemap's tiles come from: one texture holding equal-sized
 /// tiles in rows, as Tiled describes a tileset image.
 #[derive(Debug, Clone, PartialEq)]
@@ -299,11 +335,20 @@ pub struct Tileset {
     /// Animated tiles. At most [`MAX_TILE_ANIMATIONS`] animate; the first
     /// entry naming a tile wins.
     pub animations: Vec<TileAnimation>,
+    /// Tiles drawn at their own size instead of one cell. At most
+    /// [`MAX_TILE_SIZES`] apply; the first entry naming a tile wins. An
+    /// animated tile takes the size of the tile the map holds for it, in
+    /// every frame.
+    pub tile_sizes: Vec<TileSize>,
 }
+
+/// Most [`TileSize`] overrides one tileset applies.
+pub const MAX_TILE_SIZES: usize = 255;
 
 impl Tileset {
     /// A tileset of `columns` tiles per row, each `tile_size` texels, with no
-    /// spacing or margin, nearest-filtered and unanimated.
+    /// spacing or margin, nearest-filtered, unanimated and every tile one
+    /// cell.
     pub fn new(texture_id: Option<TextureId>, tile_size: [u32; 2], columns: u32) -> Self {
         Self {
             texture_id,
@@ -313,18 +358,23 @@ impl Tileset {
             margin: 0,
             filter: TextureFilter::Nearest,
             animations: Vec::new(),
+            tile_sizes: Vec::new(),
         }
     }
 
     /// The texel rectangle of tile `index` as `[x, y, width, height]`, `y`
-    /// measured down from the top of the image.
+    /// measured down from the top of the image. A tile with a
+    /// [`TileSize`] keeps its slot's corner and takes that size.
     pub fn tile_rect(&self, index: u32) -> [u32; 4] {
         let columns = self.columns.max(1);
         let (col, row) = (index % columns, index / columns);
         let [w, h] = self.tile_size;
+        let [w, h] = self
+            .size_of(index)
+            .map_or([w, h], |s| self.tile_sizes[s].size);
         [
-            self.margin + col * (w + self.spacing),
-            self.margin + row * (h + self.spacing),
+            self.margin + col * (self.tile_size[0] + self.spacing),
+            self.margin + row * (self.tile_size[1] + self.spacing),
             w,
             h,
         ]
@@ -337,85 +387,148 @@ impl Tileset {
             .take(MAX_TILE_ANIMATIONS)
             .position(|a| a.tile == tile)
     }
+
+    /// The entry of [`tile_sizes`](Self::tile_sizes) that applies to `tile`.
+    pub fn size_of(&self, tile: u32) -> Option<usize> {
+        self.tile_sizes
+            .iter()
+            .take(MAX_TILE_SIZES)
+            .position(|s| s.tile == tile)
+    }
+
+    /// How far the tiles of this set reach past their cells, in cells:
+    /// `[left, bottom, right, top]`, each zero or more. Zero everywhere when
+    /// every tile is one cell.
+    pub fn overhang(&self) -> [f32; 4] {
+        let [tw, th] = self.tile_size.map(|s| s.max(1) as f32);
+        let mut out = [0.0f32; 4];
+        for (i, s) in self.tile_sizes.iter().take(MAX_TILE_SIZES).enumerate() {
+            if self.size_of(s.tile) != Some(i) {
+                continue;
+            }
+            let lo = glam::Vec2::from(s.anchor);
+            let hi = lo + glam::Vec2::new(s.size[0] as f32 / tw, s.size[1] as f32 / th);
+            out[0] = out[0].max(-lo.x);
+            out[1] = out[1].max(-lo.y);
+            out[2] = out[2].max(hi.x - 1.0);
+            out[3] = out[3].max(hi.y - 1.0);
+        }
+        out
+    }
 }
 
-/// A fixed-size block of a tilemap's cells, drawn with one draw call.
+/// Lowest column or row a tilemap cell can have. Cells go to the GPU as
+/// signed 16-bit columns and rows.
+pub const MIN_TILE_CELL: i32 = i16::MIN as i32;
+
+/// Highest column or row a tilemap cell can have.
+pub const MAX_TILE_CELL: i32 = i16::MAX as i32;
+
+/// A square block of a tilemap's cells, drawn with one draw call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TileChunk {
     /// The chunk's cells, row by row from the bottom row, `chunk_size` to a
-    /// row. Cells past the map's edge stay empty.
+    /// row.
     pub tiles: Vec<Tile>,
 }
 
 impl TileChunk {
+    /// A chunk of `chunk_size` by `chunk_size` empty cells.
+    pub fn new(chunk_size: u32) -> Self {
+        Self {
+            tiles: vec![Tile::EMPTY; (chunk_size * chunk_size) as usize],
+        }
+    }
+
     /// How many cells hold a tile.
     pub fn occupied(&self) -> usize {
         self.tiles.iter().filter(|t| !t.is_empty()).count()
     }
 }
 
-/// A grid of tiles from one tileset, held in square chunks.
+/// A grid of tiles from one tileset, held in square chunks keyed by chunk
+/// coordinate.
 ///
-/// Column 0 is the left edge and row 0 the bottom: row numbers count up the
-/// plane's +y. Upload it once, draw it with a [`TilemapItem`] each frame, and
-/// edit it in place with `set_tile`, which re-uploads only the chunk holding
-/// the cell.
+/// Column 0 is the left edge of chunk 0 and row 0 its bottom: rows count up
+/// the plane's +y, and both may be negative, down to [`MIN_TILE_CELL`]. Chunk
+/// `[cx, cy]` holds the cells from `[cx, cy] * chunk_size` to one chunk
+/// further. The map is sparse: [`set`](Self::set) creates the chunk holding a
+/// cell, [`remove_chunk`](Self::remove_chunk) drops one, and a cell no chunk
+/// holds is empty.
+///
+/// Upload it once, draw it with a [`TilemapItem`] each frame, and edit it in
+/// place with `set_tile`, `set_chunk` and `remove_chunk`, which re-upload
+/// only the chunks they touch. Each uploaded chunk holds an instance per
+/// occupied cell and no more.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tilemap {
     /// The atlas and animations every tile reads.
     pub tileset: Tileset,
-    size: [u32; 2],
+    /// When `true` (the default), the renderer keeps its copy of the cells
+    /// after upload, for `set_tile`, CPU picks and
+    /// [`TilemapEdits::tilemap`](crate::item_types::tilemap::TilemapEdits::tilemap).
+    /// When `false` it drops them once the chunks are on the GPU, keeping
+    /// only which cells are occupied: edits then replace whole chunks with
+    /// `set_chunk`, and `set_tile` writes nothing.
+    pub keep_cpu_copy: bool,
     chunk_size: u32,
-    chunks: Vec<TileChunk>,
+    /// Keyed by `(cy, cx)`, so iteration runs row by row from the bottom.
+    chunks: std::collections::BTreeMap<(i32, i32), TileChunk>,
 }
 
 impl Tilemap {
     /// Chunk side used by [`Tilemap::new`].
     pub const DEFAULT_CHUNK_SIZE: u32 = 32;
 
-    /// An empty map `size` tiles across (columns, rows), in chunks of
-    /// [`DEFAULT_CHUNK_SIZE`](Self::DEFAULT_CHUNK_SIZE) tiles a side.
+    /// A map `size` tiles across (columns, rows) from cell (0, 0), in chunks
+    /// of [`DEFAULT_CHUNK_SIZE`](Self::DEFAULT_CHUNK_SIZE) tiles a side, with
+    /// the chunks over that range created empty.
     pub fn new(tileset: Tileset, size: [u32; 2]) -> Self {
         Self::with_chunk_size(tileset, size, Self::DEFAULT_CHUNK_SIZE)
     }
 
-    /// An empty map in chunks of `chunk_size` tiles a side. Each side of the
-    /// map is clamped to [`MAX_TILEMAP_SIDE`] and the chunk side to `1..=256`.
+    /// A map `size` tiles across in chunks of `chunk_size` tiles a side, with
+    /// the chunks over cells `0..size` created empty. Each side is clamped to
+    /// the cells up to [`MAX_TILE_CELL`] and the chunk side to `1..=256`.
     pub fn with_chunk_size(tileset: Tileset, size: [u32; 2], chunk_size: u32) -> Self {
-        let size = size.map(|s| s.min(MAX_TILEMAP_SIDE));
-        let chunk_size = chunk_size.clamp(1, 256);
-        let chunks_x = size[0].div_ceil(chunk_size);
-        let chunks_y = size[1].div_ceil(chunk_size);
-        let chunk = TileChunk {
-            tiles: vec![Tile::EMPTY; (chunk_size * chunk_size) as usize],
-        };
-        Self {
-            tileset,
-            size,
-            chunk_size,
-            chunks: vec![chunk; (chunks_x * chunks_y) as usize],
-        }
-    }
-
-    /// A map from rows of tile indices, top row first as a level is usually
-    /// written down, with [`Tile::EMPTY_INDEX`] for an empty cell. Each row
-    /// is as long as the first; shorter rows leave the rest empty.
-    pub fn from_rows(tileset: Tileset, rows: &[&[u32]], chunk_size: u32) -> Self {
-        let width = rows.first().map_or(0, |r| r.len()) as u32;
-        let height = rows.len() as u32;
-        let mut map = Self::with_chunk_size(tileset, [width, height], chunk_size);
-        for (i, row) in rows.iter().enumerate() {
-            let r = height - 1 - i as u32;
-            for (c, &index) in row.iter().enumerate().take(width as usize) {
-                map.set(c as u32, r, Tile::new(index));
+        let mut map = Self::sparse(tileset, chunk_size);
+        let cs = map.chunk_size as i64;
+        let side = |s: u32| (s as i64).min(MAX_TILE_CELL as i64 + 1);
+        let chunks = [side(size[0]), side(size[1])].map(|s| ((s + cs - 1) / cs) as i32);
+        for cy in 0..chunks[1] {
+            for cx in 0..chunks[0] {
+                map.chunks.insert((cy, cx), TileChunk::new(map.chunk_size));
             }
         }
         map
     }
 
-    /// Columns and rows of tiles.
-    pub fn size(&self) -> [u32; 2] {
-        self.size
+    /// A map with no chunks, in chunks of `chunk_size` tiles a side (clamped
+    /// to `1..=256`), that grows as cells are set.
+    pub fn sparse(tileset: Tileset, chunk_size: u32) -> Self {
+        Self {
+            tileset,
+            keep_cpu_copy: true,
+            chunk_size: chunk_size.clamp(1, 256),
+            chunks: Default::default(),
+        }
+    }
+
+    /// A map from rows of tile indices, top row first as a level is usually
+    /// written down, with [`Tile::EMPTY_INDEX`] for an empty cell. The bottom
+    /// row is row 0. Each row is as long as the first; shorter rows leave the
+    /// rest empty.
+    pub fn from_rows(tileset: Tileset, rows: &[&[u32]], chunk_size: u32) -> Self {
+        let width = rows.first().map_or(0, |r| r.len()) as u32;
+        let height = rows.len() as u32;
+        let mut map = Self::with_chunk_size(tileset, [width, height], chunk_size);
+        for (i, row) in rows.iter().enumerate() {
+            let r = (height - 1 - i as u32) as i32;
+            for (c, &index) in row.iter().enumerate().take(width as usize) {
+                map.set(c as i32, r, Tile::new(index));
+            }
+        }
+        map
     }
 
     /// Tiles along each side of a chunk.
@@ -423,72 +536,157 @@ impl Tilemap {
         self.chunk_size
     }
 
-    /// Chunks across and up the map.
-    pub fn chunk_grid(&self) -> [u32; 2] {
-        [
-            self.size[0].div_ceil(self.chunk_size),
-            self.size[1].div_ceil(self.chunk_size),
-        ]
+    /// How many chunks the map holds.
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
     }
 
-    /// Every chunk, row by row from the bottom-left one.
-    pub fn chunks(&self) -> &[TileChunk] {
-        &self.chunks
+    /// Every chunk with its coordinate `[cx, cy]`, row by row from the
+    /// bottom-left one.
+    pub fn chunks(&self) -> impl Iterator<Item = ([i32; 2], &TileChunk)> + '_ {
+        self.chunks.iter().map(|(&(cy, cx), c)| ([cx, cy], c))
     }
 
-    /// The chunk and the cell within it that hold cell (`col`, `row`), as
-    /// flat indices: chunk `cy * chunks_across + cx`, cell `ty * chunk_size +
-    /// tx`. `None` off the map.
-    pub fn locate(&self, col: u32, row: u32) -> Option<(u32, u32)> {
-        if col >= self.size[0] || row >= self.size[1] {
+    /// The chunk at `[cx, cy]`, when the map holds one.
+    pub fn chunk(&self, coord: [i32; 2]) -> Option<&TileChunk> {
+        self.chunks.get(&(coord[1], coord[0]))
+    }
+
+    /// The chunk coordinate holding cell (`col`, `row`) and the cell's flat
+    /// index within it, `ty * chunk_size + tx`. `None` outside the cell
+    /// range, [`MIN_TILE_CELL`] to [`MAX_TILE_CELL`].
+    pub fn locate(&self, col: i32, row: i32) -> Option<([i32; 2], u32)> {
+        let range = MIN_TILE_CELL..=MAX_TILE_CELL;
+        if !range.contains(&col) || !range.contains(&row) {
             return None;
         }
-        let cs = self.chunk_size;
-        let across = self.chunk_grid()[0];
-        let chunk = (row / cs) * across + col / cs;
-        let tile = (row % cs) * cs + col % cs;
+        let cs = self.chunk_size as i32;
+        let chunk = [col.div_euclid(cs), row.div_euclid(cs)];
+        let tile = (row.rem_euclid(cs) * cs + col.rem_euclid(cs)) as u32;
         Some((chunk, tile))
     }
 
-    /// The map cell (`col`, `row`) of `tile` in `chunk`, the inverse of
-    /// [`locate`](Self::locate). `None` when the pair names no cell on the map.
-    pub fn cell_of(&self, chunk: u32, tile: u32) -> Option<[u32; 2]> {
+    /// The cell (`col`, `row`) of flat index `tile` in chunk `chunk`, the
+    /// inverse of [`locate`](Self::locate). `None` when `tile` is past the
+    /// chunk or the cell is outside the cell range.
+    pub fn cell_of(&self, chunk: [i32; 2], tile: u32) -> Option<[i32; 2]> {
         let cs = self.chunk_size;
-        let across = self.chunk_grid()[0].max(1);
-        if chunk as usize >= self.chunks.len() || tile >= cs * cs {
+        if tile >= cs * cs {
             return None;
         }
-        let col = (chunk % across) * cs + tile % cs;
-        let row = (chunk / across) * cs + tile / cs;
-        (col < self.size[0] && row < self.size[1]).then_some([col, row])
+        let cs = cs as i64;
+        let col = chunk[0] as i64 * cs + (tile as i64 % cs);
+        let row = chunk[1] as i64 * cs + (tile as i64 / cs);
+        let range = MIN_TILE_CELL as i64..=MAX_TILE_CELL as i64;
+        (range.contains(&col) && range.contains(&row)).then_some([col as i32, row as i32])
     }
 
-    /// The tile at (`col`, `row`); `None` off the map.
-    pub fn get(&self, col: u32, row: u32) -> Option<Tile> {
+    /// The tile at (`col`, `row`); `None` where no chunk holds the cell.
+    pub fn get(&self, col: i32, row: i32) -> Option<Tile> {
         let (chunk, tile) = self.locate(col, row)?;
-        Some(self.chunks[chunk as usize].tiles[tile as usize])
+        Some(self.chunk(chunk)?.tiles[tile as usize])
     }
 
-    /// Put `tile` at (`col`, `row`). Returns the chunk index it landed in, or
-    /// `None` off the map.
-    pub fn set(&mut self, col: u32, row: u32, tile: Tile) -> Option<u32> {
+    /// Put `tile` at (`col`, `row`), creating its chunk when the map has
+    /// none there, and return the chunk's coordinate. Emptying a cell no
+    /// chunk holds creates nothing. `None` outside the cell range.
+    pub fn set(&mut self, col: i32, row: i32, tile: Tile) -> Option<[i32; 2]> {
         let (chunk, index) = self.locate(col, row)?;
-        self.chunks[chunk as usize].tiles[index as usize] = tile;
+        let key = (chunk[1], chunk[0]);
+        if tile.is_empty() && !self.chunks.contains_key(&key) {
+            return Some(chunk);
+        }
+        let cs = self.chunk_size;
+        self.chunks
+            .entry(key)
+            .or_insert_with(|| TileChunk::new(cs))
+            .tiles[index as usize] = tile;
         Some(chunk)
     }
 
-    /// The cell range chunk `chunk` covers, as `[col0, row0, col1, row1]`
-    /// with the end exclusive and clamped to the map.
-    pub fn chunk_cells(&self, chunk: u32) -> [u32; 4] {
-        let cs = self.chunk_size;
-        let across = self.chunk_grid()[0].max(1);
-        let (cx, cy) = (chunk % across, chunk / across);
+    /// Replace the chunk at `[cx, cy]` with `chunk`, creating it when the map
+    /// has none there. `chunk.tiles` is cut or padded with empty cells to the
+    /// chunk's size. `false`, changing nothing, when the chunk lies outside
+    /// the cell range.
+    pub fn set_chunk(&mut self, coord: [i32; 2], mut chunk: TileChunk) -> bool {
+        let [c0, r0, c1, r1] = self.chunk_cells(coord);
+        if c0 >= c1 || r0 >= r1 {
+            return false;
+        }
+        let cells = (self.chunk_size * self.chunk_size) as usize;
+        chunk.tiles.resize(cells, Tile::EMPTY);
+        self.chunks.insert((coord[1], coord[0]), chunk);
+        true
+    }
+
+    /// Drop the chunk at `[cx, cy]` and return it.
+    pub fn remove_chunk(&mut self, coord: [i32; 2]) -> Option<TileChunk> {
+        self.chunks.remove(&(coord[1], coord[0]))
+    }
+
+    /// The cell range chunk `[cx, cy]` covers, as `[col0, row0, col1, row1]`
+    /// with the end exclusive and clamped to the cell range.
+    pub fn chunk_cells(&self, coord: [i32; 2]) -> [i32; 4] {
+        let cs = self.chunk_size as i64;
+        let lo = MIN_TILE_CELL as i64;
+        let hi = MAX_TILE_CELL as i64 + 1;
+        let at = |c: i32, k: i64| ((c as i64 + k) * cs).clamp(lo, hi) as i32;
         [
-            cx * cs,
-            cy * cs,
-            ((cx + 1) * cs).min(self.size[0]),
-            ((cy + 1) * cs).min(self.size[1]),
+            at(coord[0], 0),
+            at(coord[1], 0),
+            at(coord[0], 1),
+            at(coord[1], 1),
         ]
+    }
+
+    /// The cells every chunk of the map covers together, as `[col0, row0,
+    /// col1, row1]` with the end exclusive. `None` for a map with no chunks.
+    pub fn cell_bounds(&self) -> Option<[i32; 4]> {
+        self.chunks()
+            .map(|(c, _)| self.chunk_cells(c))
+            .reduce(|a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            })
+    }
+
+    /// Drop every chunk's cells, keeping the tileset and the chunk size.
+    #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+    pub(crate) fn clear_chunks(&mut self) {
+        self.chunks.clear();
+    }
+}
+
+/// How a blended tilemap layer takes its place in the painter's order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TilemapPainter {
+    /// The whole layer is one batch at sort key `key`, its chunks in map
+    /// order.
+    Layer {
+        /// Sort key against other painter content on the same layer.
+        key: f32,
+    },
+    /// Each drawn row of each chunk is its own batch, keyed by where the row
+    /// stands so it sorts against sprites walking past it: the key of a row
+    /// whose bottom edge is at plane `y` is `offset - y`, so rows further up
+    /// the plane draw first and anything standing lower covers them. A
+    /// sprite whose feet are at plane `y` sorts with the rows when its key is
+    /// `offset - y` in the same layer. A tall tile draws in the batch of the
+    /// row it stands on.
+    PerRow {
+        /// Added to every row's key, to place the rows in the host's key
+        /// space.
+        offset: f32,
+    },
+}
+
+impl Default for TilemapPainter {
+    fn default() -> Self {
+        Self::Layer { key: 0.0 }
     }
 }
 
@@ -503,9 +701,10 @@ pub enum TilemapDraw {
         alpha_threshold: f32,
     },
     /// Alpha-blended, drawn after the opaque scene in painter's order: by
-    /// `layer` (lower first), at sort key `0.0` against painter sprites on the
-    /// same layer, then submission order; each layer's chunks in map order.
-    /// Never writes depth. For decoration layers with soft edges.
+    /// `layer` (lower first), then by the sort key `painter` gives it against
+    /// other painter content on the same layer, then submission order.
+    /// Never writes depth. For decoration layers with soft edges, and for
+    /// walls and props that sort against sprites by row.
     Blended {
         /// Layer order. Lower layers draw first.
         layer: u32,
@@ -513,6 +712,8 @@ pub enum TilemapDraw {
         /// geometry covers them; when `false` they draw over everything
         /// already in the scene.
         depth_test: bool,
+        /// One batch for the layer, or one per row.
+        painter: TilemapPainter,
     },
 }
 
@@ -732,19 +933,42 @@ mod tests {
     #[test]
     fn cells_round_trip_through_chunks() {
         let map = Tilemap::with_chunk_size(Tileset::new(None, [8, 8], 4), [10, 7], 4);
-        assert_eq!(map.chunk_grid(), [3, 2]);
-        assert_eq!(map.chunks().len(), 6);
-        for row in 0..7 {
-            for col in 0..10 {
+        assert_eq!(map.chunk_count(), 6);
+        assert_eq!(map.cell_bounds(), Some([0, 0, 12, 8]));
+        for row in -9..9 {
+            for col in -9..13 {
                 let (chunk, tile) = map.locate(col, row).unwrap();
                 assert_eq!(map.cell_of(chunk, tile), Some([col, row]));
             }
         }
-        assert_eq!(map.locate(10, 0), None);
-        // Chunk 2 is the bottom-right one, clipped to the map.
-        assert_eq!(map.chunk_cells(2), [8, 0, 10, 4]);
-        // Cell 3 of chunk 2 is column 11, off the map.
-        assert_eq!(map.cell_of(2, 3), None);
+        assert_eq!(map.locate(-3, 5), Some(([-1, 1], 4 + 1)));
+        assert_eq!(map.locate(MAX_TILE_CELL + 1, 0), None);
+        assert_eq!(map.chunk_cells([2, 0]), [8, 0, 12, 4]);
+        assert_eq!(map.cell_of([0, 0], 16), None);
+    }
+
+    #[test]
+    fn a_sparse_map_grows_and_shrinks_by_chunk() {
+        let mut map = Tilemap::sparse(Tileset::new(None, [8, 8], 4), 4);
+        assert_eq!(map.cell_bounds(), None);
+        assert_eq!(map.set(-5, -1, Tile::EMPTY), Some([-2, -1]));
+        assert_eq!(map.chunk_count(), 0, "emptying a cell creates no chunk");
+        assert_eq!(map.set(-5, -1, Tile::new(3)), Some([-2, -1]));
+        assert_eq!(map.chunk_count(), 1);
+        assert_eq!(map.get(-5, -1).unwrap().index, 3);
+        assert!(map.get(-6, -1).unwrap().is_empty());
+        assert_eq!(map.get(0, 0), None);
+        assert_eq!(map.cell_bounds(), Some([-8, -4, -4, 0]));
+        assert!(map.remove_chunk([-2, -1]).is_some());
+        assert_eq!(map.get(-5, -1), None);
+        assert!(map.set_chunk(
+            [1, 1],
+            TileChunk {
+                tiles: vec![Tile::new(1)]
+            }
+        ));
+        assert_eq!(map.chunk([1, 1]).unwrap().tiles.len(), 16);
+        assert_eq!(map.get(4, 4).unwrap().index, 1);
     }
 
     #[test]
@@ -761,6 +985,20 @@ mod tests {
         set.spacing = 2;
         assert_eq!(set.tile_rect(0), [1, 1, 16, 8]);
         assert_eq!(set.tile_rect(4), [1 + 18, 1 + 10, 16, 8]);
+        set.tile_sizes.push(TileSize::new(4, [16, 16]));
+        assert_eq!(set.tile_rect(4), [1 + 18, 1 + 10, 16, 16]);
+    }
+
+    #[test]
+    fn tall_tiles_reach_past_their_cells() {
+        let mut set = Tileset::new(None, [16, 16], 4);
+        assert_eq!(set.overhang(), [0.0; 4]);
+        set.tile_sizes.push(TileSize::new(2, [16, 32]));
+        set.tile_sizes
+            .push(TileSize::new(5, [48, 16]).with_anchor([-1.0, 0.0]));
+        // A later entry for the same tile is ignored.
+        set.tile_sizes.push(TileSize::new(2, [16, 160]));
+        assert_eq!(set.overhang(), [1.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]

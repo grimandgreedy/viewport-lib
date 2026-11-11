@@ -149,7 +149,11 @@ fn tilemap(grid: &TileGrid, set: Tileset) -> Tilemap {
         }
         let (col, row) = (i as u32 % cols, rows - 1 - i as u32 / cols);
         let flip = TileFlip::new(cell.flip_h, cell.flip_v, cell.flip_d);
-        map.set(col, row, Tile::new(cell.index).with_flip(flip));
+        map.set(
+            col as i32,
+            row as i32,
+            Tile::new(cell.index).with_flip(flip),
+        );
     }
     map
 }

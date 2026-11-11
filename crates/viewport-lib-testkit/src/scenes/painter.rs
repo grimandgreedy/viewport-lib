@@ -26,7 +26,9 @@ use viewport_lib_plugins::item_types::gpu_particles::{
     VelocityDist,
 };
 use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteOrder, SpriteSizeMode};
-use viewport_lib_plugins::item_types::tilemap::{Tile, Tilemap, TilemapDraw, TilemapItem, Tileset};
+use viewport_lib_plugins::item_types::tilemap::{
+    Tile, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, Tileset,
+};
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, material, rigs};
 
@@ -172,7 +174,7 @@ fn build_particles_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut map = Tilemap::with_chunk_size(Tileset::new(Some(atlas), [8, 8], 2), [12, 6], 8);
     for row in 0..6 {
         for col in 0..12 {
-            map.set(col, row, Tile::new((col + row) % 2));
+            map.set(col, row, Tile::new(((col + row) % 2) as u32));
         }
     }
     let map = ctx
@@ -185,6 +187,7 @@ fn build_particles_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     tiles.draw = TilemapDraw::Blended {
         layer: 1,
         depth_test: false,
+        painter: TilemapPainter::default(),
     };
     tiles.settings.pick_id = PickId(4201);
 

@@ -60,29 +60,57 @@ impl viewport_lib::plugin_api::Handles<TilemapId> for ViewportRenderer {
 /// Edits to an uploaded tilemap. Each call rewrites only the chunks holding
 /// the cells it changes.
 pub trait TilemapEdits {
-    /// Put `tile` at (`col`, `row`) and re-upload its chunk. `Ok(false)` when
-    /// the cell is off the map, which changes nothing.
+    /// Put `tile` at (`col`, `row`) and re-upload its chunk, creating the
+    /// chunk when the map has none there. `Ok(false)`, changing nothing, when
+    /// the cell is outside the cell range or the map was uploaded without a
+    /// CPU copy ([`Tilemap::keep_cpu_copy`]), whose edits go through
+    /// [`set_chunk`](Self::set_chunk).
     fn set_tile(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         id: TilemapId,
-        col: u32,
-        row: u32,
+        col: i32,
+        row: i32,
         tile: Tile,
     ) -> viewport_lib::error::ViewportResult<bool>;
 
     /// Put each `(col, row, tile)` and re-upload every chunk that changed,
-    /// once. `Ok(false)` when any cell was off the map; the rest are written.
+    /// once. `Ok(false)` when any cell was outside the cell range, which is
+    /// skipped while the rest are written, or the map keeps no CPU copy,
+    /// which writes nothing.
     fn set_tiles(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         id: TilemapId,
-        tiles: &[(u32, u32, Tile)],
+        tiles: &[(i32, i32, Tile)],
     ) -> viewport_lib::error::ViewportResult<bool>;
 
-    /// The renderer's copy of an uploaded map, as edits have left it.
+    /// Replace the whole chunk at `coord` (`[cx, cy]`) and upload it,
+    /// creating it when the map has none there; its buffer holds one
+    /// instance per occupied cell. Works whether or not the map keeps a CPU
+    /// copy. `Ok(false)` when the chunk lies outside the cell range.
+    fn set_chunk(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: TilemapId,
+        coord: [i32; 2],
+        chunk: TileChunk,
+    ) -> viewport_lib::error::ViewportResult<bool>;
+
+    /// Drop the chunk at `coord` and free its buffer. `Ok(false)` when the
+    /// map had no chunk there.
+    fn remove_chunk(
+        &mut self,
+        id: TilemapId,
+        coord: [i32; 2],
+    ) -> viewport_lib::error::ViewportResult<bool>;
+
+    /// The renderer's copy of an uploaded map, as edits have left it. A map
+    /// uploaded without a CPU copy comes back with its tileset and no
+    /// chunks.
     fn tilemap(&self, id: TilemapId) -> Option<&Tilemap>;
 }
 
@@ -92,8 +120,8 @@ impl TilemapEdits for ViewportRenderer {
         device: &gpu::Device,
         queue: &gpu::Queue,
         id: TilemapId,
-        col: u32,
-        row: u32,
+        col: i32,
+        row: i32,
         tile: Tile,
     ) -> viewport_lib::error::ViewportResult<bool> {
         plugin_mut::<TilemapPlugin>(self, TYPE_NAME)?.set_tiles(
@@ -109,7 +137,7 @@ impl TilemapEdits for ViewportRenderer {
         device: &gpu::Device,
         queue: &gpu::Queue,
         id: TilemapId,
-        tiles: &[(u32, u32, Tile)],
+        tiles: &[(i32, i32, Tile)],
     ) -> viewport_lib::error::ViewportResult<bool> {
         plugin_mut::<TilemapPlugin>(self, TYPE_NAME)?.set_tiles(
             device,
@@ -117,6 +145,25 @@ impl TilemapEdits for ViewportRenderer {
             id,
             tiles.iter().copied(),
         )
+    }
+
+    fn set_chunk(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: TilemapId,
+        coord: [i32; 2],
+        chunk: TileChunk,
+    ) -> viewport_lib::error::ViewportResult<bool> {
+        plugin_mut::<TilemapPlugin>(self, TYPE_NAME)?.set_chunk(device, queue, id, coord, chunk)
+    }
+
+    fn remove_chunk(
+        &mut self,
+        id: TilemapId,
+        coord: [i32; 2],
+    ) -> viewport_lib::error::ViewportResult<bool> {
+        plugin_mut::<TilemapPlugin>(self, TYPE_NAME)?.remove_chunk(id, coord)
     }
 
     fn tilemap(&self, id: TilemapId) -> Option<&Tilemap> {
@@ -130,8 +177,9 @@ pub trait TileMaterials {
     /// Register `plugin` as a tile material: a body defining
     /// `fn displace_sprite(v: SpriteVertex) -> vec3<f32>`, the sprite vertex
     /// hook, which then moves each corner of every tile of a layer whose
-    /// [`TilemapItem::material`] names it. `v.local_uv` runs across the cell
-    /// and `v.anchor` is the cell's bottom-left corner. The body reads its
+    /// [`TilemapItem::material`] names it. `v.local_uv` runs across the
+    /// tile's quad (one cell, or a [`TileSize`]'s quad) and `v.anchor` is the
+    /// cell's bottom-left corner. The body reads its
     /// parameters through `params` and `hook_params.lanes`; tile materials
     /// take no textures.
     ///

@@ -24,8 +24,10 @@ pub(crate) const PICK: usize = 6;
 pub(crate) const PICK_PAINTER: usize = 7;
 /// Pick for blended layers that ignore scene depth.
 pub(crate) const PICK_PAINTER_NO_TEST: usize = 8;
+/// A selected layer's tiles in the selection-outline mask.
+pub(crate) const OUTLINE_MASK: usize = 9;
 
-const COUNT: usize = 9;
+const COUNT: usize = 10;
 
 /// The instance stream: cell, tile, flags and tint per occupied cell.
 const TILE_ATTRS: [viewport_lib::gpu::VertexAttribute; 4] = [
@@ -77,6 +79,42 @@ pub(crate) type TilemapPipelines = viewport_lib::plugin_api::LazyPipelines<Tilem
 fn build(r: &TilemapRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     use viewport_lib::gpu;
     let vertex_buffers = [tile_layout()];
+    if i == OUTLINE_MASK {
+        // The mask pass clears its own depth; tiles are flat, so every one
+        // of them goes in.
+        return viewport_lib::plugin_api::builders::render_pipeline(
+            &r.device,
+            viewport_lib::plugin_api::builders::RenderPipelineDesc {
+                label: "tilemap_outline_mask_pipeline",
+                layout: &r.layout,
+                vertex_module: r.shader.get(),
+                vertex_entry: "vs_main",
+                vertex_buffers: &vertex_buffers,
+                fragment: Some(gpu::FragmentState {
+                    module: r.shader.get(),
+                    entry_point: Some("fs_mask"),
+                    targets: &[Some(gpu::ColorTargetState {
+                        format: gpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                    r.depth_format,
+                    false,
+                    gpu::CompareFunction::Always,
+                )),
+                multisample: gpu::MultisampleState::default(),
+                cache: None,
+            },
+        );
+    }
     if matches!(i, PICK | PICK_PAINTER | PICK_PAINTER_NO_TEST) {
         let id_target = Some(gpu::ColorTargetState {
             format: gpu::TextureFormat::R32Uint,

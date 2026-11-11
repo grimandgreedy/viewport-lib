@@ -396,6 +396,43 @@ impl ViewportRenderer {
         })
     }
 
+    /// The outline of each selected sub-object only an item type can place,
+    /// keyed by its `(node id, sub-object)` pair, asked of every plugin
+    /// through [`sub_object_outline`](crate::plugin_api::ItemTypePlugin::sub_object_outline).
+    pub(crate) fn plugin_sub_object_outlines(
+        &self,
+        selection: &SubSelectionRef,
+        frame: &FrameData,
+    ) -> crate::resources::PluginOutlines {
+        let mut out = crate::resources::PluginOutlines::default();
+        let mut corners = Vec::new();
+        for &(id, sub_object) in selection.items() {
+            if !matches!(sub_object, SubObjectRef::Tile { .. }) {
+                continue;
+            }
+            for (name, plugin) in self.item_type_plugins.iter() {
+                let items = crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                );
+                corners.clear();
+                plugin.sub_object_outline(
+                    &items,
+                    crate::renderer::PickId(id),
+                    sub_object,
+                    &mut corners,
+                );
+                if !corners.is_empty() {
+                    out.insert(
+                        (id, sub_object),
+                        corners.iter().map(|c| c.to_array()).collect(),
+                    );
+                    break;
+                }
+            }
+        }
+        out
+    }
+
     /// Whether this device can resolve GPU sub-object picking for triangle-meshed
     /// types (surface face / cell / vertex, tube-family segment / strip / node).
     ///

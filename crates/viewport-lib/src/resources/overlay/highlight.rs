@@ -1,6 +1,25 @@
 use crate::renderer::{SubObjectRef, SubSelectionRef};
 use crate::resources::types::DeviceResources;
 
+/// World-space outlines item-type plugins gave for selected sub-objects, by
+/// `(node id, sub-object)`: the corners of a convex polygon each.
+pub(crate) type PluginOutlines = std::collections::HashMap<(u64, SubObjectRef), Vec<[f32; 3]>>;
+
+/// A hash of `outlines`, so the highlight is rebuilt only when one changes.
+pub(crate) fn plugin_outlines_hash(outlines: &PluginOutlines) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut entries: Vec<_> = outlines.iter().collect();
+    entries.sort_by_key(|(k, _)| (k.0, k.1.index()));
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for (key, corners) in entries {
+        key.hash(&mut h);
+        for c in corners {
+            c.map(f32::to_bits).hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
 /// Recover the two world-space endpoint positions for a global polyline segment index.
 ///
 /// Returns `None` if the index is out of range or positions are missing.
@@ -233,12 +252,16 @@ impl DeviceResources {
     /// `extra_edge_data` is a flat list of f32 pairs (start xyz, end xyz per segment)
     /// appended to the edge geometry after all sub-selection edges are emitted.
     /// Pass an empty slice when there are no extra edges.
+    ///
+    /// `plugin_outlines` holds the world-space polygons item-type plugins gave
+    /// for sub-objects whose geometry only they know.
     pub(crate) fn build_sub_highlight(
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         sel: Option<&SubSelectionRef>,
         extra_edge_data: &[f32],
+        plugin_outlines: &PluginOutlines,
         fill_colour: [f32; 4],
         edge_colour: [f32; 4],
         edge_width: f32,
@@ -518,8 +541,23 @@ impl DeviceResources {
                             }
                         }
                     }
-                    // The overlay has no lookup for a tilemap's cells.
-                    SubObjectRef::Tile { .. } => {}
+                    // A tilemap cell, outlined by the plugin that draws it,
+                    // already in world space: filled as a fan and traced.
+                    SubObjectRef::Tile { .. } => {
+                        if let Some(corners) = plugin_outlines.get(&(*node_id, *sub_ref)) {
+                            for i in 1..corners.len().saturating_sub(1) {
+                                fill_verts.extend_from_slice(&[
+                                    corners[0],
+                                    corners[i],
+                                    corners[i + 1],
+                                ]);
+                            }
+                            for i in 0..corners.len() {
+                                edge_data.extend_from_slice(&corners[i]);
+                                edge_data.extend_from_slice(&corners[(i + 1) % corners.len()]);
+                            }
+                        }
+                    }
                 }
             }
         } // end if let Some(sel)

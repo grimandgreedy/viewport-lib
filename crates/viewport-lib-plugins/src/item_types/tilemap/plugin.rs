@@ -1,15 +1,16 @@
 //! The tilemap plugin: its store, its per-frame layers and its draw hooks.
 
 use super::store::{
-    LAYER_STRIDE, StoredTilemap, TilemapLayouts, TilemapStore, chunk_bounds, layer_uniform,
-    resolve_bindings,
+    ChunkKey, LAYER_STRIDE, StoredTilemap, TilemapLayouts, TilemapStore, chunk_bounds,
+    layer_uniform, resolve_bindings, unpack_cell,
 };
 use super::*;
 use viewport_lib::plugin_api::{
-    ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext, PainterBatch, PainterContext,
-    PerViewport, PickContext, PickPassContext, PickRay, PluginItem,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PainterBatch, PainterContext, PerViewport, PickContext, PickPassContext, PickRay, PluginItem,
+    RectPickContext,
 };
-use viewport_lib::renderer::{PickHit, PickId, PickMask, SubObjectRef};
+use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
 
 /// This type's shaders as the pipelines compile them, shared sections already
 /// spliced in front of each body.
@@ -49,16 +50,34 @@ struct FrameLayer {
     /// Dynamic offset of the layer's uniform.
     offset: u32,
     /// Chunks that draw: occupied and, after the cull, in view.
-    visible: Vec<u32>,
+    visible: Vec<ChunkKey>,
+    /// Drawn as the outlines of its cells instead of its tiles, in
+    /// wireframe mode or with `settings.wireframe`. Still picks.
+    wireframe: bool,
 }
 
 impl FrameLayer {
-    fn painter(&self) -> Option<(u32, bool)> {
+    fn painter(&self) -> Option<(u32, bool, TilemapPainter)> {
         match self.item.draw {
-            TilemapDraw::Blended { layer, depth_test } => Some((layer, depth_test)),
+            TilemapDraw::Blended {
+                layer,
+                depth_test,
+                painter,
+            } => Some((layer, depth_test, painter)),
             TilemapDraw::Cutout { .. } => None,
         }
     }
+}
+
+/// One painter batch: a blended layer whole, or one row run of one chunk of
+/// a layer sorted by row.
+struct Piece {
+    /// Index into the view's `frame`.
+    layer: usize,
+    /// For a row: its chunk, first instance and instance count.
+    run: Option<(ChunkKey, u32, u32)>,
+    painter_layer: u32,
+    key: f32,
 }
 
 /// One viewport's layers and their uniforms, rebuilt by each prepare for
@@ -66,7 +85,9 @@ impl FrameLayer {
 #[derive(Default)]
 struct TilemapView {
     frame: Vec<FrameLayer>,
-    /// Indices into `frame` of the blended layers, in the order they draw.
+    /// The blended layers' batches; a batch handle is an index into it.
+    pieces: Vec<Piece>,
+    /// Indices into `pieces`, in the order they draw.
     painter_sequence: Vec<usize>,
     layer_buf: Option<viewport_lib::gpu::Buffer>,
     layer_bg: Option<viewport_lib::gpu::BindGroup>,
@@ -79,8 +100,77 @@ impl TilemapView {
         (0..self.frame.len()).filter(|&i| self.frame[i].painter().is_none())
     }
 
-    fn drawn_chunks(&self) -> u32 {
-        self.frame.iter().map(|l| l.visible.len() as u32).sum()
+    /// The cutout layers drawn as tiles rather than outlines.
+    fn filled_cutout_layers(&self) -> impl Iterator<Item = usize> + '_ {
+        self.cutout_layers().filter(|&i| !self.frame[i].wireframe)
+    }
+
+    /// Draw calls this view issues in the colour passes.
+    fn draws(&self) -> u32 {
+        let cutout: usize = self
+            .filled_cutout_layers()
+            .map(|i| self.frame[i].visible.len())
+            .sum();
+        let painter: usize = self
+            .pieces
+            .iter()
+            .map(|p| match p.run {
+                Some(_) => 1,
+                None => self.frame[p.layer].visible.len(),
+            })
+            .sum();
+        (cutout + painter) as u32
+    }
+
+    /// Rebuild the painter batches from the visible chunks.
+    fn build_pieces(&mut self, maps: &TilemapStore) {
+        self.pieces.clear();
+        for (i, layer) in self.frame.iter().enumerate() {
+            let Some((painter_layer, _, painter)) = layer.painter() else {
+                continue;
+            };
+            if layer.wireframe {
+                continue;
+            }
+            match painter {
+                TilemapPainter::Layer { key } => self.pieces.push(Piece {
+                    layer: i,
+                    run: None,
+                    painter_layer,
+                    key,
+                }),
+                TilemapPainter::PerRow { offset } => {
+                    let Some(stored) = maps.get(layer.item.source) else {
+                        continue;
+                    };
+                    let item = &layer.item;
+                    let base = item.drawn_origin(item.plane.to_plane(self.eye)).y;
+                    let cell = item.cell_size[1] as f64;
+                    for &key in &layer.visible {
+                        let Some(chunk) = stored.chunks.get(&key) else {
+                            continue;
+                        };
+                        for &(row, first, count) in &chunk.rows {
+                            let y = base + row as f64 * cell;
+                            self.pieces.push(Piece {
+                                layer: i,
+                                run: Some((key, first, count)),
+                                painter_layer,
+                                key: (offset as f64 - y) as f32,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        let mut order: Vec<usize> = (0..self.pieces.len()).collect();
+        order.sort_by(|&a, &b| {
+            let (a, b) = (&self.pieces[a], &self.pieces[b]);
+            a.painter_layer
+                .cmp(&b.painter_layer)
+                .then(a.key.total_cmp(&b.key))
+        });
+        self.painter_sequence = order;
     }
 }
 
@@ -96,6 +186,7 @@ pub struct TilemapPlugin {
     views: PerViewport<TilemapView>,
     /// The viewport prepared or culled last, for the queries that name none.
     last_viewport: usize,
+    /// Draw calls in the colour passes of the last prepared or culled view.
     drawn_chunks: u32,
     upload_bytes: u64,
     /// Registered tile materials, by [`TileMaterialId`] index.
@@ -231,20 +322,24 @@ impl TilemapPlugin {
     }
 
     /// Put each `(col, row, tile)` into the map and re-upload every chunk
-    /// that changed, once. `Ok(false)` when any cell was off the map; the
-    /// cells on it are still written.
+    /// that changed, once. `Ok(false)` when any cell was outside the cell
+    /// range, whose cells are skipped, or the map keeps no CPU copy, which
+    /// writes nothing.
     pub fn set_tiles(
         &mut self,
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
         id: TilemapId,
-        tiles: impl IntoIterator<Item = (u32, u32, Tile)>,
+        tiles: impl IntoIterator<Item = (i32, i32, Tile)>,
     ) -> viewport_lib::error::ViewportResult<bool> {
         let Some(stored) = self.maps.get_mut(id) else {
             return Err(self.maps.stale(id));
         };
-        let mut all_on_map = true;
-        let mut touched: Vec<u32> = Vec::new();
+        if !stored.map.keep_cpu_copy {
+            return Ok(false);
+        }
+        let mut all_written = true;
+        let mut touched: Vec<[i32; 2]> = Vec::new();
         for (col, row, tile) in tiles {
             match stored.map.set(col, row, tile) {
                 Some(chunk) => {
@@ -252,14 +347,48 @@ impl TilemapPlugin {
                         touched.push(chunk);
                     }
                 }
-                None => all_on_map = false,
+                None => all_written = false,
             }
         }
         for chunk in touched {
             stored.upload_chunk(device, queue, chunk);
         }
         self.maps.recharge(id);
-        Ok(all_on_map)
+        Ok(all_written)
+    }
+
+    /// Replace the whole chunk at `coord` and re-upload it, creating it when
+    /// the map has none there. `Ok(false)` when the chunk lies outside the
+    /// cell range.
+    pub fn set_chunk(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        id: TilemapId,
+        coord: [i32; 2],
+        chunk: TileChunk,
+    ) -> viewport_lib::error::ViewportResult<bool> {
+        let Some(stored) = self.maps.get_mut(id) else {
+            return Err(self.maps.stale(id));
+        };
+        let written = stored.replace_chunk(device, queue, coord, chunk);
+        self.maps.recharge(id);
+        Ok(written)
+    }
+
+    /// Drop the chunk at `coord` and free its buffer. `Ok(false)` when the
+    /// map had no chunk there.
+    pub fn remove_chunk(
+        &mut self,
+        id: TilemapId,
+        coord: [i32; 2],
+    ) -> viewport_lib::error::ViewportResult<bool> {
+        let Some(stored) = self.maps.get_mut(id) else {
+            return Err(self.maps.stale(id));
+        };
+        let removed = stored.remove_chunk(coord);
+        self.maps.recharge(id);
+        Ok(removed)
     }
 
     /// The CPU copy of an uploaded map.
@@ -273,8 +402,16 @@ impl TilemapPlugin {
         self.maps.get(id).map(|s| s.chunk_uploads)
     }
 
-    /// Chunk draws in the colour passes of the last prepared frame, after
-    /// the cull.
+    /// Bytes the chunk instance buffers of an uploaded map hold: sixteen
+    /// per occupied cell, give or take room left by edits that emptied
+    /// cells.
+    pub fn chunk_buffer_bytes(&self, id: TilemapId) -> Option<u64> {
+        self.maps.get(id).map(|s| s.chunk_buffer_bytes())
+    }
+
+    /// Draw calls in the colour passes of the last prepared frame, after
+    /// the cull: one per drawn chunk, and one per drawn row of a layer
+    /// sorted by row.
     pub fn drawn_chunks(&self) -> u32 {
         self.drawn_chunks
     }
@@ -317,8 +454,8 @@ impl TilemapPlugin {
         }
     }
 
-    /// Draw `layers` (indices into the view's `frame`) with `member`, binding
-    /// per layer.
+    /// Draw `layers` (indices into the view's `frame`), each whole, with
+    /// `member`.
     fn draw_layers(
         &self,
         view: &TilemapView,
@@ -326,12 +463,27 @@ impl TilemapPlugin {
         layers: impl Iterator<Item = usize>,
         member: impl Fn(&FrameLayer) -> usize,
     ) {
+        self.draw_runs(view, pass, layers.map(|i| (i, None)), member);
+    }
+
+    /// Draw each `(layer, run)` with `member`, binding per layer: the
+    /// layer's visible chunks whole, or for a run its rows of one chunk.
+    fn draw_runs(
+        &self,
+        view: &TilemapView,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        runs: impl Iterator<Item = (usize, Option<(ChunkKey, u32, u32)>)>,
+        member: impl Fn(&FrameLayer) -> usize,
+    ) {
         let (Some(gpu), Some(layer_bg)) = (&self.gpu, &view.layer_bg) else {
             return;
         };
         let mut bound = None;
-        for i in layers {
-            let layer = &view.frame[i];
+        let mut bound_layer = None;
+        for (i, run) in runs {
+            let Some(layer) = view.frame.get(i) else {
+                continue;
+            };
             let Some(stored) = self.maps.get(layer.item.source) else {
                 continue;
             };
@@ -344,17 +496,60 @@ impl TilemapPlugin {
                 pass.set_pipeline(pl);
                 bound = Some((layer.family, m));
             }
-            pass.set_bind_group(1, &stored.bind_group, &[]);
-            pass.set_bind_group(2, layer_bg, &[layer.offset]);
-            for &chunk in &layer.visible {
-                let chunk = &stored.chunks[chunk as usize];
-                let Some(buffer) = &chunk.buffer else {
-                    continue;
-                };
-                pass.set_vertex_buffer(0, buffer.slice(..));
-                pass.draw(0..6, 0..chunk.count);
+            if bound_layer != Some(i) {
+                pass.set_bind_group(1, &stored.bind_group, &[]);
+                pass.set_bind_group(2, layer_bg, &[layer.offset]);
+                bound_layer = Some(i);
+            }
+            let stride = super::store::INSTANCE_STRIDE;
+            match run {
+                None => {
+                    for key in &layer.visible {
+                        let Some(buffer) = stored
+                            .chunks
+                            .get(key)
+                            .and_then(|c| c.buffer.as_ref().map(|b| (b, c.count)))
+                        else {
+                            continue;
+                        };
+                        pass.set_vertex_buffer(0, buffer.0.slice(..buffer.1 as u64 * stride));
+                        pass.draw(0..6, 0..buffer.1);
+                    }
+                }
+                Some((key, first, count)) => {
+                    let Some(buffer) = stored.chunks.get(&key).and_then(|c| c.buffer.as_ref())
+                    else {
+                        continue;
+                    };
+                    let start = first as u64 * stride;
+                    pass.set_vertex_buffer(0, buffer.slice(start..start + count as u64 * stride));
+                    pass.draw(0..6, 0..count);
+                }
             }
         }
+    }
+
+    /// The `(layer, run)` pairs of painter batches `handles`.
+    fn piece_runs<'a>(
+        view: &'a TilemapView,
+        handles: impl Iterator<Item = usize> + 'a,
+    ) -> impl Iterator<Item = (usize, Option<(ChunkKey, u32, u32)>)> + 'a {
+        handles
+            .filter_map(|h| view.pieces.get(h))
+            .map(|p| (p.layer, p.run))
+    }
+
+    /// The four corners of cell (`col`, `row`) of `item` as drawn for a
+    /// camera at `eye`, counter-clockwise from the bottom left.
+    fn cell_corners(item: &TilemapItem, eye: glam::DVec3, col: i32, row: i32) -> [glam::Vec3; 4] {
+        let plane = item.plane;
+        let o = item.drawn_origin(plane.to_plane(eye));
+        let cell = glam::DVec2::new(item.cell_size[0] as f64, item.cell_size[1] as f64);
+        let e = item.elevation as f64;
+        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|[x, y]| {
+            let p = o + (glam::DVec2::new(col as f64, row as f64) + glam::DVec2::new(x, y)) * cell;
+            plane.to_world(p, e).as_vec3()
+        })
     }
 }
 
@@ -440,14 +635,13 @@ impl ItemTypePlugin for TilemapPlugin {
             let family = family.map(|(m, _)| m.id.0 as usize);
             uniforms.extend_from_slice(bytemuck::bytes_of(&data));
             uniforms.resize(offset as usize + LAYER_STRIDE as usize, 0);
-            let visible = (0..stored.chunks.len() as u32)
-                .filter(|&c| stored.chunks[c as usize].count > 0)
-                .collect();
+            let visible = stored.chunks.keys().copied().collect();
             view.frame.push(FrameLayer {
                 item: item.clone(),
                 family,
                 offset,
                 visible,
+                wireframe: ctx.wireframe_mode || item.settings.wireframe,
             });
         }
         if view.frame.is_empty() {
@@ -497,18 +691,8 @@ impl ItemTypePlugin for TilemapPlugin {
         }
         self.upload_bytes += needed;
 
-        let painters: Vec<(usize, u32)> = view
-            .frame
-            .iter()
-            .enumerate()
-            .filter_map(|(i, l)| l.painter().map(|(layer, _)| (i, layer)))
-            .collect();
-        view.painter_sequence =
-            crate::item_types::sprite::painter_batch_order(painters.iter().map(|&(_, l)| l))
-                .into_iter()
-                .map(|k| painters[k].0)
-                .collect();
-        self.drawn_chunks = view.drawn_chunks();
+        view.build_pieces(&self.maps);
+        self.drawn_chunks = view.draws();
         Vec::new()
     }
 
@@ -526,15 +710,18 @@ impl ItemTypePlugin for TilemapPlugin {
                 layer.visible.clear();
                 continue;
             };
-            layer.visible = (0..stored.chunks.len() as u32)
-                .filter(|&c| stored.chunks[c as usize].count > 0)
+            layer.visible = stored
+                .chunks
+                .keys()
+                .copied()
                 .filter(|&c| {
-                    let (min, max) = chunk_bounds(&layer.item, &stored.map, c, eye);
+                    let (min, max) = chunk_bounds(&layer.item, stored, c, eye);
                     !frustum.cull_aabb(&viewport_lib::Aabb { min, max })
                 })
                 .collect();
         }
-        self.drawn_chunks = view.drawn_chunks();
+        view.build_pieces(&self.maps);
+        self.drawn_chunks = view.draws();
     }
 
     fn paint(
@@ -551,7 +738,7 @@ impl ItemTypePlugin for TilemapPlugin {
         } else {
             pipeline::CUTOUT_LDR
         };
-        self.draw_layers(view, pass, view.cutout_layers(), |_| member);
+        self.draw_layers(view, pass, view.filled_cutout_layers(), |_| member);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -564,16 +751,16 @@ impl ItemTypePlugin for TilemapPlugin {
             .is_some_and(|v| !v.painter_sequence.is_empty())
     }
 
-    /// One batch per blended layer, at sort key `0.0`, handle its index into
-    /// the frame's layers.
+    /// One batch per blended layer at its key, or one per drawn row of each
+    /// visible chunk for a layer sorted by row; the handle indexes the view's
+    /// pieces.
     fn painter_batches(&self, viewport_index: usize, out: &mut Vec<PainterBatch>) {
         let Some(view) = self.views.get(viewport_index) else {
             return;
         };
         for &i in &view.painter_sequence {
-            if let Some((layer, _)) = view.frame[i].painter() {
-                out.push(PainterBatch::new(layer, 0.0, i as u32));
-            }
+            let piece = &view.pieces[i];
+            out.push(PainterBatch::new(piece.painter_layer, piece.key, i as u32));
         }
     }
 
@@ -586,30 +773,26 @@ impl ItemTypePlugin for TilemapPlugin {
         let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
         };
-        let in_range = |i: &usize| {
-            view.frame[*i]
-                .painter()
-                .is_some_and(|(layer, _)| ctx.includes(layer))
-        };
-        let layers: Box<dyn Iterator<Item = usize> + '_> = match ctx.batches {
-            Some(batches) => Box::new(
-                batches
+        let handles: Box<dyn Iterator<Item = usize> + '_> = match ctx.batches {
+            Some(batches) => Box::new(batches.iter().map(|&b| b as usize)),
+            None => Box::new(
+                view.painter_sequence
                     .iter()
-                    .map(|&b| b as usize)
-                    .filter(|&i| i < view.frame.len()),
+                    .copied()
+                    .filter(|&i| ctx.includes(view.pieces[i].painter_layer)),
             ),
-            None => Box::new(view.painter_sequence.iter().copied().filter(in_range)),
         };
+        let runs = Self::piece_runs(view, handles);
 
         pass.set_bind_group(3, ctx.mask_bind_group, &[]);
         if ctx.is_hdr_pass() {
-            self.draw_layers(view, pass, layers, |l| match l.painter() {
-                Some((_, false)) => pipeline::BLEND_OFF_DEPTH_READ,
+            self.draw_runs(view, pass, runs, |l| match l.painter() {
+                Some((_, false, _)) => pipeline::BLEND_OFF_DEPTH_READ,
                 _ => pipeline::BLEND_TEST_DEPTH_READ,
             });
         } else {
-            self.draw_layers(view, pass, layers, |l| match l.painter() {
-                Some((_, false)) => pipeline::BLEND_OFF_LDR,
+            self.draw_runs(view, pass, runs, |l| match l.painter() {
+                Some((_, false, _)) => pipeline::BLEND_OFF_LDR,
                 _ => pipeline::BLEND_TEST_LDR,
             });
         }
@@ -621,7 +804,7 @@ impl ItemTypePlugin for TilemapPlugin {
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
+        if !ctx.mask.intersects(PickMask::OBJECT | PickMask::TILE) {
             return;
         }
         let Some(view) = self.views.get(ctx.viewport_index) else {
@@ -641,21 +824,18 @@ impl ItemTypePlugin for TilemapPlugin {
         run: &viewport_lib::plugin_api::PainterRun<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
+        if !ctx.mask.intersects(PickMask::OBJECT | PickMask::TILE) {
             return;
         }
         let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
         };
         let pickable = |i: &usize| {
-            *i < view.frame.len() && view.frame[*i].item.settings.pick_id != PickId::NONE
+            view.pieces
+                .get(*i)
+                .is_some_and(|p| view.frame[p.layer].item.settings.pick_id != PickId::NONE)
         };
-        let in_range = |i: &usize| {
-            view.frame[*i]
-                .painter()
-                .is_some_and(|(layer, _)| run.includes(layer))
-        };
-        let order: Vec<usize> = match run.batches {
+        let handles: Vec<usize> = match run.batches {
             Some(batches) => batches
                 .iter()
                 .map(|&b| b as usize)
@@ -665,44 +845,140 @@ impl ItemTypePlugin for TilemapPlugin {
                 .painter_sequence
                 .iter()
                 .copied()
-                .filter(in_range)
+                .filter(|&i| run.includes(view.pieces[i].painter_layer))
                 .filter(pickable)
                 .collect(),
         };
-        self.draw_layers(view, pass, order.into_iter(), |l| match l.painter() {
-            Some((_, false)) => pipeline::PICK_PAINTER_NO_TEST,
+        let runs = Self::piece_runs(view, handles.into_iter());
+        self.draw_runs(view, pass, runs, |l| match l.painter() {
+            Some((_, false, _)) => pipeline::PICK_PAINTER_NO_TEST,
             _ => pipeline::PICK_PAINTER,
         });
     }
 
+    fn outline_mask(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &OutlineMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
+        // A selected layer's drawn tiles go into the mask, so the outline
+        // traces the occupied cells rather than the map's bounds.
+        let selected = (0..view.frame.len())
+            .filter(|&i| view.frame[i].item.settings.selected)
+            .collect::<Vec<_>>();
+        self.draw_layers(view, pass, selected.into_iter(), |_| pipeline::OUTLINE_MASK);
+    }
+
+    /// The outline of each occupied cell of the visible chunks, drawn in
+    /// place of the tiles in wireframe mode or for a layer with
+    /// `settings.wireframe`. Past a cap of cells a layer outlines each
+    /// visible chunk instead.
+    fn wireframe_polylines(
+        &self,
+        _items: &ItemCollections<'_>,
+        ctx: &ItemFrameContext<'_>,
+    ) -> Vec<viewport_lib::renderer::PolylineItem> {
+        /// Above this many cells an outline each stops being readable.
+        const MAX_OUTLINED_CELLS: usize = 4096;
+
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for layer in &view.frame {
+            let item = &layer.item;
+            if !layer.wireframe {
+                continue;
+            }
+            let Some(stored) = self.maps.get(item.source) else {
+                continue;
+            };
+            let cells: usize = layer
+                .visible
+                .iter()
+                .filter_map(|k| stored.chunks.get(k))
+                .map(|c| c.count as usize)
+                .sum();
+            let mut positions: Vec<[f32; 3]> = Vec::new();
+            let mut strips: Vec<u32> = Vec::new();
+            let mut rect = |c: [glam::Vec3; 4]| {
+                positions.extend([c[0], c[1], c[2], c[3], c[0]].map(|p| p.to_array()));
+                strips.push(5);
+            };
+            for key in &layer.visible {
+                let coord = [key.1, key.0];
+                if cells > MAX_OUTLINED_CELLS {
+                    let [c0, r0, c1, r1] = stored.map.chunk_cells(coord);
+                    let a = Self::cell_corners(item, view.eye, c0, r0)[0];
+                    let b = Self::cell_corners(item, view.eye, c1 - 1, r0)[1];
+                    let c = Self::cell_corners(item, view.eye, c1 - 1, r1 - 1)[2];
+                    let d = Self::cell_corners(item, view.eye, c0, r1 - 1)[3];
+                    rect([a, b, c, d]);
+                    continue;
+                }
+                let Some(chunk) = stored.chunks.get(key) else {
+                    continue;
+                };
+                let cs = stored.map.chunk_size();
+                for tile in 0..cs * cs {
+                    if !chunk.holds(tile) {
+                        continue;
+                    }
+                    if let Some([col, row]) = stored.map.cell_of(coord, tile) {
+                        rect(Self::cell_corners(item, view.eye, col, row));
+                    }
+                }
+            }
+            if strips.is_empty() {
+                continue;
+            }
+            let mut poly = viewport_lib::renderer::PolylineItem::default();
+            poly.positions = positions;
+            poly.strip_lengths = strips;
+            poly.default_colour = viewport_lib::Colour::linear(0.75, 0.75, 0.75, 1.0);
+            poly.line_width = 1.0;
+            out.push(poly);
+        }
+        out
+    }
+
     fn resolve_sub_object(
         &self,
-        pick_id: PickId,
+        _pick_id: PickId,
         primitive_index: u32,
         _world_pos: glam::Vec3,
         mask: PickMask,
     ) -> Option<SubObjectRef> {
-        if !mask.intersects(PickMask::INSTANCE) {
-            return None;
-        }
-        let layer = self
-            .views
-            .get(self.last_viewport)?
-            .frame
-            .iter()
-            .find(|l| l.item.settings.pick_id == pick_id)?;
-        let map = &self.maps.get(layer.item.source)?.map;
-        let (chunk, tile) = map.locate(primitive_index & 0xffff, primitive_index >> 16)?;
-        Some(SubObjectRef::Tile { chunk, tile })
+        // The pick fragment writes the cell, packed as the vertex stream
+        // carries it.
+        let [col, row] = unpack_cell(primitive_index);
+        mask.intersects(PickMask::TILE)
+            .then_some(SubObjectRef::Tile { col, row })
     }
 
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
-        let wants_tile = ctx.mask.intersects(PickMask::INSTANCE);
+        let wants_tile = ctx.mask.intersects(PickMask::TILE);
         if !wants_tile && !ctx.mask.intersects(PickMask::OBJECT) {
             return None;
         }
-        let origin = ray.origin.as_dvec3();
-        let dir = ray.direction.as_dvec3().normalize_or_zero();
+        // Cast through the centre of the pixel under the cursor, the pixel
+        // the GPU pick reads, so a cursor on an edge two cells share picks
+        // the same cell on either backend.
+        let (origin, dir) = if ctx.viewport_size.x > 0.0 && ctx.viewport_size.y > 0.0 {
+            let (o, d) = viewport_lib::interaction::query::picking::screen_to_ray(
+                ctx.click_pos.floor() + 0.5,
+                ctx.viewport_size,
+                ctx.view_proj.inverse(),
+            );
+            (o.as_dvec3(), d.as_dvec3())
+        } else {
+            (ray.origin.as_dvec3(), ray.direction.as_dvec3())
+        };
+        let dir = dir.normalize_or_zero();
         let view = self.views.get(self.last_viewport)?;
         let mut best: Option<(f32, PickHit)> = None;
         for layer in &view.frame {
@@ -727,27 +1003,132 @@ impl ItemTypePlugin for TilemapPlugin {
             let local = plane.to_plane(hit) - item.drawn_origin(plane.to_plane(view.eye));
             let col = (local.x / item.cell_size[0] as f64).floor();
             let row = (local.y / item.cell_size[1] as f64).floor();
-            if col < 0.0 || row < 0.0 {
+            let range = MIN_TILE_CELL as f64..=MAX_TILE_CELL as f64;
+            if !range.contains(&col) || !range.contains(&row) {
                 continue;
             }
-            let (col, row) = (col as u32, row as u32);
-            if stored.map.get(col, row).is_none_or(|t| t.is_empty()) {
+            let (col, row) = (col as i32, row as i32);
+            if !stored.holds(col, row) {
                 continue;
             }
-            let toi = t as f32;
+            // Distance along the router's ray, which the other hits use.
+            let toi = (hit - ray.origin.as_dvec3())
+                .dot(ray.direction.as_dvec3().normalize_or_zero())
+                .max(0.0) as f32;
             // Ties go to the later layer, which drew on top.
             if best.as_ref().is_some_and(|(b, _)| *b < toi) {
                 continue;
             }
             let mut pick = PickHit::object_hit(item.settings.pick_id.0, hit, plane.normal());
             if wants_tile {
-                pick.sub_object = stored
-                    .map
-                    .locate(col, row)
-                    .map(|(chunk, tile)| SubObjectRef::Tile { chunk, tile });
+                pick.sub_object = Some(SubObjectRef::Tile { col, row });
             }
             best = Some((toi, pick));
         }
         best
+    }
+
+    /// Every occupied cell whose centre projects inside the rectangle, as a
+    /// [`SubObjectRef::Tile`] under [`PickMask::TILE`].
+    fn pick_rect(&self, ctx: &RectPickContext<'_>) -> PickRectResult {
+        use viewport_lib::plugin_api::pick_helpers::project_to_screen;
+        let mut result = PickRectResult::default();
+        let wants_tile = ctx.mask.intersects(PickMask::TILE);
+        let wants_object = ctx.mask.intersects(PickMask::OBJECT);
+        if !wants_tile && !wants_object {
+            return result;
+        }
+        let Some(view) = self.views.get(self.last_viewport) else {
+            return result;
+        };
+        let inside = |p: glam::Vec2| {
+            p.x >= ctx.rect_min.x
+                && p.x <= ctx.rect_max.x
+                && p.y >= ctx.rect_min.y
+                && p.y <= ctx.rect_max.y
+        };
+        let screen = |p: glam::Vec3| project_to_screen(p, ctx.view_proj, ctx.viewport_size);
+        for layer in &view.frame {
+            let item = &layer.item;
+            if item.settings.pick_id == PickId::NONE {
+                continue;
+            }
+            let Some(stored) = self.maps.get(item.source) else {
+                continue;
+            };
+            let id = item.settings.pick_id.0;
+            let mut item_hit = false;
+            let cs = stored.map.chunk_size();
+            for (key, chunk) in &stored.chunks {
+                let coord = [key.1, key.0];
+                // Skip a chunk whose projected box misses the rectangle.
+                let [c0, r0, c1, r1] = stored.map.chunk_cells(coord);
+                let corners = [
+                    Self::cell_corners(item, view.eye, c0, r0)[0],
+                    Self::cell_corners(item, view.eye, c1 - 1, r1 - 1)[2],
+                    Self::cell_corners(item, view.eye, c1 - 1, r0)[1],
+                    Self::cell_corners(item, view.eye, c0, r1 - 1)[3],
+                ];
+                let projected: Option<Vec<glam::Vec2>> =
+                    corners.iter().map(|&c| screen(c)).collect();
+                if let Some(p) = projected {
+                    let lo = p.iter().fold(glam::Vec2::MAX, |a, &b| a.min(b));
+                    let hi = p.iter().fold(glam::Vec2::MIN, |a, &b| a.max(b));
+                    if hi.x < ctx.rect_min.x
+                        || lo.x > ctx.rect_max.x
+                        || hi.y < ctx.rect_min.y
+                        || lo.y > ctx.rect_max.y
+                    {
+                        continue;
+                    }
+                }
+                for tile in 0..cs * cs {
+                    if !chunk.holds(tile) {
+                        continue;
+                    }
+                    let Some([col, row]) = stored.map.cell_of(coord, tile) else {
+                        continue;
+                    };
+                    let c = Self::cell_corners(item, view.eye, col, row);
+                    let centre = (c[0] + c[2]) * 0.5;
+                    if !screen(centre).is_some_and(inside) {
+                        continue;
+                    }
+                    item_hit = true;
+                    if wants_tile {
+                        result.elements.push((id, SubObjectRef::Tile { col, row }));
+                    }
+                }
+            }
+            if wants_object && item_hit {
+                result.objects.push(id);
+            }
+        }
+        result
+    }
+
+    /// The cell's quad as drawn, for the sub-object highlight.
+    fn sub_object_outline(
+        &self,
+        items: &ItemCollections<'_>,
+        pick_id: PickId,
+        sub_object: SubObjectRef,
+        out: &mut Vec<glam::Vec3>,
+    ) {
+        let SubObjectRef::Tile { col, row } = sub_object else {
+            return;
+        };
+        let Some(item) = items
+            .of::<TilemapItem>()
+            .iter()
+            .find(|i| !i.settings.hidden && i.settings.pick_id == pick_id)
+        else {
+            return;
+        };
+        let eye = self
+            .views
+            .get(self.last_viewport)
+            .map_or(glam::DVec3::ZERO, |v| v.eye);
+        out.extend(Self::cell_corners(item, eye, col, row));
     }
 }

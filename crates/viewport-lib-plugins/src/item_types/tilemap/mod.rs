@@ -3,7 +3,8 @@
 //!
 //! A [`Tilemap`] is uploaded once and returns a [`TilemapId`]; each frame a
 //! [`TilemapItem`] places it on a plane with an origin, an elevation, a
-//! parallax factor and an animation clock. The map is held in square chunks:
+//! parallax factor and an animation clock. The map is held in square chunks
+//! keyed by chunk coordinate, created as cells are set and removed whole:
 //! each chunk is one instance buffer (one 16-byte instance per occupied cell)
 //! and one instanced draw, a chunk outside the view is not drawn, and
 //! `set_tile` rewrites only the chunk holding the cell.
@@ -16,7 +17,9 @@
 //! the opaque scene in painter's order through `paint_painter`, in the
 //! painter pass after the resolved transparency on the HDR path and after
 //! every item type's opaque draws on the LDR path, like painter sprites,
-//! interleaved by layer with world overlay layers.
+//! interleaved by layer with world overlay layers. A blended layer is one
+//! painter batch, or one per drawn row of each chunk so walls and tall props
+//! sort against sprites by where they stand.
 //!
 //! The draws use instanced vertex streams and uniforms only, so the type runs
 //! on the compatibility tier.
@@ -29,9 +32,9 @@
 mod types;
 
 pub use types::{
-    MAX_TILE_ANIMATIONS, MAX_TILEMAP_SIDE, Tile, TileAnimation, TileChunk, TileFlip, TileFrame,
-    TileMaterial, TileMaterialId, Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPlane,
-    Tileset,
+    MAX_TILE_ANIMATIONS, MAX_TILE_CELL, MAX_TILE_SIZES, MIN_TILE_CELL, Tile, TileAnimation,
+    TileChunk, TileFlip, TileFrame, TileMaterial, TileMaterialId, TileSize, Tilemap, TilemapDraw,
+    TilemapId, TilemapItem, TilemapPainter, TilemapPlane, Tileset,
 };
 
 /// Stable name this item type submits and registers under.

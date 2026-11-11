@@ -16,7 +16,7 @@ use viewport_lib_plugins::item_types::sprite::{
     SpriteMaterials, SpriteOrder, SpriteSizeMode, TileMode,
 };
 use viewport_lib_plugins::item_types::tilemap::{
-    Tile, TileMaterial, TileMaterials, Tilemap, TilemapDraw, TilemapItem, Tileset,
+    Tile, TileMaterial, TileMaterials, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, Tileset,
 };
 use viewport_lib_testkit::Harness;
 
@@ -230,6 +230,7 @@ fn a_mask_from_a_sprites_alpha_cuts_a_blended_tile_layer() {
     layer.draw = TilemapDraw::Blended {
         layer: 3,
         depth_test: false,
+        painter: TilemapPainter::default(),
     };
     layer.mask = MaskTest::VisibleInside(2);
 

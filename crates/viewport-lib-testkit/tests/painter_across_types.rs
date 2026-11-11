@@ -11,7 +11,7 @@ use viewport_lib::{
 };
 use viewport_lib_plugins::item_types::sprite::{self, SpriteItem, SpriteOrder, SpriteSizeMode};
 use viewport_lib_plugins::item_types::tilemap::{
-    self, Tile, Tilemap, TilemapDraw, TilemapItem, Tileset,
+    self, Tile, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, Tileset,
 };
 use viewport_lib_testkit::{Harness, catalogue, frame_for};
 
@@ -201,6 +201,7 @@ fn tile_layer(harness: &mut Harness, layer: u32) -> TilemapItem {
     item.draw = TilemapDraw::Blended {
         layer,
         depth_test: false,
+        painter: TilemapPainter::default(),
     };
     item.settings.pick_id = PickId(7);
     item

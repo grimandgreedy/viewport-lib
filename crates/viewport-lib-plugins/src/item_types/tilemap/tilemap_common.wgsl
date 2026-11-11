@@ -6,9 +6,11 @@
 // Group 2: the drawn layer's uniform, at a dynamic offset.
 //
 // One instance per occupied cell, six vertices each (two triangles):
-//   location 0: cell, column in the low 16 bits and row in the high 16
+//   location 0: cell, column in the low 16 bits and row in the high 16, each
+//               two's complement
 //   location 1: tileset tile index, or animation slot when flag bit 3 is set
-//   location 2: flags, bit 0 horizontal flip, 1 vertical, 2 diagonal, 3 animated
+//   location 2: flags, bit 0 horizontal flip, 1 vertical, 2 diagonal, 3 animated,
+//               bits 8-15 the size slot (0 for one cell)
 //   location 3: tint, unorm8x4 linear RGBA
 
 struct TilesetUniform {
@@ -19,6 +21,9 @@ struct TilesetUniform {
     margin:      f32,
     _pad0:       u32,
     _pad1:       u32,
+    // Per size slot: the image size in texels (xy) and where the quad's
+    // bottom-left corner sits in cells from the cell's (zw). Slot 0 is unused.
+    sizes:       array<vec4<f32>, 256>,
 };
 
 struct LayerUniform {
@@ -112,11 +117,28 @@ fn tile_pixel_snap(clip: vec4<f32>, anchor: vec4<f32>, viewport: vec2<f32>) -> v
 fn tile_vertex(in: TileIn) -> TileOut {
     var out: TileOut;
     let corner = tile_corner(in.vertex_index);
-    let cell = vec2<f32>(f32(in.cell & 0xffffu), f32(in.cell >> 16u));
+    // Column and row, sign-extended from 16 bits.
+    let cell = vec2<f32>(
+        f32(bitcast<i32>(in.cell << 16u) >> 16u),
+        f32(bitcast<i32>(in.cell) >> 16u),
+    );
+
+    // A tile with a size slot covers its own image size, scaled as one
+    // tileset tile is to one cell, from its anchor in the cell.
+    var texels = tileset.tile_size;
+    var quad_min = vec2<f32>(0.0);
+    var quad_size = vec2<f32>(1.0);
+    let size_slot = (in.flags >> 8u) & 0xffu;
+    if size_slot != 0u {
+        let s = tileset.sizes[size_slot];
+        texels = s.xy;
+        quad_min = s.zw;
+        quad_size = s.xy / max(tileset.tile_size, vec2<f32>(1.0));
+    }
 
     // Parallax: the layer follows `follow` of the camera across the plane.
     let shift = layer.translation + tile_eye_on_plane() * layer.follow;
-    var world = tile_world((cell + corner) * layer.cell_size + shift);
+    var world = tile_world((cell + quad_min + corner * quad_size) * layer.cell_size + shift);
     // <tile-hook:vertex>
     var clip = camera.view_proj * vec4<f32>(world, 1.0);
     if (layer.flags & 1u) != 0u {
@@ -154,8 +176,8 @@ fn tile_vertex(in: TileIn) -> TileOut {
 
     out.clip_pos = clip;
     out.mask_clip = clip;
-    out.texel = origin + q * tileset.tile_size;
-    out.rect = vec4<f32>(origin, origin + tileset.tile_size);
+    out.texel = origin + q * texels;
+    out.rect = vec4<f32>(origin, origin + texels);
     out.tint = in.tint * layer.tint;
     out.world_pos = world;
     out.cell = in.cell;

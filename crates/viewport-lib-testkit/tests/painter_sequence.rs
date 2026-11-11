@@ -13,7 +13,7 @@ use viewport_lib_plugins::item_types::sprite::{
     self, SpriteItem, SpriteOrder, SpritePlugin, SpriteSizeMode,
 };
 use viewport_lib_plugins::item_types::tilemap::{
-    self, Tile, Tilemap, TilemapDraw, TilemapItem, Tileset,
+    self, Tile, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, Tileset,
 };
 use viewport_lib_testkit::Harness;
 
@@ -83,6 +83,7 @@ fn sprites_and_tile_layers_draw_in_one_order_by_layer() {
     tiles.draw = TilemapDraw::Blended {
         layer: 1,
         depth_test: false,
+        painter: TilemapPainter::default(),
     };
 
     let mut scene = SceneFrame::default();

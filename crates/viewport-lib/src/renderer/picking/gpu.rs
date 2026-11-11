@@ -960,10 +960,12 @@ impl ViewportRenderer {
                 | PickMask::VOXEL
                 | PickMask::POLY_NODE
                 | PickMask::SEGMENT
-                | PickMask::STRIP,
+                | PickMask::STRIP
+                | PickMask::TILE,
         ) && self.any_plugin_items_submitted(frame);
 
-        let has_painter_pick = mask.intersects(PickMask::OBJECT | PickMask::INSTANCE)
+        let has_painter_pick = mask
+            .intersects(PickMask::OBJECT | PickMask::INSTANCE | PickMask::TILE)
             && self.any_plugin_draws_painter(frame);
 
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
@@ -2193,7 +2195,8 @@ impl ViewportRenderer {
             | PickMask::VOXEL
             | PickMask::POLY_NODE
             | PickMask::SEGMENT
-            | PickMask::STRIP;
+            | PickMask::STRIP
+            | PickMask::TILE;
         let effective_mask = if primitive_index_supported {
             mask
         } else {

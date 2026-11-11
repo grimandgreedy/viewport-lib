@@ -1588,18 +1588,6 @@ pub(crate) fn painter_pieces(batches: &[PainterInput<'_>]) -> Vec<PainterPiece> 
     pieces
 }
 
-/// The order painter batches draw in, from each batch's layer in submission
-/// order: ascending layer, submission order within a layer.
-pub(crate) fn painter_batch_order(layers: impl IntoIterator<Item = u32>) -> Vec<usize> {
-    let mut order: Vec<(u32, usize)> = layers
-        .into_iter()
-        .enumerate()
-        .map(|(i, l)| (l, i))
-        .collect();
-    order.sort_by_key(|&(layer, i)| (layer, i));
-    order.into_iter().map(|(_, i)| i).collect()
-}
-
 /// Whether every texture one stored batch's bind groups name is still
 /// uploaded. The renderer's resource epoch says when to ask; this says what a
 /// batch bound.
@@ -1752,16 +1740,9 @@ mod painter_tests {
     }
 
     #[test]
-    fn batches_sort_by_layer_then_submission() {
-        assert_eq!(painter_batch_order([2, 0, 1, 0, 2]), vec![1, 3, 2, 0, 4]);
-    }
-
-    #[test]
     fn layer_wins_over_key() {
         // A batch on a lower layer draws first whatever its sprites' keys:
         // the key orders sprites within a batch only.
-        let batches = painter_batch_order([1, 0]);
-        assert_eq!(batches, vec![1, 0]);
         let back = painter_instance_order(&[9.0, 8.0], 2).unwrap();
         let front = painter_instance_order(&[-9.0, -8.0], 2);
         assert_eq!(back, vec![1, 0]);

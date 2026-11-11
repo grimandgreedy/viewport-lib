@@ -263,6 +263,8 @@ pub(crate) struct ViewportSlot {
     pub sub_highlight_generation: u64,
     /// World origin epoch the sub-object highlight geometry was built against.
     pub sub_highlight_origin_epoch: u32,
+    /// Hash of the plugin outlines the sub-object highlight was built from.
+    pub sub_highlight_outlines: u64,
     /// The skybox bind group for this viewport's background environment.
     pub skybox: Option<crate::resources::material::environment::SkyboxBinding>,
     /// Whether this viewport draws a skybox this frame.
@@ -4516,6 +4518,7 @@ impl ViewportRenderer {
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 sub_highlight_origin_epoch: 0,
+                sub_highlight_outlines: 0,
                 skybox: None,
                 draw_skybox: false,
                 dyn_res: None,

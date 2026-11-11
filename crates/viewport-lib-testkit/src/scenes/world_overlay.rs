@@ -175,7 +175,7 @@ fn ground(ctx: &mut BuildCtx<'_>) -> TilemapItem {
     let mut map = Tilemap::with_chunk_size(set, [20, 16], 8);
     for row in 0..16u32 {
         for col in 0..20u32 {
-            map.set(col, row, Tile::new((col + row) % 2));
+            map.set(col as i32, row as i32, Tile::new((col + row) % 2));
         }
     }
     let map = ctx

@@ -2,13 +2,14 @@
 //! on the compatibility tier.
 
 use glam::Vec2;
-use viewport_lib::plugin_api::Uploads;
+use viewport_lib::plugin_api::{ItemTypePlugin, Uploads};
 use viewport_lib::{
     Camera2d, CameraFrame, FrameData, PickBackend, PickId, PickMask, Plane2d, SceneFrame,
     SubObjectRef, Tier,
 };
 use viewport_lib_plugins::item_types::tilemap::{
-    TYPE_NAME, Tile, Tilemap, TilemapEdits, TilemapId, TilemapItem, TilemapPlugin, Tileset,
+    MAX_TILE_CELL, TYPE_NAME, Tile, Tilemap, TilemapDraw, TilemapEdits, TilemapId, TilemapItem,
+    TilemapPainter, TilemapPlugin, Tileset,
 };
 use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
 
@@ -132,10 +133,10 @@ fn set_tile_re_uploads_only_its_chunk() {
     // One chunk of 16 x 16 occupied cells at 16 bytes each.
     assert_eq!(upload_bytes(&harness) - steady, 16 * 16 * 16);
 
-    // Off the map: nothing written.
+    // Outside the cell range: nothing written.
     let off = harness
         .renderer
-        .set_tile(&device, &queue, id, 200, 0, Tile::new(0))
+        .set_tile(&device, &queue, id, MAX_TILE_CELL + 1, 0, Tile::new(0))
         .unwrap();
     assert!(!off);
     assert_eq!(plugin(&harness).chunk_uploads(id), Some(65));
@@ -167,16 +168,12 @@ fn picks_name_the_tile_under_the_cursor() {
     let mut item = TilemapItem::new(id);
     item.settings.pick_id = PickId(77);
     item.cell_size = [4.0, 4.0];
-    // Plane 0..62 in view. Pixel (42, 20) is plane (42, 42): cell (10, 10),
-    // in chunk 0, cell 10 * 16 + 10 of it.
+    // Plane 0..62 in view. Pixel (42, 20) is plane (42, 42): cell (10, 10).
     let f = frame(item, Vec2::splat(31.0), 62);
     harness.render(&f, 62, 62);
     let device = harness.device.clone();
     let queue = harness.queue.clone();
-    let expected = Some(SubObjectRef::Tile {
-        chunk: 0,
-        tile: 10 * 16 + 10,
-    });
+    let expected = Some(SubObjectRef::Tile { col: 10, row: 10 });
     for backend in [PickBackend::Gpu, PickBackend::Cpu] {
         let hit = harness
             .renderer
@@ -186,7 +183,7 @@ fn picks_name_the_tile_under_the_cursor() {
                 &f,
                 &device,
                 &queue,
-                PickMask::OBJECT | PickMask::INSTANCE,
+                PickMask::OBJECT | PickMask::TILE,
             )
             .unwrap_or_else(|| panic!("{backend:?} misses the map"));
         assert_eq!(hit.id, 77, "{backend:?}");
@@ -253,4 +250,452 @@ fn an_item_on_the_frame_clock_animates_with_the_frame_time() {
     let on_clock = harness.render(&at(true, 0.0, 0.3), 200, 150);
     assert!(by_hand != held, "the water shows another frame at 0.3 s");
     assert!(on_clock == by_hand, "the frame clock drives the animation");
+}
+
+/// A sparse map in `chunk`-tile chunks with tile 0 at each of `cells`.
+fn sparse_map(chunk: u32, cells: impl IntoIterator<Item = (i32, i32)>) -> Tilemap {
+    let mut map = Tilemap::sparse(Tileset::new(None, [8, 8], 1), chunk);
+    for (col, row) in cells {
+        map.set(col, row, Tile::new(0));
+    }
+    map
+}
+
+fn painter_batches(harness: &Harness) -> u32 {
+    harness
+        .renderer
+        .plugin_frame_counters()
+        .find(|(name, _)| *name == TYPE_NAME)
+        .map(|(_, c)| c.painter_batches)
+        .unwrap()
+}
+
+/// A layer sorted by row reports one batch, and draws once, per occupied row
+/// of each drawn chunk; a whole-layer one reports one batch.
+#[test]
+fn a_layer_sorted_by_row_reports_a_batch_per_drawn_row() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // 8 x 6 cells in 4-cell chunks with row 2 left empty: the bottom chunks
+    // hold rows 0, 1 and 3, the top ones rows 4 and 5.
+    let cells = (0..6)
+        .filter(|&r| r != 2)
+        .flat_map(|r| (0..8).map(move |c| (c, r)));
+    let id = upload(&mut harness, &sparse_map(4, cells));
+    let mut item = TilemapItem::new(id);
+    item.cell_size = [4.0, 4.0];
+    item.draw = TilemapDraw::Blended {
+        layer: 0,
+        depth_test: false,
+        painter: TilemapPainter::PerRow { offset: 0.0 },
+    };
+
+    harness.render(&frame(item.clone(), Vec2::new(16.0, 12.0), 40), 40, 40);
+    assert_eq!(painter_batches(&harness), 2 * 3 + 2 * 2);
+    assert_eq!(draw_calls(&harness), 10, "one draw per batch");
+
+    // Only the left chunks in view (plane 1..15 across): half the rows.
+    harness.render(&frame(item.clone(), Vec2::new(8.0, 12.0), 14), 14, 14);
+    assert_eq!(painter_batches(&harness), 3 + 2);
+
+    item.draw = TilemapDraw::Blended {
+        layer: 0,
+        depth_test: false,
+        painter: TilemapPainter::Layer { key: 0.0 },
+    };
+    harness.render(&frame(item, Vec2::new(16.0, 12.0), 40), 40, 40);
+    assert_eq!(painter_batches(&harness), 1);
+    assert_eq!(draw_calls(&harness), 4, "one draw per chunk");
+}
+
+/// A map grown at negative coordinates draws, culls and picks those chunks
+/// like any other.
+#[test]
+fn a_chunk_at_negative_coordinates_draws_and_culls() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    harness.renderer.set_cpu_pick_cache(true);
+    let id = upload(&mut harness, &sparse_map(4, [(-3, -3), (5, 5)]));
+    let mut item = TilemapItem::new(id);
+    item.cell_size = [4.0, 4.0];
+    item.settings.pick_id = PickId(9);
+
+    // Plane -20..28: both chunks.
+    let f = frame(item.clone(), Vec2::new(4.0, 4.0), 48);
+    harness.render(&f, 48, 48);
+    assert_eq!(plugin(&harness).drawn_chunks(), 2);
+    // Plane -15..-1: the negative chunk alone.
+    harness.render(&frame(item.clone(), Vec2::new(-8.0, -8.0), 14), 14, 14);
+    assert_eq!(plugin(&harness).drawn_chunks(), 1);
+    // Plane 1..15: neither.
+    harness.render(&frame(item, Vec2::new(8.0, 8.0), 14), 14, 14);
+    assert_eq!(plugin(&harness).drawn_chunks(), 0);
+
+    // Cell (-3, -3) covers plane -12..-8: its centre (-10, -10) is pixel
+    // (10, 38) in the first view.
+    harness.render(&f, 48, 48);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    for backend in [PickBackend::Gpu, PickBackend::Cpu] {
+        let hit = harness
+            .renderer
+            .pick_object(
+                backend,
+                Vec2::new(10.0, 38.0),
+                &f,
+                &device,
+                &queue,
+                PickMask::OBJECT | PickMask::TILE,
+            )
+            .unwrap_or_else(|| panic!("{backend:?} misses the cell"));
+        assert_eq!(
+            hit.sub_object,
+            Some(SubObjectRef::Tile { col: -3, row: -3 }),
+            "{backend:?}"
+        );
+    }
+}
+
+/// A chunk's buffer holds an instance per occupied cell, and removing the
+/// chunk frees it.
+#[test]
+fn chunk_buffers_fit_their_tiles_and_go_with_their_chunk() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // One tile in a 32 x 32 chunk: one 16-byte instance.
+    let one = upload(&mut harness, &sparse_map(32, [(3, 4)]));
+    assert_eq!(plugin(&harness).chunk_buffer_bytes(one), Some(16));
+
+    let id = upload(&mut harness, &sparse_map(4, [(0, 0), (1, 0), (-1, 9)]));
+    assert_eq!(plugin(&harness).chunk_buffer_bytes(id), Some(3 * 16));
+    let before = plugin(&harness).resident_bytes();
+    let removed = harness.renderer.remove_chunk(id, [-1, 2]).unwrap();
+    assert!(removed);
+    assert_eq!(plugin(&harness).chunk_buffer_bytes(id), Some(2 * 16));
+    assert_eq!(before - plugin(&harness).resident_bytes(), 16);
+    assert!(
+        harness
+            .renderer
+            .tilemap(id)
+            .unwrap()
+            .chunk([-1, 2])
+            .is_none()
+    );
+    assert!(!harness.renderer.remove_chunk(id, [-1, 2]).unwrap());
+
+    let mut item = TilemapItem::new(id);
+    item.cell_size = [4.0, 4.0];
+    harness.render(&frame(item, Vec2::new(0.0, 16.0), 64), 64, 64);
+    assert_eq!(plugin(&harness).drawn_chunks(), 1);
+}
+
+/// A map uploaded without its CPU copy takes whole-chunk edits only.
+#[test]
+fn a_map_without_its_cpu_copy_is_edited_by_chunk() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut map = sparse_map(4, [(0, 0), (5, 1)]);
+    map.keep_cpu_copy = false;
+    let id = upload(&mut harness, &map);
+    assert_eq!(harness.renderer.tilemap(id).unwrap().chunk_count(), 0);
+    assert_eq!(plugin(&harness).chunk_buffer_bytes(id), Some(2 * 16));
+
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    let written = harness
+        .renderer
+        .set_tile(&device, &queue, id, 1, 0, Tile::new(0))
+        .unwrap();
+    assert!(!written, "no copy to edit a cell in");
+    assert_eq!(plugin(&harness).chunk_buffer_bytes(id), Some(2 * 16));
+
+    let mut chunk = viewport_lib_plugins::item_types::tilemap::TileChunk::new(4);
+    chunk.tiles[0] = Tile::new(0);
+    chunk.tiles[1] = Tile::new(0);
+    assert!(
+        harness
+            .renderer
+            .set_chunk(&device, &queue, id, [0, 0], chunk)
+            .unwrap()
+    );
+    assert_eq!(plugin(&harness).chunk_buffer_bytes(id), Some(3 * 16));
+    assert_eq!(harness.renderer.tilemap(id).unwrap().chunk_count(), 0);
+}
+
+/// A 62 x 62 view of 4-unit cells (one unit per pixel) with pick id 77.
+fn picking_frame(harness: &mut Harness) -> FrameData {
+    harness.renderer.set_cpu_pick_cache(true);
+    let id = upload(harness, &full_map());
+    let mut item = TilemapItem::new(id);
+    item.settings.pick_id = PickId(77);
+    item.cell_size = [4.0, 4.0];
+    let f = frame(item, Vec2::splat(31.0), 62);
+    harness.render(&f, 62, 62);
+    f
+}
+
+/// A rectangle over the centres of 4 x 3 cells returns those twelve, on
+/// either backend.
+#[test]
+fn a_rectangle_over_four_by_three_cells_returns_twelve() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let f = picking_frame(&mut harness);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    // Columns 2..=5 are plane x 8..24 and rows 3..=5 plane y 12..24, pixel
+    // y 38..50. The rectangle takes in their centres and no other cell's
+    // pixels.
+    let (min, max) = (Vec2::new(9.0, 39.0), Vec2::new(23.0, 49.0));
+    let mut expected: Vec<_> = (2..=5)
+        .flat_map(|col| (3..=5).map(move |row| SubObjectRef::Tile { col, row }))
+        .collect();
+    expected.sort_by_key(|s| s.index());
+    for backend in [PickBackend::Cpu, PickBackend::Gpu] {
+        let result = harness.renderer.pick_rect_objects(
+            backend,
+            min,
+            max,
+            &f,
+            &device,
+            &queue,
+            PickMask::OBJECT | PickMask::TILE,
+        );
+        assert_eq!(result.objects, vec![77], "{backend:?}");
+        let mut got: Vec<_> = result
+            .elements
+            .iter()
+            .filter(|(id, _)| *id == 77)
+            .map(|(_, s)| *s)
+            .collect();
+        got.sort_by_key(|s| s.index());
+        got.dedup();
+        assert_eq!(got, expected, "{backend:?}");
+    }
+}
+
+/// Tiles answer `PickMask::TILE`, not `INSTANCE`.
+#[test]
+fn a_pick_for_instances_only_returns_no_tiles() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let f = picking_frame(&mut harness);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    for backend in [PickBackend::Gpu, PickBackend::Cpu] {
+        let hit = harness.renderer.pick_object(
+            backend,
+            Vec2::new(42.0, 20.0),
+            &f,
+            &device,
+            &queue,
+            PickMask::INSTANCE,
+        );
+        assert!(
+            hit.is_none_or(|h| !matches!(h.sub_object, Some(SubObjectRef::Tile { .. }))),
+            "{backend:?}: {hit:?}"
+        );
+    }
+    let rect = harness.renderer.pick_rect_objects(
+        PickBackend::Cpu,
+        Vec2::ZERO,
+        Vec2::splat(62.0),
+        &f,
+        &device,
+        &queue,
+        PickMask::INSTANCE,
+    );
+    assert!(rect.elements.is_empty() && rect.objects.is_empty());
+}
+
+/// Each cell picks as itself at its centre, and a cursor on an edge two
+/// cells share picks the same one of them on either backend: the one whose
+/// pixel the cursor is in, right of a vertical edge and below a horizontal
+/// one on screen.
+#[test]
+fn cells_pick_at_their_centres_and_their_shared_edges() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let f = picking_frame(&mut harness);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    let mut pick = |at: Vec2, backend| {
+        harness
+            .renderer
+            .pick_object(backend, at, &f, &device, &queue, PickMask::TILE)
+            .and_then(|h| h.sub_object)
+    };
+    // Plane (x, y) is pixel (x, 62 - y).
+    for col in 2..6 {
+        for row in 2..6 {
+            let (x0, y0) = (col as f32 * 4.0, row as f32 * 4.0);
+            let cell = Some(SubObjectRef::Tile { col, row });
+            for backend in [PickBackend::Gpu, PickBackend::Cpu] {
+                let centre = Vec2::new(x0 + 2.0, 62.0 - (y0 + 2.0));
+                assert_eq!(
+                    pick(centre, backend),
+                    cell,
+                    "{backend:?} centre {col} {row}"
+                );
+                // The cell's left edge, and the edge on screen above it,
+                // which is its top: both inside it.
+                let left = Vec2::new(x0, 62.0 - (y0 + 2.0));
+                assert_eq!(pick(left, backend), cell, "{backend:?} left {col} {row}");
+                let top = Vec2::new(x0 + 2.0, 62.0 - (y0 + 4.0));
+                assert_eq!(pick(top, backend), cell, "{backend:?} top {col} {row}");
+            }
+        }
+    }
+}
+
+/// A selected layer is outlined around its occupied cells, wireframe mode
+/// traces each cell, and a selected cell takes the sub-object highlight.
+#[test]
+fn selection_outlines_traces_and_highlights_cells() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // Columns 2..=5 and rows 3..=5 of 4-unit cells: plane x 8..24, y 12..24,
+    // pixels x 8..24 and y 38..50 of the 62-pixel view.
+    let cells = (2..=5).flat_map(|c| (3..=5).map(move |r| (c, r)));
+    let id = upload(&mut harness, &sparse_map(8, cells));
+    let mut item = TilemapItem::new(id);
+    item.cell_size = [4.0, 4.0];
+    item.settings.pick_id = PickId(77);
+    let base_frame = frame(item.clone(), Vec2::splat(31.0), 62);
+    let _ = harness.render(&base_frame, 62, 62);
+    let base = harness.render(&base_frame, 62, 62);
+    let at = |img: &[u8], x: usize, y: usize| img[(y * 62 + x) * 4..][..3].to_vec();
+    let changed = |img: &[u8], inside: bool| {
+        (0..62)
+            .flat_map(|y| (0..62).map(move |x| (x, y)))
+            .filter(|&(x, y)| ((8..24).contains(&x) && (38..50).contains(&y)) == inside)
+            .filter(|&(x, y)| at(img, x, y) != at(&base, x, y))
+            .count()
+    };
+
+    // The outline rings the block and leaves its inside alone.
+    item.settings.selected = true;
+    let mut outlined = frame(item.clone(), Vec2::splat(31.0), 62);
+    outlined.interaction.outline_selected = true;
+    let _ = harness.render(&outlined, 62, 62);
+    let img = harness.render(&outlined, 62, 62);
+    assert!(changed(&img, false) > 40, "the ring around the block");
+    assert_eq!(changed(&img, true), 0, "nothing inside the block");
+    item.settings.selected = false;
+
+    // Wireframe mode draws each cell's outline instead of its tile.
+    let mut wire = frame(item.clone(), Vec2::splat(31.0), 62);
+    wire.viewport.wireframe_mode = true;
+    let _ = harness.render(&wire, 62, 62);
+    let img = harness.render(&wire, 62, 62);
+    // The line on plane x 12 lands on pixel column 11 or 12.
+    let lines = (38..50)
+        .filter(|&y| [11, 12].iter().any(|&x| at(&img, x, y) != at(&img, 14, y)))
+        .count();
+    assert!(lines >= 8, "a line between columns 2 and 3: {lines} pixels");
+    assert!(
+        changed(&img, true) > 40,
+        "tiles gone from the cells' insides"
+    );
+
+    // Cell (3, 4) is pixels x 12..16, y 42..46.
+    let mut selection = viewport_lib::SubSelection::new();
+    selection.add(77, SubObjectRef::Tile { col: 3, row: 4 });
+    let mut highlighted = frame(item, Vec2::splat(31.0), 62);
+    highlighted.interaction.sub_selection = Some(viewport_lib::SubSelectionRef::new(
+        &selection,
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    ));
+    let _ = harness.render(&highlighted, 62, 62);
+    let img = harness.render(&highlighted, 62, 62);
+    assert_ne!(at(&img, 14, 44), at(&base, 14, 44), "the selected cell");
+    assert_eq!(at(&img, 21, 40), at(&base, 21, 40), "another cell");
+}
+
+/// Tall tiles sorted by row draw on both tiers: the tree's upper cell, and
+/// the lower of two trees over the upper one's trunk. On the full tier the
+/// trunk also covers the figure behind it and the figure in front covers the
+/// trunk; sprites do not draw on the compatibility tier.
+#[test]
+fn tall_tiles_draw_on_the_compatibility_tier() {
+    let scenes = catalogue();
+    let scene = scenes
+        .iter()
+        .find(|s| s.name == "tilemap_tall_tiles")
+        .unwrap();
+    let render = |mut harness: Harness| {
+        let built = harness.build_scene(scene);
+        let f = frame_for(&built, &scene.cameras[0].camera, [200.0, 150.0]);
+        let _ = harness.render(&f, 200, 150);
+        harness.render(&f, 200, 150)
+    };
+    #[derive(Debug, PartialEq)]
+    enum Seen {
+        Canopy,
+        Trunk,
+        Red,
+        Blue,
+        Other,
+    }
+    // The 200 x 150 render shows plane (-66, -25.5) to (34, 49.5), two
+    // pixels per unit.
+    let seen = |img: &[u8], x: f32, y: f32| {
+        let (px, py) = ((x + 66.0) * 2.0, (49.5 - y) * 2.0);
+        let p = &img[((py as usize) * 200 + px as usize) * 4..][..3];
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        if r > 150 && g < 100 {
+            Seen::Red
+        } else if b > 150 && r < 100 {
+            Seen::Blue
+        } else if g > r && g > b && g < 130 {
+            Seen::Canopy
+        } else if r > g && g > b && r < 160 {
+            Seen::Trunk
+        } else {
+            Seen::Other
+        }
+    };
+    let check = |img: &[u8], tier: &str| {
+        assert_eq!(seen(img, -40.0, 24.0), Seen::Canopy, "{tier}: upper cell");
+        assert_eq!(
+            seen(img, 8.0, 22.0),
+            Seen::Canopy,
+            "{tier}: lower row in front"
+        );
+        assert_eq!(seen(img, 8.0, 36.0), Seen::Canopy, "{tier}: upper tree");
+    };
+    let Some(full) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let img = render(full);
+    check(&img, "full");
+    assert_eq!(seen(&img, -42.0, 10.0), Seen::Trunk, "trunk over red");
+    assert_eq!(seen(&img, -38.0, 4.0), Seen::Blue, "blue over trunk");
+    assert_eq!(seen(&img, -46.0, 10.0), Seen::Red, "red beside the trunk");
+    let Some(compat) = Harness::with_profile(&DeviceProfile::downlevel_webgl2(
+        "tilemap-tall-compatibility",
+    )) else {
+        return;
+    };
+    assert_eq!(compat.renderer.tier(), Tier::Compatibility);
+    check(&render(compat), "compatibility");
 }

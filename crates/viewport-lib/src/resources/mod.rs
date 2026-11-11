@@ -102,6 +102,7 @@ pub use self::mesh_sidecar::shade::{
 };
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
+pub(crate) use self::overlay::highlight::{PluginOutlines, plugin_outlines_hash};
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, INDIRECT_FRACTION_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
     PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts,

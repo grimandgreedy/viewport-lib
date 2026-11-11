@@ -24,7 +24,9 @@ use viewport_lib_plugins::item_types::sprite::{
     MaskSource, SpriteDrawMode, SpriteEffects, SpriteItem, SpriteMaskItem, SpriteMaterial,
     SpriteMaterials, SpriteOrder, SpriteSizeMode, TileMode,
 };
-use viewport_lib_plugins::item_types::tilemap::{Tile, Tilemap, TilemapDraw, TilemapItem, Tileset};
+use viewport_lib_plugins::item_types::tilemap::{
+    Tile, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, Tileset,
+};
 
 use super::sprites_2d::pixel_art;
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, rigs};
@@ -174,6 +176,7 @@ fn build_sprites_2d_modes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     tiles.draw = TilemapDraw::Blended {
         layer: 1,
         depth_test: false,
+        painter: TilemapPainter::default(),
     };
     tiles.mask = MaskTest::VisibleInside(1);
 

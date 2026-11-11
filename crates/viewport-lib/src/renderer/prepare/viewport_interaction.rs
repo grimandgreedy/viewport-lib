@@ -796,6 +796,15 @@ impl ViewportRenderer {
             let has_sub_sel = frame.interaction.sub_selection.is_some();
 
             if has_sub_sel {
+                // Sub-objects only their item type can place, asked every
+                // frame so a moved item keeps its highlight under it.
+                let outlines = frame
+                    .interaction
+                    .sub_selection
+                    .as_ref()
+                    .map(|s| self.plugin_sub_object_outlines(s, frame))
+                    .unwrap_or_default();
+                let outlines_hash = crate::resources::plugin_outlines_hash(&outlines);
                 let needs_rebuild = {
                     let slot = &self.viewport_slots[vp_idx];
                     let sel_version_changed = frame
@@ -807,6 +816,7 @@ impl ViewportRenderer {
                     sel_version_changed
                         || slot.sub_highlight.is_none()
                         || slot.sub_highlight_origin_epoch != self.origin.epoch()
+                        || slot.sub_highlight_outlines != outlines_hash
                 };
                 if needs_rebuild {
                     self.resources.ensure_sub_highlight_pipelines(device);
@@ -816,6 +826,7 @@ impl ViewportRenderer {
                         queue,
                         sel_ref,
                         &[],
+                        &outlines,
                         frame
                             .interaction
                             .sub_highlight_face_fill_colour
@@ -836,6 +847,7 @@ impl ViewportRenderer {
                     slot.sub_highlight = Some(data);
                     slot.sub_highlight_generation = new_gen;
                     slot.sub_highlight_origin_epoch = self.origin.epoch();
+                    slot.sub_highlight_outlines = outlines_hash;
                 }
             } else {
                 let slot = &mut self.viewport_slots[vp_idx];

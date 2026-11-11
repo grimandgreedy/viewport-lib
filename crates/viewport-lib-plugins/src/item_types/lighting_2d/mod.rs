@@ -253,7 +253,7 @@ fn in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
 /// solid).
 ///
 /// A cell side is an edge only where a solid cell meets a cell that is not
-/// solid or the edge of the map, facing out of the solid, and consecutive
+/// solid or that no chunk holds, facing out of the solid, and consecutive
 /// sides along a row or column line merge into one edge. A wall several cells
 /// thick therefore casts from its outline alone, with no edges inside it to
 /// shadow its own face, and the inside of a hole casts outward into the hole.
@@ -263,12 +263,17 @@ pub fn occluders_from_tilemap(
     cell_size: [f32; 2],
     solid: impl Fn(Tile) -> bool,
 ) -> Vec<Occluder2d> {
-    let [cols, rows] = map.size();
-    let is_solid = |col: i64, row: i64| {
-        col >= 0 && row >= 0 && map.get(col as u32, row as u32).is_some_and(|t| solid(t))
+    let Some([col0, row0, col1, row1]) = map.cell_bounds() else {
+        return Vec::new();
     };
-    let x = |col: u32| origin[0] + col as f32 * cell_size[0];
-    let y = |row: u32| origin[1] + row as f32 * cell_size[1];
+    let (cols, rows) = ((col1 - col0) as u32, (row1 - row0) as u32);
+    // Lines are numbered from the bounds' bottom-left corner.
+    let is_solid = |col: i64, row: i64| {
+        map.get((col0 as i64 + col) as i32, (row0 as i64 + row) as i32)
+            .is_some_and(|t| solid(t))
+    };
+    let x = |col: u32| origin[0] + (col0 as i64 + col as i64) as f32 * cell_size[0];
+    let y = |row: u32| origin[1] + (row0 as i64 + row as i64) as f32 * cell_size[1];
     let mut edges = Vec::new();
     // Runs of cell sides along one line: `side(i)` is `Some(true)` where the
     // solid is on the line's positive side, `Some(false)` where it is on the
@@ -446,7 +451,7 @@ mod tests {
             [cols, rows],
         );
         for &(col, row) in solid {
-            map.set(col, row, Tile::new(1));
+            map.set(col as i32, row as i32, Tile::new(1));
         }
         map
     }

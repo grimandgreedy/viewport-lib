@@ -55,3 +55,16 @@ fn fs_cutout_scene(in: TileOut) -> SceneFragment {
 fn fs_blended(in: TileOut) -> @location(0) vec4<f32> {
     return blended_body(in);
 }
+
+// The selection-outline mask: every texel of the layer a pick would see.
+@fragment
+fn fs_mask(in: TileOut) -> @location(0) vec4<f32> {
+    let colour = tile_colour(in);
+    if !viewport_clip_test(in.world_pos) {
+        discard;
+    }
+    if colour.a < max(layer.alpha_threshold, 0.001) {
+        discard;
+    }
+    return vec4<f32>(1.0);
+}

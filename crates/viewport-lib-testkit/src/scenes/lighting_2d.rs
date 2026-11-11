@@ -95,8 +95,8 @@ fn build_lighting_2d(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             let upright = col == 10 && (5..14).contains(&row);
             let across = row == 6 && (15..23).contains(&col);
             map.set(
-                col,
-                row,
+                col as i32,
+                row as i32,
                 Tile::new(if upright || across { WALL } else { FLOOR }),
             );
         }

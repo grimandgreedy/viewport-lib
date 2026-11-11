@@ -1956,6 +1956,27 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ) -> Option<glam::Vec3> {
         None
     }
+
+    /// World-space outline of a resolved sub-object, for the sub-object
+    /// highlight: the corners of a convex polygon in order, which the
+    /// highlight fills and traces.
+    ///
+    /// Asked for each selected sub-object whose geometry only the item type
+    /// knows, such as a [`SubObjectRef::Tile`](crate::renderer::SubObjectRef::Tile),
+    /// with the collection submitted this frame. Push the corners into `out`
+    /// for a sub-object of one of this plugin's items and nothing otherwise;
+    /// the first plugin to push wins. The highlight is rebuilt when an
+    /// outline changes, so an item that moves keeps its highlight under it.
+    ///
+    /// Default: nothing, so the sub-object draws no highlight.
+    fn sub_object_outline(
+        &self,
+        _items: &ItemCollections<'_>,
+        _pick_id: PickId,
+        _sub_object: crate::renderer::SubObjectRef,
+        _out: &mut Vec<glam::Vec3>,
+    ) {
+    }
 }
 
 /// A registered item-type plugin plus the renderer-owned services an upload

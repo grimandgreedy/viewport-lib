@@ -82,6 +82,6 @@ pub use plugin::SpritePlugin;
 #[cfg(feature = "gpu")]
 pub(crate) use plugin::shader_sources;
 #[cfg(feature = "gpu")]
-pub(crate) use store::{encode_sprites, painter_batch_order};
+pub(crate) use store::encode_sprites;
 #[cfg(feature = "gpu")]
 pub use uploads::{SpriteInstanceUploads, SpriteMaterials};

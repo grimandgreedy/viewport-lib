@@ -2,7 +2,9 @@
 //! each map, one instance buffer per occupied chunk, and the tileset bind
 //! group, plus the per-layer uniform every frame writes.
 
-use super::types::{Tile, TileChunk, Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPlane};
+use super::types::{
+    MAX_TILE_SIZES, Tile, TileChunk, Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPlane,
+};
 use viewport_lib::resources::DeviceResources;
 
 /// Bytes per tile instance: cell, tile, flags and tint, four bytes each.
@@ -13,11 +15,12 @@ pub(crate) const INSTANCE_STRIDE: u64 = std::mem::size_of::<GpuTile>() as u64;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GpuTile {
-    /// Column in the low 16 bits, row in the high 16.
+    /// Column in the low 16 bits, row in the high 16, each two's complement.
     cell: u32,
     /// Tileset index, or the animation slot when [`FLAG_ANIMATED`] is set.
     tile: u32,
-    /// Flip bits (horizontal 1, vertical 2, diagonal 4) and [`FLAG_ANIMATED`].
+    /// Flip bits (horizontal 1, vertical 2, diagonal 4), [`FLAG_ANIMATED`],
+    /// and in bits 8 to 15 the tile's size slot, `0` for one cell.
     flags: u32,
     /// Linear RGBA tint, one byte a channel.
     tint: [u8; 4],
@@ -25,6 +28,22 @@ pub(crate) struct GpuTile {
 
 /// [`GpuTile::flags`] bit: `tile` names an animation slot.
 const FLAG_ANIMATED: u32 = 1 << 3;
+
+/// [`GpuTile::flags`] shift of the size slot.
+const SIZE_SLOT_SHIFT: u32 = 8;
+
+/// A cell as the vertex stream and the pick channel carry it.
+pub(crate) fn pack_cell(col: i32, row: i32) -> u32 {
+    (col as u16 as u32) | ((row as u16 as u32) << 16)
+}
+
+/// The cell `pack_cell` packed.
+pub(crate) fn unpack_cell(cell: u32) -> [i32; 2] {
+    [
+        (cell & 0xffff) as u16 as i16 as i32,
+        (cell >> 16) as u16 as i16 as i32,
+    ]
+}
 
 /// The tileset uniform, matching `TilesetUniform` in `tilemap_common.wgsl`.
 #[repr(C)]
@@ -36,7 +55,13 @@ pub(crate) struct TilesetUniformData {
     spacing: f32,
     margin: f32,
     _pad: [u32; 2],
+    /// Per size slot: the image size in texels, then the anchor in cells.
+    /// Slot 0 is unused, so a zero slot draws one cell.
+    sizes: [[f32; 4]; SIZE_SLOTS],
 }
+
+/// Size slots in the tileset uniform: one per override and the unused zero.
+const SIZE_SLOTS: usize = MAX_TILE_SIZES + 1;
 
 /// Animation slots per layer uniform, four to a `vec4<u32>`.
 const ANIM_SLOTS: usize = super::types::MAX_TILE_ANIMATIONS;
@@ -181,23 +206,47 @@ pub(crate) fn resolve_bindings(
     }
 }
 
-/// One chunk's instance buffer. Allocated for the whole chunk the first time
-/// it holds a tile, so later edits only write.
+/// The key chunks are stored under: `(cy, cx)`, so iteration runs row by row
+/// from the bottom, as the map's own chunks do.
+pub(crate) type ChunkKey = (i32, i32);
+
+/// One chunk's instance buffer, sized to its occupied cells.
 pub(crate) struct StoredChunk {
     pub(crate) buffer: Option<viewport_lib::gpu::Buffer>,
     /// Instances that draw: the chunk's occupied cells.
     pub(crate) count: u32,
+    /// Runs of instances on one row, bottom row first: the row, the first
+    /// instance and how many.
+    pub(crate) rows: Vec<(i32, u32, u32)>,
+    /// One bit per cell of the chunk that holds a tile, in cell order, for
+    /// CPU picks that run without the CPU copy.
+    pub(crate) occupied: Vec<u64>,
+}
+
+impl StoredChunk {
+    /// Whether cell `tile` of the chunk holds a tile.
+    pub(crate) fn holds(&self, tile: u32) -> bool {
+        self.occupied
+            .get(tile as usize / 64)
+            .is_some_and(|w| w & (1 << (tile % 64)) != 0)
+    }
 }
 
 /// One uploaded map: its CPU copy, its chunk buffers and its tileset binding.
 pub(crate) struct StoredTilemap {
     pub(crate) map: Tilemap,
-    pub(crate) chunks: Vec<StoredChunk>,
+    pub(crate) chunks: std::collections::BTreeMap<ChunkKey, StoredChunk>,
     pub(crate) bind_group: viewport_lib::gpu::BindGroup,
     uniform: TilesetUniformData,
     uniform_buf: viewport_lib::gpu::Buffer,
     /// For each tileset tile index that animates, its slot.
     anim_slots: std::collections::HashMap<u32, u32>,
+    /// For each tileset tile index with its own size, its size slot.
+    size_slots: std::collections::HashMap<u32, u32>,
+    /// How far tiles reach past their cells, from [`Tileset::overhang`].
+    ///
+    /// [`Tileset::overhang`]: super::types::Tileset::overhang
+    pub(crate) overhang: [f32; 4],
     /// Chunk instance bytes written since the plugin last read it.
     pub(crate) uploaded_bytes: u64,
     /// Chunk uploads over the map's lifetime.
@@ -206,12 +255,7 @@ pub(crate) struct StoredTilemap {
 
 impl viewport_lib::resources::handle::GpuByteSize for StoredTilemap {
     fn gpu_bytes(&self) -> u64 {
-        self.chunks
-            .iter()
-            .filter_map(|c| c.buffer.as_ref())
-            .map(|b| b.size())
-            .sum::<u64>()
-            + self.uniform_buf.size()
+        self.chunk_buffer_bytes() + self.uniform_buf.size()
     }
 }
 
@@ -223,48 +267,56 @@ fn tint_bytes(c: viewport_lib::Colour) -> [u8; 4] {
         .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-/// The instances of `chunk`, one per occupied cell in row order.
+/// The instances of the chunk at `coord`, one per occupied cell in row
+/// order, and the runs of them on each row.
 pub(crate) fn chunk_instances(
     map: &Tilemap,
     anim_slots: &std::collections::HashMap<u32, u32>,
-    chunk_index: u32,
+    size_slots: &std::collections::HashMap<u32, u32>,
+    coord: [i32; 2],
     chunk: &TileChunk,
-) -> Vec<GpuTile> {
-    let [col0, row0, _, _] = map.chunk_cells(chunk_index);
-    let cs = map.chunk_size();
-    chunk
-        .tiles
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| !t.is_empty())
-        .filter_map(|(i, t)| {
-            let (col, row) = (col0 + i as u32 % cs, row0 + i as u32 / cs);
-            let [w, h] = map.size();
-            (col < w && row < h).then(|| gpu_tile(anim_slots, col, row, t))
-        })
-        .collect()
+) -> (Vec<GpuTile>, Vec<(i32, u32, u32)>) {
+    let mut tiles = Vec::new();
+    let mut rows: Vec<(i32, u32, u32)> = Vec::new();
+    for (i, t) in chunk.tiles.iter().enumerate() {
+        if t.is_empty() {
+            continue;
+        }
+        let Some([col, row]) = map.cell_of(coord, i as u32) else {
+            continue;
+        };
+        match rows.last_mut() {
+            Some(run) if run.0 == row => run.2 += 1,
+            _ => rows.push((row, tiles.len() as u32, 1)),
+        }
+        tiles.push(gpu_tile(anim_slots, size_slots, col, row, t));
+    }
+    (tiles, rows)
 }
 
 fn gpu_tile(
     anim_slots: &std::collections::HashMap<u32, u32>,
-    col: u32,
-    row: u32,
+    size_slots: &std::collections::HashMap<u32, u32>,
+    col: i32,
+    row: i32,
     t: &Tile,
 ) -> GpuTile {
     let (tile, animated) = match anim_slots.get(&t.index) {
         Some(&slot) => (slot, FLAG_ANIMATED),
         None => (t.index, 0),
     };
+    let size = size_slots.get(&t.index).copied().unwrap_or(0);
     GpuTile {
-        cell: (col & 0xffff) | (row << 16),
+        cell: pack_cell(col, row),
         tile,
-        flags: t.flip.bits() | animated,
+        flags: t.flip.bits() | animated | size << SIZE_SLOT_SHIFT,
         tint: tint_bytes(t.tint),
     }
 }
 
 impl StoredTilemap {
     /// Build every occupied chunk's buffer and the tileset binding for `map`.
+    /// A map that keeps no CPU copy drops its cells once they are uploaded.
     pub(crate) fn build(
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
@@ -279,6 +331,15 @@ impl StoredTilemap {
                 (set.animation_of(tile) == Some(slot)).then_some((tile, slot as u32))
             })
             .collect();
+        let mut sizes = [[0.0f32; 4]; SIZE_SLOTS];
+        let mut size_slots = std::collections::HashMap::new();
+        for (i, s) in set.tile_sizes.iter().take(MAX_TILE_SIZES).enumerate() {
+            if set.size_of(s.tile) == Some(i) {
+                let slot = size_slots.len() + 1;
+                sizes[slot] = [s.size[0] as f32, s.size[1] as f32, s.anchor[0], s.anchor[1]];
+                size_slots.insert(s.tile, slot as u32);
+            }
+        }
         let uniform = TilesetUniformData {
             tile_size: set.tile_size.map(|s| s as f32),
             columns: set.columns.max(1),
@@ -286,7 +347,9 @@ impl StoredTilemap {
             spacing: set.spacing as f32,
             margin: set.margin as f32,
             _pad: [0; 2],
+            sizes,
         };
+        let overhang = set.overhang();
         let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some("tileset_uniform_buf"),
             size: std::mem::size_of::<TilesetUniformData>() as u64,
@@ -296,63 +359,142 @@ impl StoredTilemap {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform));
         let bind_group = build_bind_group(device, binds, &uniform_buf);
-        let chunks = map
-            .chunks()
-            .iter()
-            .map(|_| StoredChunk {
-                buffer: None,
-                count: 0,
-            })
-            .collect();
+        let keys: Vec<[i32; 2]> = map.chunks().map(|(c, _)| c).collect();
         let mut stored = Self {
             map,
-            chunks,
+            chunks: Default::default(),
             bind_group,
             uniform,
             uniform_buf,
             anim_slots,
+            size_slots,
+            overhang,
             uploaded_bytes: 0,
             chunk_uploads: 0,
         };
-        for chunk in 0..stored.chunks.len() as u32 {
-            stored.upload_chunk(device, queue, chunk);
+        for coord in keys {
+            stored.upload_chunk(device, queue, coord);
+        }
+        if !stored.map.keep_cpu_copy {
+            stored.map.clear_chunks();
         }
         stored
     }
 
-    /// Rewrite chunk `chunk`'s instances from the CPU copy, allocating its
-    /// buffer the first time it holds a tile.
+    /// Rewrite the chunk at `coord`'s instances from the CPU copy, growing
+    /// its buffer when it holds more tiles than it has room for and freeing
+    /// it when the copy holds no tile there.
     pub(crate) fn upload_chunk(
         &mut self,
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
-        chunk: u32,
+        coord: [i32; 2],
     ) {
-        let instances = chunk_instances(
-            &self.map,
-            &self.anim_slots,
-            chunk,
-            &self.map.chunks()[chunk as usize],
-        );
-        let stored = &mut self.chunks[chunk as usize];
-        stored.count = instances.len() as u32;
+        let Some(chunk) = self.map.chunk(coord) else {
+            self.chunks.remove(&(coord[1], coord[0]));
+            return;
+        };
+        let (instances, rows) =
+            chunk_instances(&self.map, &self.anim_slots, &self.size_slots, coord, chunk);
+        let occupied = occupancy(chunk);
+        self.write_chunk(device, queue, coord, instances, rows, occupied);
+    }
+
+    /// Replace the chunk at `coord` with `chunk` on the GPU, and in the CPU
+    /// copy when the map keeps one.
+    pub(crate) fn replace_chunk(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        coord: [i32; 2],
+        chunk: TileChunk,
+    ) -> bool {
+        if self.map.keep_cpu_copy {
+            if !self.map.set_chunk(coord, chunk) {
+                return false;
+            }
+            self.upload_chunk(device, queue, coord);
+            return true;
+        }
+        // Without the copy, the chunk is checked and sized through a
+        // throwaway map holding only it.
+        let mut scratch = Tilemap::sparse(self.map.tileset.clone(), self.map.chunk_size());
+        if !scratch.set_chunk(coord, chunk) {
+            return false;
+        }
+        let chunk = scratch.chunk(coord).expect("just set");
+        let (instances, rows) =
+            chunk_instances(&scratch, &self.anim_slots, &self.size_slots, coord, chunk);
+        let occupied = occupancy(chunk);
+        self.write_chunk(device, queue, coord, instances, rows, occupied);
+        true
+    }
+
+    /// Drop the chunk at `coord` and free its buffer. `false` when the map
+    /// had no chunk there.
+    pub(crate) fn remove_chunk(&mut self, coord: [i32; 2]) -> bool {
+        let in_copy = self.map.remove_chunk(coord).is_some();
+        let on_gpu = self.chunks.remove(&(coord[1], coord[0])).is_some();
+        in_copy || on_gpu
+    }
+
+    fn write_chunk(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        coord: [i32; 2],
+        instances: Vec<GpuTile>,
+        rows: Vec<(i32, u32, u32)>,
+        occupied: Vec<u64>,
+    ) {
+        let key = (coord[1], coord[0]);
         if instances.is_empty() {
+            self.chunks.remove(&key);
             return;
         }
-        let cs = self.map.chunk_size() as u64;
-        let buffer = stored.buffer.get_or_insert_with(|| {
-            device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+        let stored = self.chunks.entry(key).or_insert_with(|| StoredChunk {
+            buffer: None,
+            count: 0,
+            rows: Vec::new(),
+            occupied: Vec::new(),
+        });
+        let bytes: &[u8] = bytemuck::cast_slice(&instances);
+        if stored
+            .buffer
+            .as_ref()
+            .is_none_or(|b| b.size() < bytes.len() as u64)
+        {
+            stored.buffer = Some(device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("tilemap_chunk_buf"),
-                size: cs * cs * INSTANCE_STRIDE,
+                size: bytes.len() as u64,
                 usage: viewport_lib::gpu::BufferUsages::VERTEX
                     | viewport_lib::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            })
-        });
-        let bytes: &[u8] = bytemuck::cast_slice(&instances);
-        queue.write_buffer(buffer, 0, bytes);
+            }));
+        }
+        queue.write_buffer(stored.buffer.as_ref().expect("allocated"), 0, bytes);
+        stored.count = instances.len() as u32;
+        stored.rows = rows;
+        stored.occupied = occupied;
         self.uploaded_bytes += bytes.len() as u64;
         self.chunk_uploads += 1;
+    }
+
+    /// Bytes held by the chunk instance buffers.
+    pub(crate) fn chunk_buffer_bytes(&self) -> u64 {
+        self.chunks
+            .values()
+            .filter_map(|c| c.buffer.as_ref())
+            .map(|b| b.size())
+            .sum()
+    }
+
+    /// Whether cell (`col`, `row`) holds a tile, from the stored occupancy.
+    pub(crate) fn holds(&self, col: i32, row: i32) -> bool {
+        self.map
+            .locate(col, row)
+            .and_then(|(c, tile)| Some(self.chunks.get(&(c[1], c[0]))?.holds(tile)))
+            .unwrap_or(false)
     }
 
     /// The tile each animation slot shows at `time`.
@@ -379,6 +521,17 @@ impl StoredTilemap {
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&self.uniform));
         self.bind_group = build_bind_group(device, binds, &self.uniform_buf);
     }
+}
+
+/// One bit per cell of `chunk` that holds a tile.
+fn occupancy(chunk: &TileChunk) -> Vec<u64> {
+    let mut bits = vec![0u64; chunk.tiles.len().div_ceil(64)];
+    for (i, t) in chunk.tiles.iter().enumerate() {
+        if !t.is_empty() {
+            bits[i / 64] |= 1 << (i % 64);
+        }
+    }
+    bits
 }
 
 fn build_bind_group(
@@ -453,24 +606,38 @@ pub(crate) fn layer_uniform(
     }
 }
 
-/// The world-space box chunk `chunk` of `stored` covers when `item` draws it
-/// for a camera at `eye`, as `(min, max)`.
-pub(crate) fn chunk_bounds(
+/// The world-space box the cells `[col0, row0, col1, row1]` (end exclusive)
+/// of `stored` cover when `item` draws them for a camera at `eye`, tiles that
+/// reach past their cells included, as `(min, max)`.
+pub(crate) fn cell_box_bounds(
     item: &TilemapItem,
-    map: &Tilemap,
-    chunk: u32,
+    stored: &StoredTilemap,
+    cells: [i32; 4],
     eye: glam::DVec3,
 ) -> (glam::Vec3, glam::Vec3) {
     let plane = item.plane;
     let shift = item.drawn_origin(plane.to_plane(eye));
-    let [c0, r0, c1, r1] = map.chunk_cells(chunk);
+    let [c0, r0, c1, r1] = cells;
+    let [l, b, r, t] = stored.overhang.map(|v| v as f64);
     let cell = glam::DVec2::new(item.cell_size[0] as f64, item.cell_size[1] as f64);
-    let a = shift + glam::DVec2::new(c0 as f64, r0 as f64) * cell;
-    let b = shift + glam::DVec2::new(c1 as f64, r1 as f64) * cell;
+    let a = shift + glam::DVec2::new(c0 as f64 - l, r0 as f64 - b) * cell;
+    let b = shift + glam::DVec2::new(c1 as f64 + r, r1 as f64 + t) * cell;
     let e = item.elevation as f64;
     let p = plane.to_world(a, e).as_vec3();
     let q = plane.to_world(b, e).as_vec3();
     (p.min(q), p.max(q))
+}
+
+/// The world-space box the chunk at `key` of `stored` covers when `item`
+/// draws it for a camera at `eye`, as `(min, max)`.
+pub(crate) fn chunk_bounds(
+    item: &TilemapItem,
+    stored: &StoredTilemap,
+    key: ChunkKey,
+    eye: glam::DVec3,
+) -> (glam::Vec3, glam::Vec3) {
+    let cells = stored.map.chunk_cells([key.1, key.0]);
+    cell_box_bounds(item, stored, cells, eye)
 }
 
 #[cfg(test)]
@@ -480,7 +647,10 @@ mod tests {
     #[test]
     fn layout_sizes_match_the_shader() {
         assert_eq!(INSTANCE_STRIDE, 16);
-        assert_eq!(std::mem::size_of::<TilesetUniformData>(), 32);
+        assert_eq!(
+            std::mem::size_of::<TilesetUniformData>(),
+            32 + 16 * SIZE_SLOTS
+        );
         assert_eq!(
             std::mem::size_of::<LayerUniformData>(),
             80 + 4 * ANIM_SLOTS + 128
@@ -503,12 +673,23 @@ mod tests {
         map.set(1, 2, Tile::new(5).with_flip(TileFlip::ROTATE_90));
         map.set(3, 3, Tile::new(2));
         let slots = [(5u32, 0u32)].into_iter().collect();
-        let tiles = chunk_instances(&map, &slots, 0, &map.chunks()[0]);
+        let sizes = [(2u32, 3u32)].into_iter().collect();
+        let (tiles, rows) =
+            chunk_instances(&map, &slots, &sizes, [0, 0], map.chunk([0, 0]).unwrap());
         assert_eq!(tiles.len(), 2);
         assert_eq!(tiles[0].cell, 1 | (2 << 16));
         assert_eq!(tiles[0].tile, 0);
         assert_eq!(tiles[0].flags, TileFlip::ROTATE_90.bits() | FLAG_ANIMATED);
         assert_eq!(tiles[1].tile, 2);
+        assert_eq!(tiles[1].flags, 3 << SIZE_SLOT_SHIFT);
         assert_eq!(tiles[1].tint, [255; 4]);
+        assert_eq!(rows, vec![(2, 0, 1), (3, 1, 1)]);
+    }
+
+    #[test]
+    fn cells_pack_signed() {
+        for cell in [[0, 0], [-1, 5], [32767, -32768], [-300, -2]] {
+            assert_eq!(unpack_cell(pack_cell(cell[0], cell[1])), cell);
+        }
     }
 }

@@ -50,7 +50,8 @@ bitflags::bitflags! {
         // Bits 80-119 reserved for face-like types.
         const FACE          = 1 << 80;  // mesh face
         const STRIP         = 1 << 81;  // one connected curve within a multi-strip item
-        // bits 82-119: reserved for future face-like types
+        const TILE          = 1 << 82;  // tilemap cell
+        // bits 83-119: reserved for future face-like types
 
         // bits 120-127: reserved for future use
 
@@ -71,7 +72,8 @@ bitflags::bitflags! {
         /// segments.
         const EDGE_LIKE     = Self::EDGE.bits() | Self::SEGMENT.bits();
 
-        /// All face-like sub-elements: mesh faces and connected curve strips.
-        const FACE_LIKE     = Self::FACE.bits() | Self::STRIP.bits();
+        /// All face-like sub-elements: mesh faces, connected curve strips and
+        /// tilemap cells.
+        const FACE_LIKE     = Self::FACE.bits() | Self::STRIP.bits() | Self::TILE.bits();
     }
 }

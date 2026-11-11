@@ -422,14 +422,14 @@ fn ground_map(set: Tileset) -> Tilemap {
     let ground_row = (GROUND_Z / CELL) as u32 - 1;
     for col in 0..COLS {
         for row in 0..ground_row {
-            map.set(col, row, Tile::new(DIRT));
+            map.set(col as i32, row as i32, Tile::new(DIRT));
         }
-        map.set(col, ground_row, Tile::new(GRASS));
+        map.set(col as i32, ground_row as i32, Tile::new(GRASS));
     }
     let mut fill = |cols: std::ops::RangeInclusive<u32>, rows: std::ops::RangeInclusive<u32>, t| {
         for c in cols {
             for r in rows.clone() {
-                map.set(c, r, Tile::new(t));
+                map.set(c as i32, r as i32, Tile::new(t));
             }
         }
     };
@@ -448,10 +448,10 @@ fn ground_map(set: Tileset) -> Tilemap {
     fill(128..=136, 11..=11, PLANK);
     fill(146..=148, 5..=6, STONE);
     for (col, row) in TORCHES {
-        map.set(col, row, Tile::new(TORCH));
+        map.set(col as i32, row as i32, Tile::new(TORCH));
     }
     for col in [5, 14, 34, 58, 70, 88, 104, 118, 140, 154] {
-        map.set(col, 5, Tile::new(BUSH));
+        map.set(col as i32, 5, Tile::new(BUSH));
     }
     map
 }
@@ -464,10 +464,10 @@ fn hills_map(set: Tileset) -> Tilemap {
         let x = col as f32;
         let top = (4.5 + 1.6 * (x * 0.21).sin() + 1.0 * (x * 0.53 + 1.0).sin()) as u32;
         for row in 0..top.min(rows) {
-            map.set(col, row, Tile::new(HILL));
+            map.set(col as i32, row as i32, Tile::new(HILL));
         }
         if top < rows {
-            map.set(col, top, Tile::new(HILL_TOP));
+            map.set(col as i32, top as i32, Tile::new(HILL_TOP));
         }
     }
     map
@@ -815,7 +815,7 @@ impl World {
         if col >= COLS {
             return true;
         }
-        self.map.get(col, row).is_some_and(solid)
+        self.map.get(col as i32, row as i32).is_some_and(solid)
     }
 
     /// Whether the player's box with its feet at `feet` overlaps a solid cell.
@@ -1302,10 +1302,15 @@ fn minimap_mesh(map: &Tilemap) -> OverlayMeshItem {
     for row in 0..MINIMAP_ROWS {
         let mut col = 0;
         while col < MINIMAP_COLS {
-            let tile = map.get(col, row).map_or(Tile::EMPTY_INDEX, |t| t.index);
+            let tile = map
+                .get(col as i32, row as i32)
+                .map_or(Tile::EMPTY_INDEX, |t| t.index);
             let start = col;
             while col < MINIMAP_COLS
-                && map.get(col, row).map_or(Tile::EMPTY_INDEX, |t| t.index) == tile
+                && map
+                    .get(col as i32, row as i32)
+                    .map_or(Tile::EMPTY_INDEX, |t| t.index)
+                    == tile
             {
                 col += 1;
             }
