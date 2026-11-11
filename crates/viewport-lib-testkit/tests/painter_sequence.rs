@@ -162,10 +162,11 @@ fn sprite_batches_on_one_layer_interleave_by_key() {
 
     let seq = harness.renderer.debug_painter_sequence(&frame, true);
     assert_eq!(seq.len(), 1, "one run of the sprite plugin: {seq:?}");
-    // The crowd's two lower keys, then the single sprite, then the rest.
+    // The crowd's two lower keys, then the single sprite, then the rest: one
+    // piece per key, so each sprite is placed by its own key.
     assert_eq!(
         pieces(&harness, &seq[0].2),
-        vec![(0, 0..2), (1, 0..1), (0, 2..4)]
+        vec![(0, 0..1), (0, 1..2), (1, 0..1), (0, 2..3), (0, 3..4)]
     );
 }
 

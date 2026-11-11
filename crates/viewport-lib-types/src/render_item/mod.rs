@@ -5,5 +5,7 @@
 //! `viewport-lib`; this module holds the wgpu-free, store-id-free exceptions.
 
 mod blend;
+mod painter;
 
 pub use blend::SpriteBlend;
+pub use painter::{PAINTER_MEMBERS, PainterPlacement, painter_key};

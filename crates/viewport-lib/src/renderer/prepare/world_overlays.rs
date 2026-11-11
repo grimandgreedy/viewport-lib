@@ -55,7 +55,7 @@ pub(crate) fn world_layer_view(
 
 impl ViewportRenderer {
     /// The pass the world layers draw into on the path `frame` takes: the
-    /// read-only-depth pass on the HDR path, the scene pass on the LDR path.
+    /// painter pass on the HDR path, the scene pass on the LDR path.
     fn world_overlay_pass(&self, frame: &FrameData) -> WorldPassKey {
         if self.draws_hdr(frame) && self.resources.scene_tier.is_built() {
             WorldPassKey {

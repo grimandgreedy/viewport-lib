@@ -346,6 +346,7 @@ pub use renderer::{
 };
 pub use renderer::{BlitFilter, BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 pub use renderer::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
+pub use renderer::{PAINTER_MEMBERS, PainterPlacement, painter_key};
 pub use resources::PipelineCompilation;
 
 pub use runners::{

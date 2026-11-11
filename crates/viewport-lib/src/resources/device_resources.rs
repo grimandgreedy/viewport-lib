@@ -202,6 +202,9 @@ pub(crate) struct PickResources {
     /// the primitive channel. Reuses `vertex_mesh_bgl` for group 2. Only built with
     /// SHADER_PRIMITIVE_INDEX.
     pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// `pipeline`'s twin for mesh content drawn in the painter sequence: it
+    /// tests the pick depth without writing it, so the later draw wins.
+    pub(crate) painter_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 /// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.

@@ -72,8 +72,8 @@ fn painter_sprites_issue_no_oit_pass() {
         "painter sprites must not open the OIT pass: {painter:?}"
     );
     assert!(
-        painter.contains(&"depth_read"),
-        "painter sprites draw in the read-only-depth pass: {painter:?}"
+        painter.contains(&"painter"),
+        "painter sprites draw in the painter pass: {painter:?}"
     );
 
     // The same sprites in the default order composite through OIT.

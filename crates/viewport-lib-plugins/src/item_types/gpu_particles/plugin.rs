@@ -58,6 +58,9 @@ impl viewport_lib::plugin_api::PluginItem for GpuParticleSystemItem {
 /// to the resources, and the clones are cheap because wgpu's handles are
 /// reference-counted.
 struct ParticleFrame {
+    /// The item's painter placement; such a system draws in the painter
+    /// sequence rather than the scene pass.
+    painter: Option<viewport_lib_types::render_item::PainterPlacement>,
     blend: SpriteBlend,
     route: ParticleDrawRoute,
     capacity: u32,
@@ -464,6 +467,7 @@ impl ItemTypePlugin for GpuParticlesPlugin {
             // not freeze it mid-flight and resume it later.
             if !item.settings.hidden {
                 self.frame.push(ParticleFrame {
+                    painter: item.painter,
                     blend,
                     route,
                     capacity,
@@ -525,13 +529,67 @@ impl ItemTypePlugin for GpuParticlesPlugin {
             return;
         }
         let hdr = ctx.is_hdr_pass();
-        // Each system draws its full capacity; a dead particle emits a
-        // degenerate vertex and contributes no fragments.
-        for pd in &self.frame {
+        for pd in self.frame.iter().filter(|pd| pd.painter.is_none()) {
+            self.draw_system(pass, gpu, pd, &ctx.meshes, |route, blend| {
+                pipeline::draw_index(route, blend, hdr)
+            });
+        }
+    }
+
+    fn draws_painter(&self, _viewport_index: usize) -> bool {
+        self.frame.iter().any(|pd| pd.painter.is_some())
+    }
+
+    /// One batch per painter-placed system, handle its index in the frame.
+    fn painter_batches(
+        &self,
+        _viewport_index: usize,
+        out: &mut Vec<viewport_lib::plugin_api::PainterBatch>,
+    ) {
+        for (i, pd) in self.frame.iter().enumerate() {
+            if let Some(p) = pd.painter {
+                out.push(viewport_lib::plugin_api::PainterBatch::at(p, i as u32));
+            }
+        }
+    }
+
+    fn paint_painter(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &viewport_lib::plugin_api::PainterContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        // Only the HDR painter pass: the type has no LDR pipelines.
+        if !ctx.is_hdr_pass() {
+            return;
+        }
+        for &b in ctx.batches.unwrap_or_default() {
+            let Some(pd) = self.frame.get(b as usize) else {
+                continue;
+            };
+            self.draw_system(pass, gpu, pd, &ctx.meshes, pipeline::painter_index);
+        }
+    }
+}
+
+impl GpuParticlesPlugin {
+    /// Draw one system through the member `member` names for its route and
+    /// blend. Each system draws its full capacity; a dead particle emits a
+    /// degenerate vertex and contributes no fragments.
+    fn draw_system(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        gpu: &pipeline::ParticleGpu,
+        pd: &ParticleFrame,
+        meshes: &viewport_lib::resources::MeshDraw<'_>,
+        member: impl Fn(usize, SpriteBlend) -> usize,
+    ) {
+        {
             match pd.route {
                 ParticleDrawRoute::Sprite { lit } => {
                     let Some(draw_bg) = pd.draw_bg.as_ref() else {
-                        continue;
+                        return;
                     };
                     let route = if lit {
                         pipeline::SPRITE_LIT
@@ -539,11 +597,8 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                         pipeline::SPRITE
                     };
                     // Still compiling: this system draws next frame.
-                    let Some(pl) = gpu
-                        .pipelines
-                        .get(pipeline::draw_index(route, pd.blend, hdr))
-                    else {
-                        continue;
+                    let Some(pl) = gpu.pipelines.get(member(route, pd.blend)) else {
+                        return;
                     };
                     pass.set_pipeline(pl);
                     pass.set_bind_group(1, draw_bg, &[]);
@@ -560,20 +615,14 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                 }
                 ParticleDrawRoute::Mesh { mesh_id } => {
                     let Some(draw_bg) = pd.draw_bg_mesh.as_ref() else {
-                        continue;
+                        return;
                     };
-                    let Some(pl) =
-                        gpu.pipelines
-                            .get(pipeline::draw_index(pipeline::MESH, pd.blend, hdr))
-                    else {
-                        continue;
+                    let Some(pl) = gpu.pipelines.get(member(pipeline::MESH, pd.blend)) else {
+                        return;
                     };
                     pass.set_pipeline(pl);
                     pass.set_bind_group(1, draw_bg, &[]);
-                    if ctx
-                        .meshes
-                        .draw_indexed_instanced(pass, mesh_id, pd.capacity)
-                    {
+                    if meshes.draw_indexed_instanced(pass, mesh_id, pd.capacity) {
                         self.issued
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }

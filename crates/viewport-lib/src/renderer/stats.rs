@@ -158,6 +158,12 @@ pub struct PluginFrameCounters {
     pub draw_calls: u32,
     /// Bytes this plugin reported uploading for the frame.
     pub upload_bytes: u64,
+    /// Batches this plugin reported into the last painter sequence drawn,
+    /// through
+    /// [`ItemTypePlugin::painter_batches`](crate::plugin_api::ItemTypePlugin::painter_batches).
+    /// Zero for a plugin whose painter's-order content, if any, did not join
+    /// the sequence.
+    pub painter_batches: u32,
 }
 
 /// CPU time spent in each phase of `prepare()`, in milliseconds.
@@ -407,6 +413,11 @@ pub struct FrameStats {
     /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
     /// renderer observed.
     pub plugin_upload_bytes: u64,
+    /// Batches in the last painter sequence drawn: every plugin's reported
+    /// batches plus the renderer's own painter-placed mesh draws. Per-plugin
+    /// counts are in
+    /// [`PluginFrameCounters::painter_batches`].
+    pub painter_batches: u32,
     /// Sidecar records moved or created by deform-slot changes since the
     /// previous `prepare()`.
     ///

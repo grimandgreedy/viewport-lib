@@ -19,8 +19,8 @@ pub(crate) const BLEND_TEST_DEPTH_READ: usize = 4;
 pub(crate) const BLEND_OFF_DEPTH_READ: usize = 5;
 /// Pick for cutout layers.
 pub(crate) const PICK: usize = 6;
-/// Pick for blended layers, drawn in painter order with `LessEqual` so the
-/// later of two tiles at one depth wins, as on screen.
+/// Pick for blended layers, drawn in the painter sequence with `LessEqual` and
+/// no depth write, so the later of two overlapping draws wins, as on screen.
 pub(crate) const PICK_PAINTER: usize = 7;
 /// Pick for blended layers that ignore scene depth.
 pub(crate) const PICK_PAINTER_NO_TEST: usize = 8;
@@ -101,9 +101,11 @@ fn build(r: &TilemapRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
                     cull_mode: None,
                     ..Default::default()
                 },
+                // Painter picks test depth without writing it, so the
+                // sequence's later draw wins wherever two overlap.
                 depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
                     r.depth_format,
-                    true,
+                    i == PICK,
                     match i {
                         PICK => viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                         PICK_PAINTER => viewport_lib::plugin_api::depth::DEPTH_COMPARE,

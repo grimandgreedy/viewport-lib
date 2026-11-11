@@ -585,4 +585,9 @@ pub struct MeshInstanceGpuData {
     /// The batch's instance records, bound at group 1 binding 0 and as
     /// vertex buffer slot 1.
     pub(crate) instance_buf: crate::gpu::Buffer,
+    /// The source item's painter placement: such a batch draws in the
+    /// painter sequence rather than the scene pass.
+    pub(crate) painter: Option<crate::PainterPlacement>,
+    /// Index of the source item in `SceneFrame::mesh_instances`.
+    pub(crate) item_index: usize,
 }

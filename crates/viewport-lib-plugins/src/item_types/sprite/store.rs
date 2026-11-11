@@ -569,6 +569,7 @@ pub(super) fn build_sprite(
             vertex_buffer: positions.buffer().clone(),
             sprite_count: count,
             pick_id: item.settings.pick_id,
+            pick_alpha_threshold: item.pick_alpha_threshold,
             bind_group,
             texture_id: item.texture_id,
             normal_texture_id: item.normal_texture_id,
@@ -785,6 +786,8 @@ pub(crate) struct SpriteGpuData {
     /// Object-level pick id shared by every instance in the batch (from the
     /// item's `settings.pick_id`); `PickId::NONE` when not pickable.
     pub(crate) pick_id: viewport_lib::PickId,
+    /// The item's `pick_alpha_threshold`.
+    pub(crate) pick_alpha_threshold: Option<f32>,
     /// Position vertex buffer: one `vec3` per sprite, instance-stepped.
     pub(crate) vertex_buffer: viewport_lib::gpu::Buffer,
     /// Number of sprites (= draw instance count).
@@ -917,23 +920,25 @@ pub(crate) struct PainterInput<'a> {
     pub(crate) keys: Option<&'a [f32]>,
 }
 
-/// A contiguous range of one painter batch's drawn sprites, drawn as one call.
+/// A contiguous range of one painter batch's drawn sprites that share one
+/// key. Consecutive pieces of one batch that the sequence keeps together draw
+/// as one call.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PainterPiece {
     /// Index of the batch in the input.
     pub(crate) batch: usize,
     pub(crate) instances: std::ops::Range<u32>,
     pub(crate) layer: u32,
-    /// The key of the piece's first sprite.
+    /// The key every sprite of the piece shares.
     pub(crate) key: f32,
 }
 
-/// The order painter batches draw in, split into pieces so that batches on
-/// one layer interleave by their sprites' keys: ascending layer, then a merge
-/// of that layer's batches by key, ties to the earlier submission. A batch
-/// splits only where another batch's key falls strictly between two of its
-/// own, so batches whose keys do not overlap draw whole. Empty batches draw
-/// nothing and get no piece.
+/// The order painter batches draw in, split into pieces of one key each so
+/// that every sprite takes its place in the painter sequence by its own key:
+/// ascending layer, then a merge of that layer's batches by key, ties to the
+/// earlier submission. A batch also splits where another batch's key falls
+/// strictly between two of its own. Empty batches draw nothing and get no
+/// piece.
 pub(crate) fn painter_pieces(batches: &[PainterInput<'_>]) -> Vec<PainterPiece> {
     let key = |b: usize, i: u32| {
         batches[b]
@@ -971,7 +976,10 @@ pub(crate) fn painter_pieces(batches: &[PainterInput<'_>]) -> Vec<PainterPiece> 
                 .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
             let start = heads[first];
             let mut end = start + 1;
+            // A piece holds one key: the sequence places it by that key
+            // against every other painter draw.
             while end < batches[first].count
+                && key(first, end).total_cmp(&key(first, start)).is_eq()
                 && bound.is_none_or(|o| before((key(first, end), first), o))
             {
                 end += 1;
@@ -1109,8 +1117,22 @@ mod painter_tests {
             .iter()
             .map(|p| (p.batch, p.instances.clone()))
             .collect();
-        assert_eq!(got, vec![(0, 0..2), (1, 0..1), (0, 2..4)]);
-        assert_eq!(pieces[2].key, 1.0);
+        assert_eq!(
+            got,
+            vec![(0, 0..1), (0, 1..2), (1, 0..1), (0, 2..3), (0, 3..4)]
+        );
+        assert_eq!(pieces[3].key, 1.0);
+    }
+
+    #[test]
+    fn pieces_split_at_every_key_change_and_keep_equal_keys_together() {
+        let keys = [1.0, 1.0, 2.0, 2.0, 2.0, 5.0];
+        let pieces = painter_pieces(&[input(0, Some(&keys), 6)]);
+        let got: Vec<(std::ops::Range<u32>, f32)> = pieces
+            .iter()
+            .map(|p| (p.instances.clone(), p.key))
+            .collect();
+        assert_eq!(got, vec![(0..2, 1.0), (2..5, 2.0), (5..6, 5.0)]);
     }
 
     #[test]
@@ -1127,7 +1149,10 @@ mod painter_tests {
             .iter()
             .map(|p| (p.batch, p.instances.clone()))
             .collect();
-        assert_eq!(got, vec![(2, 0..3), (1, 0..2), (0, 0..2)]);
+        assert_eq!(
+            got,
+            vec![(2, 0..3), (1, 0..1), (1, 1..2), (0, 0..1), (0, 1..2)]
+        );
         // Equal keys keep submission order and do not split.
         let ties = painter_pieces(&[input(0, None, 2), input(0, None, 2)]);
         assert_eq!(ties.len(), 2);

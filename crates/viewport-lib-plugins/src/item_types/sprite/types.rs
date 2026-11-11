@@ -170,15 +170,22 @@ pub struct SpriteItem {
     /// further down the screen cover the ones behind them. Empty keeps
     /// submission order and sorts at `0.0`. Ignored by `SpriteOrder::Depth`.
     ///
-    /// Batches on one layer split into separate draws where their keys
-    /// interleave, so two large batches with evenly mixed keys cost up to a
-    /// draw per sprite; batches whose key ranges do not overlap draw whole.
-    /// Against another type's batches a sprite batch orders by the key of each
-    /// of its pieces' first sprite.
+    /// Every sprite takes its place in the painter sequence by its own key,
+    /// against this type's batches and every other type's painter content
+    /// (compose keys with `viewport_lib::painter_key` to keep an entity's
+    /// parts together). Consecutive sprites of one batch with nothing of
+    /// another batch between them still draw as one call, so batches whose
+    /// key ranges do not overlap draw whole, and two large batches with evenly
+    /// mixed keys cost up to a draw per sprite.
     ///
     /// The batch is sorted when it is built: an uploaded set is sorted once,
     /// and later ranged writes into it are not re-sorted.
     pub sort_keys: Vec<f32>,
+    /// When set, a GPU pick discards the sprite's fragments whose alpha (the
+    /// texel's alpha times the sprite's colour alpha) is below the threshold,
+    /// so a pick on a transparent part of a cut-out sprite misses it and finds
+    /// what is underneath. `None` (the default) picks the whole quad.
+    pub pick_alpha_threshold: Option<f32>,
     /// Flash, dissolve, palette swap, outline and a custom sprite material.
     /// `None` (the default) draws through the plain sprite pipelines and costs
     /// nothing; `Some` draws through the effect pipelines. See
@@ -250,11 +257,13 @@ pub enum SpriteOrder {
     /// carry, draws after the opaque scene in submission order).
     #[default]
     Depth,
-    /// Drawn in an exact order after the opaque scene, never through
-    /// order-independent transparency: by `layer` (lower first), then by
-    /// [`SpriteItem::sort_keys`], then submission order, in one sequence with
-    /// the other painter's-order content (blended tile layers) and the world
-    /// overlay layers. Depth writes are off whatever `depth_write` says. Use
+    /// Drawn in an exact order after the opaque scene and the resolved
+    /// order-independent transparency, never through it: by `layer` (lower
+    /// first), then by [`SpriteItem::sort_keys`], then submission order, in
+    /// one sequence with the other painter's-order content (blended tile
+    /// layers, painter-placed meshes and particles) and the world overlay
+    /// layers. A 3D transparent surface in front of a painter sprite therefore
+    /// draws behind it. Depth writes are off whatever `depth_write` says. Use
     /// for 2D scenes that stack cutouts.
     Painter {
         /// Layer order, for example the `order` of the scene layer the batch
@@ -366,6 +375,7 @@ impl Default for SpriteItem {
             order: SpriteOrder::Depth,
             sort_keys: Vec::new(),
             effects: None,
+            pick_alpha_threshold: None,
             settings: ItemSettings::default(),
         }
     }

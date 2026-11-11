@@ -1748,7 +1748,8 @@ impl crate::renderer::ViewportRenderer {
                 // nothing uses never compiles.
                 let mut pipeline = None;
                 for batch in self.mesh_instance_gpu_data.iter() {
-                    if batch.blend != blend {
+                    // Painter-placed batches draw in the painter sequence.
+                    if batch.blend != blend || batch.painter.is_some() {
                         continue;
                     }
                     let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {

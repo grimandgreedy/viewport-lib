@@ -594,7 +594,9 @@ impl DeviceResources {
     /// `@location(0)`, a sub-object index (or 0) at `@location(1)`, and the
     /// framebuffer `z` at `@location(2)`. Use
     /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL),
-    /// whose `viewport_pick_fs` produces exactly that output.
+    /// whose `viewport_pick_fs` produces exactly that output. Depth is tested
+    /// with `LessEqual` and written unless
+    /// [`depth_write`](PluginPipelineOpts::depth_write) is `false`.
     pub fn build_pick_pipeline(
         &self,
         device: &crate::gpu::Device,
@@ -1014,7 +1016,7 @@ impl PipelineBuilder {
                 primitive: opts.primitive,
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_stencil_format,
-                    true,
+                    opts.depth_write,
                     crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
@@ -1114,8 +1116,10 @@ pub struct PluginPipelineOpts<'a> {
     /// (the default for opaque pipelines). Ignored by OIT / mask / pick /
     /// shadow builders, which use their pass-specific blend state.
     pub color_blend: Option<crate::gpu::BlendState>,
-    /// Whether the opaque builder writes depth. Ignored by the other
-    /// builders. Default `true`.
+    /// Whether the opaque and pick builders write depth. Ignored by the other
+    /// builders. Default `true`. A pick pipeline for painter's-order content
+    /// sets it `false`, so the last draw in the sequence wins as it does on
+    /// screen.
     pub depth_write: bool,
     /// Depth-compare function for the opaque and shadow builders, written
     /// for scene depth. Ignored by the others. Default

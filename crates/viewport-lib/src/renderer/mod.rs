@@ -21,8 +21,10 @@ mod colour_ready;
 mod warm;
 pub use config::RendererConfig;
 pub use warm::PipelineSet;
+mod painter;
 mod paths;
 pub use self::types::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
+pub use self::types::{PAINTER_MEMBERS, PainterPlacement, painter_key};
 pub use blit::{BlitFilter, BlitTexture};
 pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
@@ -201,6 +203,11 @@ pub(crate) struct ViewportSlot {
     /// Per-item draw resources for this viewport's foreground items,
     /// index-aligned with `SceneFrame::foreground_items`.
     pub foreground_objects: Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
+    /// This viewport's painter-placed surfaces: the item's index in the
+    /// surface submission and its placement, in submission order.
+    pub(crate) painter_surfaces: Vec<(usize, crate::PainterPlacement)>,
+    /// Per-item draw resources for `painter_surfaces`, index-aligned with it.
+    pub(crate) painter_objects: Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
     /// Grid bind group (group 0 for grid pipeline) referencing this slot's grid buffer.
     pub grid_bind_group: crate::gpu::BindGroup,
     /// Per-viewport HDR post-process render targets.
@@ -597,6 +604,10 @@ pub struct ViewportRenderer {
     /// Rebuilt each `dispatch_plugin_prepare`; a plugin with no items that frame
     /// is present with a zero.
     plugin_prepare_ms: Vec<(&'static str, f32)>,
+    /// Painter batches each participant reported into the last painter
+    /// sequence drawn, by name: the renderer's own under
+    /// [`painter::CORE_PAINTER`], then the plugins'.
+    painter_batch_counts: std::sync::Mutex<Vec<(&'static str, u32)>>,
     /// The item types that had items in the last prepare. A type with none is
     /// not prepared, so it still holds the last frame it was given; the CPU
     /// pick paths ask only these.
@@ -1224,6 +1235,7 @@ impl ViewportRenderer {
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
             plugin_prepare_ms: Vec::new(),
+            painter_batch_counts: std::sync::Mutex::new(Vec::new()),
             plugins_with_items: std::collections::HashSet::new(),
             renderer_owned_type_names: std::collections::HashSet::new(),
             declined_item_types: std::collections::HashMap::new(),
@@ -1470,9 +1482,31 @@ impl ViewportRenderer {
                         0
                     },
                     upload_bytes: plugin.upload_bytes(),
+                    painter_batches: self.painter_batches_of(name),
                 },
             )
         })
+    }
+
+    /// Batches `name` reported into the last painter sequence drawn.
+    fn painter_batches_of(&self, name: &str) -> u32 {
+        self.painter_batch_counts
+            .lock()
+            .map(|c| {
+                c.iter()
+                    .filter(|(n, _)| *n == name)
+                    .map(|(_, count)| *count)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Keep `plan`'s batch counts for the frame's stats.
+    fn record_painter_counts(&self, plan: &PainterPlan) {
+        if let Ok(mut counts) = self.painter_batch_counts.lock() {
+            counts.clear();
+            counts.extend_from_slice(&plan.counts);
+        }
     }
 
     /// Performance counters from the last completed frame. `notices` counts
@@ -1489,6 +1523,11 @@ impl ViewportRenderer {
                 &self.item_type_plugins,
                 &self.plugins_with_items,
             ),
+            painter_batches: self
+                .painter_batch_counts
+                .lock()
+                .map(|c| c.iter().map(|(_, n)| *n).sum())
+                .unwrap_or(0),
             ..self.last_stats
         }
     }
@@ -2942,22 +2981,28 @@ impl ViewportRenderer {
             })
     }
 
-    /// `true` when a registered plugin with items this frame has
-    /// painter's-order draws.
+    /// `true` when the frame has painter's-order draws: a registered plugin
+    /// with items that has some, or the renderer's own painter-placed meshes.
     pub(crate) fn any_plugin_draws_painter(&self, frame: &FrameData) -> bool {
-        !self.item_type_plugins.is_empty()
-            && self.item_type_plugins.iter().any(|(name, plugin)| {
-                plugin.draws_painter(frame.camera.viewport_index)
-                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
-                        .any(|items| !items.is_empty())
-            })
+        self.core_draws_painter(frame)
+            || (!self.item_type_plugins.is_empty()
+                && self.item_type_plugins.iter().any(|(name, plugin)| {
+                    plugin.draws_painter(frame.camera.viewport_index)
+                        && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                            .any(|items| !items.is_empty())
+                }))
     }
 
-    /// Whether the HDR path opens its read-only-depth pass this frame: for
-    /// plugins that draw there, painter's-order content, or world overlays.
+    /// Whether the HDR path opens its read-only-depth pass this frame, for
+    /// plugins that draw there.
     pub(crate) fn hdr_depth_read_active(&self, frame: &FrameData) -> bool {
         self.any_plugin_draws_depth_read(frame)
-            || self.any_plugin_draws_painter(frame)
+    }
+
+    /// Whether the HDR path opens its painter pass this frame: for
+    /// painter's-order content or world overlays.
+    pub(crate) fn hdr_painter_active(&self, frame: &FrameData) -> bool {
+        self.any_plugin_draws_painter(frame)
             || self
                 .viewport_slots
                 .get(frame.camera.viewport_index)
@@ -2971,10 +3016,11 @@ impl ViewportRenderer {
     ///
     /// Batches reported through `painter_batches` sort by layer, then sort key,
     /// then plugin registration order, then report order, and draw as runs of
-    /// consecutive batches of one plugin. Layers between world overlay layers
-    /// form runs: a run draws its sequenced batches, then once each plugin that
-    /// reported no batches (for the run's layers), then the world layers at the
-    /// run's top layer.
+    /// consecutive batches of one plugin. The renderer's own painter meshes
+    /// sort as if registered before every plugin. Layers between world overlay
+    /// layers form runs: a run draws its sequenced batches, then once each
+    /// plugin that reported no batches (for the run's layers), then the world
+    /// layers at the run's top layer.
     pub(crate) fn painter_plan(&self, frame: &FrameData, hdr: bool) -> PainterPlan {
         struct Entry {
             layer: u32,
@@ -2988,6 +3034,27 @@ impl ViewportRenderer {
         let mut entries: Vec<Entry> = Vec::new();
         let mut unsequenced: Vec<&'static str> = Vec::new();
         let mut reported = Vec::new();
+        let push = |entries: &mut Vec<Entry>,
+                    plan: &mut PainterPlan,
+                    reported: &[crate::plugin_api::PainterBatch],
+                    plugin: usize,
+                    name: &'static str| {
+            plan.counts.push((name, reported.len() as u32));
+            for (report, b) in reported.iter().enumerate() {
+                entries.push(Entry {
+                    layer: b.layer,
+                    key: b.sort_key,
+                    plugin,
+                    report,
+                    name,
+                    batch: b.batch,
+                });
+            }
+        };
+        self.core_painter_batches(frame, &mut reported);
+        if !reported.is_empty() {
+            push(&mut entries, &mut plan, &reported, 0, painter::CORE_PAINTER);
+        }
         for (plugin, (name, p)) in self.item_type_plugins.iter().enumerate() {
             let vp = frame.camera.viewport_index;
             if !p.draws_painter(vp) || (!hdr && !p.draws_ldr()) {
@@ -3003,16 +3070,7 @@ impl ViewportRenderer {
             if reported.is_empty() {
                 unsequenced.push(name);
             }
-            for (report, b) in reported.iter().enumerate() {
-                entries.push(Entry {
-                    layer: b.layer,
-                    key: b.sort_key,
-                    plugin,
-                    report,
-                    name,
-                    batch: b.batch,
-                });
-            }
+            push(&mut entries, &mut plan, &reported, plugin + 1, name);
         }
         entries.sort_by(|a, b| {
             a.layer
@@ -3068,7 +3126,9 @@ impl ViewportRenderer {
     }
 
     /// Call one plugin's `paint_painter` for `layers`, naming `batches` when
-    /// the plugin reported them.
+    /// the plugin reported them. The renderer's own painter meshes draw
+    /// under [`painter::CORE_PAINTER`].
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_plugin_paint_painter(
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
@@ -3077,7 +3137,18 @@ impl ViewportRenderer {
         layers: std::ops::RangeInclusive<u32>,
         batches: Option<&[u32]>,
         scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+        camera_bg: &crate::gpu::BindGroup,
     ) {
+        if name == painter::CORE_PAINTER {
+            self.paint_core_painter(
+                pass,
+                frame,
+                batches.unwrap_or_default(),
+                scene_depth_bind_group.is_some(),
+                camera_bg,
+            );
+            return;
+        }
         let Some(plugin) = self.item_type_plugins.get(name) else {
             return;
         };
@@ -3089,6 +3160,7 @@ impl ViewportRenderer {
             layers,
             batches,
             scene_depth_bind_group,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         let items = crate::plugin_api::ItemCollections::new(
             crate::renderer::item_plugins::plugin_collections_slice(frame, name),
@@ -3116,6 +3188,7 @@ impl ViewportRenderer {
             return;
         }
         let plan = self.painter_plan(frame, scene_depth_bind_group.is_some());
+        self.record_painter_counts(&plan);
         for step in &plan.steps {
             match step {
                 PainterStep::Batches {
@@ -3129,6 +3202,7 @@ impl ViewportRenderer {
                     layers.clone(),
                     Some(&plan.batches[batches.clone()]),
                     scene_depth_bind_group,
+                    camera_bg,
                 ),
                 PainterStep::Layers { plugin, layers } => self.dispatch_plugin_paint_painter(
                     pass,
@@ -3137,6 +3211,7 @@ impl ViewportRenderer {
                     layers.clone(),
                     None,
                     scene_depth_bind_group,
+                    camera_bg,
                 ),
                 PainterStep::World { layers } => {
                     let Some(worlds) = worlds else { continue };
@@ -3222,6 +3297,7 @@ impl ViewportRenderer {
             return;
         };
         let plan = self.painter_plan(frame, scene_depth_bind_group.is_some());
+        self.record_painter_counts(&plan);
         // The sequence cut at every break: each chunk draws in one pass, and
         // the break after it names the layer whose snapshot it fills.
         let mut chunks: Vec<(Vec<Unit>, Option<(usize, overlay_draw_order::OverlayBreak)>)> =
@@ -3285,6 +3361,7 @@ impl ViewportRenderer {
                                 layers.clone(),
                                 Some(&plan.batches[batches.clone()]),
                                 scene_depth_bind_group,
+                                camera_bg,
                             ),
                             PainterStep::Layers { plugin, layers } => self
                                 .dispatch_plugin_paint_painter(
@@ -3294,6 +3371,7 @@ impl ViewportRenderer {
                                     layers.clone(),
                                     None,
                                     scene_depth_bind_group,
+                                    camera_bg,
                                 ),
                             PainterStep::World { .. } => {}
                         },
@@ -4400,6 +4478,8 @@ impl ViewportRenderer {
                 foreground_clip_volume_buf,
                 foreground_camera_bind_group,
                 foreground_objects: Vec::new(),
+                painter_surfaces: Vec::new(),
+                painter_objects: Vec::new(),
                 grid_bind_group,
                 hdr: None,
                 cull: crate::resources::ViewportCullState::new(),
@@ -4920,6 +5000,8 @@ pub(crate) enum PainterStep {
 pub(crate) struct PainterPlan {
     pub(crate) steps: Vec<PainterStep>,
     pub(crate) batches: Vec<u32>,
+    /// How many batches each participant reported, in report order.
+    pub(crate) counts: Vec<(&'static str, u32)>,
 }
 
 /// The target a painter sequence that breaks draws into: the scene's colour

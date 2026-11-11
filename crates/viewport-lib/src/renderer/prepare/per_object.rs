@@ -94,11 +94,7 @@ pub(crate) fn build_instance_record(
     let backface_pattern_scale = match m.backface_policy {
         crate::scene::material::BackfacePolicy::Pattern(cfg) => {
             let world_extent = mesh
-                .map(|m| {
-                    m.aabb
-                        .transformed(&item.model.to_mat4())
-                        .longest_side()
-                })
+                .map(|m| m.aabb.transformed(&item.model.to_mat4()).longest_side())
                 .unwrap_or(1.0)
                 .max(1e-6);
             cfg.scale / world_extent
@@ -248,16 +244,19 @@ impl ViewportRenderer {
     /// keyed cache over a second list would collide with the scene items'
     /// entries. `entries` is index-aligned with `items`; an entry whose mesh
     /// is missing keeps `bind_group: None` and the draw path skips it.
-    pub(super) fn prepare_foreground_objects(
+    ///
+    /// Also used for a viewport's painter surfaces, which keep their own
+    /// records the same way.
+    pub(in crate::renderer) fn prepare_foreground_objects<'i>(
         resources: &mut DeviceResources,
         entries: &mut Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
-        items: &[SceneRenderItem],
+        items: impl ExactSizeIterator<Item = &'i SceneRenderItem>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
         entries.truncate(items.len());
         let uniform_size = std::mem::size_of::<InstanceData>() as u64;
-        for (idx, item) in items.iter().enumerate() {
+        for (idx, item) in items.enumerate() {
             if entries.len() <= idx {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("foreground_object_uniform"),

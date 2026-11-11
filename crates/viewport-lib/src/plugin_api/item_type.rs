@@ -562,16 +562,19 @@ pub struct PainterContext<'a> {
     /// reports none, which draws everything it has in
     /// [`layers`](Self::layers).
     pub batches: Option<&'a [u32]>,
-    /// On the HDR path, the read-only-depth pass's ready-made scene depth
-    /// bind group (see [`DepthReadContext::scene_depth_bind_group`]); `None`
-    /// in the LDR scene pass, whose depth attachment is writable.
+    /// On the HDR path, the painter pass's ready-made scene depth bind group
+    /// (laid out as [`DepthReadContext::scene_depth_bind_group`]); `None` in
+    /// the LDR scene pass, whose depth attachment is writable.
     pub scene_depth_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// Draws an uploaded mesh by id, for a painter draw built on one.
+    pub meshes: crate::resources::MeshDraw<'a>,
 }
 
 impl PainterContext<'_> {
-    /// `true` in the HDR path's read-only-depth pass (`HDR_COLOR_FORMAT`,
-    /// the renderer's sample count), `false` in the LDR scene pass (the
-    /// renderer's output format, one sample).
+    /// `true` in the HDR path's painter pass (`HDR_COLOR_FORMAT`, the
+    /// renderer's sample count, one colour target, scene depth read-only),
+    /// `false` in the LDR scene pass (the renderer's output format, one
+    /// sample).
     pub fn is_hdr_pass(&self) -> bool {
         self.scene_depth_bind_group.is_some()
     }
@@ -587,15 +590,25 @@ impl PainterContext<'_> {
 ///
 /// The renderer sorts every plugin's batches into one sequence: ascending
 /// `layer`, then ascending `sort_key`, then registration order of the plugins,
-/// then the order each plugin reported them in. A world overlay layer draws
-/// after every batch whose layer is at or below its `order`.
+/// then the order each plugin reported them in. The renderer's own painter
+/// content (mesh instances and surfaces with a
+/// [`PainterPlacement`](crate::PainterPlacement)) sorts as if registered
+/// before every plugin. A world overlay layer draws after every batch whose
+/// layer is at or below its `order`.
+///
+/// The sequence places each batch by its one key, so a batch must hold draws
+/// at a single key. A plugin whose draw covers several keys reports it as one
+/// batch per run of equal keys and draws consecutive batches of its own that
+/// the sequence hands back together as one draw where it can, as the sprite
+/// type does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct PainterBatch {
     /// Painter layer: lower layers draw first.
     pub layer: u32,
-    /// Order within the layer, across plugins: lower keys draw first. A batch
-    /// holding many sorted instances reports the key of its first one.
+    /// Order within the layer, across plugins: lower keys draw first.
+    /// Compared with `f32::total_cmp`. Compose it with
+    /// [`painter_key`](crate::painter_key) to keep an entity's parts together.
     pub sort_key: f32,
     /// The plugin's own handle for the batch, handed back in
     /// [`PainterContext::batches`].
@@ -610,6 +623,34 @@ impl PainterBatch {
             sort_key,
             batch,
         }
+    }
+
+    /// A batch at `placement`, named `batch` by the plugin.
+    pub fn at(placement: crate::PainterPlacement, batch: u32) -> Self {
+        Self::new(placement.layer, placement.key, batch)
+    }
+}
+
+/// The painter's-order draws one
+/// [`render_pick_painter`](ItemTypePlugin::render_pick_painter) call covers:
+/// the same run of the sequence a
+/// [`paint_painter`](ItemTypePlugin::paint_painter) call draws.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct PainterRun<'a> {
+    /// The painter layers this run covers, inclusive.
+    pub layers: std::ops::RangeInclusive<u32>,
+    /// For a plugin that reports
+    /// [`painter_batches`](ItemTypePlugin::painter_batches): the batch handles
+    /// of the run, in draw order. `None` for a plugin that reports none, which
+    /// picks everything it has in [`layers`](Self::layers).
+    pub batches: Option<&'a [u32]>,
+}
+
+impl PainterRun<'_> {
+    /// Whether `layer` is covered by this run.
+    pub fn includes(&self, layer: u32) -> bool {
+        self.layers.contains(&layer)
     }
 }
 
@@ -645,12 +686,14 @@ pub enum EncoderScope {
     /// composites onto surfaces rather than sampling them, use
     /// [`OnOpaqueSurfaces`](Self::OnOpaqueSurfaces).
     AfterOpaque,
-    /// After the OIT resolve and before the outline composite and foreground
-    /// pass.
+    /// After the OIT resolve and the painter's-order content, and before the
+    /// outline composite and foreground pass.
     ///
-    /// The scene colour now holds opaque plus resolved transparency, which is
-    /// what a participating-media or volumetric effect wants to composite
-    /// over. Depth is still opaque-only: the OIT pass writes none.
+    /// The scene colour now holds opaque plus resolved transparency and the
+    /// painter sequence (blended sprites and tiles, world overlay layers),
+    /// which is what a participating-media or volumetric effect wants to
+    /// composite over. Depth is still opaque-only: neither the OIT pass nor
+    /// the painter pass writes any.
     ///
     /// The one scope the LDR path also has, for plugins that opt in through
     /// [`encodes_ldr`](ItemTypePlugin::encodes_ldr): after the scene content,
@@ -1259,6 +1302,15 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ///
     /// Only called when [`draws_depth_read`](Self::draws_depth_read) returns
     /// `true`.
+    ///
+    /// Content that should sort with painter layers (blended sprites, tiles,
+    /// 2D meshes, particles in a 2D scene) does not belong here: the renderer
+    /// cannot tell such draws from depth-read effects, so they draw before the
+    /// painter sequence whatever their layer. Report them through
+    /// [`painter_batches`](Self::painter_batches) and draw them in
+    /// [`paint_painter`](Self::paint_painter);
+    /// [`PluginFrameCounters::painter_batches`](crate::renderer::stats::PluginFrameCounters::painter_batches)
+    /// shows what joined the sequence.
     fn paint_depth_read(
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
@@ -1271,9 +1323,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// [`paint_painter`](Self::paint_painter) in the viewport `viewport_index`.
     ///
     /// Read after [`prepare`](Self::prepare). A frame where some plugin says
-    /// `true` draws them on the HDR path inside the read-only-depth pass (which
-    /// opens for it) and on the LDR path in the scene pass, after every
-    /// plugin's [`paint`](Self::paint).
+    /// `true` draws them on the HDR path in a read-only-depth pass of their
+    /// own after the order-independent transparency resolves, and on the LDR
+    /// path in the scene pass, after every plugin's [`paint`](Self::paint).
     fn draws_painter(&self, _viewport_index: usize) -> bool {
         false
     }
@@ -1289,6 +1341,14 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// consecutive batches of this plugin, naming them in
     /// [`PainterContext::batches`]. Pushing nothing, the default, keeps the
     /// plugin out of the sequence: see `paint_painter` for where it draws then.
+    ///
+    /// Each batch is placed by its one key (see [`PainterBatch`]): report a
+    /// draw that covers several keys as one batch per run of equal keys.
+    /// Content meant to sort with painter layers must come through here; the
+    /// renderer cannot see draws a plugin makes in
+    /// [`paint`](Self::paint) or [`paint_depth_read`](Self::paint_depth_read)
+    /// and does not warn about them. The count reported each frame is in
+    /// [`PluginFrameCounters::painter_batches`](crate::renderer::stats::PluginFrameCounters::painter_batches).
     fn painter_batches(&self, _viewport_index: usize, _out: &mut Vec<PainterBatch>) {}
 
     /// Issue this frame's painter's-order draws.
@@ -1684,6 +1744,10 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// [`pick`](Self::pick); a plugin implements whichever fits, or both.
     /// Default no-op: plugins relying on the CPU path leave this empty.
     ///
+    /// Painter's-order content picks in
+    /// [`render_pick_painter`](Self::render_pick_painter) instead, which runs
+    /// after every plugin's `render_pick` in the painter sequence's order.
+    ///
     /// For sub-object picking (face / vertex / edge on the drawn geometry),
     /// use the primitive-index fragment helper
     /// ([`SHARED_PICK_PRIM_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_PRIM_WGSL))
@@ -1695,6 +1759,30 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// Issue pick draws for one run of this frame's painter sequence.
+    ///
+    /// The pick pass draws every plugin's [`render_pick`](Self::render_pick)
+    /// first, then walks the painter sequence in draw order and calls this
+    /// once per run of this plugin, as [`paint_painter`](Self::paint_painter)
+    /// is called: with the batch handles of the run, or for a plugin that
+    /// reports no batches with the run's layers. The draw drawn last on
+    /// screen therefore wins the pick across plugins, provided the pipeline
+    /// tests the pick depth without writing it:
+    /// [`build_pick_pipeline`](PluginResources::build_pick_pipeline) with
+    /// `depth_write: false` and the
+    /// [`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE) test.
+    ///
+    /// Only called when [`draws_painter`](Self::draws_painter) returns `true`.
+    /// Default no-op.
+    fn render_pick_painter(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        _run: &PainterRun<'_>,
         _items: &ItemCollections<'_>,
     ) {
     }

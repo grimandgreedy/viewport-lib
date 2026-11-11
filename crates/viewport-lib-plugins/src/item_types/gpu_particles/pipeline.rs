@@ -1,7 +1,7 @@
 //! GPU state for the particle item type: the emit and sim compute pipelines,
-//! and the nine draw pipelines (three blend modes across the emissive sprite,
-//! lit sprite, and instanced mesh routes), each draw pipeline built in the
-//! format a draw needs the first time it needs it.
+//! and the draw pipelines (three blend modes across the emissive sprite, lit
+//! sprite, and instanced mesh routes, for the LDR and HDR scene passes and the
+//! HDR painter pass), each built the first time a draw needs it.
 //!
 //! The bind group layouts stay in `resources`, because
 //! `create_gpu_particle_system` is public API and builds each system's
@@ -19,13 +19,25 @@ pub(super) const MESH: usize = 2;
 
 /// The member of [`ParticlePipelines`] for a route, blend mode and format.
 pub(super) fn draw_index(route: usize, blend: SpriteBlend, hdr: bool) -> usize {
-    let blend = match blend {
+    (route * 3 + blend_index(blend)) * 2 + hdr as usize
+}
+
+/// The member of [`ParticlePipelines`] a system placed in the painter sequence
+/// draws through on the HDR path: one HDR colour target, depth read-only.
+pub(super) fn painter_index(route: usize, blend: SpriteBlend) -> usize {
+    SCENE_MEMBERS + route * 3 + blend_index(blend)
+}
+
+/// The scene-pass members: three routes by three blends by two formats.
+const SCENE_MEMBERS: usize = 18;
+
+fn blend_index(blend: SpriteBlend) -> usize {
+    match blend {
         SpriteBlend::Additive => 1,
         SpriteBlend::Premultiplied => 2,
         // Particles have no multiply or screen pipeline; those draw as alpha.
         SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => 0,
-    };
-    (route * 3 + blend) * 2 + hdr as usize
+    }
 }
 
 /// What a particle draw pipeline build reads.
@@ -42,13 +54,20 @@ pub(super) struct ParticleRecipe {
     depth_format: viewport_lib::gpu::TextureFormat,
 }
 
-/// Three routes by three blend modes by two formats.
-pub(super) type ParticlePipelines = viewport_lib::plugin_api::LazyPipelines<ParticleRecipe, 18>;
+/// Three routes by three blend modes by two formats, then the same routes and
+/// blends for the HDR painter pass.
+pub(super) type ParticlePipelines = viewport_lib::plugin_api::LazyPipelines<ParticleRecipe, 27>;
 
 fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
-    let hdr = i % 2 == 1;
-    let route = i / 6;
-    let (blend, blend_name) = match (i / 2) % 3 {
+    // A painter member is the single-target build into the HDR format.
+    let painter = i >= SCENE_MEMBERS;
+    let (hdr, route, blend) = if painter {
+        let j = i - SCENE_MEMBERS;
+        (false, j / 3, j % 3)
+    } else {
+        (i % 2 == 1, i / 6, (i / 2) % 3)
+    };
+    let (blend, blend_name) = match blend {
         0 => (viewport_lib::gpu::BlendState::ALPHA_BLENDING, "alpha"),
         1 => (
             viewport_lib::plugin_api::builders::ADDITIVE_BLEND,
@@ -74,7 +93,11 @@ fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             Some(viewport_lib::gpu::Face::Back),
         ),
     };
-    let label = format!("particle_{route_name}_{blend_name}");
+    let label = if painter {
+        format!("particle_{route_name}_{blend_name}_painter")
+    } else {
+        format!("particle_{route_name}_{blend_name}")
+    };
     viewport_lib::plugin_api::builders::build_dual_pipeline_variant(
         &r.device,
         &DualPipelineDesc {
@@ -90,7 +113,11 @@ fn build(r: &ParticleRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             depth_write: false,
             depth_compare: viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
             sample_count: r.sample_count,
-            ldr_format: r.ldr_format,
+            ldr_format: if painter {
+                viewport_lib::resources::HDR_COLOR_FORMAT
+            } else {
+                r.ldr_format
+            },
             depth_format: r.depth_format,
             indirect_fraction_entry: Some("fs_scene"),
         },

@@ -310,6 +310,14 @@ impl ViewportRenderer {
         // camera still runs its full GPU cull regardless of per-light channels.
         let cull_mask = frame.camera.cull_mask;
         scene_items_owned.retain(|item| (item.settings.visibility_mask & cull_mask) != 0);
+        // Painter-placed surfaces draw in the painter sequence from their own
+        // records, so every scene pass skips them. Hidden rather than removed,
+        // to keep the list in step with the submission.
+        for item in &mut scene_items_owned {
+            if item.painter.is_some() {
+                item.settings.hidden = true;
+            }
+        }
 
         // Resolve LOD groups to concrete meshes before anything reads the draw
         // list. Items with a `lod_group` get their `mesh_id` overwritten with the
@@ -675,6 +683,15 @@ impl ViewportRenderer {
                 triangles += (indices / 3) as u64 * batch.instance_count as u64;
             }
 
+            // A painter surface draws once, in the painter sequence.
+            draw_calls += match &frame.scene.surfaces {
+                SurfaceSubmission::Flat(items) => items
+                    .iter()
+                    .filter(|i| {
+                        crate::renderer::painter::painter_surface(i, frame.camera.cull_mask)
+                    })
+                    .count() as u32,
+            };
             let deform = resources.scene_tier.deform.take_counters();
             let plugin_draw_calls =
                 plugin_draw_calls(&self.item_type_plugins, &self.plugins_with_items);
@@ -1032,10 +1049,11 @@ impl ViewportRenderer {
         Self::prepare_foreground_objects(
             &mut self.resources,
             &mut self.viewport_slots[vp_idx].foreground_objects,
-            &frame.scene.foreground_items,
+            frame.scene.foreground_items.iter(),
             device,
             queue,
         );
+        self.prepare_painter_surfaces(device, queue, frame);
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
         self.resources.upload_material_gpu(device, queue);

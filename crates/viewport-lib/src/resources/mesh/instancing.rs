@@ -620,6 +620,8 @@ impl DeviceResources {
                 other => other,
             },
             instance_buf,
+            painter: item.painter,
+            item_index: 0,
         })
     }
 }

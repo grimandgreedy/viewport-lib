@@ -270,6 +270,54 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     )
 }
 
+/// One `mesh.wgsl` pipeline for the HDR painter pass: the `fs_main` entry into
+/// the single Rgba16Float colour target, blended with `blend`, testing the
+/// scene depth without writing it.
+pub(crate) fn hdr_painter_mesh_pipeline(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    depth_format: crate::gpu::TextureFormat,
+    label: &str,
+    blend: crate::gpu::BlendState,
+) -> crate::gpu::RenderPipeline {
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: mesh_vertex_entry(false, false, false),
+            vertex_buffers: &mesh_vertex_buffers(false),
+            fragment: Some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(crate::gpu::ColorTargetState {
+                    format: crate::gpu::TextureFormat::Rgba16Float,
+                    blend: Some(blend),
+                    write_mask: crate::gpu::ColorWrites::ALL,
+                })],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                depth_format,
+                false,
+                crate::plugin_api::depth::DEPTH_COMPARE,
+            )),
+            multisample: crate::gpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+}
+
 /// One transmissive `mesh.wgsl` pipeline: the `fs_main_transmission`
 /// entries, depth-tested against the opaque scene without writing it, over a
 /// layout whose group 3 holds the opaque scene copy.

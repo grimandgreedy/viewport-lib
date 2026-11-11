@@ -214,6 +214,19 @@ struct PickDrawSet {
     /// the pick instance buffer.
     batch_instances: Vec<PickInstance>,
     batches: Vec<PickInstanceBatch>,
+    /// How many of `draws` and `batches` are scene content; the rest are
+    /// painter-placed meshes, drawn in the painter sequence.
+    opaque_draws: usize,
+    opaque_batches: usize,
+    /// The `draws` slot of each of the viewport's painter surfaces, by its
+    /// index there. `None` for one that does not pick.
+    painter_surface_draws: Vec<Option<usize>>,
+    /// The `batches` entry of each painter-placed mesh-instance item, by its
+    /// index in `SceneFrame::mesh_instances`.
+    painter_instance_batches: Vec<Option<usize>>,
+    /// Whether the painter sequence picks this query: some plugin or the
+    /// renderer has painter's-order draws and the mask asks for them.
+    has_painter_pick: bool,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -236,7 +249,10 @@ impl PickDrawSet {
     /// `true` when nothing would be drawn: the pass has nothing to submit, so
     /// the caller can report a miss without touching the GPU.
     fn is_empty(&self) -> bool {
-        self.draws.is_empty() && self.batches.is_empty() && !self.has_plugin_pick
+        self.draws.is_empty()
+            && self.batches.is_empty()
+            && !self.has_plugin_pick
+            && !self.has_painter_pick
     }
 }
 
@@ -752,6 +768,9 @@ impl ViewportRenderer {
     ) -> PickPipelineFlags {
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
+        if self.core_draws_painter(_frame) {
+            self.resources.ensure_pick_painter_pipeline(device);
+        }
         // Surface VERTEX and EDGE write their final sub-id per pixel from a
         // dedicated pipeline variant. Build them when the mask asks for that
         // level; each is a no-op without SHADER_PRIMITIVE_INDEX.
@@ -795,6 +814,7 @@ impl ViewportRenderer {
         let pickable = |item: &SceneRenderItem| {
             !item.settings.hidden
                 && item.settings.pick_id != PickId::NONE
+                && item.painter.is_none()
                 && self
                     .resources
                     .item_colour_ready(item, colour_hdr, clipping_active)
@@ -843,13 +863,42 @@ impl ViewportRenderer {
             }
         }
 
+        // Painter surfaces pick through the same pipeline's painter twin, in
+        // the painter sequence: their slots follow the scene draws.
+        let opaque_draws = draws.len();
+        let mut painter_surface_draws = Vec::new();
+        if PickItemType::Surface.satisfies(mask) && self.resources.scene_tier.is_built() {
+            let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
+            if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
+                for &(index, _) in &slot.painter_surfaces {
+                    let item = items.get(index).filter(|item| {
+                        !item.settings.hidden && item.settings.pick_id != PickId::NONE
+                    });
+                    painter_surface_draws.push(item.map(|item| {
+                        draws.push((item.mesh_id, to_instance(item)));
+                        draws.len() - 1
+                    }));
+                }
+            }
+        }
+
         // Mesh-instance batches: one slot per transform, all carrying the
         // batch's pick id and writing their transform index into the
         // primitive channel. A LOD batch picks against its full-detail mesh.
+        // Painter-placed items come after the rest, drawn in the sequence.
         let mut batch_instances: Vec<PickInstance> = Vec::new();
         let mut batches: Vec<PickInstanceBatch> = Vec::new();
+        let mut painter_instance_batches = vec![None; frame.scene.mesh_instances.len()];
+        let mut opaque_batches = 0;
         if mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
-            for item in frame.scene.mesh_instances.iter() {
+            let order = (0..frame.scene.mesh_instances.len())
+                .filter(|&i| frame.scene.mesh_instances[i].painter.is_none())
+                .chain(
+                    (0..frame.scene.mesh_instances.len())
+                        .filter(|&i| frame.scene.mesh_instances[i].painter.is_some()),
+                );
+            for item_index in order {
+                let item = &frame.scene.mesh_instances[item_index];
                 if item.settings.hidden
                     || item.settings.pick_id == PickId::NONE
                     || item.transforms.is_empty()
@@ -882,6 +931,11 @@ impl ViewportRenderer {
                     first,
                     count: item.transforms.len() as u32,
                 });
+                if item.painter.is_some() {
+                    painter_instance_batches[item_index] = Some(batches.len() - 1);
+                } else {
+                    opaque_batches = batches.len();
+                }
             }
         }
 
@@ -909,6 +963,9 @@ impl ViewportRenderer {
                 | PickMask::STRIP,
         ) && self.any_plugin_items_submitted(frame);
 
+        let has_painter_pick = mask.intersects(PickMask::OBJECT | PickMask::INSTANCE)
+            && self.any_plugin_draws_painter(frame);
+
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
         let surface_meta = build_surface_pick_meta(frame);
         let primitive_index_supported = device
@@ -919,6 +976,11 @@ impl ViewportRenderer {
             draws,
             batch_instances,
             batches,
+            opaque_draws,
+            opaque_batches,
+            painter_surface_draws,
+            painter_instance_batches,
+            has_painter_pick,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -1147,7 +1209,9 @@ impl ViewportRenderer {
             .as_ref()
             .expect("ensure_pick_pipeline must be called first");
 
-        for (instance_slot, (mesh_id, _)) in draw_set.draws.iter().enumerate() {
+        for (instance_slot, (mesh_id, _)) in
+            draw_set.draws[..draw_set.opaque_draws].iter().enumerate()
+        {
             let slot = instance_slot as u32;
             let variant = sublevel.get(instance_slot).and_then(|s| s.as_ref());
             let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
@@ -1184,7 +1248,7 @@ impl ViewportRenderer {
         // Mesh-instance batches: one instanced draw per batch over its
         // consecutive slots, after the single-slot draws in the buffer.
         let batch_base = draw_set.draws.len() as u32;
-        for batch in &draw_set.batches {
+        for batch in &draw_set.batches[..draw_set.opaque_batches] {
             let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
                 continue;
             };
@@ -1210,6 +1274,120 @@ impl ViewportRenderer {
                 &[],
             );
             self.dispatch_plugin_pick(pick_pass, frame, draw_set.mask);
+        }
+
+        // Then the painter sequence in draw order, each draw testing the pick
+        // depth without writing it, so the one drawn last wins as on screen.
+        if draw_set.has_painter_pick {
+            self.record_painter_pick(pick_pass, pick_camera_bg, pick_instance_bg, draw_set, frame);
+        }
+    }
+
+    /// Draw the painter sequence into the pick pass: the renderer's own
+    /// painter meshes through the painter pick pipeline, and each plugin's
+    /// runs through its `render_pick_painter`.
+    fn record_painter_pick<'rp>(
+        &'rp self,
+        pick_pass: &mut crate::gpu::RenderPass<'rp>,
+        pick_camera_bg: &'rp crate::gpu::BindGroup,
+        pick_instance_bg: &'rp PickInstanceGroups,
+        draw_set: &PickDrawSet,
+        frame: &'rp FrameData,
+    ) {
+        let plan = self.painter_plan(frame, self.draws_hdr(frame));
+        let ctx = crate::plugin_api::PickPassContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.scene_size()),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+            mask: draw_set.mask,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
+        };
+        let plugin_camera_bg = self.viewport_camera_bind_group(frame.camera.viewport_index);
+        let batch_base = draw_set.draws.len() as u32;
+        for step in &plan.steps {
+            let (plugin, layers, batches) = match step {
+                crate::renderer::PainterStep::Batches {
+                    plugin,
+                    layers,
+                    batches,
+                } => (
+                    *plugin,
+                    layers.clone(),
+                    Some(&plan.batches[batches.clone()]),
+                ),
+                crate::renderer::PainterStep::Layers { plugin, layers } => {
+                    (*plugin, layers.clone(), None)
+                }
+                crate::renderer::PainterStep::World { .. } => continue,
+            };
+            if plugin == crate::renderer::painter::CORE_PAINTER {
+                let Some(pipeline) = self.resources.pick.painter_pipeline.as_ref() else {
+                    continue;
+                };
+                for &handle in batches.unwrap_or_default() {
+                    let (mesh_id, instances) =
+                        match crate::renderer::painter::CoreBatch::decode(handle) {
+                            crate::renderer::painter::CoreBatch::Surface(j) => {
+                                let Some(slot) =
+                                    draw_set.painter_surface_draws.get(j).copied().flatten()
+                                else {
+                                    continue;
+                                };
+                                let slot = slot as u32;
+                                (draw_set.draws[slot as usize].0, slot..slot + 1)
+                            }
+                            crate::renderer::painter::CoreBatch::Instances(i) => {
+                                let Some(batch) = self
+                                    .mesh_instance_gpu_data
+                                    .get(i)
+                                    .and_then(|gd| {
+                                        draw_set.painter_instance_batches.get(gd.item_index)
+                                    })
+                                    .copied()
+                                    .flatten()
+                                    .map(|b| &draw_set.batches[b])
+                                else {
+                                    continue;
+                                };
+                                let first = batch_base + batch.first;
+                                (batch.mesh_id, first..first + batch.count)
+                            }
+                        };
+                    let Some(mesh) = self.resources.mesh_store.get(mesh_id) else {
+                        continue;
+                    };
+                    pick_pass.set_pipeline(pipeline);
+                    pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                    pick_pass.set_bind_group(1, pick_instance_bg.for_mesh(mesh), &[]);
+                    pick_pass.set_vertex_buffer(
+                        0,
+                        self.resources.geometry.vertex_slice(mesh.vertex_span),
+                    );
+                    pick_pass.set_index_buffer(
+                        self.resources.geometry.index_slice(mesh.index_span),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    pick_pass.draw_indexed(0..mesh.index_count, 0, instances);
+                }
+                continue;
+            }
+            let Some(p) = self.item_type_plugins.get(plugin) else {
+                continue;
+            };
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, plugin),
+            );
+            if items.is_empty() {
+                continue;
+            }
+            pick_pass.set_bind_group(0, plugin_camera_bg, &[]);
+            p.render_pick_painter(
+                pick_pass,
+                &ctx,
+                &crate::plugin_api::PainterRun { layers, batches },
+                &items,
+            );
         }
     }
 

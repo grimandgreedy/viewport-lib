@@ -1659,6 +1659,7 @@ impl DeviceResources {
         // The object pick deforms too, so a deformed mesh is picked where it is
         // drawn. Rebuilt on the next pick; its layouts are kept.
         self.pick.pipeline = None;
+        self.pick.painter_pipeline = None;
 
         // The GPU-culled families rebuild through their own `ensure_*` too,
         // which build the bindless twins beside them, so a bindless bind group

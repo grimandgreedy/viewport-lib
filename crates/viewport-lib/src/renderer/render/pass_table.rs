@@ -28,6 +28,7 @@ pub(crate) enum HdrPass {
     Transmission,
     ScopeAfterOpaque,
     Oit,
+    Painter,
     ScopeAfterTransparent,
     OutlineComposite,
     Foreground,
@@ -353,6 +354,15 @@ impl ViewportRenderer {
             TargetSet::of(T::HdrColour)
                 .with(T::OitAccum)
                 .with(T::OitReveal),
+        );
+        // Painter's-order content and world overlay layers, after the OIT
+        // composite so they draw over resolved transparency.
+        table.declare(
+            HdrPass::Painter,
+            "painter",
+            self.hdr_painter_active(frame),
+            scene,
+            TargetSet::of(T::HdrColour),
         );
         table.declare_side_effect(
             HdrPass::ScopeAfterTransparent,

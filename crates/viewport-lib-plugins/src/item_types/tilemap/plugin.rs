@@ -580,17 +580,51 @@ impl ItemTypePlugin for TilemapPlugin {
         let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
         };
-        // Cutout layers first, then the blended ones in the order they drew.
+        // Cutout layers here; the blended ones pick in the painter sequence
+        // through `render_pick_painter`.
         let pickable = |i: &usize| view.frame[*i].item.settings.pick_id != PickId::NONE;
-        let order = view
-            .cutout_layers()
-            .chain(view.painter_sequence.iter().copied())
-            .filter(pickable)
-            .collect::<Vec<_>>();
+        let order = view.cutout_layers().filter(pickable).collect::<Vec<_>>();
+        self.draw_layers(view, pass, order.into_iter(), |_| pipeline::PICK);
+    }
+
+    fn render_pick_painter(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &PickPassContext<'_>,
+        run: &viewport_lib::plugin_api::PainterRun<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
+            return;
+        }
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
+        let pickable = |i: &usize| {
+            *i < view.frame.len() && view.frame[*i].item.settings.pick_id != PickId::NONE
+        };
+        let in_range = |i: &usize| {
+            view.frame[*i]
+                .painter()
+                .is_some_and(|(layer, _)| run.includes(layer))
+        };
+        let order: Vec<usize> = match run.batches {
+            Some(batches) => batches
+                .iter()
+                .map(|&b| b as usize)
+                .filter(pickable)
+                .collect(),
+            None => view
+                .painter_sequence
+                .iter()
+                .copied()
+                .filter(in_range)
+                .filter(pickable)
+                .collect(),
+        };
         self.draw_layers(view, pass, order.into_iter(), |l| match l.painter() {
-            None => pipeline::PICK,
-            Some((_, true)) => pipeline::PICK_PAINTER,
             Some((_, false)) => pipeline::PICK_PAINTER_NO_TEST,
+            _ => pipeline::PICK_PAINTER,
         });
     }
 

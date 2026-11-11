@@ -21,4 +21,6 @@ pub use self::mesh::*;
 pub use self::mesh_instance::*;
 pub use self::volume_mesh::*;
 pub use crate::renderer::item_plugins::polyline::types::*;
-pub use viewport_lib_types::render_item::SpriteBlend;
+pub use viewport_lib_types::render_item::{
+    PAINTER_MEMBERS, PainterPlacement, SpriteBlend, painter_key,
+};

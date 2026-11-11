@@ -234,6 +234,13 @@ fn expected(name: &str) -> Option<Expected> {
         "overlay_world_layer_blends" => e(0, 0, 0, 0, 0),
         // A plate, three squares and a bar, drawn at a reference resolution.
         "presentation_reference" => e(5, 5, 5, 5, 10),
+        // One flat surface placed in the painter sequence: it leaves the scene
+        // passes (not visible to them, no batch) and is one painter draw.
+        "painter_composed_keys" => e(1, 0, 1, 0, 0),
+        // Tiles, particles and sprites only: no mesh-family draws.
+        "painter_particles_layers" => e(0, 0, 0, 0, 0),
+        // A plate and two translucent cubes; the cubes share an OIT batch.
+        "painter_over_transparent" => e(3, 3, 2, 2, 26),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),

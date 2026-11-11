@@ -43,7 +43,7 @@ impl ViewportRenderer {
         let mut reduced = 0u32;
         let mut seen: Vec<(u64, u32)> = Vec::new();
 
-        for item in &frame.scene.mesh_instances {
+        for (item_index, item) in frame.scene.mesh_instances.iter().enumerate() {
             if item.settings.hidden || item.transforms.is_empty() {
                 continue;
             }
@@ -64,7 +64,8 @@ impl ViewportRenderer {
                 None => None,
             };
             let Some(aabb) = base_aabb else {
-                if let Some(gd) = resources.upload_mesh_instance(device, queue, item) {
+                if let Some(mut gd) = resources.upload_mesh_instance(device, queue, item) {
+                    gd.item_index = item_index;
                     mesh_instance_gpu_data.push(gd);
                 }
                 continue;
@@ -124,6 +125,8 @@ impl ViewportRenderer {
                     level_meshes[level],
                     Some(idxs),
                 ) {
+                    let mut gd = gd;
+                    gd.item_index = item_index;
                     mesh_instance_gpu_data.push(gd);
                 }
             }

@@ -26,6 +26,7 @@ pub mod meshes;
 pub mod normal_maps;
 pub mod occlusion;
 pub mod overlays;
+pub mod painter;
 pub mod presentation;
 #[cfg(feature = "real_models")]
 pub mod real_models;
@@ -1131,6 +1132,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(lighting_2d::scenes());
     scenes.extend(world_overlay::scenes());
     scenes.extend(presentation::scenes());
+    scenes.extend(painter::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

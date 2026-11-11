@@ -9,19 +9,22 @@
 // The fragment stage writes the item's object id (supplied per draw through a
 // small uniform at group 2) into the R32Uint id target and clip-space depth
 // into the R32Float depth target. The pick_id is per item (one sprite item =
-// one draw of all its instances), so it does not vary per instance.
+// one draw of all its instances), so it does not vary per instance. With an
+// alpha threshold set, a fragment whose texel alpha times the sprite's colour
+// alpha falls below it is discarded, so a pick through a cut-out misses.
 
 // Per-draw pick id (one sprite item = one draw of all its instances).
 struct PickId {
-    object_id: u32,
-    _pad0:     u32,
-    _pad1:     u32,
-    _pad2:     u32,
+    object_id:       u32,
+    // Negative when the whole quad picks.
+    alpha_threshold: f32,
+    _pad1:           u32,
+    _pad2:           u32,
 };
 
 @group(1) @binding(0) var<uniform>       sprite_ub:   SpriteUniform;
-// Bindings 1 (texture) and 2 (sampler) are present in the sprite bind group
-// but unused here; the pick fragment does not sample the texture.
+@group(1) @binding(1) var               sprite_texture: texture_2d<f32>;
+@group(1) @binding(2) var               sprite_sampler: sampler;
 @group(1) @binding(3) var<storage, read> instance_buf: array<SpriteInstance>;
 
 @group(2) @binding(0) var<uniform>       pick: PickId;
@@ -38,6 +41,8 @@ struct VertexOut {
     // Instance index forwarded flat so the fragment can write the per-sprite
     // instance into the primitive-id channel for sub-object picking.
     @location(1) @interpolate(flat) instance_index: u32,
+    @location(2)                    uv:             vec2<f32>,
+    @location(3) @interpolate(flat) alpha:          f32,
 };
 
 @vertex
@@ -124,6 +129,11 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     out.world_pos = world_pos;
     out.instance_index = in.instance_index;
+    // The same UV as the colour pass, for the alpha test.
+    let u  = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
+    let v  = mix(inst.uv_rect.y, inst.uv_rect.w, (corner.y + 1.0) * 0.5);
+    out.uv = vec2<f32>(u, v);
+    out.alpha = inst.colour.a;
     return out;
 }
 
@@ -142,6 +152,13 @@ fn fs_main(in: VertexOut) -> FragOut {
         }
     }
     if !viewport_pass_clip_volumes(in.world_pos) { discard; }
+    if pick.alpha_threshold >= 0.0 {
+        var alpha = in.alpha;
+        if sprite_ub.has_texture != 0u {
+            alpha = alpha * textureSampleLevel(sprite_texture, sprite_sampler, in.uv, 0.0).a;
+        }
+        if alpha < pick.alpha_threshold { discard; }
+    }
 
     var out: FragOut;
     out.object_id = pick.object_id;

@@ -296,8 +296,9 @@ pub(super) const OIT: usize = 4;
 pub(super) const OIT_PREMULTIPLIED: usize = 5;
 pub(super) const OIT_LIT: usize = 6;
 pub(super) const OIT_LIT_PREMULTIPLIED: usize = 7;
-/// Pick for painter batches: drawn in painter order with `LessEqual`, so of
-/// two sprites at one depth the later (the one drawn on top) wins.
+/// Pick for painter batches: drawn in the painter sequence with `LessEqual`
+/// and no depth write, so of two overlapping draws the later (the one drawn on
+/// top) wins.
 pub(super) const PICK_PAINTER: usize = 8;
 /// Pick for painter batches that ignore scene depth.
 pub(super) const PICK_PAINTER_NO_TEST: usize = 9;
@@ -417,9 +418,11 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                         cull_mode: None,
                         ..Default::default()
                     },
+                    // Painter picks test depth without writing it, so the
+                    // sequence's later draw wins wherever two overlap.
                     depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
                         r.depth_format,
-                        true,
+                        i == PICK,
                         match i {
                             PICK => viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
                             PICK_PAINTER => viewport_lib::plugin_api::depth::DEPTH_COMPARE,
@@ -940,15 +943,19 @@ impl SpriteGpu {
 
 impl SpriteGpu {
     /// Group-2 bind group carrying one batch's object pick id, for the pick pass.
+    /// `alpha_threshold` discards pick fragments whose alpha falls below it;
+    /// `None` picks the whole quad.
     pub(super) fn pick_bind_group(
         &self,
         device: &viewport_lib::gpu::Device,
         queue: &viewport_lib::gpu::Queue,
         pick_id: viewport_lib::renderer::PickId,
+        alpha_threshold: Option<f32>,
     ) -> viewport_lib::gpu::BindGroup {
-        // The id plus padding to the uniform's 16-byte size, matching the
-        // layout the pick shader declares.
-        let id_data = [pick_id.0 as u32, 0u32, 0u32, 0u32];
+        // The id, the threshold (negative for none) and padding to the
+        // uniform's 16-byte size, matching the layout the pick shader declares.
+        let threshold = alpha_threshold.map_or(-1.0, |t| t.max(0.0));
+        let id_data = [pick_id.0 as u32, threshold.to_bits(), 0u32, 0u32];
         let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some("sprite_pick_id_buf"),
             size: std::mem::size_of_val(&id_data) as u64,

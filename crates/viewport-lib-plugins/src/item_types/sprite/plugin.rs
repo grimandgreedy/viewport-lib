@@ -511,7 +511,8 @@ impl SpritePlugin {
     }
 
     /// Draw painter pieces (indices into `painter_pieces`) in the order
-    /// given, switching pipeline only where consecutive pieces differ.
+    /// given, switching pipeline only where consecutive pieces differ and
+    /// drawing consecutive pieces of one batch as one call.
     fn draw_painter(
         &self,
         view: &SpriteView,
@@ -522,11 +523,8 @@ impl SpritePlugin {
     ) {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = None;
-        for piece in pieces {
-            let Some(piece) = view.painter_pieces.get(piece) else {
-                continue;
-            };
-            let sprite = &view.frame[piece.batch];
+        for (batch, instances) in painter_runs(view, pieces) {
+            let sprite = &view.frame[batch];
             if !is_painter(sprite) {
                 continue;
             }
@@ -542,7 +540,7 @@ impl SpritePlugin {
                 bound = Some(member);
             }
             bind_sprite(pass, gpu, sprite, key);
-            pass.draw(0..6, piece.instances.clone());
+            pass.draw(0..6, instances);
             self.issued
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -579,6 +577,43 @@ impl SpritePlugin {
         }
     }
 
+    /// Pick draws of `order`, batch and drawn-sprite range, each through the
+    /// pick member its batch's order selects.
+    fn pick_draws(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        view: &SpriteView,
+        order: impl Iterator<Item = (usize, std::ops::Range<u32>)>,
+    ) {
+        let Some(gpu) = &self.gpu else { return };
+        let mut bound = None;
+        for (i, instances) in order {
+            let sprite = &view.frame[i];
+            let Some(pick_bg) = &view.pick_bind_groups[i] else {
+                continue;
+            };
+            if !gpu.drawn(sprite) {
+                continue;
+            }
+            let member = match sprite.painter {
+                None => pipeline::PICK,
+                Some(p) if p.depth_test => pipeline::PICK_PAINTER,
+                Some(_) => pipeline::PICK_PAINTER_NO_TEST,
+            };
+            if bound != Some(member) {
+                let Some(pl) = gpu.passes.get(member) else {
+                    continue;
+                };
+                pass.set_pipeline(pl);
+                bound = Some(member);
+            }
+            pass.set_bind_group(1, &sprite.bind_group, &[]);
+            pass.set_bind_group(2, pick_bg, &[]);
+            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+            pass.draw(0..6, instances);
+        }
+    }
+
     /// The batch and drawn-sprite range of painter batch handle `batch`, as
     /// reported through `painter_batches`. For tests of the draw order.
     #[doc(hidden)]
@@ -589,6 +624,27 @@ impl SpritePlugin {
             .get(batch as usize)
             .map(|p| (p.batch, p.instances.clone()))
     }
+}
+
+/// The draws `pieces` (indices into the view's painter pieces) make, in
+/// order: a piece that continues the previous one's batch where it ended joins
+/// its draw.
+fn painter_runs(
+    view: &SpriteView,
+    pieces: impl Iterator<Item = usize>,
+) -> impl Iterator<Item = (usize, std::ops::Range<u32>)> {
+    let mut pieces = pieces
+        .filter_map(|i| view.painter_pieces.get(i))
+        .map(|p| (p.batch, p.instances.clone()))
+        .peekable();
+    std::iter::from_fn(move || {
+        let (batch, mut instances) = pieces.next()?;
+        while let Some((_, next)) = pieces.next_if(|(b, r)| *b == batch && r.start == instances.end)
+        {
+            instances.end = next.end;
+        }
+        Some((batch, instances))
+    })
 }
 
 /// Bind one batch's groups 1 and 3 and its vertex streams for a colour draw.
@@ -810,7 +866,7 @@ impl ItemTypePlugin for SpritePlugin {
             .iter()
             .map(|s| {
                 (s.pick_id != PickId::NONE && s.sprite_count > 0)
-                    .then(|| gpu.pick_bind_group(device, queue, s.pick_id))
+                    .then(|| gpu.pick_bind_group(device, queue, s.pick_id, s.pick_alpha_threshold))
             })
             .collect();
 
@@ -882,8 +938,9 @@ impl ItemTypePlugin for SpritePlugin {
             .is_some_and(|v| !v.painter_pieces.is_empty())
     }
 
-    /// One batch per piece: a painter batch whole, or the part of it between
-    /// two keys of another batch on its layer.
+    /// One batch per piece: a run of a painter batch's sprites at one key.
+    /// The sequence places each by its key, and `paint_painter` draws
+    /// consecutive pieces of one batch as one call.
     fn painter_batches(&self, viewport_index: usize, out: &mut Vec<PainterBatch>) {
         let Some(view) = self.views.get(viewport_index) else {
             return;
@@ -905,8 +962,8 @@ impl ItemTypePlugin for SpritePlugin {
         let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
         };
-        // Painter batches in their own order: after every opaque draw and
-        // before transparency and post effects. In the read-only-depth pass
+        // Painter batches in their own order: after every opaque draw and the
+        // resolved transparency, before post effects. In the HDR painter pass
         // the live scene depth is bound for the soft fade; the LDR scene pass
         // gets the 1x1 fallback.
         let all =
@@ -1281,47 +1338,40 @@ impl ItemTypePlugin for SpritePlugin {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
             return;
         }
-        let Some(gpu) = &self.gpu else { return };
         let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
         };
-        // Depth-ordered batches first, then the painter pieces in the order
-        // they were drawn, each through a pipeline that lets the later of two
-        // sprites at one depth win, as it did on screen.
+        // Depth-ordered batches here; the painter pieces pick in the painter
+        // sequence through `render_pick_painter`.
         let depth_ordered = (0..view.frame.len())
             .filter(|&i| view.frame[i].painter.is_none())
             .map(|i| (i, 0..view.frame[i].sprite_count));
-        let painter = view
-            .painter_pieces
-            .iter()
-            .map(|p| (p.batch, p.instances.clone()));
-        let order = depth_ordered.chain(painter);
-        let mut bound = None;
-        for (i, instances) in order {
-            let sprite = &view.frame[i];
-            let Some(pick_bg) = &view.pick_bind_groups[i] else {
-                continue;
-            };
-            if !gpu.drawn(sprite) {
-                continue;
-            }
-            let member = match sprite.painter {
-                None => pipeline::PICK,
-                Some(p) if p.depth_test => pipeline::PICK_PAINTER,
-                Some(_) => pipeline::PICK_PAINTER_NO_TEST,
-            };
-            if bound != Some(member) {
-                let Some(pl) = gpu.passes.get(member) else {
-                    continue;
-                };
-                pass.set_pipeline(pl);
-                bound = Some(member);
-            }
-            pass.set_bind_group(1, &sprite.bind_group, &[]);
-            pass.set_bind_group(2, pick_bg, &[]);
-            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-            pass.draw(0..6, instances);
+        self.pick_draws(pass, view, depth_ordered);
+    }
+
+    fn render_pick_painter(
+        &self,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
+        ctx: &PickPassContext<'_>,
+        run: &viewport_lib::plugin_api::PainterRun<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+        if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
+            return;
         }
+        let Some(view) = self.views.get(ctx.viewport_index) else {
+            return;
+        };
+        // The run's pieces in the order they were drawn, each through a
+        // pipeline that lets the later of two overlapping draws win, as it
+        // did on screen.
+        let all =
+            (0..view.painter_pieces.len()).filter(|&i| run.includes(view.painter_pieces[i].layer));
+        let pieces: Box<dyn Iterator<Item = usize> + '_> = match run.batches {
+            Some(batches) => Box::new(batches.iter().map(|&b| b as usize)),
+            None => Box::new(all),
+        };
+        self.pick_draws(pass, view, painter_runs(view, pieces));
     }
 
     /// A quad outline per billboard, showing where each sprite sits and how
@@ -1398,8 +1448,8 @@ fn is_ldr_blended(s: &SpriteGpuData) -> bool {
     !s.wireframe && !s.depth_write && s.refraction_strength <= 0.0 && s.painter.is_none()
 }
 
-/// Batches that draw in painter's order: in the read-only-depth pass on the
-/// HDR path, after the opaque sprites in the scene pass on the LDR path.
+/// Batches that draw in painter's order: in the painter pass on the HDR path,
+/// after the opaque sprites in the scene pass on the LDR path.
 fn is_painter(s: &SpriteGpuData) -> bool {
     !s.wireframe && s.refraction_strength <= 0.0 && s.painter.is_some()
 }
