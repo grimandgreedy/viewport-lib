@@ -1,27 +1,35 @@
 //! A scrolling tilemap with two parallax layers under `Camera2d`, with pixel
 //! art sprites walking over it.
 //!
-//! A far layer of hills scrolls at a third of the camera's speed behind a
-//! ground layer of grass, paths and animated water; three hundred critters
-//! walk over the ground as painter-ordered sprites sorted by `-y`. A signpost
-//! of vector art and a glowing additive path sit on a world overlay layer
-//! between the ground and the critters, so they scroll and zoom with the map
-//! and take bloom. Damage numbers float up from the critters and fade, and
-//! one critter carries a name tag: both are screen labels anchored to world
-//! points and sized in world units, so they scale with the zoom while facing
-//! the screen, and the name tag never shrinks below 12 pixels. The camera
-//! drifts to the right on its own.
+//! The level is a Tiled map read through viewport-lib-io: a far layer of hills
+//! that scrolls at a third of the camera's speed behind a ground layer of
+//! grass, paths and animated water, both cut from one tileset image. The map's
+//! cells, flips, tile animation, layer offsets and parallax factors map onto
+//! `Tilemap`, `Tileset` and `TilemapItem` here; three hundred critters walk
+//! over the ground as painter-ordered sprites sorted by `-y`, cut from the
+//! same tileset. A signpost of vector art and a glowing additive path sit on a
+//! world overlay layer between the ground and the critters, so they scroll and
+//! zoom with the map and take bloom. Damage numbers float up from the critters
+//! and fade, and one critter carries a name tag: both are screen labels
+//! anchored to world points and sized in world units, so they scale with the
+//! zoom while facing the screen, and the name tag never shrinks below 12
+//! pixels. The camera drifts to the right on its own.
 //!
 //! Drag to pan, scroll or pinch to zoom, `P` to switch between crisp pixel art
 //! (nearest-sampled and snapped to the pixel grid) and smooth filtering.
 
 use std::cell::Cell;
+use std::path::Path;
 use std::rc::Rc;
 
 use glam::Vec2;
 
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
+use viewport_lib_io::loaders::{png, tiled};
+use viewport_lib_io::{
+    PropertyValue, TextureSource, TileGrid, TileLayerData, TileLayerKind, TileMapData, TileSetData,
+};
 use viewport_lib_plugins::item_types::sprite::{
     SpriteFlip, SpriteItem, SpriteOrder, SpriteSizeMode,
 };
@@ -38,109 +46,114 @@ use vpl::{
 
 const TOGGLE_PIXEL_ART: Action = Action::Custom(1);
 
-/// Tiles across and up the ground map.
-const MAP: [u32; 2] = [256, 32];
-/// World units per ground cell: one texel is one unit.
-const CELL: f32 = 8.0;
+/// The Tiled map beside this file: its tileset image sits next to it.
+const LEVEL: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/winit_tilemap_2d/assets/level.tmx"
+);
 const CRITTERS: usize = 300;
-
-// Atlas tiles, four to a row.
-const GRASS: u32 = 0;
-const PATH: u32 = 1;
-const WATER: u32 = 2;
-const HILL: u32 = 3;
-const SKY: u32 = 4;
-const EDGE: u32 = 5;
-const WATER_B: u32 = 6;
+/// The critter's tile in the tileset.
 const CRITTER: u32 = 7;
 
-const ART: [[&str; 8]; 8] = [
-    [
-        "GGGGGGGG", "GgGGGGgG", "GGGGGGGG", "GGGgGGGG", "GGGGGGGG", "GgGGGgGG", "GGGGGGGG",
-        "GGGGGGGG",
-    ],
-    [
-        "DDDDDDDD", "DdDDDDDD", "DDDDDdDD", "DDDDDDDD", "DDdDDDDD", "DDDDDDdD", "DDDDDDDD",
-        "DdDDDDDD",
-    ],
-    [
-        "wwwwwwww", "wWwwwwww", "wwwwwwww", "wwwwWwww", "wwwwwwww", "wwwwwwwW", "wwwwwwww",
-        "wwwwwwww",
-    ],
-    [
-        "........", "...hh...", "..hhhh..", ".hhhhhh.", "hhhhhhhh", "hhhhhhhh", "hhhhhhhh",
-        "hhhhhhhh",
-    ],
-    [
-        "ssssssss", "ssssssss", "ssSSssss", "sSSSSsss", "ssssssss", "ssssssss", "ssssSSss",
-        "sssSSSSs",
-    ],
-    // Grass edge: grass along the top, path below, flipped for the far side.
-    [
-        "GGGGGGGG", "GGGGGGGG", "GgGGGgGG", "DGDDGDDG", "DDDDDDDD", "DdDDDDDD", "DDDDDdDD",
-        "DDDDDDDD",
-    ],
-    [
-        "wwwwwwww", "wwwwwwww", "wwWwwwww", "wwwwwwww", "wwwwwwWw", "wwwwwwww", "Wwwwwwww",
-        "wwwwwwww",
-    ],
-    [
-        "..KKKK..", ".KKKKKK.", "KKWBKWBK", "KKKKKKKK", "KRRRRRRK", ".KKKKKK.", ".K....K.",
-        "KK....KK",
-    ],
-];
-
-fn palette(c: char) -> [u8; 4] {
-    match c {
-        'G' => [70, 160, 70, 255],
-        'g' => [110, 200, 90, 255],
-        'D' => [150, 110, 70, 255],
-        'd' => [120, 85, 55, 255],
-        'w' => [40, 90, 190, 255],
-        'W' => [220, 235, 255, 255],
-        'h' => [70, 100, 120, 255],
-        's' => [120, 160, 215, 255],
-        'S' => [210, 222, 240, 255],
-        'K' => [230, 140, 60, 255],
-        'B' => [20, 20, 30, 255],
-        'R' => [200, 50, 60, 255],
-        _ => [0, 0, 0, 0],
-    }
+/// The level as loaded: the map, its one tileset's image, and the two tile
+/// layers by name.
+struct Level {
+    map: TileMapData,
+    atlas: TextureData,
+    /// World units per ground cell: one texel is one unit.
+    cell: f32,
+    /// Extent of the ground layer in world units.
+    extent: Vec2,
 }
 
-/// The atlas, row 0 of the image at the top as a tileset image is drawn.
-fn atlas() -> TextureData {
-    let (w, h) = (32usize, 16usize);
-    let mut pixels = vec![0u8; w * h * 4];
-    for (i, art) in ART.iter().enumerate() {
-        let (tx, ty) = ((i % 4) * 8, (i / 4) * 8);
-        for (y, line) in art.iter().enumerate() {
-            for (x, c) in line.chars().enumerate() {
-                let at = ((ty + y) * w + tx + x) * 4;
-                pixels[at..at + 4].copy_from_slice(&palette(c));
-            }
+impl Level {
+    fn load() -> Self {
+        let map = tiled::tilemap_from_path(Path::new(LEVEL)).expect("level");
+        let set = map.tilesets.first().expect("the level has a tileset");
+        let image = set.image.as_ref().expect("the tileset has an image");
+        let atlas = match &image.source {
+            TextureSource::File(path) => png::texture_from_path(path).expect("tileset image"),
+            TextureSource::Decoded(data) => data.clone(),
+        };
+        let cell = map.tile_size[0] as f32;
+        let ground = tile_layer(&map, "ground").1;
+        let extent = Vec2::new(ground.size[0] as f32, ground.size[1] as f32) * cell;
+        Self {
+            map,
+            atlas,
+            cell,
+            extent,
         }
     }
-    TextureData::srgb(w as u32, h as u32, pixels)
+
+    fn tileset(&self) -> &TileSetData {
+        &self.map.tilesets[0]
+    }
+
+    /// The critter's tile as a sprite UV rect. A sprite quad maps `v = 0` to
+    /// its bottom edge and the image has row 0 at the top, so the rect runs
+    /// from the tile's bottom edge up to its top.
+    fn critter_uv(&self) -> [f32; 4] {
+        let rect = self.tileset().tile_rect(CRITTER).expect("critter tile");
+        let (w, h) = (self.atlas.width() as f32, self.atlas.height() as f32);
+        [
+            rect.x as f32 / w,
+            (rect.y + rect.height) as f32 / h,
+            (rect.x + rect.width) as f32 / w,
+            rect.y as f32 / h,
+        ]
+    }
 }
 
-fn tileset(atlas: TextureId, filter: TextureFilter) -> Tileset {
-    let mut set = Tileset::new(Some(atlas), [8, 8], 4);
-    set.filter = filter;
-    set.animations.push(TileAnimation {
-        tile: WATER,
-        frames: vec![
-            TileFrame {
-                tile: WATER,
-                duration: 0.4,
-            },
-            TileFrame {
-                tile: WATER_B,
-                duration: 0.4,
-            },
-        ],
-    });
-    set
+/// The tile layer called `name` and its grid.
+fn tile_layer<'a>(map: &'a TileMapData, name: &str) -> (&'a TileLayerData, &'a TileGrid) {
+    map.layers
+        .iter()
+        .find_map(|layer| match &layer.kind {
+            TileLayerKind::Tiles(grid) if layer.name == name => Some((layer, grid)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the level has no tile layer called {name}"))
+}
+
+/// The renderer's tileset over the uploaded image: the grid as the file lays
+/// it out, and every animated tile's frames with their durations in seconds.
+fn tileset(set: &TileSetData, atlas: TextureId, filter: TextureFilter) -> Tileset {
+    let mut out = Tileset::new(Some(atlas), set.tile_size, set.columns);
+    out.spacing = set.spacing;
+    out.margin = set.margin;
+    out.filter = filter;
+    for tile in set.tiles.iter().filter(|t| !t.animation.is_empty()) {
+        out.animations.push(TileAnimation {
+            tile: tile.index,
+            frames: tile
+                .animation
+                .iter()
+                .map(|f| TileFrame {
+                    tile: f.index,
+                    duration: f.duration_ms as f32 / 1000.0,
+                })
+                .collect(),
+        });
+    }
+    out
+}
+
+/// A grid's cells as a `Tilemap`. The file lists rows from the top and the
+/// map counts them from the bottom, so the rows turn over; the flips carry
+/// across as they are.
+fn tilemap(grid: &TileGrid, set: Tileset) -> Tilemap {
+    let mut map = Tilemap::new(set, grid.size);
+    let [cols, rows] = grid.size;
+    for (i, cell) in grid.cells.iter().enumerate() {
+        if cell.is_empty() || cell.tileset != 0 {
+            continue;
+        }
+        let (col, row) = (i as u32 % cols, rows - 1 - i as u32 / cols);
+        let flip = TileFlip::new(cell.flip_h, cell.flip_v, cell.flip_d);
+        map.set(col, row, Tile::new(cell.index).with_flip(flip));
+    }
+    map
 }
 
 /// A small deterministic generator, so the map is the same every run.
@@ -151,58 +164,13 @@ fn next(seed: &mut u32) -> f32 {
     *seed as f32 / u32::MAX as f32
 }
 
-/// Grass with a winding path and a few ponds.
-fn ground(set: Tileset) -> Tilemap {
-    let mut map = Tilemap::new(set, MAP);
-    let mut seed = 0x7111_E5ED;
-    for col in 0..MAP[0] {
-        let path = (12.0 + 6.0 * (col as f32 * 0.07).sin()) as u32;
-        for row in 0..MAP[1] {
-            let tile = if row == path + 2 {
-                Tile::new(EDGE)
-            } else if row == path.saturating_sub(2) {
-                Tile::new(EDGE).with_flip(TileFlip::VERTICAL)
-            } else if row.abs_diff(path) < 2 {
-                Tile::new(PATH)
-            } else {
-                Tile::new(GRASS)
-            };
-            map.set(col, row, tile);
-        }
-    }
-    for _ in 0..20 {
-        let (c, r) = (
-            (next(&mut seed) * (MAP[0] - 4) as f32) as u32,
-            (next(&mut seed) * 6.0) as u32 + if next(&mut seed) < 0.5 { 1 } else { 24 },
-        );
-        for dc in 0..3 {
-            for dr in 0..2 {
-                map.set(c + dc, r + dr, Tile::new(WATER));
-            }
-        }
-    }
-    map
-}
-
-/// The far layer: sky over a band of hills.
-fn hills(set: Tileset) -> Tilemap {
-    let mut map = Tilemap::new(set, [128, 24]);
-    for col in 0..128 {
-        for row in 0..24 {
-            map.set(col, row, Tile::new(if row < 10 { HILL } else { SKY }));
-        }
-    }
-    map
-}
-
 struct Critter {
     position: Vec2,
     velocity: Vec2,
 }
 
-fn critters() -> Vec<Critter> {
+fn critters(extent: Vec2) -> Vec<Critter> {
     let mut seed = 0x2D5E_ED01;
-    let extent = Vec2::new(MAP[0] as f32, MAP[1] as f32) * CELL;
     (0..CRITTERS)
         .map(|_| Critter {
             position: Vec2::new(next(&mut seed), next(&mut seed)) * extent,
@@ -221,11 +189,17 @@ struct Layers {
     hills: [TilemapId; 2],
 }
 
-fn sprites(atlas: TextureId, critters: &[Critter], pixel_art: bool) -> SpriteItem {
+fn sprites(
+    atlas: TextureId,
+    uv: [f32; 4],
+    size: f32,
+    critters: &[Critter],
+    pixel_art: bool,
+) -> SpriteItem {
     let mut item = SpriteItem::default();
     item.texture_id = Some(atlas);
     item.size_mode = SpriteSizeMode::WorldSpace;
-    item.default_size = 8.0;
+    item.default_size = size;
     item.default_pivot = [0.5, 0.0];
     item.filter = if pixel_art {
         TextureFilter::Nearest
@@ -238,11 +212,6 @@ fn sprites(atlas: TextureId, critters: &[Critter], pixel_art: bool) -> SpriteIte
         layer: 1,
         depth_test: false,
     };
-    // The critter's tile in the 4 x 2 atlas. A sprite quad maps `v = 0` to
-    // its bottom edge and the atlas has row 0 at the top, so the rect runs
-    // from the tile's bottom edge up to its top.
-    let (col, row) = ((CRITTER % 4) as f32, (CRITTER / 4) as f32);
-    let uv = [col / 4.0, (row + 1.0) / 2.0, (col + 1.0) / 4.0, row / 2.0];
     for c in critters {
         item.positions.push([c.position.x, c.position.y, 1.0]);
         item.uv_rects.push(uv);
@@ -376,14 +345,16 @@ fn main() {
     let layers: Rc<Cell<Option<Layers>>> = Rc::new(Cell::new(None));
     let setup_layers = layers.clone();
 
-    let extent = Vec2::new(MAP[0] as f32, MAP[1] as f32) * CELL;
+    let level = Rc::new(Level::load());
+    let setup_level = level.clone();
+    let extent = level.extent;
     // Three screen pixels per texel.
     let mut camera = Camera2d::new(Plane2d::Xy)
         .with_centre(Vec2::new(200.0, extent.y * 0.5))
         .with_units_per_pixel(1.0 / 3.0);
     camera.snap_to_pixels = true;
     let mut controller = Camera2dController::new_stateless();
-    let mut critters = critters();
+    let mut critters = critters(extent);
     let mut damage: Vec<Damage> = Vec::new();
     let mut damage_seed = 0x5EED_D00D_u32;
     let mut next_hit = 0.0_f32;
@@ -405,13 +376,16 @@ fn main() {
                 }
                 let atlas = setup
                     .resources_mut()
-                    .upload_texture(&device, &queue, atlas())
+                    .upload_texture(&device, &queue, setup_level.atlas.clone())
                     .expect("atlas upload");
                 let renderer = setup.renderer_mut();
                 let mut upload = |map: Tilemap| renderer.upload(&device, &queue, &map).unwrap();
                 let filters = [TextureFilter::Nearest, TextureFilter::Linear];
-                let ground = filters.map(|f| upload(ground(tileset(atlas, f))));
-                let hills = filters.map(|f| upload(hills(tileset(atlas, f))));
+                let set = setup_level.tileset();
+                let ground = tile_layer(&setup_level.map, "ground").1;
+                let hills = tile_layer(&setup_level.map, "hills").1;
+                let ground = filters.map(|f| upload(tilemap(ground, tileset(set, atlas, f))));
+                let hills = filters.map(|f| upload(tilemap(hills, tileset(set, atlas, f))));
                 setup_layers.set(Some(Layers {
                     atlas,
                     ground,
@@ -484,23 +458,38 @@ fn main() {
                 }
                 if let Some(layers) = layers.get() {
                     let which = if pixel_art { 0 } else { 1 };
+                    let cell = level.cell;
+                    // The hills draw at the cell size their layer's `cell`
+                    // property names, from the layer's offset (pixels, y down
+                    // in the file; world units, y up here), and lag the
+                    // camera across the screen by the layer's parallax factor
+                    // while keeping step with it vertically, so they never
+                    // float above or sink under the ground when the view pans
+                    // or zooms.
+                    let (far_layer, _) = tile_layer(&level.map, "hills");
+                    let far_cell = match far_layer.properties.get("cell") {
+                        Some(PropertyValue::Float(v)) => *v as f32,
+                        _ => cell,
+                    };
                     let mut far = TilemapItem::new(layers.hills[which]);
-                    far.cell_size = [CELL * 2.0, CELL * 2.0];
-                    far.origin = [-200.0, -40.0];
-                    // A side view: the hills lag the camera across the screen
-                    // but keep step with it vertically, so they never float
-                    // above or sink under the ground when the view pans or
-                    // zooms.
-                    far.parallax = [1.0 / 3.0, 1.0];
+                    far.cell_size = [far_cell, far_cell];
+                    far.origin = [far_layer.offset[0], -far_layer.offset[1]];
+                    far.parallax = far_layer.parallax;
                     far.elevation = -1.0;
                     far.pixel_snap = pixel_art;
                     let mut near = TilemapItem::new(layers.ground[which]);
-                    near.cell_size = [CELL, CELL];
+                    near.cell_size = [cell, cell];
                     near.time = ctx.time() as f32;
                     near.pixel_snap = pixel_art;
                     extras.push(ctx.add_item(far));
                     extras.push(ctx.add_item(near));
-                    extras.push(ctx.add_item(sprites(layers.atlas, &critters, pixel_art)));
+                    extras.push(ctx.add_item(sprites(
+                        layers.atlas,
+                        level.critter_uv(),
+                        cell,
+                        &critters,
+                        pixel_art,
+                    )));
                 }
                 let layer = signpost(ctx.time());
                 let mut labels = damage_labels(&damage);

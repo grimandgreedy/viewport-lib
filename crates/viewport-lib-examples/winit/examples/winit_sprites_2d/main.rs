@@ -1,12 +1,15 @@
 //! Animated pixel-art sprites on the XY plane under `Camera2d`.
 //!
 //! Three hundred critters wander over the plane, every one drawn from one
-//! four-frame walk cycle in a single atlas texture. Each sprite picks its frame
-//! from the atlas with a UV rect, flips to face the way it walks, and stands on
-//! a pivot at its feet. The batch draws in painter's order with `-y` as the sort
-//! key, so a critter lower on screen covers the ones behind it. The atlas is
-//! nearest-sampled, the camera shows three screen pixels per texel and snaps to
-//! the pixel grid, and the sprites snap too, so the art stays crisp.
+//! four-frame walk cycle in a single atlas texture. The atlas and its frames
+//! come from an Aseprite sprite sheet read through viewport-lib-io: the
+//! `walk` tag names the frames, each frame's rectangle becomes a UV rect, and
+//! the `feet` slice's pivot puts the sprite's position at its feet. Each
+//! sprite flips to face the way it walks. The batch draws in painter's order
+//! with `-y` as the sort key, so a critter lower on screen covers the ones
+//! behind it. The atlas is nearest-sampled, the camera shows three screen
+//! pixels per texel and snaps to the pixel grid, and the sprites snap too, so
+//! the art stays crisp.
 //!
 //! A torch follows the cursor: it is a point light in the frame's lighting,
 //! projected onto the plane by the 2D light layer, and two standing stones cast
@@ -17,11 +20,14 @@
 //! Drag to pan, scroll or pinch to zoom.
 
 use std::cell::Cell;
+use std::path::Path;
 use std::rc::Rc;
 
 use glam::{DVec3, Vec2};
 
 use viewport_lib as vpl;
+use viewport_lib_io::TextureSource;
+use viewport_lib_io::loaders::{aseprite, png};
 use viewport_lib_plugins::item_types::lighting_2d::{Lighting2dItem, occluders_from_sprites};
 use viewport_lib_plugins::item_types::sprite::{
     SpriteEffects, SpriteFlip, SpriteItem, SpriteOrder, SpriteSizeMode,
@@ -39,55 +45,72 @@ const STONES: [[f32; 2]; 2] = [[-40.0, -10.0], [50.0, 20.0]];
 
 /// How many critters wander the plane.
 const COUNT: usize = 300;
-/// Frames in the walk cycle, side by side in the atlas.
-const FRAMES: usize = 4;
 /// The critters stay inside this half extent of the plane, in world units.
 const HALF_EXTENT: Vec2 = Vec2::new(200.0, 110.0);
 
-/// One 8 x 8 walk frame, top row first. `L` marks the legs, which move per frame.
-const BODY: [&str; 8] = [
-    "..GGGG..", //
-    ".GGGGGG.", //
-    "GGGGWKGG", //
-    "GGGGGGGG", //
-    "GRRRRGGG", //
-    ".GGGGGG.", //
-    "........", //
-    "........", //
-];
+/// The sprite sheet beside this file: its atlas image sits next to it.
+const SHEET: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/winit_sprites_2d/assets/critter.json"
+);
 
-/// The two leg rows of each frame.
-const LEGS: [[&str; 2]; FRAMES] = [
-    [".L....L.", "LL....LL"],
-    ["..L..L..", ".LL..LL."],
-    [".L....L.", "LL....LL"],
-    ["L......L", "L......L"],
-];
+/// The walk cycle as loaded from the sheet.
+struct Walk {
+    atlas: TextureData,
+    /// One UV rect per frame of the `walk` tag.
+    frames: Vec<[f32; 4]>,
+    /// The sprite's size in texels, one texel per world unit.
+    size: [f32; 2],
+    /// The pivot along the quad's right and up axes, `[0.5, 0.0]` for feet at
+    /// the bottom centre.
+    pivot: [f32; 2],
+}
 
-/// The atlas: the frames side by side, uploaded bottom row first because a
-/// sprite quad maps `v = 0` to its bottom edge.
-fn atlas() -> TextureData {
-    let (w, h) = (8 * FRAMES as u32, 8u32);
-    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
-    for row in (0..8).rev() {
-        for frame in 0..FRAMES {
-            let line = if row < 6 {
-                BODY[row]
-            } else {
-                LEGS[frame][row - 6]
-            };
-            for c in line.chars() {
-                pixels.extend_from_slice(&match c {
-                    'G' | 'L' => [90, 200, 110, 255],
-                    'W' => [255, 255, 255, 255],
-                    'K' => [20, 20, 30, 255],
-                    'R' => [210, 60, 70, 255],
-                    _ => [0, 0, 0, 0],
-                });
-            }
+impl Walk {
+    fn load() -> Self {
+        let sheet = aseprite::sprite_sheet_from_path(Path::new(SHEET)).expect("sprite sheet");
+        let atlas = match sheet.image.as_ref().expect("the sheet names its image") {
+            TextureSource::File(path) => png::texture_from_path(path).expect("atlas image"),
+            TextureSource::Decoded(data) => data.clone(),
+        };
+        let walk = sheet
+            .animations
+            .iter()
+            .find(|a| a.name == "walk")
+            .expect("a walk tag");
+        // A sprite quad maps `v = 0` to its bottom edge and the sheet's `v`
+        // runs from the image's top, so each rect runs from the frame's
+        // bottom edge up to its top.
+        let frames = (walk.first..=walk.last)
+            .map(|i| {
+                let [u0, v0, u1, v1] = sheet.frames[i as usize].uv;
+                [u0, v1, u1, v0]
+            })
+            .collect();
+        let first = &sheet.frames[walk.first as usize];
+        let size = [first.source_size[0] as f32, first.source_size[1] as f32];
+        // The slice pivot is in pixels from the slice's top left; the sprite
+        // pivot is a fraction of the quad from its bottom left.
+        let pivot = sheet
+            .slices
+            .iter()
+            .find(|s| s.name == "feet")
+            .and_then(|s| s.keys.first())
+            .and_then(|k| k.pivot.map(|p| (p, k.bounds)))
+            .map(|(p, b)| {
+                [
+                    p[0] as f32 / b.width as f32,
+                    1.0 - p[1] as f32 / b.height as f32,
+                ]
+            })
+            .unwrap_or([0.5, 0.0]);
+        Self {
+            atlas,
+            frames,
+            size,
+            pivot,
         }
     }
-    TextureData::srgb(w, h, pixels)
 }
 
 struct Critter {
@@ -105,7 +128,7 @@ fn next(seed: &mut u32) -> f32 {
     *seed as f32 / u32::MAX as f32
 }
 
-fn critters() -> Vec<Critter> {
+fn critters(frames: usize) -> Vec<Critter> {
     let mut seed = 0x2D5E_ED01;
     (0..COUNT)
         .map(|_| {
@@ -119,7 +142,7 @@ fn critters() -> Vec<Critter> {
             Critter {
                 position,
                 velocity: Vec2::from_angle(angle) * speed,
-                phase: next(&mut seed) * FRAMES as f32,
+                phase: next(&mut seed) * frames as f32,
                 tint: Colour::linear_rgb(shade, 1.0, shade),
             }
         })
@@ -127,24 +150,23 @@ fn critters() -> Vec<Critter> {
 }
 
 /// This frame's sprite batch for the critters, each with its flash amount.
-fn sprites(atlas: TextureId, critters: &[Critter], flashes: &[f32]) -> SpriteItem {
+fn sprites(atlas: TextureId, walk: &Walk, critters: &[Critter], flashes: &[f32]) -> SpriteItem {
     let mut item = SpriteItem::default();
     item.texture_id = Some(atlas);
     item.size_mode = SpriteSizeMode::WorldSpace;
-    item.default_size = 8.0;
+    item.sizes = vec![walk.size; critters.len()];
     item.filter = TextureFilter::Nearest;
     item.pixel_snap = true;
     // Feet on the position, so the sort key is where the critter stands.
-    item.default_pivot = [0.5, 0.0];
+    item.default_pivot = walk.pivot;
     item.order = SpriteOrder::Painter {
         layer: 0,
         depth_test: false,
     };
     for c in critters {
         item.positions.push([c.position.x, c.position.y, 0.0]);
-        let frame = (c.phase as usize) % FRAMES;
-        let u0 = frame as f32 / FRAMES as f32;
-        item.uv_rects.push([u0, 0.0, u0 + 1.0 / FRAMES as f32, 1.0]);
+        item.uv_rects
+            .push(walk.frames[(c.phase as usize) % walk.frames.len()]);
         // The art faces right.
         item.flips.push(if c.velocity.x < 0.0 {
             SpriteFlip::HORIZONTAL
@@ -190,7 +212,9 @@ fn main() {
     let mut camera = Camera2d::new(Plane2d::Xy).with_units_per_pixel(1.0 / 3.0);
     camera.snap_to_pixels = true;
     let mut controller = Camera2dController::new_stateless();
-    let mut critters = critters();
+    let walk = Rc::new(Walk::load());
+    let setup_walk = walk.clone();
+    let mut critters = critters(walk.frames.len());
     let mut flashes = vec![0.0f32; COUNT];
     let mut extras: Vec<ExtraId> = Vec::new();
     let mut torch = Vec2::ZERO;
@@ -212,7 +236,7 @@ fn main() {
                 }
                 let atlas = setup
                     .resources_mut()
-                    .upload_texture(&device, &queue, atlas())
+                    .upload_texture(&device, &queue, setup_walk.atlas.clone())
                     .expect("atlas upload");
                 setup_atlas.set(Some(atlas));
                 let mut bindings = planar_bindings();
@@ -274,7 +298,8 @@ fn main() {
                         c.velocity.y = -c.velocity.y;
                     }
                     c.position = c.position.clamp(-HALF_EXTENT, HALF_EXTENT);
-                    c.phase = (c.phase + dt * c.velocity.length() * 0.35) % FRAMES as f32;
+                    c.phase =
+                        (c.phase + dt * c.velocity.length() * 0.35) % walk.frames.len() as f32;
                 }
 
                 // The setup callback runs again after a lost device, with a new
@@ -284,7 +309,7 @@ fn main() {
                     ctx.remove_extra(id);
                 }
                 if let Some(atlas) = atlas_id.get() {
-                    extras.push(ctx.add_item(sprites(atlas, &critters, &flashes)));
+                    extras.push(ctx.add_item(sprites(atlas, &walk, &critters, &flashes)));
                 }
                 let stones = stones(dissolve);
                 let mut light = Lighting2dItem::default();
