@@ -11,6 +11,7 @@
 //! an upload builds its bind groups against them and an upload can arrive long
 //! before the first frame that draws one.
 
+use bytemuck::Zeroable;
 use viewport_lib::error::ViewportResult;
 use viewport_lib::plugin_api::Extent;
 use viewport_lib::resources::{ContentBuffer, DeviceResources};
@@ -327,6 +328,19 @@ pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
     bytes
 }
 
+/// Whether a built batch keeps a caller-ordered copy of its sprites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Retain {
+    /// A per-frame item, rebuilt every frame: no copy.
+    Frame,
+    /// An uploaded set: a copy when it draws in painter's order, so ranged
+    /// writes can address sprites by index and a key write can re-sort it.
+    Set,
+    /// An uploaded instance set: always a copy, which per-frame overrides are
+    /// applied to.
+    InstanceSet,
+}
+
 /// Build the GPU data for one sprite batch: its buffers and its bind groups.
 ///
 /// Shared by the per-frame item path and the two stores, so a reference draw
@@ -337,6 +351,7 @@ pub(super) fn build_sprite(
     binds: &SpriteBindings,
     item: &super::types::SpriteItem,
     capacity: u32,
+    retain: Retain,
 ) -> StoredSprite {
     {
         let count = item.positions.len() as u32;
@@ -356,6 +371,11 @@ pub(super) fn build_sprite(
             None
         };
         let source = |drawn: usize| order.as_ref().map_or(drawn, |o| o[drawn] as usize);
+        let keep_copy = match retain {
+            Retain::Frame => false,
+            Retain::Set => painter.is_some(),
+            Retain::InstanceSet => true,
+        };
 
         // Position vertex buffer (one vec3 per sprite, instance-stepped).
         let mut positions = ContentBuffer::new(
@@ -374,9 +394,9 @@ pub(super) fn build_sprite(
             let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&item.positions));
         }
 
-        let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
-            .map(|drawn| {
-                let i = source(drawn);
+        // The records in the caller's order, then in drawn order.
+        let records: Vec<GpuSpriteInstance> = (0..item.positions.len())
+            .map(|i| {
                 GpuSpriteInstance::new(
                     item.colours
                         .get(i)
@@ -395,6 +415,10 @@ pub(super) fn build_sprite(
                 )
             })
             .collect();
+        let drawn_records: std::borrow::Cow<'_, [GpuSpriteInstance]> = match &order {
+            Some(o) => o.iter().map(|&i| records[i as usize]).collect(),
+            None => std::borrow::Cow::Borrowed(&records),
+        };
 
         let mut sprites = ContentBuffer::new(
             device,
@@ -403,7 +427,8 @@ pub(super) fn build_sprite(
             SPRITE_STRIDE,
             capacity,
         );
-        let _ = sprites.write_range(queue, 0, bytemuck::cast_slice(&instances));
+        let _ = sprites.write_range(queue, 0, bytemuck::cast_slice(&drawn_records));
+        let mut uploaded_bytes = positions.live_bytes() + sprites.live_bytes();
 
         let (texture_view, has_texture) = (&binds.texture_view, binds.has_texture);
 
@@ -511,6 +536,7 @@ pub(super) fn build_sprite(
         let fx = match (&binds.fx, &item.effects) {
             (Some(fxb), Some(effects)) => {
                 let words = super::effects::instance_words(effects, item.positions.len(), source);
+                uploaded_bytes += words.len() as u64 * super::effects::FX_STRIDE as u64;
                 let mut stream = ContentBuffer::new(
                     device,
                     "sprite_fx_stream",
@@ -578,7 +604,7 @@ pub(super) fn build_sprite(
             depth_write: item.depth_write && painter.is_none(),
             painter,
             painter_keys,
-            instance_order: order.map(std::sync::Arc::from),
+            instance_order: order.as_deref().map(std::sync::Arc::from),
             filter: item.filter,
             blend: item.blend,
             wireframe: false,
@@ -589,6 +615,24 @@ pub(super) fn build_sprite(
             fx,
             _uniform_buf: uniform_buf,
         };
+        let copy = keep_copy.then(|| {
+            let n = item.positions.len();
+            SpriteCopy {
+                len: count,
+                positions: item.positions.clone(),
+                records,
+                fx_words: item
+                    .effects
+                    .as_ref()
+                    .filter(|_| fx_stream.is_some())
+                    .map(|fx| super::effects::instance_words(fx, n, |i| i)),
+                keys: (0..n)
+                    .map(|i| item.sort_keys.get(i).copied().unwrap_or(0.0))
+                    .collect(),
+                order: (0..n as u32).map(|d| source(d as usize) as u32).collect(),
+                dirty: Dirty::default(),
+            }
+        });
         StoredSprite {
             positions,
             sprites,
@@ -597,6 +641,8 @@ pub(super) fn build_sprite(
             draw,
             model: item.model,
             origin: glam::DVec3::ZERO,
+            copy,
+            uploaded_bytes,
         }
     }
 }
@@ -620,6 +666,142 @@ pub(crate) struct StoredSprite {
     model: [[f32; 4]; 4],
     /// The world origin the uniform's model matrix is relative to.
     origin: glam::DVec3,
+    /// The caller-ordered copy, on a painter set and an instance set.
+    copy: Option<SpriteCopy>,
+    /// Instance bytes written to the GPU since the frame last took them.
+    uploaded_bytes: u64,
+}
+
+/// A stored batch's sprites in the caller's order, and the order they are
+/// laid out in on the GPU.
+///
+/// A painter batch draws its sprites sorted by key, so the caller's sprite `i`
+/// sits at some other slot of the buffers. The copy is what lets a ranged
+/// write address sprites by the caller's index, a key write re-sort the batch
+/// without reading the buffers back, and an override build a frame's variant
+/// of the batch.
+pub(crate) struct SpriteCopy {
+    /// Live sprites, shared by every channel.
+    len: u32,
+    positions: Vec<[f32; 3]>,
+    records: Vec<GpuSpriteInstance>,
+    /// The packed effect words, on a batch with effects.
+    fx_words: Option<Vec<u32>>,
+    /// Sort keys; `0.0` where none was given.
+    keys: Vec<f32>,
+    /// The caller's index of each slot as the buffers hold them now.
+    order: Vec<u32>,
+    /// What changed since the buffers were last written.
+    dirty: Dirty,
+}
+
+/// Sprites written since the last flush, by caller index, per channel.
+#[derive(Default)]
+struct Dirty {
+    positions: Vec<bool>,
+    records: Vec<bool>,
+    fx: Vec<bool>,
+    /// The keys changed: the batch re-sorts at the flush.
+    resort: bool,
+    /// The live count changed: the slots are laid out again at the flush.
+    relayout: bool,
+}
+
+impl Dirty {
+    fn any(&self) -> bool {
+        self.resort
+            || self.relayout
+            || self.positions.contains(&true)
+            || self.records.contains(&true)
+            || self.fx.contains(&true)
+    }
+}
+
+/// Mark `range` of `flags`, growing it as needed.
+fn mark(flags: &mut Vec<bool>, range: std::ops::Range<usize>) {
+    if flags.len() < range.end {
+        flags.resize(range.end, false);
+    }
+    flags[range].fill(true);
+}
+
+/// Copy `values` into `into` at `first`, padding with `pad` up to it.
+fn put<T: Copy>(into: &mut Vec<T>, first: usize, values: &[T], pad: T) {
+    let end = first + values.len();
+    if into.len() < end {
+        into.resize(end, pad);
+    }
+    into[first..end].copy_from_slice(values);
+}
+
+/// Runs of written slots past which a write covers the span from the first
+/// to the last instead: each run is a queue write of its own, and a re-sort
+/// that shuffles every sprite a little leaves thousands of short runs.
+const MAX_RUNS: usize = 32;
+
+/// Write `data[order[d]]` for every slot `d` that `wanted` names, one queue
+/// write per run of consecutive slots, or one over their whole span when
+/// there are more than [`MAX_RUNS`] runs. Returns the bytes written.
+fn write_slots<T: bytemuck::Pod>(
+    buffer: &mut ContentBuffer,
+    queue: &viewport_lib::gpu::Queue,
+    order: &[u32],
+    data: &[T],
+    pad: T,
+    wanted: impl Fn(usize) -> bool,
+) -> u64 {
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut d = 0;
+    while d < order.len() {
+        if !wanted(d) {
+            d += 1;
+            continue;
+        }
+        let start = d;
+        while d < order.len() && wanted(d) {
+            d += 1;
+        }
+        runs.push(start..d);
+    }
+    if runs.len() > MAX_RUNS {
+        let span = runs[0].start..runs[runs.len() - 1].end;
+        runs = vec![span];
+    }
+    let mut written = 0;
+    let mut values: Vec<T> = Vec::new();
+    for run in runs {
+        values.clear();
+        values.extend(
+            order[run.clone()]
+                .iter()
+                .map(|&i| data.get(i as usize).copied().unwrap_or(pad)),
+        );
+        let bytes: &[u8] = bytemuck::cast_slice(&values);
+        if buffer.write_range(queue, run.start as u32, bytes).is_ok() {
+            written += bytes.len() as u64;
+        }
+    }
+    written
+}
+
+/// The keys of a painter batch in drawn order, or `None` when every key is
+/// `0.0`, which is how the frame reads a batch without keys.
+fn drawn_keys(keys: &[f32], order: &[u32]) -> Option<std::sync::Arc<[f32]>> {
+    keys.iter().any(|&k| k != 0.0).then(|| {
+        order
+            .iter()
+            .map(|&i| keys.get(i as usize).copied().unwrap_or(0.0))
+            .collect()
+    })
+}
+
+/// `order` as the draw data carries it: `None` when it is the identity.
+fn instance_order(order: &[u32]) -> Option<std::sync::Arc<[u32]>> {
+    order
+        .iter()
+        .enumerate()
+        .any(|(d, &i)| d as u32 != i)
+        .then(|| std::sync::Arc::from(order))
 }
 
 impl StoredSprite {
@@ -638,8 +820,12 @@ impl StoredSprite {
         );
     }
 
-    /// Write positions, records or effect words at a sprite offset, keeping
-    /// the draw count in step with the positions.
+    /// Write positions, records, effect words or sort keys at a sprite
+    /// offset, keeping the draw count in step with the positions.
+    ///
+    /// A batch with a copy takes the write into the copy and writes the
+    /// buffers at the next [`flush`](Self::flush), at the slots the written
+    /// sprites hold; a batch without one writes straight through.
     pub(crate) fn write_channel(
         &mut self,
         queue: &viewport_lib::gpu::Queue,
@@ -647,6 +833,14 @@ impl StoredSprite {
         first_element: u32,
         data: &[u8],
     ) -> ViewportResult<()> {
+        let not_present =
+            |channel: &'static str| viewport_lib::error::ViewportError::ChannelNotPresent {
+                type_name: super::TYPE_NAME,
+                channel,
+            };
+        if self.copy.is_some() {
+            return self.write_copy(channel, first_element, data);
+        }
         match channel {
             SpriteChannel::Positions => {
                 self.positions.write_range(queue, first_element, data)?;
@@ -656,13 +850,160 @@ impl StoredSprite {
             SpriteChannel::Effects => self
                 .fx_stream
                 .as_mut()
-                .ok_or(viewport_lib::error::ViewportError::ChannelNotPresent {
-                    type_name: super::TYPE_NAME,
-                    channel: "effects",
-                })?
+                .ok_or(not_present("effects"))?
                 .write_range(queue, first_element, data)?,
+            // Keys order a painter batch only, and every painter set keeps a
+            // copy.
+            SpriteChannel::SortKeys => return Err(not_present("sort_keys")),
+        }
+        self.uploaded_bytes += data.len() as u64;
+        Ok(())
+    }
+
+    /// [`write_channel`](Self::write_channel) into the copy.
+    fn write_copy(
+        &mut self,
+        channel: SpriteChannel,
+        first_element: u32,
+        data: &[u8],
+    ) -> ViewportResult<()> {
+        let (stride, buffer_capacity) = match channel {
+            SpriteChannel::Positions => (POSITION_STRIDE, self.positions.capacity()),
+            SpriteChannel::Sprites => (SPRITE_STRIDE, self.sprites.capacity()),
+            SpriteChannel::Effects => match &self.fx_stream {
+                Some(stream) => (super::effects::FX_STRIDE, stream.capacity()),
+                None => {
+                    return Err(viewport_lib::error::ViewportError::ChannelNotPresent {
+                        type_name: super::TYPE_NAME,
+                        channel: "effects",
+                    });
+                }
+            },
+            SpriteChannel::SortKeys => (4, self.positions.capacity()),
+        };
+        if data.is_empty() {
+            return Ok(());
+        }
+        let count = (data.len() / stride as usize) as u32;
+        let end = first_element.saturating_add(count);
+        if data.len() % stride as usize != 0 || end > buffer_capacity {
+            return Err(
+                viewport_lib::error::ViewportError::ContentBufferWriteOutOfRange {
+                    first_element,
+                    element_count: if data.len() % stride as usize == 0 {
+                        count
+                    } else {
+                        0
+                    },
+                    capacity: buffer_capacity,
+                    stride_bytes: stride,
+                },
+            );
+        }
+        let copy = self.copy.as_mut().expect("checked by the caller");
+        let first = first_element as usize;
+        let range = first..end as usize;
+        match channel {
+            SpriteChannel::Positions => {
+                let values: Vec<[f32; 3]> = bytemuck::pod_collect_to_vec(data);
+                put(&mut copy.positions, first, &values, [0.0; 3]);
+                mark(&mut copy.dirty.positions, range);
+            }
+            SpriteChannel::Sprites => {
+                let values: Vec<GpuSpriteInstance> = bytemuck::pod_collect_to_vec(data);
+                put(
+                    &mut copy.records,
+                    first,
+                    &values,
+                    GpuSpriteInstance::zeroed(),
+                );
+                mark(&mut copy.dirty.records, range);
+            }
+            SpriteChannel::Effects => {
+                let values: Vec<u32> = bytemuck::pod_collect_to_vec(data);
+                let words = copy.fx_words.get_or_insert_with(Vec::new);
+                put(words, first, &values, 0);
+                mark(&mut copy.dirty.fx, range);
+            }
+            SpriteChannel::SortKeys => {
+                let values: Vec<f32> = bytemuck::pod_collect_to_vec(data);
+                put(&mut copy.keys, first, &values, 0.0);
+                copy.dirty.resort = true;
+            }
+        }
+        if end > copy.len {
+            copy.len = end;
+            copy.dirty.relayout = true;
         }
         Ok(())
+    }
+
+    /// Write what the copy changed since the last flush into the buffers:
+    /// re-sort after a key write, lay the slots out again after the live
+    /// count changed, and write each written sprite at its slot. A sprite
+    /// whose slot changed is written on every channel. Nothing for a batch
+    /// without a copy or with nothing changed.
+    pub(crate) fn flush(&mut self, queue: &viewport_lib::gpu::Queue) {
+        let Some(copy) = self.copy.as_mut() else {
+            return;
+        };
+        if !copy.dirty.any() {
+            return;
+        }
+        let n = copy.len;
+        let target: Vec<u32> = if copy.dirty.resort && self.draw.painter.is_some() {
+            painter_instance_order(&copy.keys, n as usize).unwrap_or_else(|| (0..n).collect())
+        } else {
+            // The sprites that stay keep their slots' order; new ones follow.
+            let old = copy.order.len() as u32;
+            copy.order
+                .iter()
+                .copied()
+                .filter(|&i| i < n)
+                .chain(old..n.max(old))
+                .collect()
+        };
+        let moved = |d: usize| copy.order.get(d) != Some(&target[d]);
+        let dirty =
+            |flags: &[bool], d: usize| flags.get(target[d] as usize).copied().unwrap_or(false);
+        let mut written = write_slots(
+            &mut self.positions,
+            queue,
+            &target,
+            &copy.positions,
+            [0.0; 3],
+            |d| moved(d) || dirty(&copy.dirty.positions, d),
+        );
+        written += write_slots(
+            &mut self.sprites,
+            queue,
+            &target,
+            &copy.records,
+            GpuSpriteInstance::zeroed(),
+            |d| moved(d) || dirty(&copy.dirty.records, d),
+        );
+        if let (Some(stream), Some(words)) = (&mut self.fx_stream, &copy.fx_words) {
+            written += write_slots(stream, queue, &target, words, 0, |d| {
+                moved(d) || dirty(&copy.dirty.fx, d)
+            });
+            let _ = stream.set_len(n);
+        }
+        let _ = self.positions.set_len(n);
+        let _ = self.sprites.set_len(n);
+        self.draw.sprite_count = n;
+        if self.draw.painter.is_some() {
+            self.draw.painter_keys =
+                drawn_keys(&copy.keys[..(n as usize).min(copy.keys.len())], &target);
+        }
+        self.draw.instance_order = instance_order(&target);
+        copy.order = target;
+        copy.dirty = Dirty::default();
+        self.uploaded_bytes += written;
+    }
+
+    /// Instance bytes written since the last call.
+    pub(crate) fn take_uploaded_bytes(&mut self) -> u64 {
+        std::mem::take(&mut self.uploaded_bytes)
     }
 
     /// Grow both channels to at least `capacity` sprites, rebuilding the bind
@@ -694,8 +1035,27 @@ impl StoredSprite {
         moved
     }
 
-    /// Set how many sprites draw.
+    /// Set how many sprites draw. On a batch with a copy the sprites past
+    /// `len` leave the draw at the next flush, whichever slots they hold.
     pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        if let Some(copy) = &mut self.copy {
+            let capacity = self.positions.capacity();
+            if len > capacity {
+                return Err(
+                    viewport_lib::error::ViewportError::ContentBufferWriteOutOfRange {
+                        first_element: 0,
+                        element_count: len,
+                        capacity,
+                        stride_bytes: POSITION_STRIDE,
+                    },
+                );
+            }
+            if len != copy.len {
+                copy.len = len;
+                copy.dirty.relayout = true;
+            }
+            return Ok(());
+        }
         self.positions.set_len(len)?;
         self.sprites.set_len(len)?;
         if let Some(stream) = &mut self.fx_stream {
@@ -712,11 +1072,143 @@ impl StoredSprite {
             SpriteChannel::Positions => &self.positions,
             SpriteChannel::Sprites => &self.sprites,
             SpriteChannel::Effects => self.fx_stream.as_ref()?,
+            SpriteChannel::SortKeys => {
+                self.copy.as_ref().filter(|_| self.draw.painter.is_some())?;
+                &self.positions
+            }
         };
         Some(Extent {
             capacity: cb.capacity(),
-            len: cb.len(),
+            // A batch with a copy has one live count, ahead of the buffers
+            // until the next flush.
+            len: self.copy.as_ref().map_or(cb.len(), |c| c.len),
         })
+    }
+
+    /// This batch with `overrides` applied, for one frame: the stored buffers
+    /// are untouched, and only the streams the overrides change are copied
+    /// into frame buffers. Returns the draw data and the bytes written.
+    /// `None` when the batch keeps no copy or the overrides change nothing.
+    pub(crate) fn overridden(
+        &self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        overrides: &super::types::SpriteOverrides,
+    ) -> Option<(SpriteGpuData, u64)> {
+        let copy = self.copy.as_ref()?;
+        if overrides.is_empty() {
+            return None;
+        }
+        let n = copy.len as usize;
+        let live = |v: usize| v.min(n);
+        let mut positions = None::<Vec<[f32; 3]>>;
+        let mut records = None::<Vec<GpuSpriteInstance>>;
+        let mut keys = None::<Vec<f32>>;
+        for (j, &index) in overrides.indices.iter().enumerate() {
+            let i = index as usize;
+            if i >= n {
+                continue;
+            }
+            if let Some(p) = overrides.positions.get(j) {
+                let v = positions.get_or_insert_with(|| {
+                    let mut v = copy.positions[..live(copy.positions.len())].to_vec();
+                    v.resize(n, [0.0; 3]);
+                    v
+                });
+                v[i] = *p;
+            }
+            if let Some(c) = overrides.colours.get(j) {
+                let v = records.get_or_insert_with(|| {
+                    let mut v = copy.records[..live(copy.records.len())].to_vec();
+                    v.resize(n, GpuSpriteInstance::zeroed());
+                    v
+                });
+                v[i].colour = c.to_linear_rgba();
+            }
+            if let Some(k) = overrides.sort_keys.get(j)
+                && self.draw.painter.is_some()
+            {
+                let v = keys.get_or_insert_with(|| {
+                    let mut v = copy.keys[..live(copy.keys.len())].to_vec();
+                    v.resize(n, 0.0);
+                    v
+                });
+                v[i] = *k;
+            }
+        }
+        if positions.is_none() && records.is_none() && keys.is_none() {
+            return None;
+        }
+        let order: std::borrow::Cow<'_, [u32]> = match &keys {
+            Some(k) => painter_instance_order(k, n)
+                .unwrap_or_else(|| (0..n as u32).collect())
+                .into(),
+            None => std::borrow::Cow::Borrowed(&copy.order),
+        };
+        let reordered = *order != copy.order[..];
+        let mut draw = self.draw.clone();
+        let mut written = 0;
+        let frame_buffer = |label, usage, stride, data: &[u8]| {
+            let mut buffer = ContentBuffer::new(device, label, usage, stride, n as u32);
+            let _ = buffer.write_range(queue, 0, data);
+            buffer.buffer().clone()
+        };
+        if positions.is_some() || reordered {
+            let source = positions.as_deref().unwrap_or(&copy.positions);
+            let drawn: Vec<[f32; 3]> = order
+                .iter()
+                .map(|&i| source.get(i as usize).copied().unwrap_or([0.0; 3]))
+                .collect();
+            let bytes: &[u8] = bytemuck::cast_slice(&drawn);
+            written += bytes.len() as u64;
+            draw.vertex_buffer = frame_buffer(
+                "sprite_vertex_buf",
+                viewport_lib::gpu::BufferUsages::VERTEX,
+                POSITION_STRIDE,
+                bytes,
+            );
+        }
+        if records.is_some() || reordered {
+            let source = records.as_deref().unwrap_or(&copy.records);
+            let drawn: Vec<GpuSpriteInstance> = order
+                .iter()
+                .map(|&i| {
+                    source
+                        .get(i as usize)
+                        .copied()
+                        .unwrap_or(GpuSpriteInstance::zeroed())
+                })
+                .collect();
+            let bytes: &[u8] = bytemuck::cast_slice(&drawn);
+            written += bytes.len() as u64;
+            let buffer = frame_buffer(
+                "sprite_instance_buf",
+                viewport_lib::gpu::BufferUsages::STORAGE,
+                SPRITE_STRIDE,
+                bytes,
+            );
+            draw.bind_group =
+                build_bind_group(device, &self.binds, &self.draw._uniform_buf, &buffer);
+        }
+        if reordered && let (Some(fx), Some(words)) = (&mut draw.fx, &copy.fx_words) {
+            let drawn: Vec<u32> = order
+                .iter()
+                .map(|&i| words.get(i as usize).copied().unwrap_or(0))
+                .collect();
+            let bytes: &[u8] = bytemuck::cast_slice(&drawn);
+            written += bytes.len() as u64;
+            fx.stream = frame_buffer(
+                "sprite_fx_stream",
+                viewport_lib::gpu::BufferUsages::VERTEX,
+                super::effects::FX_STRIDE,
+                bytes,
+            );
+        }
+        if let Some(k) = &keys {
+            draw.painter_keys = drawn_keys(k, &order);
+        }
+        draw.instance_order = instance_order(&order);
+        Some((draw, written))
     }
 }
 
@@ -868,6 +1360,7 @@ pub(crate) enum SpriteChannel {
     Positions,
     Sprites,
     Effects,
+    SortKeys,
 }
 
 /// Where a painter batch sits in the painter sequence and how it tests depth.

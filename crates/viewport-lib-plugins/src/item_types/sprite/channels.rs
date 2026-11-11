@@ -12,6 +12,13 @@
 //! item applies to short per-sprite lists are already resolved by the time a
 //! ranged write supplies a value.
 //!
+//! A batch uploaded in painter's order also takes [`SortKeys`]. Elements are
+//! addressed by the sprite's index in the uploaded item whatever order the
+//! batch draws in, and a write to the keys re-sorts the batch at the next
+//! frame; writes to the other channels never re-sort. A painter batch's
+//! channels share one live count, so a write past it raises it for all of
+//! them.
+//!
 //! These cover the batch a `SpriteSetId` names. The instance-set store keeps its
 //! own handle type and is not writable this way.
 
@@ -21,10 +28,8 @@ use viewport_lib::plugin_api::Channel;
 
 /// One sprite of a batch, as the caller supplies it for a ranged write.
 ///
-/// Total rather than partial: the store keeps no CPU copy of a record, so
-/// "leave the colour alone" would mean reading it back off the GPU. Every write
-/// supplies every field, and the values are final rather than defaults to be
-/// filled in.
+/// Total rather than partial: every write supplies every field, and the
+/// values are final rather than defaults to be filled in.
 #[derive(Copy, Clone, Debug)]
 pub struct Sprite {
     /// Final colour, multiplied into the texture sample.
@@ -108,4 +113,21 @@ impl Channel for Effects {
     type Id = SpriteSetId;
     type Input = SpriteEffect;
     const NAME: &'static str = "effects";
+}
+
+/// Per-sprite sort keys of a batch uploaded with
+/// [`SpriteOrder::Painter`](super::SpriteOrder::Painter), as in
+/// [`SpriteItem::sort_keys`](super::SpriteItem::sort_keys). A write re-sorts
+/// the batch at the next frame, moving every sprite to its place by key; ties
+/// keep the order of the sprites' indices. A set whose keys follow its
+/// positions (a top-down set sorted by `-y`) writes both channels for the
+/// sprites that moved. A write to a batch in depth order fails with
+/// `ViewportError::ChannelNotPresent`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SortKeys;
+
+impl Channel for SortKeys {
+    type Id = SpriteSetId;
+    type Input = f32;
+    const NAME: &'static str = "sort_keys";
 }

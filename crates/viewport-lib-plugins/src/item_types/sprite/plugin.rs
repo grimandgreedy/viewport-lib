@@ -148,6 +148,9 @@ pub struct SpritePlugin {
     /// soft, OIT and refraction passes. Counted where each draw is recorded,
     /// so a batch still compiling is not counted.
     issued: std::sync::atomic::AtomicU32,
+    /// Instance bytes written for the last prepared frame: inline batches,
+    /// ranged writes and re-sorts of stored ones, and override copies.
+    upload_bytes: u64,
 }
 
 /// A viewport's scene-colour copy, allocated the first frame that viewport
@@ -169,12 +172,13 @@ impl SpritePlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: &SpriteItem,
         capacity: u32,
+        retain: store::Retain,
     ) -> StoredSprite {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
         let binds = resolve_bindings(device, resources, layouts, &self.materials, item);
-        build_sprite(device, queue, &binds, item, capacity)
+        build_sprite(device, queue, &binds, item, capacity, retain)
     }
 
     /// Register a sprite material: validate its body against both effect
@@ -230,7 +234,7 @@ impl SpritePlugin {
         item: &SpriteItem,
         capacity: u32,
     ) -> SpriteSetId {
-        let gpu = self.build(device, queue, resources, item, capacity);
+        let gpu = self.build(device, queue, resources, item, capacity, store::Retain::Set);
         self.sets.insert_sized(gpu)
     }
 
@@ -305,7 +309,7 @@ impl SpritePlugin {
         if !self.sets.contains(id) {
             return Err(self.sets.stale(id));
         }
-        let gpu = self.build(device, queue, resources, item, 0);
+        let gpu = self.build(device, queue, resources, item, 0, store::Retain::Set);
         self.sets.replace_sized(id, gpu);
         Ok(())
     }
@@ -318,7 +322,14 @@ impl SpritePlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: &SpriteItem,
     ) -> SpriteInstanceSetId {
-        let gpu = self.build(device, queue, resources, item, 0);
+        let gpu = self.build(
+            device,
+            queue,
+            resources,
+            item,
+            0,
+            store::Retain::InstanceSet,
+        );
         self.instance_sets.insert_sized(gpu)
     }
 
@@ -339,7 +350,14 @@ impl SpritePlugin {
         if !self.instance_sets.contains(id) {
             return Err(self.instance_sets.stale(id));
         }
-        let gpu = self.build(device, queue, resources, item, 0);
+        let gpu = self.build(
+            device,
+            queue,
+            resources,
+            item,
+            0,
+            store::Retain::InstanceSet,
+        );
         self.instance_sets.replace_sized(id, gpu);
         Ok(())
     }
@@ -357,6 +375,7 @@ impl SpritePlugin {
         queue: &viewport_lib::gpu::Queue,
         resources: &viewport_lib::resources::DeviceResources,
         item: SpriteItem,
+        retain: store::Retain,
     ) -> viewport_lib::resources::JobId {
         let layouts = self
             .layouts
@@ -364,7 +383,7 @@ impl SpritePlugin {
         let binds = resolve_bindings(device, resources, layouts, &self.materials, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item, 0))
+        jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item, 0, retain))
     }
 
     /// Rebind stored batches whose textures were freed or swapped since the
@@ -729,6 +748,10 @@ impl ItemTypePlugin for SpritePlugin {
         self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    fn upload_bytes(&self) -> u64 {
+        self.upload_bytes
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -746,9 +769,14 @@ impl ItemTypePlugin for SpritePlugin {
         view.painter_pieces.clear();
         view.pick_bind_groups.clear();
         let origin = ctx.world_origin();
+        self.upload_bytes = 0;
         let sets = self.sets.iter_mut().map(|(_, s)| s);
         for stored in sets.chain(self.instance_sets.iter_mut().map(|(_, s)| s)) {
             stored.rebase(queue, origin);
+            // Writes since the last frame land here, a re-sort included, so
+            // positions and keys written for one frame cost one pass.
+            stored.flush(queue);
+            self.upload_bytes += stored.take_uploaded_bytes();
         }
         let items = items.of::<SpriteItem>();
         let set_refs = ctx.refs_of::<SpriteSetRefItem>();
@@ -775,7 +803,8 @@ impl ItemTypePlugin for SpritePlugin {
                 continue;
             }
             let binds = resolve_bindings(device, ctx.resources, layouts, &self.materials, item);
-            let mut stored = build_sprite(device, queue, &binds, item, 0);
+            let mut stored = build_sprite(device, queue, &binds, item, 0, store::Retain::Frame);
+            self.upload_bytes += stored.take_uploaded_bytes();
             stored.rebase(queue, ctx.world_origin());
             let mut gd = stored.draw;
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
@@ -834,7 +863,17 @@ impl ItemTypePlugin for SpritePlugin {
             let Some(entry) = instance_sets.get(ref_item.source) else {
                 continue;
             };
-            let mut gd = entry.draw.clone();
+            let overridden = ref_item
+                .overrides
+                .as_ref()
+                .and_then(|o| entry.overridden(device, queue, o));
+            let mut gd = match overridden {
+                Some((gd, bytes)) => {
+                    self.upload_bytes += bytes;
+                    gd
+                }
+                None => entry.draw.clone(),
+            };
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             view.frame.push(gd);
             view.frame_settings.push(ref_item.settings);

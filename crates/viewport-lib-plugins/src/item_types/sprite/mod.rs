@@ -42,7 +42,8 @@ mod types;
 pub use types::{
     PaletteIndex, SpriteEffects, SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem,
     SpriteItem, SpriteLitParams, SpriteMaterial, SpriteMaterialId, SpriteNormalMode, SpriteOrder,
-    SpriteOrientation, SpriteOutline, SpritePalette, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
+    SpriteOrientation, SpriteOutline, SpriteOverrides, SpritePalette, SpriteSetId,
+    SpriteSetRefItem, SpriteSizeMode,
 };
 
 /// Stable name this item type submits and registers under.

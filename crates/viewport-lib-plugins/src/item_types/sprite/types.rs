@@ -178,8 +178,14 @@ pub struct SpriteItem {
     /// key ranges do not overlap draw whole, and two large batches with evenly
     /// mixed keys cost up to a draw per sprite.
     ///
-    /// The batch is sorted when it is built: an uploaded set is sorted once,
-    /// and later ranged writes into it are not re-sorted.
+    /// The batch is sorted when it is built. An uploaded painter set is
+    /// re-sorted only by a ranged write to its sort keys
+    /// ([`channels::SortKeys`](crate::item_types::sprite::channels::SortKeys)),
+    /// at the next frame; a write that does not include keys never re-sorts,
+    /// so moved sprites keep their place in the order. The renderer does not
+    /// derive keys from positions: a set sorted by `-y` writes its keys
+    /// together with its positions, and a positions-only write suits a set
+    /// whose keys do not depend on where its sprites are.
     pub sort_keys: Vec<f32>,
     /// When set, a GPU pick discards the sprite's fragments whose alpha (the
     /// texel's alpha times the sprite's colour alpha) is below the threshold,
@@ -462,10 +468,9 @@ impl SpriteSetRefItem {
 
 /// Per-frame reference to a pre-uploaded sprite instance set (entity sprites).
 ///
-/// The sprite definition (texture, blend, size mode, default size) is baked
-/// at upload time. The current implementation uses the same upload-time
-/// instance transforms as `SpriteSetRefItem`; full per-frame instance
-/// transform override against the stable definition is a planned follow-up.
+/// The sprites (texture, blend, size mode and every sprite's record) are
+/// baked at upload time and drawn as uploaded, unless
+/// [`overrides`](Self::overrides) changes some of them for this frame.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SpriteInstanceSetRefItem {
@@ -473,17 +478,69 @@ pub struct SpriteInstanceSetRefItem {
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload)
     /// or `Uploads::begin_upload`.
     pub source: SpriteInstanceSetId,
+    /// Positions, colours and sort keys for some of the set's sprites, for
+    /// this frame only. `None` (the default) draws the set as uploaded.
+    pub overrides: Option<SpriteOverrides>,
     /// Per-item render settings.
     pub settings: ItemSettings,
 }
 
 impl SpriteInstanceSetRefItem {
-    /// Visible reference at the upload-time transform.
+    /// Visible reference drawing the set as uploaded.
     pub fn new(id: SpriteInstanceSetId) -> Self {
         Self {
             source: id,
+            overrides: None,
             settings: ItemSettings::default(),
         }
+    }
+
+    /// This reference with `overrides` applied for the frame.
+    pub fn with_overrides(mut self, overrides: SpriteOverrides) -> Self {
+        self.overrides = Some(overrides);
+        self
+    }
+}
+
+/// Per-frame values for a subset of an uploaded instance set's sprites,
+/// applied on top of the set for one frame without changing it.
+///
+/// `indices` names the sprites by their index in the uploaded set. The other
+/// lists run parallel to it: entry `j` of `positions` replaces the position of
+/// sprite `indices[j]`, and likewise for `colours` and `sort_keys`. A list that
+/// is empty, or shorter than `indices`, keeps the uploaded value for the
+/// sprites past its end. Indices past the end of the set are ignored; a
+/// repeated index takes its last entry.
+///
+/// On a painter set ([`SpriteOrder::Painter`]) an overridden sort key moves
+/// the sprite to its place in the key order for the frame, so a sprite that
+/// walks down a y-sorted set can carry its new key here.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct SpriteOverrides {
+    /// Indices into the uploaded set of the sprites to change.
+    pub indices: Vec<u32>,
+    /// World-space positions, parallel to `indices`.
+    pub positions: Vec<[f32; 3]>,
+    /// Colour tints, parallel to `indices`. They replace the uploaded tint.
+    pub colours: Vec<Colour>,
+    /// Sort keys, parallel to `indices`. Read by painter sets only.
+    pub sort_keys: Vec<f32>,
+}
+
+impl SpriteOverrides {
+    /// Overrides for the sprites at `indices`, with no values yet.
+    pub fn new(indices: Vec<u32>) -> Self {
+        Self {
+            indices,
+            ..Self::default()
+        }
+    }
+
+    /// Whether applying these changes nothing.
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+            || (self.positions.is_empty() && self.colours.is_empty() && self.sort_keys.is_empty())
     }
 }
 

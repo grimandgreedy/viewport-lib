@@ -76,6 +76,11 @@ sprite_writes!(
     encode = encode_sprites
 );
 sprite_writes!(
+    channels::SortKeys,
+    channel = store::SpriteChannel::SortKeys,
+    encode = cast_bytes
+);
+sprite_writes!(
     channels::Effects,
     channel = store::SpriteChannel::Effects,
     encode = effects::encode_effects
@@ -105,9 +110,14 @@ impl viewport_lib::plugin_api::Uploads<SpriteItem> for ViewportRenderer {
         item: SpriteItem,
     ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
         let host = host::<SpritePlugin>(self, TYPE_NAME)?;
-        Ok(host
-            .plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item))
+        Ok(host.plugin.begin_upload(
+            &host.jobs,
+            device,
+            queue,
+            host.resources,
+            item,
+            store::Retain::Set,
+        ))
     }
 
     fn replace(
@@ -189,9 +199,14 @@ impl SpriteInstanceUploads for ViewportRenderer {
         item: SpriteItem,
     ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
         let host = host::<SpritePlugin>(self, TYPE_NAME)?;
-        Ok(host
-            .plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item))
+        Ok(host.plugin.begin_upload(
+            &host.jobs,
+            device,
+            queue,
+            host.resources,
+            item,
+            store::Retain::InstanceSet,
+        ))
     }
 
     fn replace_sprite_instance_set(
