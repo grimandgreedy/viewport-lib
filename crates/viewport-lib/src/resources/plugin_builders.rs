@@ -332,11 +332,14 @@ impl DeviceResources {
 
     /// Bind group layout for the read-only-depth pass: binding 0 is the scene
     /// depth texture (`texture_depth_2d`), binding 1 the non-filtering sampler,
-    /// and bindings 2 and 3 the painter masks as in
+    /// bindings 2 and 3 the painter masks and bindings 4 and 5 the 2D light
+    /// layers, as bindings 0 to 3 of
     /// [`painter_mask_bind_group_layout`](Self::painter_mask_bind_group_layout).
-    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group)
-    /// and [`PainterContext::depth_read_bind_group`](crate::plugin_api::PainterContext::depth_read_bind_group).
-    /// A shader that does not test masks leaves bindings 2 and 3 undeclared.
+    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group),
+    /// [`PainterContext::depth_read_bind_group`](crate::plugin_api::PainterContext::depth_read_bind_group)
+    /// and [`PaintContext::depth_read_bind_group`](crate::plugin_api::PaintContext::depth_read_bind_group).
+    /// A shader that does not test masks or sample light leaves bindings 2 to
+    /// 5 undeclared.
     ///
     /// A convenience for plugins that have a spare bind group: place this at
     /// whatever free slot of `extra_bind_group_layouts` when building the
@@ -351,11 +354,15 @@ impl DeviceResources {
         &self.scene_tier.material.depth_read_bgl
     }
 
-    /// Bind group layout of the painter masks, on every tier: binding 0 the
-    /// mask texture (`texture_2d<f32>`, unfilterable, read with
-    /// `textureLoad`), binding 1 the `PainterMasks` uniform from
+    /// Bind group layout of the painter masks and 2D light layers, on every
+    /// tier: binding 0 the mask texture (`texture_2d<f32>`, unfilterable,
+    /// read with `textureLoad`), binding 1 the `PainterMasks` uniform,
+    /// binding 2 the light layers (`texture_2d_array<f32>`, unfilterable,
+    /// read with `textureLoad`) and binding 3 the `PainterLights` uniform,
+    /// both structs from
     /// [`SHARED_PAINTER_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL).
-    /// Matches [`PainterContext::mask_bind_group`](crate::plugin_api::PainterContext::mask_bind_group).
+    /// Matches [`PainterContext::mask_bind_group`](crate::plugin_api::PainterContext::mask_bind_group)
+    /// and [`PaintContext::mask_bind_group`](crate::plugin_api::PaintContext::mask_bind_group).
     pub fn painter_mask_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
         &self.painter_mask.bgl
     }

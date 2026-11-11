@@ -851,6 +851,34 @@ impl SpriteGpu {
             usage: viewport_lib::gpu::BufferUsages::UNIFORM,
             mapped_at_creation: false,
         });
+        // Then the light layers: a 1x1 array (two array layers, as GL needs
+        // to view it as an array) and a uniform naming no range, so nothing
+        // is lit.
+        let light_fallback = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
+            label: Some("sprite_light_fallback_tex"),
+            size: viewport_lib::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 2,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: viewport_lib::gpu::TextureDimension::D2,
+            format: viewport_lib::gpu::TextureFormat::Rgba8Unorm,
+            usage: viewport_lib::gpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let light_fallback_view =
+            light_fallback.create_view(&viewport_lib::gpu::TextureViewDescriptor {
+                dimension: Some(viewport_lib::gpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+        let no_lights = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+            label: Some("sprite_no_lights_buf"),
+            size: viewport_lib::resources::PAINTER_LIGHTS_UNIFORM_BYTES,
+            usage: viewport_lib::gpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
         let fallback_bg = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("sprite_soft_fallback_bg"),
             layout: soft_bgl,
@@ -872,6 +900,14 @@ impl SpriteGpu {
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 3,
                     resource: no_masks.as_entire_binding(),
+                },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: viewport_lib::gpu::BindingResource::TextureView(&light_fallback_view),
+                },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: no_lights.as_entire_binding(),
                 },
             ],
         });

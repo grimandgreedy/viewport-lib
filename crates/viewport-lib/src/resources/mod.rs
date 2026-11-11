@@ -51,7 +51,9 @@ pub use pipeline_slot::PipelineCompilation;
 /// Painter mask layouts, fallbacks and the per-viewport mask target.
 pub(crate) mod painter_mask;
 mod plugin_builders;
-pub use painter_mask::{PAINTER_MASK_BLEND, PAINTER_MASK_FORMAT};
+pub use painter_mask::{
+    MAX_PAINTER_LIGHT_RANGES, PAINTER_LIGHTS_UNIFORM_BYTES, PAINTER_MASK_BLEND, PAINTER_MASK_FORMAT,
+};
 pub(crate) mod postprocess;
 pub(crate) use postprocess::TargetGroups;
 /// A GPU readback that can be polled instead of waited on.

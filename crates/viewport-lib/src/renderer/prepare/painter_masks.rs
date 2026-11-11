@@ -1,13 +1,15 @@
 //! The painter mask pass: each frame, the item types that report masks draw
 //! them into the viewport's mask target, and the slots' layer ranges go into
-//! the uniform the painter content tests against.
+//! the uniform the painter content tests against. The light layers a plugin
+//! reports are bound beside them.
 
 use super::*;
 
 impl ViewportRenderer {
     /// Collect this viewport's painter masks, draw them into its mask target
     /// and write the slots' ranges; with none, point the mask groups at the
-    /// empty fallback. Builds the groups the painter draws bind.
+    /// empty fallback. Takes the first light layers a plugin reports. Builds
+    /// the groups the painter draws bind.
     pub(super) fn prepare_painter_masks(
         &mut self,
         device: &crate::gpu::Device,
@@ -18,9 +20,19 @@ impl ViewportRenderer {
         let vp_idx = frame.camera.viewport_index;
         let mut reports: Vec<crate::plugin_api::PainterMask> = Vec::new();
         let mut drawers: Vec<&'static str> = Vec::new();
+        let mut lights: Option<crate::resources::painter_mask::FrameLights> = None;
         for (name, plugin) in self.item_type_plugins.iter() {
             if !self.plugins_with_items.contains(name) {
                 continue;
+            }
+            if lights.is_none()
+                && let Some(l) = plugin.painter_light_layers(vp_idx)
+            {
+                lights = Some(crate::resources::painter_mask::FrameLights {
+                    view: l.view,
+                    ranges: l.ranges.iter().map(|r| [*r.start(), *r.end()]).collect(),
+                    scale: l.scale,
+                });
             }
             let before = reports.len();
             plugin.painter_masks(vp_idx, &mut reports);
@@ -40,6 +52,7 @@ impl ViewportRenderer {
         let active = !drawers.is_empty();
         let state = &mut self.viewport_slots[vp_idx].painter_masks;
         state.active = active;
+        state.set_lights(queue, lights);
         queue.write_buffer(
             &state.uniform,
             0,
@@ -100,6 +113,7 @@ impl ViewportRenderer {
         let resources = &self.resources;
         let state = &mut self.viewport_slots[vp_idx].painter_masks;
         state.bind_group(device, &resources.painter_mask);
+        state.light_pick_group(device, &resources.painter_mask);
         if resources.scene_tier.is_built() {
             state.ldr_depth_read_group(
                 device,

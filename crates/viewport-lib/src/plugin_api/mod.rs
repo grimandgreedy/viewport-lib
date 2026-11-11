@@ -175,9 +175,10 @@ pub use install::{
 pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
     ItemFrameContext, ItemTypeHost, ItemTypeId, ItemTypePlugin, LightContext, OutlineMaskContext,
-    PaintContext, PainterBatch, PainterContext, PainterMask, PainterMaskContext, PainterRun,
-    PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
-    SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+    PaintContext, PainterBatch, PainterContext, PainterLightLayers, PainterMask,
+    PainterMaskContext, PainterRun, PickContext, PickPassContext, PickRay, PluginItem,
+    PluginItemCollection, RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext,
+    SurfaceMaskContext, surface_mask_bits,
 };
 pub use overlay_fill::OverlayFillDesc;
 pub use per_viewport::PerViewport;

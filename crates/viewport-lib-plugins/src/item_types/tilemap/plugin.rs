@@ -754,6 +754,9 @@ impl ItemTypePlugin for TilemapPlugin {
         } else {
             pipeline::CUTOUT_LDR
         };
+        // The light layers at group 3, which cutout layers sample as painter
+        // layer 0.
+        pass.set_bind_group(3, ctx.mask_bind_group, &[]);
         self.draw_layers(view, pass, view.filled_cutout_layers(), |_| member);
     }
 

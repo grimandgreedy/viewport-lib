@@ -431,6 +431,18 @@ pub const SHARED_DEPTH_READ_WGSL: &str =
 ///
 /// `test` is [`MaskTest::word`](crate::MaskTest::word) and `layer` the
 /// content's painter layer.
+///
+/// It also declares the `PainterLights` struct for 2D lighting, whose uniform
+/// rides beside the masks with the light layers (a `texture_2d_array<f32>`):
+///
+/// - `painter_light_slice(lights, layer)` is the array layer whose light
+///   lights painter `layer`, or `-1` when none does.
+/// - `painter_light_apply(rgb, light, lights)` is `rgb` lit by the texel
+///   `light` loaded from that array layer under the fragment (at
+///   `painter_mask_texel` of the light layers' size).
+///
+/// Lit content applies it to its colour; content that is not lit, or whose
+/// layer no range holds, keeps its colour.
 pub const SHARED_PAINTER_MASK_WGSL: &str = include_str!(concat!(
     env!("OUT_DIR"),
     "/helpers/shared_painter_mask.wgsl"

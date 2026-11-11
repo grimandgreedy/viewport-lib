@@ -42,11 +42,12 @@ pub struct PainterPlacement {
     /// Order within the layer: lower keys draw first. Compared with
     /// `f32::total_cmp`.
     pub key: f32,
-    /// Drawn after the 2D light layer of the painter range `layer` lies in,
-    /// so 2D lighting leaves it as drawn: an emissive part, a glow. It then
-    /// draws over the range's lit content, whatever their layers and keys,
-    /// in its own layer and key order among the range's other unlit content.
-    /// Outside every light range it draws in its place. Default `false`.
+    /// Not lit by 2D lighting: the content does not sample the light layer
+    /// of the painter range `layer` lies in, so it keeps its colour (an
+    /// emissive part, a glow). It draws over the range's lit content,
+    /// whatever their layers and keys, in its own layer and key order among
+    /// the range's other unlit content. Outside every light range it draws in
+    /// its place. Default `false`.
     #[cfg_attr(feature = "serde", serde(default))]
     pub unlit: bool,
 }

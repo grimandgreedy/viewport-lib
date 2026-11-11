@@ -100,10 +100,11 @@ pub(crate) struct ViewportHdrState {
     pub tone_map_bg_views: Option<[crate::gpu::TextureView; 9]>,
     /// The foreground view the DOF bind group was last built with.
     pub dof_bg_foreground: Option<crate::gpu::TextureView>,
-    /// Scene depth + sampler and the painter masks, handed to plugins that
-    /// draw in the depth-read and painter passes. Keyed on the depth view and
-    /// the mask view.
+    /// Scene depth + sampler, the painter masks and the light layers, handed
+    /// to plugins that draw in the depth-read and painter passes. Keyed on
+    /// the depth view, the mask view and the light view.
     pub depth_read_bg: crate::resources::cached_bind_group::CachedBindGroup<(
+        crate::gpu::TextureView,
         crate::gpu::TextureView,
         crate::gpu::TextureView,
     )>,

@@ -245,8 +245,9 @@ pub(super) struct SpriteUniformData {
     /// fixed-function blend, [`BLEND_OUT_MULTIPLY`] or [`BLEND_OUT_SCREEN`].
     flags: u32,
     _pad_lit_c: u32,
-    /// The painter mask test word and the batch's painter layer, then
-    /// padding; zero for a batch in depth order.
+    /// The painter mask test word and the batch's painter layer, both zero
+    /// for a batch in depth order; then 1 when the batch is not lit by 2D
+    /// lighting, then padding.
     mask: [u32; 4],
 }
 
@@ -546,8 +547,8 @@ pub(super) fn build_sprite(
                 },
             _pad_lit_c: 0,
             mask: match painter {
-                Some(p) => [item.mask.word(), p.layer, 0, 0],
-                None => [0; 4],
+                Some(p) => [item.mask.word(), p.layer, item.unlit as u32, 0],
+                None => [0, 0, item.unlit as u32, 0],
             },
         };
         let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
@@ -1464,7 +1465,7 @@ pub(crate) enum SpriteChannel {
 pub(crate) struct PainterOrder {
     pub(crate) layer: u32,
     pub(crate) depth_test: bool,
-    /// Drawn after the 2D light layer of its range.
+    /// Not lit by 2D lighting, drawn after its range's lit content.
     pub(crate) unlit: bool,
 }
 

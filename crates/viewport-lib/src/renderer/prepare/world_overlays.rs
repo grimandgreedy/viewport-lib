@@ -184,7 +184,8 @@ impl ViewportRenderer {
                 continue;
             }
             let mut uniform = [0.0f32; 24];
-            // The mask test and the order it compares ride as bit patterns.
+            // The mask test, the order it compares and whether the layer is
+            // lit ride as bit patterns.
             uniform[..4].copy_from_slice(&[
                 space.size[0],
                 space.size[1],
@@ -194,6 +195,7 @@ impl ViewportRenderer {
             uniform[4..20].copy_from_slice(&view.layer_to_clip.to_cols_array());
             uniform[20..22].copy_from_slice(&device_size);
             uniform[22] = f32::from_bits(layer.order);
+            uniform[23] = f32::from_bits(u32::from(!layer.unlit));
             if let Some(buf) = &ov.overlay_viewport_buf {
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(&uniform));
             }

@@ -1,6 +1,6 @@
 //! What the 2D item types report as draw calls: one per painter sprite batch,
 //! one per visible tilemap chunk, and for the light layer each light's shadow
-//! and quad plus the compose. `FrameStats::plugin_draw_calls` is their sum.
+//! and quad. `FrameStats::plugin_draw_calls` is their sum.
 
 use glam::{DVec3, Vec2};
 use viewport_lib::plugin_api::Uploads;
@@ -109,14 +109,10 @@ fn a_2d_frame_reports_every_plugin_draw() {
     );
     assert_eq!(sprites, batches, "one draw per painter batch");
     assert_eq!(tiles, CHUNKS, "one draw per visible chunk");
-    assert_eq!(
-        light,
-        2 * lights + 1,
-        "a shadow and a quad per light, and the compose"
-    );
+    assert_eq!(light, 2 * lights, "a shadow and a quad per light");
     assert_eq!(
         harness.stats().plugin_draw_calls,
-        batches + CHUNKS + 2 * lights + 1
+        batches + CHUNKS + 2 * lights
     );
 
     // A frame without the light layer's items reports nothing for it, not

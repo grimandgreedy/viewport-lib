@@ -32,6 +32,10 @@ pub(crate) struct HdrMeshContext {
     shader: crate::resources::pipeline_slot::LazyModule,
     shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     depth_format: crate::gpu::TextureFormat,
+    /// The fragment entry a painter member draws through: `fs_painter`
+    /// where the painter module samples the 2D light layers, `fs_main`
+    /// otherwise.
+    painter_entry: &'static str,
 }
 
 /// Base and HDR-variant pipelines for core scene surfaces.
@@ -57,6 +61,9 @@ pub(crate) struct SceneCorePipelines {
     /// mesh instances and surfaces placed in the painter sequence. Composed
     /// with `hdr`; each member is built the first time a painter draw asks.
     pub(crate) hdr_painter: Option<LazyFamily<HdrMeshContext, 3>>,
+    /// Whether the painter members sample the 2D light layers at group 3:
+    /// on a device with four bind groups.
+    pub(crate) hdr_painter_lit: bool,
 }
 
 const LDR_SOLID: usize = 0;
@@ -103,6 +110,7 @@ fn build_hdr_painter(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeli
         ctx.depth_format,
         label,
         blend,
+        ctx.painter_entry,
     )
 }
 
@@ -713,19 +721,48 @@ impl crate::resources::DeviceResources {
                     shader,
                     shader_nodiscard,
                     depth_format: self.scene_depth_format(),
+                    painter_entry: "fs_main",
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
                 build_hdr,
             )
             .with_features(build_hdr_features)
         };
+        // The painter members read the 2D light layers at group 3 through
+        // `fs_painter`, composed into a module of their own so the rest of
+        // the family binds no fourth group. A device with fewer groups draws
+        // them unlit by 2D lighting.
+        let painter_lit = device.limits().max_bind_groups >= 4;
+        let (painter_layout, painter_shader, painter_entry) = if painter_lit {
+            let source = format!(
+                "{final_src}\n{}",
+                crate::resources::mesh::mesh_pipelines::MESH_PAINTER_LIGHT_WGSL
+            );
+            (
+                crate::resources::builders::pipeline_layout(
+                    device,
+                    "hdr_painter_mesh_pipeline_layout",
+                    &[
+                        &self.scene_tier.binds.camera_bgl,
+                        &self.scene_tier.binds.object_bgl,
+                        &self.painter_mask.empty_bgl,
+                        &self.painter_mask.light_pick_bgl,
+                    ],
+                ),
+                self.shared_module(device, "mesh_shader_hdr_painter", &source),
+                "fs_painter",
+            )
+        } else {
+            (layout.clone(), shader.clone(), "fs_main")
+        };
         let painter = LazyFamily::new(
             HdrMeshContext {
                 device: device.clone(),
-                layout: layout.clone(),
-                shader: shader.clone(),
+                layout: painter_layout,
+                shader: painter_shader,
                 shader_nodiscard: shader_nodiscard.clone(),
                 depth_format: self.scene_depth_format(),
+                painter_entry,
             },
             std::sync::Arc::clone(&self.pipeline_compiler),
             build_hdr_painter,
@@ -735,6 +772,7 @@ impl crate::resources::DeviceResources {
         self.scene.hdr = Some(hdr);
         self.scene.hdr_bindless = hdr_bindless;
         self.scene.hdr_painter = Some(painter);
+        self.scene.hdr_painter_lit = painter_lit;
     }
 }
 
@@ -806,17 +844,20 @@ mod tests {
             2 + 2 * b,
             "the LDR mesh family is the lit module and its discard-free twin"
         );
+        // The painter members have a module of their own with the 2D light
+        // layers composed in, on a device with the group for them.
         res.ensure_hdr_mesh_pipelines(&device);
+        let p = usize::from(res.scene.hdr_painter_lit);
         assert_eq!(
             modules(&res),
-            2 + 2 * b,
+            2 + 2 * b + p,
             "the HDR mesh family shares the LDR family's two modules"
         );
 
         res.ensure_hdr_cull_pipelines(&device);
         assert_eq!(
             modules(&res),
-            2 + 2 * b,
+            2 + 2 * b + p,
             "the culled HDR family reuses the modules above"
         );
 
@@ -824,7 +865,7 @@ mod tests {
         res.ensure_oit_mesh_pipelines(&device);
         assert_eq!(
             modules(&res),
-            3 + 3 * b,
+            3 + 3 * b + p,
             "the OIT family and its culled twin share one module"
         );
         assert_eq!(compiled(&res), 0, "composing a family compiled a module");

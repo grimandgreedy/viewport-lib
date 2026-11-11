@@ -1,6 +1,5 @@
 //! 2D lighting as an [`ItemTypePlugin`]: lights on a world plane, hard
-//! shadows cast by occluders, and a light layer multiplied over the painter
-//! content it lights.
+//! shadows cast by occluders, and light layers the lit content samples.
 //!
 //! Submit a [`Lighting2dItem`] a frame. It names the plane (the same two
 //! planes as the tilemap and `Camera2d`), the ambient light, the lights and
@@ -12,30 +11,34 @@
 //! off, the frame's point and spot lights (`EffectsFrame::lighting.lights`)
 //! projected onto the plane.
 //!
-//! The light layer is a target the size of the scene, cleared to the ambient
-//! colour. Each light draws its occluders' shadows into the stencil and then
-//! adds its light where its shadow is not, so a light costs two draws; this
-//! runs before the frame's passes. The multiply is a painter batch at the top
-//! of the item's painter layer range ([`Lighting2dItem::layers`], every layer
-//! by default): it draws after the range's painter content and world overlay
-//! layers and before the next range's, and multiplies everything drawn by
-//! then, the opaque scene included. Content marked unlit (a
-//! [`PainterBatch`] with `unlit`, a painter sprite with
+//! Each item lights a range of painter layers ([`Lighting2dItem::layers`],
+//! every layer by default) and accumulates its lights into a light layer of
+//! its own: a target the size of the scene, cleared to the ambient colour.
+//! Each light draws its occluders' shadows into the stencil and then adds its
+//! light where its shadow is not, so a light costs two draws; this runs before
+//! the frame's passes. Lit content multiplies its colour by the light under
+//! it in the layer of the range its own painter layer lies in, so a range is
+//! lit by its own layer only: painter sprites, blended tile layers, GPU
+//! particles, painter-placed meshes and mesh instances, and world overlay
+//! layers. Sprites, cutout tile layers and particles drawn outside the
+//! painter sequence are lit as painter layer 0; other 3D content is not lit.
+//! Content marked unlit (a [`PainterBatch`] with `unlit`, a sprite with
 //! [`unlit`](super::sprite::SpriteItem::unlit), a placement or world overlay
-//! layer with `unlit`) moves to after the multiply of its range and keeps its
-//! colour. Bloom and the rest of the post chain run after it, so a lit
-//! highlight still blooms; screen overlays draw later and are not lit.
+//! layer with `unlit`) does not sample, draws after the lit content of its
+//! range and keeps its colour. Bloom and the rest of the post chain run
+//! after the scene, so a lit highlight still blooms; screen overlays draw
+//! later and are not lit.
 //!
 //! A light whose [`layers`](Light2d::layers) cover only part of the item's
 //! range splits the range: each part where a different set of lights applies
-//! gets its own layer and its own multiply at the top of that part. Every
-//! multiply scales all that is drawn before it, so content below the top part
-//! is scaled once per part above it as well.
+//! gets a light layer of its own, holding the ambient and those lights. The
+//! renderer binds at most
+//! [`MAX_PAINTER_LIGHT_RANGES`](viewport_lib::resources::MAX_PAINTER_LIGHT_RANGES)
+//! parts a frame; content in the rest is not lit.
 //!
-//! The layer runs whenever an item is submitted, lights or not, so the
-//! ambient light darkens a scene with every light off. On the HDR path the
-//! background colour is composited after the scene and is not darkened; on
-//! the LDR path it is the target's clear colour and is.
+//! The layers run whenever an item is submitted, lights or not, so the
+//! ambient light darkens lit content with every light off. The background is
+//! never lit.
 //!
 //! Shadows are geometry: each occluder edge is drawn as the quad it casts,
 //! its ends pushed away from the light past the light's reach. That needs one
@@ -113,8 +116,8 @@ pub struct Lighting2dItem {
     /// layer, with their `range` as the radius and their colour times their
     /// intensity as the brightness at the centre. Default `true`.
     pub use_frame_lights: bool,
-    /// The painter layers this item lights. Its multiply draws at the top of
-    /// the range, after the range's content. Default every layer.
+    /// The painter layers this item lights: lit content on these layers
+    /// samples this item's light layer. Default every layer.
     pub layers: RangeInclusive<u32>,
     /// Visibility. A hidden item draws no layer.
     pub settings: ItemSettings,

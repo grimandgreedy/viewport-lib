@@ -140,10 +140,11 @@ pub struct WorldOverlayLayer {
     /// the range of the mask in the slot it names. Items composited through a
     /// nested overlay layer are not cut. Default [`MaskTest::None`].
     pub mask: crate::render_item::MaskTest,
-    /// Drawn after the 2D light layer of the painter range `order` lies in,
-    /// so 2D lighting leaves it as drawn (labels, markers, glows placed in
-    /// the world). It then draws over the range's lit content. Outside every
-    /// light range it draws in its place. Default `false`.
+    /// Not lit by 2D lighting: the layer does not sample the light layer of
+    /// the painter range `order` lies in, so it keeps its colour (labels,
+    /// markers, glows placed in the world), and draws over the range's lit
+    /// content. Outside every light range it draws in its place. Default
+    /// `false`.
     pub unlit: bool,
     /// The items, in world units on the layer.
     pub frame: OverlayFrame,
@@ -228,7 +229,8 @@ impl WorldOverlayLayer {
         self
     }
 
-    /// Builder: draw after the 2D light layer of the layer's range.
+    /// Builder: not lit by 2D lighting, drawn after the lit content of the
+    /// layer's range.
     pub fn with_unlit(mut self, unlit: bool) -> Self {
         self.unlit = unlit;
         self

@@ -3,7 +3,8 @@
 // Group 0: Camera uniform (binding 0), ClipPlanes (binding 4), ClipVolume (binding 6).
 // Group 1: SpriteUniform (binding 0), sprite texture (binding 1), sampler (binding 2),
 //           per-instance storage buffer (binding 3).
-// Group 2: scene depth (bindings 0-1) and the painter masks (bindings 2-3).
+// Group 2: scene depth (bindings 0-1), the painter masks (bindings 2-3) and the
+//           2D light layers (bindings 4-5).
 //
 // Each sprite is rendered as 6 vertices (2 CCW triangles). The position vertex buffer
 // uses Instance stepping (one vec3 per sprite). All other per-instance data comes from
@@ -19,14 +20,18 @@
 @group(1) @binding(3) var<storage, read> instance_buf:  array<SpriteInstance>;
 
 // Group 2: scene depth resolve used for soft-particle fade, then the painter
-// masks. Bound to the scene's depth-aspect view and the frame's masks in the
-// read-only-depth and painter passes; otherwise to a placeholder. The shader
-// samples the depth only when soft_particle_distance > 0 and reads the masks
-// only for a painter batch that tests one.
+// masks and the 2D light layers. Bound to the scene's depth-aspect view in
+// the read-only-depth and painter passes, otherwise to a placeholder; the
+// masks and light layers are the frame's wherever the renderer hands them
+// over. The shader samples the depth only when soft_particle_distance > 0,
+// reads the masks only for a painter batch that tests one and the light
+// layers only when a range holds the batch's layer.
 @group(2) @binding(0) var scene_depth_tex: texture_2d<f32>;
 @group(2) @binding(1) var scene_depth_samp: sampler;
 @group(2) @binding(2) var painter_mask_tex: texture_2d<f32>;
 @group(2) @binding(3) var<uniform> painter_masks: PainterMasks;
+@group(2) @binding(4) var painter_light_tex: texture_2d_array<f32>;
+@group(2) @binding(5) var<uniform> painter_lights: PainterLights;
 
 struct VertexIn {
     @location(0)             position:       vec3<f32>,
@@ -71,15 +76,34 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-// The texel of the painter mask under a fragment at `frag` (pixels of the
-// target drawn into). The painter pass's target is the scene depth's size;
-// where a 1x1 placeholder stands in for the depth, it is the mask's own.
-fn sprite_mask_texel(frag: vec2<f32>) -> vec2<i32> {
-    let dims = textureDimensions(painter_mask_tex);
+// The texel of a `dims`-sized texture over the scene (the painter masks, the
+// light layers) under a fragment at `frag` (pixels of the target drawn into).
+// The painter pass's target is the scene depth's size; where a 1x1
+// placeholder stands in for the depth, it is the texture's own.
+fn sprite_target_texel(frag: vec2<f32>, dims: vec2<u32>) -> vec2<i32> {
     let depth_dims = textureDimensions(scene_depth_tex);
     let target_px = vec2<f32>(select(dims, depth_dims, depth_dims.x > 1u));
     let p = vec2<i32>(floor(frag / target_px * vec2<f32>(dims)));
     return clamp(p, vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+}
+
+// The texel of the painter mask under a fragment at `frag`.
+fn sprite_mask_texel(frag: vec2<f32>) -> vec2<i32> {
+    return sprite_target_texel(frag, textureDimensions(painter_mask_tex));
+}
+
+// `colour` lit by the 2D light layer of the batch's painter range (layer 0
+// for a batch in depth order) under a fragment at `frag`. An unlit batch, a
+// multiply blend (whose destination is lit already) and a layer no range
+// holds keep their colour.
+fn sprite_light(colour: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
+    let slice = painter_light_slice(painter_lights, sprite_ub.mask.y);
+    if slice < 0 || sprite_ub.mask.z != 0u || ((sprite_ub.flags >> 1u) & 3u) == 1u {
+        return colour;
+    }
+    let texel = sprite_target_texel(frag, textureDimensions(painter_light_tex));
+    let light = textureLoad(painter_light_tex, texel, slice, 0);
+    return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
 }
 
 fn fs_main_body(input: VertexOut) -> vec4<f32> {
@@ -147,6 +171,8 @@ fn fs_main_body(input: VertexOut) -> vec4<f32> {
         let fade = smoothstep(0.0, soft_dist, scene_view_z - part_view_z);
         colour.a = colour.a * fade;
     }
+
+    colour = sprite_light(colour, in.clip_pos.xy);
 
     // The painter mask: what the batch's test keeps of the fragment.
     let mask = painter_mask_keep(

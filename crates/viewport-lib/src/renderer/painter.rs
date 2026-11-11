@@ -141,6 +141,21 @@ impl ViewportRenderer {
         };
         let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
         pass.set_bind_group(0, camera_bg, &[]);
+        // The HDR members read their range's light layer at group 3, picked
+        // by a dynamic offset from the placement, where the device has the
+        // group.
+        let needs_light = hdr && resources.scene.hdr_painter_lit;
+        let lights = slot.painter_masks.current().2.filter(|_| needs_light);
+        let bind_light = |pass: &mut crate::gpu::RenderPass<'_>, p: crate::PainterPlacement| {
+            if let Some(group) = lights {
+                pass.set_bind_group(2, &resources.painter_mask.empty_bg, &[]);
+                pass.set_bind_group(
+                    3,
+                    group,
+                    &[slot.painter_masks.light_pick_offset(p.layer, p.unlit)],
+                );
+            }
+        };
         for &b in batches {
             match CoreBatch::decode(b) {
                 CoreBatch::Instances(i) => {
@@ -162,7 +177,13 @@ impl ViewportRenderer {
                     let Some(pipeline) = pipeline else {
                         continue;
                     };
+                    if needs_light && lights.is_none() {
+                        continue;
+                    }
                     pass.set_pipeline(pipeline);
+                    if let Some(p) = batch.painter {
+                        bind_light(pass, p);
+                    }
                     pass.set_bind_group(1, &batch.bind_group, &[]);
                     pass.set_vertex_buffer(1, batch.instance_buf.slice(..));
                     pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
@@ -173,7 +194,7 @@ impl ViewportRenderer {
                     pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);
                 }
                 CoreBatch::Surface(j) => {
-                    let (Some(&(index, _)), Some(entry)) =
+                    let (Some(&(index, placement)), Some(entry)) =
                         (slot.painter_surfaces.get(j), slot.painter_objects.get(j))
                     else {
                         continue;
@@ -192,6 +213,10 @@ impl ViewportRenderer {
                     let Some(pipeline) = pipeline else {
                         continue;
                     };
+                    if needs_light && lights.is_none() {
+                        continue;
+                    }
+                    bind_light(pass, placement);
                     draw_painter_surface(
                         resources,
                         pass,

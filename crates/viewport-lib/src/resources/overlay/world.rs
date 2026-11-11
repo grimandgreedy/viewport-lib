@@ -24,30 +24,49 @@ struct WorldViewport {
     mask:          u32,
     layer_to_clip: mat4x4<f32>,
     target_px:     vec2<f32>,
-    // The layer's painter order, the layer the mask test compares.
+    // The layer's painter order, the layer the mask test compares and the
+    // light range is found by.
     order:         u32,
-    pad2:          f32,
+    // 1 when the layer samples its range's 2D light layer.
+    lit:           u32,
 };
 ";
 
 /// The fragment wrapper a masked world variant ends with: the screen
-/// shader's `shade`, cut by the layer's painter mask test, at the target's
-/// place under the fragment.
+/// shader's `shade`, cut by the layer's painter mask test and lit by its
+/// range's 2D light layer, at the target's place under the fragment.
 const WORLD_MASK_WGSL: &str = "
 @group(2) @binding(0) var painter_mask_tex: texture_2d<f32>;
 @group(2) @binding(1) var<uniform> painter_masks: PainterMasks;
+@group(2) @binding(2) var painter_light_tex: texture_2d_array<f32>;
+@group(2) @binding(3) var<uniform> painter_lights: PainterLights;
+
+// The texel of a `dims`-sized texture over the target under the fragment.
+fn world_target_texel(frag: vec2<f32>, dims: vec2<u32>) -> vec2<i32> {
+    let p = vec2<i32>(floor(frag / viewport.target_px * vec2<f32>(dims)));
+    return clamp(p, vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+}
 
 fn shade(in: VertexOutput) -> vec4<f32> {
     let c = shade_unmasked(in);
-    let dims = textureDimensions(painter_mask_tex);
-    let p = vec2<i32>(floor(in.clip_position.xy / viewport.target_px * vec2<f32>(dims)));
     let texel = textureLoad(
         painter_mask_tex,
-        clamp(p, vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1)),
+        world_target_texel(in.clip_position.xy, textureDimensions(painter_mask_tex)),
         0,
     );
     let keep = painter_mask_keep(texel, painter_masks, viewport.mask, viewport.order);
-    return vec4<f32>(c.rgb, c.a * keep);
+    var rgb = c.rgb;
+    let slice = painter_light_slice(painter_lights, viewport.order);
+    if viewport.lit != 0u && slice >= 0 {
+        let light = textureLoad(
+            painter_light_tex,
+            world_target_texel(in.clip_position.xy, textureDimensions(painter_light_tex)),
+            slice,
+            0,
+        );
+        rgb = painter_light_apply(rgb, light, painter_lights);
+    }
+    return vec4<f32>(rgb, c.a * keep);
 }
 ";
 

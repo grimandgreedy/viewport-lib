@@ -1242,10 +1242,13 @@ impl DeviceResources {
                                 ),
                                 count: None,
                             },
-                            // The painter masks, for painter content that
-                            // binds this group and tests a mask.
+                            // The painter masks and light layers, for
+                            // painter content that binds this group and
+                            // tests a mask or samples its light.
                             crate::resources::painter_mask::painter_mask_entries(2)[0],
                             crate::resources::painter_mask::painter_mask_entries(2)[1],
+                            crate::resources::painter_mask::painter_mask_entries(2)[2],
+                            crate::resources::painter_mask::painter_mask_entries(2)[3],
                         ],
                     });
 

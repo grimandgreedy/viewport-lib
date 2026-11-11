@@ -35,3 +35,36 @@ fn painter_mask_keep(texel: vec4<f32>, masks: PainterMasks, test: u32, layer: u3
     let coverage = texel[test & 3u];
     return select(1.0 - coverage, coverage, side == 1u);
 }
+
+// The 2D light layers: a `texture_2d_array<f32>` the drawing shader declares
+// beside the masks, one array layer of light per run of painter layers. Lit
+// content multiplies its colour by the light under it in the array layer of
+// the range its own painter layer lies in, so each range is lit by its own
+// layer only.
+struct PainterLights {
+    // Ranges in use.
+    count: u32,
+    // Multiplied into a sampled light: 2 for a layer holding half the light.
+    scale: f32,
+    _pad0: u32,
+    _pad1: u32,
+    // Per range: first layer, last layer, array layer, unused.
+    ranges: array<vec4<u32>, 16>,
+};
+
+// The array layer lighting painter `layer`, or -1 when no range holds it.
+fn painter_light_slice(lights: PainterLights, layer: u32) -> i32 {
+    for (var i = 0u; i < min(lights.count, 16u); i = i + 1u) {
+        let r = lights.ranges[i];
+        if layer >= r.x && layer <= r.y {
+            return i32(r.z);
+        }
+    }
+    return -1;
+}
+
+// `rgb` lit by the light layer texel `light` (loaded from the array layer
+// `painter_light_slice` named).
+fn painter_light_apply(rgb: vec3<f32>, light: vec4<f32>, lights: PainterLights) -> vec3<f32> {
+    return rgb * light.rgb * lights.scale;
+}

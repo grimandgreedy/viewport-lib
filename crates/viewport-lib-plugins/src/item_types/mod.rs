@@ -279,8 +279,8 @@ pub fn install(
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.
     register(Box::new(scatter_volume::ScatterVolumePlugin::default()));
-    // The 2D light layer multiplies over everything drawn before it, so it
-    // registers last.
+    // The 2D light layers are accumulated in `prepare` and sampled by the
+    // types above as they draw.
     register(Box::new(lighting_2d::Lighting2dPlugin::default()));
     declined
 }

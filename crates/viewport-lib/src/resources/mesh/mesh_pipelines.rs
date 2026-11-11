@@ -270,7 +270,41 @@ pub(crate) fn hdr_mesh_pipeline_entry(
     )
 }
 
-/// One `mesh.wgsl` pipeline for the HDR painter pass: the `fs_main` entry into
+/// The painter pass's fragment entry, appended to the HDR mesh source for the
+/// painter family's own module where the device has a fourth bind group:
+/// `fs_main` times the 2D light under the fragment in its range's light
+/// layer, picked by the light pick group at group 3.
+pub(crate) const MESH_PAINTER_LIGHT_WGSL: &str = "
+// The 2D light layers a painter-placed mesh is lit by: the array layer of
+// its range (negative for none) and the scale.
+struct PainterLightPick {
+    slice: i32,
+    scale: f32,
+    _pad0: u32,
+    _pad1: u32,
+};
+@group(3) @binding(2) var painter_light_layers: texture_2d_array<f32>;
+@group(3) @binding(3) var<uniform> painter_light_pick: PainterLightPick;
+
+// `fs_main` for the painter pass: the colour times the light under the
+// fragment in its range's light layer.
+@fragment
+fn fs_painter(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let colour = fs_body(in, is_front);
+    if painter_light_pick.slice < 0 {
+        return colour;
+    }
+    let clip = camera.view_proj * vec4<f32>(in.world_pos, 1.0);
+    let ndc = clip.xy / clip.w;
+    let dims = vec2<i32>(textureDimensions(painter_light_layers));
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let texel = clamp(vec2<i32>(floor(uv * vec2<f32>(dims))), vec2<i32>(0), dims - vec2<i32>(1));
+    let light = textureLoad(painter_light_layers, texel, painter_light_pick.slice, 0).rgb;
+    return vec4<f32>(colour.rgb * light * painter_light_pick.scale, colour.a);
+}
+";
+
+/// One `mesh.wgsl` pipeline for the HDR painter pass: the `fragment_entry` entry into
 /// the single Rgba16Float colour target, blended with `blend`, testing the
 /// scene depth without writing it.
 pub(crate) fn hdr_painter_mesh_pipeline(
@@ -280,6 +314,7 @@ pub(crate) fn hdr_painter_mesh_pipeline(
     depth_format: crate::gpu::TextureFormat,
     label: &str,
     blend: crate::gpu::BlendState,
+    fragment_entry: &str,
 ) -> crate::gpu::RenderPipeline {
     crate::resources::builders::render_pipeline(
         device,
@@ -291,7 +326,7 @@ pub(crate) fn hdr_painter_mesh_pipeline(
             vertex_buffers: &mesh_vertex_buffers(false),
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(fragment_entry),
                 targets: &[Some(crate::gpu::ColorTargetState {
                     format: crate::gpu::TextureFormat::Rgba16Float,
                     blend: Some(blend),

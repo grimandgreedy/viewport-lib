@@ -426,7 +426,7 @@ pub(crate) struct WorldOverlayDraw {
     pub ov: ViewportOverlay,
     pub order: u32,
     pub depth_test: bool,
-    /// Drawn after the light layer of its range.
+    /// Not lit by 2D lighting, drawn after the lit content of its range.
     pub unlit: bool,
 }
 
@@ -2869,6 +2869,10 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() {
             return;
         }
+        let masks = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.painter_masks);
         let ctx = crate::plugin_api::PaintContext {
             camera: &frame.camera.render_camera,
             viewport_size: glam::Vec2::from(frame.scene_size()),
@@ -2880,6 +2884,10 @@ impl ViewportRenderer {
                 self.resources.target_format
             },
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            depth_read_bind_group: masks.and_then(|m| m.current().1),
+            mask_bind_group: masks
+                .and_then(|m| m.current().0)
+                .unwrap_or(&self.resources.painter_mask.empty_group),
             hdr_pass: is_hdr,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
@@ -2964,6 +2972,8 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            depth_read_bind_group: None,
+            mask_bind_group: &self.resources.painter_mask.empty_group,
             hdr_pass: true,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
@@ -3029,21 +3039,22 @@ impl ViewportRenderer {
     /// then plugin registration order, then report order, and draw as runs of
     /// consecutive batches of one plugin. The renderer's own painter meshes
     /// sort as if registered before every plugin. A world layer draws after
-    /// the batches at and below its order. A light layer draws at the top of
-    /// its range, after the range's batches and world layers, and the range's
-    /// unlit batches and world layers follow it. World layers and light layers
-    /// cut the sequence into runs: a run draws its sequenced content, then
-    /// once each plugin that reported no batches (for the run's layers).
+    /// the batches at and below its order. The unlit batches and world layers
+    /// of a light layer range (see
+    /// [`painter_light_layers`](crate::plugin_api::ItemTypePlugin::painter_light_layers))
+    /// draw at the top of the range, after its lit content. World layers and
+    /// unlit content cut the sequence into runs: a run draws its sequenced
+    /// content, then once each plugin that reported no batches (for the
+    /// run's layers).
     pub(crate) fn painter_plan(&self, frame: &FrameData, hdr: bool) -> PainterPlan {
         enum What {
             Batch { name: &'static str, batch: u32 },
             World(usize),
         }
         /// An entry's place: the layer it draws at (`slot`, the top of its
-        /// range for a light layer and the content it lifts) and `phase`
-        /// (`0` in place, `1` the light layer, `2` unlit content after it),
-        /// then its own layer, world layers after batches, the key and the
-        /// tiebreaks.
+        /// light range for unlit content) and `phase` (`0` in place, `1`
+        /// unlit content after the range's lit content), then its own layer,
+        /// world layers after batches, the key and the tiebreaks.
         struct Entry {
             slot: u32,
             phase: u8,
@@ -3084,25 +3095,21 @@ impl ViewportRenderer {
             reported_all.extend(reported.iter().map(|b| (plugin + 1, name, *b)));
         }
 
-        // The light layers' ranges, the first reported winning where two
-        // overlap.
-        let ranges: Vec<[u32; 2]> = reported_all
-            .iter()
-            .filter_map(|(_, _, b)| b.light_layers)
-            .collect();
-        let place = |layer: u32, unlit: bool, light: Option<[u32; 2]>| -> (u32, u8) {
-            if let Some([_, last]) = light {
-                return (last, 1);
-            }
+        // The light layers' ranges, the first that holds a layer winning.
+        let ranges: &[[u32; 2]] = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map_or(&[], |s| s.painter_masks.light_ranges());
+        let place = |layer: u32, unlit: bool| -> (u32, u8) {
             if unlit && let Some([_, last]) = ranges.iter().find(|r| r[0] <= layer && layer <= r[1])
             {
-                return (*last, 2);
+                return (*last, 1);
             }
             (layer, 0)
         };
         let mut entries: Vec<Entry> = Vec::with_capacity(reported_all.len());
         for (report, (plugin, name, b)) in reported_all.iter().enumerate() {
-            let (slot, phase) = place(b.layer, b.unlit, b.light_layers);
+            let (slot, phase) = place(b.layer, b.unlit);
             entries.push(Entry {
                 slot,
                 phase,
@@ -3124,7 +3131,7 @@ impl ViewportRenderer {
         if let Some(w) = worlds {
             for (k, &i) in w.sequence.iter().enumerate() {
                 let draw = &w.layers[i];
-                let (slot, phase) = place(draw.order, draw.unlit, None);
+                let (slot, phase) = place(draw.order, draw.unlit);
                 entries.push(Entry {
                     slot,
                     phase,
@@ -3169,12 +3176,17 @@ impl ViewportRenderer {
             let first = e;
             match entries[e].what {
                 What::Batch { name, .. } => {
-                    if entries[e].phase == 1 {
+                    // The unsequenced plugins' lit content of a range draws
+                    // before its unlit content, which runs one range at a
+                    // time.
+                    let phase = entries[e].phase;
+                    if phase == 1 {
                         flush(&mut plan, &mut lo, entries[e].slot);
                     }
                     e += 1;
                     while e < entries.len()
-                        && entries[e].phase != 1
+                        && entries[e].phase == phase
+                        && (phase == 0 || entries[e].slot == entries[first].slot)
                         && matches!(entries[e].what, What::Batch { name: n, .. } if n == name)
                     {
                         e += 1;
@@ -3248,7 +3260,7 @@ impl ViewportRenderer {
         let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) else {
             return;
         };
-        let (Some(mask_bind_group), ldr_depth) = slot.painter_masks.current() else {
+        let (Some(mask_bind_group), ldr_depth, _) = slot.painter_masks.current() else {
             return;
         };
         let ctx = crate::plugin_api::PainterContext {
@@ -3756,6 +3768,8 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            depth_read_bind_group: None,
+            mask_bind_group: &self.resources.painter_mask.empty_group,
             hdr_pass: true,
         };
         for (name, plugin) in self.item_type_plugins.iter() {

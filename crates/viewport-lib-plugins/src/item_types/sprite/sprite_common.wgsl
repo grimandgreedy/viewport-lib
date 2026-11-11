@@ -26,8 +26,9 @@ struct SpriteUniform {
     // the blend does not weight colour by alpha (premultiplied, additive).
     flags:                  u32,
     _pad_lit_c:             u32,
-    // The painter mask test (`MaskTest::word`) and the batch's painter layer;
-    // zero for a batch in depth order.
+    // The painter mask test (`MaskTest::word`) and the batch's painter layer,
+    // both zero for a batch in depth order; then 1 when the batch is not lit
+    // by 2D lighting.
     mask:                   vec4<u32>,
 };
 

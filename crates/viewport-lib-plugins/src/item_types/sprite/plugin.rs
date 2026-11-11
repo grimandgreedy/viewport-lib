@@ -983,28 +983,19 @@ impl ItemTypePlugin for SpritePlugin {
             return;
         };
         // The depth attachment is writable in this pass and is the same buffer
-        // the soft fade would sample, so group 2 gets the 1x1 fallback. A
-        // depth-writing batch has no soft fade to lose by it.
+        // the soft fade would sample, so group 2 gets a 1x1 depth: the
+        // renderer's, which carries the frame's masks and light layers, or
+        // the plugin's own placeholder. A depth-writing batch has no soft fade
+        // to lose by it.
+        let group2 = ctx.depth_read_bind_group.unwrap_or(&gpu.soft_fallback_bg);
         if ctx.is_hdr_pass() {
             if view.frame.iter().any(is_opaque) {
-                self.draw_bucket(
-                    view,
-                    pass,
-                    pipeline::SpritePass::Scene,
-                    &gpu.soft_fallback_bg,
-                    is_opaque,
-                );
+                self.draw_bucket(view, pass, pipeline::SpritePass::Scene, group2, is_opaque);
             }
             return;
         }
         if view.frame.iter().any(is_opaque) {
-            self.draw_bucket(
-                view,
-                pass,
-                pipeline::SpritePass::Ldr,
-                &gpu.soft_fallback_bg,
-                is_opaque,
-            );
+            self.draw_bucket(view, pass, pipeline::SpritePass::Ldr, group2, is_opaque);
         }
         // This path has neither the read-only-depth pass nor OIT, so the
         // blended batches those draw on the HDR path draw here, after the
@@ -1015,7 +1006,7 @@ impl ItemTypePlugin for SpritePlugin {
                 view,
                 pass,
                 pipeline::SpritePass::Ldr,
-                &gpu.soft_fallback_bg,
+                group2,
                 is_ldr_blended,
             );
         }

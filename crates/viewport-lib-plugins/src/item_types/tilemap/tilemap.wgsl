@@ -1,10 +1,32 @@
 // Tilemap colour shader: unlit atlas tiles, alpha-tested for a cutout layer
-// and alpha-blended for a painter layer. The vertex stage and the bindings
-// are in tilemap_common.wgsl.
+// and alpha-blended for a painter layer, lit by the 2D light layer of their
+// painter range (layer 0 for a cutout layer). The vertex stage and the
+// bindings are in tilemap_common.wgsl.
 
 @vertex
 fn vs_main(in: TileIn) -> TileOut {
     return tile_vertex(in);
+}
+
+// The painter masks, read by blended layers, and the 2D light layers.
+@group(3) @binding(0) var painter_mask_tex: texture_2d<f32>;
+@group(3) @binding(1) var<uniform> painter_masks: PainterMasks;
+@group(3) @binding(2) var painter_light_tex: texture_2d_array<f32>;
+@group(3) @binding(3) var<uniform> painter_lights: PainterLights;
+
+// `colour` lit by the light layer of the layer's painter range under the
+// fragment; a layer no range holds keeps its colour.
+fn tile_light(colour: vec4<f32>, in: TileOut) -> vec4<f32> {
+    let slice = painter_light_slice(painter_lights, layer.painter_layer.x);
+    if slice < 0 {
+        return colour;
+    }
+    let texel = painter_mask_texel(
+        in.mask_clip.xy / in.mask_clip.w,
+        textureDimensions(painter_light_tex),
+    );
+    let light = textureLoad(painter_light_tex, texel, slice, 0);
+    return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
 }
 
 fn cutout_body(in: TileOut) -> vec4<f32> {
@@ -15,13 +37,8 @@ fn cutout_body(in: TileOut) -> vec4<f32> {
     if colour.a < layer.alpha_threshold {
         discard;
     }
-    return vec4<f32>(colour.rgb, 1.0);
+    return vec4<f32>(tile_light(colour, in).rgb, 1.0);
 }
-
-// The painter masks, read by blended layers only (the cutout entries leave
-// group 3 out of their layout).
-@group(3) @binding(0) var painter_mask_tex: texture_2d<f32>;
-@group(3) @binding(1) var<uniform> painter_masks: PainterMasks;
 
 fn blended_body(in: TileOut) -> vec4<f32> {
     var colour = tile_colour(in);
@@ -37,7 +54,7 @@ fn blended_body(in: TileOut) -> vec4<f32> {
     if colour.a <= 0.001 {
         discard;
     }
-    return colour;
+    return tile_light(colour, in);
 }
 
 @fragment

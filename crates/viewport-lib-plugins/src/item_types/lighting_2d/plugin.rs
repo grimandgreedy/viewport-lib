@@ -1,23 +1,15 @@
-//! The 2D lighting plugin: each item's light list and edge stream, the light
-//! layers it accumulates before the frame, and the multiply it draws as a
-//! painter batch per light range.
+//! The 2D lighting plugin: each item's light list and edge stream, and the
+//! light layers it accumulates before the frame for lit content to sample.
 
 use super::*;
 use viewport_lib::plugin_api::{
-    ItemCollections, ItemFrameContext, ItemTypePlugin, PainterBatch, PainterContext, PerViewport,
-    PluginItem,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, PainterLightLayers, PerViewport, PluginItem,
 };
 
 /// This type's shaders, as the pipelines compile them.
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     use crate::item_types::shader::wgsl_source;
-    vec![
-        ("lighting_2d.wgsl", wgsl_source!("lighting_2d").to_string()),
-        (
-            "lighting_2d_compose.wgsl",
-            wgsl_source!("lighting_2d_compose").to_string(),
-        ),
-    ]
+    vec![("lighting_2d.wgsl", wgsl_source!("lighting_2d").to_string())]
 }
 
 impl PluginItem for Lighting2dItem {
@@ -36,8 +28,7 @@ pub struct Lighting2dStats {
     pub lights: u32,
     /// Occluder edges in the shadow streams, summed over the items.
     pub edges: u32,
-    /// Render passes encoded before the frame, one per light layer. Each
-    /// light layer is also one painter batch.
+    /// Render passes encoded before the frame, one per light layer.
     pub passes: u32,
 }
 
@@ -74,8 +65,8 @@ struct GpuEdge {
 const FLOAT_LAYER_FORMAT: viewport_lib::gpu::TextureFormat =
     viewport_lib::resources::HDR_COLOR_FORMAT;
 /// The light layer's format on the compatibility tier, which every tier can
-/// render to. It holds half the light, and the LDR multiply doubles it, so a
-/// light can still brighten what it lands on up to twice.
+/// render to. It holds half the light, and the content sampling it doubles
+/// it, so a light can still brighten what it lands on up to twice.
 const UNORM_LAYER_FORMAT: viewport_lib::gpu::TextureFormat =
     viewport_lib::gpu::TextureFormat::Rgba8Unorm;
 /// The stencil the shadows stamp. The depth half is unused.
@@ -366,7 +357,6 @@ fn directional_reach(
 struct Layouts {
     light_bgl: viewport_lib::gpu::BindGroupLayout,
     texture_bgl: viewport_lib::gpu::BindGroupLayout,
-    compose_bgl: viewport_lib::gpu::BindGroupLayout,
 }
 
 /// The accumulation pipelines for one light layer format.
@@ -376,46 +366,25 @@ struct Accumulate {
     light: viewport_lib::gpu::RenderPipeline,
 }
 
-/// What the multiply pipelines are built against, taken from the resources
-/// at the first prepare.
-struct ComposeTargets {
-    group0: viewport_lib::gpu::BindGroupLayout,
-    sample_count: u32,
-    depth_format: viewport_lib::gpu::TextureFormat,
-    ldr_format: viewport_lib::gpu::TextureFormat,
-}
-
-/// The multiply pipeline for one painter pass target: its format and
-/// whether it halves the layer.
-struct Compose {
-    target: viewport_lib::gpu::TextureFormat,
-    half: bool,
-    pipeline: std::sync::Arc<viewport_lib::gpu::RenderPipeline>,
-}
-
-/// One light layer's target and stencil, kept across frames and reallocated
-/// when the scene size or the layer format changes.
-struct LayerTarget {
+/// A viewport's light layers, one array layer per part, and the stencil they
+/// share, kept across frames and reallocated when the scene size, the layer
+/// format or the part count outgrows them.
+struct LayerTargets {
     size: [u32; 2],
     format: viewport_lib::gpu::TextureFormat,
-    light_view: viewport_lib::gpu::TextureView,
+    /// The whole array, as lit content samples it.
+    array_view: viewport_lib::gpu::TextureView,
+    /// One view per array layer, to render into.
+    slice_views: Vec<viewport_lib::gpu::TextureView>,
     stencil_view: viewport_lib::gpu::TextureView,
-    compose_bg: viewport_lib::gpu::BindGroup,
-}
-
-/// One light layer this frame: the painter layers it multiplies, its target
-/// and the accumulation draws it took.
-struct Part {
-    layers: RangeInclusive<u32>,
-    target: usize,
-    draws: u32,
 }
 
 /// A viewport's light layers, built in `prepare` for that viewport.
 #[derive(Default)]
 struct FrameLayer {
-    parts: Vec<Part>,
-    targets: Vec<LayerTarget>,
+    /// The painter layers each array layer lights, array layer 0 first.
+    parts: Vec<RangeInclusive<u32>>,
+    targets: Option<LayerTargets>,
     /// One shadow stream per item, by its place among the kept items.
     edges: Vec<(viewport_lib::gpu::Buffer, u32)>,
     blocks: Option<(viewport_lib::gpu::Buffer, u32, viewport_lib::gpu::BindGroup)>,
@@ -433,18 +402,10 @@ pub struct Lighting2dPlugin {
     /// A white texel and its sampler, bound for lights without a texture.
     white: Option<viewport_lib::gpu::BindGroup>,
     sampler: Option<viewport_lib::gpu::Sampler>,
-    compose_targets: Option<ComposeTargets>,
-    /// The device the multiply pipelines are built on, the first time a
-    /// painter pass of their target draws.
-    device: Option<viewport_lib::gpu::Device>,
-    /// One multiply pipeline per painter pass target it has drawn into.
-    compose: std::sync::Mutex<Vec<Compose>>,
     frame: PerViewport<FrameLayer>,
     stats: std::sync::Mutex<Lighting2dStats>,
-    /// Draws issued since the last prepare, across every viewport: each light
-    /// layer's shadows and lights, counted when its multiply draws, and the
-    /// multiply.
-    issued: std::sync::atomic::AtomicU32,
+    /// The shadow and light draws the last prepare encoded.
+    issued: u32,
 }
 
 impl Lighting2dPlugin {
@@ -493,23 +454,9 @@ impl Lighting2dPlugin {
                 },
             ],
         });
-        let compose_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
-            label: Some("lighting_2d_compose_bgl"),
-            entries: &[gpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: gpu::ShaderStages::FRAGMENT,
-                ty: gpu::BindingType::Texture {
-                    sample_type: gpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: gpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            }],
-        });
         Layouts {
             light_bgl,
             texture_bgl,
-            compose_bgl,
         }
     }
 
@@ -635,96 +582,6 @@ impl Lighting2dPlugin {
         }
     }
 
-    /// The multiply over a `target` painter pass, built the first time a
-    /// frame draws into one; `half` halves the layer for an LDR target.
-    fn compose_for(
-        &self,
-        device: &viewport_lib::gpu::Device,
-        target: viewport_lib::gpu::TextureFormat,
-        hdr: bool,
-        half: bool,
-    ) -> Option<std::sync::Arc<viewport_lib::gpu::RenderPipeline>> {
-        use viewport_lib::gpu;
-        use viewport_lib::plugin_api::builders;
-        let (Some(layouts), Some(targets)) = (&self.layouts, &self.compose_targets) else {
-            return None;
-        };
-        let mut cache = self.compose.lock().unwrap();
-        if let Some(c) = cache.iter().find(|c| c.target == target && c.half == half) {
-            return Some(c.pipeline.clone());
-        }
-        let shader = builders::wgsl_module(
-            device,
-            "lighting_2d_compose_shader",
-            crate::item_types::shader::wgsl_source!("lighting_2d_compose"),
-        );
-        let layout = builders::pipeline_layout(
-            device,
-            "lighting_2d_compose_layout",
-            &[&targets.group0, &layouts.compose_bgl],
-        );
-        // `dst * src`: the layer multiplied over the scene, alpha untouched.
-        // Over an LDR target the layer arrives halved: `src * dst + dst * src`.
-        let multiply = gpu::BlendState {
-            color: gpu::BlendComponent {
-                src_factor: if hdr {
-                    gpu::BlendFactor::Zero
-                } else {
-                    gpu::BlendFactor::Dst
-                },
-                dst_factor: gpu::BlendFactor::Src,
-                operation: gpu::BlendOperation::Add,
-            },
-            alpha: gpu::BlendComponent {
-                src_factor: gpu::BlendFactor::Zero,
-                dst_factor: gpu::BlendFactor::One,
-                operation: gpu::BlendOperation::Add,
-            },
-        };
-        let pipeline = builders::render_pipeline(
-            device,
-            builders::RenderPipelineDesc {
-                label: "lighting_2d_compose_pipeline",
-                layout: &layout,
-                vertex_module: &shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(gpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(if half { "fs_half" } else { "fs_main" }),
-                    targets: &[Some(gpu::ColorTargetState {
-                        format: target,
-                        blend: Some(multiply),
-                        write_mask: gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(builders::depth_stencil(
-                    targets.depth_format,
-                    false,
-                    gpu::CompareFunction::Always,
-                )),
-                multisample: gpu::MultisampleState {
-                    count: targets.sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        );
-        let pipeline = std::sync::Arc::new(pipeline);
-        cache.push(Compose {
-            target,
-            half,
-            pipeline: pipeline.clone(),
-        });
-        Some(pipeline)
-    }
-
     /// The white texel's bind group and the sampler for light textures,
     /// built once.
     fn ensure_white(
@@ -812,71 +669,72 @@ fn texture_bind_group(
     })
 }
 
-/// The layer target at `index` of `targets`, allocated or reallocated for
-/// `size` and `format`.
-fn layer_target<'a>(
-    targets: &'a mut Vec<LayerTarget>,
+/// The light layers in `targets`, allocated or reallocated for `size`,
+/// `format` and at least `count` array layers.
+fn layer_targets<'a>(
+    targets: &'a mut Option<LayerTargets>,
     device: &viewport_lib::gpu::Device,
-    compose_bgl: &viewport_lib::gpu::BindGroupLayout,
-    index: usize,
+    count: usize,
     size: [u32; 2],
     format: viewport_lib::gpu::TextureFormat,
-) -> &'a LayerTarget {
+) -> &'a LayerTargets {
     use viewport_lib::gpu;
     let fresh = targets
-        .get(index)
-        .is_some_and(|t| t.size == size && t.format == format);
+        .as_ref()
+        .is_some_and(|t| t.size == size && t.format == format && t.slice_views.len() >= count);
     if !fresh {
-        let texture = |label, format, usage| {
-            device.create_texture(&gpu::TextureDescriptor {
-                label: Some(label),
-                size: gpu::Extent3d {
-                    width: size[0].max(1),
-                    height: size[1].max(1),
-                    depth_or_array_layers: 1,
-                },
+        // At least two array layers: GL views a one-layer texture as 2D only.
+        let layers = count.next_power_of_two().max(2) as u32;
+        let extent = |layers| gpu::Extent3d {
+            width: size[0].max(1),
+            height: size[1].max(1),
+            depth_or_array_layers: layers,
+        };
+        let light = device.create_texture(&gpu::TextureDescriptor {
+            label: Some("lighting_2d_layers"),
+            size: extent(layers),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: gpu::TextureDimension::D2,
+            format,
+            usage: gpu::TextureUsages::RENDER_ATTACHMENT | gpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let array_view = light.create_view(&gpu::TextureViewDescriptor {
+            dimension: Some(gpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let slice_views = (0..layers)
+            .map(|k| {
+                light.create_view(&gpu::TextureViewDescriptor {
+                    dimension: Some(gpu::TextureViewDimension::D2),
+                    base_array_layer: k,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let stencil_view = device
+            .create_texture(&gpu::TextureDescriptor {
+                label: Some("lighting_2d_stencil"),
+                size: extent(1),
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: gpu::TextureDimension::D2,
-                format,
-                usage,
+                format: STENCIL_FORMAT,
+                usage: gpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             })
-        };
-        let light_view = texture(
-            "lighting_2d_layer",
-            format,
-            gpu::TextureUsages::RENDER_ATTACHMENT | gpu::TextureUsages::TEXTURE_BINDING,
-        )
-        .create_view(&gpu::TextureViewDescriptor::default());
-        let stencil_view = texture(
-            "lighting_2d_stencil",
-            STENCIL_FORMAT,
-            gpu::TextureUsages::RENDER_ATTACHMENT,
-        )
-        .create_view(&gpu::TextureViewDescriptor::default());
-        let compose_bg = device.create_bind_group(&gpu::BindGroupDescriptor {
-            label: Some("lighting_2d_compose_bg"),
-            layout: compose_bgl,
-            entries: &[gpu::BindGroupEntry {
-                binding: 0,
-                resource: gpu::BindingResource::TextureView(&light_view),
-            }],
-        });
-        let target = LayerTarget {
+            .create_view(&gpu::TextureViewDescriptor::default());
+        *targets = Some(LayerTargets {
             size,
             format,
-            light_view,
+            array_view,
+            slice_views,
             stencil_view,
-            compose_bg,
-        };
-        if index < targets.len() {
-            targets[index] = target;
-        } else {
-            targets.push(target);
-        }
+        });
     }
-    &targets[index]
+    targets.as_ref().expect("made above")
 }
 
 /// Whether two layer ranges share a layer.
@@ -899,9 +757,8 @@ impl ItemTypePlugin for Lighting2dPlugin {
         TYPE_NAME
     }
 
-    /// Every tier: uniforms, vertex streams, a stencil and a texture, drawn
-    /// before the frame, and a multiply in the painter sequence on either
-    /// path.
+    /// Every tier: uniforms, vertex streams, a stencil and a texture array,
+    /// drawn before the frame and sampled by the lit content on either path.
     fn requires(&self) -> viewport_lib::Requirements {
         viewport_lib::Requirements::compatibility_tier()
     }
@@ -915,7 +772,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         use viewport_lib::gpu;
         *self.stats.get_mut().unwrap() = Lighting2dStats::default();
-        *self.issued.get_mut() = 0;
+        self.issued = 0;
         self.frame.get_mut(ctx.viewport_index).parts.clear();
 
         // The items to draw: visible, with a range, and not overlapping an
@@ -948,17 +805,6 @@ impl ItemTypePlugin for Lighting2dPlugin {
         if self.layouts.is_none() {
             self.layouts = Some(Self::layouts(device));
         }
-        if self.device.is_none() {
-            self.device = Some(device.clone());
-        }
-        if self.compose_targets.is_none() {
-            self.compose_targets = Some(ComposeTargets {
-                group0: ctx.resources.group0_layout().clone(),
-                sample_count: ctx.resources.sample_count(),
-                depth_format: ctx.resources.scene_depth_format(),
-                ldr_format: ctx.resources.target_format(),
-            });
-        }
         self.ensure_white(device, queue, ctx.resources);
         let float = ctx.resources.has_hdr_path();
         let format = if float {
@@ -989,7 +835,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
         let inv_view_proj = view_proj.inverse();
 
         let resources = ctx.resources;
-        let plans: Vec<ItemPlan> = kept
+        let mut plans: Vec<ItemPlan> = kept
             .iter()
             .map(|(_, item)| {
                 let plane_origin = item
@@ -1038,6 +884,26 @@ impl ItemTypePlugin for Lighting2dPlugin {
             })
             .collect();
 
+        // The parts past the most the renderer binds are not lit.
+        let mut room = viewport_lib::resources::MAX_PAINTER_LIGHT_RANGES;
+        let mut dropped = 0usize;
+        for plan in &mut plans {
+            let keep = plan.parts.len().min(room);
+            dropped += plan.parts.len() - keep;
+            plan.parts.truncate(keep);
+            room -= keep;
+        }
+        if dropped > 0 {
+            ctx.report_notice(viewport_lib::Severity::Warning, "too_many_light_ranges", || {
+                format!(
+                    "{dropped} 2D light layer ranges past the {} the renderer binds were not lit; \
+                     use fewer lighting items or per-light layer ranges",
+                    viewport_lib::resources::MAX_PAINTER_LIGHT_RANGES
+                )
+            });
+        }
+        let part_count: usize = plans.iter().map(|p| p.parts.len()).sum();
+
         let Self {
             layouts,
             accumulate,
@@ -1045,7 +911,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
             sampler,
             frame,
             stats,
-            ..
+            issued,
         } = self;
         let (Some(layouts), Some(white), Some(sampler)) = (&*layouts, &*white, &*sampler) else {
             return Vec::new();
@@ -1166,29 +1032,22 @@ impl ItemTypePlugin for Lighting2dPlugin {
         let mut encoder = device.create_command_encoder(&gpu::CommandEncoderDescriptor {
             label: Some("lighting_2d_encoder"),
         });
+        let targets = layer_targets(&mut frame.targets, device, part_count, size, format);
         let mut totals = Lighting2dStats::default();
+        let mut draws = 0u32;
         let mut slot = 0u32;
-        let mut target_index = 0usize;
+        let mut part_index = 0usize;
         for (i, plan) in plans.iter().enumerate() {
             totals.edges += plan.edges.len() as u32;
             for (layers, lit) in &plan.parts {
-                let target = layer_target(
-                    &mut frame.targets,
-                    device,
-                    &layouts.compose_bgl,
-                    target_index,
-                    size,
-                    format,
-                );
                 let [r, g, b] = plan.ambient.map(|c| c * scale);
-                let mut draws = 0u32;
                 {
                     let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
                         #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                         multiview_mask: None,
                         label: Some("lighting_2d_lights"),
                         color_attachments: &[Some(gpu::RenderPassColorAttachment {
-                            view: &target.light_view,
+                            view: &targets.slice_views[part_index],
                             resolve_target: None,
                             ops: gpu::Operations {
                                 load: gpu::LoadOp::Clear(gpu::Color {
@@ -1202,7 +1061,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
                             depth_slice: None,
                         })],
                         depth_stencil_attachment: Some(gpu::RenderPassDepthStencilAttachment {
-                            view: &target.stencil_view,
+                            view: &targets.stencil_view,
                             depth_ops: Some(gpu::Operations {
                                 load: gpu::LoadOp::Clear(
                                     viewport_lib::plugin_api::depth::DEPTH_CLEAR,
@@ -1243,83 +1102,37 @@ impl ItemTypePlugin for Lighting2dPlugin {
                 }
                 totals.lights += lit.len() as u32;
                 totals.passes += 1;
-                frame.parts.push(Part {
-                    layers: layers.clone(),
-                    target: target_index,
-                    draws,
-                });
-                target_index += 1;
+                frame.parts.push(layers.clone());
+                part_index += 1;
             }
         }
-        frame.targets.truncate(target_index.max(1));
+        *issued = draws;
         *stats.get_mut().unwrap() = totals;
         vec![encoder.finish()]
     }
 
     fn draw_calls(&self) -> u32 {
-        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+        self.issued
     }
 
+    /// The light layers serve the LDR path as well, though the plugin draws
+    /// nothing in its passes.
     fn draws_ldr(&self) -> bool {
         true
     }
 
-    fn draws_painter(&self, viewport_index: usize) -> bool {
-        self.frame
-            .get(viewport_index)
-            .is_some_and(|f| !f.parts.is_empty())
-    }
-
-    /// One light layer per part of each item's range, at the top of it.
-    fn painter_batches(&self, viewport_index: usize, out: &mut Vec<PainterBatch>) {
-        let Some(frame) = self.frame.get(viewport_index) else {
-            return;
-        };
-        for (i, part) in frame.parts.iter().enumerate() {
-            out.push(PainterBatch::light_layer(part.layers.clone(), i as u32));
+    /// One array layer per part of each kept item's range.
+    fn painter_light_layers(&self, viewport_index: usize) -> Option<PainterLightLayers> {
+        let frame = self.frame.get(viewport_index)?;
+        if frame.parts.is_empty() {
+            return None;
         }
-    }
-
-    fn paint_painter(
-        &self,
-        pass: &mut viewport_lib::gpu::RenderPass<'_>,
-        ctx: &PainterContext<'_>,
-        _items: &ItemCollections<'_>,
-    ) {
-        let (Some(frame), Some(targets)) = (
-            self.frame.get(ctx.viewport_index),
-            self.compose_targets.as_ref(),
-        ) else {
-            return;
-        };
-        let Some(batches) = ctx.batches else { return };
-        let hdr = ctx.is_hdr_pass();
-        let (target, half) = if hdr {
-            (viewport_lib::resources::HDR_COLOR_FORMAT, false)
-        } else {
-            (targets.ldr_format, frame.float)
-        };
-        let Some(device) = &self.device else {
-            return;
-        };
-        let Some(pipeline) = self.compose_for(device, target, hdr, half) else {
-            return;
-        };
-        let mut draws = 0u32;
-        for &b in batches {
-            let Some(part) = frame.parts.get(b as usize) else {
-                continue;
-            };
-            let Some(layer) = frame.targets.get(part.target) else {
-                continue;
-            };
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(1, &layer.compose_bg, &[]);
-            pass.draw(0..3, 0..1);
-            draws += part.draws + 1;
-        }
-        self.issued
-            .fetch_add(draws, std::sync::atomic::Ordering::Relaxed);
+        let targets = frame.targets.as_ref()?;
+        Some(PainterLightLayers::new(
+            targets.array_view.clone(),
+            frame.parts.clone(),
+            if frame.float { 1.0 } else { 2.0 },
+        ))
     }
 }
 

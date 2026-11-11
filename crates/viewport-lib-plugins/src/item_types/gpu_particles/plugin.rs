@@ -27,18 +27,34 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
         ),
         (
             "particle_sprite.wgsl",
-            scene_shader(&[], wgsl_source!("particle_sprite")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    &super::pipeline::light_wgsl(Some(2), "sprite_ub"),
+                ],
+                wgsl_source!("particle_sprite"),
+            ),
         ),
         (
             "particle_sprite_lit.wgsl",
             lit_shader(
-                &[viewport_lib::plugin_api::shared_wgsl::SHARED_CLIP_WGSL],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_CLIP_WGSL,
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    &super::pipeline::light_wgsl(Some(3), "sprite_ub"),
+                ],
                 wgsl_source!("particle_sprite_lit"),
             ),
         ),
         (
             "particle_mesh.wgsl",
-            scene_shader(&[], wgsl_source!("particle_mesh")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    &super::pipeline::light_wgsl(Some(2), "draw_ub"),
+                ],
+                wgsl_source!("particle_mesh"),
+            ),
         ),
     ]
 }
@@ -284,8 +300,11 @@ impl GpuParticlesPlugin {
             system.draw_lit_normal_bg = bindings.draw_lit_normal_bg;
             system.draw_uniform_buf = bindings.draw_uniform_buf;
             system.draw_textures = bindings.draw_textures;
-            // The rebuilt uniform holds a zero offset again.
-            system.emit.lock().unwrap().drawn_offset = None;
+            // The rebuilt uniform holds a zero offset and layer again.
+            let mut emit = system.emit.lock().unwrap();
+            emit.drawn_offset = None;
+            emit.drawn_light = None;
+            drop(emit);
             self.draw_bg_rebuilds += 1;
         }
     }
@@ -450,6 +469,19 @@ impl ItemTypePlugin for GpuParticlesPlugin {
                     }
                     emit.drawn_offset = Some(offset);
                 }
+                // The painter layer whose 2D light the draw samples (layer 0
+                // outside the painter sequence) and whether it is unlit.
+                let light = item.painter.map_or([0, 0], |p| [p.layer, p.unlit as u32]);
+                if emit.drawn_light != Some(light) {
+                    if let Some(buf) = &system.draw_uniform_buf {
+                        let at = match route {
+                            ParticleDrawRoute::Sprite { .. } => 88,
+                            ParticleDrawRoute::Mesh { .. } => 8,
+                        };
+                        queue.write_buffer(buf, at, bytemuck::cast_slice(&light));
+                    }
+                    emit.drawn_light = Some(light);
+                }
                 (count, anchor)
             };
             let sim_params = build_sim_params(item.time_step, capacity, &item.forces, anchor);
@@ -530,9 +562,14 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         }
         let hdr = ctx.is_hdr_pass();
         for pd in self.frame.iter().filter(|pd| pd.painter.is_none()) {
-            self.draw_system(pass, gpu, pd, &ctx.meshes, |route, blend| {
-                pipeline::draw_index(route, blend, hdr)
-            });
+            self.draw_system(
+                pass,
+                gpu,
+                pd,
+                &ctx.meshes,
+                ctx.mask_bind_group,
+                |route, blend| pipeline::draw_index(route, blend, hdr),
+            );
         }
     }
 
@@ -568,21 +605,30 @@ impl ItemTypePlugin for GpuParticlesPlugin {
             let Some(pd) = self.frame.get(b as usize) else {
                 continue;
             };
-            self.draw_system(pass, gpu, pd, &ctx.meshes, pipeline::painter_index);
+            self.draw_system(
+                pass,
+                gpu,
+                pd,
+                &ctx.meshes,
+                ctx.mask_bind_group,
+                pipeline::painter_index,
+            );
         }
     }
 }
 
 impl GpuParticlesPlugin {
     /// Draw one system through the member `member` names for its route and
-    /// blend. Each system draws its full capacity; a dead particle emits a
-    /// degenerate vertex and contributes no fragments.
+    /// blend, with `masks` (the painter mask group, for its light layers)
+    /// after the route's own groups. Each system draws its full capacity; a
+    /// dead particle emits a degenerate vertex and contributes no fragments.
     fn draw_system(
         &self,
         pass: &mut viewport_lib::gpu::RenderPass<'_>,
         gpu: &pipeline::ParticleGpu,
         pd: &ParticleFrame,
         meshes: &viewport_lib::resources::MeshDraw<'_>,
+        masks: &viewport_lib::gpu::BindGroup,
         member: impl Fn(usize, SpriteBlend) -> usize,
     ) {
         {
@@ -609,6 +655,9 @@ impl GpuParticlesPlugin {
                             .unwrap_or(&gpu.sprite_lit_fallback_bg);
                         pass.set_bind_group(2, normal_bg, &[]);
                     }
+                    if let Some(g) = gpu.light_groups[route] {
+                        pass.set_bind_group(g, masks, &[]);
+                    }
                     pass.draw(0..6, 0..pd.capacity);
                     self.issued
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -622,6 +671,9 @@ impl GpuParticlesPlugin {
                     };
                     pass.set_pipeline(pl);
                     pass.set_bind_group(1, draw_bg, &[]);
+                    if let Some(g) = gpu.light_groups[pipeline::MESH] {
+                        pass.set_bind_group(g, masks, &[]);
+                    }
                     if meshes.draw_indexed_instanced(pass, mesh_id, pd.capacity) {
                         self.issued
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

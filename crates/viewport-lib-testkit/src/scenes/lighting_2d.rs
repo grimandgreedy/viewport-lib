@@ -15,8 +15,9 @@
 //! layer 1 beside it is lit, the one on layer 3 is left at the ambient level.
 //! On layer 3 too, a yellow square and a row of orange particles are unlit
 //! and keep their colour. The global and directional lights light layers 0
-//! to 2, so the range splits in three parts, each multiplying what is drawn
-//! below it.
+//! to 2, so the range splits in three parts, each with a light layer of its
+//! own at the same ambient, and each square is lit by its own part's layer
+//! only.
 
 use glam::{DVec3, Vec2};
 use viewport_lib::plugin_api::Uploads;

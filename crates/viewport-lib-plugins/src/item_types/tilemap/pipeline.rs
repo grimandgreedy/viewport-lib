@@ -174,7 +174,7 @@ fn build(r: &TilemapRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             } else {
                 "tilemap_blended_pipeline"
             },
-            layout: if cutout { &r.layout } else { &r.masked_layout },
+            layout: &r.masked_layout,
             shader: r.shader.get(),
             vertex_entry: "vs_main",
             fragment_entry: if cutout { "fs_cutout" } else { "fs_blended" },
@@ -292,7 +292,7 @@ fn pipeline_set(
         "tilemap_pipeline_layout",
         &[resources.group0_layout(), &layouts.map, &layouts.layer],
     );
-    // Blended layers read the painter masks at group 3.
+    // The colour members read the painter masks and light layers at group 3.
     let masked_layout = viewport_lib::plugin_api::builders::pipeline_layout(
         device,
         "tilemap_masked_pipeline_layout",

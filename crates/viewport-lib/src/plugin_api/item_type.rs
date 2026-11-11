@@ -484,6 +484,18 @@ pub struct PaintContext<'a> {
     /// An item type whose geometry is a `MeshId` binds and draws it through
     /// this; one that owns its buffers ignores it.
     pub meshes: crate::resources::MeshDraw<'a>,
+    /// In `paint`, on the full tier, a group laid out as
+    /// [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout)
+    /// over a 1x1 depth (the pass writes the real one), carrying this frame's
+    /// painter masks and light layers. 2D content drawn outside the painter
+    /// sequence samples its light through it as painter layer 0. `None` on
+    /// the compatibility tier and in the other passes.
+    pub depth_read_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// In `paint`, this frame's painter masks and light layers, laid out as
+    /// [`painter_mask_bind_group_layout`](crate::resources::DeviceResources::painter_mask_bind_group_layout),
+    /// on every tier; in the other passes a group with no masks and no light
+    /// layers.
+    pub mask_bind_group: &'a crate::gpu::BindGroup,
     /// Whether the pass is one of the HDR path's passes.
     pub(crate) hdr_pass: bool,
 }
@@ -599,15 +611,17 @@ pub struct PainterContext<'a> {
     /// in either pass: the scene depth on the HDR path (the same group as
     /// [`scene_depth_bind_group`](Self::scene_depth_bind_group)), a 1x1 depth
     /// in the LDR scene pass. Its bindings 2 and 3 carry this frame's painter
-    /// masks, so a plugin with no spare group tests masks through it. `None`
-    /// on the compatibility tier.
+    /// masks and bindings 4 and 5 its light layers, so a plugin with no spare
+    /// group tests masks and samples light through it. `None` on the
+    /// compatibility tier.
     pub depth_read_bind_group: Option<&'a crate::gpu::BindGroup>,
-    /// This frame's painter masks, laid out as
+    /// This frame's painter masks and light layers, laid out as
     /// [`painter_mask_bind_group_layout`](crate::resources::DeviceResources::painter_mask_bind_group_layout),
     /// on every tier. Content that honours a [`MaskTest`](crate::MaskTest)
-    /// binds it at a spare group and tests through
+    /// or is lit by 2D lighting binds it at a spare group and tests or
+    /// samples through
     /// [`SHARED_PAINTER_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL).
-    /// A frame with no masks binds an empty one.
+    /// A frame with no masks or light layers binds empty ones.
     pub mask_bind_group: &'a crate::gpu::BindGroup,
     /// Draws an uploaded mesh by id, for a painter draw built on one.
     pub meshes: crate::resources::MeshDraw<'a>,
@@ -675,11 +689,10 @@ pub struct PainterMaskContext<'a> {
 /// before every plugin. A world overlay layer draws after every batch whose
 /// layer is at or below its `order`.
 ///
-/// A light layer (a batch built with [`light_layer`](Self::light_layer))
-/// draws after every other batch and world overlay layer of its range, and
-/// a batch marked [`unlit`](Self::unlit) on a layer in that range moves to
-/// after it: the unlit content of a range draws above its lit content, in
-/// its own layer and key order.
+/// A batch marked [`unlit`](Self::unlit) on a layer in the range of a light
+/// layer (see [`PainterLightLayers`]) moves to after every other batch and
+/// world overlay layer of that range: the unlit content of a range draws
+/// above its lit content, in its own layer and key order.
 ///
 /// The sequence places each batch by its one key, so a batch must hold draws
 /// at a single key. A plugin whose draw covers several keys reports it as one
@@ -698,14 +711,10 @@ pub struct PainterBatch {
     /// The plugin's own handle for the batch, handed back in
     /// [`PainterContext::batches`].
     pub batch: u32,
-    /// Drawn after the light layer whose range holds `layer`, so 2D lighting
-    /// leaves it as drawn. With no light layer over `layer` it draws in its
-    /// place.
+    /// Not lit by 2D lighting: the content does not sample its range's light
+    /// layer, and draws after the range's lit content. With no light layer
+    /// over `layer` it draws in its place.
     pub unlit: bool,
-    /// For a light layer: the first and last painter layer it lights. The
-    /// batch draws at the top of that range, after its other content, and
-    /// multiplies what is drawn by then. `None` for ordinary content.
-    pub light_layers: Option<[u32; 2]>,
 }
 
 impl PainterBatch {
@@ -716,7 +725,6 @@ impl PainterBatch {
             sort_key,
             batch,
             unlit: false,
-            light_layers: None,
         }
     }
 
@@ -731,21 +739,43 @@ impl PainterBatch {
         self.unlit = unlit;
         self
     }
+}
 
-    /// A light layer over the painter layers `layers`, named `batch` by the
-    /// plugin: placed at the range's last layer, after everything else drawn
-    /// in the range and before the unlit content of the range.
-    ///
-    /// When two light layers name ranges that overlap, the sequence places
-    /// unlit content by the first one reported.
-    pub fn light_layer(layers: std::ops::RangeInclusive<u32>, batch: u32) -> Self {
-        let (first, last) = (*layers.start(), *layers.end());
+/// A plugin's 2D light layers this frame, as reported by
+/// [`ItemTypePlugin::painter_light_layers`]: one array layer of light per run
+/// of painter layers, which lit content multiplies its colour by under its
+/// fragment.
+///
+/// The renderer binds the view and a `PainterLights` uniform describing the
+/// ranges in the painter mask and depth-read groups, so every lit draw reads
+/// the light of the range its own layer lies in, and only that one.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct PainterLightLayers {
+    /// A `D2Array` view, one array layer per range and at least two, at the
+    /// scene's device size, of a format sampled as unfilterable float.
+    pub view: crate::gpu::TextureView,
+    /// The painter layers each array layer lights, array layer 0 first. At
+    /// most [`MAX_PAINTER_LIGHT_RANGES`](crate::resources::MAX_PAINTER_LIGHT_RANGES)
+    /// are bound. Ranges should not overlap: a layer reads the first range
+    /// that holds it.
+    pub ranges: Vec<std::ops::RangeInclusive<u32>>,
+    /// Multiplied into what is sampled: `1.0` for a layer holding the light
+    /// itself, `2.0` for one holding half of it.
+    pub scale: f32,
+}
+
+impl PainterLightLayers {
+    /// Light layers in `view` over `ranges`, sampled times `scale`.
+    pub fn new(
+        view: crate::gpu::TextureView,
+        ranges: Vec<std::ops::RangeInclusive<u32>>,
+        scale: f32,
+    ) -> Self {
         Self {
-            layer: last,
-            sort_key: f32::INFINITY,
-            batch,
-            unlit: false,
-            light_layers: Some([first, last]),
+            view,
+            ranges,
+            scale,
         }
     }
 }
@@ -1481,12 +1511,12 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// content interleaves with other plugins' by layer and sort key.
     ///
     /// A plugin that reports none is called once per run of layers between
-    /// world overlay layers and light layers, ascending, after the sequenced
-    /// batches of that run, and draws its content whose layer lies in
-    /// [`PainterContext::layers`]; then the world layers or the light layer
-    /// at the run's top layer draw. A frame with neither makes one such call
-    /// covering every layer. Such plugins draw in registration order within a
-    /// run, and their content is never unlit.
+    /// world overlay layers and the unlit content of light ranges, ascending,
+    /// after the sequenced batches of that run, and draws its content whose
+    /// layer lies in [`PainterContext::layers`]; then the world layers or the
+    /// range's unlit content at the run's top layer draw. A frame with
+    /// neither makes one such call covering every layer. Such plugins draw in
+    /// registration order within a run, and their content is never unlit.
     ///
     /// The pass has the viewport's camera bind group at group 0 on entry.
     /// Only called when [`draws_painter`](Self::draws_painter) returns `true`,
@@ -1525,6 +1555,18 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         _ctx: &PainterMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
+    }
+
+    /// The 2D light layers this plugin accumulated for the viewport
+    /// `viewport_index` this frame, if any.
+    ///
+    /// Read after [`prepare`](Self::prepare), on every tier. The first plugin
+    /// with items that returns some has them bound for the frame's lit
+    /// content; the ranges also place [`PainterBatch::unlit`] content. The
+    /// layers must be complete by the end of `prepare`: accumulate them in
+    /// the command buffers it returns.
+    fn painter_light_layers(&self, _viewport_index: usize) -> Option<PainterLightLayers> {
+        None
     }
 
     /// `true` when this plugin draws in the foreground pass.

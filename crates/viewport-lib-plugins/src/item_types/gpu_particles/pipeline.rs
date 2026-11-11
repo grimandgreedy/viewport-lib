@@ -40,6 +40,42 @@ fn blend_index(blend: SpriteBlend) -> usize {
     }
 }
 
+/// `particle_light(colour, clip)` for a route whose draw uniform is `ub`: the
+/// colour lit by the 2D light layer of the system's painter range (layer 0
+/// outside the painter sequence) at clip position `clip`, reading the light
+/// layers through the painter mask group at `group`. With no group to spare
+/// it returns the colour.
+pub(crate) fn light_wgsl(group: Option<u32>, ub: &str) -> String {
+    let Some(g) = group else {
+        return "fn particle_light(colour: vec4<f32>, clip: vec4<f32>) -> vec4<f32> {\n    \
+                return colour;\n}\n"
+            .to_string();
+    };
+    format!(
+        "@group({g}) @binding(2) var painter_light_tex: texture_2d_array<f32>;
+@group({g}) @binding(3) var<uniform> painter_lights: PainterLights;
+
+// An unlit system and a layer no range holds keep their colour.
+fn particle_light(colour: vec4<f32>, clip: vec4<f32>) -> vec4<f32> {{
+    let slice = painter_light_slice(painter_lights, {ub}.painter_layer);
+    if slice < 0 || {ub}.unlit != 0u {{
+        return colour;
+    }}
+    let texel = painter_mask_texel(clip.xy / clip.w, textureDimensions(painter_light_tex));
+    let light = textureLoad(painter_light_tex, texel, slice, 0);
+    return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
+}}
+"
+    )
+}
+
+/// The group each route reads the light layers through, by route: the one
+/// after its own groups, where the device has it.
+pub(super) fn light_groups(max_bind_groups: u32) -> [Option<u32>; 3] {
+    let at = |g: u32| (g < max_bind_groups).then_some(g);
+    [at(2), at(3), at(2)]
+}
+
 /// What a particle draw pipeline build reads.
 pub(super) struct ParticleRecipe {
     device: viewport_lib::gpu::Device,
@@ -163,6 +199,8 @@ pub(super) struct ParticleGpu {
     >,
     pub(super) pipelines: ParticlePipelines,
     pub(super) sprite_lit_fallback_bg: viewport_lib::gpu::BindGroup,
+    /// By route, the group the light layers bind at, if any.
+    pub(super) light_groups: [Option<u32>; 3],
 }
 
 impl ParticleGpu {
@@ -199,27 +237,53 @@ impl ParticleGpu {
             build_compute,
         );
 
+        // Each route reads the 2D light layers through the painter mask
+        // group after its own groups, where the device has one more.
+        let light_groups = light_groups(device.limits().max_bind_groups);
+        let masks = resources.painter_mask_bind_group_layout();
+        fn with_masks<'a>(
+            light: Option<u32>,
+            masks: &'a viewport_lib::gpu::BindGroupLayout,
+            groups: &[&'a viewport_lib::gpu::BindGroupLayout],
+        ) -> Vec<&'a viewport_lib::gpu::BindGroupLayout> {
+            let mut groups = groups.to_vec();
+            if light.is_some() {
+                groups.push(masks);
+            }
+            groups
+        }
+
         let sprite_shader = resources.lazy_module(
             device,
             "particle_sprite_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    &light_wgsl(light_groups[SPRITE], "sprite_ub"),
+                ],
                 crate::item_types::shader::wgsl_source!("particle_sprite"),
             ),
         );
 
-        let draw_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
+        let draw_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "particle_draw_layout",
-            resources.group0_layout(),
-            &layouts.draw_bgl,
+            &with_masks(
+                light_groups[SPRITE],
+                masks,
+                &[resources.group0_layout(), &layouts.draw_bgl],
+            ),
         );
 
         let lit_shader = resources.lazy_module(
             device,
             "particle_sprite_lit_shader",
             &crate::item_types::shader::lit_shader(
-                &[viewport_lib::plugin_api::shared_wgsl::SHARED_CLIP_WGSL],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_CLIP_WGSL,
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    &light_wgsl(light_groups[SPRITE_LIT], "sprite_ub"),
+                ],
                 crate::item_types::shader::wgsl_source!("particle_sprite_lit"),
             ),
         );
@@ -227,11 +291,15 @@ impl ParticleGpu {
         let lit_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "particle_draw_lit_layout",
-            &[
-                resources.group0_layout(),
-                &layouts.draw_bgl,
-                &layouts.sprite_lit_bgl,
-            ],
+            &with_masks(
+                light_groups[SPRITE_LIT],
+                masks,
+                &[
+                    resources.group0_layout(),
+                    &layouts.draw_bgl,
+                    &layouts.sprite_lit_bgl,
+                ],
+            ),
         );
 
         let sprite_lit_fallback_bg =
@@ -258,16 +326,22 @@ impl ParticleGpu {
             device,
             "particle_mesh_shader",
             &crate::item_types::shader::scene_shader(
-                &[],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    &light_wgsl(light_groups[MESH], "draw_ub"),
+                ],
                 crate::item_types::shader::wgsl_source!("particle_mesh"),
             ),
         );
 
-        let mesh_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
+        let mesh_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "particle_mesh_draw_layout",
-            resources.group0_layout(),
-            &layouts.mesh_draw_bgl,
+            &with_masks(
+                light_groups[MESH],
+                masks,
+                &[resources.group0_layout(), &layouts.mesh_draw_bgl],
+            ),
         );
 
         let pipelines = resources.lazy_pipelines(
@@ -290,6 +364,7 @@ impl ParticleGpu {
             compute,
             pipelines,
             sprite_lit_fallback_bg,
+            light_groups,
         }
     }
 }
