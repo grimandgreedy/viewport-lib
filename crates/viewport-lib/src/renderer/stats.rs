@@ -662,6 +662,16 @@ pub struct FrameStats {
     /// here. A value that stays non-zero frame after frame means groups are
     /// paying a full rebuild instead of being drawn from their buffers.
     pub overlay_retained_reemitted: u32,
+    /// Retained overlay groups in world overlay layers rebuilt this frame, for
+    /// the most recently prepared viewport. Kept out of
+    /// [`overlay_retained_reemitted`](Self::overlay_retained_reemitted), which
+    /// counts the screen overlays.
+    ///
+    /// A world layer's scale follows the camera's zoom, so its groups re-emit
+    /// only when that scale moves to another step of the text size ladder: a
+    /// smooth zoom reads non-zero on the frames that cross a step and zero
+    /// between them.
+    pub world_overlay_retained_reemitted: u32,
     /// Live compiled overlay geometry, in bytes: vertex, shape, and shadow
     /// buffers across every group that has been compiled and not freed.
     ///

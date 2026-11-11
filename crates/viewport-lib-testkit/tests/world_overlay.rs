@@ -6,6 +6,11 @@
 //! Destination reads and backdrops on a world layer draw on both owned paths
 //! and fall back to source-over in a host-owned pass.
 //!
+//! A pixel-snapped layer keeps its edges on the device pixel columns of
+//! snapped sprites as the camera pans, and a retained group in a layer
+//! re-emits only when a zoom moves its scale to another step of the text
+//! size ladder.
+//!
 //! The two-zoom pair and the blends scene on the LDR path have goldens of
 //! their own next to the catalogue's:
 //!
@@ -14,9 +19,12 @@
 use glam::{DVec3, Vec2};
 use std::path::Path;
 use viewport_lib::{
-    Camera2d, Colour, FrameData, NoticeDetail, OverlayBlend, OverlayFrame, OverlayPolylineItem,
-    PipelineMode, Plane2d, WorldOverlayItem, WorldOverlayLayer, WorldPlane, wgpu,
+    Camera2d, Colour, FrameData, LabelItem, NoticeDetail, OverlayBlend, OverlayFill, OverlayFrame,
+    OverlayPolylineItem, OverlayResolution, OverlayShape, OverlayShapeItem, PipelineMode, Plane2d,
+    Presentation, ReferenceFit, RetainedOverlay, TextSizing, WorldOverlayItem, WorldOverlayLayer,
+    WorldPlane, wgpu,
 };
+use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteSizeMode};
 use viewport_lib_testkit::golden::{self, GoldenMode, Outcome, RgbaImage, Tolerance};
 use viewport_lib_testkit::scenes::{BuiltScene, NamedCamera, NamedScene, world_overlay};
 use viewport_lib_testkit::{DeviceProfile, Harness, frame_for};
@@ -440,4 +448,206 @@ fn paint_host(h: &mut Harness, frame: &FrameData) -> Vec<u8> {
         out.extend_from_slice(&mapped[start..start + (W * 4) as usize]);
     }
     out
+}
+
+/// A white bar one world unit wide running down the plane from layer `(0,
+/// 0)` at plane `origin`, and a white sprite four units square standing on
+/// the same point by its bottom-left corner, snapped. The two share a left
+/// edge: the sprite above the point, the bar below it.
+fn snap_scene(origin: [f32; 2], pixel_snap: bool) -> BuiltScene {
+    let mut frame = OverlayFrame::default();
+    frame.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 0.0 },
+            [0.0, 0.0],
+            [1.0, 8.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::linear_rgb(1.0, 1.0, 1.0))),
+    );
+    let layer = WorldOverlayLayer::new(WorldPlane::Xy)
+        .with_origin(origin)
+        .with_pixel_snap(pixel_snap)
+        .with_frame(frame);
+    let mut sprite = SpriteItem::default();
+    sprite.positions = vec![[origin[0], origin[1], 0.0]];
+    sprite.size_mode = SpriteSizeMode::WorldSpace;
+    sprite.default_size = 4.0;
+    sprite.default_pivot = [0.0, 0.0];
+    sprite.default_colour = Colour::linear_rgb(1.0, 1.0, 1.0);
+    sprite.pixel_snap = true;
+    let mut built = bare_scene(vec![layer]);
+    built.sprite_items = vec![sprite];
+    built
+}
+
+/// Linear coverage of the red channel at `(x, y)` of a `width`-wide image.
+fn coverage(pixels: &[u8], width: u32, x: u32, y: u32) -> f32 {
+    let c = pixels[((y * width + x) * 4) as usize] as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// The first column of row `y` from the left with coverage over `threshold`,
+/// and the coverage of the column before it, of that column and of the one
+/// after it.
+fn left_edge(pixels: &[u8], width: u32, y: u32, threshold: f32) -> (u32, [f32; 3]) {
+    let x = (1..width - 1)
+        .find(|&x| coverage(pixels, width, x, y) > threshold)
+        .expect("an edge on the row");
+    let c = |x| coverage(pixels, width, x, y);
+    (x, [c(x - 1), c(x), c(x + 1)])
+}
+
+/// The snap scene under a camera panned by `pan` units, three device pixels
+/// per unit, at the window size or presented at half of it.
+fn snap_frame(built: &BuiltScene, pan: f32, reference: bool) -> FrameData {
+    let size = if reference {
+        Vec2::new(W as f32 * 0.5, H as f32 * 0.5)
+    } else {
+        Vec2::new(W as f32, H as f32)
+    };
+    let camera = Camera2d::new(Plane2d::Xy)
+        .with_centre(Vec2::new(pan, pan * 0.37))
+        .with_units_per_pixel(1.0 / 3.0)
+        .with_viewport_size(size)
+        .camera();
+    let mut frame = frame_for(built, &camera, [W as f32, H as f32]);
+    if reference {
+        frame.viewport.presentation = Presentation::Reference {
+            size: [W / 2, H / 2],
+            fit: ReferenceFit::IntegerBars {
+                colour: Colour::linear_rgb(0.0, 0.0, 0.0),
+            },
+            overlays: OverlayResolution::Native,
+        };
+    }
+    frame
+}
+
+/// Under a camera panning by fractions of a pixel, a snapped world layer
+/// keeps a one-unit bar's edge on the device pixel boundary of a snapped
+/// sprite's edge, at the window size and inside a reference target;
+/// unsnapped, the bar's edge falls between pixel boundaries.
+#[test]
+fn a_snapped_world_layer_stays_on_the_pixel_grid_of_snapped_sprites() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let origin = [-10.3, 2.45];
+    for reference in [false, true] {
+        let snapped = snap_scene(origin, true);
+        let loose = snap_scene(origin, false);
+        let mut soft = 0;
+        for i in 0..8 {
+            let pan = i as f32 * 0.137;
+            let frame = snap_frame(&snapped, pan, reference);
+            let pixels = render(&mut harness, &frame);
+            // Rows two units above and four below the shared point, in
+            // window pixels.
+            let scale = if reference { 2.0 } else { 1.0 };
+            let centre_row = H as f32 * 0.5;
+            let row =
+                |plane_y: f32| (centre_row - (plane_y - pan * 0.37) * 3.0 * scale).round() as u32;
+            let (sprite_x, _) = left_edge(&pixels, W, row(origin[1] + 2.0), 0.5);
+            // The bar's anti-aliased edge ramps over the pixel inside it, so
+            // an edge on a pixel boundary leaves its first pixel half covered
+            // and the pixels either side empty and full. Inside a reference
+            // target each reference pixel is two window pixels.
+            let first = if reference { 2 } else { 1 };
+            let bar_row = row(origin[1] - 4.0);
+            let (bar_x, edge) = left_edge(&pixels, W, bar_row, 0.25);
+            let inner = coverage(&pixels, W, bar_x + first, bar_row);
+            assert_eq!(
+                bar_x, sprite_x,
+                "reference {reference}, pan {pan}: the bar's edge is off the sprite's"
+            );
+            assert!(
+                edge[0] < 0.02 && (edge[1] - 0.5).abs() < 0.03 && inner > 0.98,
+                "reference {reference}, pan {pan}: the edge is off the pixel grid ({edge:?}, {inner})"
+            );
+            let frame = snap_frame(&loose, pan, reference);
+            let pixels = render(&mut harness, &frame);
+            let (_, edge) = left_edge(&pixels, W, bar_row, 0.02);
+            if (edge[1] - 0.5).abs() > 0.1 && edge[1] < 0.9 {
+                soft += 1;
+            }
+        }
+        assert!(
+            soft >= 4,
+            "reference {reference}: the unsnapped bar should go soft as the camera pans ({soft} of 8)"
+        );
+    }
+}
+
+/// A retained group in a world layer under a smooth zoom re-emits on the
+/// frames whose scale moves to another step of the text size ladder and on
+/// no other.
+#[test]
+fn a_world_retained_group_re_emits_only_at_ladder_steps() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let label = harness.renderer.compile_overlay_label(
+        &harness.device,
+        &harness.queue,
+        &LabelItem::new("sign")
+            .with_screen_anchor([1.0, 1.0])
+            .with_font_size(1.0),
+        1.0,
+    );
+    let mut frame = OverlayFrame::default();
+    frame.retained.push(RetainedOverlay::new(label));
+    let layer = WorldOverlayLayer::new(WorldPlane::Xy)
+        .with_origin([-4.0, 3.0])
+        .with_frame(frame);
+    let built = bare_scene(vec![layer]);
+    // Device pixels per unit from 10 to about 20, skipping the scales too
+    // near a step boundary for the comparison below to be sure of its side.
+    let step = |ppp: f32| ((ppp / 48.0).ln() / TextSizing::STEP.ln()).round() as i32;
+    let near_boundary = |ppp: f32| {
+        let k = (ppp / 48.0).ln() / TextSizing::STEP.ln();
+        (k - k.floor() - 0.5).abs() < 0.01
+    };
+    let zoom: Vec<f32> = (0..120)
+        .map(|i| 10.0 * 1.006_f32.powi(i))
+        .filter(|ppp| !near_boundary(*ppp))
+        .collect();
+    let mut re_emits = 0;
+    let mut steps_crossed = 0;
+    let mut baked: Option<i32> = None;
+    for &ppp in &zoom {
+        let camera = world_overlay::camera(1.0 / ppp, Vec2::ZERO);
+        let fd = frame_for(&built, &camera, [W as f32, H as f32]);
+        let _ = harness.render(&fd, W, H);
+        let stats = harness.stats();
+        let expect = u32::from(baked != Some(step(ppp)));
+        assert_eq!(
+            stats.world_overlay_retained_reemitted,
+            expect,
+            "{ppp} px per unit (step {}, baked at {baked:?})",
+            step(ppp)
+        );
+        if expect == 1 {
+            if baked.is_some() {
+                steps_crossed += 1;
+            }
+            baked = Some(step(ppp));
+        }
+        re_emits += stats.world_overlay_retained_reemitted;
+        assert_eq!(stats.overlay_retained_reemitted, 0, "no screen groups");
+    }
+    assert!(
+        steps_crossed >= 10,
+        "the zoom crosses many steps ({steps_crossed})"
+    );
+    assert!(
+        (re_emits as usize) < zoom.len() / 3,
+        "{re_emits} re-emits over {} frames",
+        zoom.len()
+    );
 }

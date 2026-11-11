@@ -493,12 +493,15 @@ fn main() {
                         pixel_art,
                     )));
                 }
-                let layer = signpost(ctx.time());
+                // The signpost animates, so it is rebuilt in place each frame.
+                let layer = signpost(ctx.time()).with_pixel_snap(pixel_art);
+                let world = ctx.world_overlays_mut();
+                world.clear();
+                world.push(layer);
                 let mut labels = damage_labels(&damage);
                 labels.push(name_tag(critters[0].position));
+                ctx.overlays_mut().labels.extend(labels);
                 ctx.inject(move |frame| {
-                    frame.scene.world_overlays.push(layer);
-                    frame.overlays.labels.extend(labels);
                     frame.effects.post_process.bloom.enabled = true;
                 });
 

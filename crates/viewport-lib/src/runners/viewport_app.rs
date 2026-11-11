@@ -502,6 +502,7 @@ pub struct FrameCtx<'a> {
     surface_format: crate::gpu::TextureFormat,
     close_requested: bool,
     camera_control: &'a mut CameraControl,
+    world_overlays: &'a mut Vec<crate::WorldOverlayLayer>,
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
     events: Vec<ViewportEvent>,
@@ -691,6 +692,16 @@ impl FrameCtx<'_> {
     /// overlay reset assembly performs. Per-frame: starts empty each callback.
     pub fn overlays_mut(&mut self) -> &mut OverlayFrame {
         &mut self.overlays
+    }
+
+    /// World overlay layers to draw in this window's scene, kept from frame to
+    /// frame: set them once and edit them in place, and clear the list to stop
+    /// drawing them. They are moved into `SceneFrame::world_overlays` for the
+    /// frame and moved back after it, so no layer is cloned. Layers that an
+    /// [`inject`](Self::inject) closure pushes draw after these, for that frame
+    /// only.
+    pub fn world_overlays_mut(&mut self) -> &mut Vec<crate::WorldOverlayLayer> {
+        self.world_overlays
     }
 
     /// Queue a closure to run against the assembled [`FrameData`] before render, for
@@ -1157,6 +1168,8 @@ struct WindowState {
     exposure_follow_up: bool,
     orbit: OrbitCameraController,
     camera_control: CameraControl,
+    /// The host's world overlay layers, between frames.
+    world_overlays: Vec<crate::WorldOverlayLayer>,
     input: Option<WindowInputHandler>,
     callback: WindowCallback,
     paint: Option<WindowPaint>,
@@ -1329,6 +1342,7 @@ impl AppHandler {
                 exposure_follow_up: false,
                 orbit: OrbitCameraController::new_stateless(),
                 camera_control: config.camera_control,
+                world_overlays: Vec::new(),
                 input,
                 callback,
                 paint,
@@ -1482,6 +1496,7 @@ impl AppHandler {
                 surface_format: state.surface_config.format,
                 close_requested: std::mem::take(&mut state.close_requested),
                 camera_control: &mut state.camera_control,
+                world_overlays: &mut state.world_overlays,
                 overlays: OverlayFrame::default(),
                 injects: Vec::new(),
                 events: std::mem::take(&mut state.events),
@@ -1503,12 +1518,16 @@ impl AppHandler {
             commands = raised;
             next_id = advanced;
             do_exit = request_exit;
+            let world_overlays = std::mem::take(&mut state.world_overlays);
+            let host_layers = world_overlays.len();
 
             // With an input handler the app already drove the camera, so assemble
             // without touching it; otherwise move it as the window's camera
             // control says.
             let inject = move |frame: &mut FrameData| {
                 frame.overlays = overlays;
+                let assembled = std::mem::replace(&mut frame.scene.world_overlays, world_overlays);
+                frame.scene.world_overlays.extend(assembled);
                 for inject in injects {
                     inject(frame);
                 }
@@ -1604,6 +1623,13 @@ impl AppHandler {
                     }
                 }
             }
+
+            // The host's layers go back to the window for the next callback,
+            // without the ones injected for this frame alone.
+            let mut layers =
+                std::mem::take(&mut state.session.frame_data_mut().scene.world_overlays);
+            layers.truncate(host_layers);
+            state.world_overlays = layers;
 
             // begin_frame_at rather than begin_frame: the runner already owns a clock,
             // and double tap and long press need one.

@@ -1220,14 +1220,21 @@ impl ViewportRenderer {
     /// nothing changed: a few compares, and the plots it draws from are marked
     /// used this frame.
     ///
+    /// With `stepped` (a group in a world layer, whose scale follows the
+    /// camera's zoom) a change of `ppp` makes the group stale only when it
+    /// moves to another step of the text size ladder, and the group re-emits
+    /// at the `ppp` of that frame.
+    ///
     /// Returns `true` when the group was rebuilt, which is what
-    /// `FrameStats::overlay_retained_reemitted` counts.
+    /// `FrameStats::overlay_retained_reemitted` (or, in a world layer,
+    /// `world_overlay_retained_reemitted`) counts.
     pub(super) fn reemit_overlay_geometry_if_stale(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         id: crate::renderer::OverlayGeometryId,
         ppp: f32,
+        stepped: bool,
     ) -> bool {
         let glyphs = &mut self.resources.content.glyph_atlas;
         let current_coverage = self.resources.content.coverage_atlas.version();
@@ -1236,7 +1243,11 @@ impl ViewportRenderer {
                 Some(src) => {
                     let stale = !glyphs.is_current(&src.baked_glyphs)
                         || src.baked_coverage_version != current_coverage
-                        || src.baked_ppp != ppp;
+                        || if stepped {
+                            ppp_step(src.baked_ppp) != ppp_step(ppp)
+                        } else {
+                            src.baked_ppp != ppp
+                        };
                     if !stale {
                         // Drawn this frame from the cells it baked, so they
                         // must outlive anything laid out after it.
@@ -1314,5 +1325,37 @@ impl ViewportRenderer {
             .overlay_geometry
             .set_bytes(id, total_bytes);
         true
+    }
+}
+
+/// The step of the `48 * 1.04^k` text size ladder `ppp` rounds to, as `k`:
+/// the ladder [`TextSizing::step_px`](crate::renderer::types::TextSizing::step_px)
+/// rounds a size to.
+fn ppp_step(ppp: f32) -> i32 {
+    if !(ppp > 0.0) || !ppp.is_finite() {
+        return i32::MIN;
+    }
+    ((ppp / 48.0).ln() / crate::renderer::types::TextSizing::STEP.ln()).round() as i32
+}
+
+#[cfg(test)]
+mod ppp_step_tests {
+    use super::ppp_step;
+    use crate::renderer::types::TextSizing;
+
+    #[test]
+    fn the_step_is_the_ladder_text_sizes_round_to() {
+        for ppp in [0.5_f32, 1.0, 3.7, 15.0, 48.0, 61.3, 300.0] {
+            let k = ppp_step(ppp);
+            let step = 48.0 * TextSizing::STEP.powi(k);
+            assert!(
+                (step - TextSizing::step_px(ppp)).abs() / step < 1.0e-4,
+                "{ppp}"
+            );
+        }
+        // A smooth zoom crosses steps rarely: about one per four percent.
+        let steps: std::collections::BTreeSet<i32> =
+            (0..100).map(|i| ppp_step(10.0 + i as f32 * 0.003)).collect();
+        assert!(steps.len() <= 2, "{steps:?}");
     }
 }

@@ -113,6 +113,12 @@ impl WorldPlane {
 /// Viewport-anchored items resolve against the rectangle `size`
 /// from `origin`; world-anchored items resolve to the point's place on the
 /// layer and are dropped outside that rectangle.
+///
+/// Retained groups (`OverlayFrame::retained`) bake their glyphs and fringes at
+/// the device pixels one layer unit covers. In a world layer they re-emit only
+/// when that scale moves to another step of the `48 * 1.04^k` ladder
+/// ([`TextSizing::step_px`](crate::overlay::TextSizing::step_px)), not on
+/// every frame of a zoom, and draw scaled from the bake in between.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct WorldOverlayLayer {
@@ -146,6 +152,15 @@ pub struct WorldOverlayLayer {
     /// content. Outside every light range it draws in its place. Default
     /// `false`.
     pub unlit: bool,
+    /// Snap the layer to the device pixel grid: each frame the layer's
+    /// `(0, 0)` is moved across the view by under half a device pixel so it
+    /// lands on a whole device pixel, as a sprite with `pixel_snap` does with
+    /// its position. Items stay in world units, so at a whole number of device
+    /// pixels per unit their edges sit on pixel boundaries and line up with
+    /// snapped sprites and tiles. Applies under an orthographic camera looking
+    /// straight at the plane; otherwise the layer draws unsnapped. CPU picks
+    /// through [`pick`](Self::pick) do not apply the shift. Default `false`.
+    pub pixel_snap: bool,
     /// The items, in world units on the layer.
     pub frame: OverlayFrame,
 }
@@ -161,6 +176,7 @@ impl Default for WorldOverlayLayer {
             depth_test: false,
             mask: crate::render_item::MaskTest::None,
             unlit: false,
+            pixel_snap: false,
             frame: OverlayFrame::default(),
         }
     }
@@ -233,6 +249,13 @@ impl WorldOverlayLayer {
     /// layer's range.
     pub fn with_unlit(mut self, unlit: bool) -> Self {
         self.unlit = unlit;
+        self
+    }
+
+    /// Builder: snap the layer's origin to a whole device pixel under an
+    /// orthographic camera facing the plane.
+    pub fn with_pixel_snap(mut self, pixel_snap: bool) -> Self {
+        self.pixel_snap = pixel_snap;
         self
     }
 

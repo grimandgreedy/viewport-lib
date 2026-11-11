@@ -53,6 +53,38 @@ pub(crate) fn world_layer_view(
     (ppp.is_finite() && ppp > 0.0).then_some(WorldLayerView { layer_to_clip, ppp })
 }
 
+/// `layer_to_clip` moved across the view so the layer's `(0, 0)` lands on a
+/// whole device pixel of a target `device_size` device pixels across, the
+/// shift a pixel-snapped sprite takes. `None` unless the map is an
+/// orthographic view looking straight at the layer: clip w does not vary over
+/// the layer or along its normal, and the normal maps to no clip x or y.
+pub(crate) fn pixel_snapped(
+    layer_to_clip: glam::Mat4,
+    device_size: [f32; 2],
+) -> Option<glam::Mat4> {
+    let r0 = layer_to_clip.row(0);
+    let r1 = layer_to_clip.row(1);
+    let r3 = layer_to_clip.row(3);
+    let tol = 1.0e-5;
+    let scale = r0.truncate().length().max(r1.truncate().length());
+    let orthographic = r3.x.abs() <= tol * r3.w.abs()
+        && r3.y.abs() <= tol * r3.w.abs()
+        && r3.z.abs() <= tol * r3.w.abs();
+    let facing = r0.z.abs() <= tol * scale && r1.z.abs() <= tol * scale;
+    if !(r3.w > 0.0) || !orthographic || !facing {
+        return None;
+    }
+    let anchor = layer_to_clip.w_axis;
+    let size = glam::Vec2::from(device_size);
+    let px = (anchor.truncate().truncate() / anchor.w * 0.5 + 0.5) * size;
+    let shift = (px.round() - px) / size * 2.0;
+    // Clip x and y gain the shift times clip w, as the sprite snap applies it.
+    let mut snap = glam::Mat4::IDENTITY;
+    snap.w_axis.x = shift.x;
+    snap.w_axis.y = shift.y;
+    Some(snap * layer_to_clip)
+}
+
 impl ViewportRenderer {
     /// The pass the world layers draw into on the path `frame` takes: the
     /// painter pass on the HDR path, the scene pass on the LDR path.
@@ -84,6 +116,7 @@ impl ViewportRenderer {
         let mut worlds = std::mem::take(&mut self.viewport_slots[vp_idx].world_overlays);
         worlds.sequence.clear();
         worlds.pass = None;
+        self.last_stats.world_overlay_retained_reemitted = 0;
         let layers = &frame.scene.world_overlays;
         if layers.is_empty() {
             self.viewport_slots[vp_idx].world_overlays = worlds;
@@ -115,7 +148,12 @@ impl ViewportRenderer {
         worlds.layers.truncate(layers.len());
 
         for (i, layer) in layers.iter().enumerate() {
-            let layer_to_clip = view_proj * layer.layer_to_world(world_origin);
+            let mut layer_to_clip = view_proj * layer.layer_to_world(world_origin);
+            if layer.pixel_snap {
+                if let Some(snapped) = pixel_snapped(layer_to_clip, device_size) {
+                    layer_to_clip = snapped;
+                }
+            }
             let Some(view) = world_layer_view(layer_to_clip, device_size) else {
                 continue;
             };
@@ -214,6 +252,10 @@ impl ViewportRenderer {
         worlds.sequence = sequence;
         worlds.pass = Some(pass);
 
+        self.last_stats.world_overlay_retained_reemitted = self
+            .overlay_retained_counters
+            .reemitted
+            .saturating_sub(counters.reemitted);
         self.overlay_retained_counters = counters;
         self.overlay_tess_cache.tessellations = tessellations;
         self.viewport_slots[vp_idx].world_overlays = worlds;
@@ -264,6 +306,55 @@ mod tests {
                 "{units_per_pixel}: {dy_px} px"
             );
         }
+    }
+
+    #[test]
+    fn a_snapped_layer_origin_lands_on_a_whole_device_pixel() {
+        let px = [640.0, 360.0];
+        let layer =
+            crate::renderer::types::WorldOverlayLayer::new(crate::renderer::types::WorldPlane::Xy)
+                .with_origin([1.137, 7.29]);
+        let m = ortho_view_proj(0.25, px) * layer.layer_to_world(glam::DVec3::ZERO);
+        let snapped = pixel_snapped(m, px).unwrap();
+        let to_px = |m: glam::Mat4, p: glam::Vec2| {
+            let c = m * glam::Vec4::new(p.x, p.y, 0.0, 1.0);
+            (glam::Vec2::new(c.x, c.y) / c.w * 0.5 + 0.5) * glam::Vec2::from(px)
+        };
+        let o = to_px(snapped, glam::Vec2::ZERO);
+        assert!((o - o.round()).abs().max_element() < 1.0e-3, "{o:?}");
+        let before = to_px(m, glam::Vec2::ZERO);
+        assert!((o - before).abs().max_element() <= 0.5 + 1.0e-3);
+        // Every layer point moves by the same shift, so the scale is kept.
+        let a = to_px(snapped, glam::Vec2::new(3.0, 2.0)) - o;
+        let b = to_px(m, glam::Vec2::new(3.0, 2.0)) - before;
+        assert!((a - b).abs().max_element() < 1.0e-3);
+        assert_eq!(
+            world_layer_view(snapped, px).unwrap().ppp,
+            world_layer_view(m, px).unwrap().ppp
+        );
+    }
+
+    #[test]
+    fn a_perspective_or_tilted_view_is_not_snapped() {
+        let px = [640.0, 360.0];
+        let layer =
+            crate::renderer::types::WorldOverlayLayer::new(crate::renderer::types::WorldPlane::Xy);
+        let proj = glam::Mat4::perspective_rh(0.8, px[0] / px[1], 0.1, 100.0);
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(0.0, 0.0, 10.0),
+            glam::Vec3::ZERO,
+            glam::Vec3::Y,
+        );
+        let m = proj * view * layer.layer_to_world(glam::DVec3::ZERO);
+        assert!(pixel_snapped(m, px).is_none());
+        let proj = glam::Mat4::orthographic_rh(-8.0, 8.0, -4.5, 4.5, 0.1, 100.0);
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(0.0, -6.0, 8.0),
+            glam::Vec3::ZERO,
+            glam::Vec3::Z,
+        );
+        let m = proj * view * layer.layer_to_world(glam::DVec3::ZERO);
+        assert!(pixel_snapped(m, px).is_none());
     }
 
     #[test]

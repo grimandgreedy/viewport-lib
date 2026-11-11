@@ -2477,8 +2477,15 @@ impl ViewportRenderer {
                         .layer_plan
                         .record_layer(LayerFamily::Retained, item_index);
                     // Re-emit the group first if its baked glyph UVs went stale
-                    // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
-                    if self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp) {
+                    // (atlas grew or pixels_per_point changed, by a ladder step
+                    // in a world layer); cheap no-op otherwise.
+                    if self.reemit_overlay_geometry_if_stale(
+                        device,
+                        queue,
+                        r.id,
+                        ppp,
+                        space.world.is_some(),
+                    ) {
                         self.overlay_retained_counters.reemitted += 1;
                     }
                     // Resolve the group's tracks. Every channel they drive rides
