@@ -1451,26 +1451,19 @@ impl ViewportRenderer {
         // at the four-group limit ignore it and bake the same depth-only view +
         // sampler into a group of their own.
         let resources = &self.resources;
-        let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
+        let slot = &mut self.viewport_slots[ctx.vp_idx];
+        let masks = &slot.painter_masks;
+        let mask_view = masks.bound_view(&resources.painter_mask).clone();
+        let hdr = slot.hdr.as_mut().unwrap();
         let view = sample_view.clone();
-        let depth_bg = hdr.depth_read_bg.get(view.clone(), || {
-            ctx.device
-                .create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("plugin_depth_read_bg"),
-                    layout: &resources.scene_tier.material.depth_read_bgl,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: crate::gpu::BindingResource::TextureView(&view),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: crate::gpu::BindingResource::Sampler(
-                                &resources.scene_tier.material.depth_read_sampler,
-                            ),
-                        },
-                    ],
-                })
+        let depth_bg = hdr.depth_read_bg.get((view.clone(), mask_view), || {
+            masks.depth_read_group(
+                ctx.device,
+                &resources.painter_mask,
+                &resources.scene_tier.material.depth_read_bgl,
+                &resources.scene_tier.material.depth_read_sampler,
+                &view,
+            )
         });
         (sample_view, depth_bg.clone())
     }

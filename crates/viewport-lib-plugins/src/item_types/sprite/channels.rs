@@ -1,7 +1,7 @@
 //! The sprite batch's writable channels.
 //!
 //! Two channels: the positions, which are a vertex stream of their own, and the
-//! per-sprite records, which are one interleaved 64-byte block each. Splitting
+//! per-sprite records, which are one interleaved 80-byte block each. Splitting
 //! them matters because a particle feed usually moves every sprite and recolours
 //! none of them, so the position write is a quarter of the traffic of a full
 //! update. A batch uploaded with effects has a third, its packed effect words,

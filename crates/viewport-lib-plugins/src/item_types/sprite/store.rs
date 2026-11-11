@@ -245,6 +245,9 @@ pub(super) struct SpriteUniformData {
     /// fixed-function blend, [`BLEND_OUT_MULTIPLY`] or [`BLEND_OUT_SCREEN`].
     flags: u32,
     _pad_lit_c: u32,
+    /// The painter mask test word and the batch's painter layer, then
+    /// padding; zero for a batch in depth order.
+    mask: [u32; 4],
 }
 
 /// [`SpriteUniformData::flags`] bit: snap each sprite to whole device pixels.
@@ -253,9 +256,13 @@ const FLAG_PIXEL_SNAP: u32 = 1;
 const BLEND_OUT_MULTIPLY: u32 = 1 << 1;
 /// [`SpriteUniformData::flags`] blend output for `SpriteBlend::Screen`.
 const BLEND_OUT_SCREEN: u32 = 2 << 1;
+/// [`SpriteUniformData::flags`] bit: the blend does not weight the colour by
+/// its alpha (premultiplied and additive), so a mask scales every channel
+/// rather than the alpha alone.
+const FLAG_PREMULTIPLIED: u32 = 1 << 3;
 
 /// The per-sprite record the shader reads, matching `SpriteInstance` in
-/// `sprite_common.wgsl`. 64 bytes each.
+/// `sprite_common.wgsl`. 80 bytes each.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GpuSpriteInstance {
@@ -269,6 +276,60 @@ pub(crate) struct GpuSpriteInstance {
     /// The pivot as an offset from the quad centre in `-1..=1` of the half
     /// size, two snorm16 values (x low, y high). Zero is the centre.
     pivot: u32,
+    /// The batch's draw mode, as [`draw_word`] packs it.
+    draw: [u32; 4],
+}
+
+/// A sprite draw mode as the shaders read it: the mode in bits 0-1 of the
+/// first word (adaptive tiling in bit 2), then the border or tile size as two
+/// pairs of half floats.
+pub(crate) fn draw_word(mode: super::types::SpriteDrawMode) -> [u32; 4] {
+    use super::types::{SpriteDrawMode, TileMode};
+    let pair = |a: f32, b: f32| f16_bits(a) as u32 | ((f16_bits(b) as u32) << 16);
+    match mode {
+        SpriteDrawMode::Simple => [0; 4],
+        SpriteDrawMode::Sliced {
+            border: [l, b, r, t],
+        } => [
+            1,
+            pair(l.max(0.0), b.max(0.0)),
+            pair(r.max(0.0), t.max(0.0)),
+            0,
+        ],
+        SpriteDrawMode::Tiled { tile_size, mode } => [
+            2 | if mode == TileMode::Adaptive { 4 } else { 0 },
+            pair(tile_size[0].max(0.0), tile_size[1].max(0.0)),
+            0,
+            0,
+        ],
+    }
+}
+
+/// `v` as an IEEE half float, rounded to nearest even, saturating to
+/// infinity.
+fn f16_bits(v: f32) -> u16 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let a = v.abs();
+    if a.is_nan() {
+        return sign | 0x7e00;
+    }
+    if a >= 65520.0 {
+        return sign | 0x7c00;
+    }
+    if a < 6.103_515_6e-5 {
+        // Subnormal: a whole number of the smallest half step.
+        return sign | (a / 5.960_464_5e-8).round() as u16;
+    }
+    let abits = a.to_bits();
+    let exp = ((abits >> 23) & 0xff) - 127 + 15;
+    let mant = abits & 0x7f_ffff;
+    let mut h = (exp << 10) | (mant >> 13);
+    let rest = mant & 0x1fff;
+    if rest > 0x1000 || (rest == 0x1000 && h & 1 == 1) {
+        h += 1;
+    }
+    sign | h as u16
 }
 
 impl GpuSpriteInstance {
@@ -282,6 +343,7 @@ impl GpuSpriteInstance {
         flip: super::types::SpriteFlip,
         velocity: [f32; 3],
         pivot: [f32; 2],
+        draw: [u32; 4],
     ) -> Self {
         Self {
             colour,
@@ -291,6 +353,7 @@ impl GpuSpriteInstance {
             uv_rect: flip.apply(uv_rect),
             velocity,
             pivot: pack_pivot(pivot),
+            draw,
         }
     }
 }
@@ -322,6 +385,8 @@ pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
             s.flip,
             s.velocity,
             s.pivot,
+            // The batch's own mode goes in when the write lands.
+            [0; 4],
         );
         bytes.extend_from_slice(bytemuck::bytes_of(&record));
     }
@@ -395,6 +460,7 @@ pub(super) fn build_sprite(
         }
 
         // The records in the caller's order, then in drawn order.
+        let draw_mode = draw_word(item.draw_mode);
         let records: Vec<GpuSpriteInstance> = (0..item.positions.len())
             .map(|i| {
                 GpuSpriteInstance::new(
@@ -412,6 +478,7 @@ pub(super) fn build_sprite(
                     item.flips.get(i).copied().unwrap_or_default(),
                     item.velocities.get(i).copied().unwrap_or([0.0; 3]),
                     item.pivots.get(i).copied().unwrap_or(item.default_pivot),
+                    draw_mode,
                 )
             })
             .collect();
@@ -471,9 +538,15 @@ pub(super) fn build_sprite(
                 | match item.blend {
                     viewport_lib::renderer::SpriteBlend::Multiply => BLEND_OUT_MULTIPLY,
                     viewport_lib::renderer::SpriteBlend::Screen => BLEND_OUT_SCREEN,
+                    viewport_lib::renderer::SpriteBlend::Premultiplied
+                    | viewport_lib::renderer::SpriteBlend::Additive => FLAG_PREMULTIPLIED,
                     _ => 0,
                 },
             _pad_lit_c: 0,
+            mask: match painter {
+                Some(p) => [item.mask.word(), p.layer, 0, 0],
+                None => [0; 4],
+            },
         };
         let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some("sprite_uniform_buf"),
@@ -642,6 +715,7 @@ pub(super) fn build_sprite(
             model: item.model,
             origin: glam::DVec3::ZERO,
             copy,
+            draw_word: draw_mode,
             uploaded_bytes,
         }
     }
@@ -668,6 +742,9 @@ pub(crate) struct StoredSprite {
     origin: glam::DVec3,
     /// The caller-ordered copy, on a painter set and an instance set.
     copy: Option<SpriteCopy>,
+    /// The batch's draw mode word, written into every record a ranged write
+    /// supplies.
+    draw_word: [u32; 4],
     /// Instance bytes written to the GPU since the frame last took them.
     uploaded_bytes: u64,
 }
@@ -846,7 +923,10 @@ impl StoredSprite {
                 self.positions.write_range(queue, first_element, data)?;
                 self.draw.sprite_count = self.positions.len();
             }
-            SpriteChannel::Sprites => self.sprites.write_range(queue, first_element, data)?,
+            SpriteChannel::Sprites => {
+                let records = self.with_draw_word(data);
+                self.sprites.write_range(queue, first_element, &records)?
+            }
             SpriteChannel::Effects => self
                 .fx_stream
                 .as_mut()
@@ -858,6 +938,17 @@ impl StoredSprite {
         }
         self.uploaded_bytes += data.len() as u64;
         Ok(())
+    }
+
+    /// `data`, whole sprite records, with the batch's draw mode in each.
+    fn with_draw_word(&self, data: &[u8]) -> Vec<u8> {
+        let mut out = data.to_vec();
+        let at = std::mem::offset_of!(GpuSpriteInstance, draw);
+        let word: &[u8] = bytemuck::cast_slice(&self.draw_word);
+        for record in out.chunks_exact_mut(SPRITE_STRIDE as usize) {
+            record[at..at + word.len()].copy_from_slice(word);
+        }
+        out
     }
 
     /// [`write_channel`](Self::write_channel) into the copy.
@@ -910,7 +1001,10 @@ impl StoredSprite {
                 mark(&mut copy.dirty.positions, range);
             }
             SpriteChannel::Sprites => {
-                let values: Vec<GpuSpriteInstance> = bytemuck::pod_collect_to_vec(data);
+                let mut values: Vec<GpuSpriteInstance> = bytemuck::pod_collect_to_vec(data);
+                for v in &mut values {
+                    v.draw = self.draw_word;
+                }
                 put(
                     &mut copy.records,
                     first,
@@ -1371,6 +1465,11 @@ pub(crate) struct PainterOrder {
 }
 
 impl SpriteGpuData {
+    /// Whether the batch's sizes are screen-space points.
+    pub(crate) fn screen_sized(&self) -> bool {
+        self.uniform.world_space == 0
+    }
+
     /// The drawn index of the caller's sprite `index`.
     pub(crate) fn drawn_index(&self, index: u32) -> Option<u32> {
         match &self.instance_order {

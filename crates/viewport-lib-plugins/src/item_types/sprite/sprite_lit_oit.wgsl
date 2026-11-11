@@ -26,6 +26,11 @@ struct Camera {
     exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
+    proj:          mat4x4<f32>,
+    inv_proj:      mat4x4<f32>,
+    viewport:      vec4<f32>,
+    // Near, far, orthographic, and the target's pixels per point.
+    clip:          vec4<f32>,
 };
 
 struct ClipPlanes {
@@ -94,15 +99,18 @@ struct VertexOut {
     @location(4)       tangent_world:  vec3<f32>,
     @location(5)       bitangent_world:vec3<f32>,
     @location(6)       facing_world:   vec3<f32>,
+    @location(7)       draw_local:     vec2<f32>,
+    @location(8) @interpolate(flat) draw_size: vec2<f32>,
+    @location(9) @interpolate(flat) draw_rect: vec4<f32>,
+    @location(10) @interpolate(flat) draw_word: vec4<u32>,
 };
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
     let inst = instance_buf[in.instance_index];
-
-    let world_pos = (sprite_ub.model * vec4<f32>(in.position, 1.0)).xyz;
-    let corner    = quad_corner(in.vertex_index);
+    let corner = quad_corner(in.vertex_index);
+    let placed = sprite_corner(in.position, corner, inst);
 
     let c = cos(inst.rotation);
     let s = sin(inst.rotation);
@@ -110,88 +118,26 @@ fn vs_main(in: VertexIn) -> VertexOut {
         c * corner.x - s * corner.y,
         s * corner.x + c * corner.y,
     );
-    let offset = sprite_offset(corner, inst);
 
-    let cam_right_default = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
-    let cam_up_default    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
-    let cam_forward       = vec3<f32>(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
-
-    var local_right = cam_right_default;
-    var local_up    = cam_up_default;
-    var stretch_x   = 1.0;
-
-    if sprite_ub.orientation == 1u {
-        let v = inst.velocity;
-        let speed = length(v);
-        if speed > 1e-4 {
-            let v_screen = v - cam_forward * dot(v, cam_forward);
-            let s_len    = length(v_screen);
-            if s_len > 1e-4 {
-                local_right = v_screen / s_len;
-                local_up    = normalize(cross(cam_forward, local_right));
-                stretch_x   = 1.0 + speed * 0.25;
-            }
-        }
-    } else if sprite_ub.orientation == 2u {
-        let axis = normalize(sprite_ub.axis);
-        local_up = axis;
-        let right = cross(axis, cam_forward);
-        let r_len = length(right);
-        if r_len > 1e-4 {
-            local_right = right / r_len;
-        } else {
-            local_right = cam_right_default;
-        }
-    }
-
-    var quad_world_pos = world_pos;
+    out.clip_pos = placed.clip;
     if sprite_ub.world_space != 0u {
-        quad_world_pos = world_pos
-                       + local_right * (offset.x * stretch_x)
-                       + local_up    * offset.y;
-        out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
+        out.world_pos = placed.world;
     } else {
-        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let inv_vp  = vec2<f32>(1.0, 1.0)
-                    / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        if sprite_ub.orientation == 0u {
-            let ndc_off = offset * inv_vp;
-            out.clip_pos = vec4<f32>(
-                centre.x + ndc_off.x * centre.w,
-                centre.y + ndc_off.y * centre.w,
-                centre.z,
-                centre.w,
-            );
-        } else {
-            let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
-            let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
-            let offset_clip = right_clip * (offset.x * stretch_x * inv_vp.x)
-                            + up_clip    * (offset.y * inv_vp.y);
-            out.clip_pos = centre + offset_clip * centre.w;
-        }
-        quad_world_pos = world_pos
-                       + local_right * (rotated.x * stretch_x)
-                       + local_up    *  rotated.y;
+        out.world_pos = placed.anchor
+                      + placed.right * (rotated.x * placed.stretch)
+                      + placed.up    *  rotated.y;
     }
+    out.colour = inst.colour;
+    out.local_offset  = vec2<f32>(rotated.x * placed.stretch, rotated.y);
+    out.tangent_world   = placed.right;
+    out.bitangent_world = placed.up;
+    out.facing_world    = -placed.forward;
 
-    if (sprite_ub.flags & 1u) != 0u {
-        out.clip_pos = sprite_pixel_snap(
-            out.clip_pos,
-            camera.view_proj * vec4<f32>(world_pos, 1.0),
-            vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height),
-        );
-    }
-
-    out.world_pos = quad_world_pos;
-    out.colour     = inst.colour;
-    out.local_offset  = vec2<f32>(rotated.x * stretch_x, rotated.y);
-    out.tangent_world   = local_right;
-    out.bitangent_world = local_up;
-    out.facing_world    = -cam_forward;
-
-    let u  = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
-    let v  = mix(inst.uv_rect.y, inst.uv_rect.w, (corner.y + 1.0) * 0.5);
-    out.uv = vec2<f32>(u, v);
+    out.uv = sprite_corner_uv(corner, inst);
+    out.draw_local = (corner + 1.0) * 0.5;
+    out.draw_size = inst.size;
+    out.draw_rect = inst.uv_rect;
+    out.draw_word = inst.draw;
 
     return out;
 }
@@ -236,10 +182,19 @@ fn pack_oit(rgb: vec3<f32>, alpha: f32, view_z: f32, is_premultiplied: bool) -> 
     return out;
 }
 
-fn resolve_colour(in: VertexOut) -> vec4<f32> {
+fn resolve_colour(input: VertexOut) -> vec4<f32> {
+    // The draw mode's sample position, and the derivatives of its unwrapped
+    // form, taken here while control flow is uniform.
+    var in = input;
+    let texels = select(vec2<f32>(0.0), vec2<f32>(textureDimensions(sprite_texture)), sprite_ub.has_texture != 0u);
+    let drawn = sprite_draw_uv(in.uv, in.draw_local, in.draw_size, in.draw_rect, in.draw_word, texels);
+    in.uv = drawn.uv;
+    let uv_ddx = dpdx(drawn.continuous);
+    let uv_ddy = dpdy(drawn.continuous);
+
     var colour = in.colour;
     if sprite_ub.has_texture != 0u {
-        colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
+        colour = colour * textureSampleGrad(sprite_texture, sprite_sampler, in.uv, uv_ddx, uv_ddy);
     }
 
     if sprite_ub.lit != 0u {

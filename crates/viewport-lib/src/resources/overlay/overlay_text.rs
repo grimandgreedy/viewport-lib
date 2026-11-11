@@ -75,7 +75,8 @@ impl crate::resources::DeviceResources {
                     // shader maps local-pixel positions to NDC with it.
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 3,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,

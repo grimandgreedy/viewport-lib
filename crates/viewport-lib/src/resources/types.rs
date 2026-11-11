@@ -186,7 +186,8 @@ pub struct CameraUniform {
     /// Viewport size in physical pixels: width, height, 1 / width, 1 / height.
     pub viewport: [f32; 4],
     /// Near plane, far plane, 1 for an orthographic projection (0 for
-    /// perspective), and a reserved zero.
+    /// perspective), and the device pixels per point of the target the scene
+    /// draws into (0 for a camera uniform no viewport wrote).
     pub clip: [f32; 4],
     /// Frame time: seconds as f32, the remainder f32 drops from the f64
     /// seconds, delta seconds, and the frame index modulo 2^24.

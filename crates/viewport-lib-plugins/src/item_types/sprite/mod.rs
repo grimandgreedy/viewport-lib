@@ -40,14 +40,18 @@
 mod types;
 
 pub use types::{
-    PaletteIndex, SpriteEffects, SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem,
-    SpriteItem, SpriteLitParams, SpriteMaterial, SpriteMaterialId, SpriteNormalMode, SpriteOrder,
-    SpriteOrientation, SpriteOutline, SpriteOverrides, SpritePalette, SpriteSetId,
-    SpriteSetRefItem, SpriteSizeMode,
+    MaskSource, PaletteIndex, SpriteDrawMode, SpriteEffects, SpriteFlip, SpriteInstanceSetId,
+    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteMaskItem, SpriteMaterial,
+    SpriteMaterialId, SpriteNormalMode, SpriteOrder, SpriteOrientation, SpriteOutline,
+    SpriteOverrides, SpritePalette, SpriteSetId, SpriteSetRefItem, SpriteSizeMode, TileMode,
 };
+pub use viewport_lib_types::render_item::MaskTest;
 
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.sprite";
+
+/// Stable name [`SpriteMaskItem`]s submit and register under.
+pub const MASK_TYPE_NAME: &str = "vpl.sprite_mask";
 
 /// The structs and helpers every sprite shader shares, spliced in front of
 /// each body.
@@ -59,6 +63,8 @@ pub mod channels;
 #[cfg(feature = "gpu")]
 mod effects;
 #[cfg(feature = "gpu")]
+mod mask;
+#[cfg(feature = "gpu")]
 mod pipeline;
 #[cfg(feature = "gpu")]
 mod plugin;
@@ -67,6 +73,10 @@ mod store;
 #[cfg(feature = "gpu")]
 mod uploads;
 
+#[cfg(feature = "gpu")]
+pub(crate) use effects::{TileMaterialEntry, compose_tile, material_lanes, validate_tile_material};
+#[cfg(feature = "gpu")]
+pub use mask::SpriteMaskPlugin;
 #[cfg(feature = "gpu")]
 pub use plugin::SpritePlugin;
 #[cfg(feature = "gpu")]

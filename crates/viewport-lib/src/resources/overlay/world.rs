@@ -20,12 +20,51 @@ const WORLD_VIEWPORT_WGSL: &str = "\
 struct WorldViewport {
     size:          vec2<f32>,
     ppp:           f32,
-    pad:           f32,
+    // The layer's painter mask test (`MaskTest::word`).
+    mask:          u32,
     layer_to_clip: mat4x4<f32>,
     target_px:     vec2<f32>,
-    pad2:          vec2<f32>,
+    // The layer's painter order, the layer the mask test compares.
+    order:         u32,
+    pad2:          f32,
 };
 ";
+
+/// The fragment wrapper a masked world variant ends with: the screen
+/// shader's `shade`, cut by the layer's painter mask test, at the target's
+/// place under the fragment.
+const WORLD_MASK_WGSL: &str = "
+@group(2) @binding(0) var painter_mask_tex: texture_2d<f32>;
+@group(2) @binding(1) var<uniform> painter_masks: PainterMasks;
+
+fn shade(in: VertexOutput) -> vec4<f32> {
+    let c = shade_unmasked(in);
+    let dims = textureDimensions(painter_mask_tex);
+    let p = vec2<i32>(floor(in.clip_position.xy / viewport.target_px * vec2<f32>(dims)));
+    let texel = textureLoad(
+        painter_mask_tex,
+        clamp(p, vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1)),
+        0,
+    );
+    let keep = painter_mask_keep(texel, painter_masks, viewport.mask, viewport.order);
+    return vec4<f32>(c.rgb, c.a * keep);
+}
+";
+
+/// [`world_variant`] cut by the layer's painter mask: the screen `shade`
+/// renamed and wrapped, with the mask bindings at group 2.
+pub(crate) fn world_masked_variant(src: &str) -> Result<String, MissingLine> {
+    let mut s = world_variant(src)?;
+    let shade = "fn shade(in: VertexOutput) -> vec4<f32> {";
+    if !s.contains(shade) {
+        return Err(MissingLine(shade));
+    }
+    s = s.replace(shade, "fn shade_unmasked(in: VertexOutput) -> vec4<f32> {");
+    s.push('\n');
+    s.push_str(crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL);
+    s.push_str(WORLD_MASK_WGSL);
+    Ok(s)
+}
 
 /// Bytes of the world viewport uniform.
 pub(crate) const WORLD_VIEWPORT_BYTES: u64 = 96;
@@ -124,6 +163,9 @@ pub(crate) struct OverlayWorldResources {
     pub(crate) text_shader: Option<crate::gpu::ShaderModule>,
     backdrop_shader: Option<crate::gpu::ShaderModule>,
     backdrop_layout: Option<crate::gpu::PipelineLayout>,
+    /// The screen shape and text layouts with the painter masks at group 2.
+    shape_layout: Option<crate::gpu::PipelineLayout>,
+    text_layout: Option<crate::gpu::PipelineLayout>,
     pipelines: Vec<(
         (WorldPassKey, WorldPipe, crate::renderer::OverlayBlend),
         crate::gpu::RenderPipeline,
@@ -177,8 +219,22 @@ impl crate::resources::DeviceResources {
             match pipe {
                 WorldPipe::Shape => {
                     self.ensure_overlay_shape_pipeline(device);
+                    let fill = self.overlay_fill_bgl(device).clone();
+                    let layout = match (
+                        &self.overlay_world.shape_layout,
+                        &self.overlay_shape.shadow_bgl,
+                    ) {
+                        (Some(l), _) => Some(l.clone()),
+                        (None, Some(shadow)) => Some(crate::resources::builders::pipeline_layout(
+                            device,
+                            "overlay_world_shape_layout",
+                            &[shadow, &fill, &self.painter_mask.bgl],
+                        )),
+                        _ => None,
+                    };
+                    self.overlay_world.shape_layout = layout.clone();
                     (
-                        self.overlay_shape.layout.clone(),
+                        layout,
                         "overlay_world_shape_pipeline",
                         vec![crate::resources::OverlayShapeInstance::buffer_layout()],
                     )
@@ -186,8 +242,19 @@ impl crate::resources::DeviceResources {
                 WorldPipe::Backdrop => unreachable!("built above"),
                 WorldPipe::Text => {
                     self.ensure_overlay_text_pipeline(device);
+                    let fill = self.overlay_fill_bgl(device).clone();
+                    let layout = match (&self.overlay_world.text_layout, &self.overlay_text.bgl) {
+                        (Some(l), _) => Some(l.clone()),
+                        (None, Some(bgl)) => Some(crate::resources::builders::pipeline_layout(
+                            device,
+                            "overlay_world_text_layout",
+                            &[bgl, &fill, &self.painter_mask.bgl],
+                        )),
+                        _ => None,
+                    };
+                    self.overlay_world.text_layout = layout.clone();
                     (
-                        self.overlay_text.layout.clone(),
+                        layout,
                         "overlay_world_text_pipeline",
                         vec![
                             crate::resources::OverlayTextVertex::buffer_layout(),
@@ -213,7 +280,7 @@ impl crate::resources::DeviceResources {
                     _ => "overlay_text",
                 };
                 let src = self.overlay_fill_shader_source(name);
-                let world = match world_variant(&src) {
+                let world = match world_masked_variant(&src) {
                     Ok(world) => world,
                     Err(MissingLine(line)) => {
                         tracing::warn!("{name}: no world variant, missing `{line}`");
@@ -407,6 +474,23 @@ mod tests {
             )
             .validate(&module)
             .unwrap_or_else(|e| panic!("{name} world variant: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn the_masked_world_variants_are_made_and_validate() {
+        for (name, src) in sources() {
+            let world =
+                world_masked_variant(src).unwrap_or_else(|e| panic!("{name}: no line {:?}", e.0));
+            assert!(world.contains("fn shade_unmasked("), "{name}");
+            let module = naga::front::wgsl::parse_str(&world)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&world)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{name} masked world variant: {e:?}"));
         }
     }
 

@@ -8,4 +8,4 @@ mod blend;
 mod painter;
 
 pub use blend::SpriteBlend;
-pub use painter::{PAINTER_MEMBERS, PainterPlacement, painter_key};
+pub use painter::{MaskTest, PAINTER_MASK_SLOTS, PAINTER_MEMBERS, PainterPlacement, painter_key};

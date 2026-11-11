@@ -230,7 +230,7 @@ fn a_positions_write_moves_only_the_positions_bytes() {
     harness.render(&f, W, H);
     let resort = upload_bytes(&harness);
     assert!(
-        resort > 100 * 12 && resort <= 100 * (12 + 64),
+        resort > 100 * 12 && resort <= 100 * (12 + 80),
         "a re-sort writes positions and moved records once: {resort}"
     );
     harness.render(&f, W, H);

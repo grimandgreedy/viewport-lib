@@ -35,9 +35,14 @@ struct LayerUniform {
     alpha_threshold: f32,
     flags:           u32,        // bit 0 pixel snap
     pick_id:         u32,
-    _pad:            u32,
+    // The painter mask test (`MaskTest::word`), read by a blended layer.
+    mask:            u32,
+    // x: the blended layer's painter layer.
+    painter_layer:   vec4<u32>,
     // The tile each animation slot shows this frame, four slots per entry.
     anim:            array<vec4<u32>, 64>,
+    // A tile material's parameter lanes; lane 0 is reserved.
+    lanes:           array<vec4<f32>, 8>,
 };
 
 @group(1) @binding(0) var<uniform> tileset:       TilesetUniform;
@@ -62,6 +67,8 @@ struct TileOut {
     @location(2) @interpolate(flat) tint:      vec4<f32>,
     @location(3)                    world_pos: vec3<f32>,
     @location(4) @interpolate(flat) cell:      u32,
+    // The clip position again, for the fragment's place on the painter mask.
+    @location(5)                    mask_clip: vec4<f32>,
 };
 
 // Corner of the unit cell, 0..1 with y up the plane (two CCW triangles).
@@ -109,7 +116,8 @@ fn tile_vertex(in: TileIn) -> TileOut {
 
     // Parallax: the layer follows `follow` of the camera across the plane.
     let shift = layer.translation + tile_eye_on_plane() * layer.follow;
-    let world = tile_world((cell + corner) * layer.cell_size + shift);
+    var world = tile_world((cell + corner) * layer.cell_size + shift);
+    // <tile-hook:vertex>
     var clip = camera.view_proj * vec4<f32>(world, 1.0);
     if (layer.flags & 1u) != 0u {
         // The whole layer moves by one shift, so neighbouring tiles stay
@@ -145,6 +153,7 @@ fn tile_vertex(in: TileIn) -> TileOut {
     }
 
     out.clip_pos = clip;
+    out.mask_clip = clip;
     out.texel = origin + q * tileset.tile_size;
     out.rect = vec4<f32>(origin, origin + tileset.tile_size);
     out.tint = in.tint * layer.tint;

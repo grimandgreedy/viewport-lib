@@ -345,8 +345,8 @@ pub use renderer::{
     obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitFilter, BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use renderer::{MaskTest, PAINTER_MASK_SLOTS, PAINTER_MEMBERS, PainterPlacement, painter_key};
 pub use renderer::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
-pub use renderer::{PAINTER_MEMBERS, PainterPlacement, painter_key};
 pub use resources::PipelineCompilation;
 
 pub use runners::{

@@ -4,6 +4,8 @@
 
 ### Breaking
 
+- **Screen-space sprite sizes are points** - a `SpriteSizeMode::ScreenSpace` sprite of size `s` now covers `s` points (`s` times the pixels per point in device pixels) instead of half of `s` device pixels. Halve a size that was doubled to compensate.
+- **Depth-read bind group carries the painter masks** - `depth_read_bind_group_layout` gains bindings 2 (the painter mask texture) and 3 (its uniform), so a bind group a plugin builds against it supplies them; the ready-made `DepthReadContext::scene_depth_bind_group` already does.
 - **Item-type plugin queries name the viewport** - `ItemTypePlugin::draws_transparent`, `draws_depth_read`, `draws_painter` and `painter_batches` take the `viewport_index` they answer for. Add the parameter to overrides; a plugin whose frame state is the same in every viewport can ignore it.
 - **`ViewportApp` setup callbacks take a `SetupCtx`** - `window`, `window_with_input`, `window_with_paint` and `FrameCtx::open_window` take `FnMut(&mut SetupCtx)` instead of `FnMut(&mut ViewportInstance, &Device)`. `SetupCtx` derefs to the window's `ViewportInstance` and has `device()`, `queue()` and `device_rebuilt()`, so a setup callback can attach a runtime and install features.
 - **`ViewportApp` steps the runtime before the frame callback** - the callback reads this frame's output from `FrameCtx::runtime_output_mut`, and scene edits it makes reach the runtime on the next frame instead of the current one.
@@ -29,6 +31,11 @@
 
 ### Features
 
+- **Painter masks** - `SpriteMaskItem` draws a sprite's alpha above a threshold or an overlay shape fitted to its quads into one of four mask slots for a range of painter layers, and painter sprites (`SpriteItem::mask`), blended tile layers (`TilemapItem::mask`) and world overlay layers (`WorldOverlayLayer::mask`) with `MaskTest::VisibleInside` or `VisibleOutside` show only inside or outside it. Masks draw on every tier.
+- **Painter masks in the plugin API** - `ItemTypePlugin::painter_masks` and `paint_painter_masks` let an item type draw masks, `PainterContext::mask_bind_group` and `depth_read_bind_group` hand painter content the frame's masks, and `SHARED_PAINTER_MASK_WGSL` tests them.
+- **Sliced and tiled sprites** - `SpriteItem::draw_mode` takes `SpriteDrawMode::Sliced { border }` (nine-slice, borders kept at texel size) or `SpriteDrawMode::Tiled { tile_size, mode }` with `TileMode::Continuous` or `Adaptive`, evaluated per fragment so resizing costs nothing.
+- **Sprite and tile vertex hooks** - a sprite material may define `fn displace_sprite(v: SpriteVertex) -> vec3<f32>` beside or instead of `shade_sprite` to move each corner of its quads; picks and selection outlines follow the moved quad. `TileMaterials::register_tile_material` registers the same hook for tilemap layers through `TilemapItem::material`.
+- **`NoticeDetail::PainterSpriteScreenSized`** - raised once per frame when sprites in painter's order have a screen-space size. Plugins report typed notices with `ItemFrameContext::report_detail`.
 - **`painter_key` and `PainterPlacement`** - `painter_key(layer, sort, member)` composes a layer, a sort value such as `-y` and a member index into a `PainterPlacement { layer, key }`, so the parts of one entity share a sort value and stack by member index. The sort value keeps 18 significant bits and up to `PAINTER_MEMBERS` (64) members stay distinct.
 - **Meshes and particles in the painter sequence** - `MeshInstanceItem::painter`, `SceneRenderItem::painter` and `GpuParticleSystemItem::painter` place a mesh batch, a surface (flat or GPU-skinned) or a particle system in the painter sequence among sprites and tile layers, drawn blended with depth read-only and picked in that order. A painter surface leaves the opaque, transparent and shadow passes and draws whole with its single material's built-in shading.
 - **`SpriteItem::pick_alpha_threshold`** - a GPU pick discards sprite fragments whose alpha is below the threshold, so a pick on a transparent texel misses the sprite.

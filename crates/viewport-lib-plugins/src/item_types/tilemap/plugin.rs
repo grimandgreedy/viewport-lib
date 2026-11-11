@@ -18,7 +18,13 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     vec![
         (
             "tilemap.wgsl",
-            scene_shader(&[super::TILEMAP_COMMON], wgsl_source!("tilemap")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::TILEMAP_COMMON,
+                ],
+                wgsl_source!("tilemap"),
+            ),
         ),
         (
             "tilemap_pick.wgsl",
@@ -38,6 +44,8 @@ impl PluginItem for TilemapItem {
 /// One layer drawn this frame.
 struct FrameLayer {
     item: TilemapItem,
+    /// The tile material index whose pipelines it draws through.
+    family: Option<usize>,
     /// Dynamic offset of the layer's uniform.
     offset: u32,
     /// Chunks that draw: occupied and, after the cull, in view.
@@ -90,9 +98,37 @@ pub struct TilemapPlugin {
     last_viewport: usize,
     drawn_chunks: u32,
     upload_bytes: u64,
+    /// Registered tile materials, by [`TileMaterialId`] index.
+    materials: Vec<crate::item_types::sprite::TileMaterialEntry>,
 }
 
 impl TilemapPlugin {
+    /// Register a tile material: validate its vertex hook against the
+    /// tilemap shaders and keep it for the layers that name it.
+    pub(crate) fn register_material(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        plugin: &dyn viewport_lib::MaterialPlugin,
+    ) -> viewport_lib::error::ViewportResult<TileMaterialId> {
+        let (colour, pick) = pipeline::tile_sources();
+        let entry = crate::item_types::sprite::validate_tile_material(
+            device,
+            &self.materials,
+            plugin,
+            &[("colour", colour), ("pick", pick)],
+        )?;
+        self.materials.push(entry);
+        Ok(TileMaterialId(self.materials.len() as u32 - 1))
+    }
+
+    /// The tile material registered as `name`.
+    pub(crate) fn material_id(&self, name: &str) -> Option<TileMaterialId> {
+        self.materials
+            .iter()
+            .position(|m| m.name == name)
+            .map(|i| TileMaterialId(i as u32))
+    }
+
     fn layouts(&mut self, device: &viewport_lib::gpu::Device) -> &TilemapLayouts {
         self.layouts
             .get_or_insert_with(|| TilemapLayouts::new(device))
@@ -300,13 +336,13 @@ impl TilemapPlugin {
                 continue;
             };
             let m = member(layer);
-            if bound != Some(m) {
+            if bound != Some((layer.family, m)) {
                 // Still compiling: this layer draws next frame.
-                let Some(pl) = gpu.pipelines.get(m) else {
+                let Some(pl) = gpu.set(layer.family).and_then(|set| set.get(m)) else {
                     continue;
                 };
                 pass.set_pipeline(pl);
-                bound = Some(m);
+                bound = Some((layer.family, m));
             }
             pass.set_bind_group(1, &stored.bind_group, &[]);
             pass.set_bind_group(2, layer_bg, &[layer.offset]);
@@ -393,7 +429,15 @@ impl ItemTypePlugin for TilemapPlugin {
                 continue;
             };
             let offset = uniforms.len() as u32;
-            let data = layer_uniform(item, stored, origin, ctx.time.seconds);
+            let mut data = layer_uniform(item, stored, origin, ctx.time.seconds);
+            let family = item
+                .material
+                .as_ref()
+                .and_then(|m| self.materials.get(m.id.0 as usize).map(|e| (m, e)));
+            if let Some((m, entry)) = family {
+                data.lanes = crate::item_types::sprite::material_lanes(&entry.params, &m.params);
+            }
+            let family = family.map(|(m, _)| m.id.0 as usize);
             uniforms.extend_from_slice(bytemuck::bytes_of(&data));
             uniforms.resize(offset as usize + LAYER_STRIDE as usize, 0);
             let visible = (0..stored.chunks.len() as u32)
@@ -401,6 +445,7 @@ impl ItemTypePlugin for TilemapPlugin {
                 .collect();
             view.frame.push(FrameLayer {
                 item: item.clone(),
+                family,
                 offset,
                 visible,
             });
@@ -414,7 +459,8 @@ impl ItemTypePlugin for TilemapPlugin {
             .layouts
             .get_or_insert_with(|| TilemapLayouts::new(device));
         self.gpu
-            .get_or_insert_with(|| pipeline::TilemapGpu::new(device, ctx.resources, layouts));
+            .get_or_insert_with(|| pipeline::TilemapGpu::new(device, ctx.resources, layouts))
+            .ensure_families(device, ctx.resources, layouts, &self.materials);
         let needed = uniforms.len() as u64;
         if view.layer_buf.as_ref().is_none_or(|b| b.size() < needed) {
             let size = needed.next_power_of_two().max(LAYER_STRIDE * 4);
@@ -555,6 +601,7 @@ impl ItemTypePlugin for TilemapPlugin {
             None => Box::new(view.painter_sequence.iter().copied().filter(in_range)),
         };
 
+        pass.set_bind_group(3, ctx.mask_bind_group, &[]);
         if ctx.is_hdr_pass() {
             self.draw_layers(view, pass, layers, |l| match l.painter() {
                 Some((_, false)) => pipeline::BLEND_OFF_DEPTH_READ,

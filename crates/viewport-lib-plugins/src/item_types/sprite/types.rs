@@ -2,7 +2,7 @@ use viewport_lib_types::colour::Colour;
 use viewport_lib_types::ids::TextureId;
 use viewport_lib_types::material::{ItemSettings, TextureFilter};
 use viewport_lib_types::plugin::material::ParamValue;
-use viewport_lib_types::render_item::SpriteBlend;
+use viewport_lib_types::render_item::{MaskTest, SpriteBlend};
 
 viewport_lib_types::slot_handle! {
     /// Handle to a sprite batch uploaded once through
@@ -18,14 +18,59 @@ viewport_lib_types::slot_handle! {
     pub struct SpriteInstanceSetId;
 }
 
-/// Controls whether sprite sizes are measured in screen-space pixels or world-space units.
+/// Controls whether sprite sizes are measured in screen-space points or world-space units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpriteSizeMode {
-    /// Sizes in screen-space pixels. Sprites maintain constant apparent size at all distances.
+    /// Sizes in points (device-independent pixels): a sprite of size `s`
+    /// covers `s` points, `s * pixels_per_point` device pixels, at every
+    /// distance and zoom. The default, for markers and particles in a 3D view.
+    /// A sprite in painter's order with this size raises
+    /// `NoticeDetail::PainterSpriteScreenSized`, since a 2D scene wants
+    /// world sizes.
     #[default]
     ScreenSpace,
     /// Sizes in world-space units. Sprites shrink with distance like regular geometry.
     WorldSpace,
+}
+
+/// How a sprite's image fills its quad.
+///
+/// Evaluated per fragment against the sprite's UV rect and size, so resizing
+/// a sliced or tiled sprite costs nothing on the CPU. Flips, pivots, the
+/// texture filter, effects and masks all apply after it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum SpriteDrawMode {
+    /// The UV rect stretched across the quad. The default.
+    #[default]
+    Simple,
+    /// Nine-slice: the borders keep their size and the centre stretches.
+    Sliced {
+        /// Border widths `[left, bottom, right, top]` in texels of the
+        /// texture (in size units for an untextured sprite). A border draws
+        /// one texel per unit of the sprite's size, so a sprite drawn at its
+        /// texel size shows the image unchanged; a quad too small for two
+        /// opposite borders shrinks them in proportion.
+        border: [f32; 4],
+    },
+    /// The UV rect repeated across the quad.
+    Tiled {
+        /// One tile's size in the sprite's size units.
+        tile_size: [f32; 2],
+        /// What happens where the quad is not a whole number of tiles.
+        mode: TileMode,
+    },
+}
+
+/// How a [`SpriteDrawMode::Tiled`] sprite fills a quad that is not a whole
+/// number of tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TileMode {
+    /// Tiles keep their size and the last one is cut off. The default.
+    #[default]
+    Continuous,
+    /// The nearest whole number of tiles (at least one) is drawn, each
+    /// stretched to fill the quad.
+    Adaptive,
 }
 
 /// A batch of instanced billboard sprites rendered as camera-facing textured quads.
@@ -192,6 +237,13 @@ pub struct SpriteItem {
     /// so a pick on a transparent part of a cut-out sprite misses it and finds
     /// what is underneath. `None` (the default) picks the whole quad.
     pub pick_alpha_threshold: Option<f32>,
+    /// How the image fills each quad: stretched, nine-sliced or tiled.
+    /// Default [`SpriteDrawMode::Simple`].
+    pub draw_mode: SpriteDrawMode,
+    /// Whether a painter mask cuts this batch. Read only in painter's order
+    /// ([`SpriteOrder::Painter`]): the batch is cut when its layer is in the
+    /// range of the mask in the slot it names. Default [`MaskTest::None`].
+    pub mask: MaskTest,
     /// Flash, dissolve, palette swap, outline and a custom sprite material.
     /// `None` (the default) draws through the plain sprite pipelines and costs
     /// nothing; `Some` draws through the effect pipelines. See
@@ -382,6 +434,8 @@ impl Default for SpriteItem {
             sort_keys: Vec::new(),
             effects: None,
             pick_alpha_threshold: None,
+            draw_mode: SpriteDrawMode::Simple,
+            mask: MaskTest::None,
             settings: ItemSettings::default(),
         }
     }
@@ -769,5 +823,63 @@ mod effect_tests {
         };
         assert_eq!(fx.instance_word(0), 128 | (255 << 8));
         assert_eq!(fx.instance_word(1), 255 << 8);
+    }
+}
+
+/// What a [`SpriteMaskItem`] covers.
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum MaskSource {
+    /// Every quad of `sprite` where its texel alpha times its tint alpha is
+    /// at least `threshold`. The quads are placed as the sprite batch would
+    /// draw them (position, size, pivot, rotation, size mode, orientation and
+    /// model); its order, blend, effects and draw mode are ignored.
+    Alpha {
+        /// The sprites whose alpha is the mask.
+        sprite: SpriteItem,
+        /// Alpha at and above which a texel is inside the mask.
+        threshold: f32,
+    },
+    /// `shape` inscribed in every quad of `sprite`, as an overlay shape is
+    /// inscribed in its box, with radii in the sprite's size units. Rect,
+    /// rounded rect, circle, ellipse, capsule and ring are evaluated exactly;
+    /// any other shape covers the whole quad. The sprite's texture is ignored.
+    Shape {
+        /// The shape.
+        shape: viewport_lib_types::overlay::OverlayShape,
+        /// The quads it fills.
+        sprite: SpriteItem,
+    },
+}
+
+/// A painter mask drawn from sprites or shapes: its coverage goes into
+/// `slot` of the frame's mask target, and painter content on a layer in
+/// `layers` that tests that slot ([`SpriteItem::mask`], `TilemapItem::mask`,
+/// `WorldOverlayLayer::mask`) shows only inside or only outside it.
+///
+/// The mask itself is not drawn. Masks in one slot combine into their union,
+/// and the slot's layers run from the lowest to the highest any of them names.
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct SpriteMaskItem {
+    /// What the mask covers.
+    pub source: MaskSource,
+    /// The painter layers content testing the slot is cut on.
+    pub layers: std::ops::RangeInclusive<u32>,
+    /// The slot, `0` to `PAINTER_MASK_SLOTS - 1`; higher values wrap.
+    pub slot: u8,
+    /// Visibility; only `hidden` is read.
+    pub settings: ItemSettings,
+}
+
+impl SpriteMaskItem {
+    /// A mask in `slot` over `layers` covering `source`.
+    pub fn new(source: MaskSource, slot: u8, layers: std::ops::RangeInclusive<u32>) -> Self {
+        Self {
+            source,
+            layers,
+            slot,
+            settings: ItemSettings::default(),
+        }
     }
 }

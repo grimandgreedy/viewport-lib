@@ -30,7 +30,8 @@ mod types;
 
 pub use types::{
     MAX_TILE_ANIMATIONS, MAX_TILEMAP_SIDE, Tile, TileAnimation, TileChunk, TileFlip, TileFrame,
-    Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPlane, Tileset,
+    TileMaterial, TileMaterialId, Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPlane,
+    Tileset,
 };
 
 /// Stable name this item type submits and registers under.
@@ -51,8 +52,10 @@ mod store;
 mod uploads;
 
 #[cfg(feature = "gpu")]
+pub(crate) use pipeline::tile_sources;
+#[cfg(feature = "gpu")]
 pub use plugin::TilemapPlugin;
 #[cfg(feature = "gpu")]
 pub(crate) use plugin::shader_sources;
 #[cfg(feature = "gpu")]
-pub use uploads::TilemapEdits;
+pub use uploads::{TileMaterials, TilemapEdits};

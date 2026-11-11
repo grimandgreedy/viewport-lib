@@ -63,6 +63,8 @@ fn tile_layout() -> viewport_lib::gpu::VertexBufferLayout<'static> {
 pub(crate) struct TilemapRecipe {
     device: viewport_lib::gpu::Device,
     layout: viewport_lib::gpu::PipelineLayout,
+    /// `layout` with the painter masks at group 3, for blended layers.
+    masked_layout: viewport_lib::gpu::PipelineLayout,
     shader: viewport_lib::plugin_api::LazyModule,
     pick_shader: viewport_lib::plugin_api::LazyModule,
     sample_count: u32,
@@ -134,7 +136,7 @@ fn build(r: &TilemapRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
             } else {
                 "tilemap_blended_pipeline"
             },
-            layout: &r.layout,
+            layout: if cutout { &r.layout } else { &r.masked_layout },
             shader: r.shader.get(),
             vertex_entry: "vs_main",
             fragment_entry: if cutout { "fs_cutout" } else { "fs_blended" },
@@ -162,10 +164,31 @@ fn build(r: &TilemapRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     )
 }
 
+/// The tilemap's colour and pick shader sources, shared sections spliced in.
+pub(crate) fn tile_sources() -> (String, String) {
+    let common = super::TILEMAP_COMMON;
+    (
+        crate::item_types::shader::scene_shader(
+            &[
+                viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                common,
+            ],
+            crate::item_types::shader::wgsl_source!("tilemap"),
+        ),
+        crate::item_types::shader::scene_shader(
+            &[common],
+            crate::item_types::shader::wgsl_source!("tilemap_pick"),
+        ),
+    )
+}
+
 /// The tilemap's pipelines and layouts, made on the first frame that draws a
-/// layer.
+/// layer: the plain set, and one set per tile material, its vertex hook
+/// composed into both shaders.
 pub(crate) struct TilemapGpu {
     pub(crate) pipelines: TilemapPipelines,
+    /// By tile material index, built the first frame after it registers.
+    pub(crate) families: Vec<TilemapPipelines>,
 }
 
 impl TilemapGpu {
@@ -174,40 +197,85 @@ impl TilemapGpu {
         resources: &DeviceResources,
         layouts: &super::store::TilemapLayouts,
     ) -> Self {
-        let common = super::TILEMAP_COMMON;
-        let shader = resources.lazy_module(
-            device,
-            "tilemap_shader",
-            crate::item_types::shader::scene_shader(
-                &[common],
-                crate::item_types::shader::wgsl_source!("tilemap"),
-            ),
-        );
-        let pick_shader = resources.lazy_module(
-            device,
-            "tilemap_pick_shader",
-            crate::item_types::shader::scene_shader(
-                &[common],
-                crate::item_types::shader::wgsl_source!("tilemap_pick"),
-            ),
-        );
-        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
-            device,
-            "tilemap_pipeline_layout",
-            &[resources.group0_layout(), &layouts.map, &layouts.layer],
-        );
-        let pipelines = resources.lazy_pipelines(
-            TilemapRecipe {
-                device: device.clone(),
-                layout,
-                shader,
-                pick_shader,
-                sample_count: resources.sample_count(),
-                ldr_format: resources.target_format(),
-                depth_format: resources.scene_depth_format(),
-            },
-            build,
-        );
-        Self { pipelines }
+        let (colour, pick) = tile_sources();
+        Self {
+            pipelines: pipeline_set(device, resources, layouts, "tilemap", colour, pick),
+            families: Vec::new(),
+        }
     }
+
+    /// Build the set of every registered material that has none yet.
+    pub(crate) fn ensure_families(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::TilemapLayouts,
+        materials: &[crate::item_types::sprite::TileMaterialEntry],
+    ) {
+        let (colour, pick) = tile_sources();
+        for m in &materials[self.families.len().min(materials.len())..] {
+            // Composition was checked at registration.
+            let compose = |base: &str| {
+                crate::item_types::sprite::compose_tile(base, m).expect("tile hook composes")
+            };
+            self.families.push(pipeline_set(
+                device,
+                resources,
+                layouts,
+                &format!("tilemap_{}", m.name),
+                compose(&colour),
+                compose(&pick),
+            ));
+        }
+    }
+
+    /// The set a layer with tile material `family` draws through.
+    pub(crate) fn set(&self, family: Option<usize>) -> Option<&TilemapPipelines> {
+        match family {
+            None => Some(&self.pipelines),
+            Some(i) => self.families.get(i),
+        }
+    }
+}
+
+/// One set of tilemap pipelines over `colour` and `pick`.
+fn pipeline_set(
+    device: &viewport_lib::gpu::Device,
+    resources: &DeviceResources,
+    layouts: &super::store::TilemapLayouts,
+    label: &str,
+    colour: String,
+    pick: String,
+) -> TilemapPipelines {
+    let shader = resources.lazy_module(device, &format!("{label}_shader"), colour);
+    let pick_shader = resources.lazy_module(device, &format!("{label}_pick_shader"), pick);
+    let layout = viewport_lib::plugin_api::builders::pipeline_layout(
+        device,
+        "tilemap_pipeline_layout",
+        &[resources.group0_layout(), &layouts.map, &layouts.layer],
+    );
+    // Blended layers read the painter masks at group 3.
+    let masked_layout = viewport_lib::plugin_api::builders::pipeline_layout(
+        device,
+        "tilemap_masked_pipeline_layout",
+        &[
+            resources.group0_layout(),
+            &layouts.map,
+            &layouts.layer,
+            resources.painter_mask_bind_group_layout(),
+        ],
+    );
+    resources.lazy_pipelines(
+        TilemapRecipe {
+            device: device.clone(),
+            layout,
+            masked_layout,
+            shader,
+            pick_shader,
+            sample_count: resources.sample_count(),
+            ldr_format: resources.target_format(),
+            depth_format: resources.scene_depth_format(),
+        },
+        build,
+    )
 }

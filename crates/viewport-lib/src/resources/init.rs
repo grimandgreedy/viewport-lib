@@ -1212,9 +1212,10 @@ impl DeviceResources {
                 let lut_sampler =
                     crate::resources::builders::clamp_linear_sampler(device, "lut_sampler");
 
-                // Read-only-depth plugin pass: non-filtering clamp sampler + group-1
-                // BGL (depth texture + sampler). The renderer builds the matching bind
-                // group each frame from the scene depth-only view.
+                // Read-only-depth plugin pass: non-filtering clamp sampler + the
+                // layout (depth texture + sampler, then the painter masks). The
+                // renderer builds the matching bind group each frame from the
+                // scene depth-only view.
                 let depth_read_sampler =
                     crate::resources::builders::clamp_nearest_sampler(device, "depth_read_sampler");
                 let depth_read_bgl =
@@ -1241,6 +1242,10 @@ impl DeviceResources {
                                 ),
                                 count: None,
                             },
+                            // The painter masks, for painter content that
+                            // binds this group and tests a mask.
+                            crate::resources::painter_mask::painter_mask_entries(2)[0],
+                            crate::resources::painter_mask::painter_mask_entries(2)[1],
                         ],
                     });
 
@@ -1630,6 +1635,7 @@ impl DeviceResources {
             _ => None,
         };
         let resources = Self {
+            painter_mask: crate::resources::painter_mask::PainterMaskResources::new(device),
             compatibility_tier,
             outline: None,
             group0_profile,

@@ -136,6 +136,10 @@ pub struct WorldOverlayLayer {
     /// covers it; when `false` it draws over everything already in the scene.
     /// Default `false`.
     pub depth_test: bool,
+    /// Whether a painter mask cuts the layer: it is cut when `order` is in
+    /// the range of the mask in the slot it names. Items composited through a
+    /// nested overlay layer are not cut. Default [`MaskTest::None`].
+    pub mask: crate::render_item::MaskTest,
     /// The items, in world units on the layer.
     pub frame: OverlayFrame,
 }
@@ -149,6 +153,7 @@ impl Default for WorldOverlayLayer {
             size: [0.0, 0.0],
             order: 0,
             depth_test: false,
+            mask: crate::render_item::MaskTest::None,
             frame: OverlayFrame::default(),
         }
     }

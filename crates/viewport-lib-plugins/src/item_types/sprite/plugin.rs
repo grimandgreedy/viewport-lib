@@ -24,28 +24,59 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
         shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
         shared_wgsl::SHARED_CSM_WGSL,
         shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+        viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
         super::SPRITE_COMMON,
     ];
     vec![
         (
             "sprite.wgsl",
-            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
+                wgsl_source!("sprite"),
+            ),
         ),
         (
             "sprite_oit.wgsl",
-            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_oit")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
+                wgsl_source!("sprite_oit"),
+            ),
         ),
         (
             "sprite_pick.wgsl",
-            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_pick")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
+                wgsl_source!("sprite_pick"),
+            ),
         ),
         (
             "sprite_outline_mask.wgsl",
-            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_outline_mask")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
+                wgsl_source!("sprite_outline_mask"),
+            ),
         ),
         (
             "sprite_refraction.wgsl",
-            scene_shader(&[super::SPRITE_COMMON], wgsl_source!("sprite_refraction")),
+            scene_shader(
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
+                wgsl_source!("sprite_refraction"),
+            ),
         ),
         (
             "sprite_lit.wgsl",
@@ -55,6 +86,7 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
             "sprite_lit_oit.wgsl",
             lit_shader(&lit_extra, wgsl_source!("sprite_lit_oit")),
         ),
+        ("sprite_mask.wgsl", super::mask::mask_shader_source()),
         ("sprite_fx.wgsl", {
             let (unlit, _) = super::effects::base_sources();
             super::effects::compose(&unlit, false, None).expect("sprite effect shader composes")
@@ -64,6 +96,9 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
             super::effects::compose(&lit, true, None).expect("sprite effect shader composes")
         }),
     ]
+    .into_iter()
+    .chain(super::effects::sample_material_sources())
+    .collect()
 }
 
 impl PluginItem for SpriteItem {
@@ -619,12 +654,24 @@ impl SpritePlugin {
                 Some(p) if p.depth_test => pipeline::PICK_PAINTER,
                 Some(_) => pipeline::PICK_PAINTER_NO_TEST,
             };
-            if bound != Some(member) {
-                let Some(pl) = gpu.passes.get(member) else {
+            // A material with a vertex hook picks through its own pipelines,
+            // so the pick follows the moved quad.
+            let hook = gpu.hook_passes_of(sprite);
+            let family = sprite.fx.as_ref().map_or(0, |fx| fx.family);
+            let key = (hook.is_some().then_some(family), member);
+            if bound != Some(key) {
+                let pl = match hook {
+                    Some((passes, _)) => passes.get(pipeline::hook_member(member)),
+                    None => gpu.passes.get(member),
+                };
+                let Some(pl) = pl else {
                     continue;
                 };
                 pass.set_pipeline(pl);
-                bound = Some(member);
+                bound = Some(key);
+            }
+            if let Some((_, fx_bg)) = hook {
+                pass.set_bind_group(3, fx_bg, &[]);
             }
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             pass.set_bind_group(2, pick_bg, &[]);
@@ -882,6 +929,19 @@ impl ItemTypePlugin for SpritePlugin {
         let painters: Vec<usize> = (0..view.frame.len())
             .filter(|&i| view.frame[i].painter.is_some())
             .collect();
+        let screen_sized = painters
+            .iter()
+            .filter(|&&i| view.frame[i].screen_sized())
+            .count();
+        if screen_sized > 0 {
+            ctx.report_detail(
+                viewport_lib::Severity::Warning,
+                "painter_sprite_screen_sized",
+                || viewport_lib::NoticeDetail::PainterSpriteScreenSized {
+                    batches: screen_sized as u32,
+                },
+            );
+        }
         let inputs: Vec<store::PainterInput<'_>> = painters
             .iter()
             .map(|&i| {
@@ -1015,11 +1075,13 @@ impl ItemTypePlugin for SpritePlugin {
             Some(depth) => {
                 self.draw_painter(view, pass, pipeline::SpritePass::DepthRead, depth, pieces)
             }
+            // The renderer's depth-read group carries the frame's masks over
+            // a 1x1 depth; without one, the plugin's own placeholder.
             None => self.draw_painter(
                 view,
                 pass,
                 pipeline::SpritePass::Ldr,
-                &gpu.soft_fallback_bg,
+                ctx.depth_read_bind_group.unwrap_or(&gpu.soft_fallback_bg),
                 pieces,
             ),
         }
@@ -1102,16 +1164,29 @@ impl ItemTypePlugin for SpritePlugin {
         }
         // The billboard quads themselves go into the mask, so the outline
         // follows each sprite's shape and per-instance size.
-        let Some(pl) = gpu.passes.get(pipeline::OUTLINE_MASK) else {
-            return;
-        };
-        pass.set_pipeline(pl);
         for outline in &view.outlines {
             let Some(sprite) = view.frame.get(outline.frame_index) else {
                 continue;
             };
             if !gpu.drawn(sprite) {
                 continue;
+            }
+            // A material with a vertex hook outlines the moved quad.
+            match gpu.hook_passes_of(sprite) {
+                Some((passes, fx_bg)) => {
+                    let Some(pl) = passes.get(pipeline::HOOK_OUTLINE_MASK) else {
+                        continue;
+                    };
+                    pass.set_pipeline(pl);
+                    pass.set_bind_group(2, &gpu.empty_bg, &[]);
+                    pass.set_bind_group(3, fx_bg, &[]);
+                }
+                None => {
+                    let Some(pl) = gpu.passes.get(pipeline::OUTLINE_MASK) else {
+                        continue;
+                    };
+                    pass.set_pipeline(pl);
+                }
             }
             pass.set_bind_group(1, &sprite.bind_group, &[]);
             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
@@ -1630,9 +1705,11 @@ fn sprite_quad_outlines_polyline(
                     glam::Vec3::new(clip_centre.x, clip_centre.y, clip_centre.z) / clip_centre.w;
                 for (cx, cy) in CORNERS {
                     let (rx, ry) = offset(cx, cy);
+                    // Sizes are points, and a point is two NDC units over
+                    // the viewport's width in points.
                     let ndc = glam::Vec3::new(
-                        ndc_centre.x + rx / vw,
-                        ndc_centre.y + ry / vh,
+                        ndc_centre.x + rx * 2.0 / vw,
+                        ndc_centre.y + ry * 2.0 / vh,
                         ndc_centre.z,
                     );
                     let world_h = inv_view_proj * ndc.extend(1.0);

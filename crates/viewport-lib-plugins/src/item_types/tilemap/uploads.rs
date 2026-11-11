@@ -124,3 +124,46 @@ impl TilemapEdits for ViewportRenderer {
             .tilemap(id)
     }
 }
+
+/// Registering tile materials with the tilemap type.
+pub trait TileMaterials {
+    /// Register `plugin` as a tile material: a body defining
+    /// `fn displace_sprite(v: SpriteVertex) -> vec3<f32>`, the sprite vertex
+    /// hook, which then moves each corner of every tile of a layer whose
+    /// [`TilemapItem::material`] names it. `v.local_uv` runs across the cell
+    /// and `v.anchor` is the cell's bottom-left corner. The body reads its
+    /// parameters through `params` and `hook_params.lanes`; tile materials
+    /// take no textures.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::ShadeNameTaken`](viewport_lib::error::ViewportError::ShadeNameTaken)
+    /// when a tile material of that name exists;
+    /// [`ViewportError::ShadeShaderInvalid`](viewport_lib::error::ViewportError::ShadeShaderInvalid)
+    /// when the name is not a WGSL identifier, the body defines no
+    /// `displace_sprite`, it declares textures or too many parameters, or a
+    /// composed module fails validation.
+    fn register_tile_material(
+        &mut self,
+        device: &gpu::Device,
+        plugin: &dyn viewport_lib::MaterialPlugin,
+    ) -> viewport_lib::error::ViewportResult<TileMaterialId>;
+
+    /// The tile material registered as `name`.
+    fn tile_material_id(&self, name: &str) -> Option<TileMaterialId>;
+}
+
+impl TileMaterials for ViewportRenderer {
+    fn register_tile_material(
+        &mut self,
+        device: &gpu::Device,
+        plugin: &dyn viewport_lib::MaterialPlugin,
+    ) -> viewport_lib::error::ViewportResult<TileMaterialId> {
+        plugin_mut::<TilemapPlugin>(self, TYPE_NAME)?.register_material(device, plugin)
+    }
+
+    fn tile_material_id(&self, name: &str) -> Option<TileMaterialId> {
+        self.item_type_plugin::<TilemapPlugin>(TYPE_NAME)?
+            .material_id(name)
+    }
+}

@@ -272,6 +272,9 @@ pub fn install(
     // Before sprites, so a blended tile layer draws under painter sprites.
     register(Box::new(tilemap::TilemapPlugin::default()));
     register(Box::new(sprite::SpritePlugin::default()));
+    // After the types that read masks, which only need the mask target by
+    // the time the painter sequence draws.
+    register(Box::new(sprite::SpriteMaskPlugin::default()));
     register(Box::new(gpu_particles::GpuParticlesPlugin::default()));
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.

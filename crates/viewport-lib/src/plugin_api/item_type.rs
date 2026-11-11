@@ -391,6 +391,29 @@ impl<'a> ItemFrameContext<'a> {
         self.items_of::<T>()
     }
 
+    /// Report `detail` as a notice in the [`Item`](crate::NoticeCategory::Item)
+    /// category, for a condition the notice vocabulary already names.
+    ///
+    /// Reports with the same `key` coalesce into one notice with a count, so
+    /// reporting every frame is fine. `detail` is called only for the first
+    /// report of `key` since the host last took the notices.
+    pub fn report_detail(
+        &self,
+        severity: crate::Severity,
+        key: &'static str,
+        detail: impl FnOnce() -> crate::NoticeDetail,
+    ) {
+        self.resources.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::Item,
+                key,
+                [crate::notice::name_id(key), 0],
+            ),
+            severity,
+            detail,
+        );
+    }
+
     /// Report a condition the host should hear about, such as items this type
     /// skipped. It reaches the host through `ViewportRenderer::take_notices` as a
     /// [`NoticeDetail::Plugin`](crate::NoticeDetail::Plugin) in the
@@ -566,6 +589,21 @@ pub struct PainterContext<'a> {
     /// (laid out as [`DepthReadContext::scene_depth_bind_group`]); `None` in
     /// the LDR scene pass, whose depth attachment is writable.
     pub scene_depth_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// On the full tier, a group laid out as
+    /// [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout)
+    /// in either pass: the scene depth on the HDR path (the same group as
+    /// [`scene_depth_bind_group`](Self::scene_depth_bind_group)), a 1x1 depth
+    /// in the LDR scene pass. Its bindings 2 and 3 carry this frame's painter
+    /// masks, so a plugin with no spare group tests masks through it. `None`
+    /// on the compatibility tier.
+    pub depth_read_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// This frame's painter masks, laid out as
+    /// [`painter_mask_bind_group_layout`](crate::resources::DeviceResources::painter_mask_bind_group_layout),
+    /// on every tier. Content that honours a [`MaskTest`](crate::MaskTest)
+    /// binds it at a spare group and tests through
+    /// [`SHARED_PAINTER_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL).
+    /// A frame with no masks binds an empty one.
+    pub mask_bind_group: &'a crate::gpu::BindGroup,
     /// Draws an uploaded mesh by id, for a painter draw built on one.
     pub meshes: crate::resources::MeshDraw<'a>,
 }
@@ -583,6 +621,42 @@ impl PainterContext<'_> {
     pub fn includes(&self, layer: u32) -> bool {
         self.layers.contains(&layer)
     }
+}
+
+/// A painter mask a plugin draws this frame, as reported by
+/// [`ItemTypePlugin::painter_masks`]: the slot its coverage goes into and the
+/// painter layers it applies to.
+///
+/// Several masks may share a slot: their coverage is the union, and the
+/// slot's layers run from the lowest first layer to the highest last layer
+/// any of them names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PainterMask {
+    /// The slot, `0` to `PAINTER_MASK_SLOTS - 1`; higher values wrap.
+    pub slot: u8,
+    /// The painter layers content testing this slot is cut on.
+    pub layers: std::ops::RangeInclusive<u32>,
+}
+
+impl PainterMask {
+    /// A mask in `slot` over `layers`.
+    pub fn new(slot: u8, layers: std::ops::RangeInclusive<u32>) -> Self {
+        Self { slot, layers }
+    }
+}
+
+/// Per-call context for [`ItemTypePlugin::paint_painter_masks`].
+#[non_exhaustive]
+pub struct PainterMaskContext<'a> {
+    /// Active render-camera snapshot for this viewport.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
 }
 
 /// One of a plugin's painter's-order draws this frame, as reported by
@@ -1376,6 +1450,33 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PainterContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// The painter masks this plugin draws in the viewport `viewport_index`
+    /// this frame, pushed onto `out`.
+    ///
+    /// Read after [`prepare`](Self::prepare). A frame where some plugin
+    /// reports one clears the viewport's mask target and calls
+    /// [`paint_painter_masks`](Self::paint_painter_masks) on every plugin that
+    /// reported, before any painter content draws; content testing a slot
+    /// nobody reported is not cut.
+    fn painter_masks(&self, _viewport_index: usize, _out: &mut Vec<PainterMask>) {}
+
+    /// Draw this frame's painter masks into the viewport's mask target.
+    ///
+    /// The target is [`PAINTER_MASK_FORMAT`](crate::resources::PAINTER_MASK_FORMAT)
+    /// at the scene's device size, one sample, with no depth attachment and
+    /// the viewport's camera bind group at group 0 on entry. Write a mask's
+    /// coverage (`0` to `1`) into the channel of its slot (red for slot 0 to
+    /// alpha for slot 3) and zero into the others, through
+    /// [`PAINTER_MASK_BLEND`](crate::resources::PAINTER_MASK_BLEND). Runs on
+    /// every tier, during prepare, so it needs no pass of the frame itself.
+    fn paint_painter_masks(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PainterMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
     }

@@ -18,11 +18,22 @@ fn cutout_body(in: TileOut) -> vec4<f32> {
     return vec4<f32>(colour.rgb, 1.0);
 }
 
+// The painter masks, read by blended layers only (the cutout entries leave
+// group 3 out of their layout).
+@group(3) @binding(0) var painter_mask_tex: texture_2d<f32>;
+@group(3) @binding(1) var<uniform> painter_masks: PainterMasks;
+
 fn blended_body(in: TileOut) -> vec4<f32> {
-    let colour = tile_colour(in);
+    var colour = tile_colour(in);
     if !viewport_clip_test(in.world_pos) {
         discard;
     }
+    let texel = textureLoad(
+        painter_mask_tex,
+        painter_mask_texel(in.mask_clip.xy / in.mask_clip.w, textureDimensions(painter_mask_tex)),
+        0,
+    );
+    colour.a = colour.a * painter_mask_keep(texel, painter_masks, layer.mask, layer.painter_layer.x);
     if colour.a <= 0.001 {
         discard;
     }

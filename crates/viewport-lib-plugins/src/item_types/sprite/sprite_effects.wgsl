@@ -3,79 +3,14 @@
 // The composer adds the effect varyings to `VertexOut`, the effect word to
 // `VertexIn` (an instance-stepped `u32` stream at location 1), turns the
 // body's vertex entry into `sprite_vertex` and appends the `vs_main` below it,
-// and replaces the markers in the body with the two calls here.
-//
-// Group 3: the lit normal map (bindings 0-1, read only by the lit body), this
-// batch's effect block (2), the dissolve noise (3) and the palette (4), then
-// the sampler (5) and four textures (6-9) a custom material reads. A material
-// body follows the particle fragment-hook contract: `sprite_samp`,
-// `htex0..htex3` and `hook_params.lanes` (lane 0 reserved, `.w` the time).
-
-// Per-batch effect block. Must match `SpriteFxUniform` in `effects.rs`.
-struct SpriteFx {
-    flash_colour:   vec4<f32>,
-    edge_colour:    vec4<f32>,
-    outline_colour: vec4<f32>,
-    edge_width:     f32,
-    noise_scale:    f32,
-    // Outline width in device pixels; 0 draws no outline.
-    outline_px:     f32,
-    // Bit 0: a noise texture is bound. Bit 1: palette swap. Bit 2: the
-    // palette index is the texel's luminance rather than its red channel.
-    flags:          u32,
-    // A custom material's parameter lanes. Lane 0 is reserved; parameter i
-    // is lane 1 + i.
-    lanes:          array<vec4<f32>, 8>,
-};
-
-@group(3) @binding(2) var<uniform> sprite_fx:         SpriteFx;
-@group(3) @binding(3) var          sprite_fx_noise:   texture_2d<f32>;
-@group(3) @binding(4) var          sprite_fx_palette: texture_2d<f32>;
-@group(3) @binding(5) var          sprite_samp:       sampler;
-@group(3) @binding(6) var          htex0:             texture_2d<f32>;
-@group(3) @binding(7) var          htex1:             texture_2d<f32>;
-@group(3) @binding(8) var          htex2:             texture_2d<f32>;
-@group(3) @binding(9) var          htex3:             texture_2d<f32>;
-
-struct HookParams {
-    lanes: array<vec4<f32>, 8>,
-};
-// The material's lanes as its body reads them, lane 0 carrying the time.
-var<private> hook_params: HookParams;
+// and replaces the markers in the body with the two calls here. The group-3
+// bindings and the material contract's structs are in `sprite_hook.wgsl`,
+// spliced in front of this.
 
 // The UV derivatives, taken in `sprite_fx_base` where control flow is still
 // uniform and read by the outline taps after it.
 var<private> sprite_fx_uv_ddx: vec2<f32>;
 var<private> sprite_fx_uv_ddy: vec2<f32>;
-
-// What a custom material's `shade_sprite` receives. The first seven fields
-// are the particle hook's `ParticleFragment`, so one body draws both.
-struct SpriteFragment {
-    // Atlas UV of this fragment.
-    uv:          vec2<f32>,
-    // The sprite's texture at `uv`, palette-swapped when the batch swaps
-    // palettes; white for an untextured batch.
-    texel:       vec4<f32>,
-    // The sprite's tint.
-    colour:      vec4<f32>,
-    // A particle's life; always 0 for a sprite.
-    age:         f32,
-    age_sec:     f32,
-    world:       vec3<f32>,
-    // Seconds, from the frame time.
-    time:        f32,
-    // Position across the quad, 0 to 1 from its bottom-left corner. Outside
-    // that range in the margin an outline adds.
-    local_uv:    vec2<f32>,
-    // The sprite's atlas rect, flips applied.
-    uv_rect:     vec4<f32>,
-    flash:       f32,
-    dissolve:    f32,
-    palette_row: u32,
-    // Screen-space derivatives of `uv`, for `textureSampleGrad`.
-    uv_ddx:      vec2<f32>,
-    uv_ddy:      vec2<f32>,
-};
 
 // Device-pixel position of a clip-space point.
 fn sprite_fx_px(clip: vec4<f32>, viewport: vec2<f32>) -> vec2<f32> {
@@ -148,7 +83,7 @@ fn sprite_fx_base(colour: vec4<f32>, in: VertexOut) -> vec4<f32> {
         c = in.colour * texel;
     }
     // <sprite-fx:material>
-    if !sprite_fx_inside(in.uv, in.fx_uv_rect) {
+    if !sprite_fx_inside(in.uv, in.draw_rect) {
         c = vec4<f32>(c.rgb, 0.0);
     }
     return c;
@@ -163,14 +98,14 @@ fn sprite_fx_shaded(colour: vec4<f32>, in: VertexOut) -> vec4<f32> {
     if sprite_fx.outline_px > 0.0 {
         let o = in.fx_outline_uv;
         let d = o * 0.70710678;
-        var m = sprite_fx_alpha(in.uv + vec2<f32>(o.x, 0.0), in.fx_uv_rect);
-        m = max(m, sprite_fx_alpha(in.uv - vec2<f32>(o.x, 0.0), in.fx_uv_rect));
-        m = max(m, sprite_fx_alpha(in.uv + vec2<f32>(0.0, o.y), in.fx_uv_rect));
-        m = max(m, sprite_fx_alpha(in.uv - vec2<f32>(0.0, o.y), in.fx_uv_rect));
-        m = max(m, sprite_fx_alpha(in.uv + d, in.fx_uv_rect));
-        m = max(m, sprite_fx_alpha(in.uv - d, in.fx_uv_rect));
-        m = max(m, sprite_fx_alpha(in.uv + vec2<f32>(d.x, -d.y), in.fx_uv_rect));
-        m = max(m, sprite_fx_alpha(in.uv + vec2<f32>(-d.x, d.y), in.fx_uv_rect));
+        var m = sprite_fx_alpha(in.uv + vec2<f32>(o.x, 0.0), in.draw_rect);
+        m = max(m, sprite_fx_alpha(in.uv - vec2<f32>(o.x, 0.0), in.draw_rect));
+        m = max(m, sprite_fx_alpha(in.uv + vec2<f32>(0.0, o.y), in.draw_rect));
+        m = max(m, sprite_fx_alpha(in.uv - vec2<f32>(0.0, o.y), in.draw_rect));
+        m = max(m, sprite_fx_alpha(in.uv + d, in.draw_rect));
+        m = max(m, sprite_fx_alpha(in.uv - d, in.draw_rect));
+        m = max(m, sprite_fx_alpha(in.uv + vec2<f32>(d.x, -d.y), in.draw_rect));
+        m = max(m, sprite_fx_alpha(in.uv + vec2<f32>(-d.x, d.y), in.draw_rect));
         // The sprite over its outline.
         let ring = sprite_fx.outline_colour.a * m * (1.0 - c.a);
         let a = c.a + ring;
@@ -180,7 +115,7 @@ fn sprite_fx_shaded(colour: vec4<f32>, in: VertexOut) -> vec4<f32> {
 
     let dissolve = f32((in.fx_word >> 8u) & 0xffu) / 255.0;
     if dissolve > 0.0 {
-        let n = sprite_fx_noise_at(in.fx_local_uv);
+        let n = sprite_fx_noise_at(in.draw_local);
         if n < dissolve || dissolve >= 1.0 {
             c = vec4<f32>(c.rgb, 0.0);
         } else if n < dissolve + sprite_fx.edge_width {
@@ -203,8 +138,8 @@ fn sprite_fx_fragment(in: VertexOut, texel: vec4<f32>) -> SpriteFragment {
     s.age_sec = 0.0;
     s.world = in.world_pos;
     s.time = camera.time.x;
-    s.local_uv = in.fx_local_uv;
-    s.uv_rect = in.fx_uv_rect;
+    s.local_uv = in.draw_local;
+    s.uv_rect = in.draw_rect;
     s.flash = f32(in.fx_word & 0xffu) / 255.0;
     s.dissolve = f32((in.fx_word >> 8u) & 0xffu) / 255.0;
     s.palette_row = in.fx_word >> 16u;
@@ -232,10 +167,10 @@ fn vs_main(in: VertexIn) -> VertexOut {
         grown = corner + sign(corner) * (2.0 * w / len);
         outline_uv = abs(inst.uv_rect.zw - inst.uv_rect.xy) * (w / len);
     }
+    // The body's own `draw_local` and `draw_rect` carry the grown quad's
+    // position across it and the sprite's atlas rect.
     var out = sprite_vertex(in, grown);
     out.fx_word = in.fx_word;
-    out.fx_local_uv = (grown + 1.0) * 0.5;
     out.fx_outline_uv = outline_uv;
-    out.fx_uv_rect = inst.uv_rect;
     return out;
 }

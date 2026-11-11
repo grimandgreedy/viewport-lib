@@ -1,6 +1,7 @@
 use viewport_lib_types::colour::Colour;
 use viewport_lib_types::ids::TextureId;
 use viewport_lib_types::material::{ItemSettings, TextureFilter};
+use viewport_lib_types::render_item::MaskTest;
 
 viewport_lib_types::slot_handle! {
     /// Handle to a tilemap uploaded once through
@@ -572,6 +573,16 @@ pub struct TilemapItem {
     /// origin lands on the pixel grid, which keeps every texel of pixel art
     /// drawn at an integer scale on whole pixels. Default `false`.
     pub pixel_snap: bool,
+    /// Whether a painter mask cuts the layer. Read by a blended layer only,
+    /// which is cut when its layer is in the range of the mask in the slot
+    /// it names. Default [`MaskTest::None`].
+    pub mask: MaskTest,
+    /// A tile material whose vertex hook moves each corner of every tile,
+    /// registered with
+    /// [`TileMaterials::register_tile_material`](crate::item_types::tilemap::TileMaterials::register_tile_material).
+    /// Picks follow the moved tiles. `None` (the default) draws the grid as
+    /// it lies.
+    pub material: Option<TileMaterial>,
     /// Visibility, pick identity and selection.
     pub settings: ItemSettings,
 }
@@ -592,6 +603,8 @@ impl TilemapItem {
             use_frame_clock: false,
             draw: TilemapDraw::default(),
             pixel_snap: false,
+            mask: MaskTest::None,
+            material: None,
             settings: ItemSettings::default(),
         }
     }
@@ -757,5 +770,53 @@ mod tests {
         item.parallax = [0.5, 0.0];
         let o = item.drawn_origin(glam::DVec2::new(10.0, 4.0));
         assert_eq!(o, glam::DVec2::new(7.0, 4.0));
+    }
+}
+
+/// Handle to a tile material registered with
+/// [`TileMaterials::register_tile_material`](crate::item_types::tilemap::TileMaterials::register_tile_material).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TileMaterialId(pub(crate) u32);
+
+impl TileMaterialId {
+    /// Registry index.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// A layer's tile material: the registered material and the values of the
+/// parameters it declares.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileMaterial {
+    /// The registered material.
+    pub id: TileMaterialId,
+    /// Parameter values by name. Parameters not named take the defaults the
+    /// material declares.
+    pub params: Vec<(String, viewport_lib_types::plugin::material::ParamValue)>,
+}
+
+impl TileMaterial {
+    /// The material `id` with every parameter at its default.
+    pub fn new(id: TileMaterialId) -> Self {
+        Self {
+            id,
+            params: Vec::new(),
+        }
+    }
+
+    /// Set parameter `name`.
+    pub fn with_param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<viewport_lib_types::plugin::material::ParamValue>,
+    ) -> Self {
+        let name = name.into();
+        let value = value.into();
+        match self.params.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = value,
+            None => self.params.push((name, value)),
+        }
+        self
     }
 }

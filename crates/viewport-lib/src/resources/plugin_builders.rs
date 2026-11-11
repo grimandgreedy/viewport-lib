@@ -331,8 +331,12 @@ impl DeviceResources {
     }
 
     /// Bind group layout for the read-only-depth pass: binding 0 is the scene
-    /// depth texture (`texture_depth_2d`), binding 1 the non-filtering sampler.
-    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group).
+    /// depth texture (`texture_depth_2d`), binding 1 the non-filtering sampler,
+    /// and bindings 2 and 3 the painter masks as in
+    /// [`painter_mask_bind_group_layout`](Self::painter_mask_bind_group_layout).
+    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group)
+    /// and [`PainterContext::depth_read_bind_group`](crate::plugin_api::PainterContext::depth_read_bind_group).
+    /// A shader that does not test masks leaves bindings 2 and 3 undeclared.
     ///
     /// A convenience for plugins that have a spare bind group: place this at
     /// whatever free slot of `extra_bind_group_layouts` when building the
@@ -345,6 +349,15 @@ impl DeviceResources {
     /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
     pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
         &self.scene_tier.material.depth_read_bgl
+    }
+
+    /// Bind group layout of the painter masks, on every tier: binding 0 the
+    /// mask texture (`texture_2d<f32>`, unfilterable, read with
+    /// `textureLoad`), binding 1 the `PainterMasks` uniform from
+    /// [`SHARED_PAINTER_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL).
+    /// Matches [`PainterContext::mask_bind_group`](crate::plugin_api::PainterContext::mask_bind_group).
+    pub fn painter_mask_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
+        &self.painter_mask.bgl
     }
 
     /// Shared linear-clamp sampler used by the lib for colourmap LUTs.

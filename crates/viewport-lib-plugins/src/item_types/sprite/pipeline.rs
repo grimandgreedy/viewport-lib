@@ -377,77 +377,18 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
                 cache: None,
             },
         ),
-        PICK | PICK_PAINTER | PICK_PAINTER_NO_TEST => {
-            viewport_lib::plugin_api::builders::render_pipeline(
-                &r.device,
-                viewport_lib::plugin_api::builders::RenderPipelineDesc {
-                    label: match i {
-                        PICK => "sprite_pick_pipeline",
-                        PICK_PAINTER => "sprite_pick_painter_pipeline",
-                        _ => "sprite_pick_painter_no_test_pipeline",
-                    },
-                    layout: &r.pick_layout,
-                    vertex_module: r.pick_shader.get(),
-                    vertex_entry: "vs_main",
-                    vertex_buffers: &vertex_buffers,
-                    fragment: Some(viewport_lib::gpu::FragmentState {
-                        module: r.pick_shader.get(),
-                        entry_point: Some("fs_main"),
-                        targets: &[
-                            Some(viewport_lib::gpu::ColorTargetState {
-                                format: viewport_lib::gpu::TextureFormat::R32Uint,
-                                blend: None,
-                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                            }),
-                            Some(viewport_lib::gpu::ColorTargetState {
-                                format: viewport_lib::gpu::TextureFormat::R32Uint,
-                                blend: None,
-                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                            }),
-                            Some(viewport_lib::gpu::ColorTargetState {
-                                format: viewport_lib::gpu::TextureFormat::R32Uint,
-                                blend: None,
-                                write_mask: viewport_lib::gpu::ColorWrites::ALL,
-                            }),
-                        ],
-                        compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(
-                        ),
-                    }),
-                    primitive: viewport_lib::gpu::PrimitiveState {
-                        topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    // Painter picks test depth without writing it, so the
-                    // sequence's later draw wins wherever two overlap.
-                    depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
-                        r.depth_format,
-                        i == PICK,
-                        match i {
-                            PICK => viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
-                            PICK_PAINTER => viewport_lib::plugin_api::depth::DEPTH_COMPARE,
-                            _ => viewport_lib::gpu::CompareFunction::Always,
-                        },
-                    )),
-                    multisample: viewport_lib::gpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    cache: None,
-                },
-            )
-        }
-        OUTLINE_MASK => viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
+        PICK | PICK_PAINTER | PICK_PAINTER_NO_TEST => pick_pipeline(
             &r.device,
-            "sprite_outline_mask_pipeline",
+            &r.pick_layout,
+            r.pick_shader.get(),
+            i,
+            r.depth_format,
+        ),
+        OUTLINE_MASK => outline_mask_pipeline(
+            &r.device,
             &r.mask_layout,
             r.mask_shader.get(),
-            viewport_lib::gpu::TextureFormat::R8Unorm,
             r.depth_format,
-            &vertex_buffers,
-            None,
-            false,
-            viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
         ),
         // The unlit colour shader again, stamping the scene stencil. It
         // discards where the colour pass did, so a cut-out sprite stamps only
@@ -540,6 +481,147 @@ fn build_pass(r: &SpritePassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeli
     }
 }
 
+/// A pick pipeline: [`PICK`], [`PICK_PAINTER`] or [`PICK_PAINTER_NO_TEST`]
+/// by `member`.
+fn pick_pipeline(
+    device: &viewport_lib::gpu::Device,
+    layout: &viewport_lib::gpu::PipelineLayout,
+    module: &viewport_lib::gpu::ShaderModule,
+    member: usize,
+    depth_format: viewport_lib::gpu::TextureFormat,
+) -> viewport_lib::gpu::RenderPipeline {
+    let vertex_buffers = [position_layout()];
+    let id_target = Some(viewport_lib::gpu::ColorTargetState {
+        format: viewport_lib::gpu::TextureFormat::R32Uint,
+        blend: None,
+        write_mask: viewport_lib::gpu::ColorWrites::ALL,
+    });
+    viewport_lib::plugin_api::builders::render_pipeline(
+        device,
+        viewport_lib::plugin_api::builders::RenderPipelineDesc {
+            label: match member {
+                PICK => "sprite_pick_pipeline",
+                PICK_PAINTER => "sprite_pick_painter_pipeline",
+                _ => "sprite_pick_painter_no_test_pipeline",
+            },
+            layout,
+            vertex_module: module,
+            vertex_entry: "vs_main",
+            vertex_buffers: &vertex_buffers,
+            fragment: Some(viewport_lib::gpu::FragmentState {
+                module,
+                entry_point: Some("fs_main"),
+                targets: &[id_target.clone(), id_target.clone(), id_target],
+                compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: viewport_lib::gpu::PrimitiveState {
+                topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            // Painter picks test depth without writing it, so the
+            // sequence's later draw wins wherever two overlap.
+            depth_stencil: Some(viewport_lib::plugin_api::builders::scene_depth_stencil(
+                depth_format,
+                member == PICK,
+                match member {
+                    PICK => viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
+                    PICK_PAINTER => viewport_lib::plugin_api::depth::DEPTH_COMPARE,
+                    _ => viewport_lib::gpu::CompareFunction::Always,
+                },
+            )),
+            multisample: viewport_lib::gpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+}
+
+/// The selection-outline mask pipeline over `layout` and `module`.
+fn outline_mask_pipeline(
+    device: &viewport_lib::gpu::Device,
+    layout: &viewport_lib::gpu::PipelineLayout,
+    module: &viewport_lib::gpu::ShaderModule,
+    depth_format: viewport_lib::gpu::TextureFormat,
+) -> viewport_lib::gpu::RenderPipeline {
+    viewport_lib::plugin_api::builders::build_outline_mask_pipeline(
+        device,
+        "sprite_outline_mask_pipeline",
+        layout,
+        module,
+        viewport_lib::gpu::TextureFormat::R8Unorm,
+        depth_format,
+        &[position_layout()],
+        None,
+        false,
+        viewport_lib::plugin_api::depth::DEPTH_COMPARE_STRICT,
+    )
+}
+
+/// Members of [`HookPassPipelines`]: the three picks share the indices of
+/// [`SpritePassPipelines`], the outline mask follows them.
+pub(super) const HOOK_OUTLINE_MASK: usize = 3;
+
+/// The hook member a pass member draws through: `PICK` and its two painter
+/// forms keep their pick, the outline mask moves to [`HOOK_OUTLINE_MASK`].
+pub(super) fn hook_member(member: usize) -> usize {
+    match member {
+        PICK => 0,
+        PICK_PAINTER => 1,
+        PICK_PAINTER_NO_TEST => 2,
+        _ => HOOK_OUTLINE_MASK,
+    }
+}
+
+/// What a material with a vertex hook builds its pick and outline-mask
+/// pipelines from: its composed shaders and the layouts with its group 3.
+pub(super) struct HookPassRecipe {
+    device: viewport_lib::gpu::Device,
+    pick_layout: viewport_lib::gpu::PipelineLayout,
+    pick_shader: viewport_lib::plugin_api::LazyModule,
+    outline_layout: viewport_lib::gpu::PipelineLayout,
+    outline_shader: viewport_lib::plugin_api::LazyModule,
+    depth_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// A vertex-hook material's three pick pipelines and its outline mask, each
+/// built the first time a draw needs it.
+pub(super) type HookPassPipelines = viewport_lib::plugin_api::LazyPipelines<HookPassRecipe, 4>;
+
+fn build_hook_pass(r: &HookPassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
+    match i {
+        HOOK_OUTLINE_MASK => outline_mask_pipeline(
+            &r.device,
+            &r.outline_layout,
+            r.outline_shader.get(),
+            r.depth_format,
+        ),
+        0 => pick_pipeline(
+            &r.device,
+            &r.pick_layout,
+            r.pick_shader.get(),
+            PICK,
+            r.depth_format,
+        ),
+        1 => pick_pipeline(
+            &r.device,
+            &r.pick_layout,
+            r.pick_shader.get(),
+            PICK_PAINTER,
+            r.depth_format,
+        ),
+        _ => pick_pipeline(
+            &r.device,
+            &r.pick_layout,
+            r.pick_shader.get(),
+            PICK_PAINTER_NO_TEST,
+            r.depth_format,
+        ),
+    }
+}
+
 /// Every pipeline and layout the sprite draw hooks need, made on the first
 /// prepare that sees an item. The pipelines themselves are built the first
 /// time a draw needs them.
@@ -552,6 +634,12 @@ pub(super) struct SpriteGpu {
     /// What an effect family's build reads beyond its shaders and layout.
     fx_base: FxFamilyBase,
     pub(super) passes: SpritePassPipelines,
+    /// The pick and outline-mask pipelines of each registered material with
+    /// a vertex hook, by material index.
+    pub(super) hook_passes: Vec<Option<HookPassPipelines>>,
+    /// An empty group, bound at group 2 of a hook outline mask, whose layout
+    /// keeps the material's group 3 in its place.
+    pub(super) empty_bg: viewport_lib::gpu::BindGroup,
     pub(super) refraction_bgl: viewport_lib::gpu::BindGroupLayout,
     pub(super) refraction_sampler: viewport_lib::gpu::Sampler,
     pub(super) pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
@@ -569,9 +657,49 @@ struct FxFamilyBase {
     bgl: viewport_lib::gpu::BindGroupLayout,
     soft_bgl: viewport_lib::gpu::BindGroupLayout,
     fx_bgl: viewport_lib::gpu::BindGroupLayout,
+    pick_id_bgl: viewport_lib::gpu::BindGroupLayout,
+    empty_bgl: viewport_lib::gpu::BindGroupLayout,
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
     depth_format: viewport_lib::gpu::TextureFormat,
+}
+
+/// Build the pick and outline-mask pipelines of `material`, which has a
+/// vertex hook.
+fn hook_passes(
+    device: &viewport_lib::gpu::Device,
+    resources: &DeviceResources,
+    base: &FxFamilyBase,
+    material: &super::effects::SpriteMaterialEntry,
+) -> HookPassPipelines {
+    let (pick, outline) = super::effects::hook_base_sources();
+    // Checked when the material was registered, so it cannot fail here.
+    let compose = |base: &str| {
+        super::effects::compose_hook(base, &material.source()).expect("sprite hook shader composes")
+    };
+    let name = material.name.as_str();
+    let pick_shader = resources.lazy_module(device, &format!("{name}_pick_shader"), compose(&pick));
+    let outline_shader =
+        resources.lazy_module(device, &format!("{name}_outline_shader"), compose(&outline));
+    resources.lazy_pipelines(
+        HookPassRecipe {
+            device: device.clone(),
+            pick_layout: viewport_lib::plugin_api::builders::pipeline_layout(
+                device,
+                "sprite_hook_pick_pipeline_layout",
+                &[&base.group0, &base.bgl, &base.pick_id_bgl, &base.fx_bgl],
+            ),
+            pick_shader,
+            outline_layout: viewport_lib::plugin_api::builders::pipeline_layout(
+                device,
+                "sprite_hook_outline_pipeline_layout",
+                &[&base.group0, &base.bgl, &base.empty_bgl, &base.fx_bgl],
+            ),
+            outline_shader,
+            depth_format: base.depth_format,
+        },
+        build_hook_pass,
+    )
 }
 
 /// Build the colour pipelines of one effect family: the built-in effects, or
@@ -624,7 +752,8 @@ impl SpriteGpu {
         }
     }
 
-    /// Build the family of every registered material that has none yet.
+    /// Build the family of every registered material that has none yet, and
+    /// the pick and outline-mask pipelines of each with a vertex hook.
     pub(super) fn ensure_material_families(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -634,12 +763,30 @@ impl SpriteGpu {
         while self.fx_families.len() < materials.len() + 1 {
             self.fx_families.push(None);
         }
+        while self.hook_passes.len() < materials.len() {
+            self.hook_passes.push(None);
+        }
         for (i, m) in materials.iter().enumerate() {
             if self.fx_families[i + 1].is_none() {
                 self.fx_families[i + 1] =
                     Some(fx_family(device, resources, &self.fx_base, Some(m)));
             }
+            if m.displaces && self.hook_passes[i].is_none() {
+                self.hook_passes[i] = Some(hook_passes(device, resources, &self.fx_base, m));
+            }
         }
+    }
+
+    /// The hook pick and outline-mask pipelines `sprite` draws those passes
+    /// through, when its material has a vertex hook.
+    pub(super) fn hook_passes_of<'a>(
+        &'a self,
+        sprite: &'a super::store::SpriteGpuData,
+    ) -> Option<(&'a HookPassPipelines, &'a viewport_lib::gpu::BindGroup)> {
+        let fx = sprite.fx.as_ref()?;
+        let material = fx.family.checked_sub(1)? as usize;
+        let passes = self.hook_passes.get(material)?.as_ref()?;
+        Some((passes, &fx.bind_group))
     }
 
     pub(super) fn new(
@@ -651,9 +798,10 @@ impl SpriteGpu {
         let lit_bgl = &layouts.lit_bgl;
         let group0 = resources.group0_layout();
 
-        // Group 2: scene depth + sampler for the soft-particle fade. The
-        // shader skips the sample unless soft_particle_distance > 0, so a pass
-        // that cannot expose live depth binds the 1x1 fallback below instead.
+        // Group 2: scene depth + sampler for the soft-particle fade, then the
+        // painter masks. The shader skips the depth sample unless
+        // soft_particle_distance > 0, so a pass that cannot expose live depth
+        // binds the 1x1 fallback below instead.
         // This is the lib's shared depth-read layout rather than one of our
         // own: the entries are identical, and matching it means the ready-made
         // `DepthReadContext::scene_depth_bind_group` binds here directly.
@@ -678,6 +826,31 @@ impl SpriteGpu {
             aspect: viewport_lib::gpu::TextureAspect::DepthOnly,
             ..Default::default()
         });
+        // The painter masks the layout carries after the depth: an empty 1x1
+        // mask and a uniform naming no slot, so a pass with no masks to test
+        // keeps every fragment.
+        let mask_fallback = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
+            label: Some("sprite_mask_fallback_tex"),
+            size: viewport_lib::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: viewport_lib::gpu::TextureDimension::D2,
+            format: viewport_lib::resources::PAINTER_MASK_FORMAT,
+            usage: viewport_lib::gpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let mask_fallback_view =
+            mask_fallback.create_view(&viewport_lib::gpu::TextureViewDescriptor::default());
+        let no_masks = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+            label: Some("sprite_no_masks_buf"),
+            size: 64,
+            usage: viewport_lib::gpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
         let fallback_bg = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("sprite_soft_fallback_bg"),
             layout: soft_bgl,
@@ -692,6 +865,14 @@ impl SpriteGpu {
                         resources.depth_read_sampler(),
                     ),
                 },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: viewport_lib::gpu::BindingResource::TextureView(&mask_fallback_view),
+                },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: no_masks.as_entire_binding(),
+                },
             ],
         });
 
@@ -699,7 +880,10 @@ impl SpriteGpu {
             device,
             "sprite_shader",
             &crate::item_types::shader::scene_shader(
-                &[super::SPRITE_COMMON],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
                 crate::item_types::shader::wgsl_source!("sprite"),
             ),
         );
@@ -723,7 +907,10 @@ impl SpriteGpu {
             device,
             "sprite_refraction_shader",
             &crate::item_types::shader::scene_shader(
-                &[super::SPRITE_COMMON],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
                 crate::item_types::shader::wgsl_source!("sprite_refraction"),
             ),
         );
@@ -744,6 +931,7 @@ impl SpriteGpu {
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
                     shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
                     super::SPRITE_COMMON,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit"),
@@ -785,7 +973,10 @@ impl SpriteGpu {
             device,
             "sprite_oit_shader",
             &crate::item_types::shader::scene_shader(
-                &[super::SPRITE_COMMON],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
                 crate::item_types::shader::wgsl_source!("sprite_oit"),
             ),
         );
@@ -797,6 +988,7 @@ impl SpriteGpu {
                     shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
                     shared_wgsl::SHARED_CSM_WGSL,
                     shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
                     super::SPRITE_COMMON,
                 ],
                 crate::item_types::shader::wgsl_source!("sprite_lit_oit"),
@@ -817,7 +1009,10 @@ impl SpriteGpu {
             device,
             "sprite_outline_mask_shader",
             &crate::item_types::shader::scene_shader(
-                &[super::SPRITE_COMMON],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
                 crate::item_types::shader::wgsl_source!("sprite_outline_mask"),
             ),
         );
@@ -846,7 +1041,10 @@ impl SpriteGpu {
             device,
             "sprite_pick_shader",
             &crate::item_types::shader::scene_shader(
-                &[super::SPRITE_COMMON],
+                &[
+                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
+                    super::SPRITE_COMMON,
+                ],
                 crate::item_types::shader::wgsl_source!("sprite_pick"),
             ),
         );
@@ -876,11 +1074,23 @@ impl SpriteGpu {
             },
             build_sprite,
         );
+        let empty_bgl =
+            device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
+                label: Some("sprite_empty_bgl"),
+                entries: &[],
+            });
+        let empty_bg = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
+            label: Some("sprite_empty_bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
         let fx_base = FxFamilyBase {
             group0: group0.clone(),
             bgl: bgl.clone(),
             soft_bgl: soft_bgl.clone(),
             fx_bgl: layouts.fx_bgl.clone(),
+            pick_id_bgl: pick_id_bgl.clone(),
+            empty_bgl,
             sample_count,
             ldr_format: resources.target_format(),
             depth_format: resources.scene_depth_format(),
@@ -912,6 +1122,8 @@ impl SpriteGpu {
             fx_families: vec![Some(builtin)],
             fx_base,
             passes,
+            hook_passes: Vec::new(),
+            empty_bg,
             refraction_bgl,
             refraction_sampler,
             pick_id_bgl,

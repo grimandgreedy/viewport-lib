@@ -79,6 +79,9 @@ pub(crate) struct OverlayEmit<'a> {
     /// The pass a world layer draws in, which selects the world variants of
     /// the shape and text pipelines; `None` for screen overlays.
     pub world: Option<crate::resources::overlay::world::WorldPassKey>,
+    /// The painter masks a world layer's shape and text draws test, bound at
+    /// group 2; `None` binds masks that cut nothing.
+    pub masks: Option<&'a crate::gpu::BindGroup>,
 }
 
 impl OverlayEmit<'_> {
@@ -87,6 +90,7 @@ impl OverlayEmit<'_> {
         dst: false,
         backdrop: None,
         world: None,
+        masks: None,
     };
 }
 
@@ -111,11 +115,20 @@ pub(crate) fn emit_overlay_segments(
 ) {
     use crate::renderer::overlay_draw_order::OverlayDrawSource;
     let mut last_pipe: Option<OverlayPipe> = None;
+    // A world layer's shape and text pipelines test the painter masks at
+    // group 2; other draws in between may bind their own group 2.
+    let world_masks = emit
+        .world
+        .map(|_| emit.masks.unwrap_or(&resources.painter_mask.empty_group));
     let mut set = |pass: &mut crate::gpu::RenderPass<'_>,
                    key: OverlayPipe,
                    pipeline: &crate::gpu::RenderPipeline| {
         if last_pipe != Some(key) {
             pass.set_pipeline(pipeline);
+            if let (Some(masks), OverlayPipe::Shape(_) | OverlayPipe::Text(_)) = (world_masks, key)
+            {
+                pass.set_bind_group(2, masks, &[]);
+            }
             last_pipe = Some(key);
         }
     };
@@ -1670,6 +1683,7 @@ impl ViewportRenderer {
                         None
                     },
                     world: None,
+                    masks: None,
                 },
             );
             return;
@@ -1681,6 +1695,7 @@ impl ViewportRenderer {
             dst: true,
             backdrop: ov.layer_targets.item_backdrop_bg(),
             world: None,
+            masks: None,
         };
         let mut start = 0usize;
         // A clear still owed: the first pass runs even with nothing to draw

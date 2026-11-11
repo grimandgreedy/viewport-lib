@@ -583,6 +583,7 @@ impl CameraFrame {
         let w = (scene_size[0] * scene_ppp).round().max(1.0);
         let h = (scene_size[1] * scene_ppp).round().max(1.0);
         u.viewport = [w, h, 1.0 / w, 1.0 / h];
+        u.clip[3] = scene_ppp;
         u.time = crate::renderer::frame_clock::pack_time(time);
         u
     }

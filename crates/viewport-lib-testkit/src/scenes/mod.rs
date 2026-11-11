@@ -35,6 +35,7 @@ pub mod section_caps;
 pub mod shadows;
 pub mod skinning;
 pub mod sprites_2d;
+pub mod sprites_2d_modes;
 pub mod sprites_effects;
 pub mod textures;
 pub mod tilemap;
@@ -111,6 +112,8 @@ pub struct BuiltScene {
     pub sprite_items: Vec<SpriteItem>,
     /// Tilemap layers, each naming a map the build uploaded.
     pub tilemaps: Vec<viewport_lib_plugins::item_types::tilemap::TilemapItem>,
+    /// Painter masks drawn from sprites and shapes.
+    pub sprite_masks: Vec<viewport_lib_plugins::item_types::sprite::SpriteMaskItem>,
     /// The 2D light layer, lit by the scene's point lights.
     pub lighting_2d: Vec<viewport_lib_plugins::item_types::lighting_2d::Lighting2dItem>,
     /// GPU particle systems advanced and drawn each frame. The simulation runs
@@ -275,6 +278,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
         scene.sprite_items.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::tilemap::TilemapItem>() =
         scene.tilemaps.clone();
+    *sf.items_mut::<viewport_lib_plugins::item_types::sprite::SpriteMaskItem>() =
+        scene.sprite_masks.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::lighting_2d::Lighting2dItem>() =
         scene.lighting_2d.clone();
     *sf.items_mut::<viewport_lib_plugins::item_types::gpu_particles::GpuParticleSystemItem>() =
@@ -1127,6 +1132,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(tone_mapping::scenes());
     scenes.extend(occlusion::scenes());
     scenes.extend(sprites_2d::scenes());
+    scenes.extend(sprites_2d_modes::scenes());
     scenes.extend(sprites_effects::scenes());
     scenes.extend(tilemap::scenes());
     scenes.extend(lighting_2d::scenes());

@@ -21,39 +21,7 @@ struct VertexIn {
 @vertex
 fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     let inst = instance_buf[in.instance_index];
-
-    let world_pos = (sprite_ub.model * vec4<f32>(in.position, 1.0)).xyz;
-    let corner    = quad_corner(in.vertex_index);
-
-    let offset = sprite_offset(corner, inst);
-
-    var clip: vec4<f32>;
-    if sprite_ub.world_space != 0u {
-        let cam_right = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
-        let cam_up    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
-        let ws_pos    = world_pos
-                      + cam_right * offset.x
-                      + cam_up    * offset.y;
-        clip = camera.view_proj * vec4<f32>(ws_pos, 1.0);
-    } else {
-        let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let ndc_off   = offset
-                      / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        clip = vec4<f32>(
-            centre.x + ndc_off.x * centre.w,
-            centre.y + ndc_off.y * centre.w,
-            centre.z,
-            centre.w,
-        );
-    }
-    if (sprite_ub.flags & 1u) != 0u {
-        clip = sprite_pixel_snap(
-            clip,
-            camera.view_proj * vec4<f32>(world_pos, 1.0),
-            vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height),
-        );
-    }
-    return clip;
+    return sprite_corner(in.position, quad_corner(in.vertex_index), inst).clip;
 }
 
 @fragment

@@ -16,6 +16,7 @@ mod overlay_geometry;
 mod overlay_style_check;
 pub(crate) mod overlay_tess_cache;
 mod overlay_vector;
+mod painter_masks;
 mod per_object;
 mod projection;
 mod scene_uploads;
@@ -977,6 +978,7 @@ impl ViewportRenderer {
             self.prepare_sub_highlight(device, queue, frame);
         }
         self.prepare_viewport_overlays(device, queue, frame, sink);
+        self.prepare_painter_masks(device, queue, frame, sink);
         self.prepare_debug_buffer(frame);
         if self.resources.scene_tier.is_built() {
             self.prepare_atlas_blit(queue, frame, viewport_fx);

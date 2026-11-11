@@ -23,8 +23,10 @@ pub use config::RendererConfig;
 pub use warm::PipelineSet;
 mod painter;
 mod paths;
+pub use self::types::{
+    MaskTest, PAINTER_MASK_SLOTS, PAINTER_MEMBERS, PainterPlacement, painter_key,
+};
 pub use self::types::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
-pub use self::types::{PAINTER_MEMBERS, PainterPlacement, painter_key};
 pub use blit::{BlitFilter, BlitTexture};
 pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
@@ -269,6 +271,9 @@ pub(crate) struct ViewportSlot {
     pub overlay: ViewportOverlay,
     /// This viewport's prepared world overlay layers, drawn inside the scene.
     pub world_overlays: WorldOverlays,
+    /// This viewport's painter mask target, its uniform and the groups over
+    /// them.
+    pub(crate) painter_masks: crate::resources::painter_mask::PainterMaskState,
     /// Ground-plane uniform for this viewport's camera, and the bind group
     /// over it and the shadow atlas, rebuilt when the atlas view changes.
     pub ground_uniform_buf: crate::gpu::Buffer,
@@ -3152,6 +3157,12 @@ impl ViewportRenderer {
         let Some(plugin) = self.item_type_plugins.get(name) else {
             return;
         };
+        let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) else {
+            return;
+        };
+        let (Some(mask_bind_group), ldr_depth) = slot.painter_masks.current() else {
+            return;
+        };
         let ctx = crate::plugin_api::PainterContext {
             camera: &frame.camera.render_camera,
             viewport_size: glam::Vec2::from(frame.scene_size()),
@@ -3160,6 +3171,8 @@ impl ViewportRenderer {
             layers,
             batches,
             scene_depth_bind_group,
+            depth_read_bind_group: scene_depth_bind_group.or(ldr_depth),
+            mask_bind_group,
             meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         let items = crate::plugin_api::ItemCollections::new(
@@ -3233,6 +3246,7 @@ impl ViewportRenderer {
                                         depth_test: draw.depth_test,
                                         ..pass_key
                                     }),
+                                    masks: self.world_masks(frame),
                                 },
                             );
                         }
@@ -3241,6 +3255,13 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
+
+    /// The viewport's painter masks, which world layer draws test.
+    fn world_masks(&self, frame: &FrameData) -> Option<&crate::gpu::BindGroup> {
+        self.viewport_slots
+            .get(frame.camera.viewport_index)
+            .and_then(|s| s.painter_masks.current().0)
     }
 
     /// Whether a world layer of `vp_idx` reads what is drawn under it, and
@@ -3394,6 +3415,7 @@ impl ViewportRenderer {
                                         depth_test: draw.depth_test,
                                         ..pass_key
                                     }),
+                                    masks: self.world_masks(frame),
                                 },
                             );
                         }
@@ -4501,6 +4523,7 @@ impl ViewportRenderer {
                 reference: None,
                 overlay: ViewportOverlay::new(),
                 world_overlays: WorldOverlays::default(),
+                painter_masks: crate::resources::painter_mask::PainterMaskState::new(device),
                 ground_uniform_buf,
                 ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
                 overlay_depth: None,

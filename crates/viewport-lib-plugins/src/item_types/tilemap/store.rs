@@ -54,8 +54,13 @@ pub(crate) struct LayerUniformData {
     alpha_threshold: f32,
     flags: u32,
     pick_id: u32,
-    _pad: u32,
+    /// The painter mask test word, read by a blended layer.
+    mask: u32,
+    /// The blended layer's painter layer, then padding.
+    painter_layer: [u32; 4],
     anim: [u32; ANIM_SLOTS],
+    /// A tile material's parameter lanes, lane 0 reserved.
+    pub(crate) lanes: [[f32; 4]; 8],
 }
 
 /// Bytes between layers in the frame's uniform buffer: the uniform rounded up
@@ -420,9 +425,9 @@ pub(crate) fn layer_uniform(
     let parallax = glam::DVec2::new(item.parallax[0] as f64, item.parallax[1] as f64);
     let translation = glam::DVec2::new(item.origin[0] as f64, item.origin[1] as f64) - o * parallax;
     let elevation = item.elevation as f64 - plane.elevation_of(origin);
-    let alpha_threshold = match item.draw {
-        TilemapDraw::Cutout { alpha_threshold } => alpha_threshold,
-        TilemapDraw::Blended { .. } => 0.0,
+    let (alpha_threshold, mask, painter_layer) = match item.draw {
+        TilemapDraw::Cutout { alpha_threshold } => (alpha_threshold, 0, 0),
+        TilemapDraw::Blended { layer, .. } => (0.0, item.mask.word(), layer),
     };
     LayerUniformData {
         translation: translation.as_vec2().to_array(),
@@ -437,12 +442,14 @@ pub(crate) fn layer_uniform(
         alpha_threshold,
         flags: item.pixel_snap as u32,
         pick_id: item.settings.pick_id.0 as u32,
-        _pad: 0,
+        mask,
+        painter_layer: [painter_layer, 0, 0, 0],
         anim: stored.animation_frames(if item.use_frame_clock {
             frame_seconds as f32
         } else {
             item.time
         }),
+        lanes: [[0.0; 4]; 8],
     }
 }
 
@@ -474,7 +481,10 @@ mod tests {
     fn layout_sizes_match_the_shader() {
         assert_eq!(INSTANCE_STRIDE, 16);
         assert_eq!(std::mem::size_of::<TilesetUniformData>(), 32);
-        assert_eq!(std::mem::size_of::<LayerUniformData>(), 64 + 4 * ANIM_SLOTS);
+        assert_eq!(
+            std::mem::size_of::<LayerUniformData>(),
+            80 + 4 * ANIM_SLOTS + 128
+        );
         assert_eq!(LAYER_STRIDE % 256, 0);
     }
 

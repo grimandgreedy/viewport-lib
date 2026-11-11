@@ -100,9 +100,13 @@ pub(crate) struct ViewportHdrState {
     pub tone_map_bg_views: Option<[crate::gpu::TextureView; 9]>,
     /// The foreground view the DOF bind group was last built with.
     pub dof_bg_foreground: Option<crate::gpu::TextureView>,
-    /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.
-    pub depth_read_bg:
-        crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,
+    /// Scene depth + sampler and the painter masks, handed to plugins that
+    /// draw in the depth-read and painter passes. Keyed on the depth view and
+    /// the mask view.
+    pub depth_read_bg: crate::resources::cached_bind_group::CachedBindGroup<(
+        crate::gpu::TextureView,
+        crate::gpu::TextureView,
+    )>,
     /// A copy of the scene depth for the depth-read pass to sample, on a device
     /// that cannot sample a depth attachment it binds read-only (wgpu's GL
     /// backend). Allocated the first time that pass runs there.
@@ -607,6 +611,8 @@ pub struct DeviceResources {
     pub(crate) scene_tier: SceneTierSlot,
     /// Samplers resolved from material sampler keys, on every tier.
     pub(crate) sampler_palette: crate::resources::material::fallbacks::SamplerPalette,
+    /// The painter mask layout and its fallbacks, on every tier.
+    pub(crate) painter_mask: crate::resources::painter_mask::PainterMaskResources,
     /// Group 0 on the compatibility tier: built there in place of the scene tier,
     /// `None` on every other tier.
     pub(crate) compatibility_tier:

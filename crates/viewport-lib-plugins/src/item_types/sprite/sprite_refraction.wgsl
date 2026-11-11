@@ -44,79 +44,11 @@ struct VertexOut {
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
     let inst = instance_buf[in.instance_index];
+    let corner = quad_corner(in.vertex_index);
+    let placed = sprite_corner(in.position, corner, inst);
 
-    let world_pos = (sprite_ub.model * vec4<f32>(in.position, 1.0)).xyz;
-    let corner    = quad_corner(in.vertex_index);
-
-    let offset = sprite_offset(corner, inst);
-
-    let cam_right_default = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
-    let cam_up_default    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
-    let cam_forward       = vec3<f32>(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
-
-    var local_right = cam_right_default;
-    var local_up    = cam_up_default;
-    var stretch_x   = 1.0;
-
-    if sprite_ub.orientation == 1u {
-        let v = inst.velocity;
-        let speed = length(v);
-        if speed > 1e-4 {
-            let v_screen = v - cam_forward * dot(v, cam_forward);
-            let s_len    = length(v_screen);
-            if s_len > 1e-4 {
-                local_right = v_screen / s_len;
-                local_up    = normalize(cross(cam_forward, local_right));
-                stretch_x   = 1.0 + speed * 0.25;
-            }
-        }
-    } else if sprite_ub.orientation == 2u {
-        let axis = normalize(sprite_ub.axis);
-        local_up = axis;
-        let right = cross(axis, cam_forward);
-        let r_len = length(right);
-        if r_len > 1e-4 {
-            local_right = right / r_len;
-        } else {
-            local_right = cam_right_default;
-        }
-    }
-
-    if sprite_ub.world_space != 0u {
-        let ws_pos = world_pos
-                   + local_right * (offset.x * stretch_x)
-                   + local_up    * offset.y;
-        out.clip_pos = camera.view_proj * vec4<f32>(ws_pos, 1.0);
-    } else {
-        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let inv_vp  = vec2<f32>(1.0, 1.0)
-                    / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        if sprite_ub.orientation == 0u {
-            let ndc_off = offset * inv_vp;
-            out.clip_pos = vec4<f32>(
-                centre.x + ndc_off.x * centre.w,
-                centre.y + ndc_off.y * centre.w,
-                centre.z,
-                centre.w,
-            );
-        } else {
-            let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
-            let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
-            let offset_clip = right_clip * (offset.x * stretch_x * inv_vp.x)
-                            + up_clip    * (offset.y * inv_vp.y);
-            out.clip_pos = centre + offset_clip * centre.w;
-        }
-    }
-
-    if (sprite_ub.flags & 1u) != 0u {
-        out.clip_pos = sprite_pixel_snap(
-            out.clip_pos,
-            camera.view_proj * vec4<f32>(world_pos, 1.0),
-            vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height),
-        );
-    }
-
-    out.world_pos = world_pos;
+    out.clip_pos  = placed.clip;
+    out.world_pos = placed.anchor;
     out.colour    = inst.colour;
     out.uv        = vec2<f32>((corner.x + 1.0) * 0.5, (corner.y + 1.0) * 0.5);
     return out;

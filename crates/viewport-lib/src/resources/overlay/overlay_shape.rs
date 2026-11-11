@@ -188,7 +188,8 @@ impl crate::resources::DeviceResources {
                     // vertex shader's local-pixel-to-NDC transform.
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Buffer {
                             ty: crate::gpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,

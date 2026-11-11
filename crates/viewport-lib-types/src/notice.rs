@@ -184,6 +184,14 @@ pub enum NoticeDetail {
     /// which cannot be ended to copy the destination; those blends drew as
     /// source-over and the backdrops were not drawn.
     OverlayDestinationReadsOnPath,
+    /// Painter-ordered sprites were drawn with a screen-space size, which
+    /// keeps them a fixed number of points across whatever the 2D camera's
+    /// zoom; a sprite in a 2D scene almost always wants a world-space size.
+    PainterSpriteScreenSized {
+        /// Sprite batches this frame in painter's order with a screen-space
+        /// size.
+        batches: u32,
+    },
     /// A notice reported by a plugin.
     Plugin {
         /// The key the plugin reported it under; repeats of one key coalesce.
@@ -317,6 +325,12 @@ impl fmt::Display for NoticeDetail {
                  (paint()/paint_viewport()), which cannot be ended to copy it: \
                  destination-reading blends drew as source-over and backdrops were not drawn. \
                  Use an owned-encoder render path.",
+            ),
+            Self::PainterSpriteScreenSized { batches } => write!(
+                f,
+                "{batches} sprite batches in painter's order have a screen-space size, so they \
+                 stay the same size on screen at any zoom; set size_mode to \
+                 SpriteSizeMode::WorldSpace for sprites that belong to a 2D scene"
             ),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),
         }

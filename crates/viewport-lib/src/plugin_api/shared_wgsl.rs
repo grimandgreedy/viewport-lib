@@ -264,7 +264,8 @@ pub const SHARED_CLIP_WGSL: &str =
 ///
 /// `viewport_depth_to_view_z` turns a stored depth into positive view-space
 /// distance; pass `camera.clip` from [`SHARED_BINDINGS_WGSL`], whose lanes are
-/// (near, far, is_ortho, 0) with far 0 for a projection with no far plane.
+/// (near, far, is_ortho, pixels per point) with far 0 for a projection with
+/// no far plane.
 /// `viewport_ndc_ray` builds the ray through a screen point from the near
 /// plane; do not unproject depth 1 and 0 and divide by `w`, since the far
 /// point is at infinity. `viewport_view_z` and
@@ -408,6 +409,32 @@ pub const SHARED_OIT_WGSL: &str =
 /// or the value passed to the draw).
 pub const SHARED_DEPTH_READ_WGSL: &str =
     include_str!(concat!(env!("OUT_DIR"), "/helpers/shared_depth_read.wgsl"));
+
+/// The painter mask test, for painter content that honours a
+/// [`MaskTest`](crate::MaskTest).
+///
+/// Declares the `PainterMasks` struct and two functions, and no bindings. The
+/// drawing shader declares the mask texture (`texture_2d<f32>`) and a
+/// `var<uniform>` of `PainterMasks` in a group it owns, laid out as
+/// [`painter_mask_bind_group_layout`](crate::resources::DeviceResources::painter_mask_bind_group_layout)
+/// (or folded into the depth-read group at bindings 2 and 3, see
+/// [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout)),
+/// and binds [`PainterContext::mask_bind_group`](crate::plugin_api::PainterContext::mask_bind_group)
+/// there.
+///
+/// - `painter_mask_texel(ndc, dims)` is the texel under a fragment at `ndc`
+///   (normalised device coordinates) of a mask texture `dims` texels across.
+/// - `painter_mask_keep(texel, masks, test, layer)` is the fraction of the
+///   fragment a test keeps: `1.0` for no test, a slot no mask drew into or a
+///   layer outside the slot's range, else the slot's coverage (visible
+///   inside) or one minus it (visible outside). Multiply alpha by it.
+///
+/// `test` is [`MaskTest::word`](crate::MaskTest::word) and `layer` the
+/// content's painter layer.
+pub const SHARED_PAINTER_MASK_WGSL: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/helpers/shared_painter_mask.wgsl"
+));
 
 /// Fragment helper for the outline mask pass.
 ///

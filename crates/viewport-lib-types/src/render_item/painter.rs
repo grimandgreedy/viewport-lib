@@ -51,6 +51,43 @@ impl PainterPlacement {
     }
 }
 
+/// How many painter mask slots a frame has: a mask item draws into one of
+/// slots `0` to `PAINTER_MASK_SLOTS - 1`.
+pub const PAINTER_MASK_SLOTS: u8 = 4;
+
+/// Whether painter content is cut by a painter mask, and which side of it
+/// shows.
+///
+/// A mask item draws its coverage into one slot and names the painter layers
+/// it applies to. Content on a layer in that range with
+/// [`VisibleInside`](Self::VisibleInside) shows only where the mask covers it,
+/// and with [`VisibleOutside`](Self::VisibleOutside) only where it does not.
+/// Content on a layer outside the range, or testing a slot no mask drew into
+/// this frame, is not cut. Slots above `PAINTER_MASK_SLOTS - 1` wrap.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum MaskTest {
+    /// Not cut by any mask. The default.
+    #[default]
+    None,
+    /// Shown only inside the mask in this slot.
+    VisibleInside(u8),
+    /// Shown only outside the mask in this slot.
+    VisibleOutside(u8),
+}
+
+impl MaskTest {
+    /// The test as the shaders read it: the slot in bits 0-1 and the side in
+    /// bits 2-3 (`0` none, `1` inside, `2` outside).
+    pub const fn word(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::VisibleInside(slot) => (slot as u32 & 3) | (1 << 2),
+            Self::VisibleOutside(slot) => (slot as u32 & 3) | (2 << 2),
+        }
+    }
+}
+
 /// How many member indices [`painter_key`] keeps distinct: `0` to
 /// `PAINTER_MEMBERS - 1`.
 pub const PAINTER_MEMBERS: u32 = 1 << PAINTER_MEMBER_BITS;

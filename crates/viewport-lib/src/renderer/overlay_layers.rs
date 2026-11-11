@@ -1710,6 +1710,7 @@ impl crate::renderer::ViewportRenderer {
             dst: true,
             backdrop: lt.inner_backdrop_bg(),
             world: lf.world.map(|(key, _, _)| key),
+            masks: None,
         };
         let top = lt.draws.iter().map(|d| d.level).max().unwrap_or(0);
         let mut ranges: Vec<std::ops::Range<u32>> = Vec::new();
