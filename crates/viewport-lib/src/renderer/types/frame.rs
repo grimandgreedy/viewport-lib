@@ -959,7 +959,9 @@ pub struct ViewportFrame {
     pub grid_z: f32,
     /// RGB colour for the grid lines. None = renderer default (mid-grey).
     pub grid_colour: Option<crate::Colour>,
-    /// Whether to draw the axes orientation indicator overlay. Default: true.
+    /// Whether to draw the axes orientation indicator overlay, which sits in
+    /// the bottom-left corner above every overlay the frame submits. Default:
+    /// true.
     pub show_axes_indicator: bool,
     /// What this viewport draws behind the scene. Default: the lighting
     /// environment, or `background_colour` when there is none. Drawn only on

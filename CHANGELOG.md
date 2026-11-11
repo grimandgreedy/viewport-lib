@@ -89,6 +89,7 @@
 
 ### Fixes
 
+- **Axes indicator order** - the bottom-left orientation indicator draws above every overlay shape the frame submits, instead of sorting between them by `z_order`.
 - **Item-type draw calls in `FrameStats::plugin_draw_calls`** - the built-in item types reported no draws, so the figure left out everything they drew. Every built-in item type now reports the colour draws it issued, the figure is read after the frame has painted, and a type with no items in the frame counts zero rather than what it drew last.
 - **Reference-only frames skipped the read-only-depth and foreground passes** - a frame whose first collection for an item type was empty (an empty `SpriteItem` list ahead of `SpriteSetRefItem`s) left out that type's depth-read and foreground draws; every collection is now checked.
 - **Scaled labels and glyph runs magnified their glyphs** - an item's `transform.scale` (and `stretch`) scaled the quads of glyphs rasterised at the unscaled size, so scaled text blurred. The scale now selects the raster size, so a label scaled 2x draws like one at twice the font size; text that relied on the magnified look draws sharp. A retained group's own scale still magnifies what it compiled.
