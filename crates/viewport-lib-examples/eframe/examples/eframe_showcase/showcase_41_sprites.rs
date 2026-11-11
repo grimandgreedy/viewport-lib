@@ -362,8 +362,9 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         let (w, h) = (32u32, 96u32);
         let mut pixels = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {
-            // v = 0 at the wide base, 1 at the narrow tip.
-            let v = y as f32 / (h - 1) as f32;
+            // v = 0 at the wide base (the last row), 1 at the narrow tip
+            // (row 0, the top of the quad).
+            let v = 1.0 - y as f32 / (h - 1) as f32;
             // Half-width of the flame at this height (texture-space).
             let taper = (1.0 - v * 0.85).max(0.05);
             for x in 0..w {

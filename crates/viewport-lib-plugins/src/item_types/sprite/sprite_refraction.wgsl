@@ -50,7 +50,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = placed.clip;
     out.world_pos = placed.anchor;
     out.colour    = inst.colour;
-    out.uv        = vec2<f32>((corner.x + 1.0) * 0.5, (corner.y + 1.0) * 0.5);
+    out.uv        = vec2<f32>((corner.x + 1.0) * 0.5, (1.0 - corner.y) * 0.5);
     return out;
 }
 

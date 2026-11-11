@@ -393,16 +393,15 @@ fn glow_texture() -> TextureData {
     TextureData::srgb(n as u32, n as u32, pixels)
 }
 
-/// The UV rect of an atlas cell `w` x `h` cells from `(col, row)`. A sprite
-/// quad maps `v = 0` to its bottom edge and the atlas has row 0 at the top,
-/// so the rect runs from the cell's bottom edge up to its top.
+/// The UV rect of an atlas cell `w` x `h` cells from `(col, row)`, with row 0
+/// at the top of the atlas.
 fn cell_uv(col: usize, row: usize, w: usize, h: usize) -> [f32; 4] {
     let (cw, ch) = (1.0 / ATLAS_COLS as f32, 1.0 / ATLAS_ROWS as f32);
     [
         col as f32 * cw,
-        (row + h) as f32 * ch,
-        (col + w) as f32 * cw,
         row as f32 * ch,
+        (col + w) as f32 * cw,
+        (row + h) as f32 * ch,
     ]
 }
 

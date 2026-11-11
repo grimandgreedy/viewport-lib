@@ -206,10 +206,11 @@ fn sprite_corner(position: vec3<f32>, corner: vec2<f32>, inst: SpriteInstance) -
     return c;
 }
 
-// The atlas UV of corner `corner` of the sprite's UV rect.
+// The atlas UV of corner `corner` of the sprite's UV rect. `v0` sits on the
+// quad's top edge, so a texture's first row draws at the top.
 fn sprite_corner_uv(corner: vec2<f32>, inst: SpriteInstance) -> vec2<f32> {
     let u = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
-    let v = mix(inst.uv_rect.y, inst.uv_rect.w, (corner.y + 1.0) * 0.5);
+    let v = mix(inst.uv_rect.y, inst.uv_rect.w, (1.0 - corner.y) * 0.5);
     return vec2<f32>(u, v);
 }
 
@@ -243,7 +244,8 @@ struct SpriteDrawUv {
 // bottom-left corner) into a sprite `size` units across with UV rect `rect`
 // and draw word `draw`. `uv` is what the simple mode samples. `texels` is the
 // texture's size, or zero when the batch has no texture, which measures the
-// rect in size units. A flipped rect mirrors the result.
+// rect in size units. The mapping runs from the rect's `(u0, v0)` corner, the
+// image's top left, so tiles start there; a flipped rect mirrors the result.
 fn sprite_draw_uv(
     uv: vec2<f32>,
     local: vec2<f32>,
@@ -261,18 +263,21 @@ fn sprite_draw_uv(
     }
     let lo = min(rect.xy, rect.zw);
     let hi = max(rect.xy, rect.zw);
-    // Distance from the image's own low edge, in size units: a flipped rect
-    // puts that edge at the quad's high side.
-    let d = select(local, vec2<f32>(1.0) - local, rect.xy > rect.zw) * size;
+    // Distance from the image's own low-UV edges, in size units: the left and
+    // the top, which a flipped rect moves to the quad's right and bottom.
+    let from_top = vec2<f32>(local.x, 1.0 - local.y);
+    let d = select(from_top, vec2<f32>(1.0) - from_top, rect.xy > rect.zw) * size;
     let a = unpack2x16float(draw.y);
     var s: vec2<f32>;
     var cont: vec2<f32>;
     if mode == 1u {
+        // Borders (left, bottom) and (right, top); the top border is the one
+        // at low `v`.
         let b = unpack2x16float(draw.z);
         let src = select(max((hi - lo) * texels, vec2<f32>(1e-6)), size, texels.x <= 0.0);
         s = vec2<f32>(
             sprite_slice(d.x, size.x, a.x, b.x, src.x),
-            sprite_slice(d.y, size.y, a.y, b.y, src.y),
+            sprite_slice(d.y, size.y, b.y, a.y, src.y),
         ) / src;
         cont = s;
     } else {

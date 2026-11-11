@@ -90,17 +90,15 @@ impl Level {
         &self.map.tilesets[0]
     }
 
-    /// The critter's tile as a sprite UV rect. A sprite quad maps `v = 0` to
-    /// its bottom edge and the image has row 0 at the top, so the rect runs
-    /// from the tile's bottom edge up to its top.
+    /// The critter's tile as a sprite UV rect.
     fn critter_uv(&self) -> [f32; 4] {
         let rect = self.tileset().tile_rect(CRITTER).expect("critter tile");
         let (w, h) = (self.atlas.width() as f32, self.atlas.height() as f32);
         [
             rect.x as f32 / w,
-            (rect.y + rect.height) as f32 / h,
-            (rect.x + rect.width) as f32 / w,
             rect.y as f32 / h,
+            (rect.x + rect.width) as f32 / w,
+            (rect.y + rect.height) as f32 / h,
         ]
     }
 }

@@ -78,14 +78,8 @@ impl Walk {
             .iter()
             .find(|a| a.name == "walk")
             .expect("a walk tag");
-        // A sprite quad maps `v = 0` to its bottom edge and the sheet's `v`
-        // runs from the image's top, so each rect runs from the frame's
-        // bottom edge up to its top.
         let frames = (walk.first..=walk.last)
-            .map(|i| {
-                let [u0, v0, u1, v1] = sheet.frames[i as usize].uv;
-                [u0, v1, u1, v0]
-            })
+            .map(|i| sheet.frames[i as usize].uv)
             .collect();
         let first = &sheet.frames[walk.first as usize];
         let size = [first.source_size[0] as f32, first.source_size[1] as f32];

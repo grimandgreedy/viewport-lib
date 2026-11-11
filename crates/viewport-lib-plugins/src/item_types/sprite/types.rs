@@ -52,7 +52,7 @@ pub enum SpriteDrawMode {
         /// opposite borders shrinks them in proportion.
         border: [f32; 4],
     },
-    /// The UV rect repeated across the quad.
+    /// The UV rect repeated across the quad from its top-left corner.
     Tiled {
         /// One tile's size in the sprite's size units.
         tile_size: [f32; 2],
@@ -65,7 +65,8 @@ pub enum SpriteDrawMode {
 /// number of tiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TileMode {
-    /// Tiles keep their size and the last one is cut off. The default.
+    /// Tiles keep their size and the last one along each axis (the right
+    /// and bottom ones, unflipped) is cut off. The default.
     #[default]
     Continuous,
     /// The nearest whole number of tiles (at least one) is drawn, each
@@ -112,8 +113,11 @@ pub struct SpriteItem {
     /// Per-instance rotation angles in radians, CCW around the camera-forward axis.
     /// Empty = no rotation applied. The quad rotates about its pivot.
     pub rotations: Vec<f32>,
-    /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions.
-    /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
+    /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions,
+    /// with `v = 0` at the image's top row: `(u0, v0)` draws at the quad's
+    /// top-left corner, so an image uploaded top row first, as image loaders
+    /// return it, draws upright. Empty = full texture `[0.0, 0.0, 1.0, 1.0]`
+    /// for all.
     pub uv_rects: Vec<[f32; 4]>,
     /// Per-instance pivots: the point of the quad that sits at the sprite's
     /// position, as `[x, y]` in `0..=1` of the quad (`[0, 0]` the bottom-left

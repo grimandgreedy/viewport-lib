@@ -44,9 +44,6 @@ pub fn scenes() -> Vec<NamedScene> {
 
 /// Upload pixel art given as rows of characters, top row first, each
 /// character looked up in `palette` (anything else is transparent).
-///
-/// A sprite quad maps `v = 0` to its bottom edge, so the rows are uploaded
-/// bottom row first to read the right way up.
 pub(crate) fn pixel_art(
     ctx: &mut BuildCtx<'_>,
     rows: &[&str],
@@ -56,7 +53,6 @@ pub(crate) fn pixel_art(
     let w = rows[0].len() as u32;
     let pixels: Vec<u8> = rows
         .iter()
-        .rev()
         .flat_map(|row| {
             row.chars().flat_map(|c| {
                 palette

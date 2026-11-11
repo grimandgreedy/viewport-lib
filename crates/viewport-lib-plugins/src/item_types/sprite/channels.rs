@@ -45,8 +45,9 @@ pub struct Sprite {
     pub flip: SpriteFlip,
     /// Soft-particle fade distance. `0.0` disables the fade for this sprite.
     pub soft_distance: f32,
-    /// Sub-rectangle of the batch's texture as `[u0, v0, u1, v1]`. Use
-    /// `[0.0, 0.0, 1.0, 1.0]` for the whole texture.
+    /// Sub-rectangle of the batch's texture as `[u0, v0, u1, v1]`, `v = 0`
+    /// at the image's top row. Use `[0.0, 0.0, 1.0, 1.0]` for the whole
+    /// texture.
     pub uv_rect: [f32; 4],
     /// Velocity, read only when the batch orients itself by it.
     pub velocity: [f32; 3],

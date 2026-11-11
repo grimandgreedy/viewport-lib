@@ -102,7 +102,6 @@ fn palette_pair(ctx: &mut BuildCtx<'_>) -> (TextureId, TextureId) {
     ];
     let index: Vec<u8> = rows
         .iter()
-        .rev()
         .flat_map(|row| {
             row.chars().flat_map(|c| match c.to_digit(10) {
                 Some(i) => [(i * 255 / 3) as u8, 0, 0, 255],
@@ -115,7 +114,7 @@ fn palette_pair(ctx: &mut BuildCtx<'_>) -> (TextureId, TextureId) {
         .resources_mut()
         .upload_texture(ctx.device, ctx.queue, TextureData::linear(8, 8, index))
         .expect("index map upload");
-    // Row 0 (bottom of the texture) is a warm ramp, row 1 a cool one.
+    // Row 0 is a warm ramp, row 1 a cool one.
     let palette: Vec<u8> = [
         [255, 245, 200, 255],
         [250, 190, 60, 255],
