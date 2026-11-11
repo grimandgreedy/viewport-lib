@@ -1352,7 +1352,7 @@ pub(super) fn emit_glyph_quads(
             gq.uv_min,
             gq.uv_max,
             colour,
-            glyph_tex_mode(gq.color),
+            glyph_tex_mode(gq.color, gq.nearest),
             vp_w,
             vp_h,
         );
@@ -1361,8 +1361,10 @@ pub(super) fn emit_glyph_quads(
 
 /// The vertex `use_texture` mode for a glyph: `2.0` samples the atlas as full
 /// colour (emoji), `1.0` tints the atlas coverage by the run colour (text).
-fn glyph_tex_mode(color: bool) -> f32 {
-    if color { 2.0 } else { 1.0 }
+/// A bitmap face's cell adds three (`4.0`, `5.0`): read texel by texel.
+fn glyph_tex_mode(color: bool, nearest: bool) -> f32 {
+    let mode = if color { 2.0 } else { 1.0 };
+    if nearest { mode + 3.0 } else { mode }
 }
 
 /// Emit one textured quad per glyph, each with its own tint colour.
@@ -1389,7 +1391,7 @@ pub(super) fn emit_glyph_quads_colored(
             gq.uv_min,
             gq.uv_max,
             *colour,
-            glyph_tex_mode(gq.color),
+            glyph_tex_mode(gq.color, gq.nearest),
             vp_w,
             vp_h,
         );

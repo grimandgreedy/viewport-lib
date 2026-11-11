@@ -289,3 +289,102 @@ fn partly_overlapping_layers_are_reported() {
         });
     assert_eq!(overlap, Some((1, 0)));
 }
+
+/// The pixel at `[x, y]` of a `W` by `H` RGBA readback.
+fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let at = ((y * W + x) * 4) as usize;
+    [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
+}
+
+/// A red rect, then a layer over it whose first member is a destination-out
+/// mask over part of the red and whose second is a green rect beside it.
+fn masked_layer_frame(isolated: bool) -> FrameData {
+    let mut fd = frame();
+    let solid = |x: f32, y: f32, w: f32, h: f32, c: Colour| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, [x, y], [w, h])
+            .with_fill(OverlayFill::Solid(c))
+    };
+    fd.overlays.shapes.push(solid(
+        40.0,
+        40.0,
+        80.0,
+        60.0,
+        Colour::srgb(1.0, 0.0, 0.0, 1.0),
+    ));
+    let mark = fd.overlays.layer_mark();
+    fd.overlays.shapes.push(
+        solid(50.0, 50.0, 30.0, 30.0, Colour::srgb(1.0, 1.0, 1.0, 1.0))
+            .with_blend(OverlayBlend::DestinationOut)
+            .with_z_order(1),
+    );
+    fd.overlays
+        .shapes
+        .push(solid(140.0, 50.0, 30.0, 30.0, Colour::srgb(0.0, 1.0, 0.0, 1.0)).with_z_order(1));
+    fd.overlays
+        .push_layer(mark, OverlayLayerStyle::default().with_isolated(isolated));
+    fd
+}
+
+/// An isolated layer at opacity 1 keeps a destination-out member inside its
+/// own target: the red under the layer stays red. Without isolation the layer
+/// folds away as before and the mask cuts through the red.
+#[test]
+fn an_isolated_layer_keeps_a_destination_mask_inside_it() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let fd = masked_layer_frame(true);
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(stats.overlay_layers_composited, 1);
+    assert_eq!(stats.overlay_layer_targets, 1);
+    let isolated = h.render(&fd, W, H);
+    let under = pixel(&isolated, 65, 65);
+    assert!(
+        under[0] > 240 && under[1] < 15 && under[2] < 15 && under[3] == 255,
+        "the red under an isolated mask is kept: {under:?}"
+    );
+    let green = pixel(&isolated, 155, 65);
+    assert!(
+        green[1] > 240 && green[0] < 15,
+        "the layer's content draws: {green:?}"
+    );
+
+    let fd = masked_layer_frame(false);
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(stats.overlay_layers_composited, 0);
+    assert_eq!(stats.overlay_layer_targets, 0);
+    let folded = h.render(&fd, W, H);
+    let cut = pixel(&folded, 65, 65);
+    assert!(
+        cut[0] < 15 || cut[3] < 15,
+        "without isolation the mask reaches the red under the layer: {cut:?}"
+    );
+    assert_eq!(pixel(&folded, 155, 65), green, "the content draws the same");
+    assert_eq!(pixel(&folded, 110, 90), pixel(&isolated, 110, 90));
+}
+
+/// An isolated layer that would otherwise pass through costs a target and a
+/// composite.
+#[test]
+fn an_isolated_pass_through_layer_costs_its_composite() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mut fd = frame();
+    push_pair(&mut fd, 10.0, 10.0, OverlayLayerStyle::default());
+    let plain = h.render_two_frames(&fd, W, H);
+    assert_eq!(plain.overlay_layers_composited, 0);
+    let mut fd = frame();
+    push_pair(
+        &mut fd,
+        10.0,
+        10.0,
+        OverlayLayerStyle::default().with_isolated(true),
+    );
+    let isolated = h.render_two_frames(&fd, W, H);
+    assert_eq!(isolated.overlay_layers_composited, 1);
+    assert_eq!(isolated.overlay_layer_targets, 1);
+    assert_eq!(isolated.overlay_draw_calls, plain.overlay_draw_calls + 1);
+}

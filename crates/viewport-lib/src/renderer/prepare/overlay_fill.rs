@@ -166,6 +166,7 @@ impl FillTable {
                 transform,
                 nine_slice,
                 tint: tex_tint,
+                filter,
                 ..
             } => {
                 header[3] = scale(tex_tint.to_linear_rgba());
@@ -173,6 +174,9 @@ impl FillTable {
                     header[0][0] = kind::SOLID;
                 } else {
                     header[0][0] = kind::TEXTURE;
+                    if *filter == crate::TextureFilter::Nearest {
+                        header[2][0] = 1.0;
+                    }
                     header[4] = [
                         transform.offset[0],
                         transform.offset[1],

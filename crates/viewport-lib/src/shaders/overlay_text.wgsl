@@ -102,7 +102,7 @@ struct VertexInput {
     @location(0) position:    vec2<f32>,  // local logical pixels
     @location(1) uv:          vec2<f32>,  // atlas UV (ignored for solid quads)
     @location(2) colour:      vec4<f32>,  // RGBA tint
-    @location(3) use_texture: f32,        // 0 = solid, 1 = glyph coverage, 2 = colour glyph, 3 = coverage cell
+    @location(3) use_texture: f32,        // 0 = solid, 1 = glyph coverage, 2 = colour glyph, 3 = coverage cell, 4 and 5 = 1 and 2 unfiltered
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
     @location(6) group_tint:  f32,        // 1 = the group tint applies here, 0 = shadow geometry
@@ -424,6 +424,20 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
 }
 
 // The fragment colour in straight alpha.
+// The texel of a glyph atlas page under `uv`, unfiltered.
+fn glyph_page_texel(uv: vec2<f32>, dims: vec2<u32>) -> vec2<i32> {
+    let p = vec2<i32>(floor(uv * vec2<f32>(dims)));
+    return clamp(p, vec2<i32>(0, 0), vec2<i32>(dims) - vec2<i32>(1, 1));
+}
+
+fn glyph_texel_coverage(uv: vec2<f32>) -> f32 {
+    return textureLoad(glyph_atlas, glyph_page_texel(uv, textureDimensions(glyph_atlas)), 0).r;
+}
+
+fn glyph_texel_colour(uv: vec2<f32>) -> vec4<f32> {
+    return textureLoad(glyph_colour, glyph_page_texel(uv, textureDimensions(glyph_colour)), 0);
+}
+
 fn shade(in: VertexOutput) -> vec4<f32> {
     // Clip: the item's box (exact for rectangular masks), the mask's SDF and
     // parent chain, and a retained group's per-frame outer box (the scroll
@@ -447,31 +461,42 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // does not, so the text pipeline failed to build in Chrome while working in
     // Firefox. Each atlas has one mip level, so level zero is what an implicit
     // lookup would have chosen anyway.
-    let glyph = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0).r;
-    let emoji = textureSampleLevel(glyph_colour, atlas_sampler, in.uv, 0.0);
+    var glyph = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0).r;
+    var emoji = textureSampleLevel(glyph_colour, atlas_sampler, in.uv, 0.0);
     let cell = textureSampleLevel(coverage_atlas, atlas_sampler, in.uv, 0.0).r;
+    // A bitmap face's cell (modes 4 and 5) is read texel by texel and then
+    // drawn as a coverage or colour glyph: it is magnified by a whole
+    // multiple, and filtering would blur its pixels.
+    var mode = in.use_texture;
+    if (mode > 4.5) {
+        emoji = glyph_texel_colour(in.uv);
+        mode = 2.0;
+    } else if (mode > 3.5) {
+        glyph = glyph_texel_coverage(in.uv);
+        mode = 1.0;
+    }
     // The item's fill multiplies into the vertex colour; with no record it is
     // white and the vertex colour passes through. Evaluated outside any
     // branch, because an image fill samples a texture.
     let raw = in.colour * overlay_fill(in.fill_local, i32(in.fill_index));
     // The item's colour filter, if its record carries one. A colour glyph
     // filters the page's colour under the run's alpha.
-    let is_emoji = in.use_texture > 1.5 && in.use_texture <= 2.5;
+    let is_emoji = mode > 1.5 && mode <= 2.5;
     let colour = overlay_colour_matrix(
         select(raw, vec4<f32>(emoji.rgb, raw.a), is_emoji),
         i32(in.fill_index),
     );
 
     var result: vec4<f32>;
-    if (in.use_texture > 2.5) {
+    if (mode > 2.5) {
         // Vector-shape coverage cell: tint its coverage by the fill.
         result = vec4<f32>(colour.rgb, colour.a * cell);
-    } else if (in.use_texture > 1.5) {
+    } else if (mode > 1.5) {
         // Colour glyph (emoji): draw the colour page's RGBA as-is. The run
         // colour only carries opacity through its alpha; the tint RGB is
         // ignored.
         result = vec4<f32>(colour.rgb, emoji.a * colour.a);
-    } else if (in.use_texture > 0.5) {
+    } else if (mode > 0.5) {
         // Coverage glyph: tint the coverage page by the run colour.
         result = vec4<f32>(colour.rgb, colour.a * glyph);
     } else {

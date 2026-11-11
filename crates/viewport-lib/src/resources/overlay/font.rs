@@ -127,6 +127,9 @@ fn swash_key(font_bytes: &[u8], face: u32) -> Result<(u32, CacheKey), FontError>
 enum FontData {
     Static(&'static [u8]),
     Shared(Arc<[u8]>),
+    /// A bitmap face, which has no font file: its glyphs are cut out of the
+    /// pages it was uploaded with.
+    Bitmap(Box<BitmapFace>),
 }
 
 impl FontData {
@@ -134,15 +137,17 @@ impl FontData {
         match self {
             FontData::Static(b) => b,
             FontData::Shared(b) => b,
+            FontData::Bitmap(_) => &[],
         }
     }
 
-    /// The bytes as a shared buffer. Copies the built-in font, which is only
-    /// asked for when a caller reads it back.
-    fn shared(&self) -> Arc<[u8]> {
+    /// The bytes as a shared buffer, or `None` for a bitmap face. Copies the
+    /// built-in font, which is only asked for when a caller reads it back.
+    fn shared(&self) -> Option<Arc<[u8]>> {
         match self {
-            FontData::Static(b) => Arc::from(*b),
-            FontData::Shared(b) => b.clone(),
+            FontData::Static(b) => Some(Arc::from(*b)),
+            FontData::Shared(b) => Some(b.clone()),
+            FontData::Bitmap(_) => None,
         }
     }
 }
@@ -156,6 +161,7 @@ impl FontData {
 // `crate::resources::overlay::font::FontHandle` path keeps resolving.
 pub use viewport_lib_types::overlay::font::FontHandle;
 
+use super::bitmap_font::BitmapFace;
 use super::glyph_style::{GlyphStyle, style_coverage};
 
 /// Horizontal sub-pixel positions a glyph is rasterised at: a pen lands on the
@@ -207,6 +213,8 @@ struct GlyphEntry {
     color: bool,
     /// The plot of that page the cell sits in.
     plot: u16,
+    /// A bitmap face's cell, magnified with no filtering.
+    nearest: bool,
 }
 
 impl GlyphEntry {
@@ -220,6 +228,7 @@ impl GlyphEntry {
         offset_y: 0.0,
         color: false,
         plot: 0,
+        nearest: false,
     };
 }
 
@@ -242,6 +251,9 @@ pub(crate) struct GlyphQuad {
     /// `true` when the cell is in the colour page (drawn as-is), `false` for
     /// the coverage page (tinted by the run colour).
     pub color: bool,
+    /// `true` for a bitmap face's cell, which is read texel by texel rather
+    /// than filtered.
+    pub nearest: bool,
 }
 
 /// Metrics for an overlay text run, matching how a [`LabelItem`] with the same
@@ -830,11 +842,45 @@ impl GlyphAtlas {
         Ok(FontHandle(index))
     }
 
+    /// Register a bitmap face. Returns a [`FontHandle`] that can be passed to
+    /// overlay items.
+    pub fn upload_bitmap_font(
+        &mut self,
+        font: &viewport_lib_types::overlay::BitmapFont,
+    ) -> Result<FontHandle, FontError> {
+        let face = BitmapFace::new(font)?;
+        let index = self.font_bytes.len();
+        // A bitmap face shapes and rasterises without swash; the key is
+        // never read.
+        self.font_keys.push((0, CacheKey::new(), 0));
+        self.font_bytes.push(FontData::Bitmap(Box::new(face)));
+        Ok(FontHandle(index))
+    }
+
+    /// The font index `font` names, or the built-in font's for a handle this
+    /// atlas never issued (one from another renderer), so text laid out with
+    /// it draws in the built-in font rather than panicking.
+    fn font_index(&self, font: Option<FontHandle>) -> usize {
+        match font {
+            Some(h) if h.0 < self.font_bytes.len() => h.0,
+            _ => 0,
+        }
+    }
+
+    /// The bitmap face at `font_index`, if that font is one.
+    fn bitmap(&self, font_index: usize) -> Option<&BitmapFace> {
+        match self.font_bytes.get(font_index)? {
+            FontData::Bitmap(face) => Some(face),
+            _ => None,
+        }
+    }
+
     /// The font file and face index at `index` (a [`FontHandle`]'s value), if it
-    /// has been uploaded. Index 0 is the built-in default font.
+    /// has been uploaded and is not a bitmap face. Index 0 is the built-in
+    /// default font.
     pub(crate) fn font_face(&self, index: usize) -> Option<(Arc<[u8]>, u32)> {
         let data = self.font_bytes.get(index)?;
-        Some((data.shared(), self.font_keys[index].2))
+        Some((data.shared()?, self.font_keys[index].2))
     }
 
     /// The first character of `text` that `font` has no glyph for, skipping
@@ -847,6 +893,9 @@ impl GlyphAtlas {
             .filter(|c| !c.is_whitespace() && !c.is_control());
         if font_index >= self.font_keys.len() {
             return drawn.next();
+        }
+        if let Some(face) = self.bitmap(font_index) {
+            return drawn.find(|&c| face.id(c).is_none());
         }
         let charmap = self.font_ref(font_index).charmap();
         drawn.find(|&c| charmap.map(c) == 0)
@@ -918,7 +967,10 @@ impl GlyphAtlas {
         font: Option<FontHandle>,
         ppp: f32,
     ) -> ShapedText {
-        let font_index = font.map_or(0, |h| h.0);
+        let font_index = self.font_index(font);
+        if let Some(face) = self.bitmap(font_index) {
+            return bitmap_shape(face, text, font_size, ppp, None);
+        }
         let px = font_size * ppp;
         let (_, line_height) = self.line_metrics(font_index, px);
 
@@ -965,7 +1017,10 @@ impl GlyphAtlas {
         max_width: f32,
         ppp: f32,
     ) -> ShapedText {
-        let font_index = font.map_or(0, |h| h.0);
+        let font_index = self.font_index(font);
+        if let Some(face) = self.bitmap(font_index) {
+            return bitmap_shape(face, text, font_size, ppp, Some(max_width));
+        }
         // Shape at physical size (see `shape_text`). `max_width` arrives in
         // logical points, so scale it up to match the physical pen units the
         // wrap test below works in.
@@ -1077,21 +1132,35 @@ impl GlyphAtlas {
     where
         I: IntoIterator<Item = (u16, f32, f32, P)>,
     {
-        let font_index = font.map_or(0, |h| h.0);
-        let raster = if grid.stepped {
+        let font_index = self.font_index(font);
+        // A bitmap face draws its cells magnified by a whole multiple, so its
+        // texels cover whole device pixels at any size and its pens snap to
+        // whole pixels. The stepped ladder does not apply to it.
+        let bitmap = self
+            .bitmap(font_index)
+            .map(|face| face.scale_for(font_size * grid.scale));
+        let raster = if let Some(k) = bitmap {
+            RasterSize {
+                px: 0.0,
+                tenths: 0,
+                scale: k as f32,
+            }
+        } else if grid.stepped {
             RasterSize::for_px_stepped(font_size * grid.scale)
         } else {
             RasterSize::for_px(font_size * grid.scale)
         };
         // Snapping only lands texels on pixels while a texel is a pixel.
-        let snap = grid.snap && raster.scale == 1.0;
+        let snap = grid.snap && (raster.scale == 1.0 || bitmap.is_some());
         let inv = 1.0 / grid.scale;
 
         let mut quads = Vec::new();
         for (glyph_id, x, y, payload) in glyphs {
             let dx = grid.offset[0] + (origin[0] + x) * grid.scale;
             let dy = grid.offset[1] + (origin[1] + y) * grid.scale;
-            let (pen, bin) = if snap {
+            let (pen, bin) = if snap && bitmap.is_some() {
+                ([dx.round(), dy.round()], 0)
+            } else if snap {
                 let quarters = (dx * SUBPIXEL_BINS).round();
                 let whole = (quarters / SUBPIXEL_BINS).floor();
                 (
@@ -1183,7 +1252,15 @@ impl GlyphAtlas {
     /// The ascent is the distance from the baseline to the top of the tallest
     /// glyph.  Used to position glyph quads relative to a text origin at the
     /// top-left corner of the bounding box.
-    pub fn font_ascent(&self, font_index: usize, font_size: f32) -> f32 {
+    ///
+    /// `ppp` matters only for a bitmap face, whose size rounds to a whole
+    /// multiple of its own in device pixels.
+    pub fn font_ascent(&self, font_index: usize, font_size: f32, ppp: f32) -> f32 {
+        let font_index = self.font_index(Some(FontHandle(font_index)));
+        if let Some(face) = self.bitmap(font_index) {
+            let k = face.scale_for(font_size * ppp);
+            return (face.base * k) as f32 / ppp;
+        }
         self.line_metrics(font_index, font_size).0
     }
 
@@ -1207,7 +1284,15 @@ impl GlyphAtlas {
         font_size: f32,
         font: Option<FontHandle>,
     ) -> TextMetrics {
-        let font_index = font.map_or(0, |h| h.0);
+        let font_index = self.font_index(font);
+        if let Some(face) = self.bitmap(font_index) {
+            let shaped = bitmap_shape(face, text, font_size, 1.0, None);
+            return TextMetrics {
+                width: shaped.total_width,
+                height: shaped.height,
+                ascent: self.font_ascent(font_index, font_size, 1.0),
+            };
+        }
         let (_, line_height) = self.line_metrics(font_index, font_size);
 
         // Mirror the line splitting and shaping in `layout_text`, skipping only
@@ -1224,7 +1309,7 @@ impl GlyphAtlas {
         TextMetrics {
             width: max_width,
             height: pen_y + line_height,
-            ascent: self.font_ascent(font_index, font_size),
+            ascent: self.font_ascent(font_index, font_size, 1.0),
         }
     }
 
@@ -1251,7 +1336,15 @@ impl GlyphAtlas {
         font: Option<FontHandle>,
         max_width: f32,
     ) -> TextMetrics {
-        let font_index = font.map_or(0, |h| h.0);
+        let font_index = self.font_index(font);
+        if let Some(face) = self.bitmap(font_index) {
+            let shaped = bitmap_shape(face, text, font_size, 1.0, Some(max_width));
+            return TextMetrics {
+                width: shaped.total_width,
+                height: shaped.height,
+                ascent: self.font_ascent(font_index, font_size, 1.0),
+            };
+        }
         let (_, line_height) = self.line_metrics(font_index, font_size);
         let space_advance = self.advance_of(font_index, " ", font_size);
 
@@ -1272,7 +1365,7 @@ impl GlyphAtlas {
         TextMetrics {
             width: max_line_width,
             height: total_height,
-            ascent: self.font_ascent(font_index, font_size),
+            ascent: self.font_ascent(font_index, font_size, 1.0),
         }
     }
 
@@ -1372,6 +1465,7 @@ impl GlyphAtlas {
                 (entry.y + entry.height) as f32 / page_size,
             ],
             color: entry.color,
+            nearest: entry.nearest,
         }
     }
 
@@ -1407,6 +1501,10 @@ impl GlyphAtlas {
         // Nothing more fits this frame, so skip the rasterisation as well.
         if self.full {
             return GlyphEntry::EMPTY;
+        }
+
+        if self.bitmap(font_index).is_some() {
+            return self.ensure_bitmap_glyph(device, key, font_index, glyph_index, style);
         }
 
         // One cascade for every glyph, in priority order: layered colour outlines,
@@ -1505,6 +1603,62 @@ impl GlyphAtlas {
         }
     }
 
+    /// Pack a bitmap face's glyph, or the shadow cell baked from it, at the
+    /// face's own size. `style` is already in the face's pixels.
+    fn ensure_bitmap_glyph(
+        &mut self,
+        device: &crate::gpu::Device,
+        key: GlyphKey,
+        font_index: usize,
+        glyph_index: u16,
+        style: GlyphStyle,
+    ) -> GlyphEntry {
+        let Some(face) = self.bitmap(font_index) else {
+            return GlyphEntry::EMPTY;
+        };
+        let Some(cell) = face.cells.get(glyph_index as usize) else {
+            self.empty.insert(key);
+            return GlyphEntry::EMPTY;
+        };
+        let (w, h) = (cell.width, cell.height);
+        if w == 0 || h == 0 {
+            self.empty.insert(key);
+            return GlyphEntry::EMPTY;
+        }
+        let offset_x = cell.offset[0] as f32;
+        let offset_y = (cell.offset[1] - face.base as i32) as f32;
+        let colour = face.colour;
+        // The cells are copied out so the face's borrow ends before packing.
+        if !style.is_plain() {
+            let coverage = cell.coverage.clone();
+            let (styled, sw, sh, pad) = style_coverage(&coverage, w, h, style);
+            return self.pack(
+                device,
+                key,
+                Cell::Coverage(&styled),
+                sw,
+                sh,
+                offset_x - pad as f32,
+                offset_y - pad as f32,
+            );
+        }
+        if colour {
+            let rgba = cell.rgba.clone();
+            self.pack(device, key, Cell::Colour(&rgba), w, h, offset_x, offset_y)
+        } else {
+            let coverage = cell.coverage.clone();
+            self.pack(
+                device,
+                key,
+                Cell::Coverage(&coverage),
+                w,
+                h,
+                offset_x,
+                offset_y,
+            )
+        }
+    }
+
     /// Pack a `w * h` cell into its page, growing the page or evicting a plot
     /// if needed, and record the entry.
     ///
@@ -1582,6 +1736,7 @@ impl GlyphAtlas {
             offset_y,
             color,
             plot,
+            nearest: self.bitmap(key.font_index).is_some(),
         };
         self.entries.insert(key, entry);
         let keys = if color {
@@ -1622,6 +1777,11 @@ pub enum FontError {
         /// How many faces the file holds.
         count: u32,
     },
+    /// A bitmap font could not be cut into glyphs: a glyph names a page the
+    /// font does not have or reaches past a page's edge, or a page's pixels
+    /// cannot be read.
+    #[error("bitmap font is not usable: {0}")]
+    InvalidBitmapFont(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -1675,6 +1835,32 @@ impl crate::resources::DeviceResources {
         face: u32,
     ) -> Result<FontHandle, FontError> {
         self.content.glyph_atlas.upload_font_face(data.into(), face)
+    }
+
+    /// Upload a bitmap font for use with overlay items.
+    ///
+    /// Returns a [`FontHandle`] that labels and glyph runs name like any other
+    /// font, and that [`measure_overlay_text`](Self::measure_overlay_text)
+    /// measures. The face's glyphs are cut out of its pages here, and a font
+    /// that packs glyphs into separate channels is unpacked; the pages are not
+    /// kept.
+    ///
+    /// The face draws at whole multiples of its size only: the text size in
+    /// device pixels rounds to the nearest multiple of
+    /// [`BitmapFont::size`](crate::BitmapFont::size) (at least one), glyphs
+    /// are magnified by that factor with no filtering, and pens land on whole
+    /// device pixels, so a label measures the same at every pixels per point
+    /// when its size is a whole multiple of the face's. Measuring takes one
+    /// pixel per point. Fills, shadows and alignment apply. A face whose
+    /// glyphs are white, or grey at their own alpha, takes the fill's colour
+    /// like vector text; a face with coloured glyphs draws its colours, with
+    /// the fill's alpha, the opacity and the colour matrix applied.
+    ///
+    /// A glyph run names a bitmap face's glyphs by their index in code point
+    /// order. [`font_face`](Self::font_face) answers `None` for a bitmap
+    /// face, since it has no font file.
+    pub fn upload_bitmap_font(&mut self, font: crate::BitmapFont) -> Result<FontHandle, FontError> {
+        self.content.glyph_atlas.upload_bitmap_font(&font)
     }
 
     /// The first character of `text` that `font` cannot draw, or `None` when
@@ -1742,7 +1928,7 @@ impl crate::resources::DeviceResources {
     }
 
     /// The font file and face index `font` refers to (`None` = the built-in
-    /// default), if uploaded. A downstream text shaper can register these exact
+    /// default), if uploaded and not a bitmap face. A downstream text shaper can register these exact
     /// bytes at this face so its glyph ids match what the overlay atlas
     /// rasterizes; the bytes alone name the wrong face for a collection.
     ///
@@ -1750,6 +1936,68 @@ impl crate::resources::DeviceResources {
     /// uploaded font. The built-in font is copied out of the binary on each call.
     pub fn font_face(&self, font: Option<FontHandle>) -> Option<(Arc<[u8]>, u32)> {
         self.content.glyph_atlas.font_face(font.map_or(0, |h| h.0))
+    }
+}
+
+/// Lay out `text` in a bitmap face at `font_size` logical pixels, one line
+/// per `\n`, and with word wrapping at `max_width` logical pixels when set.
+/// The pens are whole device pixels at `ppp`; the result is in logical pixels
+/// at the first baseline, as [`GlyphAtlas::shape_text`] returns it.
+fn bitmap_shape(
+    face: &BitmapFace,
+    text: &str,
+    font_size: f32,
+    ppp: f32,
+    max_width: Option<f32>,
+) -> ShapedText {
+    let k = face.scale_for(font_size * ppp);
+    let line_height = (face.line_height * k) as f32;
+    let mut glyphs = Vec::new();
+    let mut run = Vec::new();
+    let (width, height) = if let Some(max_width) = max_width {
+        let mut space = Vec::new();
+        let space_advance = face.run(" ", k, &mut space);
+        let mut words: Vec<Vec<(u16, f32)>> = Vec::new();
+        let lines: Vec<Vec<f32>> = text
+            .split('\n')
+            .map(|line| {
+                line.split_whitespace()
+                    .map(|word| {
+                        run.clear();
+                        let w = face.run(word, k, &mut run);
+                        words.push(run.clone());
+                        w
+                    })
+                    .collect()
+            })
+            .collect();
+        let (origins, widest, total) =
+            wrap_words(&lines, space_advance, max_width * ppp, line_height);
+        for (word, o) in words.iter().zip(origins) {
+            glyphs.extend(word.iter().map(|&(id, x)| (id, o[0] + x, o[1])));
+        }
+        (widest, total)
+    } else {
+        let mut widest: f32 = 0.0;
+        let mut pen_y = 0.0;
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
+                pen_y += line_height;
+            }
+            run.clear();
+            widest = widest.max(face.run(line, k, &mut run));
+            glyphs.extend(run.iter().map(|&(id, x)| (id, x, pen_y)));
+        }
+        (widest, pen_y + line_height)
+    };
+    let inv = 1.0 / ppp;
+    ShapedText {
+        glyphs: glyphs
+            .into_iter()
+            .map(|(id, x, y)| (id, x * inv, y * inv))
+            .collect(),
+        total_width: width * inv,
+        height: height * inv,
     }
 }
 

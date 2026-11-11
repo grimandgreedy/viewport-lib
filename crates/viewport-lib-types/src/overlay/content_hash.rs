@@ -402,12 +402,14 @@ impl OverlayContentHash for OverlayFill {
                 transform,
                 nine_slice,
                 tint,
+                filter,
             } => {
                 state.write_u8(7);
                 id.content_hash_at(origin, state);
                 transform.content_hash_at(origin, state);
                 nine_slice.content_hash_at(origin, state);
                 tint.content_hash_at(origin, state);
+                std::hash::Hash::hash(filter, state);
             }
             OverlayFill::Custom { kind, params } => {
                 state.write_u8(8);
@@ -492,6 +494,7 @@ impl OverlayContentHash for OverlayLayerStyle {
             blur,
             shadow,
             backdrop,
+            isolated,
         } = self;
         hash_f32(state, *opacity);
         std::hash::Hash::hash(blend, state);
@@ -499,6 +502,7 @@ impl OverlayContentHash for OverlayLayerStyle {
         hash_f32(state, *blur);
         shadow.content_hash_at(origin, state);
         backdrop.content_hash_at(origin, state);
+        state.write_u8(*isolated as u8);
     }
 }
 

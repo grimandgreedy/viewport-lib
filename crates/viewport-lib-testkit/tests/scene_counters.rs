@@ -251,6 +251,8 @@ fn expected(name: &str) -> Option<Expected> {
         "painter_particles_layers" => e(0, 0, 0, 0, 0),
         // A plate and two translucent cubes; the cubes share an OIT batch.
         "painter_over_transparent" => e(3, 3, 2, 2, 26),
+        // The overlay scenes' sphere backdrop.
+        "overlay_bitmap_font" => e(1, 1, 1, 1, 960),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),

@@ -40,6 +40,7 @@
 - **The painter mask groups carry the 2D light layers** - `depth_read_bind_group_layout` gains bindings 4 and 5 and `painter_mask_bind_group_layout` bindings 2 and 3: the light layers (`texture_2d_array<f32>`) and a `PainterLights` uniform of `PAINTER_LIGHTS_UNIFORM_BYTES`. A plugin that builds its own group against either layout adds the two entries.
 - **`PainterPlacement` has an `unlit` field** - a struct literal needs it; `PainterPlacement::new` and `painter_key` set it to `false`.
 - **`Tileset` has an `orientation` field and `Tile` a `rotate_120` field** - struct literals need them; `Tileset::new` sets `TileOrientation::Orthogonal` and `Tile::new` and `Tile::EMPTY` set `rotate_120` to `false`.
+- **`OverlayFill::Texture` has a `filter` field** - a `TextureFilter` that picks nearest or linear sampling of the image; build the variant with `filter: TextureFilter::Linear` for the previous sampling, or use `OverlayFill::texture`, and add `..` to patterns that list its fields.
 
 ### Features
 
@@ -146,6 +147,9 @@
 - **2D light ranges** - `Lighting2dItem::layers` gives each item its own light layer, sampled only by content on its painter layers, so background, world and foreground can be lit by different items; a light whose `Light2d::layers` cover part of an item's range splits it into a layer per part. Up to `MAX_PAINTER_LIGHT_RANGES` layers are bound a frame.
 - **Unlit painter content** - `SpriteItem::unlit`, `PainterPlacement::unlit` (meshes, mesh instances and GPU particle systems) and `WorldOverlayLayer::unlit` keep content's colour under 2D lighting and draw it after the lit content of its range.
 - **Light layers in the plugin API** - `ItemTypePlugin::painter_light_layers` reports a plugin's light layers as `PainterLightLayers` (a 2D array view, one array layer per painter range, and a scale), which the renderer binds in the painter mask and depth-read groups; lit content reads its range's layer through `painter_light_slice` and `painter_light_apply` in `SHARED_PAINTER_MASK_WGSL`. `PainterBatch::unlit` moves a batch to after the lit content of its range, and `PaintContext::depth_read_bind_group` and `mask_bind_group` hand the groups to `paint` too. `ItemFrameContext::pixels_per_point` gives the scene's device size in `prepare`, and `DeviceResources::has_hdr_path` says whether float render targets are available.
+- **Bitmap fonts** - `DeviceResources::upload_bitmap_font(BitmapFont)` registers a face of page images, glyph rectangles, offsets, advances, kerning, line height and baseline as a `FontHandle` for labels and glyph runs, unpacking channel-packed pages. It draws at whole multiples of its size with unfiltered glyphs on whole device pixels, and takes fills, shadows and alignment; `measure_overlay_text` measures it.
+- **Nearest texture fills** - `OverlayFill::with_texture_filter(TextureFilter::Nearest)` samples a texture or nine-slice fill without filtering, so pixel art keeps hard texel edges at any scale. Fills of one image batch together whatever their filter.
+- **Isolated overlay layers** - `OverlayLayerStyle::isolated` (`with_isolated`) keeps a layer in its own target when it would otherwise fold away, so a destination-blend mask among its members cuts only what the layer drew.
 
 ### Fixes
 

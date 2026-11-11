@@ -21,7 +21,9 @@ use crate::overlay::{BackdropEffects, ColourMatrix, OverlayBlend, OverlayClip, S
 /// blend and colour matrix applied to it. Neither allocates a scratch target.
 /// The same holds for a layer inside another, and a layer whose one member is
 /// another layer, with opacity as its only effect, passes that opacity to the
-/// inner layer instead of drawing through a target of its own.
+/// inner layer instead of drawing through a target of its own. Set
+/// [`isolated`](Self::isolated) to keep a layer in a target of its own
+/// whatever these rules say.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayLayerStyle {
@@ -45,6 +47,12 @@ pub struct OverlayLayerStyle {
     /// A blurred, filtered copy of what is under the layer, drawn under its
     /// content and inside its clip (or its bounds when it has none).
     pub backdrop: BackdropEffects,
+    /// Draw the members into a target of their own even when the layer has
+    /// nothing to do as a whole, so a member that blends against the
+    /// destination (a `DestinationOut` mask, say) reaches only what the
+    /// layer's earlier members drew, not the content under the layer. `false`
+    /// (the default) lets the layer fold away.
+    pub isolated: bool,
 }
 
 impl Default for OverlayLayerStyle {
@@ -56,6 +64,7 @@ impl Default for OverlayLayerStyle {
             blur: 0.0,
             shadow: None,
             backdrop: BackdropEffects::default(),
+            isolated: false,
         }
     }
 }
@@ -98,10 +107,19 @@ impl OverlayLayerStyle {
         self
     }
 
-    /// Whether the layer has an effect that only a scratch target can draw:
-    /// a blur, a shadow, a backdrop, or a blend that reads the destination.
+    /// Keep the layer in a target of its own: see
+    /// [`isolated`](Self::isolated).
+    pub fn with_isolated(mut self, isolated: bool) -> Self {
+        self.isolated = isolated;
+        self
+    }
+
+    /// Whether the layer has to draw through a scratch target: it is
+    /// isolated, or it has a blur, a shadow, a backdrop, or a blend that
+    /// reads the destination.
     pub fn needs_target(&self) -> bool {
-        self.blur > 0.0
+        self.isolated
+            || self.blur > 0.0
             || self.shadow.is_some_and(|s| s.colour.alpha() > 0.0)
             || self.backdrop.is_active()
             || self.blend.reads_destination()
@@ -367,6 +385,8 @@ mod tests {
     #[test]
     fn passthrough_and_target_rules() {
         assert!(OverlayLayerStyle::default().is_passthrough());
+        let isolated = OverlayLayerStyle::default().with_isolated(true);
+        assert!(isolated.needs_target() && !isolated.is_passthrough());
         assert!(
             !OverlayLayerStyle::default()
                 .with_opacity(0.5)

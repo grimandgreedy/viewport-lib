@@ -437,7 +437,7 @@ fn emit_label(
         atlas.shape_text(&label.text, size, font, ppp)
     };
     let font_index = font.map_or(0, |h| h.0);
-    let ascent = atlas.font_ascent(font_index, size);
+    let ascent = atlas.font_ascent(font_index, size, ppp);
 
     // Alignment places the laid-out box on the origin, which is [0, 0] here;
     // position nudges last.

@@ -233,7 +233,8 @@ pub(crate) struct OverlayTextVertex {
     pub colour: [f32; 4],
     /// 0.0 = solid colour, 1.0 = tint a cell of the glyph atlas's coverage
     /// page, 2.0 = a cell of its colour page as-is, 3.0 = tint the coverage
-    /// atlas's cell.
+    /// atlas's cell, 4.0 and 5.0 = 1.0 and 2.0 read texel by texel (a bitmap
+    /// face's glyph).
     pub use_texture: f32,
     /// Index into the frame's clip-shape array, or `-1.0` for no clip.
     /// Selects the mask whose SDF (and parent chain) clips this vertex.

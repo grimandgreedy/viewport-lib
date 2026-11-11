@@ -215,3 +215,77 @@ fn meshes_batch_with_text_and_polylines() {
         "meshes, polylines and labels share the text pipeline"
     );
 }
+
+/// The filter is part of the fill record, not the binding: shapes and labels
+/// filling from one image batch together whether they sample it nearest or
+/// linear.
+#[test]
+fn nearest_and_linear_fills_of_one_image_share_a_batch() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let image = h
+        .renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            &h.device,
+            &h.queue,
+            viewport_lib::TextureData::srgb(2, 2, vec![255u8; 16]),
+        )
+        .expect("a well-formed sRGB image");
+    let mut fd = frame(false);
+    fd.overlays.shapes.clear();
+    fd.overlays.labels.clear();
+    for (i, filter) in [
+        viewport_lib::TextureFilter::Linear,
+        viewport_lib::TextureFilter::Nearest,
+        viewport_lib::TextureFilter::Linear,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fill = OverlayFill::texture(image).with_texture_filter(filter);
+        let y = 8.0 + i as f32 * 18.0;
+        fd.overlays.shapes.push(
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 3.0 },
+                [8.0, y],
+                [120.0, 16.0],
+            )
+            .with_fill(fill.clone()),
+        );
+        fd.overlays.labels.push(
+            LabelItem::new(format!("label {i}"))
+                .with_position([150.0, y])
+                .with_fill(fill),
+        );
+    }
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(stats.overlay_draw_calls, 2, "one shape draw, one text draw");
+}
+
+/// A bitmap face's glyphs pack into the same atlas pages as vector glyphs, so
+/// rows of labels in the two faces draw as one text batch.
+#[test]
+fn bitmap_and_vector_labels_share_a_draw() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let font = h
+        .renderer
+        .resources_mut()
+        .upload_bitmap_font(viewport_lib_testkit::scenes::bitmap_font::test_font())
+        .expect("the test face is well formed");
+    let mut fd = frame(true);
+    fd.overlays.shapes.clear();
+    for (i, label) in fd.overlays.labels.iter_mut().enumerate() {
+        if i % 2 == 0 {
+            label.text = "AVTo 123x".into();
+            label.text_style.font = Some(font);
+        }
+    }
+    let stats = h.render_two_frames(&fd, W, H);
+    assert_eq!(stats.overlay_draw_calls, 1);
+}

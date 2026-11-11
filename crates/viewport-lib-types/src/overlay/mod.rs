@@ -10,6 +10,7 @@
 
 pub mod anchor;
 pub mod animation;
+pub mod bitmap_font;
 pub mod clip;
 pub mod colour_matrix;
 pub mod content_hash;
@@ -31,6 +32,7 @@ pub mod world;
 
 pub use self::anchor::*;
 pub use self::animation::*;
+pub use self::bitmap_font::*;
 pub use self::clip::*;
 pub use self::colour_matrix::*;
 pub use self::content_hash::*;

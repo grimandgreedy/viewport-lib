@@ -1,3 +1,5 @@
+/// Bitmap font faces cut out of their pages.
+pub(crate) mod bitmap_font;
 /// Coverage cells for vector overlay shapes.
 pub(crate) mod coverage_atlas;
 /// Fill functions registered for `OverlayFill::Custom`.

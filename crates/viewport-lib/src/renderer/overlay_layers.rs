@@ -1905,6 +1905,40 @@ mod tests {
         assert_eq!(plan.layers[3].style.blend, OverlayBlend::Difference);
     }
 
+    #[test]
+    fn an_isolated_layer_keeps_its_target() {
+        let mut frame = OverlayFrame::default();
+        let isolated = OverlayLayerStyle::default().with_isolated(true);
+        // Two items at full opacity, isolated: a target rather than
+        // pass-through.
+        let m = frame.layer_mark();
+        frame.shapes.push(rect(0.0));
+        frame.shapes.push(rect(5.0));
+        frame.push_layer(m, isolated.clone());
+        // A single faded item, isolated: a target rather than pushed.
+        let m = frame.layer_mark();
+        frame.shapes.push(rect(20.0));
+        frame.push_layer(m, isolated.clone().with_opacity(0.5));
+        // An isolated layer whose one member is a blurred layer: both draw
+        // through targets.
+        let m = frame.layer_mark();
+        wrap(
+            &mut frame,
+            40.0,
+            OverlayLayerStyle::default().with_blur(2.0),
+            |_| {},
+        );
+        frame.push_layer(m, isolated.with_opacity(0.25));
+        let mut plan = LayerPlan::default();
+        plan.build(&frame);
+        let modes: Vec<LayerMode> = plan.layers.iter().map(|l| l.mode).collect();
+        assert_eq!(modes, vec![LayerMode::Target; 4]);
+        assert_eq!(plan.record_layer(Family::Shape, 0), 0);
+        assert_eq!(plan.record_layer(Family::Shape, 2), 1);
+        assert_eq!(plan.layers[3].style.opacity, 0.25);
+        assert_eq!(plan.layers[2].style.opacity, 1.0);
+    }
+
     /// Two items, then `inner` (pushed by the caller between the marks), as
     /// one layer drawn with `style`.
     fn wrap(

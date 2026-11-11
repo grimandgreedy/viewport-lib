@@ -13,6 +13,7 @@ use viewport_lib::Colour;
 // The corpus the catalogue builds from: procedural meshes, lighting rigs,
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
+pub mod bitmap_font;
 pub mod exposure;
 pub mod fallbacks;
 pub mod far_origin;
@@ -1141,6 +1142,9 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(world_overlay::scenes());
     scenes.extend(presentation::scenes());
     scenes.extend(painter::scenes());
+    // Its cells grow the shared glyph atlas, which would shift the atlas UVs
+    // of any text scene after it.
+    scenes.extend(bitmap_font::scenes());
     // Registers the skinning deformer, which recomposes the mesh shaders for
     // every scene built after it on the same renderer: keep it last.
     scenes.extend(skinning::scenes());

@@ -12,7 +12,8 @@
 //   1: box half-extents xy; z = angle (linear), seam (conical) or arc start
 //      (sweep); w = arc span (sweep)
 //   2: sweep centre xy in pixels from the box centre; nine-slice centre and
-//      edge tile modes zw; x = the registered function (custom)
+//      edge tile modes zw; x = the registered function (custom), or 1 for a
+//      texture sampled nearest
 //   3: a solid colour, or the tint a texture sample or a custom fill is
 //      multiplied by
 //   4: texture transform: offset xy, scale zw
@@ -188,13 +189,22 @@ fn fill_texture_uv(local: vec2<f32>, base: i32) -> vec2<f32> {
     return uvt;
 }
 
+// The texel of the fill image under `uv`, unfiltered. A load rather than a
+// second sampler, since GLSL pairs each texture with one sampler.
+fn fill_image_nearest(uv: vec2<f32>) -> vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(fill_image, 0));
+    let texel = vec2<i32>(floor(uv * vec2<f32>(dims)));
+    return textureLoad(fill_image, clamp(texel, vec2<i32>(0, 0), dims - vec2<i32>(1, 1)), 0);
+}
+
 // The colour of fill record `fill` at `local`, in linear RGBA, straight alpha.
 fn overlay_fill(local: vec2<f32>, fill: i32) -> vec4<f32> {
     let base = max(fill, 0);
     // Sampled whatever the kind: the kind is per item, and `textureSample`
     // derives its own level of detail, which WGSL allows only in uniform
     // control flow. Tint rejects the module otherwise; naga does not.
-    let image = textureSample(fill_image, fill_sampler, fill_texture_uv(local, base));
+    let uv = fill_texture_uv(local, base);
+    let image = textureSample(fill_image, fill_sampler, uv);
     if (fill < 0) {
         return vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
@@ -205,6 +215,9 @@ fn overlay_fill(local: vec2<f32>, fill: i32) -> vec4<f32> {
         return colour;
     }
     if (kind == FILL_TEXTURE) {
+        if (fill_texel(base + 2).x > 0.5) {
+            return fill_image_nearest(uv) * colour;
+        }
         return image * colour;
     }
     let params = fill_texel(base + 1);

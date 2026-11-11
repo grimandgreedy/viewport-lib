@@ -1983,11 +1983,11 @@ impl ViewportRenderer {
                     };
 
                     let font_index = label.text_style.font.map_or(0, |h| h.0);
-                    let ascent = self
-                        .resources
-                        .content
-                        .glyph_atlas
-                        .font_ascent(font_index, label.text_style.size);
+                    let ascent = self.resources.content.glyph_atlas.font_ascent(
+                        font_index,
+                        label.text_style.size,
+                        ppp,
+                    );
 
                     let align_offset = label.anchoring.align.x.align_shift(shaped.total_width);
                     let align_offset_y = label

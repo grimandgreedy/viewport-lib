@@ -2,6 +2,7 @@
 //! registered fill functions.
 
 use crate::colour::Colour;
+use crate::material::TextureFilter;
 use crate::overlay::{NineSlice, OverlayTextureId, TextureTransform};
 
 /// What an overlay item is filled with.
@@ -93,6 +94,11 @@ pub enum OverlayFill {
         /// textured item's colour comes from: a mid-grey tint darkens the
         /// image, and an alpha below one fades it.
         tint: crate::colour::Colour,
+        /// How the image is sampled: `Linear` (the default) blends
+        /// neighbouring texels, `Nearest` takes the texel under the pixel, so
+        /// a pixel-art image or nine-slice frame drawn at an integer scale
+        /// keeps hard texel edges.
+        filter: TextureFilter,
     },
     /// A fill function the consumer registered with the renderer, evaluated
     /// per pixel with `params`.
@@ -249,6 +255,7 @@ impl OverlayFill {
             transform: TextureTransform::default(),
             nine_slice: None,
             tint: crate::colour::Colour::linear(1.0, 1.0, 1.0, 1.0),
+            filter: TextureFilter::Linear,
         }
     }
 
@@ -313,6 +320,15 @@ impl OverlayFill {
         self
     }
 
+    /// Set how a texture fill samples its image. Does nothing to any other
+    /// fill.
+    pub fn with_texture_filter(mut self, f: TextureFilter) -> Self {
+        if let OverlayFill::Texture { filter, .. } = &mut self {
+            *filter = f;
+        }
+        self
+    }
+
     /// Set the tint multiplied into every sample of a texture fill.
     pub fn with_tint(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
         if let OverlayFill::Texture { tint, .. } = &mut self {
@@ -371,11 +387,13 @@ impl OverlayFill {
                 transform,
                 nine_slice,
                 tint,
+                filter,
             } => OverlayFill::Texture {
                 id: *id,
                 transform: *transform,
                 nine_slice: *nine_slice,
                 tint: f(*tint),
+                filter: *filter,
             },
             // The function's colours are its own.
             OverlayFill::Custom { kind, params } => OverlayFill::Custom {

@@ -7,6 +7,7 @@
 
 pub use viewport_lib_types::overlay::anchor::*;
 pub use viewport_lib_types::overlay::animation::*;
+pub use viewport_lib_types::overlay::bitmap_font::*;
 pub use viewport_lib_types::overlay::clip::*;
 pub use viewport_lib_types::overlay::colour_matrix::*;
 pub use viewport_lib_types::overlay::content_hash::*;

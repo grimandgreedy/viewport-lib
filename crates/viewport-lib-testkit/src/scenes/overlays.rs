@@ -219,7 +219,7 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 ///
 /// An overlay-only renderer has no meshes, so there the overlays draw over the
 /// clear colour.
-fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
+pub(super) fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
     let mesh = match ctx
         .renderer
         .resources_mut()
