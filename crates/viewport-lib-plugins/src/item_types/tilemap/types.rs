@@ -3,6 +3,8 @@ use viewport_lib_types::ids::TextureId;
 use viewport_lib_types::material::{ItemSettings, TextureFilter};
 use viewport_lib_types::render_item::MaskTest;
 
+use super::grid::TileOrientation;
+
 viewport_lib_types::slot_handle! {
     /// Handle to a tilemap uploaded once through
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload). A
@@ -90,6 +92,10 @@ impl TilemapPlane {
 /// diagonal and applies first, then the horizontal and vertical flips. The
 /// eight combinations are the eight orientations of a square, so a quarter
 /// turn is the diagonal flip plus one of the others; the constants name them.
+///
+/// On a [`TileOrientation::Hexagonal`] grid the diagonal flag turns the image
+/// 60 degrees clockwise about its centre instead, after the horizontal and
+/// vertical flips, as Tiled draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct TileFlip {
     /// Mirror left to right.
@@ -130,7 +136,7 @@ impl TileFlip {
     /// Split a Tiled global tile id into the id with its flag bits cleared
     /// and the flip they encode. Bit 31 is the horizontal flip, bit 30 the
     /// vertical and bit 29 the diagonal; bit 28, the hexagonal turn, is
-    /// cleared and ignored.
+    /// cleared here and read by [`Tile::from_tiled_gid`].
     pub const fn from_tiled_gid(gid: u32) -> (u32, Self) {
         let flip = Self::new(
             gid & (1 << 31) != 0,
@@ -176,6 +182,10 @@ pub struct Tile {
     pub flip: TileFlip,
     /// Multiplied into the tile's colour, after the item's own tint.
     pub tint: Colour,
+    /// On a [`TileOrientation::Hexagonal`] grid, turn the image 120 degrees
+    /// clockwise about its centre, after its flips; with the diagonal flag
+    /// as well the turn is 180 degrees. Ignored on other grids.
+    pub rotate_120: bool,
 }
 
 impl Tile {
@@ -186,6 +196,7 @@ impl Tile {
         index: Self::EMPTY_INDEX,
         flip: TileFlip::NONE,
         tint: Colour::WHITE,
+        rotate_120: false,
     };
 
     /// Tile `index` of the tileset, unflipped and untinted.
@@ -194,6 +205,21 @@ impl Tile {
             index,
             flip: TileFlip::NONE,
             tint: Colour::WHITE,
+            rotate_120: false,
+        }
+    }
+
+    /// The tile a Tiled global tile id names, with its flips and its
+    /// hexagonal turn (bit 28) decoded and every flag bit cleared from the
+    /// index. The index is still the global id: take the tileset's first id
+    /// off it.
+    pub const fn from_tiled_gid(gid: u32) -> Self {
+        let (index, flip) = TileFlip::from_tiled_gid(gid);
+        Self {
+            index,
+            flip,
+            tint: Colour::WHITE,
+            rotate_120: gid & (1 << 28) != 0,
         }
     }
 
@@ -206,6 +232,12 @@ impl Tile {
     /// The same tile with `tint`.
     pub const fn with_tint(mut self, tint: Colour) -> Self {
         self.tint = tint;
+        self
+    }
+
+    /// The same tile turned 120 degrees on a hexagonal grid.
+    pub const fn with_rotate_120(mut self, rotate_120: bool) -> Self {
+        self.rotate_120 = rotate_120;
         self
     }
 
@@ -313,14 +345,16 @@ impl TileSize {
 }
 
 /// The atlas a tilemap's tiles come from: one texture holding equal-sized
-/// tiles in rows, as Tiled describes a tileset image.
+/// tiles in rows, as Tiled describes a tileset image, and the grid its tiles
+/// are laid out on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tileset {
     /// The atlas texture, from `DeviceResources::upload_texture`, uploaded
     /// sRGB. Row 0 of the image is its top. `None` draws each tile as a solid
     /// quad in its tint.
     pub texture_id: Option<TextureId>,
-    /// Width and height of one tile, in texels.
+    /// Width and height of one tile, in texels. One tile is one cell: the
+    /// bounding box of a cell of any [`orientation`](Self::orientation).
     pub tile_size: [u32; 2],
     /// Tiles per atlas row.
     pub columns: u32,
@@ -340,6 +374,10 @@ pub struct Tileset {
     /// animated tile takes the size of the tile the map holds for it, in
     /// every frame.
     pub tile_sizes: Vec<TileSize>,
+    /// How the cells are laid out: square-on, isometric, staggered or
+    /// hexagonal, as Tiled lays them out. Default
+    /// [`TileOrientation::Orthogonal`].
+    pub orientation: TileOrientation,
 }
 
 /// Most [`TileSize`] overrides one tileset applies.
@@ -359,6 +397,7 @@ impl Tileset {
             filter: TextureFilter::Nearest,
             animations: Vec::new(),
             tile_sizes: Vec::new(),
+            orientation: TileOrientation::Orthogonal,
         }
     }
 
@@ -396,22 +435,37 @@ impl Tileset {
             .position(|s| s.tile == tile)
     }
 
-    /// How far the tiles of this set reach past their cells, in cells:
-    /// `[left, bottom, right, top]`, each zero or more. Zero everywhere when
-    /// every tile is one cell.
+    /// How far the tiles of this set reach past their cells' bounding
+    /// boxes, in cells: `[left, bottom, right, top]`, each zero or more. Zero
+    /// everywhere when every tile is one cell, outside a hexagonal grid,
+    /// where a turned tile reaches past its box.
     pub fn overhang(&self) -> [f32; 4] {
         let [tw, th] = self.tile_size.map(|s| s.max(1) as f32);
+        let turns = matches!(self.orientation, TileOrientation::Hexagonal { .. });
         let mut out = [0.0f32; 4];
-        for (i, s) in self.tile_sizes.iter().take(MAX_TILE_SIZES).enumerate() {
-            if self.size_of(s.tile) != Some(i) {
-                continue;
+        let mut reach = |lo: glam::Vec2, size: glam::Vec2| {
+            let (mut lo, mut hi) = (lo, lo + size);
+            if turns {
+                // Any turn about the quad's centre stays within the circle
+                // through its corners, measured in texels.
+                let centre = (lo + hi) * 0.5;
+                let radius = (size * glam::Vec2::new(tw, th) * 0.5).length();
+                let r = glam::Vec2::new(radius / tw, radius / th);
+                lo = lo.min(centre - r);
+                hi = hi.max(centre + r);
             }
-            let lo = glam::Vec2::from(s.anchor);
-            let hi = lo + glam::Vec2::new(s.size[0] as f32 / tw, s.size[1] as f32 / th);
             out[0] = out[0].max(-lo.x);
             out[1] = out[1].max(-lo.y);
             out[2] = out[2].max(hi.x - 1.0);
             out[3] = out[3].max(hi.y - 1.0);
+        };
+        reach(glam::Vec2::ZERO, glam::Vec2::ONE);
+        for (i, s) in self.tile_sizes.iter().take(MAX_TILE_SIZES).enumerate() {
+            if self.size_of(s.tile) != Some(i) {
+                continue;
+            }
+            let size = glam::Vec2::new(s.size[0] as f32 / tw, s.size[1] as f32 / th);
+            reach(glam::Vec2::from(s.anchor), size);
         }
         out
     }
@@ -677,6 +731,11 @@ pub enum TilemapPainter {
     /// sprite whose feet are at plane `y` sorts with the rows when its key is
     /// `offset - y` in the same layer. A tall tile draws in the batch of the
     /// row it stands on.
+    ///
+    /// On the other grids a row is every cell whose bounding box has the
+    /// same bottom edge: a line of diamonds across the plane on an isometric
+    /// grid, and on a grid of staggered columns the shifted and unshifted
+    /// halves of a row separately.
     PerRow {
         /// Added to every row's key, to place the rows in the host's key
         /// space.
@@ -728,9 +787,11 @@ impl Default for TilemapDraw {
 /// One drawn layer of an uploaded [`Tilemap`], submitted each frame with
 /// `frame.scene.items_mut::<TilemapItem>()`.
 ///
-/// The map's data stays on the GPU; the item places it. Cell (`col`, `row`)
-/// covers plane `origin + [col, row] * cell_size` to one cell further, on
-/// `plane` at `elevation`. Several items may draw one map.
+/// The map's data stays on the GPU; the item places it. On an orthogonal
+/// grid cell (`col`, `row`) covers plane `origin + [col, row] * cell_size` to
+/// one cell further, on `plane` at `elevation`; the other orientations place
+/// the cell's bounding box at `origin + cell_origin * cell_size`, from
+/// [`Tileset::cell_origin`]. Several items may draw one map.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TilemapItem {
@@ -744,7 +805,8 @@ pub struct TilemapItem {
     /// orthographic camera looking at the plane this is the layer order: a
     /// higher layer covers a lower one. Default `0.0`.
     pub elevation: f32,
-    /// World size of one cell along plane x and y. Default `[1.0, 1.0]`.
+    /// World size of one cell's bounding box along plane x and y. Default
+    /// `[1.0, 1.0]`.
     pub cell_size: [f32; 2],
     /// How far the layer follows the camera across the plane, per axis. The
     /// layer is drawn shifted by `camera * (1 - parallax)`, where `camera` is
@@ -817,6 +879,42 @@ impl TilemapItem {
         let follow = glam::DVec2::new(1.0 - self.parallax[0] as f64, 1.0 - self.parallax[1] as f64);
         origin + camera * follow
     }
+
+    /// The world position of the centre of cell (`col`, `row`) of a map
+    /// laid out by `tileset`, drawn by this item for a camera at plane
+    /// position `camera` (which only matters under parallax).
+    pub fn cell_to_world(
+        &self,
+        tileset: &Tileset,
+        col: i32,
+        row: i32,
+        camera: glam::DVec2,
+    ) -> glam::DVec3 {
+        let cell = glam::DVec2::new(self.cell_size[0] as f64, self.cell_size[1] as f64);
+        let p = self.drawn_origin(camera) + tileset.cell_centre(col, row) * cell;
+        self.plane.to_world(p, self.elevation as f64)
+    }
+
+    /// The cell of a map laid out by `tileset` whose outline holds the world
+    /// point `world`, projected along the plane's normal, as this item
+    /// draws it for a camera at plane position `camera`. `None` past the
+    /// cell range or for a cell size of zero.
+    pub fn world_to_cell(
+        &self,
+        tileset: &Tileset,
+        world: glam::DVec3,
+        camera: glam::DVec2,
+    ) -> Option<[i32; 2]> {
+        let cell = glam::DVec2::new(self.cell_size[0] as f64, self.cell_size[1] as f64);
+        if cell.x == 0.0 || cell.y == 0.0 {
+            return None;
+        }
+        let local = (self.plane.to_plane(world) - self.drawn_origin(camera)) / cell;
+        if !local.is_finite() {
+            return None;
+        }
+        tileset.cell_at(local)
+    }
 }
 
 #[cfg(test)]
@@ -887,6 +985,11 @@ mod tests {
         let (id, flip) = TileFlip::from_tiled_gid(0x1000_0003);
         assert_eq!(id, 3, "the hexagonal bit is cleared");
         assert_eq!(flip, TileFlip::NONE);
+        let tile = Tile::from_tiled_gid(0x3000_0003);
+        assert_eq!(tile.index, 3);
+        assert!(tile.rotate_120);
+        assert_eq!(tile.flip, TileFlip::DIAGONAL);
+        assert!(!Tile::from_tiled_gid(0xA000_0007).rotate_120);
     }
 
     #[test]
@@ -999,6 +1102,57 @@ mod tests {
         // A later entry for the same tile is ignored.
         set.tile_sizes.push(TileSize::new(2, [16, 160]));
         assert_eq!(set.overhang(), [1.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn items_map_corner_cells_to_the_world_and_back() {
+        use super::super::grid::{StaggerAxis, StaggerIndex};
+        let mut item = TilemapItem::new(TilemapId::from_index(0));
+        item.plane = TilemapPlane::Xz;
+        item.origin = [-30.0, 12.0];
+        item.cell_size = [24.0, 12.0];
+        item.elevation = 2.0;
+        item.parallax = [0.5, 1.0];
+        let camera = glam::DVec2::new(40.0, -8.0);
+        for orientation in [
+            TileOrientation::Orthogonal,
+            TileOrientation::Isometric,
+            TileOrientation::Hexagonal {
+                side_length: 6,
+                axis: StaggerAxis::X,
+                index: StaggerIndex::Even,
+            },
+        ] {
+            let mut set = Tileset::new(None, [24, 12], 4);
+            set.orientation = orientation;
+            let map = Tilemap::with_chunk_size(set, [40, 30], 8);
+            let [c0, r0, c1, r1] = map.cell_bounds().unwrap();
+            for [col, row] in [[c0, r0], [c1 - 1, r0], [c0, r1 - 1], [c1 - 1, r1 - 1]] {
+                let w = item.cell_to_world(&map.tileset, col, row, camera);
+                assert!((w.y + 2.0).abs() < 1e-9, "on the plane at its elevation");
+                assert_eq!(
+                    item.world_to_cell(&map.tileset, w, camera),
+                    Some([col, row]),
+                    "{orientation:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn turned_hexagons_reach_past_their_boxes() {
+        use super::super::grid::{StaggerAxis, StaggerIndex};
+        let mut set = Tileset::new(None, [28, 32], 4);
+        assert_eq!(set.overhang(), [0.0; 4]);
+        set.orientation = TileOrientation::Hexagonal {
+            side_length: 16,
+            axis: StaggerAxis::Y,
+            index: StaggerIndex::Odd,
+        };
+        let o = set.overhang();
+        // The circle through the corners of a 28 x 32 quad: radius 21.26.
+        let r = (14.0f32.hypot(16.0) - 14.0) / 28.0;
+        assert!((o[0] - r).abs() < 1e-5 && (o[2] - r).abs() < 1e-5, "{o:?}");
     }
 
     #[test]

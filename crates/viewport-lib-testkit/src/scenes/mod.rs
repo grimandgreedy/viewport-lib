@@ -39,6 +39,7 @@ pub mod sprites_2d_modes;
 pub mod sprites_effects;
 pub mod textures;
 pub mod tilemap;
+pub mod tilemap_orientations;
 pub mod tone_mapping;
 pub mod world_overlay;
 
@@ -1135,6 +1136,7 @@ pub fn catalogue() -> Vec<NamedScene> {
     scenes.extend(sprites_2d_modes::scenes());
     scenes.extend(sprites_effects::scenes());
     scenes.extend(tilemap::scenes());
+    scenes.extend(tilemap_orientations::scenes());
     scenes.extend(lighting_2d::scenes());
     scenes.extend(world_overlay::scenes());
     scenes.extend(presentation::scenes());

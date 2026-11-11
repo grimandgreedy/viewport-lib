@@ -10,7 +10,8 @@
 //               two's complement
 //   location 1: tileset tile index, or animation slot when flag bit 3 is set
 //   location 2: flags, bit 0 horizontal flip, 1 vertical, 2 diagonal, 3 animated,
-//               bits 8-15 the size slot (0 for one cell)
+//               4 a 120 degree turn on a hexagonal grid, bits 8-15 the size
+//               slot (0 for one cell)
 //   location 3: tint, unorm8x4 linear RGBA
 
 struct TilesetUniform {
@@ -19,8 +20,13 @@ struct TilesetUniform {
     has_texture: u32,
     spacing:     f32,
     margin:      f32,
+    // Bits 0-1 the grid: 0 orthogonal, 1 isometric, 2 columns staggered,
+    // 3 rows staggered. Bit 2: the even columns or rows are shifted. Bit 3:
+    // hexagonal, where the diagonal flag and flag bit 4 turn the tile.
+    orientation: u32,
     _pad0:       u32,
-    _pad1:       u32,
+    // A staggered grid's column step, row step and shift, in cells.
+    grid:        vec4<f32>,
     // Per size slot: the image size in texels (xy) and where the quad's
     // bottom-left corner sits in cells from the cell's (zw). Slot 0 is unused.
     sizes:       array<vec4<f32>, 256>,
@@ -88,6 +94,32 @@ fn tile_corner(vi: u32) -> vec2<f32> {
     }
 }
 
+// The plane offset, in cells, of the bottom-left corner of the bounding box
+// of `cell`; `packed` is the cell as the instance carries it, for the
+// parity of its column and row.
+fn tile_cell_origin(cell: vec2<f32>, packed: u32) -> vec2<f32> {
+    let kind = tileset.orientation & 3u;
+    if kind == 0u {
+        return cell;
+    }
+    if kind == 1u {
+        return vec2<f32>(cell.x + cell.y, cell.y - cell.x) * 0.5;
+    }
+    let even = (tileset.orientation >> 2u) & 1u;
+    if kind == 2u {
+        let shifted = (packed & 1u) != even;
+        return vec2<f32>(
+            cell.x * tileset.grid.x,
+            cell.y * tileset.grid.y - select(0.0, tileset.grid.z, shifted),
+        );
+    }
+    let shifted = ((packed >> 16u) & 1u) != even;
+    return vec2<f32>(
+        cell.x * tileset.grid.x + select(0.0, tileset.grid.z, shifted),
+        cell.y * tileset.grid.y,
+    );
+}
+
 // The world point (relative to the world origin) at plane position `p`.
 fn tile_world(p: vec2<f32>) -> vec3<f32> {
     if layer.plane == 1u {
@@ -136,9 +168,28 @@ fn tile_vertex(in: TileIn) -> TileOut {
         quad_size = s.xy / max(tileset.tile_size, vec2<f32>(1.0));
     }
 
+    let cell_origin = tile_cell_origin(cell, in.cell);
+    var offset = corner * quad_size;
+    let hexagonal = (tileset.orientation & 8u) != 0u;
+    if hexagonal {
+        // Clockwise turns of 60 degrees about the quad's centre, measured in
+        // texels: one for the diagonal flag, two for the 120 degree flag.
+        let turns = select(0.0, 1.0, (in.flags & 4u) != 0u)
+            + select(0.0, 2.0, (in.flags & 16u) != 0u);
+        if turns > 0.0 {
+            let angle = -turns * 1.04719755;
+            let texel = max(tileset.tile_size, vec2<f32>(1.0));
+            let half = quad_size * 0.5;
+            let d = (offset - half) * texel;
+            let c = cos(angle);
+            let s = sin(angle);
+            offset = half + vec2<f32>(c * d.x - s * d.y, s * d.x + c * d.y) / texel;
+        }
+    }
+
     // Parallax: the layer follows `follow` of the camera across the plane.
     let shift = layer.translation + tile_eye_on_plane() * layer.follow;
-    var world = tile_world((cell + quad_min + corner * quad_size) * layer.cell_size + shift);
+    var world = tile_world((cell_origin + quad_min + offset) * layer.cell_size + shift);
     // <tile-hook:vertex>
     var clip = camera.view_proj * vec4<f32>(world, 1.0);
     if (layer.flags & 1u) != 0u {
@@ -162,7 +213,8 @@ fn tile_vertex(in: TileIn) -> TileOut {
 
     // The drawn corner in image coordinates (y down), taken back through the
     // flips to the point of the source tile it shows: vertical, horizontal,
-    // then diagonal, the reverse of the order Tiled applies them.
+    // then diagonal, the reverse of the order Tiled applies them. On a
+    // hexagonal grid the diagonal flag turned the quad instead.
     var q = vec2<f32>(corner.x, 1.0 - corner.y);
     if (in.flags & 2u) != 0u {
         q.y = 1.0 - q.y;
@@ -170,7 +222,7 @@ fn tile_vertex(in: TileIn) -> TileOut {
     if (in.flags & 1u) != 0u {
         q.x = 1.0 - q.x;
     }
-    if (in.flags & 4u) != 0u {
+    if (in.flags & 4u) != 0u && !hexagonal {
         q = q.yx;
     }
 

@@ -8,9 +8,10 @@ use viewport_lib::{
     SubObjectRef, Tier,
 };
 use viewport_lib_plugins::item_types::tilemap::{
-    MAX_TILE_CELL, TYPE_NAME, Tile, Tilemap, TilemapDraw, TilemapEdits, TilemapId, TilemapItem,
-    TilemapPainter, TilemapPlugin, Tileset,
+    MAX_TILE_CELL, StaggerAxis, StaggerIndex, TYPE_NAME, Tile, TileOrientation, Tilemap,
+    TilemapDraw, TilemapEdits, TilemapId, TilemapItem, TilemapPainter, TilemapPlugin, Tileset,
 };
+use viewport_lib_testkit::scenes::tilemap_orientations::ORIENTATION_PICK_IDS;
 use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
 
 /// A 128 x 128 map of solid tiles in 16-tile chunks: 8 x 8 chunks.
@@ -698,4 +699,247 @@ fn tall_tiles_draw_on_the_compatibility_tier() {
     };
     assert_eq!(compat.renderer.tier(), Tier::Compatibility);
     check(&render(compat), "compatibility");
+}
+
+/// The `tilemap_orientations` scene built and drawn at its own 400 x 300
+/// size, one unit per pixel with plane (0, 0) at the centre.
+fn orientations(harness: &mut Harness) -> (FrameData, Vec<TilemapItem>) {
+    harness.renderer.set_cpu_pick_cache(true);
+    let scenes = catalogue();
+    let scene = scenes
+        .iter()
+        .find(|s| s.name == "tilemap_orientations")
+        .unwrap();
+    let built = harness.build_scene(scene);
+    let f = frame_for(&built, &scene.cameras[0].camera, [400.0, 300.0]);
+    let _ = harness.render(&f, 400, 300);
+    (f, built.tilemaps.clone())
+}
+
+/// Every occupied cell of each orientation's map, with its centre in pixels.
+fn orientation_cells(harness: &Harness, items: &[TilemapItem]) -> Vec<(u64, [i32; 2], Vec2)> {
+    let mut out = Vec::new();
+    for item in items {
+        let id = item.settings.pick_id.0;
+        if !ORIENTATION_PICK_IDS.contains(&id) {
+            continue;
+        }
+        let map = harness.renderer.tilemap(item.source).unwrap();
+        for (coord, chunk) in map.chunks() {
+            for (i, tile) in chunk.tiles.iter().enumerate() {
+                if tile.is_empty() {
+                    continue;
+                }
+                let [col, row] = map.cell_of(coord, i as u32).unwrap();
+                let w = item.cell_to_world(&map.tileset, col, row, glam::DVec2::ZERO);
+                // Round trip through the CPU helper.
+                assert_eq!(
+                    item.world_to_cell(&map.tileset, w, glam::DVec2::ZERO),
+                    Some([col, row])
+                );
+                let pixel = Vec2::new(w.x as f32 + 200.0, 150.0 - w.y as f32);
+                out.push((id, [col, row], pixel));
+            }
+        }
+    }
+    out
+}
+
+/// In each of Tiled's orientations, a pick at a cell's centre names that
+/// cell on either backend, turned hexagons included.
+#[test]
+fn cells_of_every_orientation_pick_at_their_centres() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (f, items) = orientations(&mut harness);
+    let cells = orientation_cells(&harness, &items);
+    assert_eq!(cells.len(), 35 + 50 + 30 + 28);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    for (id, [col, row], pixel) in cells {
+        for backend in [PickBackend::Gpu, PickBackend::Cpu] {
+            let hit = harness
+                .renderer
+                .pick_object(
+                    backend,
+                    pixel,
+                    &f,
+                    &device,
+                    &queue,
+                    PickMask::OBJECT | PickMask::TILE,
+                )
+                .unwrap_or_else(|| panic!("{backend:?} misses {id} ({col}, {row})"));
+            assert_eq!(hit.id, id, "{backend:?} ({col}, {row})");
+            assert_eq!(
+                hit.sub_object,
+                Some(SubObjectRef::Tile { col, row }),
+                "{backend:?} map {id}"
+            );
+        }
+    }
+}
+
+/// A rectangle around a few cells' centres of a hexagonal map returns those
+/// cells, on either backend.
+#[test]
+fn a_rectangle_picks_hexagonal_cells_by_their_centres() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (f, items) = orientations(&mut harness);
+    let cells = orientation_cells(&harness, &items);
+    let pointy = ORIENTATION_PICK_IDS[2];
+    // Cells (1, 0), (2, 0), (1, -1) and (2, -1): two rows, the lower one
+    // shifted half a cell right.
+    let wanted = [[1, 0], [2, 0], [1, -1], [2, -1]];
+    let centres: Vec<Vec2> = cells
+        .iter()
+        .filter(|(id, c, _)| *id == pointy && wanted.contains(c))
+        .map(|(_, _, p)| *p)
+        .collect();
+    assert_eq!(centres.len(), 4);
+    let min = centres.iter().fold(Vec2::MAX, |a, &b| a.min(b)) - 2.0;
+    let max = centres.iter().fold(Vec2::MIN, |a, &b| a.max(b)) + 2.0;
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    for backend in [PickBackend::Cpu, PickBackend::Gpu] {
+        let result = harness.renderer.pick_rect_objects(
+            backend,
+            min,
+            max,
+            &f,
+            &device,
+            &queue,
+            PickMask::OBJECT | PickMask::TILE,
+        );
+        let mut got: Vec<[i32; 2]> = result
+            .elements
+            .iter()
+            .filter(|(id, _)| *id == pointy)
+            .filter_map(|(_, s)| match s {
+                SubObjectRef::Tile { col, row } => Some([*col, *row]),
+                _ => None,
+            })
+            .collect();
+        got.sort();
+        got.dedup();
+        if backend == PickBackend::Cpu {
+            let mut want = wanted.to_vec();
+            want.sort();
+            assert_eq!(got, want, "{backend:?}");
+        } else {
+            // The GPU reads every covered pixel, so the cells the rectangle
+            // crosses come back too; the four always do.
+            assert!(
+                wanted.iter().all(|c| got.contains(c)),
+                "{backend:?} {got:?}"
+            );
+        }
+    }
+}
+
+/// A layer sorted by row on an isometric grid reports one batch per line of
+/// cells standing at one height on the plane, and on a grid of staggered
+/// columns the shifted columns of a row are a line of their own.
+#[test]
+fn rows_of_other_grids_are_their_lines_on_the_plane() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for (orientation, cells, lines) in [
+        // A 4 x 4 block of diamonds: seven lines, `row - col` from -3 to 3.
+        (TileOrientation::Isometric, (0..4, 0..4), 7),
+        // Three columns and two rows, the odd column shifted: four lines.
+        (
+            TileOrientation::Staggered {
+                axis: StaggerAxis::X,
+                index: StaggerIndex::Odd,
+            },
+            (0..3, 0..2),
+            4,
+        ),
+        // Pointy hexagons: each row is a line, shifted or not.
+        (
+            TileOrientation::Hexagonal {
+                side_length: 4,
+                axis: StaggerAxis::Y,
+                index: StaggerIndex::Odd,
+            },
+            (0..3, 0..3),
+            3,
+        ),
+    ] {
+        let mut map = Tilemap::sparse(Tileset::new(None, [8, 8], 1), 8);
+        map.tileset.orientation = orientation;
+        for row in cells.1.clone() {
+            for col in cells.0.clone() {
+                map.set(col, row, Tile::new(0));
+            }
+        }
+        let id = upload(&mut harness, &map);
+        let mut item = TilemapItem::new(id);
+        item.cell_size = [4.0, 4.0];
+        item.draw = TilemapDraw::Blended {
+            layer: 0,
+            depth_test: false,
+            painter: TilemapPainter::PerRow { offset: 0.0 },
+        };
+        harness.render(&frame(item, Vec2::new(4.0, 0.0), 40), 40, 40);
+        assert_eq!(painter_batches(&harness), lines, "{orientation:?}");
+    }
+}
+
+/// The orientations draw on the compatibility tier as on the full tier: the
+/// tiers shade colours differently, but two cell centres of a map show the
+/// same colour on one tier exactly when they do on the other.
+#[test]
+fn orientations_draw_on_the_compatibility_tier() {
+    let Some(mut full) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let (f, items) = orientations(&mut full);
+    let cells = orientation_cells(&full, &items);
+    let reference = full.render(&f, 400, 300);
+    let Some(mut compat) =
+        Harness::with_profile(&DeviceProfile::downlevel_webgl2("tilemap-orientations"))
+    else {
+        return;
+    };
+    assert_eq!(compat.renderer.tier(), Tier::Compatibility);
+    let (f, _) = orientations(&mut compat);
+    let img = compat.render(&f, 400, 300);
+    // The figure is the one item skipped: sprites do not draw there.
+    assert_eq!(compat.stats().items_skipped_by_tier, 1);
+    let at = |img: &[u8], p: Vec2| -> [u8; 3] {
+        let i = ((p.y as usize) * 400 + p.x as usize) * 4;
+        [img[i], img[i + 1], img[i + 2]]
+    };
+    let seen: Vec<(u64, [u8; 3], [u8; 3])> = cells
+        .iter()
+        .map(|&(id, _, p)| (id, at(&reference, p), at(&img, p)))
+        .collect();
+    let mut colours = 0;
+    for (i, a) in seen.iter().enumerate() {
+        for (j, b) in seen.iter().enumerate().skip(i + 1) {
+            if a.0 != b.0 {
+                continue;
+            }
+            assert_eq!(
+                a.1 == b.1,
+                a.2 == b.2,
+                "map {}: cells {:?} and {:?}",
+                a.0,
+                cells[i].1,
+                cells[j].1
+            );
+        }
+        colours += seen[..i].iter().all(|b| b.2 != a.2) as usize;
+    }
+    // Light, dark and a yellow arrow centre or two in every map.
+    assert!(colours >= 8, "{colours} colours");
 }

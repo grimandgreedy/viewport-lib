@@ -2,6 +2,7 @@
 //! each map, one instance buffer per occupied chunk, and the tileset bind
 //! group, plus the per-layer uniform every frame writes.
 
+use super::grid::{GridKind, GridLayout};
 use super::types::{
     MAX_TILE_SIZES, Tile, TileChunk, Tilemap, TilemapDraw, TilemapId, TilemapItem, TilemapPlane,
 };
@@ -20,7 +21,8 @@ pub(crate) struct GpuTile {
     /// Tileset index, or the animation slot when [`FLAG_ANIMATED`] is set.
     tile: u32,
     /// Flip bits (horizontal 1, vertical 2, diagonal 4), [`FLAG_ANIMATED`],
-    /// and in bits 8 to 15 the tile's size slot, `0` for one cell.
+    /// [`FLAG_ROTATE_120`], and in bits 8 to 15 the tile's size slot, `0`
+    /// for one cell.
     flags: u32,
     /// Linear RGBA tint, one byte a channel.
     tint: [u8; 4],
@@ -28,6 +30,9 @@ pub(crate) struct GpuTile {
 
 /// [`GpuTile::flags`] bit: `tile` names an animation slot.
 const FLAG_ANIMATED: u32 = 1 << 3;
+
+/// [`GpuTile::flags`] bit: the tile turns 120 degrees on a hexagonal grid.
+const FLAG_ROTATE_120: u32 = 1 << 4;
 
 /// [`GpuTile::flags`] shift of the size slot.
 const SIZE_SLOT_SHIFT: u32 = 8;
@@ -54,7 +59,11 @@ pub(crate) struct TilesetUniformData {
     has_texture: u32,
     spacing: f32,
     margin: f32,
-    _pad: [u32; 2],
+    /// [`GridLayout::word`]: the grid kind, its parity and its turns.
+    orientation: u32,
+    _pad: u32,
+    /// [`GridLayout::grid`]: a staggered grid's steps and shift, in cells.
+    grid: [f32; 4],
     /// Per size slot: the image size in texels, then the anchor in cells.
     /// Slot 0 is unused, so a zero slot draws one cell.
     sizes: [[f32; 4]; SIZE_SLOTS],
@@ -210,14 +219,17 @@ pub(crate) fn resolve_bindings(
 /// from the bottom, as the map's own chunks do.
 pub(crate) type ChunkKey = (i32, i32);
 
+/// A run of a chunk's instances whose cells' bounding boxes share a bottom
+/// edge: the edge's plane y in cells, the first instance and how many.
+pub(crate) type RowRun = (f64, u32, u32);
+
 /// One chunk's instance buffer, sized to its occupied cells.
 pub(crate) struct StoredChunk {
     pub(crate) buffer: Option<viewport_lib::gpu::Buffer>,
     /// Instances that draw: the chunk's occupied cells.
     pub(crate) count: u32,
-    /// Runs of instances on one row, bottom row first: the row, the first
-    /// instance and how many.
-    pub(crate) rows: Vec<(i32, u32, u32)>,
+    /// Runs of instances standing on one line, in draw order.
+    pub(crate) rows: Vec<RowRun>,
     /// One bit per cell of the chunk that holds a tile, in cell order, for
     /// CPU picks that run without the CPU copy.
     pub(crate) occupied: Vec<u64>,
@@ -247,6 +259,8 @@ pub(crate) struct StoredTilemap {
     ///
     /// [`Tileset::overhang`]: super::types::Tileset::overhang
     pub(crate) overhang: [f32; 4],
+    /// Where the tileset's grid puts each cell.
+    pub(crate) layout: GridLayout,
     /// Chunk instance bytes written since the plugin last read it.
     pub(crate) uploaded_bytes: u64,
     /// Chunk uploads over the map's lifetime.
@@ -267,17 +281,21 @@ fn tint_bytes(c: viewport_lib::Colour) -> [u8; 4] {
         .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-/// The instances of the chunk at `coord`, one per occupied cell in row
-/// order, and the runs of them on each row.
+/// The instances of the chunk at `coord`, one per occupied cell, and the
+/// runs of them whose cells stand on one line.
+///
+/// An orthogonal chunk runs row by row from the bottom. The other grids run
+/// from the top of the plane down, left to right along each line, as Tiled
+/// draws them, so a cell lower on the plane covers the one behind it.
 pub(crate) fn chunk_instances(
     map: &Tilemap,
     anim_slots: &std::collections::HashMap<u32, u32>,
     size_slots: &std::collections::HashMap<u32, u32>,
     coord: [i32; 2],
     chunk: &TileChunk,
-) -> (Vec<GpuTile>, Vec<(i32, u32, u32)>) {
-    let mut tiles = Vec::new();
-    let mut rows: Vec<(i32, u32, u32)> = Vec::new();
+) -> (Vec<GpuTile>, Vec<RowRun>) {
+    let layout = GridLayout::new(&map.tileset);
+    let mut cells: Vec<(glam::DVec2, i32, i32, &Tile)> = Vec::new();
     for (i, t) in chunk.tiles.iter().enumerate() {
         if t.is_empty() {
             continue;
@@ -285,9 +303,17 @@ pub(crate) fn chunk_instances(
         let Some([col, row]) = map.cell_of(coord, i as u32) else {
             continue;
         };
+        cells.push((layout.origin(col, row), col, row, t));
+    }
+    if layout.kind != GridKind::Orthogonal {
+        cells.sort_by(|a, b| b.0.y.total_cmp(&a.0.y).then(a.0.x.total_cmp(&b.0.x)));
+    }
+    let mut tiles = Vec::with_capacity(cells.len());
+    let mut rows: Vec<RowRun> = Vec::new();
+    for (origin, col, row, t) in cells {
         match rows.last_mut() {
-            Some(run) if run.0 == row => run.2 += 1,
-            _ => rows.push((row, tiles.len() as u32, 1)),
+            Some(run) if run.0 == origin.y => run.2 += 1,
+            _ => rows.push((origin.y, tiles.len() as u32, 1)),
         }
         tiles.push(gpu_tile(anim_slots, size_slots, col, row, t));
     }
@@ -309,7 +335,10 @@ fn gpu_tile(
     GpuTile {
         cell: pack_cell(col, row),
         tile,
-        flags: t.flip.bits() | animated | size << SIZE_SLOT_SHIFT,
+        flags: t.flip.bits()
+            | animated
+            | if t.rotate_120 { FLAG_ROTATE_120 } else { 0 }
+            | size << SIZE_SLOT_SHIFT,
         tint: tint_bytes(t.tint),
     }
 }
@@ -340,13 +369,16 @@ impl StoredTilemap {
                 size_slots.insert(s.tile, slot as u32);
             }
         }
+        let layout = GridLayout::new(set);
         let uniform = TilesetUniformData {
             tile_size: set.tile_size.map(|s| s as f32),
             columns: set.columns.max(1),
             has_texture: binds.has_texture,
             spacing: set.spacing as f32,
             margin: set.margin as f32,
-            _pad: [0; 2],
+            orientation: layout.word(),
+            _pad: 0,
+            grid: layout.grid(),
             sizes,
         };
         let overhang = set.overhang();
@@ -369,6 +401,7 @@ impl StoredTilemap {
             anim_slots,
             size_slots,
             overhang,
+            layout,
             uploaded_bytes: 0,
             chunk_uploads: 0,
         };
@@ -444,7 +477,7 @@ impl StoredTilemap {
         queue: &viewport_lib::gpu::Queue,
         coord: [i32; 2],
         instances: Vec<GpuTile>,
-        rows: Vec<(i32, u32, u32)>,
+        rows: Vec<RowRun>,
         occupied: Vec<u64>,
     ) {
         let key = (coord[1], coord[0]);
@@ -617,11 +650,11 @@ pub(crate) fn cell_box_bounds(
 ) -> (glam::Vec3, glam::Vec3) {
     let plane = item.plane;
     let shift = item.drawn_origin(plane.to_plane(eye));
-    let [c0, r0, c1, r1] = cells;
+    let (lo, hi) = stored.layout.extent(cells);
     let [l, b, r, t] = stored.overhang.map(|v| v as f64);
     let cell = glam::DVec2::new(item.cell_size[0] as f64, item.cell_size[1] as f64);
-    let a = shift + glam::DVec2::new(c0 as f64 - l, r0 as f64 - b) * cell;
-    let b = shift + glam::DVec2::new(c1 as f64 + r, r1 as f64 + t) * cell;
+    let a = shift + glam::DVec2::new(lo.x - l, lo.y - b) * cell;
+    let b = shift + glam::DVec2::new(hi.x + r, hi.y + t) * cell;
     let e = item.elevation as f64;
     let p = plane.to_world(a, e).as_vec3();
     let q = plane.to_world(b, e).as_vec3();
@@ -649,7 +682,7 @@ mod tests {
         assert_eq!(INSTANCE_STRIDE, 16);
         assert_eq!(
             std::mem::size_of::<TilesetUniformData>(),
-            32 + 16 * SIZE_SLOTS
+            48 + 16 * SIZE_SLOTS
         );
         assert_eq!(
             std::mem::size_of::<LayerUniformData>(),
@@ -683,7 +716,27 @@ mod tests {
         assert_eq!(tiles[1].tile, 2);
         assert_eq!(tiles[1].flags, 3 << SIZE_SLOT_SHIFT);
         assert_eq!(tiles[1].tint, [255; 4]);
-        assert_eq!(rows, vec![(2, 0, 1), (3, 1, 1)]);
+        assert_eq!(rows, vec![(2.0, 0, 1), (3.0, 1, 1)]);
+    }
+
+    #[test]
+    fn diamond_cells_draw_from_the_top_of_the_plane_down() {
+        use super::super::grid::TileOrientation;
+        use super::super::types::Tileset;
+        let mut set = Tileset::new(None, [32, 16], 4);
+        set.orientation = TileOrientation::Isometric;
+        let mut map = Tilemap::with_chunk_size(set, [2, 2], 2);
+        for (col, row) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            map.set(col, row, Tile::new(1).with_rotate_120(col == 1));
+        }
+        let none = std::collections::HashMap::new();
+        let (tiles, rows) = chunk_instances(&map, &none, &none, [0, 0], map.chunk([0, 0]).unwrap());
+        // Cell (0, 1) stands highest, (1, 0) lowest; (0, 0) and (1, 1) share
+        // a line, left to right.
+        let cells: Vec<_> = tiles.iter().map(|t| unpack_cell(t.cell)).collect();
+        assert_eq!(cells, vec![[0, 1], [0, 0], [1, 1], [1, 0]]);
+        assert_eq!(rows, vec![(0.5, 0, 1), (0.0, 1, 2), (-0.5, 3, 1)]);
+        assert_eq!(tiles[2].flags, FLAG_ROTATE_120);
     }
 
     #[test]

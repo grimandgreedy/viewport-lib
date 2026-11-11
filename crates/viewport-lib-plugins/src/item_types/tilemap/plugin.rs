@@ -1,5 +1,6 @@
 //! The tilemap plugin: its store, its per-frame layers and its draw hooks.
 
+use super::grid::GridLayout;
 use super::store::{
     ChunkKey, LAYER_STRIDE, StoredTilemap, TilemapLayouts, TilemapStore, chunk_bounds,
     layer_uniform, resolve_bindings, unpack_cell,
@@ -150,8 +151,8 @@ impl TilemapView {
                         let Some(chunk) = stored.chunks.get(&key) else {
                             continue;
                         };
-                        for &(row, first, count) in &chunk.rows {
-                            let y = base + row as f64 * cell;
+                        for &(edge, first, count) in &chunk.rows {
+                            let y = base + edge * cell;
                             self.pieces.push(Piece {
                                 layer: i,
                                 run: Some((key, first, count)),
@@ -539,17 +540,32 @@ impl TilemapPlugin {
             .map(|p| (p.layer, p.run))
     }
 
-    /// The four corners of cell (`col`, `row`) of `item` as drawn for a
-    /// camera at `eye`, counter-clockwise from the bottom left.
-    fn cell_corners(item: &TilemapItem, eye: glam::DVec3, col: i32, row: i32) -> [glam::Vec3; 4] {
+    /// World points of `item` drawn for a camera at `eye` at plane offsets
+    /// `points`, in cells.
+    fn to_world(
+        item: &TilemapItem,
+        eye: glam::DVec3,
+        points: impl IntoIterator<Item = glam::DVec2>,
+    ) -> impl Iterator<Item = glam::Vec3> {
         let plane = item.plane;
         let o = item.drawn_origin(plane.to_plane(eye));
         let cell = glam::DVec2::new(item.cell_size[0] as f64, item.cell_size[1] as f64);
         let e = item.elevation as f64;
-        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|[x, y]| {
-            let p = o + (glam::DVec2::new(col as f64, row as f64) + glam::DVec2::new(x, y)) * cell;
-            plane.to_world(p, e).as_vec3()
-        })
+        points
+            .into_iter()
+            .map(move |p| plane.to_world(o + p * cell, e).as_vec3())
+    }
+
+    /// The outline of cell (`col`, `row`) of `item` laid out by `layout`, as
+    /// drawn for a camera at `eye`, counter-clockwise.
+    fn cell_outline(
+        item: &TilemapItem,
+        layout: &GridLayout,
+        eye: glam::DVec3,
+        col: i32,
+        row: i32,
+    ) -> Vec<glam::Vec3> {
+        Self::to_world(item, eye, layout.outline(col, row)).collect()
     }
 }
 
@@ -905,19 +921,18 @@ impl ItemTypePlugin for TilemapPlugin {
                 .sum();
             let mut positions: Vec<[f32; 3]> = Vec::new();
             let mut strips: Vec<u32> = Vec::new();
-            let mut rect = |c: [glam::Vec3; 4]| {
-                positions.extend([c[0], c[1], c[2], c[3], c[0]].map(|p| p.to_array()));
-                strips.push(5);
+            let mut ring = |c: &[glam::Vec3]| {
+                positions.extend(c.iter().chain(c.first()).map(|p| p.to_array()));
+                strips.push(c.len() as u32 + 1);
             };
+            let layout = &stored.layout;
             for key in &layer.visible {
                 let coord = [key.1, key.0];
                 if cells > MAX_OUTLINED_CELLS {
-                    let [c0, r0, c1, r1] = stored.map.chunk_cells(coord);
-                    let a = Self::cell_corners(item, view.eye, c0, r0)[0];
-                    let b = Self::cell_corners(item, view.eye, c1 - 1, r0)[1];
-                    let c = Self::cell_corners(item, view.eye, c1 - 1, r1 - 1)[2];
-                    let d = Self::cell_corners(item, view.eye, c0, r1 - 1)[3];
-                    rect([a, b, c, d]);
+                    let cells = stored.map.chunk_cells(coord);
+                    let outline: Vec<_> =
+                        Self::to_world(item, view.eye, layout.region_outline(cells)).collect();
+                    ring(&outline);
                     continue;
                 }
                 let Some(chunk) = stored.chunks.get(key) else {
@@ -929,7 +944,7 @@ impl ItemTypePlugin for TilemapPlugin {
                         continue;
                     }
                     if let Some([col, row]) = stored.map.cell_of(coord, tile) {
-                        rect(Self::cell_corners(item, view.eye, col, row));
+                        ring(&Self::cell_outline(item, layout, view.eye, col, row));
                     }
                 }
             }
@@ -1001,9 +1016,13 @@ impl ItemTypePlugin for TilemapPlugin {
             }
             let hit = origin + dir * t;
             let local = plane.to_plane(hit) - item.drawn_origin(plane.to_plane(view.eye));
-            let col = (local.x / item.cell_size[0] as f64).floor();
-            let row = (local.y / item.cell_size[1] as f64).floor();
-            let range = MIN_TILE_CELL as f64..=MAX_TILE_CELL as f64;
+            let local =
+                local / glam::DVec2::new(item.cell_size[0] as f64, item.cell_size[1] as f64);
+            if !local.is_finite() {
+                continue;
+            }
+            let [col, row] = stored.layout.cell_at(local);
+            let range = MIN_TILE_CELL as i64..=MAX_TILE_CELL as i64;
             if !range.contains(&col) || !range.contains(&row) {
                 continue;
             }
@@ -1062,15 +1081,11 @@ impl ItemTypePlugin for TilemapPlugin {
             for (key, chunk) in &stored.chunks {
                 let coord = [key.1, key.0];
                 // Skip a chunk whose projected box misses the rectangle.
-                let [c0, r0, c1, r1] = stored.map.chunk_cells(coord);
-                let corners = [
-                    Self::cell_corners(item, view.eye, c0, r0)[0],
-                    Self::cell_corners(item, view.eye, c1 - 1, r1 - 1)[2],
-                    Self::cell_corners(item, view.eye, c1 - 1, r0)[1],
-                    Self::cell_corners(item, view.eye, c0, r1 - 1)[3],
-                ];
-                let projected: Option<Vec<glam::Vec2>> =
-                    corners.iter().map(|&c| screen(c)).collect();
+                let layout = &stored.layout;
+                let region = layout.region_outline(stored.map.chunk_cells(coord));
+                let projected: Option<Vec<glam::Vec2>> = Self::to_world(item, view.eye, region)
+                    .map(|c| screen(c))
+                    .collect();
                 if let Some(p) = projected {
                     let lo = p.iter().fold(glam::Vec2::MAX, |a, &b| a.min(b));
                     let hi = p.iter().fold(glam::Vec2::MIN, |a, &b| a.max(b));
@@ -1089,8 +1104,9 @@ impl ItemTypePlugin for TilemapPlugin {
                     let Some([col, row]) = stored.map.cell_of(coord, tile) else {
                         continue;
                     };
-                    let c = Self::cell_corners(item, view.eye, col, row);
-                    let centre = (c[0] + c[2]) * 0.5;
+                    let centre = Self::to_world(item, view.eye, [layout.centre(col, row)])
+                        .next()
+                        .expect("one point");
                     if !screen(centre).is_some_and(inside) {
                         continue;
                     }
@@ -1125,10 +1141,13 @@ impl ItemTypePlugin for TilemapPlugin {
         else {
             return;
         };
+        let Some(stored) = self.maps.get(item.source) else {
+            return;
+        };
         let eye = self
             .views
             .get(self.last_viewport)
             .map_or(glam::DVec3::ZERO, |v| v.eye);
-        out.extend(Self::cell_corners(item, eye, col, row));
+        out.extend(Self::cell_outline(item, &stored.layout, eye, col, row));
     }
 }

@@ -514,7 +514,7 @@ pub(crate) fn compose_tile(base: &str, material: &TileMaterialEntry) -> Result<S
     replace_once(
         &mut out,
         TILE_HOOK_MARKER,
-        "world = tile_hook_vertex(world, corner, tile_world(cell * layer.cell_size + shift));",
+        "world = tile_hook_vertex(world, corner, tile_world(cell_origin * layer.cell_size + shift));",
     )?;
     out.push('\n');
     out.push_str(SPRITE_CONTRACT);
@@ -530,7 +530,8 @@ pub(crate) fn compose_tile(base: &str, material: &TileMaterialEntry) -> Result<S
     out.push_str(&format!(
         "
 // The material's vertex hook for a tile corner `corner` (0 to 1 across the
-// cell) at `world`, the cell's corner at `anchor`.
+// quad) at `world`, the bottom-left corner of the cell's bounding box at
+// `anchor`.
 fn tile_hook_vertex(world: vec3<f32>, corner: vec2<f32>, anchor: vec3<f32>) -> vec3<f32> {{
     hook_params.lanes = layer.lanes;
     hook_params.lanes[0].w = camera.time.x;

@@ -229,6 +229,9 @@ fn expected(name: &str) -> Option<Expected> {
         "tilemap" => e(0, 0, 0, 0, 0),
         // Tile layers and painter sprites: no mesh-family draws.
         "tilemap_tall_tiles" => e(0, 0, 0, 0, 0),
+        // Tile layers in four orientations and a painter sprite: no
+        // mesh-family draws.
+        "tilemap_orientations" => e(0, 0, 0, 0, 0),
         // A tilemap room, crate sprites and the light layer: no mesh-family
         // draws.
         "lighting_2d" => e(0, 0, 0, 0, 0),

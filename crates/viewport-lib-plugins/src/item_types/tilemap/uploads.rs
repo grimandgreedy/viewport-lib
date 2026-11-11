@@ -179,7 +179,8 @@ pub trait TileMaterials {
     /// hook, which then moves each corner of every tile of a layer whose
     /// [`TilemapItem::material`] names it. `v.local_uv` runs across the
     /// tile's quad (one cell, or a [`TileSize`]'s quad) and `v.anchor` is the
-    /// cell's bottom-left corner. The body reads its
+    /// bottom-left corner of the cell's bounding box, where the grid's
+    /// orientation puts it. The body reads its
     /// parameters through `params` and `hook_params.lanes`; tile materials
     /// take no textures.
     ///

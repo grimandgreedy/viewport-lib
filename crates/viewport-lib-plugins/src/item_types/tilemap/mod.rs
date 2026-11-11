@@ -1,6 +1,10 @@
 //! The tilemap item type as an [`ItemTypePlugin`]: grids of tiles from one
 //! atlas, drawn on a world plane for 2D scenes under `Camera2d`.
 //!
+//! A [`Tileset`] lays its cells out square-on, isometric, staggered or
+//! hexagonal ([`TileOrientation`]), with Tiled's conventions, so a map read
+//! from Tiled draws as Tiled draws it.
+//!
 //! A [`Tilemap`] is uploaded once and returns a [`TilemapId`]; each frame a
 //! [`TilemapItem`] places it on a plane with an origin, an elevation, a
 //! parallax factor and an animation clock. The map is held in square chunks
@@ -29,8 +33,11 @@
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
 
+mod grid;
 mod types;
 
+pub(crate) use grid::GridLayout;
+pub use grid::{StaggerAxis, StaggerIndex, TileOrientation};
 pub use types::{
     MAX_TILE_ANIMATIONS, MAX_TILE_CELL, MAX_TILE_SIZES, MIN_TILE_CELL, Tile, TileAnimation,
     TileChunk, TileFlip, TileFrame, TileMaterial, TileMaterialId, TileSize, Tilemap, TilemapDraw,

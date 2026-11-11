@@ -527,15 +527,21 @@ fn in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
 ///
 /// A cell side is an edge only where a solid cell meets a cell that is not
 /// solid or that no chunk holds, facing out of the solid, and consecutive
-/// sides along a row or column line merge into one edge. A wall several cells
-/// thick therefore casts from its outline alone, with no edges inside it to
-/// shadow its own face, and the inside of a hole casts outward into the hole.
+/// sides along one line merge into one edge. A wall several cells thick
+/// therefore casts from its outline alone, with no edges inside it to shadow
+/// its own face, and the inside of a hole casts outward into the hole. The
+/// sides are those of the cell outlines the map's
+/// [`TileOrientation`](super::tilemap::TileOrientation) gives: squares,
+/// diamonds or hexagons.
 pub fn occluders_from_tilemap(
     map: &Tilemap,
     origin: [f32; 2],
     cell_size: [f32; 2],
     solid: impl Fn(Tile) -> bool,
 ) -> Vec<Occluder2d> {
+    if map.tileset.orientation != super::tilemap::TileOrientation::Orthogonal {
+        return grid_occluders(map, origin, cell_size, solid);
+    }
     let Some([col0, row0, col1, row1]) = map.cell_bounds() else {
         return Vec::new();
     };
@@ -602,6 +608,102 @@ pub fn occluders_from_tilemap(
     } else {
         vec![Occluder2d::Edges(edges)]
     }
+}
+
+/// [`occluders_from_tilemap`] for a grid of diamonds or hexagons: every
+/// outline side of a solid cell whose neighbour across it is not solid,
+/// joined where sides continue along one line.
+fn grid_occluders(
+    map: &Tilemap,
+    origin: [f32; 2],
+    cell_size: [f32; 2],
+    solid: impl Fn(Tile) -> bool,
+) -> Vec<Occluder2d> {
+    use glam::I64Vec2;
+    let layout = super::tilemap::GridLayout::new(&map.tileset);
+    let is_solid = |[col, row]: [i64; 2]| {
+        let range = super::tilemap::MIN_TILE_CELL as i64..=super::tilemap::MAX_TILE_CELL as i64;
+        range.contains(&col)
+            && range.contains(&row)
+            && map.get(col as i32, row as i32).is_some_and(&solid)
+    };
+    // Sides in half-texels, so the ends two sides share compare exactly.
+    let mut sides: Vec<(I64Vec2, I64Vec2)> = Vec::new();
+    for (coord, chunk) in map.chunks() {
+        for (i, tile) in chunk.tiles.iter().enumerate() {
+            if tile.is_empty() || !solid(*tile) {
+                continue;
+            }
+            let Some([col, row]) = map.cell_of(coord, i as u32) else {
+                continue;
+            };
+            for (neighbour, a, b) in layout.sides(col as i64, row as i64) {
+                if !is_solid(neighbour) {
+                    sides.push((a, b));
+                }
+            }
+        }
+    }
+    // Join each side to the one that carries on from its end in the same
+    // direction, walking from the sides nothing leads into.
+    let direction = |(a, b): (I64Vec2, I64Vec2)| {
+        let d = b - a;
+        let g = gcd(d.x.unsigned_abs(), d.y.unsigned_abs()).max(1) as i64;
+        d / g
+    };
+    let mut from: std::collections::HashMap<(I64Vec2, I64Vec2), usize> = Default::default();
+    for (i, &s) in sides.iter().enumerate() {
+        from.insert((s.0, direction(s)), i);
+    }
+    let ends: std::collections::HashSet<(I64Vec2, I64Vec2)> =
+        sides.iter().map(|&s| (s.1, direction(s))).collect();
+    let leads_in = |s: (I64Vec2, I64Vec2)| ends.contains(&(s.0, direction(s)));
+    let to_plane = |p: I64Vec2| {
+        let q = layout.to_cells(p);
+        [
+            origin[0] + (q.x * cell_size[0] as f64) as f32,
+            origin[1] + (q.y * cell_size[1] as f64) as f32,
+        ]
+    };
+    let mut used = vec![false; sides.len()];
+    let mut edges = Vec::new();
+    let mut walk = |start: usize, used: &mut Vec<bool>| {
+        let d = direction(sides[start]);
+        let a = sides[start].0;
+        let mut end = start;
+        used[start] = true;
+        while let Some(&next) = from.get(&(sides[end].1, d)) {
+            if used[next] {
+                break;
+            }
+            used[next] = true;
+            end = next;
+        }
+        edges.push(OccluderEdge {
+            a: to_plane(a),
+            b: to_plane(sides[end].1),
+        });
+    };
+    for i in 0..sides.len() {
+        if !used[i] && !leads_in(sides[i]) {
+            walk(i, &mut used);
+        }
+    }
+    // Lines that close on themselves have no first side.
+    for i in 0..sides.len() {
+        if !used[i] {
+            walk(i, &mut used);
+        }
+    }
+    if edges.is_empty() {
+        Vec::new()
+    } else {
+        vec![Occluder2d::Edges(edges)]
+    }
+}
+
+fn gcd(a: u64, b: u64) -> u64 {
+    if b == 0 { a } else { gcd(b, a % b) }
 }
 
 /// One outline per sprite of a world-space sprite batch drawn on `plane`
@@ -831,6 +933,102 @@ mod tests {
                 "{edge:?} faces out of the hole"
             );
         }
+    }
+
+    fn oriented(orientation: super::super::tilemap::TileOrientation, size: [u32; 2]) -> Tilemap {
+        let mut set = super::super::tilemap::Tileset::new(None, size, 4);
+        set.orientation = orientation;
+        Tilemap::sparse(set, 4)
+    }
+
+    /// Every edge has the solid on its left: a point just to its left is in
+    /// a solid cell and one just to its right is not.
+    fn check_facing(map: &Tilemap, edges: &[OccluderEdge]) {
+        let solid = |p: Vec2| {
+            map.tileset
+                .cell_at(p.as_dvec2())
+                .and_then(|[c, r]| map.get(c, r))
+                .is_some_and(|t| t.index == 1)
+        };
+        for e in edges {
+            let (a, b) = (Vec2::from(e.a), Vec2::from(e.b));
+            let mid = (a + b) * 0.5;
+            let left = (b - a).perp().normalize() * 0.01;
+            assert!(solid(mid + left), "{e:?} has no solid on its left");
+            assert!(!solid(mid - left), "{e:?} has solid on its right");
+        }
+    }
+
+    #[test]
+    fn diamond_and_hexagon_grids_cast_from_their_cell_sides() {
+        use super::super::tilemap::{StaggerAxis, StaggerIndex, TileOrientation};
+        // A 3 x 3 block of diamonds is one big diamond: four edges.
+        let mut iso = oriented(TileOrientation::Isometric, [32, 16]);
+        for (c, r) in block(0, 0, 3, 3) {
+            iso.set(c as i32, r as i32, Tile::new(1));
+        }
+        let e = tile_edges(&iso);
+        assert_eq!(e.len(), 4, "{e:?}");
+        check_facing(&iso, &e);
+        for edge in &e {
+            assert!((Vec2::from(edge.a) - Vec2::from(edge.b)).length() > 2.0);
+        }
+
+        // One hexagon has six sides; two side by side share one, leaving ten.
+        let hex = TileOrientation::Hexagonal {
+            side_length: 16,
+            axis: StaggerAxis::Y,
+            index: StaggerIndex::Odd,
+        };
+        let mut one = oriented(hex, [28, 32]);
+        one.set(2, 2, Tile::new(1));
+        let e = tile_edges(&one);
+        assert_eq!(e.len(), 6);
+        check_facing(&one, &e);
+        one.set(3, 2, Tile::new(1));
+        let e = tile_edges(&one);
+        assert_eq!(e.len(), 10);
+        check_facing(&one, &e);
+
+        // A ring of six hexagons round an empty one casts into the hole too.
+        for axis in [StaggerAxis::X, StaggerAxis::Y] {
+            let hex = TileOrientation::Hexagonal {
+                side_length: 14,
+                axis,
+                index: StaggerIndex::Even,
+            };
+            let mut ring = oriented(hex, [32, 28]);
+            let layout = super::super::tilemap::GridLayout::new(&ring.tileset);
+            for (n, _, _) in layout.sides(4, 4) {
+                ring.set(n[0] as i32, n[1] as i32, Tile::new(1));
+            }
+            let e = tile_edges(&ring);
+            assert_eq!(e.len(), 6 * 6 - 6 * 2, "{axis:?}");
+            check_facing(&ring, &e);
+        }
+
+        // Staggered rows of diamonds: a filled 4 x 4 patch has no inner
+        // edges, and its outline joins along each diagonal.
+        let mut staggered = oriented(
+            TileOrientation::Staggered {
+                axis: StaggerAxis::Y,
+                index: StaggerIndex::Odd,
+            },
+            [32, 16],
+        );
+        for (c, r) in block(0, 0, 4, 4) {
+            staggered.set(c as i32, r as i32, Tile::new(1));
+        }
+        let e = tile_edges(&staggered);
+        check_facing(&staggered, &e);
+        let perimeter: f32 = e
+            .iter()
+            .map(|e| (Vec2::from(e.a) - Vec2::from(e.b)).length())
+            .sum();
+        // 16 diamonds of side sqrt(0.5^2 + 0.5^2): 4 x 4 staggered rows show
+        // 4 + 4 sides along the top and bottom and 3 + 4 down each end.
+        let side = 0.5f32.hypot(0.5);
+        assert!((perimeter - 22.0 * side).abs() < 1e-4, "{perimeter}");
     }
 
     #[test]
