@@ -1,22 +1,35 @@
 //! A flat orthographic camera for 2D views, and the controller that drives it.
 //!
 //! [`Camera2d`] describes a view in 2D terms (a centre on a world plane, a zoom
-//! as world units per pixel, a turn about the view axis) and produces the
+//! as world units per pixel, a turn about the view axis) and writes the
 //! orthographic [`Camera`](crate::Camera) the renderer draws with. It looks straight at its
 //! plane and never orbits.
 //!
 //! [`Camera2dController`] applies drag-to-pan and zoom-about-the-cursor from an
 //! [`ActionFrame`](crate::input::ActionFrame) to a `Camera2d`. Pair it with
 //! [`BindingPreset::Planar`](crate::input::BindingPreset::Planar).
+//! [`Camera2dControl`] wraps the two as a [`CameraController`], for a runner
+//! that drives a `Camera` through that trait.
+//!
+//! [`snap_camera_to_pixels`] snaps any orthographic camera to whole device
+//! pixels, for a host that moves the camera after `Camera2d` has written it.
 //!
 //! Screen positions are viewport-local logical pixels with the origin at the
 //! top left and y down, the same space as
 //! [`PointerFrame::cursor`](crate::input::PointerFrame::cursor). Plane
 //! positions are `Vec2`s in world units along the plane's two axes; see
 //! [`Plane2d`].
+//!
+//! The viewport size is the size the scene draws at. For a viewport presented
+//! at a fixed reference size (`Presentation::Reference` on the renderer's
+//! viewport frame) that is the reference size, with one pixel per point, and
+//! screen positions are reference pixels: map the cursor with the renderer's
+//! `window_to_reference` first.
 
 use glam::{DMat3, DQuat, DVec3, Vec2, Vec3};
 use viewport_lib_types::camera::{Pose, Projection};
+
+use crate::CameraController;
 
 use crate::Camera;
 use crate::input::action_frame::ActionFrame;
@@ -160,18 +173,26 @@ impl Shake {
 ///
 /// The view is a `centre` on a [`Plane2d`], a zoom as `units_per_pixel` (world
 /// units across one logical pixel), and a `rotation` about the view axis.
-/// [`camera`](Self::camera) produces the orthographic [`Camera`] for the
-/// current viewport size; give the renderer that each frame.
+/// [`apply_to`](Self::apply_to) writes the orthographic pose and projection
+/// into a [`Camera`] the host owns, and [`camera`](Self::camera) builds a new
+/// one; give the renderer that each frame.
 ///
 /// On top of the view sit a follow target with damping and a dead zone,
 /// optional world bounds the visible area is kept inside, a decaying screen
 /// shake, and pixel snapping for pixel art. [`update`](Self::update) advances
 /// the follow and the shake once per frame.
 ///
+/// The stored zoom is never snapped. With
+/// [`snap_zoom_to_texel`](Self::snap_zoom_to_texel) set, the camera written
+/// out uses the nearest zoom that shows a whole number of device pixels per
+/// texel ([`drawn_units_per_pixel`](Self::drawn_units_per_pixel)), so small
+/// wheel steps still add up to the next scale.
+///
 /// [`screen_to_world`](Self::screen_to_world),
 /// [`world_to_screen`](Self::world_to_screen) and
-/// [`visible_rect`](Self::visible_rect) describe the view itself, without the
-/// shake offset or pixel snapping that [`camera`](Self::camera) adds.
+/// [`visible_rect`](Self::visible_rect) describe the view at the drawn zoom,
+/// without the shake offset or the position snapping that
+/// [`apply_to`](Self::apply_to) adds.
 #[derive(Clone, Debug)]
 pub struct Camera2d {
     /// The plane the camera looks at.
@@ -182,12 +203,28 @@ pub struct Camera2d {
     pub distance: f32,
     /// Physical pixels per logical pixel, for pixel snapping and
     /// [`snap_zoom_to_integer_scale`](Self::snap_zoom_to_integer_scale).
-    /// Defaults to `1.0`.
+    /// Defaults to `1.0`. Keep it at `1.0` for a viewport presented at a
+    /// reference size, whose scene target has one pixel per point.
     pub pixels_per_point: f32,
-    /// Round the produced camera position so the plane origin lands on a whole
+    /// Round the written camera position so the plane origin lands on a whole
     /// device pixel, which keeps pixel art from shimmering as the camera moves.
-    /// Off by default.
+    /// Off by default. A host that moves the camera after
+    /// [`apply_to`](Self::apply_to) (a blend or its own shake) leaves this off
+    /// and calls [`snap_camera_to_pixels`] last instead.
     pub snap_to_pixels: bool,
+    /// World units per texel of the art, to keep the drawn zoom at a whole
+    /// number of device pixels per texel: the written camera uses the nearest
+    /// such zoom, at least one device pixel per texel, while
+    /// [`units_per_pixel`](Self::units_per_pixel) keeps the unsnapped value.
+    /// `None` (the default) draws at the stored zoom.
+    pub snap_zoom_to_texel: Option<f32>,
+    /// Near and far plane distances along the view direction, measured from
+    /// the eye, for the written projection. `None` (the default) keeps the
+    /// projection's automatic planes, which reach about `max(1000, 3 *
+    /// distance)` from the eye. The far plane is never nearer than three
+    /// times [`distance`](Self::distance), which keeps the plane itself in
+    /// view.
+    pub depth_range: Option<[f32; 2]>,
     /// The smallest units per pixel zooming reaches (the closest zoom).
     pub min_units_per_pixel: f32,
     /// The largest units per pixel zooming reaches (the furthest zoom).
@@ -234,6 +271,8 @@ impl Camera2d {
             distance: Self::DEFAULT_DISTANCE,
             pixels_per_point: 1.0,
             snap_to_pixels: false,
+            snap_zoom_to_texel: None,
+            depth_range: None,
             min_units_per_pixel: 1.0e-6,
             max_units_per_pixel: 1.0e6,
             follow_time_constant: Self::DEFAULT_FOLLOW_TIME_CONSTANT,
@@ -295,9 +334,23 @@ impl Camera2d {
         self.clamp_to_bounds();
     }
 
-    /// World units across one logical pixel. Smaller is closer.
+    /// World units across one logical pixel. Smaller is closer. This is the
+    /// stored zoom, never snapped; see
+    /// [`drawn_units_per_pixel`](Self::drawn_units_per_pixel).
     pub fn units_per_pixel(&self) -> f32 {
         self.units_per_pixel
+    }
+
+    /// The zoom the written camera draws at: [`units_per_pixel`](Self::units_per_pixel),
+    /// or with [`snap_zoom_to_texel`](Self::snap_zoom_to_texel) set the
+    /// nearest zoom that shows a whole number of device pixels per texel.
+    pub fn drawn_units_per_pixel(&self) -> f32 {
+        match self.snap_zoom_to_texel {
+            Some(units_per_texel) if units_per_texel > 0.0 => {
+                integer_scale_zoom(units_per_texel, self.pixels_per_point, self.units_per_pixel).0
+            }
+            _ => self.units_per_pixel,
+        }
     }
 
     /// Set the zoom about the screen centre, clamped to
@@ -327,6 +380,11 @@ impl Camera2d {
 
     /// Set the viewport size in logical pixels, keeping the centre and zoom,
     /// then apply the bounds. Call it whenever the viewport resizes.
+    ///
+    /// This is the size the scene draws at, which sets the written camera's
+    /// aspect and height: for a viewport presented at a reference size, pass
+    /// the reference size (and keep [`pixels_per_point`](Self::pixels_per_point)
+    /// at `1.0`), not the window's.
     pub fn set_viewport_size(&mut self, size: Vec2) {
         self.viewport_size = size.max(Vec2::ZERO);
         self.clamp_to_bounds();
@@ -355,13 +413,13 @@ impl Camera2d {
     /// A screen offset in pixels (x right, y down) as a plane vector.
     fn offset_to_plane(&self, offset: Vec2) -> Vec2 {
         let (right, up) = self.screen_axes();
-        (right * offset.x - up * offset.y) * self.units_per_pixel
+        (right * offset.x - up * offset.y) * self.drawn_units_per_pixel()
     }
 
     /// A plane vector as a screen offset in pixels (x right, y down).
     fn plane_to_offset(&self, v: Vec2) -> Vec2 {
         let (right, up) = self.screen_axes();
-        Vec2::new(v.dot(right), -v.dot(up)) / self.units_per_pixel
+        Vec2::new(v.dot(right), -v.dot(up)) / self.drawn_units_per_pixel()
     }
 
     /// The plane position under a screen position.
@@ -385,7 +443,7 @@ impl Camera2d {
 
     fn visible_half_extent(&self) -> Vec2 {
         let (right, up) = self.screen_axes();
-        let half = self.viewport_size * 0.5 * self.units_per_pixel;
+        let half = self.viewport_size * 0.5 * self.drawn_units_per_pixel();
         right.abs() * half.x + up.abs() * half.y
     }
 
@@ -431,7 +489,9 @@ impl Camera2d {
 
     /// Zoom by `factor` about a screen position: above 1 zooms in, below 1
     /// zooms out, and the plane point under `cursor_pixels` stays under it
-    /// (unless the zoom limits or the bounds move it).
+    /// (unless the zoom limits or the bounds move it). The factor applies to
+    /// the stored zoom, so with [`snap_zoom_to_texel`](Self::snap_zoom_to_texel)
+    /// set, small steps add up until the drawn scale changes.
     pub fn zoom_at(&mut self, cursor_pixels: Vec2, factor: f32) {
         if !(factor > 0.0) || factor == 1.0 {
             return;
@@ -442,15 +502,20 @@ impl Camera2d {
         self.clamp_to_bounds();
     }
 
-    /// Set the zoom so that one texel of art drawn at `units_per_texel` world
-    /// units covers a whole number of device pixels, the nearest to the
-    /// current zoom and at least one. Returns that number. The centre stays.
+    /// Set the stored zoom so that one texel of art drawn at
+    /// `units_per_texel` world units covers a whole number of device pixels,
+    /// the nearest to the current zoom and at least one. Returns that number.
+    /// The centre stays.
+    ///
+    /// This rewrites the zoom, so calling it every frame rounds small wheel
+    /// steps back to the same scale. To keep every frame on a whole scale
+    /// while zooming, set [`snap_zoom_to_texel`](Self::snap_zoom_to_texel)
+    /// instead.
     pub fn snap_zoom_to_integer_scale(&mut self, units_per_texel: f32) -> u32 {
-        let ppp = self.pixels_per_point.max(1e-3);
-        let device_per_texel = units_per_texel * ppp / self.units_per_pixel;
-        let scale = device_per_texel.round().max(1.0);
-        self.set_units_per_pixel(units_per_texel * ppp / scale);
-        scale as u32
+        let (units_per_pixel, scale) =
+            integer_scale_zoom(units_per_texel, self.pixels_per_point, self.units_per_pixel);
+        self.set_units_per_pixel(units_per_pixel);
+        scale
     }
 
     // -----------------------------------------------------------------------
@@ -475,7 +540,7 @@ impl Camera2d {
     }
 
     /// Start a shake: a random offset of up to `amplitude_pixels` that decays
-    /// to nothing over `duration` seconds. It moves only the produced camera,
+    /// to nothing over `duration` seconds. It moves only the written camera,
     /// never the centre. A weaker shake does not cut short a stronger one
     /// still running.
     pub fn shake(&mut self, amplitude_pixels: f32, duration: f32) {
@@ -545,27 +610,25 @@ impl Camera2d {
     // The produced camera
     // -----------------------------------------------------------------------
 
-    /// The orthographic camera for this view: looking along the plane's view
-    /// direction from [`distance`](Self::distance) in front of it, as tall as
-    /// the viewport height times [`units_per_pixel`](Self::units_per_pixel),
-    /// with the shake offset added and, with
-    /// [`snap_to_pixels`](Self::snap_to_pixels), the position snapped to whole
-    /// device pixels.
-    pub fn camera(&self) -> Camera {
+    /// Write this view into `camera`: an orthographic projection as tall as
+    /// the viewport height times [`drawn_units_per_pixel`](Self::drawn_units_per_pixel),
+    /// with [`depth_range`](Self::depth_range) as its planes when set, and a
+    /// pose looking along the plane's view direction from
+    /// [`distance`](Self::distance) in front of it, moved by the shake offset
+    /// and, with [`snap_to_pixels`](Self::snap_to_pixels), snapped to whole
+    /// device pixels. The aspect comes from the viewport size and the focus
+    /// distance is set to `distance`; the exposure is otherwise left alone.
+    ///
+    /// The viewport size is the size the scene draws at: the reference size
+    /// for a viewport presented at one (see
+    /// [`set_viewport_size`](Self::set_viewport_size)).
+    ///
+    /// The camera is the host's to change afterwards: blend it, shake it,
+    /// then call [`snap_camera_to_pixels`] last if it should stay on the
+    /// pixel grid.
+    pub fn apply_to(&self, camera: &mut Camera) {
         let (right, up) = self.screen_axes();
-        let mut centre = self.centre + self.offset_to_plane(self.shake.offset);
-        if self.snap_to_pixels {
-            let ppp = self.pixels_per_point.max(1e-3);
-            let per_device = self.units_per_pixel / ppp;
-            let device = self.viewport_size * ppp;
-            // The plane origin lands on a whole device pixel when the left
-            // and top edges sit a whole number of device pixels from it.
-            let r = centre.dot(right) / per_device;
-            let u = centre.dot(up) / per_device;
-            let r = (r - device.x * 0.5).round() + device.x * 0.5;
-            let u = (u + device.y * 0.5).round() - device.y * 0.5;
-            centre = (right * r + up * u) * per_device;
-        }
+        let centre = self.centre + self.offset_to_plane(self.shake.offset);
 
         let plane = self.plane;
         let world_right = plane.x_axis() * right.x + plane.y_axis() * right.y;
@@ -576,12 +639,118 @@ impl Camera2d {
         let distance = self.distance.max(1e-3);
         let eye = plane.to_world(centre) + back.as_dvec3() * f64::from(distance);
 
-        let mut camera = Camera::new(Pose::new(eye, orientation)).with_projection(
-            Projection::orthographic(self.viewport_size.y * self.units_per_pixel),
-        );
+        let height = self.viewport_size.y * self.drawn_units_per_pixel();
+        let (near, far) = match self.depth_range {
+            Some([near, far]) => (Some(near), Some(far)),
+            None => (None, None),
+        };
+        camera.set_pose(Pose::new(eye, orientation));
+        camera.projection = Projection::Orthographic { height, near, far };
         camera.set_aspect_ratio(self.viewport_size.x, self.viewport_size.y);
         camera.set_focus_distance(distance);
+        if self.snap_to_pixels {
+            snap_camera_to_pixels(camera, self.viewport_size, self.pixels_per_point);
+        }
+    }
+
+    /// A new camera with this view written into it; see
+    /// [`apply_to`](Self::apply_to).
+    pub fn camera(&self) -> Camera {
+        let mut camera = Camera::new(Pose::IDENTITY);
+        self.apply_to(&mut camera);
         camera
+    }
+}
+
+/// The zoom nearest `units_per_pixel` at which one texel of `units_per_texel`
+/// world units covers a whole number of device pixels (at least one), and that
+/// number.
+fn integer_scale_zoom(
+    units_per_texel: f32,
+    pixels_per_point: f32,
+    units_per_pixel: f32,
+) -> (f32, u32) {
+    let ppp = pixels_per_point.max(1e-3);
+    let device_per_texel = units_per_texel * ppp / units_per_pixel;
+    let scale = device_per_texel.round().max(1.0);
+    (units_per_texel * ppp / scale, scale as u32)
+}
+
+/// Move an orthographic camera across its view so the world origin lands on a
+/// whole device pixel, which keeps pixel art from shimmering as the camera
+/// moves. The camera's own right and up axes set the pixel grid, so it works
+/// at any turn about the view axis; the depth along the view is untouched.
+///
+/// `viewport_size` (in logical pixels) and `pixels_per_point` describe the
+/// target the scene draws into: for a viewport presented at a reference size,
+/// pass the reference size and `1.0`. Call it last, after any blend or shake
+/// the host applies. A perspective or matrix projection is left alone.
+pub fn snap_camera_to_pixels(camera: &mut Camera, viewport_size: Vec2, pixels_per_point: f32) {
+    let Projection::Orthographic { height, .. } = camera.projection else {
+        return;
+    };
+    let ppp = pixels_per_point.max(1e-3);
+    let device = viewport_size.as_dvec2() * f64::from(ppp);
+    if !(height > 0.0) || !(device.y > 0.0) {
+        return;
+    }
+    let per_device = f64::from(height) / device.y;
+    let right = camera.pose.orientation * DVec3::X;
+    let up = camera.pose.orientation * DVec3::Y;
+    let eye = camera.pose.position;
+    // The origin lands on a whole device pixel when the left and top edges
+    // sit a whole number of device pixels from it.
+    let r = eye.dot(right) / per_device;
+    let u = eye.dot(up) / per_device;
+    let snapped_r = (r - device.x * 0.5).round() + device.x * 0.5;
+    let snapped_u = (u + device.y * 0.5).round() - device.y * 0.5;
+    camera.pose.position =
+        eye + right * ((snapped_r - r) * per_device) + up * ((snapped_u - u) * per_device);
+}
+
+/// A [`Camera2d`] and a [`Camera2dController`] as one [`CameraController`]:
+/// each frame it applies pan and zoom from the resolved input, advances the
+/// follow and the shake, and writes the view into the camera with
+/// [`Camera2d::apply_to`].
+///
+/// Hand it to a runner that drives a camera through [`CameraController`]
+/// (`ViewportApp`'s `CameraControl::Controller`), and reach the 2D camera
+/// through [`camera`](Self::camera) to follow, shake or set bounds. The runner
+/// passes the size the scene draws at through
+/// [`CameraController::set_viewport`] before each apply.
+pub struct Camera2dControl {
+    /// The 2D view.
+    pub camera: Camera2d,
+    /// The pan and zoom policy, with no resolver of its own.
+    pub controller: Camera2dController,
+}
+
+impl Camera2dControl {
+    /// Drive `camera` with a stateless [`Camera2dController`].
+    pub fn new(camera: Camera2d) -> Self {
+        Self {
+            camera,
+            controller: Camera2dController::new_stateless(),
+        }
+    }
+}
+
+impl CameraController for Camera2dControl {
+    fn apply(&mut self, camera: &mut Camera, frame: &ActionFrame, dt: f32) {
+        self.controller.apply(&mut self.camera, frame, dt);
+        self.camera.apply_to(camera);
+    }
+
+    fn set_viewport(&mut self, viewport_size: [f32; 2], pixels_per_point: f32) {
+        let size = Vec2::from(viewport_size);
+        if size != self.camera.viewport_size() {
+            self.camera.set_viewport_size(size);
+        }
+        self.camera.pixels_per_point = pixels_per_point;
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 
@@ -1001,6 +1170,142 @@ mod tests {
             under,
             1e-4
         ));
+    }
+
+    /// Where a plane point lands through `camera`, in device pixels.
+    fn project_camera(camera: &Camera, plane: Plane2d, world: Vec2, device: Vec2) -> Vec2 {
+        let ndc = camera
+            .view_proj_matrix()
+            .project_point3(plane.to_world(world).as_vec3());
+        Vec2::new(
+            (ndc.x + 1.0) * 0.5 * device.x,
+            (1.0 - ndc.y) * 0.5 * device.y,
+        )
+    }
+
+    #[test]
+    fn apply_to_writes_the_view_into_a_host_camera() {
+        for plane in PLANES {
+            let c = cam(plane).with_rotation(0.3);
+            let mut host = Camera::default();
+            host.exposure.aperture = 2.8;
+            c.apply_to(&mut host);
+            let built = c.camera();
+            assert_eq!(host.pose, built.pose);
+            assert_eq!(host.projection, built.projection);
+            assert_eq!(host.aspect, built.aspect);
+            assert_eq!(host.focus_distance(), built.focus_distance());
+            // The rest of the host's camera is its own.
+            assert_eq!(host.exposure.aperture, 2.8);
+        }
+    }
+
+    #[test]
+    fn a_camera_applied_shaken_blended_and_snapped_lands_on_a_device_pixel() {
+        let size = Vec2::new(320.0, 180.0);
+        for (plane, ppp) in [(Plane2d::Xy, 1.0), (Plane2d::Xz, 2.0)] {
+            let mut c = Camera2d::new(plane)
+                .with_viewport_size(size)
+                .with_units_per_pixel(0.013)
+                .with_centre(Vec2::new(0.3337, -1.2345));
+            c.pixels_per_point = ppp;
+            let mut host = Camera::default();
+            c.apply_to(&mut host);
+
+            // The host shakes by a fraction of a pixel along the screen axes,
+            // then blends toward another view of the same zoom.
+            let shake = host.right().as_dvec3() * 0.0041 + host.up().as_dvec3() * -0.0077;
+            host.pose.position += shake;
+            let other = c.clone().with_centre(Vec2::new(2.71, 0.577)).camera();
+            let mut blended = Camera::lerp(&host, &other, 0.37);
+
+            let device = size * ppp;
+            let frac = |p: Vec2| (p - p.round()).abs().max_element();
+            let origin = project_camera(&blended, plane, Vec2::ZERO, device);
+            assert!(frac(origin) > 0.01, "the blend is off the grid");
+
+            snap_camera_to_pixels(&mut blended, size, ppp);
+            let per_device = 0.013 / ppp;
+            for k in [0.0, 5.0, -11.0] {
+                let p = project_camera(&blended, plane, Vec2::splat(k * per_device), device);
+                assert!(frac(p) < 2e-3, "{plane:?} {ppp}: {p}");
+            }
+        }
+    }
+
+    #[test]
+    fn snapping_the_written_camera_matches_snapping_it_afterwards() {
+        for plane in PLANES {
+            let mut c = cam(plane).with_rotation(0.7);
+            c.pixels_per_point = 2.0;
+            c.snap_to_pixels = true;
+            let snapped = c.camera();
+            c.snap_to_pixels = false;
+            let mut after = c.camera();
+            snap_camera_to_pixels(&mut after, c.viewport_size(), c.pixels_per_point);
+            assert!((snapped.eye() - after.eye()).length() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn a_snapped_zoom_keeps_small_wheel_steps() {
+        let mut c = cam(Plane2d::Xy);
+        c.pixels_per_point = 2.0;
+        c.snap_zoom_to_texel = Some(1.0 / 16.0);
+        // 2.5 device pixels per texel draws at a whole scale.
+        let drawn = c.drawn_units_per_pixel();
+        let scale = (1.0 / 16.0) * 2.0 / drawn;
+        assert!((scale - scale.round()).abs() < 1e-4);
+        assert_eq!(c.units_per_pixel(), 0.05);
+        let height = c.camera().view_height_at(1.0);
+        assert!((height - 600.0 * drawn).abs() < 1e-3);
+
+        // Each small step moves the stored zoom; together they reach the
+        // next drawn scale.
+        let centre = c.viewport_size() * 0.5;
+        let start = scale.round();
+        let mut steps = 0;
+        while ((1.0 / 16.0) * 2.0 / c.drawn_units_per_pixel()).round() == start {
+            let before = c.units_per_pixel();
+            c.zoom_at(centre, 1.02);
+            assert!(c.units_per_pixel() < before);
+            steps += 1;
+            assert!(steps < 100, "the wheel never reached the next scale");
+        }
+        assert!(steps > 1);
+    }
+
+    #[test]
+    fn depth_range_sets_the_written_planes() {
+        let mut c = cam(Plane2d::Xy);
+        c.distance = 2000.0;
+        let auto = c.camera().depth_range();
+        assert_eq!(auto, (0.6, 6000.0));
+        c.depth_range = Some([100.0, 7000.0]);
+        let camera = c.camera();
+        assert_eq!(camera.depth_range(), (100.0, 7000.0));
+        // A layer 1500 behind the plane sits inside the depth range.
+        let v = camera
+            .view_proj_matrix()
+            .project_point3(glam::Vec3::new(3.0, -2.0, -1500.0));
+        assert!(v.z > 0.0 && v.z < 1.0, "{v}");
+    }
+
+    #[test]
+    fn the_control_adapter_drives_a_host_camera() {
+        let mut control =
+            Camera2dControl::new(Camera2d::new(Plane2d::Xy).with_units_per_pixel(0.1));
+        CameraController::set_viewport(&mut control, [400.0, 300.0], 2.0);
+        assert_eq!(control.camera.viewport_size(), Vec2::new(400.0, 300.0));
+        assert_eq!(control.camera.pixels_per_point, 2.0);
+
+        let mut frame = ActionFrame::default();
+        frame.navigation.pan = Vec2::new(10.0, 0.0);
+        let mut host = Camera::default();
+        CameraController::apply(&mut control, &mut host, &frame, 0.0);
+        assert!(close(control.camera.centre(), Vec2::new(-1.0, 0.0), 1e-5));
+        assert_eq!(host.pose, control.camera.camera().pose);
+        assert!(control.as_any_mut().is_some());
     }
 
     #[test]

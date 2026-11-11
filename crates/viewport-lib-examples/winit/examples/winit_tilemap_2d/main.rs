@@ -409,7 +409,7 @@ fn main() {
             move |ctx| {
                 let size = ctx.viewport_size();
                 camera.set_viewport_size(Vec2::from(size));
-                camera.pixels_per_point = ctx.surface_size()[0] as f32 / size[0].max(1.0);
+                camera.pixels_per_point = ctx.pixels_per_point();
                 let dt = ctx.dt();
                 let frame = ctx.action_frame().clone();
                 if frame.is_active(TOGGLE_PIXEL_ART) {

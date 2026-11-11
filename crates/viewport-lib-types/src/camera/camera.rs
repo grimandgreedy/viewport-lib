@@ -240,9 +240,100 @@ impl Camera {
         self.exposure.focus_distance = distance;
     }
 
-    /// Replace the pose.
+    /// Replace the pose. The projection is left alone, so an orthographic
+    /// height stays as it is.
     pub fn set_pose(&mut self, pose: Pose) {
         self.pose = pose;
+    }
+
+    /// The camera `t` of the way from `a` to `b`, with `t` clamped to
+    /// `0..=1`: `t = 0` returns `a` and `t = 1` returns `b` exactly.
+    ///
+    /// The eye position is lerped and the orientation slerped, with no orbit
+    /// centre involved. The aspect and the exposure (focus distance
+    /// included) are lerped.
+    ///
+    /// When both projections are orthographic the height is lerped, and when
+    /// both are perspective the field of view is; near and far planes are
+    /// lerped when both cameras set them, and otherwise taken from `a` below
+    /// `t = 0.5` and from `b` at or above it. When the projections differ in
+    /// kind, or either is a matrix projection, the result takes `a`'s
+    /// projection unchanged below `t = 0.5` and `b`'s at or above it: there
+    /// is no smooth blend between orthographic and perspective here, and a
+    /// host that wants one builds it itself.
+    pub fn lerp(a: &Camera, b: &Camera, t: f32) -> Camera {
+        let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+        if t == 0.0 {
+            return a.clone();
+        }
+        if t == 1.0 {
+            return b.clone();
+        }
+        let mix = |x: f32, y: f32| x * (1.0 - t) + y * t;
+        let pick = |x: Option<f32>, y: Option<f32>| match (x, y) {
+            (Some(x), Some(y)) => Some(mix(x, y)),
+            _ if t < 0.5 => x,
+            _ => y,
+        };
+        let projection = match (a.projection, b.projection) {
+            (
+                Projection::Orthographic {
+                    height: ha,
+                    near: na,
+                    far: fa,
+                },
+                Projection::Orthographic {
+                    height: hb,
+                    near: nb,
+                    far: fb,
+                },
+            ) => Projection::Orthographic {
+                height: mix(ha, hb),
+                near: pick(na, nb),
+                far: pick(fa, fb),
+            },
+            (
+                Projection::Perspective {
+                    fov_y: va,
+                    near: na,
+                    far: fa,
+                },
+                Projection::Perspective {
+                    fov_y: vb,
+                    near: nb,
+                    far: fb,
+                },
+            ) => Projection::Perspective {
+                fov_y: mix(va, vb),
+                near: pick(na, nb),
+                far: pick(fa, fb),
+            },
+            (pa, pb) => {
+                if t < 0.5 {
+                    pa
+                } else {
+                    pb
+                }
+            }
+        };
+        let td = f64::from(t);
+        let pose = Pose::new(
+            a.pose.position * (1.0 - td) + b.pose.position * td,
+            a.pose.orientation.slerp(b.pose.orientation, td).normalize(),
+        );
+        let (ea, eb) = (&a.exposure, &b.exposure);
+        let exposure = PhysicalExposure {
+            aperture: mix(ea.aperture, eb.aperture),
+            shutter_seconds: mix(ea.shutter_seconds, eb.shutter_seconds),
+            iso: mix(ea.iso, eb.iso),
+            focus_distance: mix(ea.focus_distance, eb.focus_distance),
+        };
+        Camera {
+            pose,
+            projection,
+            exposure,
+            aspect: mix(a.aspect, b.aspect),
+        }
     }
 
     /// The camera's orbit view: its focus point, focus distance and
@@ -271,21 +362,26 @@ impl Camera {
     }
 
     /// Move the orbit centre to `centre`, keeping the distance and
-    /// orientation.
+    /// orientation. Goes through [`set_orbit`](Self::set_orbit), so an
+    /// orthographic height is rescaled if the focus distance differs from the
+    /// distance kept.
     pub fn set_orbit_centre(&mut self, centre: impl Into<DVec3>) {
         self.set_orbit(centre, self.focus_distance(), self.orientation());
     }
 
     /// Move the eye to `distance` from the orbit centre, keeping the centre
     /// and orientation. The distance is clamped to
-    /// `[MIN_DISTANCE, MAX_DISTANCE]`.
+    /// `[MIN_DISTANCE, MAX_DISTANCE]`. An orthographic height scales with the
+    /// change in distance, as in [`set_orbit`](Self::set_orbit).
     pub fn set_orbit_distance(&mut self, distance: f32) {
         let distance = distance.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
         self.set_orbit(self.target(), distance, self.orientation());
     }
 
     /// Turn the camera to `orientation` (normalised) about the orbit centre,
-    /// keeping the centre and distance.
+    /// keeping the centre and distance. Goes through
+    /// [`set_orbit`](Self::set_orbit), so an orthographic height is rescaled
+    /// if the focus distance changes.
     pub fn set_orbit_orientation(&mut self, orientation: Quat) {
         self.set_orbit(
             self.target(),
@@ -294,7 +390,8 @@ impl Camera {
         );
     }
 
-    /// [`set_orbit`](Self::set_orbit) from a [`CameraTarget`].
+    /// [`set_orbit`](Self::set_orbit) from a [`CameraTarget`]. An orthographic
+    /// height scales with the change in distance.
     pub fn set_orbit_target(&mut self, target: CameraTarget) {
         self.set_orbit(target.centre, target.distance, target.orientation);
     }
@@ -311,8 +408,10 @@ impl Camera {
     }
 
     /// Set the vertical field of view in radians. An orthographic camera
-    /// takes the height that angle frames at the focus distance; a matrix
-    /// projection is left alone.
+    /// takes the height that angle frames at the focus distance, so on an
+    /// orthographic camera this changes the zoom; use
+    /// [`set_ortho_height`](Self::set_ortho_height) to set it directly. A
+    /// matrix projection is left alone.
     pub fn set_fov_y(&mut self, fov_y: f32) {
         let distance = self.focus_distance();
         match &mut self.projection {
@@ -327,6 +426,24 @@ impl Camera {
     /// Whether the projection is orthographic.
     pub fn is_orthographic(&self) -> bool {
         self.projection.is_orthographic()
+    }
+
+    /// Set the orthographic view height in world units, leaving the pose and
+    /// focus distance alone. A perspective camera becomes orthographic with
+    /// that height, keeping its near and far planes; a matrix projection is
+    /// left alone.
+    pub fn set_ortho_height(&mut self, height: f32) {
+        match &mut self.projection {
+            Projection::Orthographic { height: h, .. } => *h = height,
+            Projection::Perspective { near, far, .. } => {
+                self.projection = Projection::Orthographic {
+                    height,
+                    near: *near,
+                    far: *far,
+                };
+            }
+            Projection::Matrix { .. } => {}
+        }
     }
 
     /// Switch between perspective and orthographic, keeping the framing at
@@ -460,7 +577,10 @@ impl Camera {
     // Framing helpers
     // -----------------------------------------------------------------------
 
-    /// Frame a bounding sphere, keeping the orientation.
+    /// Frame a bounding sphere, keeping the orientation. Goes through
+    /// [`set_orbit`](Self::set_orbit), so an orthographic height scales with
+    /// the change in distance; set it afterwards with
+    /// [`set_ortho_height`](Self::set_ortho_height) to fix the zoom.
     pub fn frame_sphere(&mut self, centre: impl Into<DVec3>, radius: f32) {
         let (c, d) = self.fit_sphere(centre, radius);
         self.set_orbit(
@@ -470,7 +590,8 @@ impl Camera {
         );
     }
 
-    /// Frame an AABB, keeping the orientation.
+    /// Frame an AABB, keeping the orientation. An orthographic height scales
+    /// with the change in distance, as in [`frame_sphere`](Self::frame_sphere).
     pub fn frame_aabb(&mut self, aabb: &crate::scene::aabb::Aabb) {
         let (c, d) = self.fit_aabb(aabb);
         self.set_orbit(
@@ -510,7 +631,8 @@ impl Camera {
     }
 
     /// Centre the camera on a domain of the given extents, with the distance
-    /// and clipping planes set so all of it is visible.
+    /// and clipping planes set so all of it is visible. An orthographic height
+    /// scales with the change in distance, as in [`set_orbit`](Self::set_orbit).
     pub fn centre_on_domain(&mut self, nx: f32, ny: f32, nz: f32) {
         let centre = Vec3::new(nx, ny, nz).as_dvec3() / 2.0;
         let diagonal = (nx * nx + ny * ny + nz * nz).sqrt();

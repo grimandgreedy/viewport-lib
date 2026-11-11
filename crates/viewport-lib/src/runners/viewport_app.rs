@@ -174,13 +174,59 @@ impl WindowId {
     }
 }
 
+/// How the runner moves a window's camera each frame, after the frame callback
+/// and before the frame is assembled.
+///
+/// Set it with [`WindowConfig::with_camera_control`]; reach it from the frame
+/// callback with [`FrameCtx::camera_control_mut`]. A window opened with
+/// [`ViewportApp::window_with_input`] takes its input through the handler and
+/// ignores this: its camera is the handler's and the callback's to move.
+#[derive(Default)]
+pub enum CameraControl {
+    /// The built-in orbit controller on the window's resolved input.
+    #[default]
+    Orbit,
+    /// No camera control: the runner leaves the camera where the callback put
+    /// it.
+    None,
+    /// A controller of the host's, applied to the window's camera with the
+    /// window's resolved input. The runner calls
+    /// [`CameraController::set_viewport`](crate::CameraController::set_viewport)
+    /// with the size the scene draws at before each apply. A
+    /// [`Camera2dControl`](crate::Camera2dControl) runs a
+    /// [`Camera2d`](crate::Camera2d) this way.
+    Controller(Box<dyn crate::CameraController>),
+}
+
+impl CameraControl {
+    /// The controller as its concrete type, when this is a
+    /// [`Controller`](Self::Controller) of type `T` whose
+    /// [`as_any_mut`](crate::CameraController::as_any_mut) allows it.
+    pub fn controller_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        match self {
+            Self::Controller(controller) => controller.as_any_mut()?.downcast_mut::<T>(),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Debug for CameraControl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Orbit => f.write_str("Orbit"),
+            Self::None => f.write_str("None"),
+            Self::Controller(_) => f.write_str("Controller(..)"),
+        }
+    }
+}
+
 /// Per-window configuration for a window opened through [`ViewportApp`].
 ///
 /// Non-exhaustive: build with [`WindowConfig::default`] and the `with_*` methods so
 /// new options can be added without breaking construction. Fields are viewport-lib
 /// or wgpu types, never winit types, so a consumer needs no winit dependency.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WindowConfig {
     /// Window title.
     pub title: String,
@@ -196,6 +242,9 @@ pub struct WindowConfig {
     /// [`RedrawMode::Continuous`]. Set per window, so one animating window can run
     /// continuously beside a static window that only redraws on input.
     pub redraw_mode: RedrawMode,
+    /// How the runner moves this window's camera. Default:
+    /// [`CameraControl::Orbit`].
+    pub camera_control: CameraControl,
 }
 
 impl Default for WindowConfig {
@@ -206,6 +255,7 @@ impl Default for WindowConfig {
             height: 720,
             present_mode: crate::gpu::PresentMode::AutoVsync,
             redraw_mode: RedrawMode::Continuous,
+            camera_control: CameraControl::Orbit,
         }
     }
 }
@@ -247,6 +297,15 @@ impl WindowConfig {
     /// [`RedrawMode::Continuous`].
     pub fn with_redraw_mode(mut self, redraw_mode: RedrawMode) -> Self {
         self.redraw_mode = redraw_mode;
+        self
+    }
+
+    /// Set how the runner moves this window's camera. Default:
+    /// [`CameraControl::Orbit`]. Works with
+    /// [`window_with_paint`](ViewportApp::window_with_paint) as with
+    /// [`window`](ViewportApp::window).
+    pub fn with_camera_control(mut self, camera_control: CameraControl) -> Self {
+        self.camera_control = camera_control;
         self
     }
 }
@@ -442,6 +501,7 @@ pub struct FrameCtx<'a> {
     surface_size: [u32; 2],
     surface_format: crate::gpu::TextureFormat,
     close_requested: bool,
+    camera_control: &'a mut CameraControl,
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
     events: Vec<ViewportEvent>,
@@ -645,6 +705,14 @@ impl FrameCtx<'_> {
     /// top of that.
     pub fn events(&self) -> &[ViewportEvent] {
         &self.events
+    }
+
+    /// How the runner moves this window's camera after this callback returns.
+    /// Replace it to switch control, or reach a controller of the host's with
+    /// [`CameraControl::controller_mut`] (for example to make a
+    /// [`Camera2dControl`](crate::Camera2dControl)'s camera follow or shake).
+    pub fn camera_control_mut(&mut self) -> &mut CameraControl {
+        self.camera_control
     }
 }
 
@@ -1088,6 +1156,7 @@ struct WindowState {
     /// The last frame was the extra one an automatic exposure asks for.
     exposure_follow_up: bool,
     orbit: OrbitCameraController,
+    camera_control: CameraControl,
     input: Option<WindowInputHandler>,
     callback: WindowCallback,
     paint: Option<WindowPaint>,
@@ -1259,6 +1328,7 @@ impl AppHandler {
                 redraw_mode: config.redraw_mode,
                 exposure_follow_up: false,
                 orbit: OrbitCameraController::new_stateless(),
+                camera_control: config.camera_control,
                 input,
                 callback,
                 paint,
@@ -1411,6 +1481,7 @@ impl AppHandler {
                 surface_size: [state.surface_config.width, state.surface_config.height],
                 surface_format: state.surface_config.format,
                 close_requested: std::mem::take(&mut state.close_requested),
+                camera_control: &mut state.camera_control,
                 overlays: OverlayFrame::default(),
                 injects: Vec::new(),
                 events: std::mem::take(&mut state.events),
@@ -1434,27 +1505,31 @@ impl AppHandler {
             do_exit = request_exit;
 
             // With an input handler the app already drove the camera, so assemble
-            // without touching it; otherwise drive the built-in orbit.
-            let assembled = if state.input.is_some() {
-                let vctx = ViewportContext::new(state.ownership(), [w, h]);
-                state.session.frame_with(vctx, move |frame| {
-                    frame.overlays = overlays;
-                    for inject in injects {
-                        inject(frame);
-                    }
-                    auto_fill_exposure_dt(frame, dt);
-                })
-            } else {
-                state
-                    .session
-                    .update_orbit_with(&mut state.orbit, dt, move |frame| {
-                        frame.overlays = overlays;
-                        for inject in injects {
-                            inject(frame);
-                        }
-                        auto_fill_exposure_dt(frame, dt);
-                    })
+            // without touching it; otherwise move it as the window's camera
+            // control says.
+            let inject = move |frame: &mut FrameData| {
+                frame.overlays = overlays;
+                for inject in injects {
+                    inject(frame);
+                }
+                auto_fill_exposure_dt(frame, dt);
             };
+            let ownership = state.ownership();
+            let assembled =
+                match (state.input.is_some(), &mut state.camera_control) {
+                    (false, CameraControl::Orbit) => {
+                        state
+                            .session
+                            .update_orbit_with(&mut state.orbit, dt, inject)
+                    }
+                    (false, CameraControl::Controller(controller)) => state
+                        .session
+                        .update_camera_with(controller.as_mut(), dt, inject),
+                    _ => {
+                        let vctx = ViewportContext::new(ownership, [w, h]);
+                        state.session.frame_with(vctx, inject)
+                    }
+                };
             let automatic_exposure = matches!(
                 assembled.effects.display.exposure.mode,
                 ExposureMode::Automatic(_)

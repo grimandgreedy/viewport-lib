@@ -55,6 +55,23 @@ pub trait CameraController {
         frame: &viewport_lib_types::input::ActionFrame,
         dt: f32,
     );
+
+    /// The size the scene draws at, in logical pixels, and its device pixels
+    /// per point. A runner calls this before each [`apply`](Self::apply), for
+    /// controllers whose motion depends on the viewport (dragging by pixels,
+    /// zooming about the cursor). For a viewport presented at a reference
+    /// size it is the reference size with one pixel per point. The default
+    /// ignores it.
+    fn set_viewport(&mut self, viewport_size: [f32; 2], pixels_per_point: f32) {
+        let _ = (viewport_size, pixels_per_point);
+    }
+
+    /// The controller as [`Any`](std::any::Any), so a host that handed it to
+    /// a runner as a trait object can reach its concrete type again. The
+    /// default returns `None`; return `Some(self)` to allow it.
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 impl CameraController for controllers::OrbitCameraController {
@@ -67,6 +84,14 @@ impl CameraController for controllers::OrbitCameraController {
         // Delegate to the inherent apply, which drives the camera per the
         // controller's `navigation_mode`.
         controllers::OrbitCameraController::apply(self, camera, frame, dt)
+    }
+
+    fn set_viewport(&mut self, viewport_size: [f32; 2], _pixels_per_point: f32) {
+        self.set_viewport_size(viewport_size);
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 // The first/third-person controllers take an extra per-frame position (eye /
@@ -81,7 +106,7 @@ pub mod prelude {
     //! [`crate::controllers`] for the rest.
     pub use crate::CameraController;
     pub use crate::controllers::{
-        Camera2d, Camera2dController, CameraAnimator, FirstPersonCameraController,
+        Camera2d, Camera2dControl, Camera2dController, CameraAnimator, FirstPersonCameraController,
         OrbitCameraController, Plane2d, ThirdPersonCameraController, TurntableController,
     };
     pub use crate::input::ViewportInput;

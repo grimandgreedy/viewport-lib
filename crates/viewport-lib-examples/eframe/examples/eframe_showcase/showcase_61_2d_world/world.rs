@@ -531,9 +531,6 @@ pub(crate) struct World {
     pub options: WorldOptions,
     pub camera: Camera2d,
     controller: Camera2dController,
-    /// The zoom before integer snapping, so small wheel steps add up under
-    /// pixel art instead of rounding back.
-    zoom: f32,
     pixels_per_point: f32,
     time: f32,
     dt: f32,
@@ -589,7 +586,6 @@ impl World {
             options: WorldOptions::default(),
             camera,
             controller: Camera2dController::new_stateless(),
-            zoom: 1.0 / 3.0,
             pixels_per_point: 1.0,
             time: 0.0,
             dt: 0.0,
@@ -656,22 +652,19 @@ impl World {
         }
         self.damage.retain(|d| d.age < DAMAGE_LIFE);
 
-        // Follow the player's chest; pan and zoom on top; then snap the zoom
-        // to a whole number of pixels per texel for pixel art.
+        // Follow the player's chest with pan and zoom on top. For pixel art
+        // the camera draws at a whole number of pixels per texel and snaps
+        // its position, while keeping the unsnapped zoom the wheel moves.
         self.pixels_per_point = pixels_per_point.max(0.25);
         let camera = &mut self.camera;
         camera.set_viewport_size(viewport.max(Vec2::ONE));
         camera.pixels_per_point = self.pixels_per_point;
-        camera.set_units_per_pixel(self.zoom);
+        camera.snap_to_pixels = self.options.pixel_art;
+        camera.snap_zoom_to_texel = self.options.pixel_art.then_some(1.0);
         camera.follow(self.player.position + Vec2::new(0.0, 12.0));
         match nav {
             Some(frame) => self.controller.apply(camera, frame, dt),
             None => camera.update(dt),
-        }
-        self.zoom = camera.units_per_pixel();
-        camera.snap_to_pixels = self.options.pixel_art;
-        if self.options.pixel_art {
-            camera.snap_zoom_to_integer_scale(1.0);
         }
     }
 

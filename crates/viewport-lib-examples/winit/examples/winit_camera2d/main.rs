@@ -8,9 +8,10 @@
 //! edge of the middle of the screen), `Space` shakes the camera, and `P` toggles
 //! pixel snapping. The view is kept inside the grid's bounds.
 //!
-//! The window takes its input through `window_with_input`, so the runner does
-//! not drive its orbit camera: the frame callback writes `Camera2d::camera()`
-//! into the instance each frame.
+//! The window's camera control is a `Camera2dControl`, so the runner applies
+//! the pan and zoom, advances the follow and shake, and writes the 2D view into
+//! the window's camera each frame. The frame callback reaches the `Camera2d`
+//! through `FrameCtx::camera_control_mut` to steer it.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -19,8 +20,8 @@ use glam::Vec2;
 
 use viewport_lib as vpl;
 use vpl::{
-    Action, AppConfig, Camera2d, Camera2dController, Colour, ItemSettings, KeyCode, Material,
-    Modifiers, ModifiersMatch, NodeId, Plane2d, Rect2d, ViewportApp, ViewportBinding,
+    Action, AppConfig, Camera2d, Camera2dControl, CameraControl, Colour, ItemSettings, KeyCode,
+    Material, Modifiers, ModifiersMatch, NodeId, Plane2d, Rect2d, ViewportApp, ViewportBinding,
     ViewportGesture, WindowConfig, planar_bindings, primitives,
 };
 
@@ -58,14 +59,16 @@ fn main() {
         .with_bounds(bounds);
     camera.dead_zone = Rect2d::from_centre_size(Vec2::ZERO, Vec2::new(240.0, 160.0));
     camera.follow_time_constant = 0.3;
-    let mut controller = Camera2dController::new_stateless();
     let mut following = true;
 
     ViewportApp::new(AppConfig::default())
-        .window_with_input(
+        .window(
             WindowConfig::default()
                 .with_title("viewport-lib : Camera2d")
-                .with_window_size(1280, 720),
+                .with_window_size(1280, 720)
+                .with_camera_control(CameraControl::Controller(Box::new(Camera2dControl::new(
+                    camera,
+                )))),
             move |setup| {
                 let device = setup.device().clone();
                 let quad = setup
@@ -122,44 +125,37 @@ fn main() {
                 bindings.push(key(TOGGLE_SNAP, KeyCode::P));
                 setup.set_bindings(bindings);
             },
-            // Everything goes to the viewport: there is no UI over it.
-            |input| {
-                for event in input.events().to_vec() {
-                    input.forward(event);
-                }
-            },
             move |ctx| {
-                let size = ctx.viewport_size();
-                camera.set_viewport_size(Vec2::from(size));
-                camera.pixels_per_point = ctx.surface_size()[0] as f32 / size[0].max(1.0);
-
                 let frame = ctx.action_frame().clone();
                 if frame.is_active(TOGGLE_FOLLOW) {
                     following = !following;
                 }
-                if frame.is_active(SHAKE) {
-                    camera.shake(18.0, 0.45);
-                }
-                if frame.is_active(TOGGLE_SNAP) {
-                    camera.snap_to_pixels = !camera.snap_to_pixels;
-                }
-
                 let t = ctx.time() * 0.6;
                 let target = Vec2::new(t.cos(), t.sin()) * (half - 3.0);
-                if following {
-                    camera.follow(target);
-                } else {
-                    camera.stop_following();
-                }
                 if let Some(id) = marker_id.get() {
                     let at = glam::Vec3::new(target.x, target.y, 0.05);
                     ctx.scene_mut()
                         .set_local_transform(id, glam::Mat4::from_translation(at));
                 }
 
-                // Pan, zoom about the cursor, then follow and shake.
-                controller.apply(&mut camera, &frame, ctx.dt());
-                *ctx.camera_mut() = camera.camera();
+                // The runner pans, zooms, follows and shakes after this
+                // callback returns.
+                let Some(control) = ctx.camera_control_mut().controller_mut::<Camera2dControl>()
+                else {
+                    return;
+                };
+                let camera = &mut control.camera;
+                if frame.is_active(SHAKE) {
+                    camera.shake(18.0, 0.45);
+                }
+                if frame.is_active(TOGGLE_SNAP) {
+                    camera.snap_to_pixels = !camera.snap_to_pixels;
+                }
+                if following {
+                    camera.follow(target);
+                } else {
+                    camera.stop_following();
+                }
             },
         )
         .run();

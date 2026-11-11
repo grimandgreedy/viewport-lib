@@ -270,8 +270,9 @@ pub use interaction::input::{
 };
 // New input pipeline : re-exported at crate root for convenience.
 pub use camera::controllers::{
-    Camera2d, Camera2dController, FirstPersonCameraController, OrbitCameraController, Plane2d,
-    Rect2d, ThirdPersonCameraController, wish_xy_from_actions,
+    Camera2d, Camera2dControl, Camera2dController, FirstPersonCameraController,
+    OrbitCameraController, Plane2d, Rect2d, ThirdPersonCameraController, snap_camera_to_pixels,
+    wish_xy_from_actions,
 };
 pub use interaction::input::{
     ActionFrame, BindingPreset, ButtonState, CursorShape, ImeEvent, InputOwnership,
@@ -281,6 +282,7 @@ pub use interaction::input::{
     planar_bindings, planar_camera_bindings, preset_bindings, viewer_bindings,
     viewport_camera_bindings, viewport_default_bindings,
 };
+pub use viewport_lib_input::CameraController;
 
 pub use interaction::widgets::{
     BoxWidget, CylinderWidget, DiskWidget, LineProbeWidget, PlaneWidget, PolylineWidget,
@@ -354,8 +356,8 @@ pub use runners::{
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{
-    AppConfig, FrameCtx, InputCtx, PaintCtx, RedrawMode, SetupCtx, ViewportApp, WindowConfig,
-    WindowId,
+    AppConfig, CameraControl, FrameCtx, InputCtx, PaintCtx, RedrawMode, SetupCtx, ViewportApp,
+    WindowConfig, WindowId,
 };
 
 pub use resources::PolylineId;
