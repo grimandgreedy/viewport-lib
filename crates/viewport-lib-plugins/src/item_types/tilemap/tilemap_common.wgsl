@@ -2,8 +2,8 @@
 // front of each body. The structs must match `TilesetUniformData` and
 // `LayerUniformData` in `store.rs` exactly.
 //
-// Group 1: the uploaded map's tileset uniform, atlas, sampler and normal
-//          atlas.
+// Group 1: the uploaded map's tileset uniform, atlas, sampler, normal atlas
+//          and the per-tile user values a tile material's vertex hook reads.
 // Group 2: the drawn layer's uniform, at a dynamic offset.
 //
 // One instance per occupied cell, six vertices each (two triangles):
@@ -50,7 +50,8 @@ struct LayerUniform {
     pick_id:         u32,
     // The painter mask test (`MaskTest::word`), read by a blended layer.
     mask:            u32,
-    // x: the blended layer's painter layer.
+    // x: the blended layer's painter layer. y: the sprite deformers the layer
+    // runs, one bit each.
     painter_layer:   vec4<u32>,
     // The tile each animation slot shows this frame, four slots per entry.
     anim:            array<vec4<u32>, 64>,
@@ -62,6 +63,8 @@ struct LayerUniform {
 @group(1) @binding(1) var          atlas:         texture_2d<f32>;
 @group(1) @binding(2) var          atlas_sampler: sampler;
 @group(1) @binding(3) var          normal_atlas:  texture_2d<f32>;
+// `Tileset::user_values`, row by row; 1x1 zero when the tileset sets none.
+@group(1) @binding(4) var          tile_user:     texture_2d<u32>;
 @group(2) @binding(0) var<uniform> layer:         LayerUniform;
 
 struct TileIn {
@@ -141,6 +144,16 @@ fn tile_eye_on_plane() -> vec2<f32> {
     return camera.eye_pos.xy;
 }
 
+// The tileset's user value for tile `index`, zero past the table.
+fn tile_user_value(index: u32) -> u32 {
+    let dims = textureDimensions(tile_user, 0);
+    let at = vec2<u32>(index % dims.x, index / dims.x);
+    if at.y >= dims.y {
+        return 0u;
+    }
+    return textureLoad(tile_user, at, 0).r;
+}
+
 // Shift `clip` so that `anchor` lands on a whole device pixel.
 fn tile_pixel_snap(clip: vec4<f32>, anchor: vec4<f32>, viewport: vec2<f32>) -> vec4<f32> {
     if anchor.w <= 0.0 {
@@ -195,6 +208,11 @@ fn tile_vertex(in: TileIn) -> TileOut {
     // Parallax: the layer follows `follow` of the camera across the plane.
     let shift = layer.translation + tile_eye_on_plane() * layer.follow;
     var world = tile_world((cell_origin + quad_min + offset) * layer.cell_size + shift);
+    var index = in.tile;
+    if (in.flags & 8u) != 0u {
+        index = layer.anim[(in.tile >> 2u) & 63u][in.tile & 3u];
+    }
+    // <tile-deform:vertex>
     // <tile-hook:vertex>
     var clip = camera.view_proj * vec4<f32>(world, 1.0);
     if (layer.flags & 1u) != 0u {
@@ -207,10 +225,6 @@ fn tile_vertex(in: TileIn) -> TileOut {
         );
     }
 
-    var index = in.tile;
-    if (in.flags & 8u) != 0u {
-        index = layer.anim[(in.tile >> 2u) & 63u][in.tile & 3u];
-    }
     let columns = max(tileset.columns, 1u);
     let origin = vec2<f32>(tileset.margin)
         + vec2<f32>(f32(index % columns), f32(index / columns))

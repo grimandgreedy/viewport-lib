@@ -128,6 +128,8 @@ impl SpriteLayouts {
 pub(super) struct SpriteBindings {
     texture_view: viewport_lib::gpu::TextureView,
     has_texture: u32,
+    /// The texture's size as [`SpriteUniformData::texture_size`] packs it.
+    texture_size: u32,
     normal_view: viewport_lib::gpu::TextureView,
     has_normal_map: u32,
     sampler: viewport_lib::gpu::Sampler,
@@ -199,6 +201,10 @@ pub(super) fn resolve_bindings_for(
         Some(view) => (view.clone(), 1),
         None => (resources.fallback_colourmap_view().clone(), 0),
     };
+    let texture_size = texture_id
+        .filter(|_| has_texture != 0)
+        .and_then(|id| resources.texture_extent(id))
+        .map_or(0, pack_texture_size);
     let (normal_view, has_normal_map) =
         match normal_texture_id.and_then(|id| resources.texture_view(id)) {
             Some(view) => (view.clone(), 1),
@@ -212,6 +218,7 @@ pub(super) fn resolve_bindings_for(
     SpriteBindings {
         texture_view,
         has_texture,
+        texture_size,
         normal_view,
         has_normal_map,
         sampler: match filter {
@@ -258,10 +265,12 @@ pub(super) struct SpriteUniformData {
     /// Bit 0: pixel snap. Bits 1-2: how the fragment shapes its output for the
     /// fixed-function blend, [`BLEND_OUT_MULTIPLY`] or [`BLEND_OUT_SCREEN`].
     flags: u32,
-    _pad_lit_c: u32,
+    /// The texture's width in the low 16 bits and height in the high 16, for
+    /// the vertex hook's texel size; zero when unknown.
+    texture_size: u32,
     /// The painter mask test word and the batch's painter layer, both zero
     /// for a batch in depth order; then 1 when the batch is not lit by 2D
-    /// lighting, then padding.
+    /// lighting; then the sprite deformers it runs.
     mask: [u32; 4],
 }
 
@@ -359,6 +368,7 @@ impl GpuSpriteInstance {
         velocity: [f32; 3],
         pivot: [f32; 2],
         draw: [u32; 4],
+        user: u32,
     ) -> Self {
         Self {
             colour,
@@ -368,9 +378,18 @@ impl GpuSpriteInstance {
             uv_rect: flip.apply(uv_rect),
             velocity,
             pivot: pack_pivot(pivot),
-            draw,
+            draw: [draw[0], draw[1], draw[2], user],
         }
     }
+}
+
+/// Pack a texture's size for [`SpriteUniformData::texture_size`]: zero for a
+/// size that does not fit 16 bits a side, which reads as unknown.
+fn pack_texture_size([w, h]: [u32; 2]) -> u32 {
+    if w > 0xffff || h > 0xffff {
+        return 0;
+    }
+    w | (h << 16)
 }
 
 /// Pack a `0..=1` pivot as two snorm16 offsets from the quad centre, so the
@@ -402,6 +421,7 @@ pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
             s.pivot,
             // The batch's own mode goes in when the write lands.
             [0; 4],
+            s.user,
         );
         bytes.extend_from_slice(bytemuck::bytes_of(&record));
     }
@@ -496,6 +516,7 @@ pub(super) fn build_sprite(
                     item.velocities.get(i).copied().unwrap_or([0.0; 3]),
                     item.pivots.get(i).copied().unwrap_or(item.default_pivot),
                     draw_mode,
+                    item.user_values.get(i).copied().unwrap_or(0),
                 )
             })
             .collect();
@@ -559,10 +580,15 @@ pub(super) fn build_sprite(
                     | viewport_lib::renderer::SpriteBlend::Additive => FLAG_PREMULTIPLIED,
                     _ => 0,
                 },
-            _pad_lit_c: 0,
+            texture_size: binds.texture_size,
             mask: match painter {
-                Some(p) => [item.mask.word(), p.layer, item.unlit as u32, 0],
-                None => [0, 0, item.unlit as u32, 0],
+                Some(p) => [
+                    item.mask.word(),
+                    p.layer,
+                    item.unlit as u32,
+                    item.deformers.bits(),
+                ],
+                None => [0, 0, item.unlit as u32, item.deformers.bits()],
             },
         };
         let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
@@ -918,6 +944,23 @@ impl StoredSprite {
         );
     }
 
+    /// Run the sprite deformers in `set` from now on.
+    pub(crate) fn set_deformers(
+        &mut self,
+        queue: &viewport_lib::gpu::Queue,
+        set: super::types::SpriteDeformerSet,
+    ) {
+        if self.draw.uniform.mask[3] == set.bits() {
+            return;
+        }
+        self.draw.uniform.mask[3] = set.bits();
+        queue.write_buffer(
+            &self.draw._uniform_buf,
+            0,
+            bytemuck::bytes_of(&self.draw.uniform),
+        );
+    }
+
     /// Write positions, records, effect words or sort keys at a sprite
     /// offset, keeping the draw count in step with the positions.
     ///
@@ -961,11 +1004,12 @@ impl StoredSprite {
         Ok(())
     }
 
-    /// `data`, whole sprite records, with the batch's draw mode in each.
+    /// `data`, whole sprite records, with the batch's draw mode in each. The
+    /// last draw word is the sprite's user value and stays as written.
     fn with_draw_word(&self, data: &[u8]) -> Vec<u8> {
         let mut out = data.to_vec();
         let at = std::mem::offset_of!(GpuSpriteInstance, draw);
-        let word: &[u8] = bytemuck::cast_slice(&self.draw_word);
+        let word: &[u8] = bytemuck::cast_slice(&self.draw_word[..3]);
         for record in out.chunks_exact_mut(SPRITE_STRIDE as usize) {
             record[at..at + word.len()].copy_from_slice(word);
         }
@@ -1024,7 +1068,12 @@ impl StoredSprite {
             SpriteChannel::Sprites => {
                 let mut values: Vec<GpuSpriteInstance> = bytemuck::pod_collect_to_vec(data);
                 for v in &mut values {
-                    v.draw = self.draw_word;
+                    v.draw = [
+                        self.draw_word[0],
+                        self.draw_word[1],
+                        self.draw_word[2],
+                        v.draw[3],
+                    ];
                 }
                 put(
                     &mut copy.records,
@@ -1650,6 +1699,7 @@ pub(super) fn rebind_sprite(
 ) {
     let data = &mut stored.draw;
     data.uniform.has_texture = binds.has_texture;
+    data.uniform.texture_size = binds.texture_size;
     data.uniform.has_normal_map = binds.has_normal_map;
     queue.write_buffer(&data._uniform_buf, 0, bytemuck::bytes_of(&data.uniform));
 

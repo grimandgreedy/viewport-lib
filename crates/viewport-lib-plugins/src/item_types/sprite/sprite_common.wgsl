@@ -25,10 +25,12 @@ struct SpriteUniform {
     // Bit 0: pixel snap. Bits 1-2: blend output, 1 multiply, 2 screen. Bit 3:
     // the blend does not weight colour by alpha (premultiplied, additive).
     flags:                  u32,
-    _pad_lit_c:             u32,
+    // The texture's width (low 16 bits) and height (high 16) in texels; zero
+    // when the batch has no texture or its size is unknown.
+    texture_size:           u32,
     // The painter mask test (`MaskTest::word`) and the batch's painter layer,
     // both zero for a batch in depth order; then 1 when the batch is not lit
-    // by 2D lighting.
+    // by 2D lighting; then the sprite deformers it runs, one bit each.
     mask:                   vec4<u32>,
 };
 
@@ -43,7 +45,8 @@ struct SpriteInstance {
     pivot:         u32,        // two snorm16 offsets from the quad centre, in half sizes
     // The draw mode: x bits 0-1 simple, sliced or tiled, bit 2 adaptive
     // tiling; y and z two f16 pairs, the sliced border (left, bottom) and
-    // (right, top) in texels, or the tile size in y; w unused.
+    // (right, top) in texels, or the tile size in y; w the sprite's user
+    // value, which only a vertex hook or a material reads.
     draw:          vec4<u32>,
 };
 
@@ -87,6 +90,62 @@ fn sprite_pixel_snap(clip: vec4<f32>, anchor: vec4<f32>, viewport: vec2<f32>) ->
 // a camera uniform that does not carry it.
 fn sprite_pixels_per_point() -> f32 {
     return select(1.0, camera.clip.w, camera.clip.w > 0.0);
+}
+
+// The clip position of `offset` (size units along the quad's axes, as
+// `sprite_offset` gives it) from the sprite at `world_pos`.
+fn sprite_offset_clip(
+    world_pos: vec3<f32>,
+    offset: vec2<f32>,
+    right: vec3<f32>,
+    up: vec3<f32>,
+    stretch: f32,
+) -> vec4<f32> {
+    if sprite_ub.world_space != 0u {
+        let ws_pos = world_pos + right * (offset.x * stretch) + up * offset.y;
+        return camera.view_proj * vec4<f32>(ws_pos, 1.0);
+    }
+    // Screen-space sizing: sizes are points, one point covering
+    // `sprite_pixels_per_point()` device pixels, and a device pixel is two
+    // NDC units over the target's size.
+    let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    let pt_to_ndc = (2.0 * sprite_pixels_per_point())
+                  / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
+    if sprite_ub.orientation == 0u {
+        let ndc_off = offset * pt_to_ndc;
+        return vec4<f32>(
+            centre.x + ndc_off.x * centre.w,
+            centre.y + ndc_off.y * centre.w,
+            centre.z,
+            centre.w,
+        );
+    }
+    // Project the world axes to NDC so the screen extent uses the chosen
+    // orientation rather than the camera basis.
+    let right_clip  = camera.view_proj * vec4<f32>(right, 0.0);
+    let up_clip     = camera.view_proj * vec4<f32>(up,    0.0);
+    let offset_clip = right_clip * (offset.x * stretch * pt_to_ndc.x)
+                    + up_clip    * (offset.y * pt_to_ndc.y);
+    return centre + offset_clip * centre.w;
+}
+
+// The world position of point `q` (`-1..1` on each axis) of the sprite's
+// quad, as drawn: for a screen-space size, on the plane through the sprite
+// facing the camera.
+fn sprite_quad_point(
+    world_pos: vec3<f32>,
+    q: vec2<f32>,
+    inst: SpriteInstance,
+    right: vec3<f32>,
+    up: vec3<f32>,
+    stretch: f32,
+) -> vec3<f32> {
+    let offset = sprite_offset(q, inst);
+    if sprite_ub.world_space != 0u {
+        return world_pos + right * (offset.x * stretch) + up * offset.y;
+    }
+    let w = camera.inv_view_proj * sprite_offset_clip(world_pos, offset, right, up, stretch);
+    return w.xyz / w.w;
 }
 
 // One corner of a sprite as every sprite vertex stage places it.
@@ -156,36 +215,12 @@ fn sprite_corner(position: vec3<f32>, corner: vec2<f32>, inst: SpriteInstance) -
         }
     }
 
+    c.clip = sprite_offset_clip(world_pos, offset, local_right, local_up, stretch_x);
     if sprite_ub.world_space != 0u {
-        let ws_pos = world_pos
-                   + local_right * (offset.x * stretch_x)
-                   + local_up    * offset.y;
-        c.clip = camera.view_proj * vec4<f32>(ws_pos, 1.0);
-        c.world = ws_pos;
+        c.world = world_pos
+                + local_right * (offset.x * stretch_x)
+                + local_up    * offset.y;
     } else {
-        // Screen-space sizing: sizes are points, one point covering
-        // `sprite_pixels_per_point()` device pixels, and a device pixel is
-        // two NDC units over the target's size.
-        let centre    = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let pt_to_ndc = (2.0 * sprite_pixels_per_point())
-                      / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        if sprite_ub.orientation == 0u {
-            let ndc_off = offset * pt_to_ndc;
-            c.clip = vec4<f32>(
-                centre.x + ndc_off.x * centre.w,
-                centre.y + ndc_off.y * centre.w,
-                centre.z,
-                centre.w,
-            );
-        } else {
-            // Project the world axes to NDC so the screen extent uses the
-            // chosen orientation rather than the camera basis.
-            let right_clip  = camera.view_proj * vec4<f32>(local_right, 0.0);
-            let up_clip     = camera.view_proj * vec4<f32>(local_up,    0.0);
-            let offset_clip = right_clip * (offset.x * stretch_x * pt_to_ndc.x)
-                            + up_clip    * (offset.y * pt_to_ndc.y);
-            c.clip = centre + offset_clip * centre.w;
-        }
         c.world = world_pos;
     }
 
@@ -195,6 +230,7 @@ fn sprite_corner(position: vec3<f32>, corner: vec2<f32>, inst: SpriteInstance) -
     c.forward = cam_forward;
     c.stretch = stretch_x;
 
+    // <sprite-deform:vertex>
     // <sprite-hook:vertex>
 
     if (sprite_ub.flags & 1u) != 0u {

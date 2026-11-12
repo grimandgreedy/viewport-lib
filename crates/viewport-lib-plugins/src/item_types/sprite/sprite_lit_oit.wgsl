@@ -31,6 +31,8 @@ struct Camera {
     viewport:      vec4<f32>,
     // Near, far, orthographic, and the target's pixels per point.
     clip:          vec4<f32>,
+    // Frame time, seconds first.
+    time:          vec4<f32>,
 };
 
 struct ClipPlanes {

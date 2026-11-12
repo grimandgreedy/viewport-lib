@@ -90,7 +90,8 @@ pub(crate) struct LayerUniformData {
     pick_id: u32,
     /// The painter mask test word, read by a blended layer.
     mask: u32,
-    /// The blended layer's painter layer, then padding.
+    /// The blended layer's painter layer, the sprite deformers the layer
+    /// runs, then padding.
     painter_layer: [u32; 4],
     anim: [u32; ANIM_SLOTS],
     /// A tile material's parameter lanes, lane 0 reserved.
@@ -104,7 +105,7 @@ pub(crate) const LAYER_STRIDE: u64 =
 
 /// The two bind group layouts tilemap draws use.
 pub(crate) struct TilemapLayouts {
-    /// Group 1: tileset uniform, atlas, sampler, normal atlas.
+    /// Group 1: tileset uniform, atlas, sampler, normal atlas, user values.
     pub(crate) map: viewport_lib::gpu::BindGroupLayout,
     /// Group 2: the layer uniform at a dynamic offset.
     pub(crate) layer: viewport_lib::gpu::BindGroupLayout,
@@ -147,6 +148,16 @@ impl TilemapLayouts {
                     visibility: gpu::ShaderStages::FRAGMENT,
                     ty: gpu::BindingType::Texture {
                         sample_type: gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                gpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: gpu::ShaderStages::VERTEX,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Uint,
                         view_dimension: gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -278,6 +289,9 @@ pub(crate) struct StoredTilemap {
     pub(crate) bind_group: viewport_lib::gpu::BindGroup,
     uniform: TilesetUniformData,
     uniform_buf: viewport_lib::gpu::Buffer,
+    /// [`Tileset::user_values`](super::types::Tileset::user_values) as the
+    /// vertex hook reads them.
+    user_table: viewport_lib::gpu::TextureView,
     /// For each tileset tile index that animates, its slot.
     anim_slots: std::collections::HashMap<u32, u32>,
     /// For each tileset tile index with its own size, its size slot.
@@ -417,7 +431,8 @@ impl StoredTilemap {
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform));
-        let bind_group = build_bind_group(device, binds, &uniform_buf);
+        let user_table = user_table(device, queue, &set.user_values);
+        let bind_group = build_bind_group(device, binds, &uniform_buf, &user_table);
         let keys: Vec<[i32; 2]> = map.chunks().map(|(c, _)| c).collect();
         let mut stored = Self {
             map,
@@ -425,6 +440,7 @@ impl StoredTilemap {
             bind_group,
             uniform,
             uniform_buf,
+            user_table,
             anim_slots,
             size_slots,
             overhang,
@@ -580,7 +596,7 @@ impl StoredTilemap {
         self.uniform.has_texture = binds.has_texture;
         self.uniform.has_normal_atlas = binds.has_normal_atlas;
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&self.uniform));
-        self.bind_group = build_bind_group(device, binds, &self.uniform_buf);
+        self.bind_group = build_bind_group(device, binds, &self.uniform_buf, &self.user_table);
     }
 }
 
@@ -595,10 +611,54 @@ fn occupancy(chunk: &TileChunk) -> Vec<u64> {
     bits
 }
 
+/// Width of the user-value table, in values per row.
+const USER_TABLE_WIDTH: u32 = 256;
+
+/// `values` as a single-channel integer texture, [`USER_TABLE_WIDTH`] to a
+/// row and zero past the end; one zero texel for an empty list.
+fn user_table(
+    device: &viewport_lib::gpu::Device,
+    queue: &viewport_lib::gpu::Queue,
+    values: &[u32],
+) -> viewport_lib::gpu::TextureView {
+    use viewport_lib::gpu;
+    let width = (values.len() as u32).clamp(1, USER_TABLE_WIDTH);
+    let height = (values.len() as u32).div_ceil(width).max(1);
+    let mut texels = vec![0u32; (width * height) as usize];
+    texels[..values.len()].copy_from_slice(values);
+    let size = gpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&gpu::TextureDescriptor {
+        label: Some("tileset_user_table"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: gpu::TextureDimension::D2,
+        format: gpu::TextureFormat::R32Uint,
+        usage: gpu::TextureUsages::TEXTURE_BINDING | gpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        bytemuck::cast_slice(&texels),
+        gpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(height),
+        },
+        size,
+    );
+    texture.create_view(&Default::default())
+}
+
 fn build_bind_group(
     device: &viewport_lib::gpu::Device,
     binds: &TilesetBindings,
     uniform_buf: &viewport_lib::gpu::Buffer,
+    user_table: &viewport_lib::gpu::TextureView,
 ) -> viewport_lib::gpu::BindGroup {
     use viewport_lib::gpu;
     device.create_bind_group(&gpu::BindGroupDescriptor {
@@ -620,6 +680,10 @@ fn build_bind_group(
             gpu::BindGroupEntry {
                 binding: 3,
                 resource: gpu::BindingResource::TextureView(&binds.normal_view),
+            },
+            gpu::BindGroupEntry {
+                binding: 4,
+                resource: gpu::BindingResource::TextureView(user_table),
             },
         ],
     })
@@ -661,7 +725,7 @@ pub(crate) fn layer_uniform(
         flags: item.pixel_snap as u32,
         pick_id: item.settings.pick_id.0 as u32,
         mask,
-        painter_layer: [painter_layer, 0, 0, 0],
+        painter_layer: [painter_layer, item.deformers.bits(), 0, 0],
         anim: stored.animation_frames(if item.use_frame_clock {
             frame_seconds as f32
         } else {

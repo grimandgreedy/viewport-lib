@@ -267,8 +267,39 @@ impl viewport_lib::plugin_api::Handles<SpriteInstanceSetId> for ViewportRenderer
 ///     palette_row: u32,
 ///     uv_ddx:      vec2<f32>, // derivatives of uv, for textureSampleGrad
 ///     uv_ddy:      vec2<f32>,
+///     user:        u32,       // the sprite's SpriteItem::user_values entry
 /// };
 /// ```
+///
+/// A body may instead or as well define
+///
+/// ```text
+/// fn displace_sprite(v: SpriteVertex) -> vec3<f32>
+/// ```
+///
+/// which returns where one corner of the quad goes, in world space:
+///
+/// ```text
+/// struct SpriteVertex {
+///     corner:      u32,       // 0 bottom left, 1 bottom right, 2 top left, 3 top right
+///     local_uv:    vec2<f32>, // 0..1 across the quad
+///     world:       vec3<f32>, // the corner in world space
+///     anchor:      vec3<f32>, // the sprite's position
+///     time:        f32,
+///     base:        vec3<f32>, // midpoint of the quad's bottom edge
+///     pivot:       vec2<f32>, // where anchor sits across the quad
+///     size:        vec2<f32>, // the quad in world units
+///     right:       vec3<f32>, // the quad's unit axes, after rotation
+///     up:          vec3<f32>,
+///     texel:       vec2<f32>, // world size of one texel along right and up
+///     user:        u32,       // the sprite's user value
+///     tile:        u32,       // tiles only: the tile shown this frame
+///     tile_placed: u32,       // tiles only: the tile or animation slot as placed
+/// };
+/// ```
+///
+/// Positions are relative to the renderer's world origin. The pick and the
+/// outline follow the moved quad.
 ///
 /// The bindings are the particle hook's too: up to four textures as
 /// `htex0..htex3` (the plugin's `texture_count`, each item binding its own in
@@ -322,5 +353,82 @@ impl SpriteMaterials for ViewportRenderer {
     fn sprite_material_id(&self, name: &str) -> Option<SpriteMaterialId> {
         self.item_type_plugin::<SpritePlugin>(TYPE_NAME)?
             .material_id(name)
+    }
+}
+
+/// Registering sprite and tile deformers: WGSL bodies that move the corners
+/// of other people's sprites and tiles, the 2D counterpart of the mesh
+/// deformer registry.
+///
+/// A deformer's body defines
+///
+/// ```text
+/// fn deform_sprite(v: SpriteVertex, slot: u32) -> vec3<f32>
+/// ```
+///
+/// and returns where the corner goes, in world space. `SpriteVertex` is the
+/// vertex hook's contract (see [`SpriteMaterials`]). `slot` is the slot of the
+/// mesh deformer named by [`SpriteDeformerDesc::params`], whose parameters
+/// the body reads as `deform_header.slot_params[slot * 4u + i]`: a plugin that
+/// writes its mesh deformer's parameters once a frame through a
+/// `DeformSlotHandle` drives its sprites and tiles with the same write.
+///
+/// Every registered deformer is composed into every sprite and tilemap
+/// shader, so registering one rebuilds those pipelines once. It runs only on
+/// the batches whose [`SpriteItem::deformers`] and the layers whose
+/// `TilemapItem::deformers` hold it, in priority order and before a
+/// material's `displace_sprite`, in every pass that draws the quad. A batch
+/// or layer that holds none pays one branch per corner.
+pub trait SpriteDeformers {
+    /// Register a sprite and tile deformer, validating its body against every
+    /// sprite and tilemap shader with the deformers already registered.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::ShadeNameTaken`](viewport_lib::error::ViewportError::ShadeNameTaken)
+    /// when a sprite deformer of that name exists;
+    /// [`ViewportError::ShadeShaderInvalid`](viewport_lib::error::ViewportError::ShadeShaderInvalid)
+    /// when the name is not a WGSL identifier, the body defines no
+    /// `deform_sprite`, [`MAX_SPRITE_DEFORMERS`] are already registered, or a
+    /// composed module fails validation.
+    fn register_sprite_deformer(
+        &mut self,
+        device: &gpu::Device,
+        desc: &SpriteDeformerDesc,
+    ) -> viewport_lib::error::ViewportResult<SpriteDeformerId>;
+
+    /// The sprite deformer registered as `name`.
+    fn sprite_deformer_id(&self, name: &str) -> Option<SpriteDeformerId>;
+}
+
+impl SpriteDeformers for ViewportRenderer {
+    fn register_sprite_deformer(
+        &mut self,
+        device: &gpu::Device,
+        desc: &SpriteDeformerDesc,
+    ) -> viewport_lib::error::ViewportResult<SpriteDeformerId> {
+        use crate::item_types::tilemap::{self, TilemapPlugin};
+        let existing = plugin_mut::<SpritePlugin>(self, TYPE_NAME)?.deformers();
+        let entry = deform::entry(existing, desc)?;
+        let tiles = self
+            .item_type_plugin::<TilemapPlugin>(tilemap::TYPE_NAME)
+            .is_some();
+        if tiles {
+            plugin_mut::<TilemapPlugin>(self, tilemap::TYPE_NAME)?
+                .check_deformer(device, &entry)?;
+        }
+        let id = plugin_mut::<SpritePlugin>(self, TYPE_NAME)?.register_deformer(device, desc)?;
+        if tiles {
+            plugin_mut::<TilemapPlugin>(self, tilemap::TYPE_NAME)?.add_deformer(entry);
+        }
+        Ok(id)
+    }
+
+    fn sprite_deformer_id(&self, name: &str) -> Option<SpriteDeformerId> {
+        self.item_type_plugin::<SpritePlugin>(TYPE_NAME)?
+            .deformers()
+            .iter()
+            .find(|e| e.name == name)
+            .map(deform::id_of)
     }
 }

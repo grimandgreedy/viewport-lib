@@ -561,8 +561,9 @@ fn outline_mask_pipeline(
 }
 
 /// Members of [`HookPassPipelines`]: the three picks share the indices of
-/// [`SpritePassPipelines`], the outline mask follows them.
+/// [`SpritePassPipelines`], the outline mask and the surface mask follow them.
 pub(super) const HOOK_OUTLINE_MASK: usize = 3;
+pub(super) const HOOK_SURFACE_MASK: usize = 4;
 
 /// The hook member a pass member draws through: `PICK` and its two painter
 /// forms keep their pick, the outline mask moves to [`HOOK_OUTLINE_MASK`].
@@ -575,23 +576,35 @@ pub(super) fn hook_member(member: usize) -> usize {
     }
 }
 
-/// What a material with a vertex hook builds its pick and outline-mask
-/// pipelines from: its composed shaders and the layouts with its group 3.
+/// What a material with a vertex hook builds its pick, outline-mask and
+/// surface-mask pipelines from: its composed shaders and the layouts with its
+/// group 3.
 pub(super) struct HookPassRecipe {
     device: viewport_lib::gpu::Device,
     pick_layout: viewport_lib::gpu::PipelineLayout,
     pick_shader: viewport_lib::plugin_api::LazyModule,
     outline_layout: viewport_lib::gpu::PipelineLayout,
     outline_shader: viewport_lib::plugin_api::LazyModule,
+    surface_layout: viewport_lib::gpu::PipelineLayout,
+    surface_shader: viewport_lib::plugin_api::LazyModule,
     depth_format: viewport_lib::gpu::TextureFormat,
 }
 
-/// A vertex-hook material's three pick pipelines and its outline mask, each
-/// built the first time a draw needs it.
-pub(super) type HookPassPipelines = viewport_lib::plugin_api::LazyPipelines<HookPassRecipe, 4>;
+/// A vertex-hook material's three pick pipelines, its outline mask and its
+/// surface mask, each built the first time a draw needs it.
+pub(super) type HookPassPipelines = viewport_lib::plugin_api::LazyPipelines<HookPassRecipe, 5>;
 
 fn build_hook_pass(r: &HookPassRecipe, i: usize) -> viewport_lib::gpu::RenderPipeline {
     match i {
+        HOOK_SURFACE_MASK => viewport_lib::plugin_api::builders::build_surface_mask_pipeline(
+            &r.device,
+            "sprite_hook_surface_mask_pipeline",
+            &r.surface_layout,
+            r.surface_shader.get(),
+            r.depth_format,
+            &[position_layout()],
+            None,
+        ),
         HOOK_OUTLINE_MASK => outline_mask_pipeline(
             &r.device,
             &r.outline_layout,
@@ -622,6 +635,41 @@ fn build_hook_pass(r: &HookPassRecipe, i: usize) -> viewport_lib::gpu::RenderPip
     }
 }
 
+/// The sprite modules the plain pipelines build from, by shader name.
+pub(super) const PLAIN_MODULES: [&str; 7] = [
+    "sprite",
+    "sprite_refraction",
+    "sprite_lit",
+    "sprite_oit",
+    "sprite_lit_oit",
+    "sprite_outline_mask",
+    "sprite_pick",
+];
+
+/// The assembled source of plain module `name`, one of [`PLAIN_MODULES`].
+pub(super) fn plain_source(name: &str) -> String {
+    use crate::item_types::shader::{lit_shader, scene_shader, wgsl_source};
+    let painter = viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL;
+    let lit_extra = [
+        shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
+        shared_wgsl::SHARED_CSM_WGSL,
+        shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
+        painter,
+        super::SPRITE_COMMON,
+    ];
+    let extra = [painter, super::SPRITE_COMMON];
+    match name {
+        "sprite" => scene_shader(&extra, wgsl_source!("sprite")),
+        "sprite_refraction" => scene_shader(&extra, wgsl_source!("sprite_refraction")),
+        "sprite_lit" => lit_shader(&lit_extra, wgsl_source!("sprite_lit")),
+        "sprite_oit" => scene_shader(&extra, wgsl_source!("sprite_oit")),
+        "sprite_lit_oit" => lit_shader(&lit_extra, wgsl_source!("sprite_lit_oit")),
+        "sprite_outline_mask" => scene_shader(&extra, wgsl_source!("sprite_outline_mask")),
+        "sprite_pick" => scene_shader(&extra, wgsl_source!("sprite_pick")),
+        _ => unreachable!("no plain sprite module named {name}"),
+    }
+}
+
 /// Every pipeline and layout the sprite draw hooks need, made on the first
 /// prepare that sees an item. The pipelines themselves are built the first
 /// time a draw needs them.
@@ -634,8 +682,8 @@ pub(super) struct SpriteGpu {
     /// What an effect family's build reads beyond its shaders and layout.
     fx_base: FxFamilyBase,
     pub(super) passes: SpritePassPipelines,
-    /// The pick and outline-mask pipelines of each registered material with
-    /// a vertex hook, by material index.
+    /// The pick, outline-mask and surface-mask pipelines of each registered
+    /// material with a vertex hook, by material index.
     pub(super) hook_passes: Vec<Option<HookPassPipelines>>,
     /// An empty group, bound at group 2 of a hook outline mask, whose layout
     /// keeps the material's group 3 in its place.
@@ -662,6 +710,8 @@ struct FxFamilyBase {
     sample_count: u32,
     ldr_format: viewport_lib::gpu::TextureFormat,
     depth_format: viewport_lib::gpu::TextureFormat,
+    /// The registered sprite deformers, composed into every module.
+    deformers: Vec<super::deform::SpriteDeformerEntry>,
 }
 
 /// Build the pick and outline-mask pipelines of `material`, which has a
@@ -673,14 +723,20 @@ fn hook_passes(
     material: &super::effects::SpriteMaterialEntry,
 ) -> HookPassPipelines {
     let (pick, outline) = super::effects::hook_base_sources();
+    let (unlit, _) = super::effects::base_sources();
+    let base_deformers = &base.deformers;
     // Checked when the material was registered, so it cannot fail here.
     let compose = |base: &str| {
-        super::effects::compose_hook(base, &material.source()).expect("sprite hook shader composes")
+        super::effects::compose_hook(base, &material.source())
+            .and_then(|s| super::deform::sprite_module(s, base_deformers))
+            .expect("sprite hook shader composes")
     };
     let name = material.name.as_str();
     let pick_shader = resources.lazy_module(device, &format!("{name}_pick_shader"), compose(&pick));
     let outline_shader =
         resources.lazy_module(device, &format!("{name}_outline_shader"), compose(&outline));
+    let surface_shader =
+        resources.lazy_module(device, &format!("{name}_surface_shader"), compose(&unlit));
     resources.lazy_pipelines(
         HookPassRecipe {
             device: device.clone(),
@@ -696,6 +752,12 @@ fn hook_passes(
                 &[&base.group0, &base.bgl, &base.empty_bgl, &base.fx_bgl],
             ),
             outline_shader,
+            surface_layout: viewport_lib::plugin_api::builders::pipeline_layout(
+                device,
+                "sprite_hook_surface_pipeline_layout",
+                &[&base.group0, &base.bgl, &base.soft_bgl, &base.fx_bgl],
+            ),
+            surface_shader,
             depth_format: base.depth_format,
         },
         build_hook_pass,
@@ -714,8 +776,10 @@ fn fx_family(
     let source = material.map(|m| m.source());
     // Composition of the built-in family is checked by the unit tests and a
     // material's at registration, so it cannot fail here.
-    let compose = |base: &str, lit: bool| {
-        super::effects::compose(base, lit, source.as_ref()).expect("sprite effect shader composes")
+    let compose = |src: &str, lit: bool| {
+        super::effects::compose(src, lit, source.as_ref())
+            .and_then(|s| super::deform::sprite_module(s, &base.deformers))
+            .expect("sprite effect shader composes")
     };
     let name = material.map_or("sprite_fx", |m| m.name.as_str());
     let shader = resources.lazy_module(device, &format!("{name}_shader"), compose(&unlit, false));
@@ -793,7 +857,13 @@ impl SpriteGpu {
         device: &viewport_lib::gpu::Device,
         resources: &DeviceResources,
         layouts: &super::store::SpriteLayouts,
+        deformers: &[super::deform::SpriteDeformerEntry],
     ) -> Self {
+        // Every module with the registered deformers composed in, checked
+        // when each registered.
+        let deformed = |source: String| {
+            super::deform::sprite_module(source, deformers).expect("sprite deformers compose")
+        };
         let bgl = &layouts.bgl;
         let lit_bgl = &layouts.lit_bgl;
         let group0 = resources.group0_layout();
@@ -912,17 +982,8 @@ impl SpriteGpu {
             ],
         });
 
-        let shader = resources.lazy_module(
-            device,
-            "sprite_shader",
-            &crate::item_types::shader::scene_shader(
-                &[
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite"),
-            ),
-        );
+        let shader =
+            resources.lazy_module(device, "sprite_shader", deformed(plain_source("sprite")));
         let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "sprite_pipeline_layout",
@@ -942,13 +1003,7 @@ impl SpriteGpu {
         let refraction_shader = resources.lazy_module(
             device,
             "sprite_refraction_shader",
-            &crate::item_types::shader::scene_shader(
-                &[
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite_refraction"),
-            ),
+            deformed(plain_source("sprite_refraction")),
         );
         let refraction_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
@@ -962,16 +1017,7 @@ impl SpriteGpu {
         let lit_shader = resources.lazy_module(
             device,
             "sprite_lit_shader",
-            &crate::item_types::shader::lit_shader(
-                &[
-                    shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
-                    shared_wgsl::SHARED_CSM_WGSL,
-                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite_lit"),
-            ),
+            deformed(plain_source("sprite_lit")),
         );
         let lit_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
@@ -1008,27 +1054,12 @@ impl SpriteGpu {
         let oit_shader = resources.lazy_module(
             device,
             "sprite_oit_shader",
-            &crate::item_types::shader::scene_shader(
-                &[
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite_oit"),
-            ),
+            deformed(plain_source("sprite_oit")),
         );
         let oit_lit_shader = resources.lazy_module(
             device,
             "sprite_lit_oit_shader",
-            &crate::item_types::shader::lit_shader(
-                &[
-                    shared_wgsl::SHARED_CLIP_VOLUME_WGSL,
-                    shared_wgsl::SHARED_CSM_WGSL,
-                    shared_wgsl::SHARED_SHADOW_ATLAS_WGSL,
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite_lit_oit"),
-            ),
+            deformed(plain_source("sprite_lit_oit")),
         );
         let oit_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
@@ -1044,13 +1075,7 @@ impl SpriteGpu {
         let mask_shader = resources.lazy_module(
             device,
             "sprite_outline_mask_shader",
-            &crate::item_types::shader::scene_shader(
-                &[
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite_outline_mask"),
-            ),
+            deformed(plain_source("sprite_outline_mask")),
         );
         let mask_layout = viewport_lib::plugin_api::builders::standard_scene_layout(
             device,
@@ -1076,13 +1101,7 @@ impl SpriteGpu {
         let pick_shader = resources.lazy_module(
             device,
             "sprite_pick_shader",
-            &crate::item_types::shader::scene_shader(
-                &[
-                    viewport_lib::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL,
-                    super::SPRITE_COMMON,
-                ],
-                crate::item_types::shader::wgsl_source!("sprite_pick"),
-            ),
+            deformed(plain_source("sprite_pick")),
         );
         let pick_layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
@@ -1130,6 +1149,7 @@ impl SpriteGpu {
             sample_count,
             ldr_format: resources.target_format(),
             depth_format: resources.scene_depth_format(),
+            deformers: deformers.to_vec(),
         };
         let builtin = fx_family(device, resources, &fx_base, None);
         let passes: SpritePassPipelines = resources.lazy_pipelines(

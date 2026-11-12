@@ -174,6 +174,8 @@ pub struct SpritePlugin {
     pick_items: Vec<SpriteItem>,
     /// Registered sprite materials, by [`SpriteMaterialId`] index.
     materials: Vec<super::effects::SpriteMaterialEntry>,
+    /// Registered sprite deformers, by bit.
+    deformers: Vec<super::deform::SpriteDeformerEntry>,
     /// Scene-colour resolve targets for the refractive pass, one per viewport.
     /// Behind a lock because `encode` takes `&self` but the target has to be
     /// allocated the first time a viewport draws a refractive sprite, and
@@ -224,9 +226,62 @@ impl SpritePlugin {
         resources: &viewport_lib::resources::DeviceResources,
         plugin: &dyn viewport_lib::MaterialPlugin,
     ) -> viewport_lib::error::ViewportResult<SpriteMaterialId> {
-        let entry = super::effects::validate_material(device, resources, &self.materials, plugin)?;
+        let entry = super::effects::validate_material(
+            device,
+            resources,
+            &self.materials,
+            &self.deformers,
+            plugin,
+        )?;
         self.materials.push(entry);
         Ok(SpriteMaterialId(self.materials.len() as u32 - 1))
+    }
+
+    /// Register a sprite deformer: compose it with the ones already registered
+    /// into every sprite module and validate each, then keep it. The
+    /// pipelines are rebuilt with it at the next prepare.
+    pub(crate) fn register_deformer(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        desc: &super::deform::SpriteDeformerDesc,
+    ) -> viewport_lib::error::ViewportResult<SpriteDeformerId> {
+        let entry = super::deform::entry(&self.deformers, desc)?;
+        let mut trial = self.deformers.clone();
+        trial.push(entry.clone());
+        let deformed =
+            |s: Result<String, String>| s.and_then(|s| super::deform::sprite_module(s, &trial));
+        let mut modules: Vec<(String, Result<String, String>)> = pipeline::PLAIN_MODULES
+            .iter()
+            .map(|n| (n.to_string(), deformed(Ok(pipeline::plain_source(n)))))
+            .collect();
+        let (unlit, lit) = super::effects::base_sources();
+        let (pick, outline) = super::effects::hook_base_sources();
+        let materials = std::iter::once(None).chain(self.materials.iter().map(Some));
+        for m in materials {
+            let source = m.map(|m| m.source());
+            let name = m.map_or("sprite_fx", |m| m.name.as_str());
+            for (label, base, is_lit) in [("fx", &unlit, false), ("fx_lit", &lit, true)] {
+                let composed = super::effects::compose(base, is_lit, source.as_ref());
+                modules.push((format!("{name}_{label}"), deformed(composed)));
+            }
+            if let Some(source) = source.as_ref().filter(|s| s.displaces) {
+                for (label, base) in [("pick", &pick), ("outline", &outline), ("surface", &unlit)] {
+                    let composed = super::effects::compose_hook(base, source);
+                    modules.push((format!("{name}_{label}"), deformed(composed)));
+                }
+            }
+        }
+        super::deform::validate(device, &entry.name, modules)?;
+        let id = super::deform::id_of(&entry);
+        self.deformers.push(entry);
+        // Rebuilt with the deformer composed in at the next prepare.
+        self.gpu = None;
+        Ok(id)
+    }
+
+    /// The registered sprite deformers.
+    pub(crate) fn deformers(&self) -> &[super::deform::SpriteDeformerEntry] {
+        &self.deformers
     }
 
     /// How many of the last prepared frame's batches draw through the effect
@@ -774,9 +829,9 @@ impl ItemTypePlugin for SpritePlugin {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
-        let gpu = self
-            .gpu
-            .get_or_insert_with(|| pipeline::SpriteGpu::new(device, resources, layouts));
+        let gpu = self.gpu.get_or_insert_with(|| {
+            pipeline::SpriteGpu::new(device, resources, layouts, &self.deformers)
+        });
         gpu.pipelines.request_all();
         gpu.passes.request_all();
         // The built-in effects, so a flash or an outline turned on mid-game
@@ -828,6 +883,17 @@ impl ItemTypePlugin for SpritePlugin {
         let items = items.of::<SpriteItem>();
         let set_refs = ctx.refs_of::<SpriteSetRefItem>();
         let instance_refs = ctx.refs_of::<SpriteInstanceSetRefItem>();
+        // A reference that names deformers stores them on its set.
+        for r in set_refs {
+            if let (Some(set), Some(stored)) = (r.deformers, self.sets.get_mut(r.source)) {
+                stored.set_deformers(queue, set);
+            }
+        }
+        for r in instance_refs {
+            if let (Some(set), Some(stored)) = (r.deformers, self.instance_sets.get_mut(r.source)) {
+                stored.set_deformers(queue, set);
+            }
+        }
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
         if items.is_empty() && set_refs.is_empty() && instance_refs.is_empty() {
@@ -837,9 +903,9 @@ impl ItemTypePlugin for SpritePlugin {
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
         let (sets, instance_sets) = (&self.sets, &self.instance_sets);
-        let gpu = self
-            .gpu
-            .get_or_insert_with(|| pipeline::SpriteGpu::new(device, ctx.resources, layouts));
+        let gpu = self.gpu.get_or_insert_with(|| {
+            pipeline::SpriteGpu::new(device, ctx.resources, layouts, &self.deformers)
+        });
         gpu.ensure_material_families(device, ctx.resources, &self.materials);
 
         // Inline items. `outlines` indexes into `frame`, not into the
@@ -1204,7 +1270,9 @@ impl ItemTypePlugin for SpritePlugin {
         let Some(view) = self.views.get(ctx.viewport_index) else {
             return;
         };
-        let mut bound = false;
+        // The material family whose pipeline is bound: `Some(0)` the plain
+        // stamp, `Some(1 + i)` material `i`'s vertex hook.
+        let mut bound = None;
         // Only batches that wrote depth own pixels a decal could land on.
         for (sprite, settings) in view.frame.iter().zip(&view.frame_settings) {
             if !is_opaque(sprite) || !gpu.drawn(sprite) {
@@ -1213,16 +1281,26 @@ impl ItemTypePlugin for SpritePlugin {
             let Some(value) = ctx.stamp_for(settings) else {
                 continue;
             };
-            if !bound {
-                let Some(pl) = gpu.passes.get(pipeline::SURFACE_MASK) else {
-                    return;
+            // A material with a vertex hook stamps the moved quad.
+            let hook = gpu.hook_passes_of(sprite);
+            let family = hook.map_or(0, |_| sprite.fx.as_ref().map_or(0, |fx| fx.family));
+            if bound != Some(family) {
+                let pl = match hook {
+                    Some((passes, _)) => passes.get(pipeline::HOOK_SURFACE_MASK),
+                    None => gpu.passes.get(pipeline::SURFACE_MASK),
+                };
+                let Some(pl) = pl else {
+                    continue;
                 };
                 pass.set_pipeline(pl);
                 // The stencil being written shares a texture with the depth
                 // the soft fade would sample, so group 2 gets the fallback, as
                 // in the opaque pass.
                 pass.set_bind_group(2, &gpu.soft_fallback_bg, &[]);
-                bound = true;
+                bound = Some(family);
+            }
+            if let Some((_, fx_bg)) = hook {
+                pass.set_bind_group(3, fx_bg, &[]);
             }
             pass.set_stencil_reference(value);
             pass.set_bind_group(1, &sprite.bind_group, &[]);

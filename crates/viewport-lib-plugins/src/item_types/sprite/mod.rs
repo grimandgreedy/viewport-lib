@@ -40,10 +40,11 @@
 mod types;
 
 pub use types::{
-    MaskSource, PaletteIndex, SpriteDrawMode, SpriteEffects, SpriteFlip, SpriteInstanceSetId,
-    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteMaskItem, SpriteMaterial,
-    SpriteMaterialId, SpriteNormalMode, SpriteOrder, SpriteOrientation, SpriteOutline,
-    SpriteOverrides, SpritePalette, SpriteSetId, SpriteSetRefItem, SpriteSizeMode, TileMode,
+    MAX_SPRITE_DEFORMERS, MaskSource, PaletteIndex, SpriteDeformerId, SpriteDeformerSet,
+    SpriteDrawMode, SpriteEffects, SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteLitParams, SpriteMaskItem, SpriteMaterial, SpriteMaterialId,
+    SpriteNormalMode, SpriteOrder, SpriteOrientation, SpriteOutline, SpriteOverrides,
+    SpritePalette, SpriteSetId, SpriteSetRefItem, SpriteSizeMode, TileMode,
 };
 pub use viewport_lib_types::render_item::MaskTest;
 
@@ -61,6 +62,8 @@ const SPRITE_COMMON: &str = crate::item_types::shader::wgsl_source!("sprite_comm
 #[cfg(feature = "gpu")]
 pub mod channels;
 #[cfg(feature = "gpu")]
+mod deform;
+#[cfg(feature = "gpu")]
 mod effects;
 #[cfg(feature = "gpu")]
 mod mask;
@@ -74,6 +77,12 @@ mod store;
 mod uploads;
 
 #[cfg(feature = "gpu")]
+pub use deform::SpriteDeformerDesc;
+#[cfg(feature = "gpu")]
+pub(crate) use deform::{
+    SpriteDeformerEntry, tile_module as tile_deformer_module, validate as validate_deformer_modules,
+};
+#[cfg(feature = "gpu")]
 pub(crate) use effects::{TileMaterialEntry, compose_tile, material_lanes, validate_tile_material};
 #[cfg(feature = "gpu")]
 pub use mask::SpriteMaskPlugin;
@@ -84,4 +93,4 @@ pub(crate) use plugin::shader_sources;
 #[cfg(feature = "gpu")]
 pub(crate) use store::encode_sprites;
 #[cfg(feature = "gpu")]
-pub use uploads::{SpriteInstanceUploads, SpriteMaterials};
+pub use uploads::{SpriteDeformers, SpriteInstanceUploads, SpriteMaterials};

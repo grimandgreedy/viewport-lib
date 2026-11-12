@@ -227,6 +227,17 @@ pub(crate) struct TilemapGpu {
     pub(crate) pipelines: TilemapPipelines,
     /// By tile material index, built the first frame after it registers.
     pub(crate) families: Vec<TilemapPipelines>,
+    /// The registered sprite deformers, composed into every module.
+    deformers: Vec<crate::item_types::sprite::SpriteDeformerEntry>,
+}
+
+/// `source` with `deformers` composed in, checked when each registered.
+fn deformed(
+    source: String,
+    deformers: &[crate::item_types::sprite::SpriteDeformerEntry],
+) -> String {
+    crate::item_types::sprite::tile_deformer_module(source, deformers)
+        .expect("tile deformers compose")
 }
 
 impl TilemapGpu {
@@ -234,11 +245,20 @@ impl TilemapGpu {
         device: &viewport_lib::gpu::Device,
         resources: &DeviceResources,
         layouts: &super::store::TilemapLayouts,
+        deformers: &[crate::item_types::sprite::SpriteDeformerEntry],
     ) -> Self {
         let (colour, pick) = tile_sources();
         Self {
-            pipelines: pipeline_set(device, resources, layouts, "tilemap", colour, pick),
+            pipelines: pipeline_set(
+                device,
+                resources,
+                layouts,
+                "tilemap",
+                deformed(colour, deformers),
+                deformed(pick, deformers),
+            ),
             families: Vec::new(),
+            deformers: deformers.to_vec(),
         }
     }
 
@@ -261,8 +281,8 @@ impl TilemapGpu {
                 resources,
                 layouts,
                 &format!("tilemap_{}", m.name),
-                compose(&colour),
-                compose(&pick),
+                deformed(compose(&colour), &self.deformers),
+                deformed(compose(&pick), &self.deformers),
             ));
         }
     }

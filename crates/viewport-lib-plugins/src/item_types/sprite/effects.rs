@@ -18,7 +18,8 @@
 //! its textures bind as `htex0..htex3` with `sprite_samp`; one pipeline family
 //! is built per material, all over one group-3 layout. A material with a
 //! vertex hook also gets its own pick and outline-mask pipelines, composed the
-//! same way, so a pick and an outline follow the moved quad.
+//! same way, so a pick, an outline and a surface-mask stamp follow the moved
+//! quad.
 
 use viewport_lib::error::{ViewportError, ViewportResult};
 use viewport_lib::plugin_api::wgsl_compose;
@@ -49,7 +50,7 @@ pub(crate) const SPRITE_CONTRACT: &str = crate::item_types::shader::wgsl_source!
 const HOOK_MARKER: &str = "// <sprite-hook:vertex>";
 
 /// The call that takes its place.
-const HOOK_CALL: &str = "c = sprite_hook_vertex(c, corner);";
+const HOOK_CALL: &str = "c = sprite_hook_vertex(c, corner, inst);";
 
 /// The effect varyings, after the body's own `last` locations.
 fn varyings(first: u32) -> String {
@@ -72,7 +73,7 @@ pub(crate) struct MaterialSource<'a> {
     pub displaces: bool,
 }
 
-fn replace_once(source: &mut String, from: &str, to: &str) -> Result<(), String> {
+pub(crate) fn replace_once(source: &mut String, from: &str, to: &str) -> Result<(), String> {
     match source.matches(from).count() {
         1 => {
             *source = source.replacen(from, to, 1);
@@ -170,6 +171,9 @@ fn push_material(out: &mut String, m: &MaterialSource<'_>) {
     out.push_str(m.prefixed_body);
     out.push('\n');
     if m.displaces {
+        if !out.contains("fn sprite_vertex_of(") {
+            out.push_str(SPRITE_VERTEX_OF);
+        }
         out.push_str(&hook_vertex(m));
     }
 }
@@ -185,23 +189,11 @@ fn hook_vertex(m: &MaterialSource<'_>) -> String {
     };
     format!(
         "\n// The material's vertex hook: the corner moved to where the material puts it.
-fn sprite_hook_vertex(placed: SpriteCorner, corner: vec2<f32>) -> SpriteCorner {{
+fn sprite_hook_vertex(placed: SpriteCorner, corner: vec2<f32>, inst: SpriteInstance) -> SpriteCorner {{
     var c = placed;
-    var world = c.world;
-    if sprite_ub.world_space == 0u {{
-        // A screen-space corner, back on the plane through the sprite.
-        let w = camera.inv_view_proj * c.clip;
-        world = w.xyz / w.w;
-    }}
     hook_params.lanes = sprite_fx.lanes;
     hook_params.lanes[0].w = camera.time.x;
-{params}    var v: SpriteVertex;
-    v.corner = select(0u, 1u, corner.x > 0.0) + select(0u, 2u, corner.y > 0.0);
-    v.local_uv = (corner + 1.0) * 0.5;
-    v.world = world;
-    v.anchor = c.anchor;
-    v.time = camera.time.x;
-    let moved = {name}__displace_sprite(v);
+{params}    let moved = {name}__displace_sprite(sprite_vertex_of(c, corner, inst));
     c.clip = camera.view_proj * vec4<f32>(moved, 1.0);
     c.world = moved;
     return c;
@@ -210,6 +202,92 @@ fn sprite_hook_vertex(placed: SpriteCorner, corner: vec2<f32>) -> SpriteCorner {
         name = m.name
     )
 }
+
+/// The `SpriteVertex` a sprite body receives for corner `corner` of the quad
+/// `c` places: the corner where it is now, and the quad geometry measured from
+/// the quad as drawn, so a pivot, rotation, stretch or screen-space size is
+/// already in it.
+pub(crate) const SPRITE_VERTEX_OF: &str = "
+fn sprite_vertex_of(c: SpriteCorner, corner: vec2<f32>, inst: SpriteInstance) -> SpriteVertex {
+    var v: SpriteVertex;
+    var world = c.world;
+    if sprite_ub.world_space == 0u {
+        // A screen-space corner, back on the plane through the sprite.
+        let w = camera.inv_view_proj * c.clip;
+        world = w.xyz / w.w;
+    }
+    v.corner = select(0u, 1u, corner.x > 0.0) + select(0u, 2u, corner.y > 0.0);
+    v.local_uv = (corner + 1.0) * 0.5;
+    v.world = world;
+    v.anchor = c.anchor;
+    v.time = camera.time.x;
+    let p00 = sprite_quad_point(c.anchor, vec2<f32>(-1.0, -1.0), inst, c.right, c.up, c.stretch);
+    let p10 = sprite_quad_point(c.anchor, vec2<f32>( 1.0, -1.0), inst, c.right, c.up, c.stretch);
+    let p01 = sprite_quad_point(c.anchor, vec2<f32>(-1.0,  1.0), inst, c.right, c.up, c.stretch);
+    let across = p10 - p00;
+    let along = p01 - p00;
+    let size = vec2<f32>(length(across), length(along));
+    v.base = (p00 + p10) * 0.5;
+    v.pivot = (unpack2x16snorm(inst.pivot) + 1.0) * 0.5;
+    v.size = size;
+    v.right = across / max(size.x, 1e-20);
+    v.up = along / max(size.y, 1e-20);
+    let texels = vec2<f32>(
+        f32(sprite_ub.texture_size & 0xffffu),
+        f32(sprite_ub.texture_size >> 16u),
+    ) * abs(inst.uv_rect.zw - inst.uv_rect.xy);
+    v.texel = select(vec2<f32>(0.0), size / max(texels, vec2<f32>(1e-6)), texels > vec2<f32>(0.0));
+    v.user = inst.draw.w;
+    v.tile = 0u;
+    v.tile_placed = 0u;
+    return v;
+}
+";
+
+/// The `SpriteVertex` a tile body receives for corner `corner` (0 to 1 across
+/// the quad) at `world`, of the tile `index` shows in the cell whose bounding
+/// box starts at `cell_origin`. The quad spans `quad_size` cells from
+/// `quad_min`, unturned on a hexagonal grid.
+pub(crate) const TILE_VERTEX_OF: &str = "
+fn tile_vertex_of(
+    world: vec3<f32>,
+    corner: vec2<f32>,
+    in: TileIn,
+    index: u32,
+    cell_origin: vec2<f32>,
+    quad_min: vec2<f32>,
+    quad_size: vec2<f32>,
+    shift: vec2<f32>,
+) -> SpriteVertex {
+    var v: SpriteVertex;
+    v.corner = select(0u, 1u, corner.x > 0.5) + select(0u, 2u, corner.y > 0.5);
+    v.local_uv = corner;
+    v.world = world;
+    let anchor = cell_origin * layer.cell_size + shift;
+    v.anchor = tile_world(anchor);
+    v.time = camera.time.x;
+    let low = (cell_origin + quad_min) * layer.cell_size + shift;
+    let extent = quad_size * layer.cell_size;
+    let p00 = tile_world(low);
+    let across = tile_world(low + vec2<f32>(extent.x, 0.0)) - p00;
+    let along = tile_world(low + vec2<f32>(0.0, extent.y)) - p00;
+    let size = vec2<f32>(length(across), length(along));
+    v.base = p00 + across * 0.5;
+    v.pivot = (anchor - low) / select(extent, vec2<f32>(1.0), extent == vec2<f32>(0.0));
+    v.size = size;
+    v.right = across / max(size.x, 1e-20);
+    v.up = along / max(size.y, 1e-20);
+    v.texel = select(
+        vec2<f32>(0.0),
+        abs(layer.cell_size) / max(tileset.tile_size, vec2<f32>(1.0)),
+        tileset.has_texture != 0u,
+    );
+    v.user = tile_user_value(index);
+    v.tile = index;
+    v.tile_placed = in.tile;
+    return v;
+}
+";
 
 /// A material's `params` struct, filled from lanes 1.. of `lanes`, the
 /// drawing shader's lane array.
@@ -393,6 +471,7 @@ pub(super) fn validate_material(
     device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     existing: &[SpriteMaterialEntry],
+    deformers: &[super::deform::SpriteDeformerEntry],
     plugin: &dyn MaterialPlugin,
 ) -> ViewportResult<SpriteMaterialEntry> {
     let name = plugin.name();
@@ -461,6 +540,7 @@ pub(super) fn validate_material(
     let (unlit, lit) = base_sources();
     for (label, base, is_lit) in [("sprite", &unlit, false), ("sprite_lit", &lit, true)] {
         let composed = compose(base, is_lit, Some(&entry.source()))
+            .and_then(|s| super::deform::sprite_module(s, deformers))
             .map_err(|e| invalid(format!("sprite material '{name}': {e}")))?;
         wgsl_compose::validate_module(
             device,
@@ -470,8 +550,13 @@ pub(super) fn validate_material(
     }
     if displaces {
         let (pick, outline) = hook_base_sources();
-        for (label, base) in [("pick", &pick), ("outline_mask", &outline)] {
+        for (label, base) in [
+            ("pick", &pick),
+            ("outline_mask", &outline),
+            ("surface_mask", &unlit),
+        ] {
             let composed = compose_hook(base, &entry.source())
+                .and_then(|s| super::deform::sprite_module(s, deformers))
                 .map_err(|e| invalid(format!("sprite material '{name}': {e}")))?;
             wgsl_compose::validate_module(
                 device,
@@ -514,10 +599,15 @@ pub(crate) fn compose_tile(base: &str, material: &TileMaterialEntry) -> Result<S
     replace_once(
         &mut out,
         TILE_HOOK_MARKER,
-        "world = tile_hook_vertex(world, corner, tile_world(cell_origin * layer.cell_size + shift));",
+        "world = tile_hook_vertex(world, corner, in, index, cell_origin, quad_min, quad_size, shift);",
     )?;
-    out.push('\n');
-    out.push_str(SPRITE_CONTRACT);
+    if !out.contains("struct SpriteVertex {") {
+        out.push('\n');
+        out.push_str(SPRITE_CONTRACT);
+    }
+    if !out.contains("fn tile_vertex_of(") {
+        out.push_str(TILE_VERTEX_OF);
+    }
     out.push('\n');
     out.push_str(&material_declarations(&m, "layer.lanes"));
     out.push('\n');
@@ -529,18 +619,20 @@ pub(crate) fn compose_tile(base: &str, material: &TileMaterialEntry) -> Result<S
     };
     out.push_str(&format!(
         "
-// The material's vertex hook for a tile corner `corner` (0 to 1 across the
-// quad) at `world`, the bottom-left corner of the cell's bounding box at
-// `anchor`.
-fn tile_hook_vertex(world: vec3<f32>, corner: vec2<f32>, anchor: vec3<f32>) -> vec3<f32> {{
+// The material's vertex hook for a tile corner.
+fn tile_hook_vertex(
+    world: vec3<f32>,
+    corner: vec2<f32>,
+    in: TileIn,
+    index: u32,
+    cell_origin: vec2<f32>,
+    quad_min: vec2<f32>,
+    quad_size: vec2<f32>,
+    shift: vec2<f32>,
+) -> vec3<f32> {{
     hook_params.lanes = layer.lanes;
     hook_params.lanes[0].w = camera.time.x;
-{params}    var v: SpriteVertex;
-    v.corner = select(0u, 1u, corner.x > 0.5) + select(0u, 2u, corner.y > 0.5);
-    v.local_uv = corner;
-    v.world = world;
-    v.anchor = anchor;
-    v.time = camera.time.x;
+{params}    let v = tile_vertex_of(world, corner, in, index, cell_origin, quad_min, quad_size, shift);
     return {name}__displace_sprite(v);
 }}
 ",
@@ -555,6 +647,7 @@ fn tile_hook_vertex(world: vec3<f32>, corner: vec2<f32>, anchor: vec3<f32>) -> v
 pub(crate) fn validate_tile_material(
     device: &viewport_lib::gpu::Device,
     existing: &[TileMaterialEntry],
+    deformers: &[super::deform::SpriteDeformerEntry],
     plugin: &dyn MaterialPlugin,
     bases: &[(&str, String)],
 ) -> ViewportResult<TileMaterialEntry> {
@@ -595,6 +688,7 @@ pub(crate) fn validate_tile_material(
     };
     for (label, base) in bases {
         let composed = compose_tile(base, &entry)
+            .and_then(|s| super::deform::tile_module(s, deformers))
             .map_err(|e| invalid(format!("tile material '{name}': {e}")))?;
         wgsl_compose::validate_module(device, &format!("tile_material_{name}_{label}"), &composed)?;
     }
@@ -812,7 +906,8 @@ pub(crate) fn encode_effects(values: &[super::channels::SpriteEffect]) -> Vec<u8
 }
 
 /// A material with both hooks, a parameter and a texture read, composed into
-/// every shader a material reaches: the sources the shader check compiles,
+/// every shader a material reaches, and two sprite deformers composed into
+/// every sprite and tilemap module: the sources the shader check compiles,
 /// since composed modules exist only at registration otherwise.
 pub(crate) fn sample_material_sources() -> Vec<(&'static str, String)> {
     let params = [ParamDesc::f32("sway", 1.0)];
@@ -839,7 +934,7 @@ pub(crate) fn sample_material_sources() -> Vec<(&'static str, String)> {
     let (pick, outline) = hook_base_sources();
     let (tiles, tile_pick) = crate::item_types::tilemap::tile_sources();
     let ok = |r: Result<String, String>| r.expect("the sample material composes");
-    vec![
+    let mut out = vec![
         (
             "sprite_material_hooks.wgsl",
             ok(compose(&unlit, false, Some(&sprite))),
@@ -857,6 +952,10 @@ pub(crate) fn sample_material_sources() -> Vec<(&'static str, String)> {
             ok(compose_hook(&outline, &sprite)),
         ),
         (
+            "sprite_surface_mask_material_hook.wgsl",
+            ok(compose_hook(&unlit, &sprite)),
+        ),
+        (
             "tilemap_material_hook.wgsl",
             ok(compose_tile(&tiles, &tile)),
         ),
@@ -864,7 +963,70 @@ pub(crate) fn sample_material_sources() -> Vec<(&'static str, String)> {
             "tilemap_pick_material_hook.wgsl",
             ok(compose_tile(&tile_pick, &tile)),
         ),
+    ];
+    // Two deformers, one reading a mesh slot's parameters, composed into
+    // every module alone and under the sample material.
+    let deformers = [
+        super::deform::entry(
+            &[],
+            &super::deform::SpriteDeformerDesc::new(
+                "bob",
+                "fn deform_sprite(v: SpriteVertex, slot: u32) -> vec3<f32> {\n    \
+                 return v.world + v.up * sin(v.time + f32(v.user)) * v.local_uv.y;\n}\n",
+            ),
+        ),
+        super::deform::entry(
+            &[],
+            &super::deform::SpriteDeformerDesc::new(
+                "sway",
+                "fn deform_sprite(v: SpriteVertex, slot: u32) -> vec3<f32> {\n    \
+                 let p = deform_header.slot_params[slot * 4u];\n    \
+                 return v.world + v.right * p.x * v.texel.x * (v.world - v.base).z;\n}\n",
+            ),
+        ),
     ]
+    .map(|e| e.expect("the sample deformer is valid"));
+    let mut deformers = deformers.to_vec();
+    deformers[1].bit = 1;
+    deformers[1].slot = Some(3);
+    let sprite_deformed =
+        |r: Result<String, String>| ok(r.and_then(|s| super::deform::sprite_module(s, &deformers)));
+    let tile_deformed =
+        |r: Result<String, String>| ok(r.and_then(|s| super::deform::tile_module(s, &deformers)));
+    for (name, module) in [
+        ("sprite_deformed.wgsl", "sprite"),
+        ("sprite_refraction_deformed.wgsl", "sprite_refraction"),
+        ("sprite_lit_deformed.wgsl", "sprite_lit"),
+        ("sprite_oit_deformed.wgsl", "sprite_oit"),
+        ("sprite_lit_oit_deformed.wgsl", "sprite_lit_oit"),
+        ("sprite_outline_mask_deformed.wgsl", "sprite_outline_mask"),
+        ("sprite_pick_deformed.wgsl", "sprite_pick"),
+    ] {
+        out.push((
+            name,
+            sprite_deformed(Ok(super::pipeline::plain_source(module))),
+        ));
+    }
+    out.extend([
+        (
+            "sprite_material_hooks_deformed.wgsl",
+            sprite_deformed(compose(&unlit, false, Some(&sprite))),
+        ),
+        (
+            "sprite_lit_effects_deformed.wgsl",
+            sprite_deformed(compose(&lit, true, None)),
+        ),
+        (
+            "sprite_pick_material_hook_deformed.wgsl",
+            sprite_deformed(compose_hook(&pick, &sprite)),
+        ),
+        ("tilemap_deformed.wgsl", tile_deformed(Ok(tiles.clone()))),
+        (
+            "tilemap_pick_material_hook_deformed.wgsl",
+            tile_deformed(compose_tile(&tile_pick, &tile)),
+        ),
+    ]);
+    out
 }
 
 #[cfg(test)]
@@ -914,12 +1076,14 @@ mod tests {
     #[test]
     fn hooked_sources_compose_and_validate() {
         for (name, src) in sample_material_sources() {
-            if name.starts_with("sprite_pick")
-                || name.starts_with("sprite_material")
-                || name.starts_with("sprite_lit")
-                || name.starts_with("sprite_outline")
-            {
-                assert!(src.contains("c = sprite_hook_vertex(c, corner);"), "{name}");
+            if name.starts_with("sprite") && name.contains("material_hook") {
+                assert!(
+                    src.contains("c = sprite_hook_vertex(c, corner, inst);"),
+                    "{name}"
+                );
+            }
+            if name.contains("deformed") {
+                assert!(src.contains("_deform_vertex("), "{name}");
             }
             let module = naga::front::wgsl::parse_str(&src)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&src)));

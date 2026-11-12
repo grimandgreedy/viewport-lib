@@ -130,6 +130,11 @@ pub struct SpriteItem {
     /// Per-instance flips, mirroring the sprite's UV rect horizontally and/or
     /// vertically. Empty = no flip for all.
     pub flips: Vec<SpriteFlip>,
+    /// Per-instance user values, opaque to the renderer: a vertex hook reads
+    /// one as `SpriteVertex::user` and a material as `SpriteFragment::user`.
+    /// A hook can pack a weight and a phase into it (`pack2x16float`) or keep
+    /// an index into data of its own. Empty or short = `0` for the rest.
+    pub user_values: Vec<u32>,
     /// Fallback RGBA colour tint used when `colours` is empty. Default: opaque white.
     pub default_colour: viewport_lib_types::colour::Colour,
     /// Default edge length when `sizes` is empty or shorter than `positions`:
@@ -260,6 +265,9 @@ pub struct SpriteItem {
     /// nothing; `Some` draws through the effect pipelines. See
     /// [`SpriteEffects`].
     pub effects: Option<SpriteEffects>,
+    /// The registered sprite deformers that move this batch's quads. Empty
+    /// (the default) runs none.
+    pub deformers: SpriteDeformerSet,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -424,6 +432,7 @@ impl Default for SpriteItem {
             pivots: Vec::new(),
             default_pivot: [0.5, 0.5],
             flips: Vec::new(),
+            user_values: Vec::new(),
             default_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             default_size: 32.0,
             size_mode: SpriteSizeMode::ScreenSpace,
@@ -445,6 +454,7 @@ impl Default for SpriteItem {
             unlit: false,
             sort_keys: Vec::new(),
             effects: None,
+            deformers: SpriteDeformerSet::NONE,
             pick_alpha_threshold: None,
             draw_mode: SpriteDrawMode::Simple,
             mask: MaskTest::None,
@@ -518,6 +528,10 @@ pub struct SpriteSetRefItem {
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload)
     /// or `Uploads::begin_upload`.
     pub source: SpriteSetId,
+    /// The deformers the set runs from this frame on, in place of the ones
+    /// it was uploaded with. `None` (the default) keeps them. Stored on the
+    /// set, so two references to one set in a frame share the last one's.
+    pub deformers: Option<SpriteDeformerSet>,
     /// Per-item render settings (visibility, wireframe, selection).
     pub settings: ItemSettings,
 }
@@ -527,6 +541,7 @@ impl SpriteSetRefItem {
     pub fn new(id: SpriteSetId) -> Self {
         Self {
             source: id,
+            deformers: None,
             settings: ItemSettings::default(),
         }
     }
@@ -547,6 +562,10 @@ pub struct SpriteInstanceSetRefItem {
     /// Positions, colours and sort keys for some of the set's sprites, for
     /// this frame only. `None` (the default) draws the set as uploaded.
     pub overrides: Option<SpriteOverrides>,
+    /// The deformers the set runs from this frame on, in place of the ones
+    /// it was uploaded with. `None` (the default) keeps them. Stored on the
+    /// set, so two references to one set in a frame share the last one's.
+    pub deformers: Option<SpriteDeformerSet>,
     /// Per-item render settings.
     pub settings: ItemSettings,
 }
@@ -557,6 +576,7 @@ impl SpriteInstanceSetRefItem {
         Self {
             source: id,
             overrides: None,
+            deformers: None,
             settings: ItemSettings::default(),
         }
     }
@@ -766,6 +786,54 @@ impl SpriteOutline {
 /// [`SpriteMaterials::register_sprite_material`](crate::item_types::sprite::SpriteMaterials::register_sprite_material).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SpriteMaterialId(pub(crate) u32);
+
+/// Most sprite deformers that register at once.
+pub const MAX_SPRITE_DEFORMERS: usize = 8;
+
+/// A sprite and tile deformer registered with
+/// `SpriteDeformers::register_sprite_deformer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SpriteDeformerId(pub(crate) u32);
+
+/// The registered sprite deformers a sprite batch or tile layer runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SpriteDeformerSet(u32);
+
+impl SpriteDeformerSet {
+    /// No deformers.
+    pub const NONE: Self = Self(0);
+
+    /// This set with `id` in it.
+    pub const fn with(self, id: SpriteDeformerId) -> Self {
+        Self(self.0 | (1 << id.0))
+    }
+
+    /// This set without `id`.
+    pub const fn without(self, id: SpriteDeformerId) -> Self {
+        Self(self.0 & !(1 << id.0))
+    }
+
+    /// Whether the set holds `id`.
+    pub const fn contains(self, id: SpriteDeformerId) -> bool {
+        self.0 & (1 << id.0) != 0
+    }
+
+    /// Whether the set holds no deformer.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The set as the shaders read it, one bit per deformer.
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<SpriteDeformerId> for SpriteDeformerSet {
+    fn from(id: SpriteDeformerId) -> Self {
+        Self::NONE.with(id)
+    }
+}
 
 impl SpriteMaterialId {
     /// Registry index.

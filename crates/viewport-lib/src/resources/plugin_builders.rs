@@ -267,6 +267,16 @@ impl DeviceResources {
         self.content.textures.get(id).map(|t| &t.view)
     }
 
+    /// The width and height in texels of the texture behind `id`. `None` for
+    /// a stale id, and for a caller-owned view registered with
+    /// [`register_texture_view`](crate::ViewportGpuResources::register_texture_view),
+    /// whose size the store does not hold.
+    pub fn texture_extent(&self, id: crate::resources::TextureId) -> Option<[u32; 2]> {
+        let texture = self.content.textures.get(id)?.texture.as_ref()?;
+        let size = texture.size();
+        Some([size.width, size.height])
+    }
+
     /// Borrow the sampler the texture was uploaded with.
     ///
     /// Most user textures are uploaded with a shared linear-repeat sampler;

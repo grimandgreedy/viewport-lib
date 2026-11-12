@@ -51,6 +51,8 @@ pub struct Sprite {
     pub uv_rect: [f32; 4],
     /// Velocity, read only when the batch orients itself by it.
     pub velocity: [f32; 3],
+    /// The sprite's user value, as [`SpriteItem::user_values`](super::SpriteItem::user_values).
+    pub user: u32,
 }
 
 impl Default for Sprite {
@@ -66,6 +68,7 @@ impl Default for Sprite {
             soft_distance: 0.0,
             uv_rect: [0.0, 0.0, 1.0, 1.0],
             velocity: [0.0; 3],
+            user: 0,
         }
     }
 }
@@ -76,7 +79,7 @@ impl Default for Sprite {
 pub struct Positions;
 
 /// The interleaved per-sprite records: colour, size, rotation, pivot, flip,
-/// soft-particle distance, uv rect and velocity.
+/// soft-particle distance, uv rect, velocity and user value.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Sprites;
 

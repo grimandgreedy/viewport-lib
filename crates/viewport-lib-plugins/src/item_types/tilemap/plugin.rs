@@ -192,6 +192,8 @@ pub struct TilemapPlugin {
     upload_bytes: u64,
     /// Registered tile materials, by [`TileMaterialId`] index.
     materials: Vec<crate::item_types::sprite::TileMaterialEntry>,
+    /// Registered sprite deformers, by bit.
+    deformers: Vec<crate::item_types::sprite::SpriteDeformerEntry>,
 }
 
 impl TilemapPlugin {
@@ -206,11 +208,45 @@ impl TilemapPlugin {
         let entry = crate::item_types::sprite::validate_tile_material(
             device,
             &self.materials,
+            &self.deformers,
             plugin,
             &[("colour", colour), ("pick", pick)],
         )?;
         self.materials.push(entry);
         Ok(TileMaterialId(self.materials.len() as u32 - 1))
+    }
+
+    /// Check that `entry`, after the deformers already registered, composes
+    /// into every tilemap module.
+    pub(crate) fn check_deformer(
+        &self,
+        device: &viewport_lib::gpu::Device,
+        entry: &crate::item_types::sprite::SpriteDeformerEntry,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let mut trial = self.deformers.clone();
+        trial.push(entry.clone());
+        let (colour, pick) = pipeline::tile_sources();
+        let deformed = |s: Result<String, String>| {
+            s.and_then(|s| crate::item_types::sprite::tile_deformer_module(s, &trial))
+        };
+        let mut modules = vec![
+            ("tile_colour".to_string(), deformed(Ok(colour.clone()))),
+            ("tile_pick".to_string(), deformed(Ok(pick.clone()))),
+        ];
+        for m in &self.materials {
+            for (label, base) in [("colour", &colour), ("pick", &pick)] {
+                let composed = crate::item_types::sprite::compose_tile(base, m);
+                modules.push((format!("tile_{}_{label}", m.name), deformed(composed)));
+            }
+        }
+        crate::item_types::sprite::validate_deformer_modules(device, &entry.name, modules)
+    }
+
+    /// Keep `entry`, checked with [`check_deformer`](Self::check_deformer).
+    /// The pipelines are rebuilt with it at the next prepare.
+    pub(crate) fn add_deformer(&mut self, entry: crate::item_types::sprite::SpriteDeformerEntry) {
+        self.deformers.push(entry);
+        self.gpu = None;
     }
 
     /// The tile material registered as `name`.
@@ -451,13 +487,7 @@ impl TilemapPlugin {
                 continue;
             }
             let binds = resolve_bindings(
-                device,
-                resources,
-                layouts,
-                texture,
-                normals,
-                set.filter,
-                false,
+                device, resources, layouts, texture, normals, set.filter, false,
             );
             stored.rebind(device, queue, &binds);
             let set = &mut stored.map.tileset;
@@ -609,9 +639,9 @@ impl ItemTypePlugin for TilemapPlugin {
         let layouts = self
             .layouts
             .get_or_insert_with(|| TilemapLayouts::new(device));
-        let gpu = self
-            .gpu
-            .get_or_insert_with(|| pipeline::TilemapGpu::new(device, resources, layouts));
+        let gpu = self.gpu.get_or_insert_with(|| {
+            pipeline::TilemapGpu::new(device, resources, layouts, &self.deformers)
+        });
         gpu.pipelines.request_all();
     }
 
@@ -684,7 +714,9 @@ impl ItemTypePlugin for TilemapPlugin {
             .layouts
             .get_or_insert_with(|| TilemapLayouts::new(device));
         self.gpu
-            .get_or_insert_with(|| pipeline::TilemapGpu::new(device, ctx.resources, layouts))
+            .get_or_insert_with(|| {
+                pipeline::TilemapGpu::new(device, ctx.resources, layouts, &self.deformers)
+            })
             .ensure_families(device, ctx.resources, layouts, &self.materials);
         let needed = uniforms.len() as u64;
         if view.layer_buf.as_ref().is_none_or(|b| b.size() < needed) {

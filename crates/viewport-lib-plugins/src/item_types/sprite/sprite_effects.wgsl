@@ -145,6 +145,7 @@ fn sprite_fx_fragment(in: VertexOut, texel: vec4<f32>) -> SpriteFragment {
     s.palette_row = in.fx_word >> 16u;
     s.uv_ddx = sprite_fx_uv_ddx;
     s.uv_ddy = sprite_fx_uv_ddy;
+    s.user = in.draw_word.w;
     return s;
 }
 

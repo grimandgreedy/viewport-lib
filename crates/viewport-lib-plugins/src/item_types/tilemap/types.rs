@@ -384,6 +384,12 @@ pub struct Tileset {
     /// 2D lighting with `Lighting2dItem::normals` on; `None` lights the tiles
     /// flat. Default `None`.
     pub normal_atlas: Option<TextureId>,
+    /// One user value per tile index, opaque to the renderer: a tile
+    /// material's vertex hook reads the value of the tile a cell shows as
+    /// `SpriteVertex::user`, so "this tile sways" is set once here and holds
+    /// wherever the tile is painted. Tiles past the end read `0`. Default
+    /// empty.
+    pub user_values: Vec<u32>,
 }
 
 /// Most [`TileSize`] overrides one tileset applies.
@@ -405,6 +411,7 @@ impl Tileset {
             tile_sizes: Vec::new(),
             orientation: TileOrientation::Orthogonal,
             normal_atlas: None,
+            user_values: Vec::new(),
         }
     }
 
@@ -859,6 +866,9 @@ pub struct TilemapItem {
     /// Picks follow the moved tiles. `None` (the default) draws the grid as
     /// it lies.
     pub material: Option<TileMaterial>,
+    /// The registered sprite deformers that move this layer's tiles, before
+    /// its material. Empty (the default) runs none.
+    pub deformers: crate::item_types::sprite::SpriteDeformerSet,
     /// Visibility, pick identity and selection.
     pub settings: ItemSettings,
 }
@@ -881,6 +891,7 @@ impl TilemapItem {
             pixel_snap: false,
             mask: MaskTest::None,
             material: None,
+            deformers: crate::item_types::sprite::SpriteDeformerSet::NONE,
             settings: ItemSettings::default(),
         }
     }
