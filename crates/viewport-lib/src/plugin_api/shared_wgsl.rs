@@ -441,6 +441,14 @@ pub const SHARED_DEPTH_READ_WGSL: &str =
 ///   `light` loaded from that array layer under the fragment (at
 ///   `painter_mask_texel` of the light layers' size).
 ///
+/// - `painter_light_dir_slice(lights, layer)` is the array layer holding the
+///   light directions for painter `layer`, or `-1` when its range is lit
+///   flat.
+/// - `painter_light_apply_normal(rgb, light, dir, n, lights)` is `rgb` with
+///   the world-space normal `n` lit by `light` and the direction texel `dir`
+///   loaded from that array layer. Use it for content with a normal map when
+///   the direction slice is not `-1`, `painter_light_apply` otherwise.
+///
 /// Lit content applies it to its colour; content that is not lit, or whose
 /// layer no range holds, keeps its colour.
 pub const SHARED_PAINTER_MASK_WGSL: &str = include_str!(concat!(

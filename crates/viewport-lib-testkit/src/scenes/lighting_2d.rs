@@ -18,6 +18,17 @@
 //! to 2, so the range splits in three parts, each with a light layer of its
 //! own at the same ambient, and each square is lit by its own part's layer
 //! only.
+//!
+//! `lighting_2d_normals`: normals and soft shadows. In the top half (layer
+//! 0), a white light at the left, 60 units above the plane, lights a row of
+//! grey sprites: a sprite whose normals lean left towards the light, its
+//! twin without a normal map (lit flat, so as bright as the light allows),
+//! the leaning sprite flipped so its normals lean away and it is dark, and a
+//! dome bright on its left side and dark on its right. Below them a row of
+//! white tiles with dome normals, the fourth flipped across and the fifth
+//! upside down, all bright on the left. In the bottom half (layer 1), three
+//! cones shining down past three blocks cast shadows with softness 0, 4 and
+//! 12 device pixels, the penumbra widening from left to right.
 
 use glam::{DVec3, Vec2};
 use viewport_lib::plugin_api::Uploads;
@@ -34,7 +45,7 @@ use viewport_lib_plugins::item_types::lighting_2d::{
 };
 use viewport_lib_plugins::item_types::sprite::{SpriteItem, SpriteOrder, SpriteSizeMode};
 use viewport_lib_plugins::item_types::tilemap::{
-    Tile, Tilemap, TilemapItem, TilemapPlane, Tileset,
+    Tile, TileFlip, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, TilemapPlane, Tileset,
 };
 
 use super::sprites_2d::pixel_art;
@@ -61,6 +72,11 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "lighting_2d_kinds",
             cameras: top(),
             build: build_lighting_2d_kinds,
+        },
+        NamedScene {
+            name: "lighting_2d_normals",
+            cameras: top(),
+            build: build_lighting_2d_normals,
         },
     ]
 }
@@ -303,6 +319,127 @@ fn build_lighting_2d_kinds(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     BuiltScene {
         sprite_items: vec![floor, blocks, lit, above, emissive],
         gpu_particle_systems: vec![particles],
+        lighting_2d: vec![item],
+        background: Some([0.05, 0.05, 0.06, 1.0]),
+        ..Default::default()
+    }
+}
+
+/// A `size` x `size` tangent-space normal map, each texel's normal from
+/// `normal` at its centre in `-1..1` across, `y` up the image.
+fn normal_map(
+    ctx: &mut BuildCtx<'_>,
+    size: u32,
+    normal: impl Fn(f32, f32) -> [f32; 3],
+) -> TextureId {
+    let pixels: Vec<u8> = (0..size * size)
+        .flat_map(|i| {
+            let x = ((i % size) as f32 + 0.5) / size as f32 * 2.0 - 1.0;
+            let y = 1.0 - ((i / size) as f32 + 0.5) / size as f32 * 2.0;
+            let n = glam::Vec3::from(normal(x, y)).normalize();
+            let byte = |c: f32| ((c * 0.5 + 0.5) * 255.0).round() as u8;
+            [byte(n.x), byte(n.y), byte(n.z), 255]
+        })
+        .collect();
+    ctx.renderer
+        .resources_mut()
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            TextureData::normal_map(size, size, pixels),
+        )
+        .expect("normal map upload")
+}
+
+/// A hemisphere's normals over a disc, flat outside it.
+fn dome(x: f32, y: f32) -> [f32; 3] {
+    let r2 = x * x + y * y;
+    if r2 >= 1.0 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [x, y, (1.0 - r2).sqrt()]
+    }
+}
+
+fn build_lighting_2d_normals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let lean = normal_map(ctx, 16, |_, _| [-0.6, 0.0, 0.8]);
+    let round = normal_map(ctx, 16, dome);
+
+    let floor = |layer: u32, y: f32| {
+        let mut f = painter_squares(layer, 1.0, &[[0.0, y]], Colour::linear_rgb(0.5, 0.5, 0.5));
+        f.sizes = vec![[400.0, 150.0]];
+        f
+    };
+    let grey = Colour::linear_rgb(0.8, 0.8, 0.8);
+    let mut leaning = painter_squares(0, 50.0, &[[-110.0, 100.0], [10.0, 100.0]], grey);
+    leaning.normal_texture_id = Some(lean);
+    // The second leaning sprite is flipped, so its normals lean right.
+    leaning.uv_rects = vec![[0.0, 0.0, 1.0, 1.0], [1.0, 0.0, 0.0, 1.0]];
+    let flat = painter_squares(0, 50.0, &[[-50.0, 100.0]], grey);
+    let mut domed = painter_squares(0, 50.0, &[[90.0, 100.0]], grey);
+    domed.normal_texture_id = Some(round);
+
+    // A row of six white tiles with dome normals, the fourth and fifth
+    // flipped one way and the other.
+    let mut set = Tileset::new(None, [16, 16], 1);
+    set.normal_atlas = Some(round);
+    let mut map = Tilemap::with_chunk_size(set, [6, 1], 8);
+    for col in 0..6 {
+        let tile = Tile::new(0).with_flip(TileFlip::new(col == 3, col == 4, false));
+        map.set(col, 0, tile);
+    }
+    let id = ctx
+        .renderer
+        .upload(ctx.device, ctx.queue, &map)
+        .expect("tilemap upload");
+    let mut tiles = TilemapItem::new(id);
+    tiles.origin = [-150.0, 22.0];
+    tiles.cell_size = [40.0, 40.0];
+    tiles.plane = TilemapPlane::Xy;
+    tiles.draw = TilemapDraw::Blended {
+        layer: 0,
+        depth_test: false,
+        painter: TilemapPainter::Layer { key: 1.0 },
+    };
+
+    let blocks = painter_squares(
+        1,
+        16.0,
+        &[[-130.0, -50.0], [0.0, -50.0], [130.0, -50.0]],
+        Colour::linear_rgb(0.3, 0.25, 0.2),
+    );
+
+    let mut item = Lighting2dItem::default();
+    item.ambient = Colour::linear_rgb(0.15, 0.15, 0.15);
+    item.use_frame_lights = false;
+    item.normals = true;
+    item.occluders = occluders_from_sprites(&blocks, TilemapPlane::Xy);
+    item.lights = vec![
+        Light2d::point([-260.0, 70.0], 520.0)
+            .with_height(60.0)
+            .with_falloff(Falloff::Linear)
+            .with_layers(0..=0),
+    ];
+    for (x, softness) in [(-130.0, 0.0), (0.0, 4.0), (130.0, 12.0)] {
+        item.lights.push(
+            Light2d::cone([x, -10.0], 150.0, [0.0, -1.0], 0.3, 0.45)
+                .with_colour(Colour::linear_rgb(1.0, 0.85, 0.6))
+                .with_intensity(1.5)
+                .with_shadow_softness(softness)
+                .with_layers(1..=1),
+        );
+    }
+
+    BuiltScene {
+        tilemaps: vec![tiles],
+        sprite_items: vec![
+            floor(0, 75.0),
+            floor(1, -75.0),
+            leaning,
+            flat,
+            domed,
+            blocks,
+        ],
         lighting_2d: vec![item],
         background: Some([0.05, 0.05, 0.06, 1.0]),
         ..Default::default()

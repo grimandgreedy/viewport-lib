@@ -61,7 +61,7 @@ pub(crate) struct TilesetUniformData {
     margin: f32,
     /// [`GridLayout::word`]: the grid kind, its parity and its turns.
     orientation: u32,
-    _pad: u32,
+    has_normal_atlas: u32,
     /// [`GridLayout::grid`]: a staggered grid's steps and shift, in cells.
     grid: [f32; 4],
     /// Per size slot: the image size in texels, then the anchor in cells.
@@ -104,7 +104,7 @@ pub(crate) const LAYER_STRIDE: u64 =
 
 /// The two bind group layouts tilemap draws use.
 pub(crate) struct TilemapLayouts {
-    /// Group 1: tileset uniform, atlas, sampler.
+    /// Group 1: tileset uniform, atlas, sampler, normal atlas.
     pub(crate) map: viewport_lib::gpu::BindGroupLayout,
     /// Group 2: the layer uniform at a dynamic offset.
     pub(crate) layer: viewport_lib::gpu::BindGroupLayout,
@@ -142,6 +142,16 @@ impl TilemapLayouts {
                     ty: gpu::BindingType::Sampler(gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                gpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layer = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
@@ -169,17 +179,21 @@ impl TilemapLayouts {
 pub(crate) struct TilesetBindings {
     view: viewport_lib::gpu::TextureView,
     has_texture: u32,
+    normal_view: viewport_lib::gpu::TextureView,
+    has_normal_atlas: u32,
     sampler: viewport_lib::gpu::Sampler,
     layout: viewport_lib::gpu::BindGroupLayout,
 }
 
-/// Resolve the atlas view and sampler `map`'s tileset names. A missing or
-/// stale texture binds the neutral fallback and draws untextured.
+/// Resolve the atlas and normal atlas views and the sampler `map`'s tileset
+/// names. A missing or stale atlas binds the neutral fallback and draws
+/// untextured; a missing normal atlas lights the tiles flat.
 pub(crate) fn resolve_bindings(
     device: &viewport_lib::gpu::Device,
     resources: &DeviceResources,
     layouts: &TilemapLayouts,
     texture_id: Option<viewport_lib::resources::TextureId>,
+    normal_id: Option<viewport_lib::resources::TextureId>,
     filter: viewport_lib::TextureFilter,
     report: bool,
 ) -> TilesetBindings {
@@ -189,7 +203,18 @@ pub(crate) fn resolve_bindings(
             texture_id,
             TextureRequirement::colour("Tileset::texture_id"),
         );
+        resources.check_texture_slot(
+            normal_id,
+            TextureRequirement::normal_map("Tileset::normal_atlas"),
+        );
     }
+    let (normal_view, has_normal_atlas) = match normal_id.and_then(|id| resources.texture_view(id))
+    {
+        Some(view) => (view.clone(), 1),
+        // Never read with the flag clear; the colourmap fallback exists on
+        // every tier.
+        None => (resources.fallback_colourmap_view().clone(), 0),
+    };
     let (view, has_texture) = match texture_id.and_then(|id| resources.texture_view(id)) {
         Some(view) => (view.clone(), 1),
         None => (resources.fallback_colourmap_view().clone(), 0),
@@ -210,6 +235,8 @@ pub(crate) fn resolve_bindings(
     TilesetBindings {
         view,
         has_texture,
+        normal_view,
+        has_normal_atlas,
         sampler,
         layout: layouts.map.clone(),
     }
@@ -377,7 +404,7 @@ impl StoredTilemap {
             spacing: set.spacing as f32,
             margin: set.margin as f32,
             orientation: layout.word(),
-            _pad: 0,
+            has_normal_atlas: binds.has_normal_atlas,
             grid: layout.grid(),
             sizes,
         };
@@ -551,6 +578,7 @@ impl StoredTilemap {
         binds: &TilesetBindings,
     ) {
         self.uniform.has_texture = binds.has_texture;
+        self.uniform.has_normal_atlas = binds.has_normal_atlas;
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&self.uniform));
         self.bind_group = build_bind_group(device, binds, &self.uniform_buf);
     }
@@ -588,6 +616,10 @@ fn build_bind_group(
             gpu::BindGroupEntry {
                 binding: 2,
                 resource: gpu::BindingResource::Sampler(&binds.sampler),
+            },
+            gpu::BindGroupEntry {
+                binding: 3,
+                resource: gpu::BindingResource::TextureView(&binds.normal_view),
             },
         ],
     })

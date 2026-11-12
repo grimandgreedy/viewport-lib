@@ -32,6 +32,7 @@ impl ViewportRenderer {
                     view: l.view,
                     ranges: l.ranges.iter().map(|r| [*r.start(), *r.end()]).collect(),
                     scale: l.scale,
+                    directions: l.directions,
                 });
             }
             let before = reports.len();

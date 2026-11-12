@@ -1,9 +1,15 @@
 // 2D light accumulation: per light, the shadow geometry cast by every occluder
 // edge stamps the light's index into the stencil, then the light's shape adds
-// its light wherever the stencil does not hold that index.
+// its light wherever the stencil does not hold that index. A light with soft
+// shadows instead draws its shadow geometry into a mask, which is blurred,
+// and adds its light through the mask.
+//
+// With normals on, a second target takes the direction to the light per
+// fragment, in world space and weighted by the luminance the light adds.
 //
 // Group 0: one light's block, at a dynamic offset per light.
 // Group 1: the light's texture, white for a light without one.
+// Group 2: the blurred shadow mask, for a light with soft shadows.
 //
 // Positions are plane coordinates; the block carries the plane's origin and
 // axes relative to the camera eye, and a view-projection relative to the eye,
@@ -12,6 +18,7 @@
 struct LightBlock {
     view_proj: mat4x4<f32>,
     origin:    vec4<f32>,
+    // The plane's x axis, and in `w` the light's height above the plane.
     x_axis:    vec4<f32>,
     y_axis:    vec4<f32>,
     // Plane position, shadow reach, radius.
@@ -40,6 +47,7 @@ const KIND_POLYGON: u32 = 5u;
 @group(0) @binding(0) var<uniform> block: LightBlock;
 @group(1) @binding(0) var light_texture: texture_2d<f32>;
 @group(1) @binding(1) var light_sampler: sampler;
+@group(2) @binding(0) var shadow_mask: texture_2d<f32>;
 
 fn plane_clip(p: vec2<f32>) -> vec4<f32> {
     let w = block.origin.xyz + block.x_axis.xyz * p.x + block.y_axis.xyz * p.y;
@@ -112,6 +120,12 @@ fn vs_shadow(in: EdgeIn) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs_shadow() -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
+}
+
+// The shadow geometry into a soft light's mask: one where shadowed.
+@fragment
+fn fs_shadow_mask() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0);
 }
 
 struct LightOut {
@@ -189,9 +203,8 @@ fn polygon_distance(p: vec2<f32>) -> f32 {
     return s * sqrt(d);
 }
 
-// The light's colour and shape at a plane point, added to the light target.
-@fragment
-fn fs_light(in: LightOut) -> @location(0) vec4<f32> {
+// The light's colour and shape at a plane point.
+fn light_at(in: LightOut) -> vec3<f32> {
     let kind = block.flags.x;
     let l = block.light.xy;
     let radius = max(block.light.w, 1e-6);
@@ -223,5 +236,68 @@ fn fs_light(in: LightOut) -> @location(0) vec4<f32> {
             f = select(0.0, falloff(sd / radius), block.light.w > 0.0);
         }
     }
-    return vec4<f32>(block.colour.rgb * tint * f, 0.0);
+    return block.colour.rgb * tint * f;
+}
+
+// The direction texel for `colour` added at a plane point: the unit world
+// direction from the point to the light, raised by the light's height, times
+// the luminance added, and that luminance. Global and polygon lights add no
+// direction, so what they light is shaded flat.
+fn light_direction(in: LightOut, colour: vec3<f32>) -> vec4<f32> {
+    let kind = block.flags.x;
+    if kind == KIND_GLOBAL || kind == KIND_POLYGON {
+        return vec4<f32>(0.0);
+    }
+    let h = block.x_axis.w;
+    var v = vec3<f32>(block.light.xy - in.p, h);
+    if kind == KIND_DIRECTIONAL {
+        v = vec3<f32>(-block.params.xy, h);
+    }
+    let normal = cross(block.x_axis.xyz, block.y_axis.xyz);
+    let world = block.x_axis.xyz * v.x + block.y_axis.xyz * v.y + normal * v.z;
+    let len = length(world);
+    // A fragment right under a light with no height: light from straight
+    // above.
+    let l = select(normal, world / max(len, 1e-12), len > 1e-6);
+    let w = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return vec4<f32>(l * w, w);
+}
+
+// How much of a soft light reaches the fragment: one minus its blurred
+// shadow mask.
+fn unshadowed(pos: vec4<f32>) -> f32 {
+    let dims = vec2<i32>(textureDimensions(shadow_mask));
+    let texel = clamp(vec2<i32>(floor(pos.xy)), vec2<i32>(0), dims - vec2<i32>(1));
+    return 1.0 - textureLoad(shadow_mask, texel, 0).r;
+}
+
+struct LightTargets {
+    @location(0) colour: vec4<f32>,
+    @location(1) direction: vec4<f32>,
+};
+
+// The light added to the light target.
+@fragment
+fn fs_light(in: LightOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(light_at(in), 0.0);
+}
+
+// `fs_light` through the soft light's mask.
+@fragment
+fn fs_light_soft(in: LightOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(light_at(in) * unshadowed(in.pos), 0.0);
+}
+
+// `fs_light` with the direction target.
+@fragment
+fn fs_light_dir(in: LightOut) -> LightTargets {
+    let c = light_at(in);
+    return LightTargets(vec4<f32>(c, 0.0), light_direction(in, c));
+}
+
+// `fs_light_soft` with the direction target.
+@fragment
+fn fs_light_dir_soft(in: LightOut) -> LightTargets {
+    let c = light_at(in) * unshadowed(in.pos);
+    return LightTargets(vec4<f32>(c, 0.0), light_direction(in, c));
 }

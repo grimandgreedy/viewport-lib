@@ -106,7 +106,7 @@ pub(super) fn compose(
     replace_once(
         &mut out,
         "// <sprite-fx:varyings>",
-        &varyings(if lit { 12 } else { 8 }),
+        &varyings(if lit { 12 } else { 10 }),
     )?;
     replace_once(
         &mut out,

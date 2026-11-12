@@ -2,7 +2,7 @@
 //
 // Group 0: Camera uniform (binding 0), ClipPlanes (binding 4), ClipVolume (binding 6).
 // Group 1: SpriteUniform (binding 0), sprite texture (binding 1), sampler (binding 2),
-//           per-instance storage buffer (binding 3).
+//           per-instance storage buffer (binding 3), normal map (binding 4).
 // Group 2: scene depth (bindings 0-1), the painter masks (bindings 2-3) and the
 //           2D light layers (bindings 4-5).
 //
@@ -18,6 +18,9 @@
 @group(1) @binding(1) var               sprite_texture: texture_2d<f32>;
 @group(1) @binding(2) var               sprite_sampler: sampler;
 @group(1) @binding(3) var<storage, read> instance_buf:  array<SpriteInstance>;
+// Tangent-space normal map, shading the 2D light layers when the batch has
+// one and its range carries light directions.
+@group(1) @binding(4) var               sprite_normal_tex: texture_2d<f32>;
 
 // Group 2: scene depth resolve used for soft-particle fade, then the painter
 // masks and the 2D light layers. Bound to the scene's depth-aspect view in
@@ -51,6 +54,10 @@ struct VertexOut {
     @location(5) @interpolate(flat) draw_size: vec2<f32>,
     @location(6) @interpolate(flat) draw_rect: vec4<f32>,
     @location(7) @interpolate(flat) draw_word: vec4<u32>,
+    // The quad's right and up in world space, turned by the sprite's
+    // rotation: the normal map's tangent frame before any flip.
+    @location(8) @interpolate(flat) tangent:   vec3<f32>,
+    @location(9) @interpolate(flat) bitangent: vec3<f32>,
     // <sprite-fx:varyings>
 };
 
@@ -72,6 +79,11 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.draw_size = inst.size;
     out.draw_rect = inst.uv_rect;
     out.draw_word = inst.draw;
+
+    let c = cos(inst.rotation);
+    let s = sin(inst.rotation);
+    out.tangent   = placed.right * c + placed.up * s;
+    out.bitangent = placed.up * c - placed.right * s;
 
     return out;
 }
@@ -96,14 +108,33 @@ fn sprite_mask_texel(frag: vec2<f32>) -> vec2<i32> {
 // for a batch in depth order) under a fragment at `frag`. An unlit batch, a
 // multiply blend (whose destination is lit already) and a layer no range
 // holds keep their colour.
-fn sprite_light(colour: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
+//
+// With a normal map and a range that carries light directions, the light is
+// shaded by the mapped normal in the quad's tangent frame.
+fn sprite_light(colour: vec4<f32>, in: VertexOut, uv_ddx: vec2<f32>, uv_ddy: vec2<f32>) -> vec4<f32> {
     let slice = painter_light_slice(painter_lights, sprite_ub.mask.y);
     if slice < 0 || sprite_ub.mask.z != 0u || ((sprite_ub.flags >> 1u) & 3u) == 1u {
         return colour;
     }
-    let texel = sprite_target_texel(frag, textureDimensions(painter_light_tex));
+    let texel = sprite_target_texel(in.clip_pos.xy, textureDimensions(painter_light_tex));
     let light = textureLoad(painter_light_tex, texel, slice, 0);
-    return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
+    let dir_slice = painter_light_dir_slice(painter_lights, sprite_ub.mask.y);
+    if dir_slice < 0 || sprite_ub.has_normal_map == 0u {
+        return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
+    }
+    let dir = textureLoad(painter_light_tex, texel, dir_slice, 0);
+    let mapped = textureSampleGrad(sprite_normal_tex, sprite_sampler, in.uv, uv_ddx, uv_ddy).rgb;
+    let n_ts = normalize(mapped * 2.0 - vec3<f32>(1.0));
+    let t = normalize(in.tangent);
+    let b = normalize(in.bitangent);
+    let facing = normalize(cross(t, b));
+    // A flipped rect mirrors the image, and the normals with it.
+    let flip = vec2<f32>(
+        select(1.0, -1.0, in.draw_rect.z < in.draw_rect.x),
+        select(1.0, -1.0, in.draw_rect.w < in.draw_rect.y),
+    );
+    let n = normalize(t * (n_ts.x * flip.x) + b * (n_ts.y * flip.y) + facing * n_ts.z);
+    return vec4<f32>(painter_light_apply_normal(colour.rgb, light, dir, n, painter_lights), colour.a);
 }
 
 fn fs_main_body(input: VertexOut) -> vec4<f32> {
@@ -172,7 +203,7 @@ fn fs_main_body(input: VertexOut) -> vec4<f32> {
         colour.a = colour.a * fade;
     }
 
-    colour = sprite_light(colour, in.clip_pos.xy);
+    colour = sprite_light(colour, in, uv_ddx, uv_ddy);
 
     // The painter mask: what the batch's test keeps of the fragment.
     let mask = painter_mask_keep(

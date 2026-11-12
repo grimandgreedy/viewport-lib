@@ -763,10 +763,16 @@ pub struct PainterLightLayers {
     /// Multiplied into what is sampled: `1.0` for a layer holding the light
     /// itself, `2.0` for one holding half of it.
     pub scale: f32,
+    /// Per range, the array layer of [`view`](Self::view) holding the
+    /// direction the range's light arrives from, for content with a normal
+    /// map; `None` (or a short list) for a range lit flat. Each texel holds
+    /// the sum over lights of `w * l` in `rgb` and of `w` in `a`, `l` the unit
+    /// world-space direction to the light and `w` the luminance it adds.
+    pub directions: Vec<Option<u32>>,
 }
 
 impl PainterLightLayers {
-    /// Light layers in `view` over `ranges`, sampled times `scale`.
+    /// Light layers in `view` over `ranges`, sampled times `scale`, lit flat.
     pub fn new(
         view: crate::gpu::TextureView,
         ranges: Vec<std::ops::RangeInclusive<u32>>,
@@ -776,7 +782,15 @@ impl PainterLightLayers {
             view,
             ranges,
             scale,
+            directions: Vec::new(),
         }
+    }
+
+    /// These layers with a direction layer per range, as
+    /// [`directions`](Self::directions) describes.
+    pub fn with_directions(mut self, directions: Vec<Option<u32>>) -> Self {
+        self.directions = directions;
+        self
     }
 }
 

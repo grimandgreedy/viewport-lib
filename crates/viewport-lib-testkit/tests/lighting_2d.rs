@@ -3,7 +3,8 @@
 //! the light to the ambient level, lit content samples the layer of its own
 //! range only and unlit content draws after it, overlapping items raise a
 //! notice, and they light the LDR path and the compatibility tier too, never
-//! the background.
+//! the background. With normals on, a normal map shades the light by its
+//! direction; soft shadows blur their edge and hard ones cost no pass.
 
 use glam::{DVec3, Vec2};
 use viewport_lib::plugin_api::Uploads;
@@ -97,7 +98,8 @@ fn ambient_alone_darkens_the_scene_with_no_lights() {
         Lighting2dStats {
             lights: 0,
             edges: 0,
-            passes: 1
+            passes: 1,
+            soft_shadow_passes: 0
         }
     );
     for (x, y) in [(0.0, 0.0), (-60.0, 30.0), (70.0, -40.0)] {
@@ -116,7 +118,8 @@ fn ambient_alone_darkens_the_scene_with_no_lights() {
         Lighting2dStats {
             lights: 3,
             edges: 0,
-            passes: 1
+            passes: 1,
+            soft_shadow_passes: 0
         }
     );
 }
@@ -480,6 +483,22 @@ fn the_layer_lights_the_compatibility_tier() {
         f.viewport.background_colour = Some(Colour::linear_rgb(0.5, 0.5, 0.5));
         f
     };
+    // Normals need float light layers, which this tier lacks: a notice, and
+    // the tiles are lit flat.
+    let mut with_normals = Lighting2dItem::default();
+    with_normals.normals = true;
+    let _ = harness.renderer.take_notices();
+    let flat = harness.render(&compat(Some(with_normals), vec![torch(-40.0)]), W, H);
+    assert!(
+        harness.renderer.take_notices().iter().any(|n| matches!(
+            n.detail,
+            NoticeDetail::Plugin {
+                key: "normals_need_float_light_layer",
+                ..
+            }
+        )),
+        "no notice for normals on the compatibility tier"
+    );
     let bare = harness.render(&compat(None, Vec::new()), W, H);
     let unlit = harness.render(&compat(Some(Lighting2dItem::default()), Vec::new()), W, H);
     assert_eq!(stats(&harness).passes, 1);
@@ -493,6 +512,8 @@ fn the_layer_lights_the_compatibility_tier() {
     assert!(near > far + 60, "near {near}, far {far}");
     assert!(luma(&unlit, -40.0, 0.0) < luma(&bare, -40.0, 0.0));
     assert_ne!(unlit, lit);
+    assert_eq!(flat, lit);
+    assert_eq!(flat, lit);
     // The background keeps its colour on this path too.
     for frame in [&unlit, &lit] {
         let (got, want) = (luma(frame, 40.0, 0.0), luma(&bare, 40.0, 0.0));
@@ -607,4 +628,157 @@ fn every_painter_content_type_samples_its_light_layer() {
     assert!(got * 10 < was * 7, "tile: {got}, unlit {was}");
     let (got, was) = (summed(&lit, &all), summed(&bare, &all));
     assert!(got * 10 < was * 7, "the frame: {got}, unlit {was}");
+}
+
+/// A 4 x 4 normal map holding `n` everywhere.
+fn uniform_normal_map(harness: &mut Harness, n: [f32; 3]) -> viewport_lib::TextureId {
+    let n = glam::Vec3::from(n).normalize();
+    let byte = |c: f32| ((c * 0.5 + 0.5) * 255.0).round() as u8;
+    let pixels = [byte(n.x), byte(n.y), byte(n.z), 255].repeat(16);
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    harness
+        .renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::normal_map(4, 4, pixels),
+        )
+        .expect("normal map upload")
+}
+
+/// The grey floor of [`floor_frame`] with `normal_map`, under a white light
+/// 100 units to its left and 50 above the plane, with no ambient.
+fn normal_frame(normals: bool, normal_map: Option<viewport_lib::TextureId>) -> FrameData {
+    let mut item = Lighting2dItem::default();
+    item.ambient = Colour::BLACK;
+    item.use_frame_lights = false;
+    item.normals = normals;
+    item.lights = vec![
+        Light2d::point([-100.0, 0.0], 1000.0)
+            .with_height(50.0)
+            .with_falloff(viewport_lib_plugins::item_types::lighting_2d::Falloff::Linear),
+    ];
+    let mut f = frame(item, Vec::new());
+    f.scene.items_mut::<SpriteItem>()[0].normal_texture_id = normal_map;
+    f
+}
+
+#[test]
+fn a_normal_map_shades_the_light_by_the_normal_against_its_direction() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // At the floor's centre the light is 100 units left and 50 up, lit at
+    // 0.9 of its brightness by the linear falloff: the flat floor reads as
+    // 0.45 grey, and a mapped one as 0.45 times the normal's cosine to the
+    // light.
+    let l = glam::Vec3::new(-100.0, 0.0, 50.0).normalize();
+    let flat = harness.render(&normal_frame(true, None), W, H);
+    let flat_luma = luma(&flat, 0.0, 0.0);
+    let expected_flat = floor_luma(&mut harness, 0.45);
+    assert!(
+        flat_luma.abs_diff(expected_flat) <= 4,
+        "flat {flat_luma}, expected {expected_flat}"
+    );
+    for n in [[-0.6, 0.0, 0.8], [0.0, 0.0, 1.0], [0.3, 0.5, 0.81]] {
+        let map = uniform_normal_map(&mut harness, n);
+        let mapped = harness.render(&normal_frame(true, Some(map)), W, H);
+        let cos = glam::Vec3::from(n).normalize().dot(l).max(0.0);
+        let (got, want) = (
+            luma(&mapped, 0.0, 0.0),
+            floor_luma(&mut harness, 0.45 * cos),
+        );
+        assert!(
+            got.abs_diff(want) <= 6,
+            "normal {n:?}: {got}, expected {want}"
+        );
+    }
+    // A normal facing away from the light leaves only the ambient: black.
+    let away = uniform_normal_map(&mut harness, [0.9, 0.0, 0.1]);
+    let dark = harness.render(&normal_frame(true, Some(away)), W, H);
+    assert!(luma(&dark, 0.0, 0.0) <= 6);
+}
+
+#[test]
+fn normals_change_nothing_for_content_lit_flat() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let off = harness.render(&normal_frame(false, None), W, H);
+    // Content without a normal map is lit the same with normals on.
+    let on = harness.render(&normal_frame(true, None), W, H);
+    assert_eq!(off, on);
+    // And a normal map is ignored with normals off.
+    let map = uniform_normal_map(&mut harness, [-0.6, 0.0, 0.8]);
+    let ignored = harness.render(&normal_frame(false, Some(map)), W, H);
+    assert_eq!(off, ignored);
+}
+
+/// Pixels across the edge of a shadow, from luma 10% to 90% of the way from
+/// the shadow to the light, along the row at plane `y` from `x0` to `x1`.
+fn penumbra_width(pixels: &[u8], y: f32, x0: f32, x1: f32) -> usize {
+    let row: Vec<u32> = (x0 as i32..x1 as i32)
+        .map(|x| luma(pixels, x as f32, y))
+        .collect();
+    let (lo, hi) = (*row.iter().min().unwrap(), *row.iter().max().unwrap());
+    let (a, b) = (lo + (hi - lo) / 10, hi - (hi - lo) / 10);
+    row.iter().filter(|&&l| l > a && l < b).count()
+}
+
+#[test]
+fn soft_shadows_widen_the_penumbra_and_hard_ones_cost_no_pass() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // A directional light travelling down past a bar over the right half:
+    // the bar's shadow edge is the vertical line x = 0.
+    let shadow = |softness: f32| {
+        let mut item = Lighting2dItem::default();
+        item.use_frame_lights = false;
+        item.occluders = vec![Occluder2d::Rect {
+            min: [0.0, 30.0],
+            max: [70.0, 40.0],
+        }];
+        item.lights = vec![
+            Light2d::directional([0.0, -1.0])
+                .with_intensity(0.6)
+                .with_shadow_softness(softness),
+        ];
+        frame(item, Vec::new())
+    };
+    let hard = harness.render(&shadow(0.0), W, H);
+    assert_eq!(
+        stats(&harness),
+        Lighting2dStats {
+            lights: 1,
+            edges: 4,
+            passes: 1,
+            soft_shadow_passes: 0
+        }
+    );
+    let mut widths = vec![penumbra_width(&hard, -10.0, -30.0, 30.0)];
+    for softness in [4.0, 12.0] {
+        let soft = harness.render(&shadow(softness), W, H);
+        assert_eq!(stats(&harness).soft_shadow_passes, 3);
+        assert_eq!(stats(&harness).passes, 1);
+        widths.push(penumbra_width(&soft, -10.0, -30.0, 30.0));
+    }
+    assert!(widths[0] <= 2, "hard edge {widths:?}");
+    assert!(
+        widths[1] > widths[0] + 1 && widths[2] > widths[1] + 3,
+        "penumbra widths {widths:?}"
+    );
+
+    // A soft light after a hard one ends the layer pass and starts another.
+    let mut f = shadow(4.0);
+    let item = &mut f.scene.items_mut::<Lighting2dItem>()[0];
+    item.lights.insert(0, Light2d::point([-60.0, 0.0], 30.0));
+    harness.render(&f, W, H);
+    assert_eq!(stats(&harness).passes, 2);
+    assert_eq!(stats(&harness).soft_shadow_passes, 3);
 }

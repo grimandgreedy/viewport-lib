@@ -20,8 +20,9 @@ pub(crate) use super::types::{SpriteInstanceSetId, SpriteSetId};
 
 /// The bind group layouts sprite uploads build against.
 ///
-/// Group 1 carries a batch's uniform, texture, sampler and instance buffer;
-/// group 3 carries the optional tangent-space normal map for a lit batch.
+/// Group 1 carries a batch's uniform, texture, sampler, instance buffer and
+/// normal map (read by the 2D light layers); group 3 carries the same normal
+/// map for a lit batch.
 /// Both are built once at startup rather than lazily, because an upload can
 /// arrive before the first frame that draws one.
 pub(super) struct SpriteLayouts {
@@ -81,6 +82,19 @@ impl SpriteLayouts {
                         ty: viewport_lib::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 4: normal map (or the flat fallback when has_normal_map == 0)
+                viewport_lib::gpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: true,
+                        },
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -581,6 +595,10 @@ pub(super) fn build_sprite(
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 3,
                     resource: sprites.buffer().as_entire_binding(),
+                },
+                viewport_lib::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: viewport_lib::gpu::BindingResource::TextureView(normal_view),
                 },
             ],
         });
@@ -1338,6 +1356,10 @@ fn build_bind_group(
             viewport_lib::gpu::BindGroupEntry {
                 binding: 3,
                 resource: sprites.as_entire_binding(),
+            },
+            viewport_lib::gpu::BindGroupEntry {
+                binding: 4,
+                resource: viewport_lib::gpu::BindingResource::TextureView(&binds.normal_view),
             },
         ],
     })

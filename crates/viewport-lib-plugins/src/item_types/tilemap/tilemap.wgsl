@@ -15,7 +15,8 @@ fn vs_main(in: TileIn) -> TileOut {
 @group(3) @binding(3) var<uniform> painter_lights: PainterLights;
 
 // `colour` lit by the light layer of the layer's painter range under the
-// fragment; a layer no range holds keeps its colour.
+// fragment; a layer no range holds keeps its colour. With a normal atlas and
+// a range that carries light directions, shaded by the tile's normal.
 fn tile_light(colour: vec4<f32>, in: TileOut) -> vec4<f32> {
     let slice = painter_light_slice(painter_lights, layer.painter_layer.x);
     if slice < 0 {
@@ -26,7 +27,13 @@ fn tile_light(colour: vec4<f32>, in: TileOut) -> vec4<f32> {
         textureDimensions(painter_light_tex),
     );
     let light = textureLoad(painter_light_tex, texel, slice, 0);
-    return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
+    let dir_slice = painter_light_dir_slice(painter_lights, layer.painter_layer.x);
+    if dir_slice < 0 || tileset.has_normal_atlas == 0u {
+        return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
+    }
+    let dir = textureLoad(painter_light_tex, texel, dir_slice, 0);
+    let n = tile_normal(in);
+    return vec4<f32>(painter_light_apply_normal(colour.rgb, light, dir, n, painter_lights), colour.a);
 }
 
 fn cutout_body(in: TileOut) -> vec4<f32> {

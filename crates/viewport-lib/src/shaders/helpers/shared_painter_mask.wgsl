@@ -48,7 +48,8 @@ struct PainterLights {
     scale: f32,
     _pad0: u32,
     _pad1: u32,
-    // Per range: first layer, last layer, array layer, unused.
+    // Per range: first layer, last layer, array layer, and one more than the
+    // array layer holding the range's light directions (0 for none).
     ranges: array<vec4<u32>, 16>,
 };
 
@@ -67,4 +68,38 @@ fn painter_light_slice(lights: PainterLights, layer: u32) -> i32 {
 // `painter_light_slice` named).
 fn painter_light_apply(rgb: vec3<f32>, light: vec4<f32>, lights: PainterLights) -> vec3<f32> {
     return rgb * light.rgb * lights.scale;
+}
+
+// The array layer holding the light directions for painter `layer`, or -1
+// when its range has none (or no range holds it).
+fn painter_light_dir_slice(lights: PainterLights, layer: u32) -> i32 {
+    for (var i = 0u; i < min(lights.count, 16u); i = i + 1u) {
+        let r = lights.ranges[i];
+        if layer >= r.x && layer <= r.y {
+            return i32(r.w) - 1;
+        }
+    }
+    return -1;
+}
+
+// `rgb` with the world-space normal `n` lit by the light layer texel `light`
+// and the direction texel `dir` under it. `dir` holds the luminance-weighted
+// sum of the unit directions to the lights in `rgb` and the summed weight in
+// `a`; the part of the light they account for is shaded by `n` against
+// their weighted mean, the rest (ambient, global and polygon lights) stays
+// flat. Exact while `n` faces every light; a light behind the normal is
+// averaged in rather than clamped on its own.
+fn painter_light_apply_normal(
+    rgb: vec3<f32>,
+    light: vec4<f32>,
+    dir: vec4<f32>,
+    n: vec3<f32>,
+    lights: PainterLights,
+) -> vec3<f32> {
+    let total = light.rgb * lights.scale;
+    let lum = dot(total, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let w = max(dir.a, 0.0);
+    let direct = clamp(w / max(lum, 1e-6), 0.0, 1.0);
+    let shade = max(dot(n, dir.rgb / max(w, 1e-6)), 0.0);
+    return rgb * total * (1.0 - direct + direct * shade);
 }

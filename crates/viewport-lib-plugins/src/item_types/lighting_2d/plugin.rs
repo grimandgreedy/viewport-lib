@@ -9,7 +9,13 @@ use viewport_lib::plugin_api::{
 /// This type's shaders, as the pipelines compile them.
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     use crate::item_types::shader::wgsl_source;
-    vec![("lighting_2d.wgsl", wgsl_source!("lighting_2d").to_string())]
+    vec![
+        ("lighting_2d.wgsl", wgsl_source!("lighting_2d").to_string()),
+        (
+            "lighting_2d_blur.wgsl",
+            wgsl_source!("lighting_2d_blur").to_string(),
+        ),
+    ]
 }
 
 impl PluginItem for Lighting2dItem {
@@ -28,8 +34,12 @@ pub struct Lighting2dStats {
     pub lights: u32,
     /// Occluder edges in the shadow streams, summed over the items.
     pub edges: u32,
-    /// Render passes encoded before the frame, one per light layer.
+    /// Render passes encoded before the frame into the light layers: one per
+    /// layer, and one more after each light with soft shadows.
     pub passes: u32,
+    /// Passes drawing and blurring soft shadow masks, three per light with
+    /// soft shadows.
+    pub soft_shadow_passes: u32,
 }
 
 /// One light's block, matching `LightBlock` in `lighting_2d.wgsl`.
@@ -51,6 +61,24 @@ struct LightBlock {
 /// Distance between consecutive light blocks: a multiple of the largest
 /// uniform offset alignment any backend asks for.
 const BLOCK_STRIDE: u64 = 768;
+
+/// One blur pass's block, matching `Blur` in `lighting_2d_blur.wgsl`.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct BlurBlock {
+    step: [f32; 2],
+    radius: f32,
+    taps: f32,
+}
+
+/// Distance between consecutive blur blocks.
+const BLUR_STRIDE: u64 = 256;
+
+/// Most samples a blur takes each side; wider blurs space them out.
+const MAX_BLUR_TAPS: f32 = 32.0;
+
+/// The soft shadow masks' format.
+const MASK_FORMAT: viewport_lib::gpu::TextureFormat = viewport_lib::gpu::TextureFormat::R8Unorm;
 
 /// One occluder edge in the vertex stream, matching `EdgeIn`.
 #[repr(C)]
@@ -97,6 +125,9 @@ struct PlaneLight {
     texture: Option<TextureId>,
     casts: bool,
     layers: RangeInclusive<u32>,
+    height: f32,
+    /// Shadow blur radius in device pixels, zero for hard shadows.
+    softness: f32,
 }
 
 impl PlaneLight {
@@ -114,7 +145,7 @@ impl PlaneLight {
         LightBlock {
             view_proj: frame.view_proj.to_cols_array_2d(),
             origin: frame.origin.extend(0.0).to_array(),
-            x_axis: frame.x_axis.extend(0.0).to_array(),
+            x_axis: frame.x_axis.extend(self.height).to_array(),
             y_axis: frame.y_axis.extend(0.0).to_array(),
             light: [self.position.x, self.position.y, reach, self.radius],
             colour: [
@@ -174,6 +205,12 @@ fn resolve(
         texture: None,
         casts: true,
         layers: light.layers.clone(),
+        height: light.height,
+        softness: if light.shadow_softness.is_finite() {
+            light.shadow_softness.max(0.0)
+        } else {
+            0.0
+        },
     };
     match &light.kind {
         Light2dKind::Point => {
@@ -357,13 +394,48 @@ fn directional_reach(
 struct Layouts {
     light_bgl: viewport_lib::gpu::BindGroupLayout,
     texture_bgl: viewport_lib::gpu::BindGroupLayout,
+    /// The light block and the light's texture.
+    accumulate: viewport_lib::gpu::PipelineLayout,
+    /// `accumulate` and the soft shadow mask.
+    soft_light: viewport_lib::gpu::PipelineLayout,
+    shader: viewport_lib::gpu::ShaderModule,
+}
+
+/// One light layer format's light pipelines, for passes with or without the
+/// direction target.
+struct LightPipelines {
+    shadow: viewport_lib::gpu::RenderPipeline,
+    light: viewport_lib::gpu::RenderPipeline,
+    /// The light through a soft shadow mask, built when a light first asks.
+    light_soft: Option<viewport_lib::gpu::RenderPipeline>,
 }
 
 /// The accumulation pipelines for one light layer format.
 struct Accumulate {
     format: viewport_lib::gpu::TextureFormat,
-    shadow: viewport_lib::gpu::RenderPipeline,
-    light: viewport_lib::gpu::RenderPipeline,
+    flat: LightPipelines,
+    /// Built when an item first asks for normals.
+    directions: Option<LightPipelines>,
+}
+
+/// The soft shadow mask pipelines: the shadow geometry into a mask, and the
+/// blur.
+struct SoftPipelines {
+    shadow_mask: viewport_lib::gpu::RenderPipeline,
+    blur: viewport_lib::gpu::RenderPipeline,
+    blur_bgl: viewport_lib::gpu::BindGroupLayout,
+}
+
+/// A viewport's two soft shadow masks, at the light layers' size: the shadow
+/// draws into `a`, blurs across into `b` and back into `a`, which the light
+/// then reads.
+struct SoftMasks {
+    size: [u32; 2],
+    a_view: viewport_lib::gpu::TextureView,
+    b_view: viewport_lib::gpu::TextureView,
+    /// Each mask as a texture group, for the blur and the light.
+    a_bg: viewport_lib::gpu::BindGroup,
+    b_bg: viewport_lib::gpu::BindGroup,
 }
 
 /// A viewport's light layers, one array layer per part, and the stencil they
@@ -388,6 +460,11 @@ struct FrameLayer {
     /// One shadow stream per item, by its place among the kept items.
     edges: Vec<(viewport_lib::gpu::Buffer, u32)>,
     blocks: Option<(viewport_lib::gpu::Buffer, u32, viewport_lib::gpu::BindGroup)>,
+    /// Per part, the array layer holding its light directions.
+    directions: Vec<Option<u32>>,
+    masks: Option<SoftMasks>,
+    /// The blur blocks, two per light with soft shadows, and their capacity.
+    blurs: Option<(viewport_lib::gpu::Buffer, u32, viewport_lib::gpu::BindGroup)>,
     /// Whether the layers hold the full light (a float layer).
     float: bool,
 }
@@ -399,6 +476,7 @@ struct FrameLayer {
 pub struct Lighting2dPlugin {
     layouts: Option<Layouts>,
     accumulate: Vec<Accumulate>,
+    soft: Option<SoftPipelines>,
     /// A white texel and its sampler, bound for lights without a texture.
     white: Option<viewport_lib::gpu::BindGroup>,
     sampler: Option<viewport_lib::gpu::Sampler>,
@@ -454,131 +532,190 @@ impl Lighting2dPlugin {
                 },
             ],
         });
-        Layouts {
-            light_bgl,
-            texture_bgl,
-        }
-    }
-
-    fn build_accumulate(
-        device: &viewport_lib::gpu::Device,
-        layouts: &Layouts,
-        format: viewport_lib::gpu::TextureFormat,
-    ) -> Accumulate {
-        use viewport_lib::gpu;
-        use viewport_lib::plugin_api::builders;
-        let shader = builders::wgsl_module(
+        let accumulate = viewport_lib::plugin_api::builders::pipeline_layout(
+            device,
+            "lighting_2d_layout",
+            &[&light_bgl, &texture_bgl],
+        );
+        let soft_light = viewport_lib::plugin_api::builders::pipeline_layout(
+            device,
+            "lighting_2d_soft_layout",
+            &[&light_bgl, &texture_bgl, &texture_bgl],
+        );
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "lighting_2d_shader",
             crate::item_types::shader::wgsl_source!("lighting_2d"),
         );
-        let layout = builders::pipeline_layout(
+        Layouts {
+            light_bgl,
+            texture_bgl,
+            accumulate,
+            soft_light,
+            shader,
+        }
+    }
+
+    /// The shadow pipeline for one light layer format, writing only the
+    /// stencil, with the direction target when `directions`.
+    fn shadow_pipeline(
+        device: &viewport_lib::gpu::Device,
+        layouts: &Layouts,
+        format: viewport_lib::gpu::TextureFormat,
+        directions: bool,
+    ) -> viewport_lib::gpu::RenderPipeline {
+        use viewport_lib::gpu;
+        let silent = gpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: gpu::ColorWrites::empty(),
+        };
+        let targets = [Some(silent.clone()), Some(silent)];
+        accumulate_pipeline(
             device,
-            "lighting_2d_layout",
-            &[&layouts.light_bgl, &layouts.texture_bgl],
-        );
-        let stencil = |compare, pass_op| {
-            let face = gpu::StencilFaceState {
-                compare,
-                fail_op: gpu::StencilOperation::Keep,
-                depth_fail_op: gpu::StencilOperation::Keep,
-                pass_op,
-            };
-            let mut state =
-                builders::depth_stencil(STENCIL_FORMAT, false, gpu::CompareFunction::Always);
-            state.stencil = gpu::StencilState {
-                front: face,
-                back: face,
-                read_mask: 0xff,
-                write_mask: 0xff,
-            };
-            state
-        };
-        let edge_attrs = [
-            gpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: gpu::VertexFormat::Float32x4,
-            },
-            gpu::VertexAttribute {
-                offset: 16,
-                shader_location: 1,
-                format: gpu::VertexFormat::Uint32,
-            },
-        ];
-        let edge_layout = [gpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<GpuEdge>() as u64,
-            step_mode: gpu::VertexStepMode::Instance,
-            attributes: &edge_attrs,
-        }];
-        let pipeline = |label,
-                        vs,
-                        fs,
-                        buffers: &[gpu::VertexBufferLayout<'_>],
-                        target: gpu::ColorTargetState,
-                        depth_stencil| {
-            builders::render_pipeline(
-                device,
-                builders::RenderPipelineDesc {
-                    label,
-                    layout: &layout,
-                    vertex_module: &shader,
-                    vertex_entry: vs,
-                    vertex_buffers: buffers,
-                    fragment: Some(gpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fs),
-                        targets: &[Some(target)],
-                        compilation_options: gpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: gpu::PrimitiveState {
-                        topology: gpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil,
-                    multisample: gpu::MultisampleState::default(),
-                    cache: None,
-                },
-            )
-        };
-        // The shadows touch only the stencil: the light's index where an edge
-        // casts.
-        let shadow = pipeline(
+            &layouts.shader,
+            &layouts.accumulate,
             "lighting_2d_shadow_pipeline",
             "vs_shadow",
             "fs_shadow",
-            &edge_layout,
-            gpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: gpu::ColorWrites::empty(),
-            },
-            Some(stencil(
+            true,
+            &targets[..if directions { 2 } else { 1 }],
+            Some(stencil_state(
                 gpu::CompareFunction::Always,
                 gpu::StencilOperation::Replace,
             )),
-        );
-        // The light adds where the stencil does not hold its index.
-        let light = pipeline(
-            "lighting_2d_light_pipeline",
-            "vs_light",
-            "fs_light",
-            &[],
-            gpu::ColorTargetState {
-                format,
-                blend: Some(builders::ADDITIVE_BLEND),
-                write_mask: gpu::ColorWrites::COLOR,
-            },
-            Some(stencil(
-                gpu::CompareFunction::NotEqual,
-                gpu::StencilOperation::Keep,
-            )),
-        );
-        Accumulate {
+        )
+    }
+
+    /// The light pipeline for one light layer format: added where the
+    /// stencil does not hold the light's index, or through its blurred mask
+    /// when `soft`; with the direction target when `directions`.
+    fn light_pipeline(
+        device: &viewport_lib::gpu::Device,
+        layouts: &Layouts,
+        format: viewport_lib::gpu::TextureFormat,
+        directions: bool,
+        soft: bool,
+    ) -> viewport_lib::gpu::RenderPipeline {
+        use viewport_lib::gpu;
+        use viewport_lib::plugin_api::builders;
+        let add = gpu::ColorTargetState {
             format,
-            shadow,
-            light,
+            blend: Some(builders::ADDITIVE_BLEND),
+            write_mask: gpu::ColorWrites::ALL,
+        };
+        let colour = gpu::ColorTargetState {
+            write_mask: gpu::ColorWrites::COLOR,
+            ..add.clone()
+        };
+        let targets = [Some(colour), Some(add)];
+        let (label, fs) = match (directions, soft) {
+            (false, false) => ("lighting_2d_light_pipeline", "fs_light"),
+            (false, true) => ("lighting_2d_light_soft_pipeline", "fs_light_soft"),
+            (true, false) => ("lighting_2d_light_dir_pipeline", "fs_light_dir"),
+            (true, true) => ("lighting_2d_light_dir_soft_pipeline", "fs_light_dir_soft"),
+        };
+        let compare = if soft {
+            gpu::CompareFunction::Always
+        } else {
+            gpu::CompareFunction::NotEqual
+        };
+        accumulate_pipeline(
+            device,
+            &layouts.shader,
+            if soft {
+                &layouts.soft_light
+            } else {
+                &layouts.accumulate
+            },
+            label,
+            "vs_light",
+            fs,
+            false,
+            &targets[..if directions { 2 } else { 1 }],
+            Some(stencil_state(compare, gpu::StencilOperation::Keep)),
+        )
+    }
+
+    fn light_pipelines(
+        device: &viewport_lib::gpu::Device,
+        layouts: &Layouts,
+        format: viewport_lib::gpu::TextureFormat,
+        directions: bool,
+    ) -> LightPipelines {
+        LightPipelines {
+            shadow: Self::shadow_pipeline(device, layouts, format, directions),
+            light: Self::light_pipeline(device, layouts, format, directions, false),
+            light_soft: None,
+        }
+    }
+
+    fn soft_pipelines(device: &viewport_lib::gpu::Device, layouts: &Layouts) -> SoftPipelines {
+        use viewport_lib::gpu;
+        use viewport_lib::plugin_api::builders;
+        let blur_bgl = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
+            label: Some("lighting_2d_blur_bgl"),
+            entries: &[gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: gpu::ShaderStages::FRAGMENT,
+                ty: gpu::BindingType::Buffer {
+                    ty: gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: gpu::BufferSize::new(std::mem::size_of::<BlurBlock>() as u64),
+                },
+                count: None,
+            }],
+        });
+        let mask_target = [Some(gpu::ColorTargetState {
+            format: MASK_FORMAT,
+            blend: None,
+            write_mask: gpu::ColorWrites::ALL,
+        })];
+        let shadow_mask = accumulate_pipeline(
+            device,
+            &layouts.shader,
+            &layouts.accumulate,
+            "lighting_2d_shadow_mask_pipeline",
+            "vs_shadow",
+            "fs_shadow_mask",
+            true,
+            &mask_target,
+            None,
+        );
+        let shader = builders::wgsl_module(
+            device,
+            "lighting_2d_blur_shader",
+            crate::item_types::shader::wgsl_source!("lighting_2d_blur"),
+        );
+        let layout = builders::pipeline_layout(
+            device,
+            "lighting_2d_blur_layout",
+            &[&blur_bgl, &layouts.texture_bgl],
+        );
+        let blur = builders::render_pipeline(
+            device,
+            builders::RenderPipelineDesc {
+                label: "lighting_2d_blur_pipeline",
+                layout: &layout,
+                vertex_module: &shader,
+                vertex_entry: "vs_blur",
+                vertex_buffers: &[],
+                fragment: Some(gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_blur"),
+                    targets: &mask_target,
+                    compilation_options: gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: gpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: gpu::MultisampleState::default(),
+                cache: None,
+            },
+        );
+        SoftPipelines {
+            shadow_mask,
+            blur,
+            blur_bgl,
         }
     }
 
@@ -669,6 +806,91 @@ fn texture_bind_group(
     })
 }
 
+/// The stencil state of the accumulation pipelines.
+fn stencil_state(
+    compare: viewport_lib::gpu::CompareFunction,
+    pass_op: viewport_lib::gpu::StencilOperation,
+) -> viewport_lib::gpu::DepthStencilState {
+    use viewport_lib::gpu;
+    let face = gpu::StencilFaceState {
+        compare,
+        fail_op: gpu::StencilOperation::Keep,
+        depth_fail_op: gpu::StencilOperation::Keep,
+        pass_op,
+    };
+    let mut state = viewport_lib::plugin_api::builders::depth_stencil(
+        STENCIL_FORMAT,
+        false,
+        gpu::CompareFunction::Always,
+    );
+    state.stencil = gpu::StencilState {
+        front: face,
+        back: face,
+        read_mask: 0xff,
+        write_mask: 0xff,
+    };
+    state
+}
+
+/// A pipeline over `lighting_2d.wgsl`: the edge stream for the shadow
+/// geometry (`edges`), else none.
+#[allow(clippy::too_many_arguments)]
+fn accumulate_pipeline(
+    device: &viewport_lib::gpu::Device,
+    shader: &viewport_lib::gpu::ShaderModule,
+    layout: &viewport_lib::gpu::PipelineLayout,
+    label: &'static str,
+    vs: &'static str,
+    fs: &'static str,
+    edges: bool,
+    targets: &[Option<viewport_lib::gpu::ColorTargetState>],
+    depth_stencil: Option<viewport_lib::gpu::DepthStencilState>,
+) -> viewport_lib::gpu::RenderPipeline {
+    use viewport_lib::gpu;
+    use viewport_lib::plugin_api::builders;
+    let edge_attrs = [
+        gpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: gpu::VertexFormat::Float32x4,
+        },
+        gpu::VertexAttribute {
+            offset: 16,
+            shader_location: 1,
+            format: gpu::VertexFormat::Uint32,
+        },
+    ];
+    let edge_layout = [gpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<GpuEdge>() as u64,
+        step_mode: gpu::VertexStepMode::Instance,
+        attributes: &edge_attrs,
+    }];
+    builders::render_pipeline(
+        device,
+        builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex_module: shader,
+            vertex_entry: vs,
+            vertex_buffers: if edges { &edge_layout } else { &[] },
+            fragment: Some(gpu::FragmentState {
+                module: shader,
+                entry_point: Some(fs),
+                targets,
+                compilation_options: gpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: gpu::PrimitiveState {
+                topology: gpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil,
+            multisample: gpu::MultisampleState::default(),
+            cache: None,
+        },
+    )
+}
+
 /// The light layers in `targets`, allocated or reallocated for `size`,
 /// `format` and at least `count` array layers.
 fn layer_targets<'a>(
@@ -737,6 +959,119 @@ fn layer_targets<'a>(
     targets.as_ref().expect("made above")
 }
 
+/// The two soft shadow masks at `size`, with a texture group over each.
+fn soft_masks(
+    device: &viewport_lib::gpu::Device,
+    layouts: &Layouts,
+    sampler: &viewport_lib::gpu::Sampler,
+    size: [u32; 2],
+) -> SoftMasks {
+    use viewport_lib::gpu;
+    let mask = |label| {
+        device
+            .create_texture(&gpu::TextureDescriptor {
+                label: Some(label),
+                size: gpu::Extent3d {
+                    width: size[0].max(1),
+                    height: size[1].max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: gpu::TextureDimension::D2,
+                format: MASK_FORMAT,
+                usage: gpu::TextureUsages::RENDER_ATTACHMENT | gpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&gpu::TextureViewDescriptor::default())
+    };
+    let a_view = mask("lighting_2d_soft_mask_a");
+    let b_view = mask("lighting_2d_soft_mask_b");
+    SoftMasks {
+        size,
+        a_bg: texture_bind_group(device, &layouts.texture_bgl, &a_view, sampler),
+        b_bg: texture_bind_group(device, &layouts.texture_bgl, &b_view, sampler),
+        a_view,
+        b_view,
+    }
+}
+
+/// A pass into one soft shadow mask, cleared to unshadowed.
+fn mask_pass<'e>(
+    encoder: &'e mut viewport_lib::gpu::CommandEncoder,
+    view: &viewport_lib::gpu::TextureView,
+) -> viewport_lib::gpu::RenderPass<'e> {
+    use viewport_lib::gpu;
+    encoder.begin_render_pass(&gpu::RenderPassDescriptor {
+        #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
+        multiview_mask: None,
+        label: Some("lighting_2d_soft_mask"),
+        color_attachments: &[Some(gpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: gpu::Operations {
+                load: gpu::LoadOp::Clear(gpu::Color::TRANSPARENT),
+                store: gpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
+}
+
+/// A pass into one part's light layer and, with normals, its direction
+/// layer: cleared to `clear` (directions to zero), else loaded. The stencil
+/// is cleared either way, since each light stamps its shadow before it
+/// draws.
+fn layer_pass<'e>(
+    encoder: &'e mut viewport_lib::gpu::CommandEncoder,
+    colour: &viewport_lib::gpu::TextureView,
+    direction: Option<&viewport_lib::gpu::TextureView>,
+    stencil: &viewport_lib::gpu::TextureView,
+    clear: Option<viewport_lib::gpu::Color>,
+) -> viewport_lib::gpu::RenderPass<'e> {
+    use viewport_lib::gpu;
+    let attachment = |view, colour: gpu::Color| {
+        Some(gpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: gpu::Operations {
+                load: match clear {
+                    Some(_) => gpu::LoadOp::Clear(colour),
+                    None => gpu::LoadOp::Load,
+                },
+                store: gpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })
+    };
+    let attachments = [
+        attachment(colour, clear.unwrap_or(gpu::Color::BLACK)),
+        direction.and_then(|view| attachment(view, gpu::Color::TRANSPARENT)),
+    ];
+    encoder.begin_render_pass(&gpu::RenderPassDescriptor {
+        #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
+        multiview_mask: None,
+        label: Some("lighting_2d_lights"),
+        color_attachments: &attachments[..if direction.is_some() { 2 } else { 1 }],
+        depth_stencil_attachment: Some(gpu::RenderPassDepthStencilAttachment {
+            view: stencil,
+            depth_ops: Some(gpu::Operations {
+                load: gpu::LoadOp::Clear(viewport_lib::plugin_api::depth::DEPTH_CLEAR),
+                store: gpu::StoreOp::Discard,
+            }),
+            stencil_ops: Some(gpu::Operations {
+                load: gpu::LoadOp::Clear(0),
+                store: gpu::StoreOp::Discard,
+            }),
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
+}
+
 /// Whether two layer ranges share a layer.
 fn ranges_overlap(a: &RangeInclusive<u32>, b: &RangeInclusive<u32>) -> bool {
     a.start() <= b.end() && b.start() <= a.end()
@@ -749,6 +1084,8 @@ struct ItemPlan {
     lights: Vec<PlaneLight>,
     edges: Vec<GpuEdge>,
     shadows: bool,
+    /// Whether the item's layers carry light directions.
+    normals: bool,
     parts: Vec<(RangeInclusive<u32>, Vec<usize>)>,
 }
 
@@ -812,10 +1149,6 @@ impl ItemTypePlugin for Lighting2dPlugin {
         } else {
             UNORM_LAYER_FORMAT
         };
-        if !self.accumulate.iter().any(|a| a.format == format) {
-            let built = Self::build_accumulate(device, self.layouts.as_ref().unwrap(), format);
-            self.accumulate.push(built);
-        }
         let scale = if float { 1.0 } else { 0.5 };
         let size = [
             (ctx.viewport_size.x * ctx.pixels_per_point)
@@ -880,6 +1213,7 @@ impl ItemTypePlugin for Lighting2dPlugin {
                     lights,
                     edges,
                     shadows: item.shadows,
+                    normals: item.normals && float,
                 }
             })
             .collect();
@@ -903,10 +1237,84 @@ impl ItemTypePlugin for Lighting2dPlugin {
             });
         }
         let part_count: usize = plans.iter().map(|p| p.parts.len()).sum();
+        if !float && kept.iter().any(|(_, item)| item.normals) {
+            ctx.report_notice(
+                viewport_lib::Severity::Info,
+                "normals_need_float_light_layer",
+                || {
+                    "2D lighting normals need float light layers, which this device's \
+                     compatibility tier lacks; normal-mapped content is lit flat"
+                        .to_string()
+                },
+            );
+        }
+
+        // The direction layers follow the colour layers in the same array, one
+        // per part of an item with normals.
+        let mut directions = Vec::with_capacity(part_count);
+        let mut layer_count = part_count as u32;
+        for plan in &plans {
+            for _ in &plan.parts {
+                directions.push(plan.normals.then(|| {
+                    layer_count += 1;
+                    layer_count - 1
+                }));
+            }
+        }
+        let layer_count = layer_count as usize;
+        // Lights with soft shadows, which blur twice each.
+        let soft_count: usize = plans
+            .iter()
+            .filter(|p| p.shadows && !p.edges.is_empty())
+            .map(|p| {
+                p.parts
+                    .iter()
+                    .flat_map(|(_, lit)| lit.iter())
+                    .filter(|&&l| p.lights[l].casts && p.lights[l].softness > 0.0)
+                    .count()
+            })
+            .sum();
+
+        // The pipelines this frame draws with.
+        {
+            let layouts = self.layouts.as_ref().expect("made above");
+            let index = match self.accumulate.iter().position(|a| a.format == format) {
+                Some(i) => i,
+                None => {
+                    self.accumulate.push(Accumulate {
+                        format,
+                        flat: Self::light_pipelines(device, layouts, format, false),
+                        directions: None,
+                    });
+                    self.accumulate.len() - 1
+                }
+            };
+            let acc = &mut self.accumulate[index];
+            if plans.iter().any(|p| p.normals) && acc.directions.is_none() {
+                acc.directions = Some(Self::light_pipelines(device, layouts, format, true));
+            }
+            if soft_count > 0 {
+                if self.soft.is_none() {
+                    self.soft = Some(Self::soft_pipelines(device, layouts));
+                }
+                for (set, dir) in [
+                    (Some(&mut acc.flat), false),
+                    (acc.directions.as_mut(), true),
+                ] {
+                    if let Some(set) = set
+                        && set.light_soft.is_none()
+                    {
+                        set.light_soft =
+                            Some(Self::light_pipeline(device, layouts, format, dir, true));
+                    }
+                }
+            }
+        }
 
         let Self {
             layouts,
             accumulate,
+            soft: soft_pipelines,
             white,
             sampler,
             frame,
@@ -920,8 +1328,72 @@ impl ItemTypePlugin for Lighting2dPlugin {
             .iter()
             .find(|a| a.format == format)
             .expect("just built");
+        let soft_pipelines = soft_pipelines.as_ref();
         let frame = frame.get_mut(ctx.viewport_index);
         frame.float = float;
+        frame.directions = directions;
+
+        // The soft shadow masks and the blur blocks, two per soft light.
+        if soft_count > 0 {
+            if frame.masks.as_ref().is_none_or(|m| m.size != size) {
+                frame.masks = Some(soft_masks(device, layouts, sampler, size));
+            }
+            let needed = (soft_count as u32 * 2).max(1);
+            if let Some(sp) = soft_pipelines
+                && frame.blurs.as_ref().is_none_or(|(_, cap, _)| *cap < needed)
+            {
+                let capacity = needed.next_power_of_two().max(4);
+                let buffer = device.create_buffer(&gpu::BufferDescriptor {
+                    label: Some("lighting_2d_blurs"),
+                    size: BLUR_STRIDE * capacity as u64,
+                    usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let bg = device.create_bind_group(&gpu::BindGroupDescriptor {
+                    label: Some("lighting_2d_blur_bg"),
+                    layout: &sp.blur_bgl,
+                    entries: &[gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gpu::BindingResource::Buffer(gpu::BufferBinding {
+                            buffer: &buffer,
+                            offset: 0,
+                            size: gpu::BufferSize::new(std::mem::size_of::<BlurBlock>() as u64),
+                        }),
+                    }],
+                });
+                frame.blurs = Some((buffer, capacity, bg));
+            }
+            if let Some((buffer, _, _)) = &frame.blurs {
+                let mut data = Vec::with_capacity(soft_count * 2 * BLUR_STRIDE as usize);
+                for plan in plans.iter().filter(|p| p.shadows && !p.edges.is_empty()) {
+                    for (_, lit) in &plan.parts {
+                        for &l in lit {
+                            let light = &plan.lights[l];
+                            if !light.casts || light.softness <= 0.0 {
+                                continue;
+                            }
+                            let taps = light.softness.ceil().clamp(1.0, MAX_BLUR_TAPS);
+                            for step in [[1.0 / size[0] as f32, 0.0], [0.0, 1.0 / size[1] as f32]] {
+                                let block = BlurBlock {
+                                    step,
+                                    radius: light.softness,
+                                    taps,
+                                };
+                                let at = data.len();
+                                data.resize(at + BLUR_STRIDE as usize, 0u8);
+                                data[at..at + std::mem::size_of::<BlurBlock>()]
+                                    .copy_from_slice(bytemuck::bytes_of(&block));
+                            }
+                        }
+                    }
+                }
+                queue.write_buffer(buffer, 0, &data);
+            }
+        }
+        let soft_ready = soft_count > 0
+            && soft_pipelines.is_some()
+            && frame.masks.is_some()
+            && frame.blurs.is_some();
 
         // The light blocks, every part's lights in order.
         let block_count: usize = plans
@@ -1032,76 +1504,126 @@ impl ItemTypePlugin for Lighting2dPlugin {
         let mut encoder = device.create_command_encoder(&gpu::CommandEncoderDescriptor {
             label: Some("lighting_2d_encoder"),
         });
-        let targets = layer_targets(&mut frame.targets, device, part_count, size, format);
+        let targets = layer_targets(&mut frame.targets, device, layer_count, size, format);
         let mut totals = Lighting2dStats::default();
         let mut draws = 0u32;
         let mut slot = 0u32;
+        let mut blur_slot = 0u32;
         let mut part_index = 0usize;
         for (i, plan) in plans.iter().enumerate() {
             totals.edges += plan.edges.len() as u32;
+            let (edges, edge_count) = (&frame.edges[i].0, plan.edges.len() as u32);
+            let set = if plan.normals {
+                accumulate.directions.as_ref().expect("built above")
+            } else {
+                &accumulate.flat
+            };
+            let casts = |light: &PlaneLight| plan.shadows && light.casts && edge_count > 0;
+            let soft = |light: &PlaneLight| soft_ready && casts(light) && light.softness > 0.0;
             for (layers, lit) in &plan.parts {
                 let [r, g, b] = plan.ambient.map(|c| c * scale);
-                {
-                    let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
-                        #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
-                        multiview_mask: None,
-                        label: Some("lighting_2d_lights"),
-                        color_attachments: &[Some(gpu::RenderPassColorAttachment {
-                            view: &targets.slice_views[part_index],
-                            resolve_target: None,
-                            ops: gpu::Operations {
-                                load: gpu::LoadOp::Clear(gpu::Color {
-                                    r: r as f64,
-                                    g: g as f64,
-                                    b: b as f64,
-                                    a: 1.0,
-                                }),
-                                store: gpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(gpu::RenderPassDepthStencilAttachment {
-                            view: &targets.stencil_view,
-                            depth_ops: Some(gpu::Operations {
-                                load: gpu::LoadOp::Clear(
-                                    viewport_lib::plugin_api::depth::DEPTH_CLEAR,
-                                ),
-                                store: gpu::StoreOp::Discard,
-                            }),
-                            stencil_ops: Some(gpu::Operations {
-                                load: gpu::LoadOp::Clear(0),
-                                store: gpu::StoreOp::Discard,
-                            }),
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
+                let colour_view = &targets.slice_views[part_index];
+                let direction_view =
+                    frame.directions[part_index].map(|d| &targets.slice_views[d as usize]);
+                let base = slot;
+                // The part's lights in runs: a light with soft shadows first
+                // draws its mask in passes of its own, so the layer pass ends
+                // before it and starts again after.
+                let mut k = 0usize;
+                let mut first = true;
+                loop {
+                    // The light whose mask the passes below just made.
+                    let mut masked = None;
+                    let soft_light = lit.get(k).map(|&l| &plan.lights[l]).filter(|l| soft(l));
+                    if let (Some(_), Some(sp), Some(masks), Some((_, _, blur_bg))) = (
+                        soft_light,
+                        soft_pipelines,
+                        frame.masks.as_ref(),
+                        frame.blurs.as_ref(),
+                    ) {
+                        let offset = (base + k as u32) * BLOCK_STRIDE as u32;
+                        {
+                            let mut pass = mask_pass(&mut encoder, &masks.a_view);
+                            pass.set_pipeline(&sp.shadow_mask);
+                            pass.set_bind_group(0, light_bg, &[offset]);
+                            pass.set_bind_group(1, white, &[]);
+                            pass.set_vertex_buffer(0, edges.slice(..));
+                            pass.draw(0..6, 0..edge_count);
+                        }
+                        for (from, to) in
+                            [(&masks.a_bg, &masks.b_view), (&masks.b_bg, &masks.a_view)]
+                        {
+                            let mut pass = mask_pass(&mut encoder, to);
+                            pass.set_pipeline(&sp.blur);
+                            pass.set_bind_group(0, blur_bg, &[blur_slot * BLUR_STRIDE as u32]);
+                            pass.set_bind_group(1, from, &[]);
+                            pass.draw(0..3, 0..1);
+                            blur_slot += 1;
+                        }
+                        totals.soft_shadow_passes += 3;
+                        draws += 3;
+                        masked = Some(k);
+                    }
+                    let clear = first.then_some(gpu::Color {
+                        r: r as f64,
+                        g: g as f64,
+                        b: b as f64,
+                        a: 1.0,
                     });
-                    let (edges, edge_count) = (&frame.edges[i].0, plan.edges.len() as u32);
-                    for (j, &l) in lit.iter().enumerate() {
+                    first = false;
+                    let mut pass = layer_pass(
+                        &mut encoder,
+                        colour_view,
+                        direction_view,
+                        &targets.stencil_view,
+                        clear,
+                    );
+                    totals.passes += 1;
+                    while let Some(&l) = lit.get(k) {
                         let light = &plan.lights[l];
+                        let is_soft = soft(light);
+                        // A soft light draws only first in a pass, just after
+                        // its mask.
+                        if is_soft && masked != Some(k) {
+                            break;
+                        }
                         // Each light stamps its own value, so no light's
                         // shadow needs clearing before the next.
-                        pass.set_bind_group(0, light_bg, &[slot * BLOCK_STRIDE as u32]);
+                        pass.set_bind_group(
+                            0,
+                            light_bg,
+                            &[(base + k as u32) * BLOCK_STRIDE as u32],
+                        );
                         let texture_bg = light
                             .texture
                             .and_then(|id| texture_bgs.iter().find(|(t, _)| *t == id))
                             .map_or(white, |(_, bg)| bg);
                         pass.set_bind_group(1, texture_bg, &[]);
-                        pass.set_stencil_reference(j as u32 + 1);
-                        if plan.shadows && light.casts && edge_count > 0 {
-                            pass.set_pipeline(&accumulate.shadow);
-                            pass.set_vertex_buffer(0, edges.slice(..));
-                            pass.draw(0..6, 0..edge_count);
-                            draws += 1;
+                        pass.set_stencil_reference(k as u32 + 1);
+                        if is_soft {
+                            let masks = frame.masks.as_ref().expect("checked above");
+                            pass.set_bind_group(2, &masks.a_bg, &[]);
+                            pass.set_pipeline(set.light_soft.as_ref().expect("built above"));
+                        } else {
+                            if casts(light) {
+                                pass.set_pipeline(&set.shadow);
+                                pass.set_vertex_buffer(0, edges.slice(..));
+                                pass.draw(0..6, 0..edge_count);
+                                draws += 1;
+                            }
+                            pass.set_pipeline(&set.light);
                         }
-                        pass.set_pipeline(&accumulate.light);
                         pass.draw(0..6, 0..1);
                         draws += 1;
-                        slot += 1;
+                        k += 1;
+                    }
+                    drop(pass);
+                    if k >= lit.len() {
+                        break;
                     }
                 }
+                slot = base + lit.len() as u32;
                 totals.lights += lit.len() as u32;
-                totals.passes += 1;
                 frame.parts.push(layers.clone());
                 part_index += 1;
             }
@@ -1128,11 +1650,14 @@ impl ItemTypePlugin for Lighting2dPlugin {
             return None;
         }
         let targets = frame.targets.as_ref()?;
-        Some(PainterLightLayers::new(
-            targets.array_view.clone(),
-            frame.parts.clone(),
-            if frame.float { 1.0 } else { 2.0 },
-        ))
+        Some(
+            PainterLightLayers::new(
+                targets.array_view.clone(),
+                frame.parts.clone(),
+                if frame.float { 1.0 } else { 2.0 },
+            )
+            .with_directions(frame.directions.clone()),
+        )
     }
 }
 

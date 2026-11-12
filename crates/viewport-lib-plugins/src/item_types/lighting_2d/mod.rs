@@ -36,6 +36,22 @@
 //! [`MAX_PAINTER_LIGHT_RANGES`](viewport_lib::resources::MAX_PAINTER_LIGHT_RANGES)
 //! parts a frame; content in the rest is not lit.
 //!
+//! With [`Lighting2dItem::normals`] on, each light layer gets a second array
+//! layer holding the direction its light arrives from, weighted by how much
+//! each light adds, and a sprite with a
+//! [`normal_texture_id`](super::sprite::SpriteItem::normal_texture_id) or a
+//! tile layer whose tileset has a
+//! [`normal_atlas`](super::tilemap::Tileset::normal_atlas) shades the light
+//! by its normal against that direction, using each light's
+//! [`height`](Light2d::height). Ambient, global and polygon light stays flat.
+//! Where several lights overlap they shade as one light from their weighted
+//! mean direction, which is exact while the normal faces all of them.
+//!
+//! A light with a [`shadow_softness`](Light2d::shadow_softness) draws its
+//! shadows into a mask, blurs it over that many device pixels and adds its
+//! light through the blurred mask instead of the stencil, so its shadow edges
+//! fade; that costs three extra passes for the light.
+//!
 //! The layers run whenever an item is submitted, lights or not, so the
 //! ambient light darkens lit content with every light off. The background is
 //! never lit.
@@ -119,6 +135,12 @@ pub struct Lighting2dItem {
     /// The painter layers this item lights: lit content on these layers
     /// samples this item's light layer. Default every layer.
     pub layers: RangeInclusive<u32>,
+    /// Whether the layers also carry the direction each light arrives from,
+    /// so sprites and tiles with a normal map are shaded by it. Content
+    /// without one is lit flat either way. Needs float light layers: where
+    /// the device has no HDR path the layers stay flat and a notice says so.
+    /// Default `false`.
+    pub normals: bool,
     /// Visibility. A hidden item draws no layer.
     pub settings: ItemSettings,
 }
@@ -136,6 +158,7 @@ impl Default for Lighting2dItem {
             lights: Vec::new(),
             use_frame_lights: true,
             layers: 0..=u32::MAX,
+            normals: false,
             settings: ItemSettings::default(),
         }
     }
@@ -163,9 +186,17 @@ pub struct Light2d {
     pub intensity: f32,
     /// How a point, cone or polygon light fades. Default [`Falloff::Smooth`].
     pub falloff: Falloff,
-    /// Height of the light above the plane, in plane units. Content lit flat
-    /// ignores it. Default `0.0`.
+    /// Height of the light above the plane, in plane units. Content with a
+    /// normal map under [`Lighting2dItem::normals`] is shaded by the
+    /// direction from it to the light raised by this height, so at `0.0` a
+    /// flat-facing normal meets the light edge-on and stays dark; content lit
+    /// flat ignores it. For a directional light it is the rise per plane unit
+    /// of travel. Default `0.0`.
     pub height: f32,
+    /// Width of the soft edge of the light's shadows, in device pixels: its
+    /// shadows are blurred over this radius. `0.0` keeps hard shadows and
+    /// costs nothing extra. Default `0.0`.
+    pub shadow_softness: f32,
     /// The painter layers the light lights, within its item's range. Default
     /// every layer.
     pub layers: RangeInclusive<u32>,
@@ -181,6 +212,7 @@ impl Light2d {
             intensity: 1.0,
             falloff: Falloff::Smooth,
             height: 0.0,
+            shadow_softness: 0.0,
             layers: 0..=u32::MAX,
         }
     }
@@ -262,6 +294,12 @@ impl Light2d {
     /// This light at `height` above the plane.
     pub fn with_height(mut self, height: f32) -> Self {
         self.height = height;
+        self
+    }
+
+    /// This light with shadows blurred over `softness` device pixels.
+    pub fn with_shadow_softness(mut self, softness: f32) -> Self {
+        self.shadow_softness = softness;
         self
     }
 

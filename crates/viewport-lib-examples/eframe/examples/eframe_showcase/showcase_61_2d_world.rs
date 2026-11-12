@@ -25,7 +25,8 @@
 //!   between the rows.
 //! - Eight torches and three wisps as frame point lights through
 //!   `Lighting2dItem`, with hard shadows from the walls, the plank platforms
-//!   and three standing-stone sprites; the player's lantern as a cone light;
+//!   and three standing-stone sprites, rounded by a normal map; the player's
+//!   lantern as a cone light with soft shadows;
 //!   and a violet light over the guard restricted to the actors' painter
 //!   layer, so it lights them and not the tiles.
 //! - GPU particles with additive blend for the torch flames.
@@ -107,6 +108,15 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         .on_hover_text("The player's lantern as a 2D cone light facing the way they walk; off, a point light. Clearest at night");
     ui.add_enabled(o.guard, egui::Checkbox::new(&mut o.actor_light, "Actor-only light"))
         .on_hover_text("A violet light over the guard that lights painter layer 1 (the actors) and not the tiles. Clearest at night");
+    ui.checkbox(&mut o.normal_stones, "Normal-mapped stones")
+        .on_hover_text("The standing stones round away from the light by a normal map; the torches and the lantern light their near sides. Clearest at night");
+    ui.add_enabled(
+        o.cone_lantern,
+        egui::Checkbox::new(&mut o.soft_shadows, "Soft lantern shadows"),
+    )
+    .on_hover_text(
+        "The cone lantern's shadows blurred over 6 device pixels at their edges. Clearest at night",
+    );
     ui.checkbox(&mut o.bitmap_hud, "Bitmap-font HUD")
         .on_hover_text(
             "HP and score in a 5 x 7 bitmap face, drawn at a whole multiple of its size",

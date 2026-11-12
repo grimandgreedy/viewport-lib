@@ -2,7 +2,8 @@
 // front of each body. The structs must match `TilesetUniformData` and
 // `LayerUniformData` in `store.rs` exactly.
 //
-// Group 1: the uploaded map's tileset uniform, atlas and sampler.
+// Group 1: the uploaded map's tileset uniform, atlas, sampler and normal
+//          atlas.
 // Group 2: the drawn layer's uniform, at a dynamic offset.
 //
 // One instance per occupied cell, six vertices each (two triangles):
@@ -24,7 +25,8 @@ struct TilesetUniform {
     // 3 rows staggered. Bit 2: the even columns or rows are shifted. Bit 3:
     // hexagonal, where the diagonal flag and flag bit 4 turn the tile.
     orientation: u32,
-    _pad0:       u32,
+    // 1 when the normal atlas is the tileset's own, not the flat fallback.
+    has_normal_atlas: u32,
     // A staggered grid's column step, row step and shift, in cells.
     grid:        vec4<f32>,
     // Per size slot: the image size in texels (xy) and where the quad's
@@ -59,6 +61,7 @@ struct LayerUniform {
 @group(1) @binding(0) var<uniform> tileset:       TilesetUniform;
 @group(1) @binding(1) var          atlas:         texture_2d<f32>;
 @group(1) @binding(2) var          atlas_sampler: sampler;
+@group(1) @binding(3) var          normal_atlas:  texture_2d<f32>;
 @group(2) @binding(0) var<uniform> layer:         LayerUniform;
 
 struct TileIn {
@@ -80,6 +83,8 @@ struct TileOut {
     @location(4) @interpolate(flat) cell:      u32,
     // The clip position again, for the fragment's place on the painter mask.
     @location(5)                    mask_clip: vec4<f32>,
+    // The instance's flip and turn flags.
+    @location(6) @interpolate(flat) flags:     u32,
 };
 
 // Corner of the unit cell, 0..1 with y up the plane (two CCW triangles).
@@ -233,16 +238,67 @@ fn tile_vertex(in: TileIn) -> TileOut {
     out.tint = in.tint * layer.tint;
     out.world_pos = world;
     out.cell = in.cell;
+    out.flags = in.flags;
     return out;
 }
 
-// The tile's colour at this fragment: the atlas texel times the tints. The
-// atlas is read at its top level, clamped half a texel inside the tile, so a
-// linear filter never reaches a neighbouring tile.
-fn tile_colour(in: TileOut) -> vec4<f32> {
-    let dims = vec2<f32>(textureDimensions(atlas, 0));
+// The position under this fragment in an atlas `dims` texels across,
+// clamped half a texel inside the tile so a linear filter never reaches a
+// neighbouring tile.
+fn tile_atlas_uv(in: TileOut, dims: vec2<u32>) -> vec2<f32> {
     let t = clamp(in.texel, in.rect.xy + vec2<f32>(0.5), in.rect.zw - vec2<f32>(0.5));
-    let sampled = textureSampleLevel(atlas, atlas_sampler, t / dims, 0.0);
+    return t / vec2<f32>(dims);
+}
+
+// The world normal of the tile's normal atlas at this fragment, taken
+// through the tile's flips and turns the way its texels were, then onto the
+// layer's plane.
+fn tile_normal(in: TileOut) -> vec3<f32> {
+    let mapped = textureSampleLevel(
+        normal_atlas,
+        atlas_sampler,
+        tile_atlas_uv(in, textureDimensions(normal_atlas, 0)),
+        0.0,
+    ).rgb;
+    let n = normalize(mapped * 2.0 - vec3<f32>(1.0));
+    // In image axes (y down), reflected back through the flips: diagonal,
+    // horizontal, then vertical, the reverse of the texel lookup.
+    var v = vec2<f32>(n.x, -n.y);
+    let hexagonal = (tileset.orientation & 8u) != 0u;
+    if (in.flags & 4u) != 0u && !hexagonal {
+        v = v.yx;
+    }
+    if (in.flags & 1u) != 0u {
+        v.x = -v.x;
+    }
+    if (in.flags & 2u) != 0u {
+        v.y = -v.y;
+    }
+    // Plane axes, y up, then a hexagonal tile's turns as its quad turned.
+    var p = vec2<f32>(v.x, -v.y);
+    if hexagonal {
+        let turns = select(0.0, 1.0, (in.flags & 4u) != 0u)
+            + select(0.0, 2.0, (in.flags & 16u) != 0u);
+        let angle = -turns * 1.04719755;
+        let c = cos(angle);
+        let s = sin(angle);
+        p = vec2<f32>(c * p.x - s * p.y, s * p.x + c * p.y);
+    }
+    if layer.plane == 1u {
+        return normalize(vec3<f32>(p.x, -n.z, p.y));
+    }
+    return normalize(vec3<f32>(p.x, p.y, n.z));
+}
+
+// The tile's colour at this fragment: the atlas texel times the tints. The
+// atlas is read at its top level.
+fn tile_colour(in: TileOut) -> vec4<f32> {
+    let sampled = textureSampleLevel(
+        atlas,
+        atlas_sampler,
+        tile_atlas_uv(in, textureDimensions(atlas, 0)),
+        0.0,
+    );
     if tileset.has_texture != 0u {
         return in.tint * sampled;
     }

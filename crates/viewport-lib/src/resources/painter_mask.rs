@@ -272,9 +272,13 @@ pub(crate) fn painter_mask_uniform(slots: &[Option<(u32, u32)>; 4]) -> [u32; 16]
 }
 
 /// The light layer ranges as the `PainterLights` uniform holds them: the
-/// count and the scale, then per range the first layer, the last and the
-/// array layer.
-pub(crate) fn painter_lights_uniform(ranges: &[[u32; 2]], scale: f32) -> Vec<u32> {
+/// count and the scale, then per range the first layer, the last, the array
+/// layer and one more than the array layer of its directions (0 for none).
+pub(crate) fn painter_lights_uniform(
+    ranges: &[[u32; 2]],
+    directions: &[Option<u32>],
+    scale: f32,
+) -> Vec<u32> {
     let count = ranges.len().min(MAX_PAINTER_LIGHT_RANGES);
     let mut out = vec![0u32; PAINTER_LIGHTS_UNIFORM_BYTES as usize / 4];
     out[0] = count as u32;
@@ -283,6 +287,7 @@ pub(crate) fn painter_lights_uniform(ranges: &[[u32; 2]], scale: f32) -> Vec<u32
         out[4 + i * 4] = r[0];
         out[4 + i * 4 + 1] = r[1];
         out[4 + i * 4 + 2] = i as u32;
+        out[4 + i * 4 + 3] = directions.get(i).copied().flatten().map_or(0, |d| d + 1);
     }
     out
 }
@@ -313,6 +318,7 @@ pub(crate) struct FrameLights {
     pub(crate) view: crate::gpu::TextureView,
     pub(crate) ranges: Vec<[u32; 2]>,
     pub(crate) scale: f32,
+    pub(crate) directions: Vec<Option<u32>>,
 }
 
 /// One viewport's painter masks and light layers: the mask target (made the
@@ -380,13 +386,13 @@ impl PainterMaskState {
 
     /// Set this frame's light layers and write their uniforms.
     pub(crate) fn set_lights(&mut self, queue: &crate::gpu::Queue, lights: Option<FrameLights>) {
-        let (ranges, scale) = lights
-            .as_ref()
-            .map_or((&[][..], 1.0), |l| (&l.ranges[..], l.scale));
+        let (ranges, directions, scale) = lights.as_ref().map_or((&[][..], &[][..], 1.0), |l| {
+            (&l.ranges[..], &l.directions[..], l.scale)
+        });
         queue.write_buffer(
             &self.light_uniform,
             0,
-            bytemuck::cast_slice(&painter_lights_uniform(ranges, scale)),
+            bytemuck::cast_slice(&painter_lights_uniform(ranges, directions, scale)),
         );
         queue.write_buffer(&self.light_pick_uniform, 0, &light_pick_uniform(scale));
         self.lights = lights;
@@ -640,9 +646,11 @@ mod tests {
         assert_eq!(light_slice(&ranges, 3), Some(1));
         assert_eq!(light_slice(&ranges, 4), None);
         assert_eq!(light_slice(&ranges, 9), Some(2));
-        let u = painter_lights_uniform(&ranges, 2.0);
+        let u = painter_lights_uniform(&ranges, &[None, Some(4)], 2.0);
         assert_eq!(u.len() * 4, PAINTER_LIGHTS_UNIFORM_BYTES as usize);
         assert_eq!(&u[..2], &[3, 2.0f32.to_bits()]);
-        assert_eq!(&u[8..11], &[3, 3, 1]);
+        assert_eq!(&u[4..8], &[0, 2, 0, 0]);
+        assert_eq!(&u[8..12], &[3, 3, 1, 5]);
+        assert_eq!(u[15], 0);
     }
 }

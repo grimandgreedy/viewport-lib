@@ -378,6 +378,12 @@ pub struct Tileset {
     /// hexagonal, as Tiled lays them out. Default
     /// [`TileOrientation::Orthogonal`].
     pub orientation: TileOrientation,
+    /// A tangent-space normal map laid out as the atlas, tile for tile,
+    /// uploaded linear (`TextureData::normal_map`). Green points up the
+    /// image. Flipped and turned tiles turn their normals with them. Read by
+    /// 2D lighting with `Lighting2dItem::normals` on; `None` lights the tiles
+    /// flat. Default `None`.
+    pub normal_atlas: Option<TextureId>,
 }
 
 /// Most [`TileSize`] overrides one tileset applies.
@@ -398,7 +404,14 @@ impl Tileset {
             animations: Vec::new(),
             tile_sizes: Vec::new(),
             orientation: TileOrientation::Orthogonal,
+            normal_atlas: None,
         }
+    }
+
+    /// This tileset with `normal_atlas` as its normal map.
+    pub fn with_normal_atlas(mut self, normal_atlas: TextureId) -> Self {
+        self.normal_atlas = Some(normal_atlas);
+        self
     }
 
     /// The texel rectangle of tile `index` as `[x, y, width, height]`, `y`

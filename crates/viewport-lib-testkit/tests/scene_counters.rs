@@ -238,6 +238,7 @@ fn expected(name: &str) -> Option<Expected> {
         // Sprites, particles and the light layers' own lights: no mesh-family
         // draws.
         "lighting_2d_kinds" => e(0, 0, 0, 0, 0),
+        "lighting_2d_normals" => e(0, 0, 0, 0, 0),
         // A tilemap ground, a world overlay layer and a painter sprite: no
         // mesh-family draws.
         "overlay_world_layer" => e(0, 0, 0, 0, 0),

@@ -251,6 +251,7 @@ impl TilemapPlugin {
             resources,
             layouts,
             map.tileset.texture_id,
+            map.tileset.normal_atlas,
             map.tileset.filter,
             true,
         );
@@ -272,6 +273,7 @@ impl TilemapPlugin {
             resources,
             layouts,
             map.tileset.texture_id,
+            map.tileset.normal_atlas,
             map.tileset.filter,
             true,
         );
@@ -417,8 +419,9 @@ impl TilemapPlugin {
         self.drawn_chunks
     }
 
-    /// Rebind stored maps whose atlas was freed or swapped since the last
-    /// frame. The map stays; a freed atlas leaves it drawing untextured.
+    /// Rebind stored maps whose atlas or normal atlas was freed or swapped
+    /// since the last frame. The map stays; a freed atlas leaves it drawing
+    /// untextured, a freed normal atlas lit flat.
     fn revalidate_stores(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -434,23 +437,35 @@ impl TilemapPlugin {
             return;
         };
         for (_, stored) in self.maps.iter_mut() {
-            let Some(texture) = stored.map.tileset.texture_id else {
+            let set = &stored.map.tileset;
+            let (texture, normals) = (set.texture_id, set.normal_atlas);
+            if texture.is_none() && normals.is_none() {
                 continue;
-            };
-            if action == Revalidate::CheckEach && resources.has_texture(texture) {
+            }
+            if action == Revalidate::CheckEach
+                && [texture, normals]
+                    .into_iter()
+                    .flatten()
+                    .all(|id| resources.has_texture(id))
+            {
                 continue;
             }
             let binds = resolve_bindings(
                 device,
                 resources,
                 layouts,
-                Some(texture),
-                stored.map.tileset.filter,
+                texture,
+                normals,
+                set.filter,
                 false,
             );
             stored.rebind(device, queue, &binds);
-            if !resources.has_texture(texture) {
-                stored.map.tileset.texture_id = None;
+            let set = &mut stored.map.tileset;
+            if texture.is_some_and(|id| !resources.has_texture(id)) {
+                set.texture_id = None;
+            }
+            if normals.is_some_and(|id| !resources.has_texture(id)) {
+                set.normal_atlas = None;
             }
         }
     }

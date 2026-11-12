@@ -200,6 +200,10 @@ pub(crate) struct WorldOptions {
     pub actor_light: bool,
     /// The HP and score labels in a bitmap font face.
     pub bitmap_hud: bool,
+    /// The standing stones shaded by a normal map against the lights.
+    pub normal_stones: bool,
+    /// The lantern's shadows blurred at their edges.
+    pub soft_shadows: bool,
 }
 
 impl Default for WorldOptions {
@@ -220,6 +224,8 @@ impl Default for WorldOptions {
             cone_lantern: true,
             actor_light: true,
             bitmap_hud: true,
+            normal_stones: true,
+            soft_shadows: true,
         }
     }
 }
@@ -249,6 +255,8 @@ pub(crate) struct WorldAssets {
     pub torches: Vec<GpuParticleSystemId>,
     pub shield: Option<MeshId>,
     pub hud_font: Option<FontHandle>,
+    /// Normals for the atlas, rounding the standing stone.
+    pub normals: TextureId,
 }
 
 /// Upload the world's textures and maps and create its particle systems.
@@ -261,6 +269,10 @@ pub(crate) fn build_assets(
         .resources_mut()
         .upload_texture(device, queue, atlas())
         .expect("the atlas is a well-formed sRGB image");
+    let normals = renderer
+        .resources_mut()
+        .upload_texture(device, queue, atlas_normals())
+        .expect("the atlas normals are a well-formed linear image");
     let glow = renderer
         .resources_mut()
         .upload_texture(device, queue, glow_texture())
@@ -314,6 +326,7 @@ pub(crate) fn build_assets(
         torches,
         shield,
         hud_font,
+        normals,
     }
 }
 
@@ -428,6 +441,25 @@ fn palette(c: char) -> [u8; 4] {
         'm' => [82, 140, 82, 255],
         _ => [0, 0, 0, 0],
     }
+}
+
+/// Normals laid out as [`atlas`]: facing the camera everywhere but the
+/// standing stone in cell (4, 2), which rounds away to its sides and its top.
+fn atlas_normals() -> TextureData {
+    let (w, h) = (ATLAS_COLS * 8, ATLAS_ROWS * 8);
+    let mut pixels = [128u8, 128, 255, 255].repeat(w * h);
+    for y in 0..16 {
+        for x in 0..8 {
+            let u = (x as f32 + 0.5) / 4.0 - 1.0;
+            // Up the stone, its top third rounding back.
+            let v = (1.0 - (y as f32 + 0.5) / 16.0 * 3.0).max(0.0);
+            let n = glam::Vec3::new(u * 0.9, v * 0.8, 1.0).normalize();
+            let byte = |c: f32| ((c * 0.5 + 0.5) * 255.0).round() as u8;
+            let at = ((16 + y) * w + 32 + x) * 4;
+            pixels[at..at + 4].copy_from_slice(&[byte(n.x), byte(n.y), byte(n.z), 255]);
+        }
+    }
+    TextureData::normal_map(w as u32, h as u32, pixels)
 }
 
 /// The one atlas everything draws from, row 0 of the image at the top as a
@@ -1330,10 +1362,14 @@ impl World {
             tilemaps.push(iso_trees);
         }
 
-        let stones = self.stones_item(assets.atlas, o);
+        let mut stones = self.stones_item(assets.atlas, o);
+        if o.normal_stones {
+            stones.normal_texture_id = Some(assets.normals);
+        }
         let mut light = Lighting2dItem::default();
         light.plane = TilemapPlane::Xz;
         light.shadows = o.shadows;
+        light.normals = o.normal_stones;
         if o.night {
             light.ambient = Colour::linear_rgb(0.06, 0.07, 0.13);
             light.intensity = 1.0;
@@ -1394,8 +1430,9 @@ impl World {
     }
 
     /// The light item's own lights, in plane coordinates: the player's
-    /// lantern as a cone facing the way they walk, and a violet glow over the
-    /// guard that lights only the actors' painter layer, so the tiles behind
+    /// lantern as a cone facing the way they walk, six units in front of the
+    /// plane for the stones' normals and with soft shadows, and a violet glow
+    /// over the guard that lights only the actors' painter layer, so the tiles behind
     /// it stay dark.
     fn plane_lights(&self, o: WorldOptions) -> Vec<Light2d> {
         let mut lights = Vec::new();
@@ -1406,7 +1443,9 @@ impl World {
             lights.push(
                 Light2d::cone([at.x, at.y], 110.0, [dir, -0.2], 0.3, 0.6)
                     .with_colour(Colour::linear_rgb(1.0, 0.92, 0.75))
-                    .with_intensity(1.4),
+                    .with_intensity(1.4)
+                    .with_height(6.0)
+                    .with_shadow_softness(if o.soft_shadows { 6.0 } else { 0.0 }),
             );
         }
         if o.guard && o.actor_light {
