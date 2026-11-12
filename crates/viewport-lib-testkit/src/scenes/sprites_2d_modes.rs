@@ -226,9 +226,7 @@ fn build_sprites_2d_modes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut sliced = quad([-90.0, -60.0], [200.0, 60.0], Colour::WHITE);
     sliced.texture_id = Some(frame);
     sliced.filter = TextureFilter::Nearest;
-    sliced.draw_mode = SpriteDrawMode::Sliced {
-        border: [8.0, 8.0, 8.0, 8.0],
-    };
+    sliced.draw_mode = SpriteDrawMode::sliced([8.0, 8.0, 8.0, 8.0]);
     sprites.push(sliced);
 
     // --- bottom right: tiling and the vertex hook ---------------------------

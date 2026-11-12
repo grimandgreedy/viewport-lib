@@ -6,14 +6,14 @@
 //! view, so the checks read pixel positions straight off the world layout.
 
 use glam::Vec2;
-use viewport_lib::plugin_api::Uploads;
+use viewport_lib::plugin_api::{Uploads, Writes};
 use viewport_lib::{
     Camera2d, CameraFrame, Colour, FrameData, MaskTest, MaterialPlugin, NoticeDetail, OverlayShape,
     PickBackend, PickId, PickMask, Plane2d, SceneFrame, TextureData, TextureFilter, TextureId,
 };
 use viewport_lib_plugins::item_types::sprite::{
     MaskSource, SpriteDrawMode, SpriteEffects, SpriteItem, SpriteMaskItem, SpriteMaterial,
-    SpriteMaterials, SpriteOrder, SpriteSizeMode, TileMode,
+    SpriteMaterials, SpriteOrder, SpriteSizeMode, TileMode, channels,
 };
 use viewport_lib_plugins::item_types::tilemap::{
     Tile, TileMaterial, TileMaterials, Tilemap, TilemapDraw, TilemapItem, TilemapPainter, Tileset,
@@ -267,9 +267,7 @@ fn a_nine_slice_keeps_its_borders_at_texel_size() {
     let mut item = square([0.0, 0.0, 0.0], [200.0, 60.0], Colour::WHITE);
     item.texture_id = Some(tex);
     item.filter = TextureFilter::Nearest;
-    item.draw_mode = SpriteDrawMode::Sliced {
-        border: [8.0, 8.0, 8.0, 8.0],
-    };
+    item.draw_mode = SpriteDrawMode::sliced([8.0, 8.0, 8.0, 8.0]);
     let pixels = harness.render(&frame(vec![item], vec![], vec![]), W, H);
     // The quad spans x -100..100, y -30..30.
     assert!(
@@ -297,6 +295,125 @@ fn a_nine_slice_keeps_its_borders_at_texel_size() {
     assert!(
         is_colour(pixel(&pixels, 50.0, 0.0), GREEN),
         "the centre stretches"
+    );
+}
+
+/// A frame of `sprites` under a camera showing `ppu` pixels per world unit.
+fn frame_at_ppu(sprites: Vec<SpriteItem>, ppu: f32) -> FrameData {
+    let camera = Camera2d::new(Plane2d::Xy)
+        .with_units_per_pixel(1.0 / ppu)
+        .with_viewport_size(Vec2::new(W as f32, H as f32))
+        .camera();
+    let mut scene = SceneFrame::default();
+    *scene.items_mut::<SpriteItem>() = sprites;
+    FrameData::new(
+        CameraFrame::from_camera(&camera, [W as f32, H as f32]),
+        scene,
+    )
+}
+
+#[test]
+fn a_nine_slice_in_world_units_keeps_its_borders_at_texel_size() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // 32 x 32: an 8-texel red border round a green centre.
+    let tex = upload_texture(&mut harness, 32, 32, |x, y| {
+        let border = x < 8 || y < 8 || x >= 24 || y >= 24;
+        if border {
+            [255, 0, 0, 255]
+        } else {
+            [0, 255, 0, 255]
+        }
+    });
+    let device = harness.device.clone();
+    let queue = harness.queue.clone();
+    for ppu in [1.0f32, 16.0, 100.0] {
+        // 200 x 60 pixels at `ppu` pixels per unit, borders a texel a pixel.
+        let mut item = square([0.0, 0.0, 0.0], [200.0 / ppu, 60.0 / ppu], Colour::WHITE);
+        item.texture_id = Some(tex);
+        item.filter = TextureFilter::Nearest;
+        item.draw_mode = SpriteDrawMode::Sliced {
+            border: [8.0; 4],
+            units_per_texel: 1.0 / ppu,
+        };
+        let check = |pixels: &[u8], what: &str| {
+            assert!(
+                is_colour(pixel(pixels, -100.0 + 7.5, 0.0), RED),
+                "{what} {ppu}: left border"
+            );
+            assert!(
+                is_colour(pixel(pixels, -100.0 + 8.5, 0.0), GREEN),
+                "{what} {ppu}: centre"
+            );
+            assert!(
+                is_colour(pixel(pixels, 100.0 - 7.5, 0.0), RED),
+                "{what} {ppu}: right border"
+            );
+            assert!(
+                is_colour(pixel(pixels, 0.0, 30.0 - 7.5), RED),
+                "{what} {ppu}: top border"
+            );
+            assert!(
+                is_colour(pixel(pixels, 0.0, 30.0 - 8.5), GREEN),
+                "{what} {ppu}: below it"
+            );
+        };
+        let pixels = harness.render(&frame_at_ppu(vec![item.clone()], ppu), W, H);
+        check(&pixels, "inline");
+
+        // A record write into an uploaded set keeps the batch's scale.
+        let set = harness
+            .renderer
+            .upload(&device, &queue, &item)
+            .expect("upload");
+        harness
+            .renderer
+            .write_range(
+                channels::Sprites,
+                &queue,
+                set,
+                0,
+                &[channels::Sprite {
+                    size: [200.0 / ppu, 60.0 / ppu],
+                    ..Default::default()
+                }],
+            )
+            .expect("record write");
+        let mut scene = SceneFrame::default();
+        scene
+            .items_mut::<viewport_lib_plugins::item_types::sprite::SpriteSetRefItem>()
+            .push(viewport_lib_plugins::item_types::sprite::SpriteSetRefItem::new(set));
+        let camera = Camera2d::new(Plane2d::Xy)
+            .with_units_per_pixel(1.0 / ppu)
+            .with_viewport_size(Vec2::new(W as f32, H as f32))
+            .camera();
+        let f = FrameData::new(
+            CameraFrame::from_camera(&camera, [W as f32, H as f32]),
+            scene,
+        );
+        let pixels = harness.render(&f, W, H);
+        check(&pixels, "written");
+    }
+
+    // A quad 10 pixels wide at 16 pixels per unit: two 8-pixel borders shrink
+    // to 5 pixels each and the centre goes.
+    let mut item = square([0.0, 0.0, 0.0], [10.0 / 16.0, 60.0 / 16.0], Colour::WHITE);
+    item.texture_id = Some(tex);
+    item.filter = TextureFilter::Nearest;
+    item.draw_mode = SpriteDrawMode::Sliced {
+        border: [8.0; 4],
+        units_per_texel: 1.0 / 16.0,
+    };
+    let pixels = harness.render(&frame_at_ppu(vec![item], 16.0), W, H);
+    assert!(
+        is_colour(pixel(&pixels, -0.5, 0.0), RED),
+        "shrunk left border"
+    );
+    assert!(
+        is_colour(pixel(&pixels, 0.5, 0.0), RED),
+        "shrunk right border"
     );
 }
 

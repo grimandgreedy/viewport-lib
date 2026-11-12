@@ -44,7 +44,8 @@ struct SpriteInstance {
     velocity:      vec3<f32>,  // VelocityStretched direction; zero disables stretch
     pivot:         u32,        // two snorm16 offsets from the quad centre, in half sizes
     // The draw mode: x bits 0-1 simple, sliced or tiled, bit 2 adaptive
-    // tiling; y and z two f16 pairs, the sliced border (left, bottom) and
+    // tiling, bits 16-31 a sliced sprite's units per texel as f16; y and z
+    // two f16 pairs, the sliced border (left, bottom) and
     // (right, top) in texels, or the tile size in y; w the sprite's user
     // value, which only a vertex hook or a material reads.
     draw:          vec4<u32>,
@@ -253,17 +254,18 @@ fn sprite_corner_uv(corner: vec2<f32>, inst: SpriteInstance) -> vec2<f32> {
 
 // Position `d` along one axis of a sliced sprite `total` size units long,
 // as a texel position in a source `src` texels long whose borders are `lo`
-// and `hi` texels. The borders draw one texel per size unit; a quad too short
-// for both shrinks them in proportion.
-fn sprite_slice(d: f32, total: f32, lo: f32, hi: f32, src: f32) -> f32 {
-    let fit = min(1.0, total / max(lo + hi, 1e-6));
-    let a = lo * fit;
-    let b = hi * fit;
+// and `hi` texels. The borders draw `unit` size units per texel; a quad too
+// short for both shrinks them in proportion.
+fn sprite_slice(d: f32, total: f32, lo: f32, hi: f32, src: f32, unit: f32) -> f32 {
+    let fit = min(1.0, total / max((lo + hi) * unit, 1e-6));
+    let a = lo * unit * fit;
+    let b = hi * unit * fit;
+    let scale = max(unit * fit, 1e-6);
     if d < a {
-        return d / fit;
+        return d / scale;
     }
     if d > total - b {
-        return src - (total - d) / fit;
+        return src - (total - d) / scale;
     }
     let middle = max(total - a - b, 1e-6);
     return lo + (d - a) / middle * (src - lo - hi);
@@ -311,10 +313,12 @@ fn sprite_draw_uv(
         // Borders (left, bottom) and (right, top); the top border is the one
         // at low `v`.
         let b = unpack2x16float(draw.z);
+        // Size units a texel of border covers, in the first word's high half.
+        let unit = unpack2x16float(draw.x).y;
         let src = select(max((hi - lo) * texels, vec2<f32>(1e-6)), size, texels.x <= 0.0);
         s = vec2<f32>(
-            sprite_slice(d.x, size.x, a.x, b.x, src.x),
-            sprite_slice(d.y, size.y, b.y, a.y, src.y),
+            sprite_slice(d.x, size.x, a.x, b.x, src.x, unit),
+            sprite_slice(d.y, size.y, b.y, a.y, src.y, unit),
         ) / src;
         cont = s;
     } else {

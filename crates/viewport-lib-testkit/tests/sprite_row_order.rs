@@ -142,9 +142,7 @@ fn sliced_borders_and_tiles_follow_the_image_rows() {
         }
     });
     let mut sliced = textured([0.0, 0.0, 0.0], [40.0, 80.0], bands);
-    sliced.draw_mode = SpriteDrawMode::Sliced {
-        border: [0.0, 2.0, 0.0, 12.0],
-    };
+    sliced.draw_mode = SpriteDrawMode::sliced([0.0, 2.0, 0.0, 12.0]);
     // 16 x 16: top half red, bottom half blue.
     let halves = upload_texture(&mut harness, 16, 16, |_, y| {
         if y < 8 { RED_TEXEL } else { BLUE_TEXEL }

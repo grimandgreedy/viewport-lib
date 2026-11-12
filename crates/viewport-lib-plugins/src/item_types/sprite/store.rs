@@ -305,8 +305,9 @@ pub(crate) struct GpuSpriteInstance {
 }
 
 /// A sprite draw mode as the shaders read it: the mode in bits 0-1 of the
-/// first word (adaptive tiling in bit 2), then the border or tile size as two
-/// pairs of half floats.
+/// first word (adaptive tiling in bit 2, a sliced sprite's units per texel as
+/// a half float in bits 16-31), then the border or tile size as two pairs of
+/// half floats. The last word is the sprite's user value, filled per sprite.
 pub(crate) fn draw_word(mode: super::types::SpriteDrawMode) -> [u32; 4] {
     use super::types::{SpriteDrawMode, TileMode};
     let pair = |a: f32, b: f32| f16_bits(a) as u32 | ((f16_bits(b) as u32) << 16);
@@ -314,8 +315,17 @@ pub(crate) fn draw_word(mode: super::types::SpriteDrawMode) -> [u32; 4] {
         SpriteDrawMode::Simple => [0; 4],
         SpriteDrawMode::Sliced {
             border: [l, b, r, t],
+            units_per_texel,
         } => [
-            1,
+            // A scale that is not a positive number draws one unit a texel.
+            pair(
+                0.0,
+                if units_per_texel.is_finite() && units_per_texel > 0.0 {
+                    units_per_texel
+                } else {
+                    1.0
+                },
+            ) | 1,
             pair(l.max(0.0), b.max(0.0)),
             pair(r.max(0.0), t.max(0.0)),
             0,

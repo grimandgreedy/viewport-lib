@@ -44,13 +44,18 @@ pub enum SpriteDrawMode {
     #[default]
     Simple,
     /// Nine-slice: the borders keep their size and the centre stretches.
+    /// Build one with [`SpriteDrawMode::sliced`] for one size unit per texel.
     Sliced {
         /// Border widths `[left, bottom, right, top]` in texels of the
-        /// texture (in size units for an untextured sprite). A border draws
-        /// one texel per unit of the sprite's size, so a sprite drawn at its
-        /// texel size shows the image unchanged; a quad too small for two
-        /// opposite borders shrinks them in proportion.
+        /// texture (in size units for an untextured sprite): how much of the
+        /// image each border shows.
         border: [f32; 4],
+        /// Size units one texel of border covers on the quad, so a border
+        /// draws `border * units_per_texel` units wide. `1.0` suits sprites
+        /// sized in pixels; a world sized at 16 pixels per unit uses
+        /// `1.0 / 16.0`. A quad too small for two opposite borders shrinks
+        /// them in proportion.
+        units_per_texel: f32,
     },
     /// The UV rect repeated across the quad from its top-left corner.
     Tiled {
@@ -59,6 +64,17 @@ pub enum SpriteDrawMode {
         /// What happens where the quad is not a whole number of tiles.
         mode: TileMode,
     },
+}
+
+impl SpriteDrawMode {
+    /// A nine-slice with `border` (`[left, bottom, right, top]` in texels)
+    /// drawn one size unit per texel.
+    pub const fn sliced(border: [f32; 4]) -> Self {
+        Self::Sliced {
+            border,
+            units_per_texel: 1.0,
+        }
+    }
 }
 
 /// How a [`SpriteDrawMode::Tiled`] sprite fills a quad that is not a whole
