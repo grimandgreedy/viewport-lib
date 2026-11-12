@@ -17,8 +17,8 @@ use viewport_lib::{
 };
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::sprite::{
-    SpriteEffects, SpriteItem, SpriteMaterial, SpriteMaterials, SpriteOrder, SpriteSetRefItem,
-    SpriteSizeMode, channels,
+    SpriteDrawMode, SpriteEffects, SpriteItem, SpriteMaterial, SpriteMaterials, SpriteOrder,
+    SpriteSetRefItem, SpriteSizeMode, TileMode, channels,
 };
 use viewport_lib_plugins::item_types::tilemap::{
     Tile, TileMaterial, TileMaterials, TileSize, Tilemap, TilemapItem, Tileset,
@@ -212,6 +212,97 @@ fn a_body_bends_from_the_base_by_whole_texels_for_the_sprites_that_ask() {
     // Sprite 1 has no user value: it stands still.
     assert!(!red(&pixels, 78.0, 58.0), "an unweighted sprite stays put");
     assert!(red(&pixels, 66.0, 58.0), "and keeps its top right");
+}
+
+/// The world x of the leftmost red pixel on row `y`, if any.
+fn left_edge(pixels: &[u8], y: f32) -> Option<f32> {
+    (0..W)
+        .map(|col| col as f32 - W as f32 * 0.5 + 0.5)
+        .find(|&x| red(pixels, x, y))
+        .map(|x| x - 0.5)
+}
+
+#[test]
+fn texel_follows_the_draw_mode() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let device = harness.device.clone();
+    let id = harness
+        .renderer
+        .register_sprite_material(
+            &device,
+            &Body {
+                name: "step",
+                wgsl: "fn displace_sprite(v: SpriteVertex) -> vec3<f32> {\n    \
+                       return v.world + v.right * v.texel.x * 3.0;\n}\n",
+                params: vec![],
+            },
+        )
+        .expect("registers");
+    let texture = upload_white(&mut harness, 8, 8);
+    // (draw mode, quad width, the shift three drawn texels make).
+    let cases = [
+        // The rect stretched: 40 / 8 units a texel.
+        (SpriteDrawMode::Simple, 40.0, 15.0),
+        // A border texel is 2 units however far the quad stretches.
+        (
+            SpriteDrawMode::Sliced {
+                border: [2.0; 4],
+                units_per_texel: 2.0,
+            },
+            80.0,
+            6.0,
+        ),
+        // Borders of 32 + 32 units on a 40-unit quad shrink by 40 / 64.
+        (
+            SpriteDrawMode::Sliced {
+                border: [8.0; 4],
+                units_per_texel: 4.0,
+            },
+            40.0,
+            7.5,
+        ),
+        // A 20-unit tile of 8 texels.
+        (
+            SpriteDrawMode::Tiled {
+                tile_size: [20.0, 20.0],
+                mode: TileMode::Continuous,
+            },
+            80.0,
+            7.5,
+        ),
+        // 66 units hold three tiles, fitted to 22 units each.
+        (
+            SpriteDrawMode::Tiled {
+                tile_size: [20.0, 20.0],
+                mode: TileMode::Adaptive,
+            },
+            66.0,
+            8.25,
+        ),
+    ];
+    for (mode, width, shift) in cases {
+        let mut item = SpriteItem::default();
+        item.texture_id = Some(texture);
+        item.positions = vec![[0.0, 40.0, 0.0]];
+        item.sizes = vec![[width, 30.0]];
+        item.default_colour = RED;
+        item.size_mode = SpriteSizeMode::WorldSpace;
+        item.draw_mode = mode;
+        let pixels = harness.render(
+            &sprites(vec![with_material(item, SpriteMaterial::new(id))]),
+            W,
+            H,
+        );
+        let edge = left_edge(&pixels, 40.0).expect("the sprite draws");
+        let want = -width * 0.5 + shift;
+        assert!(
+            (edge - want).abs() <= 1.0,
+            "{mode:?}: left edge at {edge}, want {want}"
+        );
+    }
 }
 
 #[test]

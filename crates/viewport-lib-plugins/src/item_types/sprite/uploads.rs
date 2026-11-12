@@ -291,7 +291,7 @@ impl viewport_lib::plugin_api::Handles<SpriteInstanceSetId> for ViewportRenderer
 ///     size:        vec2<f32>, // the quad in world units
 ///     right:       vec3<f32>, // the quad's unit axes, after rotation
 ///     up:          vec3<f32>,
-///     texel:       vec2<f32>, // world size of one texel along right and up
+///     texel:       vec2<f32>, // world size of one texel as the draw mode draws it
 ///     user:        u32,       // the sprite's user value
 ///     tile:        u32,       // tiles only: the tile shown this frame
 ///     tile_placed: u32,       // tiles only: the tile or animation slot as placed

@@ -72,8 +72,10 @@ struct SpriteVertex {
     // bottom edge, `up` from its bottom edge to its top.
     right:    vec3<f32>,
     up:       vec3<f32>,
-    // The world size of one source texel along `right` and `up`; zero for an
-    // untextured sprite or tile.
+    // The world size of one texel along `right` and `up` as the art is drawn:
+    // the stretched rect's texel for a simple sprite, a border texel for a
+    // sliced one (shrunk with the borders on a quad too small for both), a
+    // tile's texel for a tiled one. Zero for an untextured sprite or tile.
     texel:    vec2<f32>,
     // The sprite's user value (`SpriteItem::user_values`), or for a tile the
     // tileset's value for the tile it shows (`Tileset::user_values`). Zero

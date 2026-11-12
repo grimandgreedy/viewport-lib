@@ -232,11 +232,34 @@ fn sprite_vertex_of(c: SpriteCorner, corner: vec2<f32>, inst: SpriteInstance) ->
     v.size = size;
     v.right = across / max(size.x, 1e-20);
     v.up = along / max(size.y, 1e-20);
+    // The texel as the draw mode draws the art: the stretched rect for a
+    // simple sprite, a border texel for a sliced one, a tile's texel for a
+    // tiled one. The last two are worked out in size units, then taken to
+    // world by the quad's world size over its size in size units.
     let texels = vec2<f32>(
         f32(sprite_ub.texture_size & 0xffffu),
         f32(sprite_ub.texture_size >> 16u),
     ) * abs(inst.uv_rect.zw - inst.uv_rect.xy);
-    v.texel = select(vec2<f32>(0.0), size / max(texels, vec2<f32>(1e-6)), texels > vec2<f32>(0.0));
+    let units = abs(inst.size);
+    let world_per_unit = size / max(units, vec2<f32>(1e-20));
+    var texel = size / max(texels, vec2<f32>(1e-6));
+    let mode = inst.draw.x & 3u;
+    if mode == 1u {
+        // Borders (left, bottom) and (right, top), shrunk as `sprite_slice`
+        // shrinks them on a quad too small for both.
+        let unit = unpack2x16float(inst.draw.x).y;
+        let borders = (unpack2x16float(inst.draw.y) + unpack2x16float(inst.draw.z)) * unit;
+        let fit = min(vec2<f32>(1.0), units / max(borders, vec2<f32>(1e-6)));
+        texel = world_per_unit * unit * fit;
+    } else if mode == 2u {
+        var tile = max(unpack2x16float(inst.draw.y), vec2<f32>(1e-6));
+        if (inst.draw.x & 4u) != 0u {
+            // Adaptive: the tile fitted to a whole number across the quad.
+            tile = units / max(round(units / tile), vec2<f32>(1.0));
+        }
+        texel = world_per_unit * tile / max(texels, vec2<f32>(1e-6));
+    }
+    v.texel = select(vec2<f32>(0.0), texel, texels > vec2<f32>(0.0));
     v.user = inst.draw.w;
     v.tile = 0u;
     v.tile_placed = 0u;
