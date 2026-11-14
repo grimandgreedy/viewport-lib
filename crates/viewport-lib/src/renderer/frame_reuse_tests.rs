@@ -4,7 +4,7 @@
 //! compare by identity, so an equal handle means nothing was rebuilt.
 
 use crate::Colour;
-use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
+use crate::renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission};
 use crate::{Camera, LabelItem, OverlayFill, OverlayShape, OverlayShapeItem, ViewportRenderer};
 
 const SIZE: u32 = 64;
@@ -61,7 +61,7 @@ fn a_repeated_frame_rebuilds_no_bind_group() {
     frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
     frame.camera.pixels_per_point = 1.0;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.settings.selected = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());

@@ -14,7 +14,7 @@ use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use vpl::{
-    Aabb, FrameStats, ItemSettings, Material, MaterialId, MeshId, SceneRenderItem, scene::Scene,
+    Aabb, FrameStats, ItemSettings, Material, MaterialId, MeshId, MeshItem, scene::Scene,
     selection::Selection,
 };
 
@@ -37,7 +37,7 @@ pub(crate) struct PerfState {
     pub selection: Selection,
     pub last_stats: FrameStats,
     pub total_objects: u32,
-    pub scene_items_cache: std::sync::Arc<[SceneRenderItem]>,
+    pub scene_items_cache: std::sync::Arc<[MeshItem]>,
     pub scene_items_version: (u64, u64),
     pub built: bool,
     pub gpu_culling: bool,

@@ -45,7 +45,7 @@ use viewport_lib::input::adapters::{AdapterCtx, winit as vpl_winit};
 
 use vpl::{
     BindingPreset, Camera, CameraFrame, EffectsFrame, FrameData, InputOwnership, Material, MeshId,
-    OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext,
+    MeshItem, OrbitCameraController, PostProcessSettings, SceneFrame, ViewportContext,
     ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
@@ -79,7 +79,7 @@ struct State {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
     /// Index of the item spun about the world up axis each frame.
     spin_item: usize,
     start: Instant,
@@ -346,7 +346,7 @@ async fn build_state(window: Arc<Window>) -> State {
         let mut material = Material::from_colour(Colour::from_linear_rgb_array(colour));
         // A little emissive above 1.0 gives bloom some HDR energy to extract.
         material.emissive = Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
-        let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
+        let mut item = MeshItem::new(mesh_id, res.upload_material(material).unwrap());
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
         item
     };

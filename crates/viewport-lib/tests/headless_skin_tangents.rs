@@ -139,7 +139,7 @@ fn fixture() -> Option<Fixture> {
     })
 }
 
-fn frame(items: Vec<SceneRenderItem>) -> FrameData {
+fn frame(items: Vec<MeshItem>) -> FrameData {
     let cam = Camera::orbit(glam::DVec3::ZERO, 4.0, Camera::default().orientation());
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
@@ -171,12 +171,12 @@ fn render_pair(fx: &mut Fixture, joint: glam::Mat4, material: MaterialId) -> [Ve
         0,
         &[joint],
     ));
-    let mut skinned = SceneRenderItem::default();
+    let mut skinned = MeshItem::default();
     skinned.mesh_id = fx.skinned;
     skinned.model = glam::Mat4::IDENTITY.into();
     skinned.material = material;
     skinned.deform_instance = Some(0);
-    let mut plain = SceneRenderItem::default();
+    let mut plain = MeshItem::default();
     plain.mesh_id = fx.plain;
     plain.model = joint.into();
     plain.material = material;

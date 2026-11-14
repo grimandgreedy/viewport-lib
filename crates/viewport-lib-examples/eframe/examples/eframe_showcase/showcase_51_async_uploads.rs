@@ -39,8 +39,8 @@ use viewport_lib_plugins::item_types::{
 use crate::eframe::egui;
 use vpl::{
     ColourmapId, JobId, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshData,
-    MeshId, OverlayTextureId, PolylineId, PolylineItem, PolylineRefItem, SceneRenderItem,
-    UploadStatus, ViewportRenderer, VolumeId, plugins::skinning::SkinWeights,
+    MeshId, MeshItem, OverlayTextureId, PolylineId, PolylineItem, PolylineRefItem, UploadStatus,
+    ViewportRenderer, VolumeId, plugins::skinning::SkinWeights,
 };
 
 use crate::App;
@@ -1106,32 +1106,32 @@ fn set_loaded_texture(
 // ---------------------------------------------------------------------------
 
 impl App {
-    pub(crate) fn async_uploads_scene_items(&self) -> Vec<SceneRenderItem> {
+    pub(crate) fn async_uploads_scene_items(&self) -> Vec<MeshItem> {
         let mut items = Vec::new();
         let state = &self.async_uploads_state;
 
         if let Some(id) = state.base_mesh_id {
-            let mut item = SceneRenderItem::new(id, state.flat_material);
+            let mut item = MeshItem::new(id, state.flat_material);
             item.model = glam::Mat4::IDENTITY.into();
             item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
             items.push(item);
         }
 
         if let Some(id) = state.loaded_mesh_id {
-            let mut item = SceneRenderItem::new(id, state.flat_material);
+            let mut item = MeshItem::new(id, state.flat_material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
             item.settings.colour = Some(Colour::linear_rgb(0.4, 0.8, 0.4));
             items.push(item);
         }
 
         if let (Some(mesh_id), Some(_)) = (state.base_mesh_id, state.loaded_texture_id) {
-            let mut item = SceneRenderItem::new(mesh_id, state.textured_material);
+            let mut item = MeshItem::new(mesh_id, state.textured_material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
             items.push(item);
         }
 
         if let Some(id) = state.skin_target_mesh_id {
-            let mut item = SceneRenderItem::new(id, state.flat_material);
+            let mut item = MeshItem::new(id, state.flat_material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).into();
             let colour = if state.skin_installed {
                 [0.9, 0.4, 0.9]

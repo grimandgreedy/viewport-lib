@@ -28,7 +28,7 @@ use viewport_lib_plugins::item_types::{
 };
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, Material, MaterialId, MeshData,
-    MeshId, SceneRenderItem, VolumeData, VolumeId, extract_isosurface,
+    MeshId, MeshItem, VolumeData, VolumeId, extract_isosurface,
 };
 
 // ---------------------------------------------------------------------------
@@ -261,11 +261,11 @@ impl App {
         Some(item)
     }
 
-    /// Build a `SceneRenderItem` for the isosurface mesh.
-    pub(crate) fn make_iso_surface_item(&self) -> Option<vpl::SceneRenderItem> {
+    /// Build a `MeshItem` for the isosurface mesh.
+    pub(crate) fn make_iso_surface_item(&self) -> Option<vpl::MeshItem> {
         let s = &self.vol_state;
         let mesh_id = s.iso_mesh_index?;
-        let mut item = vpl::SceneRenderItem::default();
+        let mut item = vpl::MeshItem::default();
         item.mesh_id = mesh_id;
         item.material = s.iso_material;
         // Slight transparency in Both mode so the volume is visible through the surface.
@@ -520,7 +520,7 @@ fn make_saddle_mesh(n: u32) -> MeshData {
 
 pub(crate) fn vol_collect_scene_items(
     app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let surface_items = if app.vol_state.mode != VolumeMode::VolumeOnly {
         app.make_iso_surface_item().into_iter().collect()
     } else {

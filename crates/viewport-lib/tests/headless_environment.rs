@@ -54,7 +54,7 @@ fn sphere_frame(
     frame.effects.environment = Some(lighting);
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(renderer, material);
@@ -271,7 +271,7 @@ fn lux_environment_matches_a_directional_light_of_the_same_lux() {
             sun.intensity = lux;
             frame.effects.lighting.lights = vec![sun];
         }
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.into();
         item.material = plane;

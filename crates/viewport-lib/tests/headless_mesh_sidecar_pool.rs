@@ -13,7 +13,7 @@ use common::*;
 const W: u32 = 64;
 const H: u32 = 64;
 
-fn frame_of(items: Vec<SceneRenderItem>) -> FrameData {
+fn frame_of(items: Vec<MeshItem>) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
@@ -96,7 +96,7 @@ fn a_per_object_draw_reads_its_own_second_uv_set() {
                 ..UvTransform::default()
             },
         );
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.material = upload_material(&mut renderer, m);
         let frame = frame_of(vec![item]);
@@ -125,7 +125,7 @@ fn a_transparent_mesh_follows_its_position_override() {
     let mut m = Material::default();
     m.base_colour = Colour::linear(1.0, 1.0, 1.0, 0.9);
     m.alpha_mode = AlphaMode::Blend;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = upload_material(&mut renderer, m);
     item.settings.unlit = true;
@@ -177,7 +177,7 @@ fn a_lightmap_set_after_upload_keeps_the_mesh_attributes() {
         .upload_mesh_data(&device, &data)
         .unwrap();
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = upload_material(&mut renderer, Material::default());
     item.settings.unlit = true;
@@ -262,7 +262,7 @@ fn a_shadow_caster_follows_its_override_window() {
         .upload_mesh_data(&device, &quad)
         .unwrap();
 
-    let mut floor = SceneRenderItem::default();
+    let mut floor = MeshItem::default();
     floor.mesh_id = floor_mesh;
     floor.material = upload_material(
         &mut renderer,
@@ -271,7 +271,7 @@ fn a_shadow_caster_follows_its_override_window() {
     // A lone quad casts only when two-sided: the shadow pass culls front faces.
     let mut caster_material = Material::from_colour(Colour::linear_rgb(0.2, 0.2, 0.8));
     caster_material.backface_policy = viewport_lib::BackfacePolicy::Identical;
-    let mut caster = SceneRenderItem::default();
+    let mut caster = MeshItem::default();
     caster.mesh_id = caster_mesh;
     caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, 1.0, 1.5)).into();
     caster.material = upload_material(&mut renderer, caster_material);
@@ -388,7 +388,7 @@ fn copies_of_a_lightmapped_mesh_sample_their_own_rects() {
         Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0)),
     );
     let copy_at = |x: f32, placement: usize| {
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = quad;
         it.material = white;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
@@ -457,7 +457,7 @@ fn a_mesh_without_a_record_draws_through_the_lean_pipeline() {
         .unwrap();
     let material = upload_material(&mut renderer, Material::default());
     let built = |renderer: &mut ViewportRenderer, mesh_id| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.material = material;
         let frame = frame_of(vec![item]);
@@ -513,7 +513,7 @@ fn a_short_vertex_scalar_draws_like_its_last_value() {
         .resources()
         .builtin_colourmap_id(viewport_lib::BuiltinColourmap::Viridis);
     let draw = |renderer: &mut ViewportRenderer, mesh_id| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.material = material;
         item.settings.unlit = true;
@@ -588,7 +588,7 @@ fn an_attribute_fed_deform_slot_follows_a_record_move() {
         .set_deform_slot_source_attribute(&device, mesh_id, slot, "lift")
         .unwrap();
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.unlit = true;
     let mut frame = frame_of(vec![item]);

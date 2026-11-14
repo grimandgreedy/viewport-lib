@@ -523,7 +523,7 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
         .expect("slab upload");
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).into();
     ground.material = material(
@@ -536,7 +536,7 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(1.6))
         .expect("cube upload");
-    let mut cube = viewport_lib::SceneRenderItem::default();
+    let mut cube = viewport_lib::MeshItem::default();
     cube.mesh_id = box_mesh;
     cube.model = Mat4::from_translation(Vec3::new(-1.3, 0.9, 0.8)).into();
     cube.material = material(
@@ -597,7 +597,7 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(1.4))
         .expect("cube upload");
-    let mut cube = viewport_lib::SceneRenderItem::default();
+    let mut cube = viewport_lib::MeshItem::default();
     cube.mesh_id = box_mesh;
     cube.material = material(
         ctx,
@@ -751,7 +751,7 @@ fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .upload_mesh_data(ctx.device, &primitives::cuboid(7.0, 7.0, 0.4))
         .expect("slab upload");
     let backdrop_tex = checker_texture(ctx, [230, 80, 60], [235, 225, 205]);
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).into();
     let mut backdrop = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
@@ -1015,7 +1015,7 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(12.0, 12.0, 0.4))
         .expect("slab upload");
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).into();
     ground.material = material(
@@ -1028,7 +1028,7 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
         .expect("sphere upload");
-    let mut ball = viewport_lib::SceneRenderItem::default();
+    let mut ball = viewport_lib::MeshItem::default();
     ball.mesh_id = sphere;
     ball.model = Mat4::from_translation(Vec3::new(0.0, 0.0, 1.0)).into();
     ball.material = material(
@@ -1075,7 +1075,7 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(14.0, 14.0, 0.4))
         .expect("slab upload");
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).into();
     ground.material = material(
@@ -1088,7 +1088,7 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(0.5, 0.5, 3.2))
         .expect("post upload");
-    let mut pillar = viewport_lib::SceneRenderItem::default();
+    let mut pillar = viewport_lib::MeshItem::default();
     pillar.mesh_id = post;
     pillar.model = Mat4::from_translation(Vec3::new(2.4, -1.4, 1.6)).into();
     pillar.material = material(
@@ -1160,7 +1160,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 0.3, 5.0))
         .expect("backdrop upload");
-    let mut wall = viewport_lib::SceneRenderItem::default();
+    let mut wall = viewport_lib::MeshItem::default();
     wall.mesh_id = backdrop;
     wall.model = Mat4::from_translation(Vec3::new(0.0, 2.6, 0.0)).into();
     wall.material = material(
@@ -1236,7 +1236,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(9.0, 0.3, 6.0))
         .expect("backdrop upload");
-    let mut wall = viewport_lib::SceneRenderItem::default();
+    let mut wall = viewport_lib::MeshItem::default();
     wall.mesh_id = backdrop;
     wall.model = Mat4::from_translation(Vec3::new(0.0, 2.8, 0.0)).into();
     wall.material = material(
@@ -1252,7 +1252,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .expect("strut upload");
     let mut posts = Vec::new();
     for (i, x) in [-2.2f32, -0.7, 0.8, 2.3].iter().enumerate() {
-        let mut post = viewport_lib::SceneRenderItem::default();
+        let mut post = viewport_lib::MeshItem::default();
         post.mesh_id = strut;
         post.model = Mat4::from_translation(Vec3::new(*x, 1.9, 0.0)).into();
         let t = i as f32 / 3.0;
@@ -1411,7 +1411,7 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
         .expect("slab upload");
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).into();
     ground.material = material(
@@ -1424,7 +1424,7 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(1.2))
         .expect("cube upload");
-    let mut cube = viewport_lib::SceneRenderItem::default();
+    let mut cube = viewport_lib::MeshItem::default();
     cube.mesh_id = box_mesh;
     cube.model = Mat4::from_translation(Vec3::new(-1.6, 1.2, 0.6)).into();
     cube.material = material(
@@ -1489,7 +1489,7 @@ fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .upload_mesh_data(ctx.device, &primitives::cuboid(7.0, 7.0, 0.4))
         .expect("slab upload");
     let backdrop_tex = checker_texture(ctx, [230, 80, 60], [235, 225, 205]);
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).into();
     let mut backdrop = Material::pbr(Colour::linear_rgb(1.0, 1.0, 1.0), 0.0, 0.85);
@@ -1600,7 +1600,7 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
         .expect("sphere upload");
-    let mut mesh = viewport_lib::SceneRenderItem::default();
+    let mut mesh = viewport_lib::MeshItem::default();
     mesh.mesh_id = ball;
     mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).into();
     mesh.material = material(
@@ -1650,7 +1650,7 @@ fn build_decal_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
         .expect("sphere upload");
     let mut sphere = |x: f32| {
-        let mut item = viewport_lib::SceneRenderItem::default();
+        let mut item = viewport_lib::MeshItem::default();
         item.mesh_id = ball;
         item.model = Mat4::from_translation(Vec3::new(x, 0.0, 0.0)).into();
         item.material = material(
@@ -1709,8 +1709,8 @@ fn lic_surface(
     ctx: &mut BuildCtx<'_>,
     mesh: viewport_lib::MeshId,
     model: Mat4,
-) -> (viewport_lib::SceneRenderItem, SurfaceLicItem) {
-    let mut item = viewport_lib::SceneRenderItem::default();
+) -> (viewport_lib::MeshItem, SurfaceLicItem) {
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.model = model.into();
     item.material = material(
@@ -1764,7 +1764,7 @@ fn build_surface_lic_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let sphere_at = Vec3::new(-1.8, 0.0, 0.0);
     // Along the iso camera's line of sight from the sphere.
     let toward_eye = Vec3::new(0.54, -0.64, 0.54);
-    let mut blocker = viewport_lib::SceneRenderItem::default();
+    let mut blocker = viewport_lib::MeshItem::default();
     blocker.mesh_id = cube;
     blocker.model = Mat4::from_translation(sphere_at + toward_eye * 2.2).into();
     blocker.material = material(
@@ -1949,7 +1949,7 @@ fn build_surface_contours(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .expect("sphere upload");
 
     let coloured = |mesh, model: Mat4, attribute: &str, map: viewport_lib::BuiltinColourmap| {
-        let mut item = viewport_lib::SceneRenderItem::default();
+        let mut item = viewport_lib::MeshItem::default();
         item.mesh_id = mesh;
         item.model = model.into();
         item.active_attribute = Some(viewport_lib::AttributeRef {
@@ -2020,7 +2020,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .expect("cube upload");
 
     let plane_model = Mat4::from_translation(plane_at);
-    let mut floor = viewport_lib::SceneRenderItem::default();
+    let mut floor = viewport_lib::MeshItem::default();
     floor.mesh_id = plane;
     floor.model = plane_model.into();
     floor.material = material(
@@ -2045,7 +2045,7 @@ fn build_surface_contours_occluded(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     // Between the camera and the outer rings on the plane's right, clear of
     // the disc.
-    let mut blocker = viewport_lib::SceneRenderItem::default();
+    let mut blocker = viewport_lib::MeshItem::default();
     blocker.mesh_id = cube;
     blocker.model = Mat4::from_translation(plane_at + Vec3::new(1.3, 0.6, 0.4)).into();
     blocker.material = material(
@@ -2122,7 +2122,7 @@ fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
         .expect("slab upload");
-    let mut ground = viewport_lib::SceneRenderItem::default();
+    let mut ground = viewport_lib::MeshItem::default();
     ground.mesh_id = slab;
     ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).into();
     ground.material = material(

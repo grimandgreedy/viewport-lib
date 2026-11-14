@@ -20,9 +20,9 @@ fn frame() -> FrameData {
 }
 
 fn cubes(mesh_id: MeshId, count: usize) -> SurfaceSubmission {
-    let items: Vec<SceneRenderItem> = (0..count)
+    let items: Vec<MeshItem> = (0..count)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.5, 0.0, 0.0))
                 .into();

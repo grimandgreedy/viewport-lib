@@ -1004,7 +1004,7 @@ impl Showcase for DecalCoverageShowcase {
             &mut self.meshes_receive,
             "Meshes receive decals (layers 0 to 7)",
         );
-        ui.weak("Only SceneRenderItem has that flag: the other types cannot decline.");
+        ui.weak("Only MeshItem has that flag: the other types cannot decline.");
         ui.add(egui::Slider::new(&mut self.decal_depth, 0.05..=4.0).text("box half-depth (Z)"));
         ui.checkbox(&mut self.tri_planar, "Tri-planar projection");
         ui.weak(

@@ -47,7 +47,7 @@ fn render_sphere_with(
     light.intensity = intensity;
     light.cast_shadows = false;
     frame.effects.lighting.lights = vec![light];
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.material = upload_material(renderer, material);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());

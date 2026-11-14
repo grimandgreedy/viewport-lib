@@ -9,8 +9,8 @@
 use viewport_lib::resources::build_log;
 use viewport_lib::wgpu;
 use viewport_lib::{
-    Colour, FrameData, Material, PerformancePolicy, PipelineCompilation, RendererConfig,
-    SceneRenderItem, ViewportRenderer,
+    Colour, FrameData, Material, MeshItem, PerformancePolicy, PipelineCompilation, RendererConfig,
+    ViewportRenderer,
 };
 use viewport_lib_testkit::fixtures::{probe_frame, probe_quad};
 
@@ -69,13 +69,13 @@ impl Rig {
     }
 
     /// A unit quad as a foreground item.
-    fn foreground_item(&mut self) -> SceneRenderItem {
+    fn foreground_item(&mut self) -> MeshItem {
         let mesh = self
             .renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &probe_quad())
             .expect("upload probe quad");
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.material = self
             .renderer

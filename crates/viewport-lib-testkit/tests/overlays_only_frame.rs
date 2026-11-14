@@ -5,7 +5,7 @@
 //! scene path, forced by one hidden mesh item: it draws nothing, so the two
 //! paths must agree pixel for pixel.
 
-use viewport_lib::{FrameData, FramePath, PipelineMode, SceneRenderItem, wgpu};
+use viewport_lib::{FrameData, FramePath, MeshItem, PipelineMode, wgpu};
 use viewport_lib_testkit::scenes::overlays;
 use viewport_lib_testkit::{Harness, frame_for};
 
@@ -26,20 +26,20 @@ fn empty_frame(h: &mut Harness, name: &str) -> FrameData {
 }
 
 /// A mesh item that draws nothing.
-fn hidden_item(h: &mut Harness) -> SceneRenderItem {
+fn hidden_item(h: &mut Harness) -> MeshItem {
     let mesh = h
         .renderer
         .resources_mut()
         .upload_mesh_data(&h.device, &viewport_lib::primitives::cube(1.0))
         .expect("upload cube");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.settings.hidden = true;
     item
 }
 
 /// `frame` with `item` added, which sends it through the scene path.
-fn with_item(mut frame: FrameData, item: &SceneRenderItem) -> FrameData {
+fn with_item(mut frame: FrameData, item: &MeshItem) -> FrameData {
     let generation = frame.scene.generation;
     frame.scene = viewport_lib::SceneFrame::from_surface_items(vec![item.clone()]);
     frame.scene.generation = generation;

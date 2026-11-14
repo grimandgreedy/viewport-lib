@@ -9,7 +9,7 @@
 //! cannot pass by agreeing with itself.
 
 use crate::Colour;
-use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
+use crate::renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission};
 use crate::{Camera, Material, ViewportRenderer};
 
 const SIZE: u32 = 96;
@@ -81,8 +81,8 @@ fn upload(renderer: &mut ViewportRenderer, device: &crate::gpu::Device) -> Meshe
     Meshes { cube }
 }
 
-fn cube_item(meshes: &Meshes, x: f32, colour: [f32; 3]) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+fn cube_item(meshes: &Meshes, x: f32, colour: [f32; 3]) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = meshes.cube;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
     item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
@@ -507,7 +507,7 @@ fn builtin_matcap_uploads_on_first_use() {
 
     let mut frame = base_frame(&meshes);
     let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
-    let mut items: Vec<SceneRenderItem> = items.iter().cloned().collect();
+    let mut items: Vec<MeshItem> = items.iter().cloned().collect();
     let mut matcap = Material::default();
     matcap.shading_model = crate::ShadingModel::Matcap(normal);
     items[0].material = renderer.resources_mut().upload_material(matcap).unwrap();

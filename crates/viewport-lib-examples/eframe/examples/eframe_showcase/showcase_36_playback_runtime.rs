@@ -14,8 +14,8 @@ use viewport_lib::Colour;
 
 use crate::eframe::egui;
 use vpl::{
-    BackfacePolicy, FrameStats, Material, MaterialId, MeshData, MeshId, PerformancePolicy,
-    QualityPreset, RuntimeMode, SceneRenderItem, ViewportRenderer, scene::Scene,
+    BackfacePolicy, FrameStats, Material, MaterialId, MeshData, MeshId, MeshItem,
+    PerformancePolicy, QualityPreset, RuntimeMode, ViewportRenderer, scene::Scene,
     selection::Selection,
 };
 
@@ -154,12 +154,12 @@ pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
 // Per-frame scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+pub(crate) fn pb_scene_items(app: &mut App) -> Vec<MeshItem> {
     let mut items = Vec::new();
 
     // Deforming mesh: single item placed at origin.
     if let Some(mid) = app.pb_state.mesh_id {
-        let mut item = SceneRenderItem::new(mid, app.pb_state.mesh_material);
+        let mut item = MeshItem::new(mid, app.pb_state.mesh_material);
         item.model = glam::Mat4::IDENTITY.into();
         items.push(item);
     }

@@ -8,21 +8,21 @@
 
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_plugins::item_types::curves::RibbonItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 /// A ground plane with a wide ribbon floating above it, lit from overhead
 /// (Z-up) so a cast shadow lands on the ground inside the frame.
-fn ground(h: &mut Harness) -> SceneRenderItem {
+fn ground(h: &mut Harness) -> MeshItem {
     let ground_id = h
         .renderer
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::heightfield(32, 32, 100.0, 2.0))
         .expect("upload ground");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
@@ -41,7 +41,7 @@ fn ribbon(cast_shadows: bool) -> RibbonItem {
     ribbon
 }
 
-fn frame(ground: &SceneRenderItem, ribbon: RibbonItem) -> FrameData {
+fn frame(ground: &MeshItem, ribbon: RibbonItem) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 150.0, 0.6, 1.0);
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [200.0, 150.0]),

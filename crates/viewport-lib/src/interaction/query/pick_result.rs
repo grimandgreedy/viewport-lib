@@ -141,7 +141,7 @@ pub struct SnapHit {
 pub struct GpuPickHit {
     /// The `pick_id` of the surface that was hit.
     ///
-    /// Matches the `SceneRenderItem::pick_id` set by the application.
+    /// Matches the `MeshItem::pick_id` set by the application.
     /// Map to a domain object using whatever id-to-object registry the app
     /// maintains. [`crate::renderer::PickId::NONE`] is never returned
     /// (non-pickable surfaces are excluded from the pick pass).

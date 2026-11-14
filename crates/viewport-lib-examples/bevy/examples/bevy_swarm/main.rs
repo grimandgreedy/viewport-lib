@@ -40,8 +40,8 @@ use viewport_lib::wgpu;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
     BindingPreset, ButtonState, Camera as VplCamera, CameraFrame, FrameData, InputOwnership,
-    LightingSettings, Material, MaterialId, MeshId, OrbitCameraController, PostProcessSettings,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    LightingSettings, Material, MaterialId, MeshId, MeshItem, OrbitCameraController,
+    PostProcessSettings, SceneFrame, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer, primitives,
 };
 
@@ -724,7 +724,7 @@ fn render_swarm(
     let sphere = renderer.sphere.expect("sphere mesh id");
     let selected_material = renderer.selected_material;
 
-    let items: Vec<SceneRenderItem> = data
+    let items: Vec<MeshItem> = data
         .instances
         .iter()
         .map(|inst| {
@@ -733,7 +733,7 @@ fn render_swarm(
             } else {
                 MaterialId::DEFAULT
             };
-            let mut item = SceneRenderItem::new(sphere, material);
+            let mut item = MeshItem::new(sphere, material);
             item.model = inst.model.into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(inst.color));
             item

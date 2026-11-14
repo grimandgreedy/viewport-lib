@@ -1213,7 +1213,7 @@ impl DeviceResources {
     /// per-instance lightmap-index + `LightmapScaleBias` model.
     ///
     /// The placement given here is the mesh's default. A
-    /// [`SceneRenderItem`](crate::SceneRenderItem) that names one of the
+    /// [`MeshItem`](crate::MeshItem) that names one of the
     /// frame's `lightmap_placements` draws its copy at that placement instead,
     /// so repeated props upload one mesh and one unwrap, each copy in its own
     /// rect of the atlas.

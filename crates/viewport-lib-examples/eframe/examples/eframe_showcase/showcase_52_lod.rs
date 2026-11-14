@@ -3,7 +3,7 @@
 //! A field of instanced spheres recedes into the distance. Each instance picks
 //! its own LOD level from how large it appears on screen, so near instances draw
 //! the full mesh and far ones drop to cheaper meshes, all from one submitted
-//! `MeshInstanceItem`. A short row of standalone `SceneRenderItem` spheres shows
+//! `MeshInstanceItem`. A short row of standalone `MeshItem` spheres shows
 //! the same on the surface-mesh path.
 //!
 //! The LOD work happens in the library: the demo uploads three icosphere
@@ -19,7 +19,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     Aabb, FrameData, FrameStats, LodGroupId, Material, MaterialId, MeshId, MeshInstanceItem,
-    PickId, RenderCamera, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
+    MeshItem, PickId, RenderCamera, SpriteBlend, ViewportRenderer, primitives,
     projected_screen_size,
 };
 
@@ -118,7 +118,7 @@ pub(crate) fn update_lod(app: &mut App, dt: f32) {
 
 /// Standalone surface-mesh items: a row of spheres at increasing distance, each
 /// referencing the LOD group so the renderer picks their level per frame.
-pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn lod_scene_items(app: &App) -> Vec<MeshItem> {
     let st = &app.lod_state;
     if !st.built {
         return Vec::new();
@@ -133,7 +133,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
     (0..count)
         .map(|i| {
             let y = -half + i as f32 * (2.0 * half / (count as f32 - 1.0));
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).into();
             item.material = st.sphere_material;
             item.settings.pick_id = PickId(1000 + i as u64);

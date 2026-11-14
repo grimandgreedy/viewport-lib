@@ -58,8 +58,8 @@ fn flat(
     mesh: MeshId,
     model: glam::Mat4,
     colour: [f32; 3],
-) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = model.into();
     item.material = upload_material(
@@ -288,7 +288,7 @@ fn cut_scene(plane: [f32; 4]) -> Option<(wgpu::Device, wgpu::Queue, ViewportRend
     Some((device, queue, renderer, quad))
 }
 
-fn bare_frame(rc: &RenderCamera, items: Vec<SceneRenderItem>) -> FrameData {
+fn bare_frame(rc: &RenderCamera, items: Vec<MeshItem>) -> FrameData {
     let mut frame = FrameData::new(
         CameraFrame::new(rc.clone(), [W as f32, H as f32]),
         SceneFrame::from_surface_items(items),
@@ -326,13 +326,13 @@ fn a_cut_caster_casts_no_shadow_from_its_removed_half() {
         .upload_mesh_data(&device, &viewport_lib::primitives::plane(4.0, 4.0))
         .unwrap();
 
-    let mut floor = SceneRenderItem::default();
+    let mut floor = MeshItem::default();
     floor.mesh_id = floor_mesh;
     floor.material = upload_material(
         &mut renderer,
         Material::from_colour(viewport_lib::Colour::linear_rgb(0.8, 0.8, 0.8)),
     );
-    let mut caster = SceneRenderItem::default();
+    let mut caster = MeshItem::default();
     caster.mesh_id = quad;
     caster.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
     let mut m = Material::from_colour(viewport_lib::Colour::linear_rgb(0.2, 0.2, 0.8));
@@ -352,7 +352,7 @@ fn a_cut_caster_casts_no_shadow_from_its_removed_half() {
     // x > 0.
     let floor_point = glam::Vec3::new(0.3, 0.2, 0.0);
     for (name, light) in [("directional", sun), ("point", bulb)] {
-        let render = |renderer: &mut ViewportRenderer, items: Vec<SceneRenderItem>| {
+        let render = |renderer: &mut ViewportRenderer, items: Vec<MeshItem>| {
             let mut frame = bare_frame(&rc, items);
             frame.effects.lighting.lights = vec![light.clone()];
             frame.effects.lighting.hemisphere_intensity = 0.05;

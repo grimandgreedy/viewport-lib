@@ -5,7 +5,7 @@
 //! stabilises again must get the bundle back.
 
 use viewport_lib::Colour;
-use viewport_lib::{CameraFrame, FrameData, Material, PickId, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, PickId, SceneFrame};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 /// One item per mesh, so one batch each. `hidden` names the item left out,
@@ -14,13 +14,13 @@ fn items(
     mesh_ids: &[viewport_lib::MeshId],
     material: viewport_lib::MaterialId,
     hidden: Option<u32>,
-) -> Vec<SceneRenderItem> {
+) -> Vec<MeshItem> {
     mesh_ids
         .iter()
         .enumerate()
         .map(|(i, &mesh_id)| {
             let i = i as u32;
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.material = material;
             let x = (i % 16) as f32 * 2.0;

@@ -9,7 +9,7 @@
 
 use viewport_lib::renderer::{PickBackend, PickMask};
 use viewport_lib::wgpu;
-use viewport_lib::{LightSource, Lux, PickId, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{LightSource, Lux, MeshItem, PickId, SurfaceSubmission};
 use viewport_lib_testkit::fixtures::{
     CallLog, CountedItemCollection, TriangleItemTypePlugin, probe_frame, probe_quad,
 };
@@ -150,7 +150,7 @@ fn triangle_fixture_is_dispatched_by_the_shadow_pass() {
                 .resources_mut()
                 .upload_mesh_data(&harness.device, &probe_quad())
                 .expect("upload probe quad");
-            let mut floor = SceneRenderItem::default();
+            let mut floor = MeshItem::default();
             floor.mesh_id = mesh_id;
             floor.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();
             frame.scene.surfaces = SurfaceSubmission::Flat(vec![floor].into());

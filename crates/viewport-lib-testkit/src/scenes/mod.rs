@@ -48,8 +48,8 @@ use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
     BackfacePolicy, Camera, CameraFrame, FrameData, FrameTime, LightingSettings, Material,
-    MaterialId, MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame,
-    SceneRenderItem, ViewportRenderer, primitives,
+    MaterialId, MeshData, MeshId, MeshInstanceItem, MeshItem, PolylineItem, ScatterSettings,
+    SceneFrame, ViewportRenderer, primitives,
 };
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::gpu_marching_cubes::GpuMarchingCubesItem;
@@ -95,7 +95,7 @@ pub struct NamedCamera {
 pub struct BuiltScene {
     /// World-space surface (mesh) items. Rebuilt into a `SceneFrame` per frame by
     /// [`frame_for`] (`SceneFrame` is not `Clone`, so the items are kept instead).
-    pub items: Vec<SceneRenderItem>,
+    pub items: Vec<MeshItem>,
     /// Point-cloud items.
     pub point_clouds: Vec<PointCloudItem>,
     /// Polyline items.
@@ -364,17 +364,12 @@ fn material(ctx: &mut BuildCtx<'_>, material: Material) -> MaterialId {
         .expect("material upload")
 }
 
-fn item(ctx: &mut BuildCtx<'_>, mesh: MeshId, pos: Vec3, material: Material) -> SceneRenderItem {
+fn item(ctx: &mut BuildCtx<'_>, mesh: MeshId, pos: Vec3, material: Material) -> MeshItem {
     item_model(ctx, mesh, Mat4::from_translation(pos), material)
 }
 
-fn item_model(
-    ctx: &mut BuildCtx<'_>,
-    mesh: MeshId,
-    model: Mat4,
-    material: Material,
-) -> SceneRenderItem {
-    let mut it = SceneRenderItem::new(mesh, self::material(ctx, material));
+fn item_model(ctx: &mut BuildCtx<'_>, mesh: MeshId, model: Mat4, material: Material) -> MeshItem {
+    let mut it = MeshItem::new(mesh, self::material(ctx, material));
     it.model = model.into();
     it
 }
@@ -384,13 +379,13 @@ fn two_sided(mut material: Material) -> Material {
     material
 }
 
-fn with_opacity(mut it: SceneRenderItem, opacity: f32) -> SceneRenderItem {
+fn with_opacity(mut it: MeshItem, opacity: f32) -> MeshItem {
     it.settings.opacity = opacity;
     it
 }
 
 /// A wide flat ground slab centred at the origin, top face at z = `top`.
-fn ground(ctx: &mut BuildCtx<'_>, top: f32) -> SceneRenderItem {
+fn ground(ctx: &mut BuildCtx<'_>, top: f32) -> MeshItem {
     let mesh = upload(ctx, &primitives::cuboid(40.0, 40.0, 0.4));
     item(
         ctx,

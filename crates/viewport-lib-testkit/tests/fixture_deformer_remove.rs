@@ -7,7 +7,7 @@
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
-    DeformerId, FrameData, Material, MeshId, SceneRenderItem, SurfaceSubmission, ViewportError,
+    DeformerId, FrameData, Material, MeshId, MeshItem, SurfaceSubmission, ViewportError,
 };
 use viewport_lib_testkit::fixtures::{
     ConstantOffsetDeformer, constant_offset_deformer_named, probe_frame, probe_quad,
@@ -28,7 +28,7 @@ fn setup(label: &'static str) -> Option<(Harness, MeshId, FrameData)> {
         .upload_mesh_data(&harness.device, &probe_quad())
         .expect("upload probe quad");
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = harness
         .renderer

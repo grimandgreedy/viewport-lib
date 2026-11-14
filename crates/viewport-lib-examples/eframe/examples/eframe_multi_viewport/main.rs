@@ -39,9 +39,9 @@ use viewport_lib_gizmo::{
 };
 use vpl::{
     BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership,
-    LightingSettings, Material, MaterialId, MeshId, MouseButton, OffscreenViewportTarget,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
-    ViewportInput, ViewportRenderer, picking::screen_to_ray, primitives,
+    LightingSettings, Material, MaterialId, MeshId, MeshItem, MouseButton, OffscreenViewportTarget,
+    OrbitCameraController, SceneFrame, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
+    ViewportRenderer, picking::screen_to_ray, primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -500,13 +500,13 @@ impl App {
                         self.position_of(id)
                     });
 
-                // Build scene render items.
-                let scene_items: Vec<SceneRenderItem> = self
+                // Build mesh items.
+                let scene_items: Vec<MeshItem> = self
                     .objects
                     .iter()
                     .enumerate()
                     .map(|(i, obj)| {
-                        let mut item = SceneRenderItem::new(obj.mesh_id, self.material);
+                        let mut item = MeshItem::new(obj.mesh_id, self.material);
                         item.model = obj.model.into();
                         item.settings.colour = Some(Colour::from_linear_rgb_array(obj.colour));
                         item.settings.selected = self.selection.contains(i as u64);

@@ -22,8 +22,8 @@ use viewport_lib::Colour;
 
 use viewport_lib::resources::build_log;
 use viewport_lib::{
-    Camera, FrameData, LightKind, LightSource, Material, RenderCamera, SceneRenderItem,
-    SurfaceSubmission, ViewportRenderer, wgpu,
+    Camera, FrameData, LightKind, LightSource, Material, MeshItem, RenderCamera, SurfaceSubmission,
+    ViewportRenderer, wgpu,
 };
 use viewport_lib_testkit::{DeviceProfile, device::headless_device_with_info};
 
@@ -159,10 +159,10 @@ fn main() {
         .upload_mesh_data(&device, &mesh)
         .expect("upload sphere");
     let plugins = std::iter::once(None).chain(ids.iter().copied().map(Some));
-    let items: Vec<SceneRenderItem> = plugins
+    let items: Vec<MeshItem> = plugins
         .enumerate()
         .map(|(i, plugin)| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 3.0 - 7.5, 0.0, 1.0))

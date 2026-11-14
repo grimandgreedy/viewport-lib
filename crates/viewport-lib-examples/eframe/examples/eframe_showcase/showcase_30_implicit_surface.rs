@@ -27,8 +27,8 @@ use viewport_lib_plugins::item_types::gpu_marching_cubes::{
     GpuMarchingCubesItem, McVolumeId, McVolumes,
 };
 use vpl::{
-    Camera, LightKind, LightSource, LightingSettings, Material, MaterialId, SceneRenderItem,
-    VolumeData, extract_isosurface, primitives,
+    Camera, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshItem, VolumeData,
+    extract_isosurface, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ impl App {
     ///
     /// Always includes the two reference spheres. Adds the marching-cubes mesh
     /// when that variant is active.
-    pub(crate) fn implicit_scene_items(&self) -> Vec<SceneRenderItem> {
+    pub(crate) fn implicit_scene_items(&self) -> Vec<MeshItem> {
         if !self.is_state.built {
             return vec![];
         }
@@ -245,14 +245,14 @@ impl App {
 
         // Near (blue): in front of the blob cloud.
         {
-            let mut item = SceneRenderItem::new(self.is_state.mesh_id, near_mat);
+            let mut item = MeshItem::new(self.is_state.mesh_id, near_mat);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).into();
             items.push(item);
         }
 
         // Far (orange): behind the blob cloud.
         {
-            let mut item = SceneRenderItem::new(self.is_state.mesh_id, far_mat);
+            let mut item = MeshItem::new(self.is_state.mesh_id, far_mat);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).into();
             items.push(item);
         }
@@ -260,7 +260,7 @@ impl App {
         // Marching cubes mesh (MarchingCubes variant only).
         if self.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
             if let Some(mc_id) = self.is_state.mc_mesh_id {
-                let mut item = SceneRenderItem::new(mc_id, mc_mat);
+                let mut item = MeshItem::new(mc_id, mc_mat);
                 item.model = glam::Mat4::IDENTITY.into();
                 items.push(item);
             }

@@ -87,7 +87,7 @@ fn lit_frame(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     frame.effects.display.exposure = exposure;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     // Scale the unit quad up so it covers the whole 1:1 frame.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();

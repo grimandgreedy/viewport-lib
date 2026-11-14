@@ -12,7 +12,7 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshId,
-    OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext,
+    MeshItem, OffscreenViewportTarget, OrbitCameraController, SceneFrame, ViewportContext,
     ViewportInput, ViewportRenderer, primitives,
 };
 
@@ -87,7 +87,7 @@ fn main() -> eframe::Result {
             let material = res.upload_material(material).expect("upload material");
 
             let item = |mesh_id: MeshId, x, z, colour: [f32; 3]| {
-                let mut s = SceneRenderItem::new(mesh_id, material);
+                let mut s = MeshItem::new(mesh_id, material);
                 s.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).into();
                 s.settings.colour = Some(Colour::from_linear_rgb_array(colour));
                 s
@@ -135,7 +135,7 @@ struct App {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
     target: Option<Target>,
 }
 
@@ -146,7 +146,7 @@ struct Target {
 }
 
 impl App {
-    fn new(renderer: ViewportRenderer, scene_items: Vec<SceneRenderItem>) -> Self {
+    fn new(renderer: ViewportRenderer, scene_items: Vec<MeshItem>) -> Self {
         Self {
             renderer,
             target: None,

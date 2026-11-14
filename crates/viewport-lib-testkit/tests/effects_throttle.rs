@@ -8,8 +8,7 @@
 
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, Material, MaterialId, MeshId, PerformancePolicy, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, Material, MaterialId, MeshId, MeshItem, PerformancePolicy, SceneFrame,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -23,7 +22,7 @@ fn frame(mesh: MeshId, material: MaterialId, yaw: f32, effects: bool) -> FrameDa
     let items = [-3.0f32, 0.0, 3.0]
         .iter()
         .map(|&x| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.material = material;
             item.model =

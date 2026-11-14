@@ -19,7 +19,7 @@
 //!   the same in every part of the scene (the world-independent look a
 //!   first-person viewmodel wants); off, they are lit by the scene.
 //!
-//! The cubes are ordinary `SceneRenderItem`s submitted through
+//! The cubes are ordinary `MeshItem`s submitted through
 //! `SceneFrame::foreground_items`; nothing here uses the plugin surface.
 
 use crate::App;
@@ -30,7 +30,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     CameraTarget, CameraTrack, ForegroundPass, ForegroundProjection, LightKind, LightSource,
-    LightingSettings, Material, PostProcessSettings, RenderCamera, SceneRenderItem, Selection,
+    LightingSettings, Material, MeshItem, PostProcessSettings, RenderCamera, Selection,
     ViewportRenderer, interpolate_camera, scene::Scene,
 };
 
@@ -233,8 +233,8 @@ impl App {
     }
 }
 
-/// World-scene render items (the background the camera flies around).
-pub(crate) fn foreground_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+/// World mesh items (the background the camera flies around).
+pub(crate) fn foreground_scene_items(app: &mut App) -> Vec<MeshItem> {
     if !app.fg_state.built {
         return Vec::new();
     }
@@ -307,7 +307,7 @@ pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
         let spin = glam::Mat4::from_rotation_y(t + i as f32 * 1.3)
             * glam::Mat4::from_rotation_x(t * 0.6 + i as f32);
         let model = c2w * glam::Mat4::from_translation(glam::Vec3::from_array(*off)) * spin;
-        let mut item = SceneRenderItem::new(app.fg_state.cube_mesh, app.fg_state.cube_materials[i]);
+        let mut item = MeshItem::new(app.fg_state.cube_mesh, app.fg_state.cube_materials[i]);
         item.model = model.into();
         item.settings.unlit = app.fg_state.unlit;
         cubes.push(item);

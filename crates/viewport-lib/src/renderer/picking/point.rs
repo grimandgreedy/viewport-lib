@@ -400,7 +400,7 @@ pub(crate) struct PickSceneBvh {
 /// a leaf is "pierced" exactly when the body would find an intersection.
 struct SurfaceGeom<'a> {
     entries: &'a [PickEntry],
-    items: &'a [SceneRenderItem],
+    items: &'a [MeshItem],
     mesh_store: &'a MeshStore,
 }
 

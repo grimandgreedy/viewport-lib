@@ -7,8 +7,8 @@
 
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -28,14 +28,14 @@ fn point_shadow_casters_are_capped_at_the_layer_budget() {
         .resources_mut()
         .upload_mesh_data(&h.device, &viewport_lib::primitives::icosphere(8.0, 2))
         .expect("ball");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
         .expect("material upload");
-    let mut ball = SceneRenderItem::default();
+    let mut ball = MeshItem::default();
     ball.mesh_id = ball_id;
     ball.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 15.0)).into();
     ball.material = h

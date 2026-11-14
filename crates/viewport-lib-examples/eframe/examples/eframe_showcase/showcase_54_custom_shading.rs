@@ -32,7 +32,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     LightKind, LightSource, LightingSettings, Material, MaterialId, MaterialPluginId, MeshId,
-    SceneRenderItem, TextureId, ViewportRenderer,
+    MeshItem, TextureId, ViewportRenderer,
 };
 
 // The plugin definitions live in `examples/plugins/toon_plugin.rs` so other
@@ -325,7 +325,7 @@ const SPHERES: [(f32, [f32; 3], bool); 8] = [
 // Render items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn custom_shading_items(app: &App) -> Vec<MeshItem> {
     let Some(mesh_id) = app.cs_state.mesh_id else {
         return vec![];
     };
@@ -336,7 +336,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
         .zip(&s.materials)
         .map(|(&(x, _, detail), &material)| {
             let mesh = if detail { detail_mesh } else { mesh_id };
-            let mut item = SceneRenderItem::new(mesh, material);
+            let mut item = MeshItem::new(mesh, material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.0)).into();
             item
         })

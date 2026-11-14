@@ -15,7 +15,7 @@ use viewport_lib::{
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item_model, orbit_camera, upload};
 
 /// The plane, and the box with its underside 0.15 above it.
-fn set(ctx: &mut BuildCtx<'_>) -> Vec<viewport_lib::SceneRenderItem> {
+fn set(ctx: &mut BuildCtx<'_>) -> Vec<viewport_lib::MeshItem> {
     let plane = upload(ctx, &primitives::plane(12.0, 12.0));
     let cube = upload(ctx, &primitives::cube(1.0));
     let grey = Material::pbr(Colour::linear_rgb(0.6, 0.6, 0.6), 0.0, 0.8);

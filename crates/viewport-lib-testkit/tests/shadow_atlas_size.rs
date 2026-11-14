@@ -5,8 +5,8 @@
 //! the full 64 MiB.
 
 use viewport_lib::{
-    CameraFrame, Colour, FrameData, LightKind, LightSource, LightingSettings, Material,
-    NoticeDetail, SceneFrame, SceneRenderItem,
+    CameraFrame, Colour, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    NoticeDetail, SceneFrame,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -14,7 +14,7 @@ const W: u32 = 200;
 const H: u32 = 150;
 
 /// A ground plane and a closed caster above it, lit from overhead (Z-up).
-fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
+fn scene(h: &mut Harness) -> Vec<MeshItem> {
     let ground_id = h
         .renderer
         .resources_mut()
@@ -25,14 +25,14 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
         .resources_mut()
         .upload_mesh_data(&h.device, &viewport_lib::primitives::icosphere(15.0, 3))
         .expect("upload ball");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
         .expect("material upload");
-    let mut ball = SceneRenderItem::default();
+    let mut ball = MeshItem::default();
     ball.mesh_id = ball_id;
     ball.material = h
         .renderer
@@ -43,7 +43,7 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
     vec![ground, ball]
 }
 
-fn frame(items: &[SceneRenderItem], atlas_resolution: u32, cascades: u32) -> FrameData {
+fn frame(items: &[MeshItem], atlas_resolution: u32, cascades: u32) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 150.0, 0.6, 1.0);
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),

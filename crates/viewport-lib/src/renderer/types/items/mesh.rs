@@ -4,7 +4,7 @@ use crate::scene::material::ItemSettings;
 /// Per-object render data for one frame.
 #[derive(Clone)]
 #[non_exhaustive]
-pub struct SceneRenderItem {
+pub struct MeshItem {
     /// `MeshId` of the uploaded GPU mesh for this object.
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// World-space placement: an f64 translation and an f32 rotation-scale.
@@ -52,7 +52,7 @@ pub struct SceneRenderItem {
     ///   (or a plugin handle like
     ///   [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)).
     ///
-    /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to
+    /// Allows multiple `MeshItem`s that share a bind-pose mesh to
     /// each pose independently (crowd / instanced characters with GPU
     /// skinning).
     ///
@@ -115,7 +115,7 @@ pub enum IndirectLightSource {
     ProbeVolume,
 }
 
-impl SceneRenderItem {
+impl MeshItem {
     /// An item drawing `mesh_id` with `material`, at the identity transform,
     /// with default settings.
     pub fn new(mesh_id: crate::resources::mesh::mesh_store::MeshId, material: MaterialId) -> Self {
@@ -127,7 +127,7 @@ impl SceneRenderItem {
     }
 }
 
-impl Default for SceneRenderItem {
+impl Default for MeshItem {
     fn default() -> Self {
         Self {
             mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,

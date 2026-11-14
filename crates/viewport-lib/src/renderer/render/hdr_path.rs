@@ -14,7 +14,7 @@ struct HdrFrameCtx<'a> {
     device: &'a crate::gpu::Device,
     queue: &'a crate::gpu::Queue,
     frame: &'a FrameData,
-    scene_items: &'a [SceneRenderItem],
+    scene_items: &'a [MeshItem],
     output_view: &'a crate::gpu::TextureView,
     vp_idx: usize,
     ssaa_factor: u32,
@@ -103,7 +103,7 @@ fn post_effect_ctx<'a>(
 pub(super) fn draw_mesh_item(
     resources: &DeviceResources,
     render_pass: &mut crate::gpu::RenderPass<'_>,
-    item: &SceneRenderItem,
+    item: &MeshItem,
     obj_override: Option<(&crate::gpu::BindGroup, &crate::gpu::Buffer)>,
     // Object-data element index the whole-mesh draw selects with
     // @builtin(instance_index). Must be 0 when `obj_override` is None (the
@@ -342,7 +342,7 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         bg_colour: [f32; 4],
         ssaa_factor: u32,
         mut encoder: crate::gpu::CommandEncoder,
@@ -2070,12 +2070,12 @@ impl ViewportRenderer {
         // back-to-front (or blend order). Foreground transparency is plain
         // sorted alpha blending against the foreground depth, not OIT.
         let eye = fg_camera.eye_position();
-        let dist_from_eye = |item: &SceneRenderItem| -> f32 {
+        let dist_from_eye = |item: &MeshItem| -> f32 {
             (item.model.translation - glam::DVec3::from(eye)).length() as f32
         };
         let items = &frame.scene.foreground_items;
-        let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
-        let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+        let mut opaque: Vec<(usize, &MeshItem)> = Vec::new();
+        let mut transparent: Vec<(usize, &MeshItem)> = Vec::new();
         for (idx, item) in items.iter().enumerate() {
             if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                 continue;

@@ -55,7 +55,7 @@ fn probe_frame(quad: Quad, bg_alpha: f32, opacity: f32) -> FrameData {
     frame.effects.lighting.hemisphere_intensity = 0.0;
 
     if opacity > 0.0 {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = quad.0;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.2)).into();
         item.material = quad.1;

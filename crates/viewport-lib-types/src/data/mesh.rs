@@ -71,7 +71,7 @@ pub struct MeshData {
     /// Empty means the whole mesh draws with the item's single material,
     /// which is the behaviour for meshes that do not need ranges. When
     /// non-empty, an item can bind one material per range via
-    /// `SceneRenderItem::submesh_materials`. See [`SubmeshRange`] for the
+    /// `MeshItem::submesh_materials`. See [`SubmeshRange`] for the
     /// index-sorting contract.
     pub submeshes: Vec<SubmeshRange>,
 }
@@ -155,7 +155,7 @@ impl MeshData {
     /// One range per distinct material id is written to `submeshes`, ordered
     /// by ascending id. Returns the distinct ids in that same order, so a
     /// caller with sparse or unordered ids can line up
-    /// `SceneRenderItem::submesh_materials[i]` with the returned `ids[i]`.
+    /// `MeshItem::submesh_materials[i]` with the returned `ids[i]`.
     ///
     /// Importers that already emit per-material contiguous indices do not
     /// need this; it exists for meshes whose triangles arrive interleaved.

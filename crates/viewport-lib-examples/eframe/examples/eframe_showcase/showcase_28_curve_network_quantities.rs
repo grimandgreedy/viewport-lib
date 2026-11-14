@@ -16,9 +16,7 @@ use std::f32::consts::TAU;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::vector_field::VectorFieldItem;
-use vpl::{
-    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
-};
+use vpl::{BuiltinColourmap, ColourmapId, FrameData, LightingSettings, MeshItem, PolylineItem};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CnqMode {
@@ -233,9 +231,7 @@ pub(crate) fn make_cnq_vectors(app: &App) -> Option<VectorFieldItem> {
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn cnq_collect_scene_items(
-    _app: &App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn cnq_collect_scene_items(_app: &App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     (vec![], LightingSettings::default(), 0, 0)
 }
 

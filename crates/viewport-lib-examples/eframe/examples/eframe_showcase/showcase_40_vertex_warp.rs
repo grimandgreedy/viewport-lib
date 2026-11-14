@@ -1,6 +1,6 @@
 //! Showcase 40: GPU Vertex Warp
 //!
-//! Demonstrates `warp_attribute` and `warp_scale` on `SceneRenderItem`.
+//! Demonstrates `warp_attribute` and `warp_scale` on `MeshItem`.
 //!
 //! A per-vertex displacement field is uploaded once alongside each mesh as an
 //! `AttributeData::VertexVector` attribute. The vertex shader reads the field
@@ -21,7 +21,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings, Material, MaterialId,
-    MeshId, SceneRenderItem, ViewportRenderer, primitives,
+    MeshId, MeshItem, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ pub(crate) fn controls_warp(app: &mut App, ui: &mut egui::Ui) {
 // Frame data
 // ---------------------------------------------------------------------------
 
-pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn warp_scene_items(app: &App) -> Vec<MeshItem> {
     if !app.warp_state.built {
         return vec![];
     }
@@ -163,7 +163,7 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
         .zip(colours.iter())
         .zip(offsets.iter())
         .map(|((&mesh_id, &colour), &tx)| {
-            let mut item = SceneRenderItem::new(mesh_id, app.warp_state.material);
+            let mut item = MeshItem::new(mesh_id, app.warp_state.material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item.warp_attribute = Some("warp".to_string());

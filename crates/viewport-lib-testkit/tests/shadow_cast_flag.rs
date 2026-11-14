@@ -7,8 +7,8 @@
 
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -16,7 +16,7 @@ use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 /// so a phantom shadow pass would darken pixels under the sphere. The caster
 /// must be a closed mesh: the cascade pipeline culls front faces, so an open
 /// sheet casts nothing single-sided.
-fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
+fn scene(h: &mut Harness) -> Vec<MeshItem> {
     let ground_id = h
         .renderer
         .resources_mut()
@@ -27,14 +27,14 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
         .resources_mut()
         .upload_mesh_data(&h.device, &viewport_lib::primitives::icosphere(15.0, 3))
         .expect("upload ball");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
         .expect("material upload");
-    let mut floater = SceneRenderItem::default();
+    let mut floater = MeshItem::default();
     floater.mesh_id = ball_id;
     floater.material = h
         .renderer
@@ -46,7 +46,7 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
     vec![ground, floater]
 }
 
-fn frame(items: &[SceneRenderItem], cast_shadows: bool, shadows_enabled: bool) -> FrameData {
+fn frame(items: &[MeshItem], cast_shadows: bool, shadows_enabled: bool) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 150.0, 0.6, 1.0);
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [200.0, 150.0]),

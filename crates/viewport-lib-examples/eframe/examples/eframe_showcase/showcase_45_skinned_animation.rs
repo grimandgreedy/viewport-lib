@@ -1562,7 +1562,7 @@ fn weights_for_mesh(state: &Skin47State, mesh_id: MeshId) -> Option<SkinWeights>
 // Scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn skin47_scene_items(app: &mut App) -> Vec<vpl::SceneRenderItem> {
+pub(crate) fn skin47_scene_items(app: &mut App) -> Vec<vpl::MeshItem> {
     app.skin_state
         .scene
         .collect_render_items(&app.skin_state.selection)

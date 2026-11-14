@@ -19,8 +19,8 @@ use viewport_lib::Colour;
 use viewport_lib as vpl;
 use vpl::wgpu;
 use vpl::{
-    Camera, CameraFrame, FrameData, GpuContext, Material, SceneFrame, SceneRenderItem,
-    ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, GpuContext, Material, MeshItem, SceneFrame, ViewportRenderer,
+    primitives,
 };
 
 const W: u32 = 640;
@@ -60,7 +60,7 @@ fn main() {
     let mut camera = Camera::orbit(glam::DVec3::ZERO, 5.0, Camera::default().orientation());
     camera.set_aspect_ratio(W as f32, H as f32);
 
-    let mut item = SceneRenderItem::new(cube, material);
+    let mut item = MeshItem::new(cube, material);
     item.model = glam::Mat4::IDENTITY.into();
 
     let frame = FrameData::new(

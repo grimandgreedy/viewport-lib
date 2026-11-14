@@ -12,7 +12,7 @@ use viewport_lib_gizmo::{
     ManipResult, build_numeric_label,
 };
 use vpl::{
-    CameraAnimator, CameraFrame, Easing, FrameData, LightingSettings, Material, SceneRenderItem,
+    CameraAnimator, CameraFrame, Easing, FrameData, LightingSettings, Material, MeshItem,
     ViewPreset, ViewportRenderer, scene::Scene, selection::Selection,
 };
 
@@ -235,7 +235,7 @@ pub(crate) fn controls_interaction(app: &mut App, ui: &mut egui::Ui) {
 
 pub(crate) fn interact_collect_scene_items(
     app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let items = app
         .interact_state
         .scene

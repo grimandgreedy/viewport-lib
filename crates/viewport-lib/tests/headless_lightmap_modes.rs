@@ -57,7 +57,7 @@ fn lightmap_replace_mode_recolours_object() {
     // No direct lights: the object colour is purely its indirect (lightmap) term.
     frame.effects.lighting.lights = vec![];
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.into();
     let mut m = Material::default();
@@ -114,7 +114,7 @@ fn lightmap_ao_mode_darkens_object() {
         // would re-brighten the occluded box and mask the darkening).
         frame.effects.lighting.hemisphere_intensity = 0.5;
         frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::IDENTITY.into();
         item.material = white;

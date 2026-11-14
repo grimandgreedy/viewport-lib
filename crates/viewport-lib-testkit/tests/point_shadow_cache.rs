@@ -5,8 +5,8 @@
 use glam::Vec3;
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_testkit::Harness;
 use viewport_lib_testkit::scenes::orbit_camera;
@@ -53,7 +53,7 @@ fn cache_reuses_and_invalidates(kind: Kind) {
         .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.2, 0.2)))
         .expect("material upload");
     let build = |caster_x: f32, light_x: f32| {
-        let mut ground = SceneRenderItem::default();
+        let mut ground = MeshItem::default();
         ground.mesh_id = plane_id;
         ground.model = (glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -1.0))
             * glam::Mat4::from_scale(Vec3::splat(12.0)))
@@ -61,7 +61,7 @@ fn cache_reuses_and_invalidates(kind: Kind) {
         ground.material = ground_material;
         ground.settings.cast_shadows = false;
 
-        let mut caster = SceneRenderItem::default();
+        let mut caster = MeshItem::default();
         caster.mesh_id = cube_id;
         caster.model = glam::Mat4::from_translation(Vec3::new(caster_x, 0.0, 1.0)).into();
         caster.material = caster_material;

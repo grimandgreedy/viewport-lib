@@ -1,7 +1,7 @@
 //! A closed-mesh answer that lands after a mesh is batched repacks the
 //! batches that draw it, and leaves the cache alone when none does.
 
-use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
+use crate::renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission};
 use crate::resources::mesh::instancing::instance_flags::MESH_CLOSED;
 use crate::{Camera, ViewportRenderer};
 
@@ -10,9 +10,9 @@ fn frame(mesh: crate::resources::mesh::mesh_store::MeshId) -> FrameData {
     frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [64.0, 64.0];
     frame.camera.pixels_per_point = 1.0;
-    let items: Vec<SceneRenderItem> = (0..4)
+    let items: Vec<MeshItem> = (0..4)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::X * i as f32 * 2.0).to_cols_array_2d();

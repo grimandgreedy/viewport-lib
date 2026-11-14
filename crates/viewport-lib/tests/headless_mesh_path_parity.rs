@@ -82,7 +82,7 @@ impl Scene {
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
 
         let item_at = |x: f32| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = self.mesh;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, x, 0.0)).into();
             item.material = material;
@@ -311,7 +311,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
         .resources_mut()
         .upload_mesh_data(&scene.device, &caster_mesh)
         .unwrap();
-    let mut floor = SceneRenderItem::default();
+    let mut floor = MeshItem::default();
     floor.mesh_id = floor_mesh;
     floor.material = upload_material(
         &mut scene.renderer,
@@ -330,7 +330,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
     };
     let (keep, cut) = (masked(0.1), masked(0.5));
     let caster_at = |y: f32, material: MaterialId| {
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).into();
         it.material = material;
@@ -339,7 +339,7 @@ fn vertex_alpha_mask_cuts_the_shadow_on_both_paths() {
 
     // Pixels dark enough to be floor in shadow.
     let gpu_cull = std::cell::Cell::new(false);
-    let mut shadowed = |light: &LightSource, items: Vec<SceneRenderItem>| -> usize {
+    let mut shadowed = |light: &LightSource, items: Vec<MeshItem>| -> usize {
         const SIZE: u32 = 64;
         if gpu_cull.get() {
             scene.renderer.enable_gpu_driven_culling();
@@ -426,7 +426,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
         .resources_mut()
         .upload_mesh_data(&scene.device, &quad_mesh(0.3))
         .unwrap();
-    let mut floor = SceneRenderItem::default();
+    let mut floor = MeshItem::default();
     floor.mesh_id = floor_mesh;
     floor.material = upload_material(
         &mut scene.renderer,
@@ -440,7 +440,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     caster.backface_policy = viewport_lib::BackfacePolicy::Identical;
     let caster = upload_material(&mut scene.renderer, caster);
     let caster_at = |y: f32| {
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = caster_mesh;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(0.5, y, 1.5)).into();
         it.material = caster;
@@ -450,7 +450,7 @@ fn casters_sharing_a_mesh_each_cast_a_shadow_on_both_paths() {
     // Pixels dark enough to be floor in shadow (lit floor and the casters
     // are both far brighter).
     let gpu_cull = std::cell::Cell::new(false);
-    let mut shadowed = |light: &LightSource, items: Vec<SceneRenderItem>| -> usize {
+    let mut shadowed = |light: &LightSource, items: Vec<MeshItem>| -> usize {
         const SIZE: u32 = 64;
         if gpu_cull.get() {
             scene.renderer.enable_gpu_driven_culling();

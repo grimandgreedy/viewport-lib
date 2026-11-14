@@ -6,8 +6,8 @@
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem, ViewportRenderer,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame, ViewportRenderer,
 };
 use viewport_lib_testkit::{meshes, orbit_camera};
 
@@ -60,14 +60,14 @@ fn render(indirect: bool) -> Option<Vec<u8>> {
         .expect("material upload");
 
     let mut items = Vec::new();
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = ground_material;
     items.push(ground);
     for i in 0..24 {
         let ang = i as f32 * 0.7;
         let r = 15.0 + (i as f32) * 12.0; // spirals well past the view
-        let mut ball = SceneRenderItem::default();
+        let mut ball = MeshItem::default();
         ball.mesh_id = ball_id;
         ball.model = glam::Mat4::from_translation(glam::Vec3::new(
             r * ang.cos(),

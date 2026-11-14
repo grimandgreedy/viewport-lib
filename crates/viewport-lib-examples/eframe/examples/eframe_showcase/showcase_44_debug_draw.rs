@@ -19,8 +19,8 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use vpl::{
-    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
-    RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
+    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, MeshItem,
+    RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
     runtime::plugin::phase,
     scene::Scene,
@@ -260,7 +260,7 @@ pub(crate) fn update_dbg_draw(app: &mut App, dt: f32) {
 // Scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn dbg_draw_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+pub(crate) fn dbg_draw_scene_items(app: &mut App) -> Vec<MeshItem> {
     app.dbg_draw_state
         .scene
         .collect_render_items(&app.dbg_draw_state.selection)

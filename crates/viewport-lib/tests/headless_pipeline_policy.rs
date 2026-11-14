@@ -4,7 +4,7 @@
 
 use viewport_lib::wgpu;
 use viewport_lib::{
-    Camera, FrameData, PipelineCompilation, RenderCamera, SceneRenderItem, SurfaceSubmission,
+    Camera, FrameData, MeshItem, PipelineCompilation, RenderCamera, SurfaceSubmission,
     ViewportRenderer,
 };
 
@@ -30,10 +30,10 @@ fn scene(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool) -> F
     if !hdr {
         frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     }
-    let mut opaque = SceneRenderItem::default();
+    let mut opaque = MeshItem::default();
     opaque.mesh_id = box_id;
     opaque.model = glam::Mat4::from_translation(glam::Vec3::new(-0.8, 0.0, 0.0)).into();
-    let mut transparent = SceneRenderItem::default();
+    let mut transparent = MeshItem::default();
     transparent.mesh_id = sphere_id;
     transparent.model = glam::Mat4::from_translation(glam::Vec3::new(0.8, 0.0, 0.0)).into();
     transparent.settings.opacity = 0.5;
@@ -359,7 +359,7 @@ fn a_warmed_renderer_compiles_nothing_afterwards() {
             frame.effects.post_process.dof.enabled = true;
             frame.effects.post_process.fxaa = true;
             if let SurfaceSubmission::Flat(items) = &mut frame.scene.surfaces {
-                let mut items: Vec<SceneRenderItem> = items.iter().cloned().collect();
+                let mut items: Vec<MeshItem> = items.iter().cloned().collect();
                 items[0].settings.selected = true;
                 let mut third = items[0].clone();
                 third.settings.selected = false;
@@ -411,9 +411,9 @@ fn instanced_frames_cull_on_the_cpu_until_the_gpu_cull_is_built() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         // Eight copies of one mesh: enough to batch, so the cull runs.
-        let items: Vec<SceneRenderItem> = (0..8)
+        let items: Vec<MeshItem> = (0..8)
             .map(|i| {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh;
                 item.model =
                     glam::Mat4::from_translation(glam::Vec3::new((i as f32 - 3.5) * 1.2, 0.0, 0.0))

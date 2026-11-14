@@ -8,8 +8,8 @@
 //! the shaded radiance without a tone-map curve.
 
 use viewport_lib::{
-    CameraFrame, Colour, FrameData, LightingSettings, Material, PipelineMode, SceneFrame,
-    SceneRenderItem, ShadingModel,
+    CameraFrame, Colour, FrameData, LightingSettings, Material, MeshItem, PipelineMode, SceneFrame,
+    ShadingModel,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -28,7 +28,7 @@ fn sphere_frame(h: &mut Harness, material: Material, generation: u64) -> FrameDa
             &viewport_lib::geometry::primitives::sphere(1.0, 48, 24),
         )
         .expect("sphere");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.material = h
         .renderer

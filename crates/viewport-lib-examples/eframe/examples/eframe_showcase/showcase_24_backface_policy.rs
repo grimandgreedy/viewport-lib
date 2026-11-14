@@ -24,8 +24,8 @@ use glam::Mat4;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
-    PatternConfig, SceneRenderItem, ViewportRenderer, scene::Scene,
+    BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material, MeshItem,
+    PatternConfig, ViewportRenderer, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ impl App {
     // Per-frame helpers (called from build_frame_data)
     // -------------------------------------------------------------------------
 
-    pub(crate) fn sa_scene_items(&mut self) -> Vec<SceneRenderItem> {
+    pub(crate) fn sa_scene_items(&mut self) -> Vec<MeshItem> {
         self.sa_state
             .scene
             .collect_render_items(&vpl::Selection::new())

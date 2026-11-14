@@ -35,7 +35,7 @@ impl Default for SurfaceLicConfig {
 ///
 /// The item draws no surface of its own: it modulates whatever colour is on
 /// screen where the mesh is the visible surface. Submit it beside the
-/// `SceneRenderItem` that draws the same mesh, with the same `model`.
+/// `MeshItem` that draws the same mesh, with the same `model`.
 ///
 /// `strength` is per item. `steps` and `step_size` are read from the first
 /// visible item of the frame, because every flow surface is advected in one

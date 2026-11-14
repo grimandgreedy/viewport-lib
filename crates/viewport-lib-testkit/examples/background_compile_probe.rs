@@ -11,7 +11,7 @@
 //! ```
 use std::time::Instant;
 use viewport_lib::{
-    Camera, FrameData, PipelineCompilation, RenderCamera, SceneRenderItem, SurfaceSubmission,
+    Camera, FrameData, MeshItem, PipelineCompilation, RenderCamera, SurfaceSubmission,
     ViewportRenderer, wgpu,
 };
 use viewport_lib_testkit::{DeviceProfile, device::headless_device_with_info};
@@ -92,9 +92,9 @@ fn main() {
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [512.0, 512.0];
-    let items: Vec<SceneRenderItem> = (0..4)
+    let items: Vec<MeshItem> = (0..4)
         .map(|i| {
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = mesh_id;
             it.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 2.5 - 4.0, 0.0, 0.0))

@@ -1982,7 +1982,7 @@ impl DeviceResources {
 
     /// Upload a 256-sample RGBA colourmap to the GPU and return its `ColourmapId`.
     ///
-    /// The returned ID can be stored in `SceneRenderItem::colourmap_id`.
+    /// The returned ID can be stored in `MeshItem::colourmap_id`.
     /// Use `BuiltinColourmap` variants + [`Self::builtin_colourmap_id`] for the built-in presets.
     ///
     /// The bytes are treated as sRGB (matching how colourmaps are authored, e.g.

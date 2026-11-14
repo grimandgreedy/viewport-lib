@@ -41,10 +41,10 @@ use viewport_lib_plugins::item_types::{
 use crate::eframe::egui;
 use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, FrameData,
-    ItemSettings, LightingSettings, Material, MaterialId, MeshId, NodeId, PickBackend, PickId,
-    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
-    SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
-    VolumeMeshData, VolumeMeshItem,
+    ItemSettings, LightingSettings, Material, MaterialId, MeshId, MeshItem, NodeId, PickBackend,
+    PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SizeSource,
+    SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData, VolumeMeshData,
+    VolumeMeshItem,
 };
 
 use crate::App;
@@ -1794,16 +1794,14 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
 /// Returns `(items, lighting, scene_gen, selection_gen)`. Call this from the
 /// `ShowcaseMode::PickLevels` arm of the frame-data builder and feed the result
 /// into the shared `SceneFrame` and `LightingSettings` slots.
-pub(crate) fn pl_collect_scene_items(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn pl_collect_scene_items(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let mut items = app
         .pl_state
         .scene
         .collect_render_items(&app.pl_state.selection);
     // TVM boundary surface rendered as an opaque mesh alongside the scene nodes.
     if let Some(tvm_mesh_id) = app.pl_state.tvm_mesh_id {
-        let mut tvm_item = SceneRenderItem::new(tvm_mesh_id, app.pl_state.tvm_material);
+        let mut tvm_item = MeshItem::new(tvm_mesh_id, app.pl_state.tvm_material);
         tvm_item.model = glam::Mat4::IDENTITY.into();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);

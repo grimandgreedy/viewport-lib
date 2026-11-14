@@ -30,10 +30,10 @@ use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
     BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, FrameData, LightKind,
-    LightSource, LightingSettings, MatcapId, Material, MaterialId, MeshId, OffscreenViewportTarget,
-    OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask, SceneFrame,
-    SceneRenderItem, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent, ViewportInput,
-    ViewportRenderer,
+    LightSource, LightingSettings, MatcapId, Material, MaterialId, MeshId, MeshItem,
+    OffscreenViewportTarget, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId,
+    PickMask, SceneFrame, ShadingModel, ShadowFilter, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
@@ -618,12 +618,12 @@ impl App {
     }
 
     /// One render item per object, plus the ground.
-    fn build_scene(&self) -> Vec<SceneRenderItem> {
+    fn build_scene(&self) -> Vec<MeshItem> {
         let mut items = Vec::new();
         let mats = &self.materials.ids;
 
-        let mut place = |mesh: MeshId, pick_id: u64, configure: &dyn Fn(&mut SceneRenderItem)| {
-            let mut item = SceneRenderItem::new(mesh, mats[pick_id as usize]);
+        let mut place = |mesh: MeshId, pick_id: u64, configure: &dyn Fn(&mut MeshItem)| {
+            let mut item = MeshItem::new(mesh, mats[pick_id as usize]);
             item.model = glam::Mat4::from_translation(grid_pos(pick_id)).into();
             item.settings.pick_id = PickId(pick_id);
             item.settings.selected = self.selection.contains(&pick_id);
@@ -680,7 +680,7 @@ impl App {
         place(self.meshes.override_pos, 14, &|_| {});
 
         // Ground platform: instanced opaque, receives every object's shadow.
-        let mut ground = SceneRenderItem::new(self.meshes.ground, mats[0]);
+        let mut ground = MeshItem::new(self.meshes.ground, mats[0]);
         ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         items.push(ground);
 

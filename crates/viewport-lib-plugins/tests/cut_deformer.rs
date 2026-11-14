@@ -10,7 +10,7 @@
 
 use viewport_lib::renderer::{CameraFrame, FrameData, RenderCamera, SceneFrame};
 use viewport_lib::resources::{AttributeData, DeformStage, DeformerDesc};
-use viewport_lib::{Camera, MeshId, SceneRenderItem, ViewportRenderer, gpu};
+use viewport_lib::{Camera, MeshId, MeshItem, ViewportRenderer, gpu};
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 
@@ -65,8 +65,8 @@ fn camera() -> RenderCamera {
     RenderCamera::from_camera(&cam)
 }
 
-fn flat(mesh: MeshId, translation: glam::Vec3, colour: [f32; 3]) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+fn flat(mesh: MeshId, translation: glam::Vec3, colour: [f32; 3]) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_translation(translation).into();
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(
@@ -80,7 +80,7 @@ impl Scene {
     /// Render the grid quad, selecting instance 1, over the backdrop, and
     /// report whether each probe point shows the quad (white) rather than the
     /// backdrop (red).
-    fn shows_quad(&mut self, extra: Vec<SceneRenderItem>, probes: &[[f32; 2]]) -> Vec<bool> {
+    fn shows_quad(&mut self, extra: Vec<MeshItem>, probes: &[[f32; 2]]) -> Vec<bool> {
         let mut quad = flat(self.grid, glam::Vec3::ZERO, [1.0, 1.0, 1.0]);
         quad.deform_instance = Some(1);
         let backdrop = flat(

@@ -17,7 +17,7 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         bg_colour: [f32; 4],
         w: u32,
         h: u32,
@@ -352,12 +352,12 @@ impl ViewportRenderer {
                     .render_camera
                     .foreground_camera(frame.effects.foreground.as_ref());
                 let eye = fg_camera.eye_position();
-                let dist_from_eye = |item: &SceneRenderItem| -> f32 {
+                let dist_from_eye = |item: &MeshItem| -> f32 {
                     (item.model.translation - glam::DVec3::from(eye)).length() as f32
                 };
                 let items = &frame.scene.foreground_items;
-                let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                let mut opaque: Vec<(usize, &MeshItem)> = Vec::new();
+                let mut transparent: Vec<(usize, &MeshItem)> = Vec::new();
                 for (idx, item) in items.iter().enumerate() {
                     if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;

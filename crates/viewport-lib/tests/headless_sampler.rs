@@ -76,7 +76,7 @@ fn material_sampler_wrap_mode_changes_tiling() {
             frame.camera.render_camera = RenderCamera::from_camera(&cam);
             frame.camera.viewport_size = [96.0, 96.0];
 
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.model = glam::Mat4::IDENTITY.into();
             let mut m = Material::default();

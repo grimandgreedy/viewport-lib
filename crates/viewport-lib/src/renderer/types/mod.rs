@@ -954,7 +954,7 @@ macro_rules! emit_draw_calls {
         // level chosen for its on-screen size, and culled items are hidden.
         // Matches `frame.scene.surfaces` in order and length, so the per-object
         // bind groups (indexed by position) line up unchanged.
-        let _scene_items: &[SceneRenderItem] = $scene_items;
+        let _scene_items: &[MeshItem] = $scene_items;
 
         render_pass.set_bind_group(0, camera_bg, &[]);
 

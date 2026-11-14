@@ -207,7 +207,7 @@ fn render_offscreen_produces_rgba_pixels() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // Add the box as a scene item.
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = false;

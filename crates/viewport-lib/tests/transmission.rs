@@ -128,11 +128,11 @@ fn raster_centre(device: &wgpu::Device, queue: &wgpu::Queue, material: Material)
     frame.effects.environment = Some(EnvironmentLighting::new(env));
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(&mut renderer, material);
-    let mut wall_item = SceneRenderItem::default();
+    let mut wall_item = MeshItem::default();
     wall_item.mesh_id = wall;
     wall_item.model = wall_model.into();
     wall_item.material = upload_material(&mut renderer, backdrop_material());

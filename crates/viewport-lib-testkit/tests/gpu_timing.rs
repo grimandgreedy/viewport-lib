@@ -8,7 +8,7 @@
 
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 /// Over a run of frames on a tiny (sub-ms) scene, fresh GPU samples must
@@ -35,7 +35,7 @@ fn gpu_samples_stay_fresh_on_short_frames() {
         .resources_mut()
         .upload_mesh_data(&h.device, &data)
         .expect("upload");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = id;
     item.material = h
         .renderer

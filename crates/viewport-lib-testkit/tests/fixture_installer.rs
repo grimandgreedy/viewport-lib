@@ -110,7 +110,7 @@ fn installer_fixture_fails_cleanly_without_a_runtime() {
 /// renders, and the feature installs again under the same names.
 #[test]
 fn installer_fixture_uninstall_restores_the_registries() {
-    use viewport_lib::{Colour, Material, SceneRenderItem, SurfaceSubmission, uninstall_plugin};
+    use viewport_lib::{Colour, Material, MeshItem, SurfaceSubmission, uninstall_plugin};
     use viewport_lib_testkit::fixtures::{probe_frame, probe_quad};
 
     let Some(mut harness) =
@@ -135,7 +135,7 @@ fn installer_fixture_uninstall_restores_the_registries() {
         .upload_mesh_data(&harness.device, &probe_quad())
         .expect("upload probe quad");
     let mut frame = probe_frame(64, [0.0, 0.0, 0.0, 1.0]);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = harness
         .renderer
@@ -314,7 +314,7 @@ fn render_offset_quad(
     queue: &viewport_lib::wgpu::Queue,
     deformer: Option<viewport_lib::DeformerId>,
 ) -> Vec<u8> {
-    use viewport_lib::{Colour, Material, SceneRenderItem, SurfaceSubmission};
+    use viewport_lib::{Colour, Material, MeshItem, SurfaceSubmission};
     use viewport_lib_testkit::fixtures::{ConstantOffsetDeformer, probe_frame, probe_quad};
 
     let resources = instance.resources_mut();
@@ -336,7 +336,7 @@ fn render_offset_quad(
             glam::Vec3::new(0.25, 0.0, 0.0),
         );
     }
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = resources
         .upload_material(Material::from_colour(Colour::linear_rgb(0.9, 0.9, 0.9)))

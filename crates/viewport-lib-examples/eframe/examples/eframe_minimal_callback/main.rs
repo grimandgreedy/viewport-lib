@@ -17,9 +17,9 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId, MeshId,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
-    ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId, MeshId, MeshItem,
+    OrbitCameraController, SceneFrame, ViewportContext, ViewportInput, ViewportRenderer,
+    primitives,
 };
 
 fn main() -> eframe::Result {
@@ -69,13 +69,13 @@ struct App {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
 }
 
 impl App {
     fn new(material: MaterialId, m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
         let make = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-            let mut item = SceneRenderItem::new(mesh_id, material);
+            let mut item = MeshItem::new(mesh_id, material);
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
             item

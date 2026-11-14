@@ -8,9 +8,7 @@
 //! wgpu adapter is available.
 
 use super::types::FrameData;
-use super::{
-    CameraFrame, RenderCamera, SceneFrame, SceneRenderItem, SurfaceSubmission, ViewportRenderer,
-};
+use super::{CameraFrame, MeshItem, RenderCamera, SceneFrame, SurfaceSubmission, ViewportRenderer};
 use crate::geometry::primitives;
 
 fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
@@ -44,9 +42,9 @@ fn frame_with(mesh_id: crate::MeshId, count: usize) -> FrameData {
         glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.333, 0.1, 1000.0),
     );
     let cf = CameraFrame::new(cam, [256.0, 256.0]);
-    let items: Vec<SceneRenderItem> = (0..count)
+    let items: Vec<MeshItem> = (0..count)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = translate(i as f32 * 2.5);
             item

@@ -496,7 +496,7 @@ fn main() {
             .resources_mut()
             .upload_mesh_data(&device, &vpl::primitives::cube(1.0))
             .expect("upload cube");
-        let mut item = vpl::SceneRenderItem::default();
+        let mut item = vpl::MeshItem::default();
         item.mesh_id = cube;
         item.model = glam::Mat4::IDENTITY.into();
         item.material = renderer
@@ -533,7 +533,7 @@ fn main() {
             .resources_mut()
             .upload_mesh_data(&device, &vpl::primitives::cube(1.0))
             .expect("upload cube");
-        let mut item = vpl::SceneRenderItem::default();
+        let mut item = vpl::MeshItem::default();
         item.mesh_id = cube;
         item.model = glam::Mat4::IDENTITY.into();
         item.material = renderer

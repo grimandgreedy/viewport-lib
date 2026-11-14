@@ -754,7 +754,7 @@ pub struct FrameStats {
 
     /// Objects that resolved through a LOD group this frame.
     ///
-    /// Counts `SceneRenderItem`s with a `lod_group` set, plus each individual
+    /// Counts `MeshItem`s with a `lod_group` set, plus each individual
     /// `MeshInstanceItem` instance whose level was selected. Zero when nothing
     /// uses LOD.
     pub lod_items_resolved: u32,
@@ -767,7 +767,7 @@ pub struct FrameStats {
     /// motion, or thresholds spaced too tightly for the hysteresis margin).
     pub lod_switches: u32,
     /// Objects dropped this frame because they fell below their LOD group's cull
-    /// size. Counts hidden `SceneRenderItem`s plus individual mesh instances that
+    /// size. Counts hidden `MeshItem`s plus individual mesh instances that
     /// were left out of every batch. Zero unless a group sets `cull_below`.
     pub lod_culled: u32,
     /// LOD objects drawn this frame at a reduced level (level index > 0, i.e.

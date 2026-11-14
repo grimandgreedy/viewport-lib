@@ -36,8 +36,7 @@ use vpl::Selection;
 use vpl::scene::{Scene, build_light_indicators};
 use vpl::{
     BackfacePolicy, FrameData, LightKind, LightSource, LightingSettings, Material, MaterialId,
-    MeshId, MeshInstanceItem, PolylineItem, SceneRenderItem, SpriteBlend, ViewportRenderer,
-    primitives,
+    MeshId, MeshInstanceItem, MeshItem, PolylineItem, SpriteBlend, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -1586,7 +1585,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 // Scene items (sphere mesh for Mode A)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn sprite_scene_items(app: &App) -> Vec<MeshItem> {
     if !app.sprite_state.built {
         return vec![];
     }
@@ -1595,7 +1594,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
         SpriteSubMode::Placed | SpriteSubMode::Blend | SpriteSubMode::Soft => {
             // The sphere acts as both a backdrop (Placed, Blend) and the
             // opaque geometry the soft-particle fade is measured against.
-            vec![SceneRenderItem::new(app.sprite_state.sphere_id, sphere_mat)]
+            vec![MeshItem::new(app.sprite_state.sphere_id, sphere_mat)]
         }
         SpriteSubMode::Lit => {
             // A small slab between the two columns acts as a shadow caster.
@@ -1606,7 +1605,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             if !app.sprite_state.lit_receive_shadows {
                 return vec![];
             }
-            let mut item = SceneRenderItem::new(app.sprite_state.sphere_id, slab_mat);
+            let mut item = MeshItem::new(app.sprite_state.sphere_id, slab_mat);
             item.model = glam::Mat4::from_scale_rotation_translation(
                 glam::Vec3::new(0.05, 1.4, 1.0),
                 glam::Quat::IDENTITY,
@@ -1634,7 +1633,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             walls
                 .iter()
                 .map(|m| {
-                    let mut item = SceneRenderItem::new(app.sprite_state.wall_id, wall_mat);
+                    let mut item = MeshItem::new(app.sprite_state.wall_id, wall_mat);
                     item.model = (*m).into();
                     item
                 })
@@ -1646,8 +1645,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             SpriteOrientation::CameraFacing => vec![],
             // Candle flames sit on a dark slab so the additive glow reads.
             SpriteOrientation::AxisLocked => {
-                let mut item =
-                    SceneRenderItem::new(app.sprite_state.sphere_id, MaterialId::DEFAULT);
+                let mut item = MeshItem::new(app.sprite_state.sphere_id, MaterialId::DEFAULT);
                 item.model = glam::Mat4::from_scale_rotation_translation(
                     glam::Vec3::new(5.0, 5.0, 0.02),
                     glam::Quat::IDENTITY,
@@ -1659,8 +1657,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             }
             // Rain reads against a darker disc that acts as a puddle.
             SpriteOrientation::VelocityStretched => {
-                let mut item =
-                    SceneRenderItem::new(app.sprite_state.sphere_id, MaterialId::DEFAULT);
+                let mut item = MeshItem::new(app.sprite_state.sphere_id, MaterialId::DEFAULT);
                 item.model = glam::Mat4::from_scale_rotation_translation(
                     glam::Vec3::new(5.0, 5.0, 0.02),
                     glam::Quat::IDENTITY,

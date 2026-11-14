@@ -35,7 +35,7 @@ use glam::{Vec2, Vec3};
 use viewport_lib::raytrace::{RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer};
 use viewport_lib::{
     Camera, CameraFrame, Colour, ExposureSettings, FrameData, LightSource, LightingSettings, Lux,
-    Material, MeshData, PipelineMode, SceneFrame, SceneRenderItem, ToneMapping,
+    Material, MeshData, MeshItem, PipelineMode, SceneFrame, ToneMapping,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -152,7 +152,7 @@ fn raster(h: &mut Harness, exposure: ExposureSettings, generation: u64) -> Vec<[
         (floor_mesh(), glam::Mat4::IDENTITY),
         (sphere_mesh(), glam::Mat4::from_translation(SPHERE_CENTRE)),
     ] {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = h
             .renderer
             .resources_mut()

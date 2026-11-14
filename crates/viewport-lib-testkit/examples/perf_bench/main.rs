@@ -34,8 +34,8 @@ use viewport_lib::Colour;
 
 use viewport_lib::wgpu;
 use viewport_lib::{
-    FrameData, ItemSettings, LightSource, LightingSettings, Material, MaterialId, MeshId,
-    RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
+    FrameData, ItemSettings, LightSource, LightingSettings, Material, MaterialId, MeshId, MeshItem,
+    RenderCamera, SurfaceSubmission, ViewportRenderer, primitives,
 };
 // The game-like mesh corpus from the test/bench kit (concave, higher-poly).
 use viewport_lib_testkit::meshes as tk;
@@ -461,7 +461,7 @@ fn hsv(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
 }
 
 /// Build the static item list for one run (camera-independent).
-fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<SceneRenderItem> {
+fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<MeshItem> {
     let n = (count as f32).cbrt().round().max(1.0) as u32;
     let spacing = 2.5_f32;
     let half = (n as f32 - 1.0) * 0.5;
@@ -501,8 +501,8 @@ fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<SceneRenderItem> {
     items
 }
 
-fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+fn make_item(mesh: MeshId, model: glam::Mat4, m: &Meshes, run: &Run, idx: u32) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = model.into();
     item.material = if run.textured {
@@ -710,7 +710,7 @@ fn run_one(
         }
     }
 
-    let items: std::sync::Arc<[SceneRenderItem]> = build_items(meshes, params.count, run).into();
+    let items: std::sync::Arc<[MeshItem]> = build_items(meshes, params.count, run).into();
 
     // One sample bucket per segment.
     let mut buckets: std::collections::HashMap<&'static str, Samples> =

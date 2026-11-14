@@ -481,7 +481,7 @@ fn gpu_pick_uses_the_picked_viewports_clip_volumes() {
     let (a, b) = (r.create_viewport(&device), r.create_viewport(&device));
     let with_box = |vp: ViewportId| {
         let mut frame = base_frame(vp, PipelineMode::Hdr);
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.settings.pick_id = PickId(7);
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());

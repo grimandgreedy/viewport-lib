@@ -234,7 +234,7 @@ pub(super) fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltS
         }
         Err(e) => panic!("mesh upload: {e}"),
     };
-    let mut item = viewport_lib::SceneRenderItem::default();
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.material = super::material(
         ctx,

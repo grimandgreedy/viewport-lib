@@ -209,7 +209,7 @@ One item struct behind **two stores**, because a batch of billboards and a set o
 
 `SurfaceLicItem`, with `SurfaceLicConfig`.
 
-Line integral convolution: streaks along a vector field on a mesh, the dense counterpart to arrow glyphs. The field is a `VertexVector` attribute the mesh was uploaded with, named on the item. The item draws no surface of its own; it modulates the colour of whatever is on screen where the mesh is the visible surface, so submit it beside the `SceneRenderItem` that draws the same `MeshId`, with the same transform. A surface in front of the mesh is left alone.
+Line integral convolution: streaks along a vector field on a mesh, the dense counterpart to arrow glyphs. The field is a `VertexVector` attribute the mesh was uploaded with, named on the item. The item draws no surface of its own; it modulates the colour of whatever is on screen where the mesh is the visible surface, so submit it beside the `MeshItem` that draws the same `MeshId`, with the same transform. A surface in front of the mesh is left alone.
 
 `strength` is per item. `steps` and `step_size` come from the first visible item in the frame, because every flow surface is advected in one fullscreen pass. Only the HDR render path draws it, and it registers after decals so a decal on a flow surface takes the streaks too.
 
@@ -217,7 +217,7 @@ Line integral convolution: streaks along a vector field on a mesh, the dense cou
 
 `SurfaceContourItem`, with `ContourLevels`.
 
-Contour lines of a scalar field on a mesh, found per pixel in a fragment shader. The field is a per-vertex scalar attribute the mesh was uploaded with (`Vertex`, or `Cell` and `Edge` averaged to the vertices), named on the item, and it need not be the one that colours the surface. Submit the item beside the `SceneRenderItem` that draws the same `MeshId`, with the same transform; the lines are depth-tested against that surface. For a volume mesh, name its `boundary_mesh_id` and a `node_scalars` entry.
+Contour lines of a scalar field on a mesh, found per pixel in a fragment shader. The field is a per-vertex scalar attribute the mesh was uploaded with (`Vertex`, or `Cell` and `Edge` averaged to the vertices), named on the item, and it need not be the one that colours the surface. Submit the item beside the `MeshItem` that draws the same `MeshId`, with the same transform; the lines are depth-tested against that surface. For a volume mesh, name its `boundary_mesh_id` and a `node_scalars` entry.
 
 `ContourLevels::Values` draws a line at each listed value, up to `MAX_CONTOUR_LEVELS` (32); `ContourLevels::Spaced` draws one every `interval` from `origin`, with no limit. `width` is in logical pixels. A static field costs one extra draw of the mesh a frame; a changing one is `replace_attribute` on the mesh. Draws on both render paths.
 
