@@ -278,9 +278,11 @@ fn main() {
                         // `create_blit_composite`, not `create_blit`: this one
                         // builds the premultiplied-blend pipelines, and a plain
                         // blit would replace the parent rather than draw over it.
-                        let blit = ctx
-                            .renderer_mut()
-                            .create_blit_composite(&device, child.target.render_view());
+                        let blit = ctx.renderer_mut().create_blit_composite(
+                            &device,
+                            child.target.render_view(),
+                            vpl::BlitFilter::Linear,
+                        );
                         child.blit = Some(blit);
                     }
                 }

@@ -369,11 +369,18 @@ pub struct SurfaceLicPlugin {
     /// Vector target and noise per viewport, rebuilt when the scene size
     /// changes. Behind a lock because `encode` runs from a shared borrow.
     targets: std::sync::Mutex<HashMap<usize, LicTargets>>,
+    /// Draws encoded since the last prepare: one seed draw per item, then the
+    /// advect pass.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for SurfaceLicPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn warm(
@@ -394,6 +401,7 @@ impl ItemTypePlugin for SurfaceLicPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.draws.clear();
         let visible: Vec<&SurfaceLicItem> = items
             .of::<SurfaceLicItem>()
@@ -536,11 +544,15 @@ impl ItemTypePlugin for SurfaceLicPlugin {
                     draw.mesh_id,
                     &draw.vector_attribute,
                 ) {
-                    drew |= ctx.meshes.draw_indexed_instance_range(
+                    if ctx.meshes.draw_indexed_instance_range(
                         &mut pass,
                         draw.mesh_id,
                         draw.instance..draw.instance + 1,
-                    );
+                    ) {
+                        drew = true;
+                        self.issued
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
         }
@@ -569,6 +581,8 @@ impl ItemTypePlugin for SurfaceLicPlugin {
         pass.set_pipeline(advect_pipeline);
         pass.set_bind_group(0, &targets.bind_group, &[]);
         pass.draw(0..3, 0..1);
+        self.issued
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

@@ -5,12 +5,14 @@ use std::hash::Hasher;
 use crate::colour::Colour;
 use crate::overlay::Alignment;
 use crate::overlay::{
-    AnchorX, AnchorY, AnimTrack, BackdropEffects, FillRule, FontHandle, GlyphRunItem, GradientStop,
-    LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring, OverlayAnimations,
-    OverlayClip, OverlayEasing, OverlayFill, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayTextureId,
-    OverlayTransform, PathSegment, PolylineCap, PositionedGlyph, RepeatMode, RetainedOverlay,
-    ShadowLayer, StrokePattern, SubPath, TextStyle, TextureTransform, TileMode, TriangleDirection,
+    AnchorX, AnchorY, AnimTrack, BackdropEffects, ColourMatrix, FillRule, FontHandle, GlyphRunItem,
+    GradientStop, LabelItem, LineCap, LineJoin, NineSlice, OutlineMode, OverlayAnchoring,
+    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
+    OverlayLayer, OverlayLayerMembers, OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem,
+    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
+    OverlayStyle, OverlayTextureId, OverlayTransform, PathSegment, PositionedGlyph, RepeatMode,
+    RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TextSizing, TextStyle, TextureTransform,
+    TileMode, TriangleDirection, WorldPlane, WorldTextSize,
 };
 
 /// Feeds everything that affects how an overlay value draws into a hasher, so
@@ -240,11 +242,15 @@ impl OverlayContentHash for OverlayTransform {
             rotation,
             pivot,
             scale,
+            stretch,
+            skew,
         } = self;
         hash_point(state, *translate, origin);
         hash_f32(state, *rotation);
         hash_floats(state, pivot);
         hash_f32(state, *scale);
+        hash_floats(state, stretch);
+        hash_f32(state, *skew);
     }
 }
 
@@ -265,9 +271,43 @@ impl OverlayContentHash for OverlayClip {
 
 impl OverlayContentHash for TextStyle {
     fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
-        let Self { font, size } = self;
+        let Self { font, size, sizing } = self;
         font.content_hash_at(origin, state);
         hash_f32(state, *size);
+        match sizing {
+            TextSizing::Screen => state.write_u8(0),
+            TextSizing::World(w) => {
+                state.write_u8(1);
+                let WorldTextSize {
+                    plane,
+                    elevation,
+                    min_px,
+                    max_px,
+                    fade_px,
+                } = w;
+                state.write_u8(match plane {
+                    WorldPlane::Xy => 0,
+                    WorldPlane::Xz => 1,
+                });
+                hash_f32(state, *elevation);
+                for v in [*min_px, *max_px] {
+                    match v {
+                        None => state.write_u8(0),
+                        Some(v) => {
+                            state.write_u8(1);
+                            hash_f32(state, v);
+                        }
+                    }
+                }
+                match fade_px {
+                    None => state.write_u8(0),
+                    Some(f) => {
+                        state.write_u8(1);
+                        hash_floats(state, f);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -328,62 +368,53 @@ impl OverlayContentHash for OverlayFill {
                 state.write_u8(0);
                 c.content_hash_at(origin, state);
             }
-            OverlayFill::LinearGradient {
-                start_colour,
-                end_colour,
-                angle,
-            } => {
+            OverlayFill::LinearGradient { stops, angle } => {
                 state.write_u8(1);
-                start_colour.content_hash_at(origin, state);
-                end_colour.content_hash_at(origin, state);
+                stops.content_hash_at(origin, state);
                 hash_f32(state, *angle);
             }
-            OverlayFill::RadialGradient {
-                centre_colour,
-                edge_colour,
-            } => {
+            OverlayFill::RadialGradient { stops } => {
                 state.write_u8(2);
-                centre_colour.content_hash_at(origin, state);
-                edge_colour.content_hash_at(origin, state);
+                stops.content_hash_at(origin, state);
             }
             OverlayFill::ConicalGradient {
-                start_colour,
-                end_colour,
-                offset_angle,
-            } => {
-                state.write_u8(3);
-                start_colour.content_hash_at(origin, state);
-                end_colour.content_hash_at(origin, state);
-                hash_f32(state, *offset_angle);
-            }
-            OverlayFill::LinearGradientMulti { stops, angle } => {
-                state.write_u8(4);
-                stops.content_hash_at(origin, state);
-                hash_f32(state, *angle);
-            }
-            OverlayFill::RadialGradientMulti { stops } => {
-                state.write_u8(5);
-                stops.content_hash_at(origin, state);
-            }
-            OverlayFill::ConicalGradientMulti {
                 stops,
                 offset_angle,
             } => {
-                state.write_u8(6);
+                state.write_u8(3);
                 stops.content_hash_at(origin, state);
                 hash_f32(state, *offset_angle);
+            }
+            OverlayFill::SweepGradient {
+                stops,
+                centre,
+                start_angle,
+                end_angle,
+            } => {
+                state.write_u8(4);
+                stops.content_hash_at(origin, state);
+                hash_floats(state, centre);
+                hash_f32(state, *start_angle);
+                hash_f32(state, *end_angle);
             }
             OverlayFill::Texture {
                 id,
                 transform,
                 nine_slice,
                 tint,
+                filter,
             } => {
                 state.write_u8(7);
                 id.content_hash_at(origin, state);
                 transform.content_hash_at(origin, state);
                 nine_slice.content_hash_at(origin, state);
                 tint.content_hash_at(origin, state);
+                std::hash::Hash::hash(filter, state);
+            }
+            OverlayFill::Custom { kind, params } => {
+                state.write_u8(8);
+                put_u32(state, kind.0);
+                hash_floats(state, params);
             }
         }
     }
@@ -427,6 +458,9 @@ impl OverlayContentHash for OverlayStyle {
             backdrop,
             tint,
             opacity,
+            blend,
+            colour_matrix,
+            edge,
         } = self;
         fill.content_hash_at(origin, state);
         shadows.content_hash_at(origin, state);
@@ -434,6 +468,41 @@ impl OverlayContentHash for OverlayStyle {
         backdrop.content_hash_at(origin, state);
         hash_floats(state, tint);
         hash_f32(state, *opacity);
+        std::hash::Hash::hash(blend, state);
+        colour_matrix.content_hash_at(origin, state);
+        state.write_u8(match edge {
+            crate::overlay::OverlayEdge::AntiAliased => 0,
+            crate::overlay::OverlayEdge::Crisp => 1,
+        });
+    }
+}
+
+impl OverlayContentHash for ColourMatrix {
+    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
+        for row in &self.0 {
+            hash_floats(state, row);
+        }
+    }
+}
+
+impl OverlayContentHash for OverlayLayerStyle {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            opacity,
+            blend,
+            colour_matrix,
+            blur,
+            shadow,
+            backdrop,
+            isolated,
+        } = self;
+        hash_f32(state, *opacity);
+        std::hash::Hash::hash(blend, state);
+        colour_matrix.content_hash_at(origin, state);
+        hash_f32(state, *blur);
+        shadow.content_hash_at(origin, state);
+        backdrop.content_hash_at(origin, state);
+        state.write_u8(*isolated as u8);
     }
 }
 
@@ -575,8 +644,9 @@ impl OverlayContentHash for TriangleDirection {
 impl OverlayContentHash for LineCap {
     fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
         state.write_u8(match self {
-            LineCap::Round => 0,
+            LineCap::Butt => 0,
             LineCap::Square => 1,
+            LineCap::Round => 2,
         });
     }
 }
@@ -635,10 +705,14 @@ impl OverlayContentHash for OverlayShape {
             OverlayShape::Vector {
                 subpaths,
                 fill_rule,
+                stroke,
+                inverse,
             } => {
                 state.write_u8(12);
                 subpaths.content_hash_at(origin, state);
                 fill_rule.content_hash_at(origin, state);
+                stroke.content_hash_at(origin, state);
+                hash_bool(state, *inverse);
             }
         }
     }
@@ -694,16 +768,7 @@ impl OverlayContentHash for LineJoin {
         state.write_u8(match self {
             LineJoin::Mitre => 0,
             LineJoin::Bevel => 1,
-        });
-    }
-}
-
-impl OverlayContentHash for PolylineCap {
-    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
-        state.write_u8(match self {
-            PolylineCap::Butt => 0,
-            PolylineCap::Square => 1,
-            PolylineCap::Round => 2,
+            LineJoin::Round => 2,
         });
     }
 }
@@ -747,6 +812,7 @@ impl OverlayContentHash for OverlayPolylineItem {
             animations,
             clip,
             stroke,
+            widths,
             closed,
             uvs,
             z_order,
@@ -762,6 +828,14 @@ impl OverlayContentHash for OverlayPolylineItem {
         animations.content_hash_at(origin, state);
         clip.content_hash_at(origin, state);
         stroke.content_hash_at(origin, state);
+        match widths {
+            None => state.write_u8(0),
+            Some(widths) => {
+                state.write_u8(1);
+                hash_len(state, widths.len());
+                hash_floats(state, widths);
+            }
+        }
         hash_bool(state, *closed);
         match uvs {
             None => state.write_u8(0),
@@ -773,6 +847,64 @@ impl OverlayContentHash for OverlayPolylineItem {
                 }
             }
         }
+        put_i32(state, *z_order);
+    }
+}
+
+impl OverlayContentHash for OverlayMeshColours {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        match self {
+            OverlayMeshColours::Uniform(c) => {
+                state.write_u8(0);
+                c.content_hash_at(origin, state);
+            }
+            OverlayMeshColours::PerVertex(list) => {
+                state.write_u8(1);
+                list.content_hash_at(origin, state);
+            }
+        }
+    }
+}
+
+impl OverlayContentHash for OverlayMeshItem {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            positions,
+            indices,
+            colours,
+            uvs,
+            anchoring,
+            transform,
+            style,
+            animations,
+            clip,
+            z_order,
+        } = self;
+        // The positions are local to the translate, which is the placement.
+        hash_len(state, positions.len());
+        for p in positions {
+            hash_floats(state, p);
+        }
+        hash_len(state, indices.len());
+        for i in indices {
+            put_u32(state, *i);
+        }
+        colours.content_hash_at(origin, state);
+        match uvs {
+            None => state.write_u8(0),
+            Some(uvs) => {
+                state.write_u8(1);
+                hash_len(state, uvs.len());
+                for uv in uvs {
+                    hash_floats(state, uv);
+                }
+            }
+        }
+        anchoring.content_hash_at(origin, state);
+        transform.content_hash_at(origin, state);
+        style.content_hash_at(origin, state);
+        animations.content_hash_at(origin, state);
+        clip.content_hash_at(origin, state);
         put_i32(state, *z_order);
     }
 }
@@ -857,6 +989,7 @@ impl OverlayContentHash for RetainedOverlay {
             tint,
             anchoring,
             animations,
+            layer,
         } = self;
         id.content_hash_at(origin, state);
         transform.content_hash_at(origin, state);
@@ -866,6 +999,73 @@ impl OverlayContentHash for RetainedOverlay {
         hash_floats(state, tint);
         anchoring.content_hash_at(origin, state);
         animations.content_hash_at(origin, state);
+        layer.content_hash_at(origin, state);
+    }
+}
+
+impl OverlayContentHash for OverlayLayerMembers {
+    fn content_hash_at<H: Hasher>(&self, _origin: [f32; 2], state: &mut H) {
+        let Self {
+            shapes,
+            labels,
+            glyph_runs,
+            polylines,
+            meshes,
+            retained,
+        } = self;
+        for r in [shapes, labels, glyph_runs, polylines, meshes, retained] {
+            put_u64(state, r.start as u64);
+            put_u64(state, r.end as u64);
+        }
+    }
+}
+
+impl OverlayContentHash for OverlayLayer {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            members,
+            z_order,
+            clip,
+            style,
+        } = self;
+        members.content_hash_at(origin, state);
+        put_i32(state, *z_order);
+        clip.content_hash_at(origin, state);
+        style.content_hash_at(origin, state);
+    }
+}
+
+/// `time` is hashed only when an item has animations, since nothing else
+/// reads it: a still frame keeps its hash as the clock runs.
+impl OverlayContentHash for OverlayFrame {
+    fn content_hash_at<H: Hasher>(&self, origin: [f32; 2], state: &mut H) {
+        let Self {
+            time,
+            shapes,
+            labels,
+            glyph_runs,
+            polylines,
+            meshes,
+            retained,
+            layers,
+        } = self;
+        let animated = shapes.iter().any(|i| i.animations.is_some())
+            || labels.iter().any(|i| i.animations.is_some())
+            || glyph_runs.iter().any(|i| i.animations.is_some())
+            || polylines.iter().any(|i| i.animations.is_some())
+            || meshes.iter().any(|i| i.animations.is_some())
+            || retained.iter().any(|i| i.animations.is_some());
+        hash_bool(state, animated);
+        if animated {
+            hash_f64(state, *time);
+        }
+        shapes.content_hash_at(origin, state);
+        labels.content_hash_at(origin, state);
+        glyph_runs.content_hash_at(origin, state);
+        polylines.content_hash_at(origin, state);
+        meshes.content_hash_at(origin, state);
+        retained.content_hash_at(origin, state);
+        layers.content_hash_at(origin, state);
     }
 }
 
@@ -930,6 +1130,49 @@ mod tests {
         }
     }
 
+    /// A compiled group keyed on the hash has to recompile when the edge mode
+    /// changes: the mode is baked into the instance records.
+    #[test]
+    fn edge_modes_hash_apart() {
+        let crisp = shape().with_style(shape().style.with_edge(crate::overlay::OverlayEdge::Crisp));
+        assert_ne!(hash(&shape()), hash(&crisp));
+        assert_eq!(hash(&crisp), hash(&crisp.clone()));
+        let mut h = Bytes::default();
+        crisp.style.content_hash(&mut h);
+        assert_eq!(h.0.last(), Some(&1));
+    }
+
+    #[test]
+    fn a_frame_hashes_its_time_only_when_something_animates() {
+        let mut frame = OverlayFrame::default();
+        frame.shapes.push(shape());
+        let still = hash(&frame);
+        frame.time = 2.0;
+        assert_eq!(hash(&frame), still);
+        frame.shapes[0].animations = Some(Box::new(
+            OverlayAnimations::default().with_opacity(AnimTrack::new(0.0, 1.0, 0.0, 1.0)),
+        ));
+        let at_two = hash(&frame);
+        frame.time = 3.0;
+        assert_ne!(hash(&frame), at_two);
+    }
+
+    #[test]
+    fn a_frame_hashes_its_layers() {
+        let mut frame = OverlayFrame::default();
+        frame.shapes.push(shape());
+        let plain = hash(&frame);
+        let mark = frame.layer_mark();
+        frame.shapes.push(shape());
+        let with_shape = hash(&frame);
+        assert_ne!(with_shape, plain);
+        frame.push_layer(mark, OverlayLayerStyle::default());
+        let layered = hash(&frame);
+        assert_ne!(layered, with_shape);
+        frame.layers[0].style.opacity = 0.5;
+        assert_ne!(hash(&frame), layered);
+    }
+
     #[test]
     fn negative_zero_hashes_like_zero() {
         let a = label().with_position([0.0, 0.0]);
@@ -949,6 +1192,9 @@ mod tests {
         assert_ne!(hash(&s), base);
         let mut s = shape();
         s.z_order = 3;
+        assert_ne!(hash(&s), base);
+        let mut s = shape();
+        s.style.edge = crate::overlay::OverlayEdge::Crisp;
         assert_ne!(hash(&s), base);
         let mut s = shape();
         s.animations = Some(Box::new(

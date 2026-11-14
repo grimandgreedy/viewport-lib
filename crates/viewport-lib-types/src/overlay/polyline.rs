@@ -14,21 +14,26 @@ pub enum LineJoin {
     Mitre,
     /// Bevel join: cut the outer corner flat between the two segments.
     Bevel,
+    /// Round join: an arc of the stroke's half-width round the outer corner.
+    Round,
 }
 
-/// End-cap style for open [`OverlayPolylineItem`] strokes.
+/// End-cap style for a stroke: an open [`OverlayPolylineItem`], a stroked
+/// vector path, the ends of each dash, and the analytic
+/// [`OverlayShape::Line`](crate::overlay::OverlayShape).
 ///
-/// Also applies to the ends of each dash when the stroke pattern is
-/// [`StrokePattern::Dashed`].
+/// The meanings follow every 2D drawing API: `Butt` stops at the end point,
+/// `Square` runs on half the stroke width past it, and `Round` ends in a
+/// half-disc of the stroke's half-width centred on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum PolylineCap {
-    /// Flat cut flush with the endpoint. Default.
+pub enum LineCap {
+    /// Flat cut flush with the end point. Default.
     #[default]
     Butt,
-    /// Flat cut extended `thickness / 2` beyond the endpoint.
+    /// Flat cut extended half the stroke width beyond the end point.
     Square,
-    /// Semicircular cap centred on the endpoint.
+    /// Semicircular cap centred on the end point.
     Round,
 }
 
@@ -65,20 +70,26 @@ pub enum StrokePattern {
     },
 }
 
-/// The stroke of an [`OverlayPolylineItem`]: everything about the line itself.
+/// The stroke of an [`OverlayPolylineItem`] or of a vector path
+/// ([`OverlayShape::Vector`]): everything about the line itself.
 ///
 /// This is the item's own geometry, not a band drawn around some other shape,
-/// so it lives here rather than on [`OverlayStyle`]. An overlay shape has no
-/// stroke: an edge band on a shape is a [`ShadowLayer`] with no blur and a
+/// so it lives here rather than on [`OverlayStyle`]. An analytic overlay shape
+/// has no stroke: an edge band on one is a [`ShadowLayer`] with no blur and a
 /// spread.
 ///
+/// A width of `0.0` is a hairline: a line one device pixel wide at any scale,
+/// group transform, or pixels per point.
+///
+/// [`OverlayShape::Vector`]: crate::overlay::OverlayShape::Vector
 /// [`OverlayStyle`]: crate::overlay::OverlayStyle
 /// [`ShadowLayer`]: crate::overlay::ShadowLayer
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct OverlayStroke {
-    /// Stroke width in logical pixels.
+    /// Stroke width in logical pixels. `0.0` draws a one-device-pixel
+    /// hairline; a negative width draws nothing.
     pub width: f32,
     /// RGBA colour in linear float format.
     pub colour: crate::colour::Colour,
@@ -91,7 +102,7 @@ pub struct OverlayStroke {
     pub mitre_limit: f32,
     /// End-cap style for open polylines and dash ends. Closed solid polylines
     /// have no free ends, so caps are ignored there.
-    pub cap: PolylineCap,
+    pub cap: LineCap,
 }
 
 impl Default for OverlayStroke {
@@ -102,7 +113,7 @@ impl Default for OverlayStroke {
             pattern: StrokePattern::Solid,
             join: LineJoin::Mitre,
             mitre_limit: 4.0,
-            cap: PolylineCap::Butt,
+            cap: LineCap::Butt,
         }
     }
 }
@@ -116,6 +127,11 @@ impl OverlayStroke {
             colour: colour.into(),
             ..Default::default()
         }
+    }
+
+    /// A hairline in `colour`: one device pixel wide whatever the scale.
+    pub fn hairline(colour: impl Into<crate::colour::Colour>) -> Self {
+        Self::new(0.0, colour)
     }
 
     /// Set the dash or dot pattern.
@@ -137,7 +153,7 @@ impl OverlayStroke {
     }
 
     /// Set the end-cap style.
-    pub fn with_cap(mut self, cap: PolylineCap) -> Self {
+    pub fn with_cap(mut self, cap: LineCap) -> Self {
         self.cap = cap;
         self
     }
@@ -194,6 +210,14 @@ pub struct OverlayPolylineItem {
     /// `None` draws no line at all, which is what a closed polyline with a
     /// fill and no outline wants.
     pub stroke: Option<OverlayStroke>,
+    /// Optional stroke width per point, in logical pixels, replacing the
+    /// stroke's own `width` along the line.
+    ///
+    /// When set, this must have the same length as `points`; otherwise the
+    /// stroke's width applies. The width runs linearly between points, so a
+    /// brush stroke tapers by giving its ends a small width. Shadow layers
+    /// still follow the stroke's own `width`.
+    pub widths: Option<Vec<f32>>,
     /// When `true`, the last point connects back to the first.
     pub closed: bool,
     /// Optional per-point UVs for textured interiors.
@@ -216,6 +240,7 @@ impl Default for OverlayPolylineItem {
             animations: None,
             clip: OverlayClip::default(),
             stroke: Some(OverlayStroke::default()),
+            widths: None,
             closed: false,
             uvs: None,
             z_order: 0,
@@ -364,7 +389,15 @@ impl OverlayPolylineItem {
         self.stroke.get_or_insert_with(OverlayStroke::default)
     }
 
-    /// Set the stroke width in logical pixels.
+    /// Set a stroke width per point, in logical pixels. Must have one entry
+    /// per point.
+    pub fn with_widths(mut self, widths: Vec<f32>) -> Self {
+        self.widths = Some(widths);
+        self
+    }
+
+    /// Set the stroke width in logical pixels. `0.0` draws a one-device-pixel
+    /// hairline.
     pub fn with_thickness(mut self, thickness: f32) -> Self {
         self.stroke_mut().width = thickness;
         self
@@ -390,7 +423,7 @@ impl OverlayPolylineItem {
     }
 
     /// Set the end-cap style for open polylines and dash ends.
-    pub fn with_cap(mut self, cap: PolylineCap) -> Self {
+    pub fn with_cap(mut self, cap: LineCap) -> Self {
         self.stroke_mut().cap = cap;
         self
     }
@@ -431,6 +464,12 @@ impl OverlayPolylineItem {
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
         self.style.opacity = opacity;
+        self
+    }
+
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: crate::overlay::OverlayBlend) -> Self {
+        self.style.blend = blend;
         self
     }
 
@@ -617,18 +656,6 @@ fn sample_closed_path(path: impl Fn(f32) -> [f32; 2], samples: u32) -> Vec<[f32;
     let n = samples.max(1);
     let divisor = (n + 1) as f32;
     (0..=n).map(|i| path(i as f32 / divisor)).collect()
-}
-
-/// End-cap style for `OverlayShape::Line`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum LineCap {
-    /// Round end caps (default). The stroke ends in a semicircle.
-    #[default]
-    Round,
-    /// Square end caps. The stroke ends in a flat perpendicular cut flush
-    /// with the segment endpoint (no extension beyond the endpoint).
-    Square,
 }
 
 #[cfg(test)]

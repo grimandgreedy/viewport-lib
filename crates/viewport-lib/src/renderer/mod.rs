@@ -21,8 +21,13 @@ mod colour_ready;
 mod warm;
 pub use config::RendererConfig;
 pub use warm::PipelineSet;
+mod painter;
 mod paths;
-pub use blit::BlitTexture;
+pub use self::types::{
+    MaskTest, PAINTER_MASK_SLOTS, PAINTER_MEMBERS, PainterPlacement, painter_key,
+};
+pub use self::types::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
+pub use blit::{BlitFilter, BlitTexture};
 pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
 mod gpu_context;
@@ -42,6 +47,7 @@ pub(crate) mod origin;
 pub use origin::WorldOrigin;
 mod overlay_buffers;
 mod overlay_draw_order;
+mod overlay_layers;
 mod readback;
 mod section_caps;
 pub use readback::ExposureReadback;
@@ -92,27 +98,30 @@ mod prepare_timing_tests;
 pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
-    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, ClipObject,
-    ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
-    DofSettings,
-    EdlSettings, EffectsFrame, EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting,
-    ExposureMode, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
-    FrameTime, GlyphRunItem, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode,
-    IndirectLightSource,
+    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure,
+    BackdropEffects, BackgroundSource, BitmapFont, BitmapFontGlyph, BitmapGlyphChannels,
+    BloomSettings, CUSTOM_FILL_PARAMS, CameraFrame, Candela, CascadeSplit, ClipObject, ClipShape,
+    ColourMatrix, ContactShadowSettings, CustomFillId, DebugOutputMode, DebugQuantity, DebugVis,
+    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
+    EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureSettings, FillRule,
+    ForegroundPass, ForegroundProjection, FrameData, FrameTime, GenericToneCurve, GlyphRunItem,
+    GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OperatorCurve, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    PASSTHROUGH_EV100, PathSegment, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceSubmission,
-    TextureTransform, TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER,
-    ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency,
-    WorkingSpace, aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
+    NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
+    OverlayAnimations, OverlayBlend, OverlayClip, OverlayContentHash, OverlayEasing, OverlayEdge,
+    OverlayFill, OverlayFrame, OverlayGeometryId, OverlayGroupItems, OverlayLayer,
+    OverlayLayerMark, OverlayLayerMembers, OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem,
+    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
+    OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, PASSTHROUGH_EV100,
+    PathSegment, PipelineMode, PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings,
+    RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects,
+    SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
+    StrokePattern, SubPath, SurfaceSubmission, TextFit, TextSizing, TextStyle, TextureTransform,
+    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
+    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace,
+    WorldOverlayHit, WorldOverlayItem, WorldOverlayLayer, WorldPlane, WorldTextSize,
+    aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
     sphere_wireframe_polyline,
 };
 
@@ -197,6 +206,11 @@ pub(crate) struct ViewportSlot {
     /// Per-item draw resources for this viewport's foreground items,
     /// index-aligned with `SceneFrame::foreground_items`.
     pub foreground_objects: Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
+    /// This viewport's painter-placed surfaces: the item's index in the
+    /// surface submission and its placement, in submission order.
+    pub(crate) painter_surfaces: Vec<(usize, crate::PainterPlacement)>,
+    /// Per-item draw resources for `painter_surfaces`, index-aligned with it.
+    pub(crate) painter_objects: Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
     /// Grid bind group (group 0 for grid pipeline) referencing this slot's grid buffer.
     pub grid_bind_group: crate::gpu::BindGroup,
     /// Per-viewport HDR post-process render targets.
@@ -239,6 +253,9 @@ pub(crate) struct ViewportSlot {
     /// Per-viewport intermediate render target for the HDR eframe callback path.
     /// `None` until the first `prepare_hdr_callback` call for this viewport.
     pub hdr_callback: Option<crate::resources::gpu::dyn_res::HdrCallbackTarget>,
+    /// The target the scene draws into under a reference presentation.
+    /// `None` until the first such frame for this viewport.
+    pub reference: Option<crate::resources::gpu::reference::ReferenceTarget>,
     /// Cached GPU data for sub-object highlight rendering.
     /// `None` when no sub-object selection is active and no volumes are selected.
     pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
@@ -247,12 +264,19 @@ pub(crate) struct ViewportSlot {
     pub sub_highlight_generation: u64,
     /// World origin epoch the sub-object highlight geometry was built against.
     pub sub_highlight_origin_epoch: u32,
+    /// Hash of the plugin outlines the sub-object highlight was built from.
+    pub sub_highlight_outlines: u64,
     /// The skybox bind group for this viewport's background environment.
     pub skybox: Option<crate::resources::material::environment::SkyboxBinding>,
     /// Whether this viewport draws a skybox this frame.
     pub draw_skybox: bool,
     /// This viewport's prepared 2D overlay pass.
     pub overlay: ViewportOverlay,
+    /// This viewport's prepared world overlay layers, drawn inside the scene.
+    pub world_overlays: WorldOverlays,
+    /// This viewport's painter mask target, its uniform and the groups over
+    /// them.
+    pub(crate) painter_masks: crate::resources::painter_mask::PainterMaskState,
     /// Ground-plane uniform for this viewport's camera, and the bind group
     /// over it and the shadow atlas, rebuilt when the atlas view changes.
     pub ground_uniform_buf: crate::gpu::Buffer,
@@ -283,24 +307,32 @@ pub(crate) struct ViewportOverlay {
     pub label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
     pub overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
-    /// Per-frame ordered overlay draw list. The overlay prepare passes record one
-    /// segment per contiguous draw, tagged with `z_order` and family rank; the
-    /// emit path walks them in sorted order so `z_order` composes across overlay
-    /// families. Rebuilt each frame, allocation reused.
+    /// Per-frame overlay draw list in paint order, built from
+    /// `overlay_order_items` once every family has recorded its items. Rebuilt
+    /// each frame, allocation reused.
     pub overlay_draw_segments: Vec<overlay_draw_order::OverlayDrawSegment>,
-    /// Set when any overlay item this frame carries a non-zero `z_order`. When
-    /// false, the segment list is left empty and the emit path uses its fixed
-    /// family order, so scenes that never touch `z_order` pay nothing.
-    pub overlay_uses_zorder: bool,
+    /// The frame's overlay items with their bounds and draw data, in the order
+    /// the families recorded them.
+    pub overlay_order_items: Vec<overlay_draw_order::OverlayOrderItem>,
+    /// Shape instances and text-stream vertices as the families emitted them,
+    /// before the draw list puts them in draw order.
+    pub overlay_shape_instances: Vec<crate::resources::OverlayShapeInstance>,
+    pub overlay_text_verts: Vec<crate::resources::OverlayTextVertex>,
+    /// The same in draw order, as uploaded. Kept to reuse the allocations.
+    pub overlay_sorted_shapes: Vec<crate::resources::OverlayShapeInstance>,
+    pub overlay_sorted_text: Vec<crate::resources::OverlayTextVertex>,
+    /// How many of the shape and text streams the last prepare uploaded: a
+    /// stream whose inputs match what its buffer was written from is not.
+    pub overlay_stream_uploads: u32,
+    /// Scratch for ranking and sorting the overlay items.
+    pub overlay_order_scratch: overlay_draw_order::OverlayOrderScratch,
     /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
     /// passes write their per-frame geometry into these in place instead of
     /// allocating a fresh buffer every frame; each grows only when a frame needs
-    /// more room. One per fixed stream (text, solid shapes, blur) plus a pool for
-    /// the variable number of per-texture shape batches.
+    /// more room. One per stream: text, shape instances, and backdrop blur.
     pub overlay_text_vbuf: overlay_buffers::GrowBuffer,
     pub overlay_shape_vbuf: overlay_buffers::GrowBuffer,
     pub overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer,
-    pub overlay_shape_tex_vbufs: Vec<overlay_buffers::GrowBuffer>,
     /// Per-frame viewport-size uniform (logical `[w, h, 0, 0]`) shared by the
     /// overlay pipelines. Overlay vertices are stored in local logical pixels; the
     /// overlay vertex shaders read this to map them to NDC, so overlay geometry is
@@ -320,9 +352,46 @@ pub(crate) struct ViewportOverlay {
     /// Set once the label prepare has written the overlay instances this frame,
     /// so the shape prepare reuses it instead of building an identity-only fallback.
     pub overlay_instances_ready: bool,
+    /// The frame's layers and the layer each item belongs to.
+    pub layer_plan: overlay_layers::LayerPlan,
+    /// The viewport's layer scratch targets and this frame's composites.
+    pub layer_targets: overlay_layers::OverlayLayerTargets,
+    /// How many of `overlay_draw_segments`, from the start, are the frame's
+    /// own list; the rest are layers' members.
+    pub overlay_main_segments: u32,
+    /// Where the frame's list reads the destination.
+    pub overlay_breaks: Vec<overlay_draw_order::OverlayBreak>,
 }
 
 impl ViewportOverlay {
+    /// Draw calls the overlay emit will issue for this viewport: one per
+    /// segment of the draw list.
+    pub(crate) fn draw_call_count(&self) -> u32 {
+        // A layer with a backdrop draws it before its content.
+        let backdrops = self
+            .layer_targets
+            .draws
+            .iter()
+            .filter(|d| d.style.backdrop.is_active())
+            .count();
+        (self.overlay_draw_segments.len() + backdrops) as u32
+    }
+
+    /// The frame's own draw list, without the layers' members.
+    pub(crate) fn main_segments(&self) -> &[overlay_draw_order::OverlayDrawSegment] {
+        &self.overlay_draw_segments[..self.overlay_main_segments as usize]
+    }
+
+    /// Whether the frame's list reads the destination anywhere.
+    pub(crate) fn has_breaks(&self) -> bool {
+        !self.overlay_breaks.is_empty()
+    }
+
+    /// Whether a break blurs the destination.
+    pub(crate) fn has_backdrops(&self) -> bool {
+        self.overlay_breaks.iter().any(|b| b.blur)
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             label_gpu_data: None,
@@ -330,15 +399,53 @@ impl ViewportOverlay {
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
             overlay_shape_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_vbuf"),
             overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
-            overlay_shape_tex_vbufs: Vec::new(),
             overlay_viewport_buf: None,
             overlay_retained_draws: Vec::new(),
             overlay_retained_shape_draws: Vec::new(),
             overlay_bindings: overlay_buffers::OverlayBindings::new(),
             overlay_instances_ready: false,
             overlay_draw_segments: Vec::new(),
-            overlay_uses_zorder: false,
+            overlay_order_items: Vec::new(),
+            overlay_shape_instances: Vec::new(),
+            overlay_text_verts: Vec::new(),
+            overlay_sorted_shapes: Vec::new(),
+            overlay_sorted_text: Vec::new(),
+            overlay_stream_uploads: 0,
+            overlay_order_scratch: Default::default(),
+            layer_plan: Default::default(),
+            layer_targets: overlay_layers::OverlayLayerTargets::new(),
+            overlay_main_segments: 0,
+            overlay_breaks: Vec::new(),
         }
+    }
+}
+
+/// One world overlay layer as prepared for a viewport: the overlay pass state
+/// its items were prepared into, and where it draws among the scene's
+/// painter's-order content.
+pub(crate) struct WorldOverlayDraw {
+    pub ov: ViewportOverlay,
+    pub order: u32,
+    pub depth_test: bool,
+    /// Not lit by 2D lighting, drawn after the lit content of its range.
+    pub unlit: bool,
+}
+
+/// A viewport's world overlay layers. The states are kept across frames to
+/// reuse their buffers; `sequence` names the ones prepared this frame in draw
+/// order.
+#[derive(Default)]
+pub(crate) struct WorldOverlays {
+    pub layers: Vec<WorldOverlayDraw>,
+    pub sequence: Vec<usize>,
+    /// The pass the layers' pipelines were built for this frame.
+    pub pass: Option<crate::resources::overlay::world::WorldPassKey>,
+}
+
+impl WorldOverlays {
+    /// Whether any layer draws this frame.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sequence.is_empty()
     }
 }
 
@@ -507,6 +614,10 @@ pub struct ViewportRenderer {
     /// Rebuilt each `dispatch_plugin_prepare`; a plugin with no items that frame
     /// is present with a zero.
     plugin_prepare_ms: Vec<(&'static str, f32)>,
+    /// Painter batches each participant reported into the last painter
+    /// sequence drawn, by name: the renderer's own under
+    /// [`painter::CORE_PAINTER`], then the plugins'.
+    painter_batch_counts: std::sync::Mutex<Vec<(&'static str, u32)>>,
     /// The item types that had items in the last prepare. A type with none is
     /// not prepared, so it still holds the last frame it was given; the CPU
     /// pick paths ask only these.
@@ -556,6 +667,9 @@ pub struct ViewportRenderer {
     /// Retained-overlay counters for the frame being prepared. Reset at the start
     /// of the overlay phase and published into `FrameStats` at the end of it.
     overlay_retained_counters: OverlayRetainedCounters,
+    /// Tessellated immediate vector shapes and polylines, reused while their
+    /// content does not change.
+    overlay_tess_cache: prepare::overlay_tess_cache::TessellationCache,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -647,6 +761,9 @@ pub struct ViewportRenderer {
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
+    /// The presentation and pixels per point of the frame the CPU pick caches
+    /// were taken from, which `pick()` and `pick_rect()` map positions through.
+    pick_presentation: (Presentation, f32),
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
@@ -1128,6 +1245,7 @@ impl ViewportRenderer {
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
             plugin_prepare_ms: Vec::new(),
+            painter_batch_counts: std::sync::Mutex::new(Vec::new()),
             plugins_with_items: std::collections::HashSet::new(),
             renderer_owned_type_names: std::collections::HashSet::new(),
             declined_item_types: std::collections::HashMap::new(),
@@ -1146,6 +1264,7 @@ impl ViewportRenderer {
             last_frame_kept_scene_depth: false,
             surface_mask: surface_mask::SurfaceMaskState::new(),
             overlay_retained_counters: OverlayRetainedCounters::default(),
+            overlay_tess_cache: Default::default(),
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
@@ -1172,6 +1291,7 @@ impl ViewportRenderer {
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
             pick_volume_mesh_items: Vec::new(),
+            pick_presentation: (Presentation::Native, 1.0),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
             pending_snap: None,
@@ -1365,11 +1485,38 @@ impl ViewportRenderer {
                 name,
                 crate::renderer::stats::PluginFrameCounters {
                     prepare_ms,
-                    draw_calls: plugin.draw_calls(),
+                    // A type with no items this frame drew nothing.
+                    draw_calls: if self.plugins_with_items.contains(name) {
+                        plugin.draw_calls()
+                    } else {
+                        0
+                    },
                     upload_bytes: plugin.upload_bytes(),
+                    painter_batches: self.painter_batches_of(name),
                 },
             )
         })
+    }
+
+    /// Batches `name` reported into the last painter sequence drawn.
+    fn painter_batches_of(&self, name: &str) -> u32 {
+        self.painter_batch_counts
+            .lock()
+            .map(|c| {
+                c.iter()
+                    .filter(|(n, _)| *n == name)
+                    .map(|(_, count)| *count)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Keep `plan`'s batch counts for the frame's stats.
+    fn record_painter_counts(&self, plan: &PainterPlan) {
+        if let Ok(mut counts) = self.painter_batch_counts.lock() {
+            counts.clear();
+            counts.extend_from_slice(&plan.counts);
+        }
     }
 
     /// Performance counters from the last completed frame. `notices` counts
@@ -1380,6 +1527,17 @@ impl ViewportRenderer {
             notices: self.resources.notices.counts(),
             device_lost,
             frames_skipped_device_lost: self.frames_skipped_device_lost,
+            // Read now rather than at prepare, so the draws a plugin counts
+            // as its paint records them are in.
+            plugin_draw_calls: prepare::plugin_draw_calls(
+                &self.item_type_plugins,
+                &self.plugins_with_items,
+            ),
+            painter_batches: self
+                .painter_batch_counts
+                .lock()
+                .map(|c| c.iter().map(|(_, n)| *n).sum())
+                .unwrap_or(0),
             ..self.last_stats
         }
     }
@@ -2590,9 +2748,10 @@ impl ViewportRenderer {
                 // and the borrow only needs to live for this iteration.
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
-                    viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                    viewport_size: glam::Vec2::from(frame.scene_size()),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
+                    time: self.frame_clock.current(),
                     scene_generation: frame.scene.generation,
                     jobs: crate::resources::Jobs::new(&self.resources),
                     resources: &self.resources,
@@ -2600,6 +2759,8 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
+                    pixels_per_point: frame.scene_ppp(),
+                    lights: &frame.effects.lighting.lights,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
@@ -2648,9 +2809,10 @@ impl ViewportRenderer {
             }
             let ctx = crate::plugin_api::ItemFrameContext {
                 camera: &frame.camera.render_camera,
-                viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                viewport_size: glam::Vec2::from(frame.scene_size()),
                 viewport_index: frame.camera.viewport_index,
                 frame_index: self.plugin_frame_index,
+                time: self.frame_clock.current(),
                 scene_generation: frame.scene.generation,
                 jobs: crate::resources::Jobs::new(&self.resources),
                 resources: &self.resources,
@@ -2658,6 +2820,8 @@ impl ViewportRenderer {
                 outline_selected: frame.interaction.outline_selected,
                 sub_selection: frame.interaction.sub_selection.as_ref(),
                 clip_objects: &frame.effects.clip.objects,
+                pixels_per_point: frame.scene_ppp(),
+                lights: &frame.effects.lighting.lights,
                 quality_reduced: self.degradation_volume_quality_reduced,
                 collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
                 world_origin: self.origin.origin(),
@@ -2666,13 +2830,9 @@ impl ViewportRenderer {
         }
         // The polyline item type draws them, through its own pipelines.
         if let Some(lines) = self.polyline_plugin_mut() {
-            lines.0.set_overlays(
-                device,
-                queue,
-                lines.1,
-                &polylines,
-                frame.camera.viewport_size,
-            );
+            lines
+                .0
+                .set_overlays(device, queue, lines.1, &polylines, frame.scene_size());
         }
     }
 
@@ -2710,9 +2870,13 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() {
             return;
         }
+        let masks = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.painter_masks);
         let ctx = crate::plugin_api::PaintContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: if is_hdr {
@@ -2721,6 +2885,10 @@ impl ViewportRenderer {
                 self.resources.target_format
             },
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            depth_read_bind_group: masks.and_then(|m| m.current().1),
+            mask_bind_group: masks
+                .and_then(|m| m.current().0)
+                .unwrap_or(&self.resources.painter_mask.empty_group),
             hdr_pass: is_hdr,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
@@ -2757,6 +2925,20 @@ impl ViewportRenderer {
             })
     }
 
+    /// `true` when a registered plugin with a non-empty collection this frame
+    /// says it has OIT draws. Gates the OIT pass and its composite for the
+    /// plugin side; a plugin that does not override
+    /// [`draws_transparent`](crate::plugin_api::ItemTypePlugin::draws_transparent)
+    /// counts whenever it has items.
+    pub(crate) fn any_plugin_draws_transparent(&self, frame: &FrameData) -> bool {
+        !self.item_type_plugins.is_empty()
+            && self.item_type_plugins.iter().any(|(name, plugin)| {
+                plugin.draws_transparent(frame.camera.viewport_index)
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
+            })
+    }
+
     /// `true` when the foreground pass has work this frame: submitted
     /// foreground items, or a registered foreground-drawing plugin with a
     /// non-empty collection.
@@ -2764,8 +2946,8 @@ impl ViewportRenderer {
         !frame.scene.foreground_items.is_empty()
             || self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_foreground()
-                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                        .is_some_and(|items| !items.is_empty())
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
             })
     }
 
@@ -2786,11 +2968,13 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PaintContext {
             camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            depth_read_bind_group: None,
+            mask_bind_group: &self.resources.painter_mask.empty_group,
             hdr_pass: true,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
@@ -2813,10 +2997,585 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_draws_depth_read(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
-                plugin.draws_depth_read()
-                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                        .is_some_and(|items| !items.is_empty())
+                plugin.draws_depth_read(frame.camera.viewport_index)
+                    && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                        .any(|items| !items.is_empty())
             })
+    }
+
+    /// `true` when the frame has painter's-order draws: a registered plugin
+    /// with items that has some, or the renderer's own painter-placed meshes.
+    pub(crate) fn any_plugin_draws_painter(&self, frame: &FrameData) -> bool {
+        self.core_draws_painter(frame)
+            || (!self.item_type_plugins.is_empty()
+                && self.item_type_plugins.iter().any(|(name, plugin)| {
+                    plugin.draws_painter(frame.camera.viewport_index)
+                        && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                            .any(|items| !items.is_empty())
+                }))
+    }
+
+    /// Whether the HDR path opens its read-only-depth pass this frame, for
+    /// plugins that draw there.
+    pub(crate) fn hdr_depth_read_active(&self, frame: &FrameData) -> bool {
+        self.any_plugin_draws_depth_read(frame)
+    }
+
+    /// Whether the HDR path opens its painter pass this frame: for
+    /// painter's-order content or world overlays.
+    pub(crate) fn hdr_painter_active(&self, frame: &FrameData) -> bool {
+        self.any_plugin_draws_painter(frame)
+            || self
+                .viewport_slots
+                .get(frame.camera.viewport_index)
+                .is_some_and(|s| !s.world_overlays.is_empty())
+    }
+
+    /// The frame's painter sequence: every plugin's painter's-order draws and
+    /// the world overlay layers, in the order they draw. `hdr` selects the
+    /// plugins that draw on the path: on the LDR path only those that
+    /// [`draws_ldr`](crate::plugin_api::ItemTypePlugin::draws_ldr).
+    ///
+    /// Batches reported through `painter_batches` sort by layer, then sort key,
+    /// then plugin registration order, then report order, and draw as runs of
+    /// consecutive batches of one plugin. The renderer's own painter meshes
+    /// sort as if registered before every plugin. A world layer draws after
+    /// the batches at and below its order. The unlit batches and world layers
+    /// of a light layer range (see
+    /// [`painter_light_layers`](crate::plugin_api::ItemTypePlugin::painter_light_layers))
+    /// draw at the top of the range, after its lit content. World layers and
+    /// unlit content cut the sequence into runs: a run draws its sequenced
+    /// content, then once each plugin that reported no batches (for the
+    /// run's layers).
+    pub(crate) fn painter_plan(&self, frame: &FrameData, hdr: bool) -> PainterPlan {
+        enum What {
+            Batch { name: &'static str, batch: u32 },
+            World(usize),
+        }
+        /// An entry's place: the layer it draws at (`slot`, the top of its
+        /// light range for unlit content) and `phase` (`0` in place, `1`
+        /// unlit content after the range's lit content), then its own layer,
+        /// world layers after batches, the key and the tiebreaks.
+        struct Entry {
+            slot: u32,
+            phase: u8,
+            layer: u32,
+            world: bool,
+            key: f32,
+            plugin: usize,
+            report: usize,
+            what: What,
+        }
+        let mut plan = PainterPlan::default();
+        let mut reported_all: Vec<(usize, &'static str, crate::plugin_api::PainterBatch)> =
+            Vec::new();
+        let mut unsequenced: Vec<&'static str> = Vec::new();
+        let mut reported = Vec::new();
+        self.core_painter_batches(frame, &mut reported);
+        if !reported.is_empty() {
+            plan.counts
+                .push((painter::CORE_PAINTER, reported.len() as u32));
+            reported_all.extend(reported.iter().map(|b| (0, painter::CORE_PAINTER, *b)));
+        }
+        for (plugin, (name, p)) in self.item_type_plugins.iter().enumerate() {
+            let vp = frame.camera.viewport_index;
+            if !p.draws_painter(vp) || (!hdr && !p.draws_ldr()) {
+                continue;
+            }
+            if crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                .all(|items| items.is_empty())
+            {
+                continue;
+            }
+            reported.clear();
+            p.painter_batches(vp, &mut reported);
+            if reported.is_empty() {
+                unsequenced.push(name);
+            }
+            plan.counts.push((name, reported.len() as u32));
+            reported_all.extend(reported.iter().map(|b| (plugin + 1, name, *b)));
+        }
+
+        // The light layers' ranges, the first that holds a layer winning.
+        let ranges: &[[u32; 2]] = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map_or(&[], |s| s.painter_masks.light_ranges());
+        let place = |layer: u32, unlit: bool| -> (u32, u8) {
+            if unlit && let Some([_, last]) = ranges.iter().find(|r| r[0] <= layer && layer <= r[1])
+            {
+                return (*last, 1);
+            }
+            (layer, 0)
+        };
+        let mut entries: Vec<Entry> = Vec::with_capacity(reported_all.len());
+        for (report, (plugin, name, b)) in reported_all.iter().enumerate() {
+            let (slot, phase) = place(b.layer, b.unlit);
+            entries.push(Entry {
+                slot,
+                phase,
+                layer: b.layer,
+                world: false,
+                key: b.sort_key,
+                plugin: *plugin,
+                report,
+                what: What::Batch {
+                    name,
+                    batch: b.batch,
+                },
+            });
+        }
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        if let Some(w) = worlds {
+            for (k, &i) in w.sequence.iter().enumerate() {
+                let draw = &w.layers[i];
+                let (slot, phase) = place(draw.order, draw.unlit);
+                entries.push(Entry {
+                    slot,
+                    phase,
+                    layer: draw.order,
+                    world: true,
+                    key: 0.0,
+                    plugin: 0,
+                    report: k,
+                    what: What::World(i),
+                });
+            }
+        }
+        entries.sort_by(|a, b| {
+            a.slot
+                .cmp(&b.slot)
+                .then(a.phase.cmp(&b.phase))
+                .then(a.layer.cmp(&b.layer))
+                .then(a.world.cmp(&b.world))
+                .then(a.key.total_cmp(&b.key))
+                .then(a.plugin.cmp(&b.plugin))
+                .then(a.report.cmp(&b.report))
+        });
+
+        // The plugins that report no batches draw once per run, for the
+        // layers from the end of the last run to the cut.
+        let mut lo = Some(0u32);
+        let flush = |plan: &mut PainterPlan, lo: &mut Option<u32>, hi: u32| {
+            if let Some(from) = *lo
+                && from <= hi
+            {
+                for &name in &unsequenced {
+                    plan.steps.push(PainterStep::Layers {
+                        plugin: name,
+                        layers: from..=hi,
+                    });
+                }
+                *lo = hi.checked_add(1);
+            }
+        };
+        let mut e = 0;
+        while e < entries.len() {
+            let first = e;
+            match entries[e].what {
+                What::Batch { name, .. } => {
+                    // The unsequenced plugins' lit content of a range draws
+                    // before its unlit content, which runs one range at a
+                    // time.
+                    let phase = entries[e].phase;
+                    if phase == 1 {
+                        flush(&mut plan, &mut lo, entries[e].slot);
+                    }
+                    e += 1;
+                    while e < entries.len()
+                        && entries[e].phase == phase
+                        && (phase == 0 || entries[e].slot == entries[first].slot)
+                        && matches!(entries[e].what, What::Batch { name: n, .. } if n == name)
+                    {
+                        e += 1;
+                    }
+                    let at = plan.batches.len();
+                    let (mut min, mut max) = (u32::MAX, 0);
+                    for entry in &entries[first..e] {
+                        if let What::Batch { batch, .. } = entry.what {
+                            plan.batches.push(batch);
+                        }
+                        min = min.min(entry.layer);
+                        max = max.max(entry.layer);
+                    }
+                    plan.steps.push(PainterStep::Batches {
+                        plugin: name,
+                        layers: min..=max,
+                        batches: at..plan.batches.len(),
+                    });
+                }
+                What::World(_) => {
+                    let (slot, phase, order) =
+                        (entries[e].slot, entries[e].phase, entries[e].layer);
+                    flush(&mut plan, &mut lo, slot);
+                    let at = plan.worlds.len();
+                    while e < entries.len()
+                        && entries[e].slot == slot
+                        && entries[e].phase == phase
+                        && entries[e].layer == order
+                        && let What::World(i) = entries[e].what
+                    {
+                        plan.worlds.push(i);
+                        e += 1;
+                    }
+                    plan.steps.push(PainterStep::World {
+                        layers: at..plan.worlds.len(),
+                    });
+                }
+            }
+        }
+        flush(&mut plan, &mut lo, u32::MAX);
+        plan
+    }
+
+    /// Call one plugin's `paint_painter` for `layers`, naming `batches` when
+    /// the plugin reported them. The renderer's own painter meshes draw
+    /// under [`painter::CORE_PAINTER`].
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_plugin_paint_painter(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        name: &'static str,
+        layers: std::ops::RangeInclusive<u32>,
+        batches: Option<&[u32]>,
+        scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+        camera_bg: &crate::gpu::BindGroup,
+    ) {
+        if name == painter::CORE_PAINTER {
+            self.paint_core_painter(
+                pass,
+                frame,
+                batches.unwrap_or_default(),
+                scene_depth_bind_group.is_some(),
+                camera_bg,
+            );
+            return;
+        }
+        let Some(plugin) = self.item_type_plugins.get(name) else {
+            return;
+        };
+        let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) else {
+            return;
+        };
+        let (Some(mask_bind_group), ldr_depth, _) = slot.painter_masks.current() else {
+            return;
+        };
+        let ctx = crate::plugin_api::PainterContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.scene_size()),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+            layers,
+            batches,
+            scene_depth_bind_group,
+            depth_read_bind_group: scene_depth_bind_group.or(ldr_depth),
+            mask_bind_group,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
+        };
+        let items = crate::plugin_api::ItemCollections::new(
+            crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+        );
+        plugin.paint_painter(pass, &ctx, &items);
+    }
+
+    /// Draw the frame's painter sequence: painter's-order content and the
+    /// world overlay layers, in [`painter_plan`](Self::painter_plan) order.
+    /// `camera_bg` is rebound at group 0 after the world layers, which bind
+    /// their own. `scene_depth_bind_group` is `Some` in the HDR
+    /// read-only-depth pass and `None` in the LDR scene pass.
+    pub(crate) fn paint_painters_and_world(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        camera_bg: &crate::gpu::BindGroup,
+        scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+    ) {
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        if worlds.is_none_or(|w| w.sequence.is_empty()) && !self.any_plugin_draws_painter(frame) {
+            return;
+        }
+        let plan = self.painter_plan(frame, scene_depth_bind_group.is_some());
+        self.record_painter_counts(&plan);
+        for step in &plan.steps {
+            match step {
+                PainterStep::Batches {
+                    plugin,
+                    layers,
+                    batches,
+                } => self.dispatch_plugin_paint_painter(
+                    pass,
+                    frame,
+                    plugin,
+                    layers.clone(),
+                    Some(&plan.batches[batches.clone()]),
+                    scene_depth_bind_group,
+                    camera_bg,
+                ),
+                PainterStep::Layers { plugin, layers } => self.dispatch_plugin_paint_painter(
+                    pass,
+                    frame,
+                    plugin,
+                    layers.clone(),
+                    None,
+                    scene_depth_bind_group,
+                    camera_bg,
+                ),
+                PainterStep::World { layers } => {
+                    let Some(worlds) = worlds else { continue };
+                    let _span =
+                        tracing::debug_span!(target: "viewport_lib::frame", "world_overlay")
+                            .entered();
+                    for &i in &plan.worlds[layers.clone()] {
+                        let draw = &worlds.layers[i];
+                        if let Some(pass_key) = worlds.pass {
+                            crate::renderer::render::emit_overlay_segments(
+                                &self.resources,
+                                &draw.ov,
+                                pass,
+                                draw.ov.main_segments(),
+                                &crate::renderer::render::OverlayEmit {
+                                    dst: false,
+                                    backdrop: None,
+                                    world: Some(crate::resources::overlay::world::WorldPassKey {
+                                        depth_test: draw.depth_test,
+                                        ..pass_key
+                                    }),
+                                    masks: self.world_masks(frame),
+                                },
+                            );
+                        }
+                    }
+                    pass.set_bind_group(0, camera_bg, &[]);
+                }
+            }
+        }
+    }
+
+    /// The viewport's painter masks, which world layer draws test.
+    fn world_masks(&self, frame: &FrameData) -> Option<&crate::gpu::BindGroup> {
+        self.viewport_slots
+            .get(frame.camera.viewport_index)
+            .and_then(|s| s.painter_masks.current().0)
+    }
+
+    /// Whether a world layer of `vp_idx` reads what is drawn under it, and
+    /// every such layer can copy `target` at its breaks.
+    pub(crate) fn world_overlays_break(&self, vp_idx: usize, target: &crate::gpu::Texture) -> bool {
+        let Some(worlds) = self.viewport_slots.get(vp_idx).map(|s| &s.world_overlays) else {
+            return false;
+        };
+        let mut reads = worlds
+            .sequence
+            .iter()
+            .map(|&i| &worlds.layers[i].ov)
+            .filter(|ov| ov.has_breaks())
+            .peekable();
+        reads.peek().is_some() && reads.all(|ov| ov.layer_targets.can_snapshot(target))
+    }
+
+    /// Whether a world layer of `vp_idx` reads what is drawn under it.
+    pub(crate) fn world_overlays_read(&self, vp_idx: usize) -> bool {
+        self.viewport_slots.get(vp_idx).is_some_and(|s| {
+            let w = &s.world_overlays;
+            w.sequence.iter().any(|&i| w.layers[i].ov.has_breaks())
+        })
+    }
+
+    /// Draw the frame's painter sequence as
+    /// [`paint_painters_and_world`](Self::paint_painters_and_world) does, in
+    /// passes of its own over `target`, ending the pass at each world layer
+    /// break: what is drawn so far is copied into that layer's snapshot (and
+    /// blurred for backdrops) before the items that read it. Call only when
+    /// [`world_overlays_break`](Self::world_overlays_break) holds for
+    /// `target`.
+    pub(crate) fn paint_painters_and_world_in_passes(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        frame: &FrameData,
+        target: &ScenePassTarget<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        scene_depth_bind_group: Option<&crate::gpu::BindGroup>,
+    ) {
+        enum Unit {
+            Step(usize),
+            World(usize, std::ops::Range<usize>),
+            Rebind,
+        }
+        let Some(worlds) = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays)
+        else {
+            return;
+        };
+        let Some(pass_key) = worlds.pass else {
+            return;
+        };
+        let plan = self.painter_plan(frame, scene_depth_bind_group.is_some());
+        self.record_painter_counts(&plan);
+        // The sequence cut at every break: each chunk draws in one pass, and
+        // the break after it names the layer whose snapshot it fills.
+        let mut chunks: Vec<(Vec<Unit>, Option<(usize, overlay_draw_order::OverlayBreak)>)> =
+            Vec::new();
+        let mut units = Vec::new();
+        for (k, step) in plan.steps.iter().enumerate() {
+            let PainterStep::World { layers } = step else {
+                units.push(Unit::Step(k));
+                continue;
+            };
+            for &i in &plan.worlds[layers.clone()] {
+                let ov = &worlds.layers[i].ov;
+                let mut start = 0;
+                for b in &ov.overlay_breaks {
+                    units.push(Unit::World(i, start..b.segment as usize));
+                    chunks.push((std::mem::take(&mut units), Some((i, *b))));
+                    start = b.segment as usize;
+                }
+                units.push(Unit::World(i, start..ov.main_segments().len()));
+            }
+            units.push(Unit::Rebind);
+        }
+        chunks.push((units, None));
+
+        let colour_texture = target.colour.texture();
+        for (units, brk) in &chunks {
+            {
+                let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                    #[cfg(any(wgpu29, wgpu30))]
+                    multiview_mask: None,
+                    label: Some(target.label),
+                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                        view: target.colour,
+                        resolve_target: None,
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Load,
+                            store: crate::gpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                        view: target.depth,
+                        depth_ops: target.depth_ops,
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_bind_group(0, camera_bg, &[]);
+                for unit in units {
+                    match unit {
+                        Unit::Step(k) => match &plan.steps[*k] {
+                            PainterStep::Batches {
+                                plugin,
+                                layers,
+                                batches,
+                            } => self.dispatch_plugin_paint_painter(
+                                &mut pass,
+                                frame,
+                                plugin,
+                                layers.clone(),
+                                Some(&plan.batches[batches.clone()]),
+                                scene_depth_bind_group,
+                                camera_bg,
+                            ),
+                            PainterStep::Layers { plugin, layers } => self
+                                .dispatch_plugin_paint_painter(
+                                    &mut pass,
+                                    frame,
+                                    plugin,
+                                    layers.clone(),
+                                    None,
+                                    scene_depth_bind_group,
+                                    camera_bg,
+                                ),
+                            PainterStep::World { .. } => {}
+                        },
+                        Unit::World(i, segs) => {
+                            let _span = tracing::debug_span!(
+                                target: "viewport_lib::frame",
+                                "world_overlay"
+                            )
+                            .entered();
+                            let draw = &worlds.layers[*i];
+                            crate::renderer::render::emit_overlay_segments(
+                                &self.resources,
+                                &draw.ov,
+                                &mut pass,
+                                &draw.ov.main_segments()[segs.clone()],
+                                &crate::renderer::render::OverlayEmit {
+                                    dst: true,
+                                    backdrop: draw.ov.layer_targets.item_backdrop_bg(),
+                                    world: Some(crate::resources::overlay::world::WorldPassKey {
+                                        depth_test: draw.depth_test,
+                                        ..pass_key
+                                    }),
+                                    masks: self.world_masks(frame),
+                                },
+                            );
+                        }
+                        Unit::Rebind => pass.set_bind_group(0, camera_bg, &[]),
+                    }
+                }
+            }
+            if let Some((i, b)) = brk {
+                let lt = &worlds.layers[*i].ov.layer_targets;
+                let ppp = lt.world.map_or(1.0, |w| w.ppp);
+                let region = lt.break_region(b.bounds, b.blur, ppp);
+                lt.snapshot(encoder, &self.resources, &colour_texture, region, b.blur);
+            }
+        }
+    }
+
+    /// The painter sequence the next draw of `frame` on the HDR (`hdr`) or LDR
+    /// path follows, one entry per call: the plugin's type name (or
+    /// `"world_overlay"`), the layers the call covers, and the batch handles
+    /// it names (for world layers, their indices in submission order; empty
+    /// for a plugin that reports no batches). For tests of the draw order.
+    #[doc(hidden)]
+    pub fn debug_painter_sequence(
+        &self,
+        frame: &FrameData,
+        hdr: bool,
+    ) -> Vec<(&'static str, std::ops::RangeInclusive<u32>, Vec<u32>)> {
+        let plan = self.painter_plan(frame, hdr);
+        let worlds = self
+            .viewport_slots
+            .get(frame.camera.viewport_index)
+            .map(|s| &s.world_overlays);
+        plan.steps
+            .iter()
+            .map(|step| match step {
+                PainterStep::Batches {
+                    plugin,
+                    layers,
+                    batches,
+                } => (
+                    *plugin,
+                    layers.clone(),
+                    plan.batches[batches.clone()].to_vec(),
+                ),
+                PainterStep::Layers { plugin, layers } => (*plugin, layers.clone(), Vec::new()),
+                PainterStep::World { layers } => {
+                    let w = worlds.expect("world steps come from the slot's world layers");
+                    let order = w.layers[plan.worlds[layers.start]].order;
+                    (
+                        "world_overlay",
+                        order..=order,
+                        plan.worlds[layers.clone()]
+                            .iter()
+                            .map(|&i| i as u32)
+                            .collect(),
+                    )
+                }
+            })
+            .collect()
     }
 
     /// Walk registered plugins and invoke `paint_depth_read` for each
@@ -2841,7 +3600,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::DepthReadContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             scene_depth,
@@ -2849,7 +3608,7 @@ impl ViewportRenderer {
             scene_depth_bind_group,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if !plugin.draws_depth_read() {
+            if !plugin.draws_depth_read(frame.camera.viewport_index) {
                 continue;
             }
             let items = crate::plugin_api::ItemCollections::new(
@@ -2861,12 +3620,51 @@ impl ViewportRenderer {
         }
     }
 
-    /// Walk registered plugins and invoke `encode` for each one that asked for
-    /// `scope`, handing over the frame's command encoder rather than a begun
-    /// render pass.
-    ///
-    /// Called from the HDR path at each [`EncoderScope`] point. A plugin that
-    /// lists no scopes is skipped without building the context.
+    /// Whether `plugin`, with items on `frame`, encodes at `scope` on the HDR
+    /// (`hdr`) or LDR path.
+    pub(crate) fn plugin_encodes_at(
+        frame: &FrameData,
+        name: &str,
+        plugin: &dyn crate::plugin_api::ItemTypePlugin,
+        scope: crate::plugin_api::EncoderScope,
+        hdr: bool,
+    ) -> bool {
+        (hdr || (scope == crate::plugin_api::EncoderScope::AfterTransparent
+            && plugin.encodes_ldr()))
+            && plugin.encoder_scopes().contains(&scope)
+            && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                .any(|items| !items.is_empty())
+    }
+
+    /// Whether a plugin with items on `frame` encodes at `scope` on the HDR
+    /// (`hdr`) or LDR path. A scope nothing encodes at opens no pass.
+    pub(crate) fn any_plugin_encodes_at(
+        &self,
+        frame: &FrameData,
+        scope: crate::plugin_api::EncoderScope,
+        hdr: bool,
+    ) -> bool {
+        self.item_type_plugins
+            .iter()
+            .any(|(name, p)| Self::plugin_encodes_at(frame, name, p, scope, hdr))
+    }
+
+    /// Whether a plugin encoding at `scope` reads the scene depth there.
+    pub(crate) fn any_plugin_scope_reads_depth(
+        &self,
+        frame: &FrameData,
+        scope: crate::plugin_api::EncoderScope,
+        hdr: bool,
+    ) -> bool {
+        self.item_type_plugins.iter().any(|(name, p)| {
+            Self::plugin_encodes_at(frame, name, p, scope, hdr) && p.encode_reads_depth(scope)
+        })
+    }
+
+    /// Walk registered plugins and invoke `encode` for each one with items
+    /// that asked for `scope`, handing over the frame's command encoder
+    /// rather than a begun render pass. `targets` are the attachments the
+    /// scope sees: the HDR scene's, or the LDR target's.
     ///
     /// [`EncoderScope`]: crate::plugin_api::EncoderScope
     #[allow(clippy::too_many_arguments)]
@@ -2878,26 +3676,14 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         vp_idx: usize,
+        targets: &ScopeTargets<'_>,
     ) {
-        if self.item_type_plugins.is_empty() {
-            return;
-        }
-        if !self
-            .item_type_plugins
-            .values()
-            .any(|p| p.encoder_scopes().contains(&scope))
-        {
+        if !self.any_plugin_encodes_at(frame, scope, targets.hdr) {
             return;
         }
         let Some(slot) = self.viewport_slots.get(vp_idx) else {
             return;
         };
-        let Some(slot_hdr) = slot.hdr.as_ref() else {
-            return;
-        };
-        // The HDR attachments, not the supersampled ones: under SSAA the
-        // resolve has already run by the time either scope fires, so from here
-        // on the frame draws into the HDR target like every other frame.
         let ctx = crate::plugin_api::EncoderScopeContext {
             scope,
             device,
@@ -2905,35 +3691,26 @@ impl ViewportRenderer {
             camera: &frame.camera.render_camera,
             viewport_index: vp_idx,
             frame_index: self.plugin_frame_index,
-            scene_size: slot_hdr.scene_size,
+            scene_size: targets.scene_size,
+            target_format: targets.target_format,
             camera_bind_group: &slot.camera_bind_group,
-            scene_colour: &slot_hdr.hdr_view,
-            scene_colour_texture: &slot_hdr.hdr_texture,
-            scene_depth: &slot_hdr.hdr_depth_view,
-            scene_depth_only: if self.resources.capabilities.direct_depth_sampling {
-                &slot_hdr.hdr_depth_only_view
-            } else {
-                // Taken by the caller just before this scope.
-                slot_hdr
-                    .depth_read_copy
-                    .as_ref()
-                    .map_or(&slot_hdr.hdr_depth_only_view, |c| &c.depth_only_view)
-            },
-            scene_stencil_only: &slot_hdr.hdr_stencil_only_view,
+            scene_colour: targets.colour,
+            scene_colour_texture: targets.colour_texture,
+            scene_depth: targets.depth,
+            scene_depth_only: targets.depth_only,
+            scene_stencil_only: targets.stencil_only,
             effects: &frame.effects,
             outline_colour: frame.interaction.outline_colour,
             outline_width_px: frame.interaction.outline_width_px,
             meshes: crate::resources::MeshDraw::new(&self.resources),
             quality_reduced: self.last_stats.volume_quality_reduced,
+            hdr_pass: targets.hdr,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if !plugin.encoder_scopes().contains(&scope) {
-                continue;
-            }
-            let items = crate::plugin_api::ItemCollections::new(
-                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
-            );
-            if !items.is_empty() {
+            if Self::plugin_encodes_at(frame, name, plugin, scope, targets.hdr) {
+                let items = crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                );
                 plugin.encode(encoder, &ctx, &items);
             }
         }
@@ -2956,7 +3733,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PickPassContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             mask,
@@ -2987,11 +3764,13 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::PaintContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
             meshes: crate::resources::MeshDraw::new(&self.resources),
+            depth_read_bind_group: None,
+            mask_bind_group: &self.resources.painter_mask.empty_group,
             hdr_pass: true,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
@@ -3060,9 +3839,10 @@ impl ViewportRenderer {
             if !items.is_empty() {
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
-                    viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                    viewport_size: glam::Vec2::from(frame.scene_size()),
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
+                    time: self.frame_clock.current(),
                     scene_generation: frame.scene.generation,
                     jobs: crate::resources::Jobs::new(&self.resources),
                     resources: &self.resources,
@@ -3070,6 +3850,8 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
+                    pixels_per_point: frame.scene_ppp(),
+                    lights: &frame.effects.lighting.lights,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     collections: crate::renderer::item_plugins::plugin_collections_slice(
                         frame, name,
@@ -3124,7 +3906,7 @@ impl ViewportRenderer {
         }
         let ctx = crate::plugin_api::OutlineMaskContext {
             camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_size: glam::Vec2::from(frame.scene_size()),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             meshes: crate::resources::MeshDraw::new(&self.resources),
@@ -3822,6 +4604,8 @@ impl ViewportRenderer {
                 foreground_clip_volume_buf,
                 foreground_camera_bind_group,
                 foreground_objects: Vec::new(),
+                painter_surfaces: Vec::new(),
+                painter_objects: Vec::new(),
                 grid_bind_group,
                 hdr: None,
                 cull: crate::resources::ViewportCullState::new(),
@@ -3836,11 +4620,15 @@ impl ViewportRenderer {
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 sub_highlight_origin_epoch: 0,
+                sub_highlight_outlines: 0,
                 skybox: None,
                 draw_skybox: false,
                 dyn_res: None,
                 hdr_callback: None,
+                reference: None,
                 overlay: ViewportOverlay::new(),
+                world_overlays: WorldOverlays::default(),
+                painter_masks: crate::resources::painter_mask::PainterMaskState::new(device),
                 ground_uniform_buf,
                 ground_bind_group: crate::resources::cached_bind_group::CachedBindGroup::new(),
                 overlay_depth: None,
@@ -3939,7 +4727,7 @@ impl ViewportRenderer {
         }
         self.begin_notice_frame();
         let mut sink = SubmitSink::inline(queue);
-        self.prepare_scene_internal(device, queue, frame, scene_effects, &mut sink);
+        self.prepare_scene_internal(device, queue, frame, scene_effects, true, &mut sink);
     }
 
     /// Prepare per-viewport GPU state (camera, clip planes, overlays, axes).
@@ -4314,4 +5102,58 @@ impl ViewportRenderer {
             .get(viewport_index)
             .map_or_else(Vec::new, |slot| slot.pass_table.ran_names())
     }
+}
+
+/// One call of the frame's painter sequence, from
+/// [`ViewportRenderer::painter_plan`].
+pub(crate) enum PainterStep {
+    /// A run of one plugin's reported batches: `PainterPlan::batches[batches]`.
+    Batches {
+        plugin: &'static str,
+        layers: std::ops::RangeInclusive<u32>,
+        batches: std::ops::Range<usize>,
+    },
+    /// A plugin that reports no batches, drawing its content in `layers`.
+    Layers {
+        plugin: &'static str,
+        layers: std::ops::RangeInclusive<u32>,
+    },
+    /// World overlay layers: `world_overlays.layers[i]` for each `i` in
+    /// `PainterPlan::worlds[layers]`.
+    World { layers: std::ops::Range<usize> },
+}
+
+/// The frame's painter sequence: the steps in draw order and the batch
+/// handles their runs name.
+#[derive(Default)]
+pub(crate) struct PainterPlan {
+    pub(crate) steps: Vec<PainterStep>,
+    pub(crate) batches: Vec<u32>,
+    /// The world layers' indices, in draw order.
+    pub(crate) worlds: Vec<usize>,
+    /// How many batches each participant reported, in report order.
+    pub(crate) counts: Vec<(&'static str, u32)>,
+}
+
+/// The target a painter sequence that breaks draws into: the scene's colour
+/// and depth, the depth read-only (`depth_ops: None`) in the HDR
+/// read-only-depth pass and loaded and stored in the LDR scene pass.
+pub(crate) struct ScenePassTarget<'a> {
+    pub(crate) colour: &'a crate::gpu::TextureView,
+    pub(crate) depth: &'a crate::gpu::TextureView,
+    pub(crate) depth_ops: Option<crate::gpu::Operations<f32>>,
+    pub(crate) label: &'static str,
+}
+
+/// The attachments an encoder scope hands to plugins: the HDR scene's, or the
+/// LDR target's.
+pub(crate) struct ScopeTargets<'a> {
+    pub(crate) scene_size: [u32; 2],
+    pub(crate) colour: &'a crate::gpu::TextureView,
+    pub(crate) colour_texture: &'a crate::gpu::Texture,
+    pub(crate) depth: &'a crate::gpu::TextureView,
+    pub(crate) depth_only: &'a crate::gpu::TextureView,
+    pub(crate) stencil_only: &'a crate::gpu::TextureView,
+    pub(crate) target_format: crate::gpu::TextureFormat,
+    pub(crate) hdr: bool,
 }

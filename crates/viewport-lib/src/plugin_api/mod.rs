@@ -154,12 +154,15 @@ pub mod cull;
 pub mod depth;
 pub mod install;
 pub mod item_type;
+pub mod overlay_fill;
+mod per_viewport;
 pub mod pick_helpers;
 mod plugin_resources;
 pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
 pub mod uploads;
+pub mod wgsl_compose;
 pub mod writes;
 
 pub use crate::resources::pipeline_slot::LazyFamily as LazyPipelines;
@@ -172,9 +175,13 @@ pub use install::{
 pub use item_type::{
     AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
     ItemFrameContext, ItemTypeHost, ItemTypeId, ItemTypePlugin, LightContext, OutlineMaskContext,
-    PaintContext, PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection,
-    RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext, SurfaceMaskContext, surface_mask_bits,
+    PaintContext, PainterBatch, PainterContext, PainterLightLayers, PainterMask,
+    PainterMaskContext, PainterRun, PickContext, PickPassContext, PickRay, PluginItem,
+    PluginItemCollection, RectPickContext, SURFACE_MASK_LAYERS, ShadowCastContext,
+    SurfaceMaskContext, surface_mask_bits,
 };
+pub use overlay_fill::OverlayFillDesc;
+pub use per_viewport::PerViewport;
 pub use plugin_resources::PluginResources;
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,

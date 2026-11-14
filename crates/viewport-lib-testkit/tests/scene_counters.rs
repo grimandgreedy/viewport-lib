@@ -218,6 +218,42 @@ fn expected(name: &str) -> Option<Expected> {
         "pcss_sun" => e(7, 7, 7, 7, 84),
         // Ground, tube and cube; the section caps are not batch draws.
         "section_caps" => e(3, 3, 3, 3, 408),
+        // Three unlit quads under the sprites: two for the multiply and screen
+        // sprites to blend over, one nearer the camera than two painter sprites.
+        "sprites_2d" => e(3, 3, 3, 3, 6),
+        // Sprites only: no mesh-family draws.
+        "sprites_effects" => e(0, 0, 0, 0, 0),
+        // Sprites, masks and a tile layer: no mesh-family draws.
+        "sprites_2d_modes" => e(0, 0, 0, 0, 0),
+        // Tilemap layers only: no mesh-family draws.
+        "tilemap" => e(0, 0, 0, 0, 0),
+        // Tile layers and painter sprites: no mesh-family draws.
+        "tilemap_tall_tiles" => e(0, 0, 0, 0, 0),
+        // Tile layers in four orientations and a painter sprite: no
+        // mesh-family draws.
+        "tilemap_orientations" => e(0, 0, 0, 0, 0),
+        // A tilemap room, crate sprites and the light layer: no mesh-family
+        // draws.
+        "lighting_2d" => e(0, 0, 0, 0, 0),
+        // Sprites, particles and the light layers' own lights: no mesh-family
+        // draws.
+        "lighting_2d_kinds" => e(0, 0, 0, 0, 0),
+        "lighting_2d_normals" => e(0, 0, 0, 0, 0),
+        // A tilemap ground, a world overlay layer and a painter sprite: no
+        // mesh-family draws.
+        "overlay_world_layer" => e(0, 0, 0, 0, 0),
+        "overlay_world_layer_blends" => e(0, 0, 0, 0, 0),
+        // A plate, three squares and a bar, drawn at a reference resolution.
+        "presentation_reference" => e(5, 5, 5, 5, 10),
+        // One flat surface placed in the painter sequence: it leaves the scene
+        // passes (not visible to them, no batch) and is one painter draw.
+        "painter_composed_keys" => e(1, 0, 1, 0, 0),
+        // Tiles, particles and sprites only: no mesh-family draws.
+        "painter_particles_layers" => e(0, 0, 0, 0, 0),
+        // A plate and two translucent cubes; the cubes share an OIT batch.
+        "painter_over_transparent" => e(3, 3, 2, 2, 26),
+        // The overlay scenes' sphere backdrop.
+        "overlay_bitmap_font" => e(1, 1, 1, 1, 960),
         // counters are identical across all of them. They exist to gate overlay
         // pixels, not scene structure; a change here means the backdrop moved.
         "overlay_shapes" => e(1, 1, 1, 1, 960),
@@ -233,6 +269,13 @@ fn expected(name: &str) -> Option<Expected> {
         "overlay_text_fill" => e(1, 1, 1, 1, 960),
         "overlay_shadow_parity" => e(1, 1, 1, 1, 960),
         "overlay_group_anchor" => e(1, 1, 1, 1, 960),
+        "overlay_blend_modes" => e(1, 1, 1, 1, 960),
+        "overlay_strokes" => e(1, 1, 1, 1, 960),
+        "overlay_text_subpixel" => e(1, 1, 1, 1, 960),
+        "overlay_layers" => e(1, 1, 1, 1, 960),
+        "overlay_mesh" => e(1, 1, 1, 1, 960),
+        "overlay_layers_nested" => e(1, 1, 1, 1, 960),
+        "overlay_ordering" => e(1, 1, 1, 1, 960),
         _ => return None,
     })
 }

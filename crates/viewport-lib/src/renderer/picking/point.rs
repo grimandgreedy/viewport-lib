@@ -14,6 +14,10 @@ impl ViewportRenderer {
     ///
     /// Returns `None` if nothing matching the mask is under the cursor.
     ///
+    /// When the last prepared frame used a reference presentation, `click_pos`
+    /// is mapped through its fit into the reference target, and a position in
+    /// the bars hits nothing.
+    ///
     /// # Arguments
     /// * `click_pos`     - cursor position in viewport pixels (top-left origin)
     /// * `viewport_size` - viewport width x height in pixels
@@ -33,6 +37,13 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> Option<PickHit> {
+        let (click_pos, viewport_size) = match self.cached_pick_placement(viewport_size) {
+            Some(p) => (
+                p.window_to_reference(click_pos)?,
+                glam::Vec2::new(p.reference_size[0] as f32, p.reference_size[1] as f32),
+            ),
+            None => (click_pos, viewport_size),
+        };
         self.pick_clipped(click_pos, viewport_size, view_proj, mask, &[])
     }
 

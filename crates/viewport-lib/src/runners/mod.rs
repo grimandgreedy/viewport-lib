@@ -479,6 +479,12 @@ impl ViewportInstance {
         self.pixels_per_point = pixels_per_point.max(0.001);
     }
 
+    /// The physical pixels per logical pixel, as last set by
+    /// [`set_pixels_per_point`](Self::set_pixels_per_point).
+    pub fn pixels_per_point(&self) -> f32 {
+        self.pixels_per_point
+    }
+
     /// Resolve accumulated events into an [`ActionFrame`] and cache it.
     ///
     /// [`update_orbit`](Self::update_orbit) and [`frame`](Self::frame) call this

@@ -35,6 +35,36 @@ impl ViewportInstance {
         &self.frame
     }
 
+    /// Resolve input, drive the camera with `controller`, assemble the frame,
+    /// then run `inject` against it. The controller first hears the size the
+    /// scene draws at through
+    /// [`CameraController::set_viewport`](crate::CameraController::set_viewport).
+    #[cfg(feature = "app")]
+    pub(crate) fn update_camera_with(
+        &mut self,
+        controller: &mut dyn crate::CameraController,
+        dt: f32,
+        inject: impl FnOnce(&mut FrameData),
+    ) -> &FrameData {
+        self.action = self.input.resolve();
+        let (size, ppp) = self.scene_size();
+        controller.set_viewport(size, ppp);
+        controller.apply(&mut self.camera, &self.action, dt);
+        self.assemble();
+        inject(&mut self.frame);
+        &self.frame
+    }
+
+    /// The size in logical pixels the scene draws at and its device pixels per
+    /// point: the reference size and one under a reference presentation (set
+    /// on [`frame_data_mut`](Self::frame_data_mut)), the viewport's otherwise.
+    fn scene_size(&self) -> ([f32; 2], f32) {
+        match self.frame.reference_size() {
+            Some([w, h]) => ([w as f32, h as f32], 1.0),
+            None => (self.viewport_size, self.pixels_per_point),
+        }
+    }
+
     /// Like [`update_orbit`](Self::update_orbit), then run `inject` against the
     /// assembled frame before returning it. This is the ordering-safe way to add
     /// per-frame overlays and non-mesh items: assembly rebuilds the scene
@@ -122,7 +152,9 @@ impl ViewportInstance {
     /// re-stamped; and `overlays` are cleared so the host re-injects per-frame
     /// overlays and direct items after this call, before rendering.
     fn assemble(&mut self) {
-        let [w, h] = self.viewport_size;
+        // The scene's aspect, which is the reference size's when the viewport
+        // presents at one.
+        let ([w, h], _) = self.scene_size();
         self.camera.set_aspect_ratio(w, h);
         self.frame.camera = CameraFrame::from_camera(&self.camera, self.viewport_size)
             .with_pixels_per_point(self.pixels_per_point);

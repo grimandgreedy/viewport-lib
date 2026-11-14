@@ -76,15 +76,16 @@ pub(super) fn build_frame_with(
 }
 
 /// The `paint` body for the streamtube and tube types, which share a pipeline
-/// description.
+/// description. Returns the draws it recorded.
 pub(super) fn paint_curve_mesh(
     pass: &mut viewport_lib::gpu::RenderPass<'_>,
     ctx: &PaintContext<'_>,
     gpu: Option<&CurveMeshGpu>,
     frame: &[CurveFrame],
-) {
-    let Some(gpu) = gpu else { return };
+) -> u32 {
+    let Some(gpu) = gpu else { return 0 };
     let is_hdr = ctx.is_hdr_pass();
+    let mut draws = 0;
     for entry in frame {
         let gd = &entry.gpu;
         if gd.index_count == 0 && gd.edge_index_count == 0 {
@@ -99,7 +100,9 @@ pub(super) fn paint_curve_mesh(
         };
         pass.set_pipeline(pipeline);
         draw_mesh(pass, gd);
+        draws += 1;
     }
+    draws
 }
 
 /// The `outline_mask` body: draw every selected item's solid triangle mesh, so

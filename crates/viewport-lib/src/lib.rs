@@ -270,7 +270,8 @@ pub use interaction::input::{
 };
 // New input pipeline : re-exported at crate root for convenience.
 pub use camera::controllers::{
-    FirstPersonCameraController, OrbitCameraController, ThirdPersonCameraController,
+    Camera2d, Camera2dControl, Camera2dController, FirstPersonCameraController,
+    OrbitCameraController, Plane2d, Rect2d, ThirdPersonCameraController, snap_camera_to_pixels,
     wish_xy_from_actions,
 };
 pub use interaction::input::{
@@ -278,8 +279,10 @@ pub use interaction::input::{
     KeyboardOwnership, ModifiersMatch, NavigationActions, PointerFrame, PointerOwnership,
     ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase, TouchSettings, ViewportBinding,
     ViewportContext, ViewportEvent, ViewportGesture, ViewportInput, forward_to_viewport,
-    viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+    planar_bindings, planar_camera_bindings, preset_bindings, viewer_bindings,
+    viewport_camera_bindings, viewport_default_bindings,
 };
+pub use viewport_lib_input::CameraController;
 
 pub use interaction::widgets::{
     BoxWidget, CylinderWidget, DiskWidget, LineProbeWidget, PlaneWidget, PolylineWidget,
@@ -308,37 +311,43 @@ pub use renderer::ShadowDebugStats;
 pub use renderer::WorldOrigin;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
-    FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
+    FramePath, FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset,
+    RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
-    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BackgroundSource, BloomSettings, CameraFrame, Candela, CascadeSplit, CellSelectionInfo,
-    ClipObject, ClipShape, ContactShadowSettings, DebugOutputMode, DebugQuantity, DebugVis,
-    DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentBackground,
-    EnvironmentIntensity, EnvironmentLighting, ExposureMode, ExposureReadback, ExposureSettings,
-    FillRule, ForegroundPass, ForegroundProjection, FrameData, FrameTime, GlyphRunItem, GpuContext,
-    GpuPickHit, GenericToneCurve, GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame,
-    LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource, LightingPosture,
-    LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode,
-    OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayContentHash, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
-    OwnedPath, PASSTHROUGH_EV100, PassPath, PassView, PathSegment, PickBackend, PickHit, PickId,
-    PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend, StrokePattern,
-    SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission, TextureTransform,
-    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
-    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem,
-    VolumeSelectionInfo, VolumeTransparency, WorkingSpace, aabb_wireframe_polyline,
-    bake_view_transform_lut, obb_wireframe_polyline, sphere_wireframe_polyline,
+    AgxLook, Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure,
+    BackdropEffects, BackgroundSource, BitmapFont, BitmapFontGlyph, BitmapGlyphChannels,
+    BloomSettings, CUSTOM_FILL_PARAMS, CameraFrame, Candela, CascadeSplit, CellSelectionInfo,
+    ClipObject, ClipShape, ColourMatrix, ContactShadowSettings, CustomFillId, DebugOutputMode,
+    DebugQuantity, DebugVis, DisplaySettings, DofSettings, EdlSettings, EffectsFrame,
+    EnvironmentBackground, EnvironmentIntensity, EnvironmentLighting, ExposureMode,
+    ExposureReadback, ExposureSettings, FillRule, ForegroundPass, ForegroundProjection, FrameData,
+    FrameTime, GenericToneCurve, GlyphRunItem, GpuContext, GpuPickHit, GradientStop, GradingSpace,
+    GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY,
+    LabelItem, LerpAnim, LightKind, LightSource, LightingPosture, LightingSettings, LineCap,
+    LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_SHADOW_LAYERS,
+    OperatorCurve, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayBlend, OverlayClip,
+    OverlayContentHash, OverlayEasing, OverlayEdge, OverlayFill, OverlayFrame, OverlayGeometryId,
+    OverlayGroupItems, OverlayLayer, OverlayLayerMark, OverlayLayerMembers, OverlayLayerStyle,
+    OverlayMeshColours, OverlayMeshItem, OverlayOrigin, OverlayPolylineItem, OverlayShape,
+    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
+    OverlayTransform, OwnedPath, PASSTHROUGH_EV100, PassPath, PassView, PathSegment, PickBackend,
+    PickHit, PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PolylineItem,
+    PolylineRefItem, PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera,
+    RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame,
+    SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SnapHit, SnapPoll, SpriteBlend,
+    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceSubmission,
+    TextFit, TextSizing, TextStyle, TextureTransform, TileMode, ToneCurve, ToneMapping,
+    TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame, ViewportId,
+    ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    WorkingSpace, WorldOverlayHit, WorldOverlayItem, WorldOverlayLayer, WorldPlane, WorldTextSize,
+    aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
-pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use renderer::{BlitFilter, BlitTexture, DeviceLostInfo, DeviceLostWatcher};
+pub use renderer::{MaskTest, PAINTER_MASK_SLOTS, PAINTER_MEMBERS, PainterPlacement, painter_key};
+pub use renderer::{OverlayResolution, Presentation, ReferenceFit, ReferencePlacement};
 pub use resources::PipelineCompilation;
 
 pub use runners::{
@@ -349,8 +358,8 @@ pub use runners::{
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{
-    AppConfig, FrameCtx, InputCtx, PaintCtx, RedrawMode, SetupCtx, ViewportApp, WindowConfig,
-    WindowId,
+    AppConfig, CameraControl, FrameCtx, InputCtx, PaintCtx, RedrawMode, SetupCtx, ViewportApp,
+    WindowConfig, WindowId,
 };
 
 pub use resources::PolylineId;

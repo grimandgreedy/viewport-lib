@@ -58,6 +58,9 @@ pub(crate) struct PolylinePlugin {
     /// the renderer after they are collected. Drawn before this type's own
     /// items and never picked or outlined.
     overlays: Vec<PolylineGpuData>,
+    /// Line draws issued since the last prepare, overlays included. Counted
+    /// where each draw is recorded, so a line still compiling is not.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for PolylinePlugin {
@@ -71,6 +74,10 @@ impl ItemTypePlugin for PolylinePlugin {
 
     fn resident_bytes(&self) -> u64 {
         self.stored.allocated_bytes()
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Asks for the four line pipelines in both formats, the pick and the
@@ -88,6 +95,7 @@ impl ItemTypePlugin for PolylinePlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         let items = items.of::<PolylineItem>();
         let refs = ctx.refs_of::<PolylineRefItem>();
@@ -186,6 +194,8 @@ impl ItemTypePlugin for PolylinePlugin {
                 pass.set_bind_group(1, &gd.bind_group, &[]);
                 pass.draw(0..6, 0..gd.segment_count);
             }
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -258,7 +268,9 @@ impl ItemTypePlugin for PolylinePlugin {
                 ) else {
                     continue;
                 };
-                let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
+                let toi = (hit.world_pos.as_vec3() - ray.origin)
+                    .dot(ray.direction)
+                    .max(0.0);
                 if wants_node {
                     // `pick_gaussian_splat_cpu` already reports the node index.
                 } else if wants_strip {

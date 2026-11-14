@@ -2,7 +2,175 @@
 //! shapes.
 
 use super::*;
+use crate::renderer::overlay_layers::Family as LayerFamily;
+use crate::resources::overlay::font::GlyphGrid;
 use crate::resources::overlay::glyph_style::GlyphStyle;
+
+/// The space one overlay prepare lays its items out in.
+///
+/// For the screen this is the viewport: logical pixels, `pixels_per_point`
+/// device pixels to each, and the camera resolving world anchors. A world
+/// layer runs the same prepare with its own space: world units on the plane,
+/// the device pixels one world unit covers at the camera's zoom, and a map
+/// that drops world anchors onto the layer.
+pub(super) struct OverlaySpace<'a> {
+    /// The items.
+    pub overlays: &'a crate::renderer::types::OverlayFrame,
+    /// The extent viewport anchors resolve against, in the space's units.
+    pub size: [f32; 2],
+    /// Device pixels per unit of the space.
+    pub ppp: f32,
+    /// View and projection taking a world point, relative to `world_origin`,
+    /// into the space through `size`.
+    pub view: glam::Mat4,
+    pub proj: glam::Mat4,
+    pub world_origin: glam::DVec3,
+    /// The camera orientation when the space draws the axes indicator.
+    pub axes: Option<glam::Quat>,
+    /// Set for a world layer: where it lies on the screen and the pass it
+    /// draws into.
+    pub world: Option<WorldSpace>,
+    /// Device pixels per logical pixel of the screen the space is seen on,
+    /// which world-sized text measures its clamps in.
+    pub screen_ppp: f32,
+}
+
+/// How a world layer's space reaches the screen.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct WorldSpace {
+    /// Layer units to the target's device pixels.
+    pub map: crate::renderer::overlay_layers::WorldMap,
+    /// The pass the layer's items draw into.
+    pub pass: crate::resources::overlay::world::WorldPassKey,
+    /// The screen viewport's size in logical pixels.
+    pub screen_size: [f32; 2],
+}
+
+/// What a text item's sizing does to it this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TextSize {
+    /// Drawn at its own `size`.
+    Unchanged,
+    /// Not drawn: faded out, or its plane cannot be measured.
+    Hidden,
+    /// World-sized: its size and every length that follows the text scale by
+    /// `scale`, its opacity multiplies by `opacity`, and it rasterises on the
+    /// stepped ladder.
+    Sized { scale: f32, opacity: f32 },
+}
+
+impl OverlaySpace<'_> {
+    /// How text in `style` hanging from `anchor` is sized in this space.
+    ///
+    /// On the screen, world sizing resolves the logical pixels one world unit
+    /// covers at the anchor. In a world layer `size` is already in world
+    /// units, so only the clamps and fade apply, measured in screen pixels.
+    pub(super) fn text_size(
+        &self,
+        style: &crate::renderer::types::TextStyle,
+        anchor: &crate::renderer::types::OverlayOrigin,
+    ) -> TextSize {
+        let crate::renderer::types::TextSizing::World(world) = style.sizing else {
+            return TextSize::Unchanged;
+        };
+        if !(style.size > 0.0) {
+            return TextSize::Unchanged;
+        }
+        let fit = if self.world.is_some() {
+            // Logical screen pixels per layer unit.
+            let per_unit = self.ppp / self.screen_ppp.max(1.0e-6);
+            world
+                .fit(style.size, per_unit)
+                .map(|f| (f.size / per_unit, f.opacity))
+        } else {
+            style
+                .resolve_screen_size_at(
+                    anchor,
+                    self.size,
+                    self.ppp,
+                    &self.view,
+                    &self.proj,
+                    self.world_origin,
+                )
+                .map(|f| (f.size, f.opacity))
+        };
+        match fit {
+            Some((size, opacity)) if opacity > 0.0 && size > 0.0 => TextSize::Sized {
+                scale: size / style.size,
+                opacity,
+            },
+            _ => TextSize::Hidden,
+        }
+    }
+}
+
+/// Scale the lengths of a text item's style that follow its size: shadow
+/// offsets, blur and spread.
+fn scale_text_style(style: &mut crate::renderer::types::OverlayStyle, scale: f32, opacity: f32) {
+    style.opacity *= opacity;
+    for layer in style
+        .shadows
+        .iter_mut()
+        .chain(style.inner_shadows.iter_mut())
+    {
+        layer.offset = [layer.offset[0] * scale, layer.offset[1] * scale];
+        layer.blur *= scale;
+        layer.spread *= scale;
+    }
+}
+
+impl<'a> OverlaySpace<'a> {
+    /// The screen space of `frame`'s own overlays.
+    pub(super) fn screen(
+        frame: &'a FrameData,
+        origin: &crate::renderer::origin::OriginState,
+    ) -> Self {
+        let camera = &frame.camera.render_camera;
+        let (size, ppp) = frame.overlay_space();
+        let mut proj = camera.projection();
+        // Overlays drawn over an upscaled reference target project world
+        // anchors through the scene's clip space onto where the target lands
+        // in the viewport.
+        if let (false, Some(p)) = (frame.overlays_in_scene(), frame.reference_placement()) {
+            proj = reference_clip_to_viewport_clip(&p) * proj;
+        }
+        Self {
+            overlays: &frame.overlays,
+            size,
+            ppp,
+            view: origin.camera(camera).view(),
+            proj,
+            world_origin: origin.origin(),
+            axes: frame
+                .viewport
+                .show_axes_indicator
+                .then(|| camera.orientation()),
+            world: None,
+            screen_ppp: ppp,
+        }
+    }
+}
+
+/// The clip-space transform taking a point in the reference target's clip
+/// space to the viewport's, under the placement `p`.
+pub(crate) fn reference_clip_to_viewport_clip(
+    p: &crate::renderer::ReferencePlacement,
+) -> glam::Mat4 {
+    let [vw, vh] = [p.viewport_px[0] as f32, p.viewport_px[1] as f32];
+    let ext = [
+        p.reference_size[0] as f32 * p.scale[0],
+        p.reference_size[1] as f32 * p.scale[1],
+    ];
+    let sx = ext[0] / vw;
+    let sy = ext[1] / vh;
+    let ox = (2.0 * p.origin_px[0] + ext[0]) / vw - 1.0;
+    let oy = 1.0 - (2.0 * p.origin_px[1] + ext[1]) / vh;
+    glam::Mat4::from_scale_rotation_translation(
+        glam::Vec3::new(sx, sy, 1.0),
+        glam::Quat::IDENTITY,
+        glam::Vec3::new(ox, oy, 0.0),
+    )
+}
 
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
 /// draw path's packing. `hw`/`hh` are the half-extents used to clamp corner radii.
@@ -59,7 +227,8 @@ fn encode_overlay_shape(
         OverlayShape::Line { thickness, cap } => {
             let cap_f = match cap {
                 LineCap::Round => 0.0,
-                LineCap::Square => 1.0,
+                LineCap::Butt => 1.0,
+                LineCap::Square => 2.0,
             };
             (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
         }
@@ -91,6 +260,381 @@ fn encode_overlay_shape(
 /// Curve-flattening tolerance for vector-shape fills, in logical pixels.
 const VECTOR_FILL_TOLERANCE: f32 = 0.2;
 
+/// Largest coverage cell, in device pixels on either side, an immediate vector
+/// shape draws from the atlas. Bigger shapes take the tessellated fill.
+pub(super) const VECTOR_ATLAS_MAX_IMMEDIATE_PX: u32 = 128;
+
+/// Largest coverage cell a vector shape in a retained group draws from.
+pub(super) const VECTOR_ATLAS_MAX_RETAINED_PX: u32 = 512;
+
+/// The atlas a vector shape's fill may draw from, and the limits it does so
+/// under.
+pub(super) struct VectorAtlas<'a> {
+    pub atlas: &'a mut crate::resources::overlay::coverage_atlas::CoverageAtlas,
+    pub device: &'a crate::gpu::Device,
+    /// The pixels per point the cell is rasterised at.
+    pub ppp: f32,
+    /// Largest cell side, in device pixels.
+    pub max_px: u32,
+}
+
+/// The affine map from a vector shape's path-local points to device pixels:
+/// `p = a * q + b`, with `a` row-major.
+fn vector_device_affine(
+    shape: &crate::renderer::types::OverlayShapeItem,
+    ppp: f32,
+) -> ([[f32; 2]; 2], [f32; 2]) {
+    let at = transform_vector_positions(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], shape);
+    let b = [at[0][0] * ppp, at[0][1] * ppp];
+    let a = [
+        [(at[1][0] - at[0][0]) * ppp, (at[2][0] - at[0][0]) * ppp],
+        [(at[1][1] - at[0][1]) * ppp, (at[2][1] - at[0][1]) * ppp],
+    ];
+    (a, b)
+}
+
+/// A vector shape's coverage cell: its cache key, its size in device pixels,
+/// where its top-left sits in device pixels, and the offset its path is drawn
+/// at within it.
+struct VectorCell {
+    key: crate::resources::overlay::coverage_atlas::VectorKey,
+    size: [u32; 2],
+    origin: [f32; 2],
+    /// Added to `a * q` to place a path point in the cell.
+    shift: [f32; 2],
+}
+
+/// Split a device-pixel translation into whole pixels and a fraction rounded
+/// to a quarter pixel, the phase a coverage cell is keyed by.
+fn split_device_translation(b: [f32; 2]) -> ([f32; 2], [u8; 2]) {
+    let mut whole = [b[0].floor(), b[1].floor()];
+    let mut phase = [0u8; 2];
+    for k in 0..2 {
+        let q = ((b[k] - whole[k]) * 4.0).round() as u8;
+        if q >= 4 {
+            whole[k] += 1.0;
+        } else {
+            phase[k] = q;
+        }
+    }
+    (whole, phase)
+}
+
+/// Plan the coverage cell a vector shape draws from under the device map
+/// `(a, b)`. The path's translation splits into whole pixels, which place the
+/// cell, and a fraction rounded to a quarter pixel, which is part of the key:
+/// a shape that only moves reuses its cell, and one that moves by part of a
+/// pixel picks from at most sixteen. `None` for a path with no points or a map
+/// that is not finite.
+///
+/// `inverse_box`, the size of the item's box, is set for an inverse fill,
+/// whose cell spans that box as well as the path.
+fn plan_vector_cell(
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse_box: Option<[f32; 2]>,
+    a: [[f32; 2]; 2],
+    b: [f32; 2],
+    path_hash: Option<u64>,
+) -> Option<VectorCell> {
+    if a.iter().flatten().chain(b.iter()).any(|v| !v.is_finite()) {
+        return None;
+    }
+    let (whole, phase) = split_device_translation(b);
+    let frac = [phase[0] as f32 * 0.25, phase[1] as f32 * 0.25];
+    // The cell spans every point the path can reach, control points included,
+    // plus a pixel for the coverage ramp.
+    let (mut min, mut max) = ([f32::MAX; 2], [f32::MIN; 2]);
+    let mut grow = |q: [f32; 2]| {
+        let p = [
+            a[0][0] * q[0] + a[0][1] * q[1] + frac[0],
+            a[1][0] * q[0] + a[1][1] * q[1] + frac[1],
+        ];
+        min = [min[0].min(p[0]), min[1].min(p[1])];
+        max = [max[0].max(p[0]), max[1].max(p[1])];
+    };
+    if let Some(size) = inverse_box {
+        for q in [[0.0, 0.0], [size[0], 0.0], [0.0, size[1]], size] {
+            grow(q);
+        }
+    }
+    for sp in subpaths {
+        if sp.segments.is_empty() {
+            continue;
+        }
+        grow(sp.start);
+        for seg in &sp.segments {
+            match *seg {
+                crate::renderer::types::PathSegment::Line { to } => grow(to),
+                crate::renderer::types::PathSegment::Quad { ctrl, to } => {
+                    grow(ctrl);
+                    grow(to);
+                }
+                crate::renderer::types::PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                    grow(ctrl1);
+                    grow(ctrl2);
+                    grow(to);
+                }
+            }
+        }
+    }
+    if min[0] > max[0] {
+        return None;
+    }
+    let lo = [min[0].floor() - 1.0, min[1].floor() - 1.0];
+    let hi = [max[0].ceil() + 1.0, max[1].ceil() + 1.0];
+    let hash = path_hash.unwrap_or_else(|| vector_path_hash(subpaths, fill_rule, inverse_box));
+    let q = |v: f32| (v * 1024.0).round() as i32;
+    Some(VectorCell {
+        key: crate::resources::overlay::coverage_atlas::VectorKey {
+            hash,
+            linear: [q(a[0][0]), q(a[0][1]), q(a[1][0]), q(a[1][1])],
+            phase,
+        },
+        size: [(hi[0] - lo[0]) as u32, (hi[1] - lo[1]) as u32],
+        origin: [whole[0] + lo[0], whole[1] + lo[1]],
+        shift: [frac[0] - lo[0], frac[1] - lo[1]],
+    })
+}
+
+/// The part of a coverage cell's key that names the path: its subpaths, fill
+/// rule and, for an inverse fill, the box it is cut from.
+pub(super) fn vector_path_hash(
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse_box: Option<[f32; 2]>,
+) -> u64 {
+    use crate::renderer::types::OverlayContentHash;
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // The same bytes as an `OverlayShape::Vector` with no stroke hashes.
+    hasher.write_u8(12);
+    subpaths.content_hash(&mut hasher);
+    fill_rule.content_hash(&mut hasher);
+    hasher.write_u8(0);
+    hasher.write_u8(inverse_box.is_some() as u8);
+    if let Some(size) = inverse_box {
+        hasher.write_u32(size[0].to_bits());
+        hasher.write_u32(size[1].to_bits());
+    }
+    hasher.finish()
+}
+
+/// Rasterise the coverage of `subpaths` under `fill_rule`, mapped by `a` and
+/// then `shift`, into `out` (`size` pixels, one byte each).
+///
+/// With `inverse_box` (the item's box size) the cell holds the inverse: the
+/// box's coverage less the path's, so the path is a hole in the box.
+pub(super) fn rasterise_vector(
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse_box: Option<[f32; 2]>,
+    a: [[f32; 2]; 2],
+    shift: [f32; 2],
+    size: [u32; 2],
+    out: &mut [u8],
+) {
+    use zeno::{Command, Fill, Format, Mask, Point};
+    let map = |q: [f32; 2]| {
+        Point::new(
+            a[0][0] * q[0] + a[0][1] * q[1] + shift[0],
+            a[1][0] * q[0] + a[1][1] * q[1] + shift[1],
+        )
+    };
+    let mut cmds: Vec<Command> = Vec::new();
+    for sp in subpaths {
+        if sp.segments.is_empty() {
+            continue;
+        }
+        cmds.push(Command::MoveTo(map(sp.start)));
+        for seg in &sp.segments {
+            cmds.push(match *seg {
+                crate::renderer::types::PathSegment::Line { to } => Command::LineTo(map(to)),
+                crate::renderer::types::PathSegment::Quad { ctrl, to } => {
+                    Command::QuadTo(map(ctrl), map(to))
+                }
+                crate::renderer::types::PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                    Command::CurveTo(map(ctrl1), map(ctrl2), map(to))
+                }
+            });
+        }
+        // A fill closes every subpath.
+        cmds.push(Command::Close);
+    }
+    Mask::new(&cmds[..])
+        .style(match fill_rule {
+            crate::renderer::types::FillRule::NonZero => Fill::NonZero,
+            crate::renderer::types::FillRule::EvenOdd => Fill::EvenOdd,
+        })
+        .format(Format::Alpha)
+        .size(size[0], size[1])
+        .render_into(out, None);
+    if let Some(b) = inverse_box {
+        let rect = [
+            Command::MoveTo(map([0.0, 0.0])),
+            Command::LineTo(map([b[0], 0.0])),
+            Command::LineTo(map(b)),
+            Command::LineTo(map([0.0, b[1]])),
+            Command::Close,
+        ];
+        let mut boxed = vec![0u8; out.len()];
+        Mask::new(&rect[..])
+            .style(Fill::NonZero)
+            .format(Format::Alpha)
+            .size(size[0], size[1])
+            .render_into(&mut boxed, None);
+        for (o, &b) in out.iter_mut().zip(&boxed) {
+            *o = ((b as u32 * (255 - *o as u32) + 127) / 255) as u8;
+        }
+    }
+}
+
+/// Whether a vector shape's fill draws from the coverage atlas rather than
+/// as a tessellated fill: when its cell fits within `max_px` on both sides.
+/// Returns the cell and the device map when it does.
+fn vector_atlas_cell(
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse: bool,
+    ppp: f32,
+    max_px: u32,
+    path_hash: Option<u64>,
+) -> Option<(VectorCell, [[f32; 2]; 2])> {
+    let (a, b) = vector_device_affine(shape, ppp);
+    let cell = plan_vector_cell(
+        subpaths,
+        fill_rule,
+        inverse.then_some(shape.size),
+        a,
+        b,
+        path_hash,
+    )?;
+    (cell.size[0] <= max_px && cell.size[1] <= max_px).then_some((cell, a))
+}
+
+/// Whether a retained group's vector shape draws from the atlas, which ties
+/// its compiled geometry to the atlas and the pixels per point the way glyphs
+/// are.
+pub(super) fn retained_vector_uses_atlas(
+    shape: &crate::renderer::types::OverlayShapeItem,
+    ppp: f32,
+) -> bool {
+    match &shape.shape {
+        crate::renderer::types::OverlayShape::Vector {
+            subpaths,
+            fill_rule,
+            inverse,
+            ..
+        } => {
+            shape.style.opacity > 0.0
+                && vector_atlas_cell(
+                    shape,
+                    subpaths,
+                    *fill_rule,
+                    *inverse,
+                    ppp,
+                    VECTOR_ATLAS_MAX_RETAINED_PX,
+                    None,
+                )
+                .is_some()
+        }
+        _ => false,
+    }
+}
+
+/// Emit a vector shape's fill as one quad over its atlas coverage cell.
+/// Returns `false`, emitting nothing, when the cell does not fit in the atlas,
+/// so the caller can fall back to the tessellated fill.
+#[allow(clippy::too_many_arguments)]
+fn emit_vector_atlas_fill(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse: bool,
+    cell: &VectorCell,
+    a: [[f32; 2]; 2],
+    va: &mut VectorAtlas<'_>,
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
+) -> bool {
+    let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
+    if det.abs() < 1e-12 {
+        return false;
+    }
+    let Some((uv_min, uv_max)) =
+        va.atlas
+            .ensure(va.device, cell.key, cell.size[0], cell.size[1], |out| {
+                let inverse_box = inverse.then_some(shape.size);
+                rasterise_vector(
+                    subpaths,
+                    fill_rule,
+                    inverse_box,
+                    a,
+                    cell.shift,
+                    cell.size,
+                    out,
+                )
+            })
+    else {
+        return false;
+    };
+    // The fill spans the path's own bounding box, as on the tessellated path,
+    // and an inverse fill the item's box.
+    let bounds = if inverse {
+        Some(([0.0, 0.0], shape.size))
+    } else {
+        crate::renderer::types::path_bounds(subpaths)
+    };
+    let Some((min, max)) = bounds else {
+        return false;
+    };
+    let half = [(max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5];
+    let centre = [min[0] + half[0], min[1] + half[1]];
+    let (base_colour, index) = overlay_geometry::fill_record(
+        &shape.style.fill,
+        shape.style.opacity,
+        half,
+        fills,
+        image_size,
+    );
+    // A cell corner back in the path's frame, through the inverse map.
+    let inv = [
+        [a[1][1] / det, -a[0][1] / det],
+        [-a[1][0] / det, a[0][0] / det],
+    ];
+    let to_local = |cx: f32, cy: f32| {
+        let d = [cx - cell.shift[0], cy - cell.shift[1]];
+        [
+            inv[0][0] * d[0] + inv[0][1] * d[1],
+            inv[1][0] * d[0] + inv[1][1] * d[1],
+        ]
+    };
+    let (w, h) = (cell.size[0] as f32, cell.size[1] as f32);
+    let corner = |cx: f32, cy: f32, uv: [f32; 2]| {
+        let l = to_local(cx, cy);
+        let mut v = overlay_geometry::solid_vertex(
+            [
+                (cell.origin[0] + cx) / va.ppp,
+                (cell.origin[1] + cy) / va.ppp,
+            ],
+            base_colour,
+            crate::resources::OverlayTextVertex::NO_AA,
+        );
+        v.uv = uv;
+        v.use_texture = 3.0;
+        v.fill = [l[0] - centre[0], l[1] - centre[1], index, 0.0];
+        v
+    };
+    let tl = corner(0.0, 0.0, uv_min);
+    let tr = corner(w, 0.0, [uv_max[0], uv_min[1]]);
+    let bl = corner(0.0, h, [uv_min[0], uv_max[1]]);
+    let br = corner(w, h, uv_max);
+    batch.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+    true
+}
+
 /// Map a vector shape's path-local points into screen-space logical pixels,
 /// applying the item's position and rotation about its centre plus pivot. This
 /// is the inverse of the frame `OverlayShapeItem::distance` evaluates in, so
@@ -104,10 +648,8 @@ fn transform_vector_positions(
     let cx = shape.transform.translate[0] + hw;
     let cy = shape.transform.translate[1] + hh;
     let piv = shape.transform.pivot;
-    let sc = shape.transform.scale;
-    let c = shape.transform.rotation.cos();
-    let s = shape.transform.rotation.sin();
-    let identity = shape.transform.rotation == 0.0 && sc == 1.0;
+    let identity = shape.transform.linear_is_identity();
+    let m = shape.transform.linear();
     local
         .iter()
         .map(|lp| {
@@ -117,30 +659,57 @@ fn transform_vector_positions(
             if identity {
                 return [cx + cpx, cy + cpy];
             }
-            // Scale about the pivot, then rotate about it: the inner half of
-            // the composition contract, baked in because an immediate item has
-            // no instance slot of its own.
-            let ax = (cpx - piv[0]) * sc;
-            let ay = (cpy - piv[1]) * sc;
-            let rx = c * ax - s * ay + piv[0];
-            let ry = s * ax + c * ay + piv[1];
-            [cx + rx, cy + ry]
+            // The item's linear map about its pivot: the inner half of the
+            // composition contract, baked in because an immediate item has no
+            // instance slot of its own.
+            let ax = cpx - piv[0];
+            let ay = cpy - piv[1];
+            [
+                cx + m[0][0] * ax + m[0][1] * ay + piv[0],
+                cy + m[1][0] * ax + m[1][1] * ay + piv[1],
+            ]
         })
         .collect()
 }
 
 /// Tessellate and emit a vector shape's fill and its shadow layers as
-/// `OverlayTextVertex`s into `batch`.
+/// `OverlayTextVertex`s into `batch`, recording the fill in `fills`.
+///
+/// `image_size` is the pixel size of the image a texture fill samples, `None`
+/// when the image is missing, which skips the fill the way a missing image
+/// skips an analytic shape. A table without textures (a compiled group) skips
+/// a texture fill too.
+///
+/// The fill draws one of two ways. With `atlas` given and the shape's coverage
+/// cell no more than `atlas.max_px` on either side, it is one quad over an
+/// exactly rasterised cell in the coverage atlas, cached across frames. The
+/// immediate path offers the atlas to shapes without animation tracks up to
+/// [`VECTOR_ATLAS_MAX_IMMEDIATE_PX`], and a retained group to every shape up to
+/// [`VECTOR_ATLAS_MAX_RETAINED_PX`]. Anything else, or a cell that does not fit
+/// in the atlas this frame, is tessellated with an anti-aliasing fringe. The
+/// shadow layers are tessellated bands either way.
+///
+/// Returns how the fill was drawn, which the tessellation cache needs: the
+/// atlas quad's place in `batch` when it came from the atlas.
+///
+/// An inverse fill fills the item's box less the path: from the atlas, the
+/// box's coverage less the path's; tessellated, the box with the path's filled
+/// region cut out. `stroke` draws over the fill and the inner shadows, with
+/// each open subpath stroked open.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_vector_shape(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
     fill_rule: crate::renderer::types::FillRule,
+    stroke: Option<&crate::renderer::types::OverlayStroke>,
+    inverse: bool,
     vp_w: f32,
     vp_h: f32,
-) {
-    let mesh = super::overlay_vector::tessellate(subpaths, fill_rule, VECTOR_FILL_TOLERANCE);
-
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: Option<[u32; 2]>,
+    atlas: Option<VectorAtlas<'_>>,
+) -> VectorFillPath {
     // Shadow layers, behind the fill. A vector path has no distance field, so a
     // layer is drawn as the filled silhouette plus its contours re-stroked
     // wider, once per band: the stroke is what supplies the dilation the SDF
@@ -155,19 +724,68 @@ pub(super) fn emit_vector_shape(
         emit_vector_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
 
-    // An image fill samples in the shape pass (`push_tessellated_tex_verts`);
-    // only the shadows draw here.
     let content_start = batch.len();
-    if !mesh.indices.is_empty() && shape.style.fill.texture_id().is_none() {
-        let positions = transform_vector_positions(&mesh.positions, shape);
+    let textured = shape.style.fill.texture_id().is_some();
+    let draws_fill = !textured || (fills.draws_textures() && image_size.is_some());
+    // The fill draws from the coverage atlas when it fits there, and is
+    // tessellated with an anti-aliasing fringe otherwise.
+    let mut path = VectorFillPath::Tessellated;
+    let from_atlas = draws_fill
+        && atlas.is_some_and(|va| {
+            match emit_vector_atlas_quad(
+                batch,
+                shape,
+                subpaths,
+                fill_rule,
+                inverse,
+                va,
+                fills,
+                image_size.unwrap_or([1, 1]),
+                None,
+            ) {
+                Some(true) => {
+                    path = VectorFillPath::Atlas(content_start);
+                    true
+                }
+                Some(false) => {
+                    path = VectorFillPath::AtlasFull;
+                    false
+                }
+                None => false,
+            }
+        });
+    if draws_fill && !from_atlas {
+        let (local, rule) = if inverse {
+            (
+                super::overlay_vector::inverse_contours(
+                    subpaths,
+                    fill_rule,
+                    shape.size,
+                    VECTOR_FILL_TOLERANCE,
+                ),
+                crate::renderer::types::FillRule::EvenOdd,
+            )
+        } else {
+            (
+                super::overlay_vector::flatten_path(subpaths, VECTOR_FILL_TOLERANCE),
+                fill_rule,
+            )
+        };
+        let screen: Vec<Vec<[f32; 2]>> = local
+            .iter()
+            .map(|c| transform_vector_positions(c, shape))
+            .collect();
+        let mesh = super::overlay_vector::tessellate_fringed(&screen, rule);
         emit_vector_fill(
             batch,
-            &positions,
-            &mesh.indices,
+            &mesh,
+            &local.concat(),
             &shape.style.fill,
             shape.style.opacity,
             vp_w,
             vp_h,
+            fills,
+            image_size.unwrap_or([1, 1]),
         );
     }
 
@@ -187,41 +805,93 @@ pub(super) fn emit_vector_shape(
     {
         emit_vector_inner_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
+
+    if let Some(stroke) = stroke {
+        emit_vector_stroke(batch, shape, subpaths, stroke);
+    }
+    path
 }
 
-/// Pack a `TextureTransform` into the two `OverlayShapeTexVertex` fields that
-/// carry it.
-fn texture_transform_gpu(tt: &crate::renderer::types::TextureTransform) -> ([f32; 4], [f32; 4]) {
-    (
-        [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]],
-        [
-            tt.rotation,
-            tile_mode_to_f(tt.tile_mode),
-            if tt.flip_x { 1.0 } else { 0.0 },
-            if tt.flip_y { 1.0 } else { 0.0 },
-        ],
-    )
+/// How [`emit_vector_shape`] drew a shape's fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VectorFillPath {
+    /// Tessellated, or not drawn.
+    Tessellated,
+    /// One quad over a coverage cell, its six vertices at this index.
+    Atlas(usize),
+    /// The cell would have fitted the size limit but not the atlas this frame,
+    /// so the fill was tessellated instead.
+    AtlasFull,
 }
 
-/// Push a tessellated fill (a closed polyline or a vector shape) as a triangle
-/// list for the texture pipeline, which serves both an image fill and a
-/// backdrop blur. `positions` are screen logical pixels and `uv(i)` gives the
-/// sample coordinate for vertex `i`.
+/// Emit a vector shape's fill as one quad over its coverage cell, untinted.
+/// `None` when the shape's cell is over the size limit (nothing emitted),
+/// `Some(false)` when it is under it but the atlas has no room this frame,
+/// `Some(true)` when the quad was emitted. `path_hash` is the cell key's path
+/// part when the caller has it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_vector_atlas_quad(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    inverse: bool,
+    mut va: VectorAtlas<'_>,
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
+    path_hash: Option<u64>,
+) -> Option<bool> {
+    let (cell, a) = vector_atlas_cell(
+        shape, subpaths, fill_rule, inverse, va.ppp, va.max_px, path_hash,
+    )?;
+    Some(emit_vector_atlas_fill(
+        batch, shape, subpaths, fill_rule, inverse, &cell, a, &mut va, fills, image_size,
+    ))
+}
+
+/// Emit a vector shape's stroke along each of its subpaths, open ones left
+/// open. The stroke is built in the path's own frame and then carried through
+/// the item transform, so its width scales with the item the way the path
+/// does, and a hairline stays one device pixel.
+fn emit_vector_stroke(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    stroke: &crate::renderer::types::OverlayStroke,
+) {
+    let start = batch.len();
+    let mut colour = stroke.colour.to_linear_rgba();
+    colour[3] *= shape.style.opacity;
+    // Path-local points land at `local + translate` before the linear map,
+    // which turns about the box centre plus the pivot (see
+    // `transform_vector_positions`).
+    let t = shape.transform.translate;
+    for (contour, closed) in
+        super::overlay_vector::flatten_for_stroke(subpaths, VECTOR_FILL_TOLERANCE)
+    {
+        let placed: Vec<[f32; 2]> = contour.iter().map(|p| [p[0] + t[0], p[1] + t[1]]).collect();
+        overlay_geometry::emit_stroke_path(batch, &placed, closed, None, stroke, colour);
+    }
+    let centre = [
+        t[0] + shape.size[0] * 0.5 + shape.transform.pivot[0],
+        t[1] + shape.size[1] * 0.5 + shape.transform.pivot[1],
+    ];
+    let rot = overlay_geometry::OverlayRotation::new(&shape.transform, centre);
+    overlay_geometry::rotate_vertices_from(batch, start, rot);
+    tint_vertices_from(batch, start, shape.style.tint);
+}
+
+/// Push a tessellated vector path as a triangle list for the backdrop
+/// pipeline. `positions` are screen logical pixels.
 ///
 /// The triangles are the coverage, so each vertex is encoded as a sharp rect
-/// grown a pixel past the fill's bounds: the shader's distance test then reads
+/// grown a pixel past the path's bounds: the shader's distance test then reads
 /// fully inside everywhere, instead of fading the edges that touch the bounds.
-#[allow(clippy::too_many_arguments)]
-fn push_tessellated_tex_verts(
-    out: &mut Vec<crate::resources::OverlayShapeTexVertex>,
+fn push_tessellated_backdrop_verts(
+    out: &mut Vec<crate::resources::OverlayBackdropVertex>,
     positions: &[[f32; 2]],
     indices: &[u32],
-    uv: impl Fn(u32) -> [f32; 2],
-    fill_colour: [f32; 4],
-    extras: [f32; 4],
-    texture_transform: ([f32; 4], [f32; 4]),
-    clip_index: f32,
-    clip_rect: [f32; 4],
+    filters: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
@@ -232,22 +902,20 @@ fn push_tessellated_tex_verts(
     let half_size = [(max[0] - min[0]) * 0.5 + 1.0, (max[1] - min[1]) * 0.5 + 1.0];
     for &i in indices {
         let p = positions[i as usize];
-        out.push(crate::resources::OverlayShapeTexVertex {
+        out.push(crate::resources::OverlayBackdropVertex {
             position: overlay_local_px(p[0], p[1], vp_w, vp_h),
             local_pos: [p[0] - centre[0], p[1] - centre[1]],
-            fill_colour,
+            // A transparent tint leaves the filtered backdrop alone: the
+            // shape's own fill draws over it in the text stream.
+            tint: [0.0; 4],
             half_size,
             radii: [0.0; 4],
-            shape_type: 0.0,
-            uv: uv(i),
+            shape_meta: [0.0, -1.0, 0.0, 0.0],
+            clip_rect: [0.0; 4],
             shadow_index: [0.0; 3],
-            extras,
-            nine_slice_uv: [0.0; 4],
-            nine_slice_frac: [0.0; 4],
-            texture_transform_a: texture_transform.0,
-            texture_transform_b: texture_transform.1,
-            clip_index,
-            clip_rect,
+            filters,
+            linv: [1.0, 0.0, 0.0, 1.0],
+            item_params: [1.0, 0.0, 0.0, 0.0],
         });
     }
 }
@@ -300,32 +968,50 @@ fn combine_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     r
 }
 
-/// Multiply a gradient (or solid) fill into the colours of `batch[from..]`,
-/// sampled at each vertex position over the item's box.
+/// Give the vertices `batch[from..]` their item's fill over the box at
+/// `box_min` of size `box_size`, in the same logical pixels as the vertex
+/// positions (before any item rotation is applied to them).
 ///
-/// This is how the glyph families get a fill: a glyph is a coverage bitmap
-/// tinted by the vertex colour, so evaluating the gradient per vertex and
-/// letting the rasteriser interpolate gives an exact linear gradient (a linear
-/// function interpolated linearly is itself) and a per-glyph piecewise-linear
-/// radial or conical one. A per-glyph `colours` entry multiplies into it,
-/// matching how `tint` composes.
+/// A solid fill multiplies into the vertex colours, which is all a flat colour
+/// needs. Any other fill becomes a record in `fills` that the text pipeline
+/// evaluates per fragment through the shared fill module, and each vertex
+/// carries its offset from the box centre and the record's index. Either way
+/// the fill multiplies the vertex colour, so a per-glyph `colours` entry
+/// composes with it the way `tint` does.
+///
+/// `image_size` is the pixel size of a texture fill's image, which a
+/// nine-slice fill needs.
 pub(super) fn fill_vertices_from(
     batch: &mut [crate::resources::OverlayTextVertex],
     from: usize,
     fill: &crate::renderer::types::OverlayFill,
     box_min: [f32; 2],
     box_size: [f32; 2],
+    fills: &mut super::overlay_fill::FillTable,
+    image_size: [u32; 2],
 ) {
     let half = [box_size[0] * 0.5, box_size[1] * 0.5];
     let centre = [box_min[0] + half[0], box_min[1] + half[1]];
+    if let crate::renderer::types::OverlayFill::Solid(c) = fill {
+        let c = c.to_linear_rgba();
+        for v in &mut batch[from..] {
+            v.colour = [
+                v.colour[0] * c[0],
+                v.colour[1] * c[1],
+                v.colour[2] * c[2],
+                v.colour[3] * c[3],
+            ];
+        }
+        return;
+    }
+    let index = fills.push(fill, half, 1.0, [1.0; 4], image_size);
     for v in &mut batch[from..] {
         // Text-stream vertex positions are logical pixels.
-        let c = fill.sample_in_box([v.position[0] - centre[0], v.position[1] - centre[1]], half);
-        v.colour = [
-            v.colour[0] * c[0],
-            v.colour[1] * c[1],
-            v.colour[2] * c[2],
-            v.colour[3] * c[3],
+        v.fill = [
+            v.position[0] - centre[0],
+            v.position[1] - centre[1],
+            index,
+            0.0,
         ];
     }
 }
@@ -573,33 +1259,37 @@ impl ViewportRenderer {
     /// Empty when `show_axes_indicator` is off or the viewport has no area.
     fn axes_overlay_items(
         &self,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
     ) -> Vec<crate::renderer::types::OverlayShapeItem> {
         let mut shapes = Vec::new();
-        let [w, h] = frame.camera.viewport_size;
-        if frame.viewport.show_axes_indicator && w > 0.0 && h > 0.0 {
-            crate::interaction::widgets::axes_indicator::build_axes_overlays(
-                w,
-                h,
-                frame.camera.render_camera.orientation(),
-                &mut shapes,
-            );
+        let [w, h] = space.size;
+        if let Some(orientation) = space.axes {
+            if w > 0.0 && h > 0.0 {
+                crate::interaction::widgets::axes_indicator::build_axes_overlays(
+                    w,
+                    h,
+                    orientation,
+                    &mut shapes,
+                );
+            }
         }
         shapes
     }
 
     /// Ensure the shared overlay viewport-size uniform exists and holds this
-    /// frame's logical size `[w, h, 0, 0]`. Overlay vertices are stored in local
-    /// logical pixels; the overlay shaders map them to NDC using this uniform, so
-    /// overlay geometry does not depend on the viewport size.
+    /// frame's logical size and pixels per point, `[w, h, ppp, 0]`. Overlay
+    /// vertices are stored in local logical pixels; the overlay shaders map them
+    /// to NDC using this uniform, so overlay geometry does not depend on the
+    /// viewport size, and size anti-aliasing fringes in device pixels with it.
     fn ensure_overlay_viewport_buf(
         ov: &mut crate::renderer::ViewportOverlay,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         vp_w: f32,
         vp_h: f32,
+        ppp: f32,
     ) {
-        let data = [vp_w, vp_h, 0.0, 0.0];
+        let data = [vp_w, vp_h, ppp, 0.0];
         if let Some(buf) = &ov.overlay_viewport_buf {
             queue.write_buffer(buf, 0, bytemuck::cast_slice(&data));
         } else {
@@ -630,6 +1320,11 @@ impl ViewportRenderer {
         ov.overlay_bindings
             .instances
             .write_changed(device, queue, &data);
+        ov.overlay_bindings.instances_uniform.write_changed(
+            device,
+            queue,
+            &crate::resources::OverlayInstance::padded_uniform_bytes(&data),
+        );
         ov.overlay_instances_ready = true;
     }
 
@@ -637,7 +1332,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
         ov: &mut crate::renderer::ViewportOverlay,
     ) {
         // ---------------------------------------------------------------
@@ -650,34 +1345,49 @@ impl ViewportRenderer {
         ov.label_gpu_data = None;
         // Counted before any of the paths below can skip a group, so the
         // submitted/drawn pair carries the skips.
-        self.overlay_retained_counters.submitted = frame.overlays.retained.len() as u32;
-        let has_vector_shape = frame.overlays.shapes.iter().any(|s| {
+        self.overlay_retained_counters.submitted = space.overlays.retained.len() as u32;
+        let has_vector_shape = space.overlays.shapes.iter().any(|s| {
             matches!(
                 &s.shape,
                 crate::renderer::types::OverlayShape::Vector { .. }
             )
         });
-        let has_overlay = !frame.overlays.labels.is_empty()
-            || !frame.overlays.glyph_runs.is_empty()
-            || !frame.overlays.polylines.is_empty()
+        let has_overlay = !space.overlays.labels.is_empty()
+            || !space.overlays.glyph_runs.is_empty()
+            || !space.overlays.polylines.is_empty()
+            || !space.overlays.meshes.is_empty()
             || has_vector_shape
-            || !frame.overlays.retained.is_empty();
+            || !space.overlays.retained.is_empty();
         if has_overlay {
+            self.resources.ensure_overlay_fill_resources(device, queue);
             self.resources.ensure_overlay_text_pipeline(device);
-            let vp_w = frame.camera.viewport_size[0];
-            let vp_h = frame.camera.viewport_size[1];
-            let ppp = frame.camera.pixels_per_point;
+            let vp_w = space.size[0];
+            let vp_h = space.size[1];
+            let ppp = space.ppp;
             if vp_w > 0.0 && vp_h > 0.0 {
                 // World anchors project through the camera relative to the
                 // world origin, with the origin subtracted in f64.
-                let world_origin = self.origin.origin();
-                let view = &self.origin.camera(&frame.camera.render_camera).view();
-                let proj = &frame.camera.render_camera.projection();
+                let world_origin = space.world_origin;
+                let view = &space.view;
+                let proj = &space.proj;
 
-                // Each item (label, glyph run, or polyline) contributes a
-                // (z_order, verts) batch. A stable sort keeps submission order
-                // within an equal z_order.
-                let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> = Vec::new();
+                // Each item (label, glyph run, polyline or vector shape)
+                // contributes a batch: its z_order, fill image, blend, the
+                // clip box it cannot draw outside, and its vertices.
+                let mut batches: Vec<TextBatch> = Vec::new();
+                // The fill records the text stream's gradient and texture
+                // fills read, uploaded once for the frame.
+                let mut text_fills = super::overlay_fill::FillTable::new();
+                // The pixel size of a texture fill's image: `None` for a fill
+                // that is not a texture, `Some(None)` when the image is gone,
+                // which skips the item as it skips an analytic shape.
+                let fill_image = |fill: &crate::renderer::types::OverlayFill,
+                                  textures: &crate::resources::handle::SlotStore<
+                    crate::resources::overlay::overlay_shape::OverlayShapeTextureEntry,
+                    crate::renderer::OverlayTextureId,
+                >| {
+                    fill.texture_id().map(|id| textures.get(id).map(|t| t.size))
+                };
 
                 // Clip masks: an overlay shape with `clip_mask_id` set contributes a
                 // clipping bounding box (framebuffer pixels) plus an SDF entry. Labels
@@ -687,9 +1397,9 @@ impl ViewportRenderer {
                 // masks scroll containers use.) The bbox and the SDF index come from the
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
-                let overlay_time = frame.overlays.time;
+                let overlay_time = space.overlays.time;
                 let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
-                    &frame.overlays.shapes,
+                    &space.overlays.shapes,
                     ppp,
                     [vp_w, vp_h],
                     view,
@@ -702,27 +1412,30 @@ impl ViewportRenderer {
                 // item's own `clip_rect`. Both are framebuffer-pixel boxes, and
                 // they compose by intersection, so naming both clips to the
                 // overlap.
-                let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
-                                  clip_id: Option<u32>,
-                                  clip_rect: Option<[f32; 4]>| {
-                    let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
-                    let rect = clip_rect.map(|r| clip_rect_to_framebuffer(r, ppp));
-                    if mask.is_none() && rect.is_none() {
-                        return;
-                    }
-                    let mask_rect = mask.map_or([0.0; 4], |ci| clip_bboxes[ci as usize]);
-                    let cr = combine_clip_rects(mask_rect, rect.unwrap_or([0.0; 4]));
-                    let ci = mask.map_or(-1.0, |ci| ci as f32);
-                    for v in batch.iter_mut() {
-                        v.clip_rect = cr;
-                        if ci >= 0.0 {
-                            v.clip_index = ci;
+                let stamp_clip =
+                    |batch: &mut [crate::resources::OverlayTextVertex],
+                     clip_id: Option<u32>,
+                     clip_rect: Option<[f32; 4]>|
+                     -> Option<crate::renderer::overlay_draw_order::Bounds> {
+                        let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
+                        let rect = clip_rect.map(|r| clip_rect_to_framebuffer(r, ppp));
+                        if mask.is_none() && rect.is_none() {
+                            return None;
                         }
-                    }
-                };
+                        let mask_rect = mask.map_or([0.0; 4], |ci| clip_bboxes[ci as usize]);
+                        let cr = combine_clip_rects(mask_rect, rect.unwrap_or([0.0; 4]));
+                        let ci = mask.map_or(-1.0, |ci| ci as f32);
+                        for v in batch.iter_mut() {
+                            v.clip_rect = cr;
+                            if ci >= 0.0 {
+                                v.clip_index = ci;
+                            }
+                        }
+                        clip_bounds(cr, ppp)
+                    };
 
                 // --- Polylines (between shapes and labels in z order) ---
-                for poly in frame.overlays.polylines.iter() {
+                for (item_index, poly) in space.overlays.polylines.iter().enumerate() {
                     if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
@@ -747,6 +1460,24 @@ impl ViewportRenderer {
                             animated_storage = owned;
                             &animated_storage
                         };
+                    // A layer can push its opacity, blend and colour matrix
+                    // onto the item, or draw it as source-over into its target.
+                    let layer_storage;
+                    let poly: &crate::renderer::types::OverlayPolylineItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::Polyline, item_index, &poly.style)
+                    {
+                        Some(style) => {
+                            let mut owned = poly.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => poly,
+                    };
+                    let record_layer = ov
+                        .layer_plan
+                        .record_layer(LayerFamily::Polyline, item_index);
                     // Resolve the anchor to a screen-pixel offset and draw the
                     // path there; a culled world anchor skips it. The offset is
                     // baked into a translated copy so the stroke and fill paths
@@ -756,6 +1487,13 @@ impl ViewportRenderer {
                     else {
                         continue;
                     };
+                    // The tessellation cache key: the path and its style with
+                    // the offset left out, so a path that only moves reuses
+                    // its geometry.
+                    let poly_key = polyline_cache_key(
+                        poly,
+                        fill_image(&poly.style.fill, &self.resources.content.overlay_textures),
+                    );
                     let translated_storage;
                     let poly: &crate::renderer::types::OverlayPolylineItem = if offset == [0.0, 0.0]
                     {
@@ -775,53 +1513,30 @@ impl ViewportRenderer {
                         crate::renderer::types::OverlayStyleSupport::for_polyline(poly.closed),
                         &poly.style,
                     );
+                    let image =
+                        fill_image(&poly.style.fill, &self.resources.content.overlay_textures);
+                    let fill_texture = match image {
+                        Some(Some(_)) if poly.closed => poly.style.fill.texture_id(),
+                        _ => None,
+                    };
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    // Shadow layers first, behind both the fill and the stroke.
-                    for layer in poly
-                        .style
-                        .shadows
-                        .iter()
-                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
-                        .filter(|l| l.is_visible())
-                    {
-                        emit_polyline_shadow(
-                            &mut batch,
-                            poly,
-                            layer,
-                            poly.style.opacity,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
-                    let content_start = batch.len();
-                    if poly.closed && poly.style.fill.texture_id().is_none() {
-                        emit_filled_polyline(
-                            &mut batch,
-                            &poly.points,
-                            &poly.style.fill,
-                            poly.style.opacity,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
-                    // Tint the fill before the inner shadows go over it: a tint
-                    // never reaches a shadow layer.
-                    tint_vertices_from(&mut batch, content_start, poly.style.tint);
-                    // An inset layer goes over what it erodes and under the
-                    // edge of it: over the fill and under the stroke for a
-                    // filled path, over the stroke when the stroke is all the
-                    // item covers.
-                    let filled = poly.closed && poly.style.fill.is_set();
-                    let inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                    let replayed = self
+                        .overlay_tess_cache
+                        .replay(poly_key, offset, &mut batch, &mut text_fills)
+                        .is_some();
+                    if !replayed {
+                        self.overlay_tess_cache.count_tessellation();
+                        let fill_from = text_fills.len();
+                        // Shadow layers first, behind both the fill and the stroke.
                         for layer in poly
                             .style
-                            .inner_shadows
+                            .shadows
                             .iter()
                             .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
                             .filter(|l| l.is_visible())
                         {
-                            emit_polyline_inner_shadow(
-                                batch,
+                            emit_polyline_shadow(
+                                &mut batch,
                                 poly,
                                 layer,
                                 poly.style.opacity,
@@ -829,50 +1544,192 @@ impl ViewportRenderer {
                                 vp_h,
                             );
                         }
-                    };
-                    if filled {
-                        inner(&mut batch);
-                    }
-                    let stroke_start = batch.len();
-                    if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
-                        let mut colour = stroke.colour.to_linear_rgba();
-                        colour[3] *= poly.style.opacity;
-                        emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
-                    }
-                    tint_vertices_from(&mut batch, stroke_start, poly.style.tint);
-                    if !filled {
-                        inner(&mut batch);
-                    }
-                    // The path turns and scales about its own bounding box,
-                    // shadows included, after every part of it has been emitted.
-                    if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
-                        let rot = OverlayRotation::new(
-                            poly.transform.rotation,
-                            poly.transform.scale,
-                            OverlayRotation::pivot_point(
-                                pmin,
-                                [pmax[0] - pmin[0], pmax[1] - pmin[1]],
-                                poly.transform.pivot,
-                            ),
+                        let content_start = batch.len();
+                        if poly.closed && image != Some(None) {
+                            emit_filled_polyline(
+                                &mut batch,
+                                &poly.points,
+                                &poly.style.fill,
+                                poly.style.opacity,
+                                vp_w,
+                                vp_h,
+                                &mut text_fills,
+                                poly.uvs.as_deref(),
+                                image.flatten().unwrap_or([1, 1]),
+                            );
+                        }
+                        // Tint the fill before the inner shadows go over it: a tint
+                        // never reaches a shadow layer.
+                        tint_vertices_from(&mut batch, content_start, poly.style.tint);
+                        // An inset layer goes over what it erodes and under the
+                        // edge of it: over the fill and under the stroke for a
+                        // filled path, over the stroke when the stroke is all the
+                        // item covers.
+                        let filled = poly.closed && poly.style.fill.is_set();
+                        let inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                            for layer in poly
+                                .style
+                                .inner_shadows
+                                .iter()
+                                .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                                .filter(|l| l.is_visible())
+                            {
+                                emit_polyline_inner_shadow(
+                                    batch,
+                                    poly,
+                                    layer,
+                                    poly.style.opacity,
+                                    vp_w,
+                                    vp_h,
+                                );
+                            }
+                        };
+                        if filled {
+                            inner(&mut batch);
+                        }
+                        let stroke_start = batch.len();
+                        if let Some(stroke) = poly.stroke.as_ref() {
+                            let mut colour = stroke.colour.to_linear_rgba();
+                            colour[3] *= poly.style.opacity;
+                            emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
+                        }
+                        tint_vertices_from(&mut batch, stroke_start, poly.style.tint);
+                        if !filled {
+                            inner(&mut batch);
+                        }
+                        // The path turns and scales about its own bounding box,
+                        // shadows included, after every part of it has been emitted.
+                        if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
+                            let rot = OverlayRotation::new(
+                                &poly.transform,
+                                OverlayRotation::pivot_point(
+                                    pmin,
+                                    [pmax[0] - pmin[0], pmax[1] - pmin[1]],
+                                    poly.transform.pivot,
+                                ),
+                            );
+                            rotate_vertices_from(&mut batch, 0, rot);
+                        }
+                        self.overlay_tess_cache.record(
+                            poly_key,
+                            offset,
+                            &batch,
+                            0,
+                            &text_fills,
+                            fill_from,
+                            None,
+                            0,
                         );
-                        rotate_vertices_from(&mut batch, 0, rot);
                     }
-                    stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
+                    let clip = stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        poly.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
                     if !batch.is_empty() {
-                        batches.push((poly.z_order, batch));
+                        batches.push(TextBatch {
+                            z_order: poly.z_order,
+                            texture: fill_texture,
+                            blend: poly.style.blend,
+                            clip,
+                            verts: batch,
+                            layer: record_layer,
+                        });
+                    }
+                }
+
+                // --- Meshes (the consumer's own triangles, no fringe) ---
+                for (item_index, mesh) in space.overlays.meshes.iter().enumerate() {
+                    if mesh.indices.len() < 3 || mesh.style.opacity <= 0.0 {
+                        continue;
+                    }
+                    let animated_storage;
+                    let mesh: &crate::renderer::types::OverlayMeshItem =
+                        if mesh.animations.is_none() {
+                            mesh
+                        } else {
+                            let mut owned = mesh.clone();
+                            if let Some(anims) = owned.animations.take() {
+                                anims.apply(
+                                    overlay_time,
+                                    &mut owned.transform,
+                                    &mut owned.style.opacity,
+                                    &mut owned.style.tint,
+                                );
+                            }
+                            animated_storage = owned;
+                            &animated_storage
+                        };
+                    let layer_storage;
+                    let mesh: &crate::renderer::types::OverlayMeshItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::Mesh, item_index, &mesh.style)
+                    {
+                        Some(style) => {
+                            let mut owned = mesh.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => mesh,
+                    };
+                    let record_layer = ov.layer_plan.record_layer(LayerFamily::Mesh, item_index);
+                    let Some(offset) =
+                        mesh.resolve_offset_at([vp_w, vp_h], view, proj, world_origin)
+                    else {
+                        continue;
+                    };
+                    super::overlay_style_check::warn_inert_style(
+                        "OverlayMeshItem",
+                        crate::renderer::types::OverlayStyleSupport::for_mesh(),
+                        &mesh.style,
+                    );
+                    let image =
+                        fill_image(&mesh.style.fill, &self.resources.content.overlay_textures);
+                    if image == Some(None) {
+                        continue;
+                    }
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    overlay_geometry::emit_mesh(
+                        &mut batch,
+                        mesh,
+                        offset,
+                        &mut text_fills,
+                        image.flatten().unwrap_or([1, 1]),
+                    );
+                    let clip = stamp_clip(&mut batch, mesh.clip.mask, mesh.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        mesh.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
+                    if !batch.is_empty() {
+                        batches.push(TextBatch {
+                            z_order: mesh.z_order,
+                            texture: mesh.style.fill.texture_id(),
+                            blend: mesh.style.blend,
+                            clip,
+                            verts: batch,
+                            layer: record_layer,
+                        });
                     }
                 }
 
                 // --- Vector shapes (tessellated fills + outline strokes) ---
                 // A vector shape has no SDF, so it draws here through the same
                 // triangle-fill pipeline as filled polylines rather than the
-                // SDF shape pass. An image fill and a backdrop blur go through
-                // the shape pass's texture pipeline instead (see
-                // `prepare_overlay_shapes`); the shadows still draw here.
-                for shape in &frame.overlays.shapes {
+                // SDF shape pass, image fills included. Only a backdrop blur
+                // goes through the shape pass's backdrop pipeline (see
+                // `prepare_overlay_shapes`).
+                for (item_index, shape) in space.overlays.shapes.iter().enumerate() {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
                         fill_rule,
+                        stroke,
+                        inverse,
                     } = &shape.shape
                     else {
                         continue;
@@ -896,6 +1753,13 @@ impl ViewportRenderer {
                             &mut owned.style.tint,
                         );
                     }
+                    if let Some(style) =
+                        ov.layer_plan
+                            .adjusted_style(LayerFamily::Shape, item_index, &owned.style)
+                    {
+                        owned.style = style;
+                    }
+                    let record_layer = ov.layer_plan.record_layer(LayerFamily::Shape, item_index);
                     // Resolve the anchor to an absolute top-left so anchored
                     // vector shapes tessellate where they draw; a culled world
                     // anchor skips the shape. Tracks resolve first, because a
@@ -907,16 +1771,125 @@ impl ViewportRenderer {
                         continue;
                     };
                     owned.transform.translate = tl;
+                    let image =
+                        fill_image(&owned.style.fill, &self.resources.content.overlay_textures);
+                    let fill_texture = match image {
+                        Some(Some(_)) => owned.style.fill.texture_id(),
+                        _ => None,
+                    };
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    emit_vector_shape(&mut batch, &owned, subpaths, *fill_rule, vp_w, vp_h);
-                    stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
+                    // An animated shape would rasterise a new cell every frame
+                    // its transform moves, so it keeps the tessellated fill.
+                    let atlas_offered = shape.animations.is_none();
+                    let key = vector_cache_key(&owned, ppp, atlas_offered, image);
+                    let mut replayed = false;
+                    if let Some(r) =
+                        self.overlay_tess_cache
+                            .replay(key, tl, &mut batch, &mut text_fills)
+                    {
+                        replayed = true;
+                        // The atlas quad is rebuilt: its cell is looked up
+                        // (and kept alive) again, and may have moved.
+                        if let Some(q) = r.atlas_quad {
+                            let mut quad = Vec::with_capacity(6);
+                            let drawn = emit_vector_atlas_quad(
+                                &mut quad,
+                                &owned,
+                                subpaths,
+                                *fill_rule,
+                                *inverse,
+                                VectorAtlas {
+                                    atlas: &mut self.resources.content.coverage_atlas,
+                                    device,
+                                    ppp,
+                                    max_px: VECTOR_ATLAS_MAX_IMMEDIATE_PX,
+                                },
+                                &mut text_fills,
+                                image.flatten().unwrap_or([1, 1]),
+                                Some(r.aux),
+                            ) == Some(true);
+                            if drawn && quad.len() == 6 && batch.len() >= q + 6 {
+                                tint_vertices_from(&mut quad, 0, owned.style.tint);
+                                batch[q..q + 6].copy_from_slice(&quad);
+                            } else {
+                                batch.clear();
+                                replayed = false;
+                            }
+                        }
+                    }
+                    if !replayed {
+                        self.overlay_tess_cache.count_tessellation();
+                        let fill_from = text_fills.len();
+                        let atlas = atlas_offered.then(|| VectorAtlas {
+                            atlas: &mut self.resources.content.coverage_atlas,
+                            device,
+                            ppp,
+                            max_px: VECTOR_ATLAS_MAX_IMMEDIATE_PX,
+                        });
+                        let path = emit_vector_shape(
+                            &mut batch,
+                            &owned,
+                            subpaths,
+                            *fill_rule,
+                            stroke.as_ref(),
+                            *inverse,
+                            vp_w,
+                            vp_h,
+                            &mut text_fills,
+                            image.flatten(),
+                            atlas,
+                        );
+                        // A fill that fell back to tessellation because the
+                        // atlas was full this frame is not kept: next frame
+                        // it may fit.
+                        let quad = match path {
+                            VectorFillPath::Atlas(q) => Some(Some(q)),
+                            VectorFillPath::Tessellated => Some(None),
+                            VectorFillPath::AtlasFull => None,
+                        };
+                        if let Some(quad) = quad {
+                            let aux = if quad.is_some() {
+                                vector_path_hash(
+                                    subpaths,
+                                    *fill_rule,
+                                    inverse.then_some(owned.size),
+                                )
+                            } else {
+                                0
+                            };
+                            self.overlay_tess_cache.record(
+                                key,
+                                tl,
+                                &batch,
+                                0,
+                                &text_fills,
+                                fill_from,
+                                quad,
+                                aux,
+                            );
+                        }
+                    }
+                    let clip = stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        owned.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
                     if !batch.is_empty() {
-                        batches.push((shape.z_order, batch));
+                        batches.push(TextBatch {
+                            z_order: shape.z_order,
+                            texture: fill_texture,
+                            blend: owned.style.blend,
+                            clip,
+                            verts: batch,
+                            layer: record_layer,
+                        });
                     }
                 }
 
                 // --- Labels ---
-                for label in &frame.overlays.labels {
+                for (item_index, label) in space.overlays.labels.iter().enumerate() {
                     if label.text.is_empty() || label.style.opacity <= 0.0 {
                         continue;
                     }
@@ -949,47 +1922,79 @@ impl ViewportRenderer {
                         animated_storage = owned;
                         &animated_storage
                     };
+                    let layer_storage;
+                    let label: &crate::renderer::types::LabelItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::Label, item_index, &label.style)
+                    {
+                        Some(style) => {
+                            let mut owned = label.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => label,
+                    };
+                    // A world-sized label draws at its size on screen this
+                    // frame, with the lengths that follow the text scaled.
+                    let sized_storage;
+                    let (label, stepped) =
+                        match space.text_size(&label.text_style, &label.anchoring.origin) {
+                            TextSize::Unchanged => (label, false),
+                            TextSize::Hidden => continue,
+                            TextSize::Sized { scale, opacity } => {
+                                let mut owned = label.clone();
+                                owned.text_style.size *= scale;
+                                owned.max_width = owned.max_width.map(|w| w * scale);
+                                scale_text_style(&mut owned.style, scale, opacity);
+                                sized_storage = owned;
+                                (&sized_storage, true)
+                            }
+                        };
+                    let record_layer = ov.layer_plan.record_layer(LayerFamily::Label, item_index);
                     let opacity = label.style.opacity.clamp(0.0, 1.0);
                     super::overlay_style_check::warn_inert_style(
                         "LabelItem",
                         crate::renderer::types::OverlayStyleSupport::for_glyphs(),
                         &label.style,
                     );
+                    let image =
+                        fill_image(&label.style.fill, &self.resources.content.overlay_textures);
+                    if image == Some(None) {
+                        continue;
+                    }
 
-                    let layout = if let Some(max_w) = label.max_width {
-                        self.resources.content.glyph_atlas.layout_text_wrapped(
+                    // Shape once; each layer places the same glyphs.
+                    let shaped = if let Some(max_w) = label.max_width {
+                        self.resources.content.glyph_atlas.shape_text_wrapped(
                             &label.text,
                             label.text_style.size,
                             label.text_style.font,
                             max_w,
                             ppp,
-                            device,
-                            GlyphStyle::PLAIN,
                         )
                     } else {
-                        self.resources.content.glyph_atlas.layout_text(
+                        self.resources.content.glyph_atlas.shape_text(
                             &label.text,
                             label.text_style.size,
                             label.text_style.font,
                             ppp,
-                            device,
-                            GlyphStyle::PLAIN,
                         )
                     };
 
                     let font_index = label.text_style.font.map_or(0, |h| h.0);
-                    let ascent = self
-                        .resources
-                        .content
-                        .glyph_atlas
-                        .font_ascent(font_index, label.text_style.size);
+                    let ascent = self.resources.content.glyph_atlas.font_ascent(
+                        font_index,
+                        label.text_style.size,
+                        ppp,
+                    );
 
-                    let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
+                    let align_offset = label.anchoring.align.x.align_shift(shaped.total_width);
                     let align_offset_y = label
                         .anchoring
                         .align
                         .y
-                        .align_shift(layout.height, Some(ascent));
+                        .align_shift(shaped.height, Some(ascent));
 
                     let text_x = anchor_px[0] + align_offset + label.transform.translate[0];
                     let text_y = anchor_px[1] + align_offset_y + label.transform.translate[1];
@@ -998,23 +2003,24 @@ impl ViewportRenderer {
 
                     // A label is one range: its glyphs and their shadow layers,
                     // turned together about the laid-out box.
-                    let rot = OverlayRotation::new(
-                        label.transform.rotation,
-                        label.transform.scale,
-                        OverlayRotation::pivot_point(
-                            [text_x, text_y],
-                            [layout.total_width, layout.height],
-                            label.transform.pivot,
-                        ),
+                    let pivot = OverlayRotation::pivot_point(
+                        [text_x, text_y],
+                        [shaped.total_width, shaped.height],
+                        label.transform.pivot,
                     );
+                    let rot = OverlayRotation::new(&label.transform, pivot);
+                    // The transform's scale picks the raster size, so a scaled
+                    // label is rasterised at its drawn size rather than magnified.
+                    let grid = GlyphGrid::for_transform(label.transform.linear(), pivot, ppp)
+                        .with_stepped(stepped);
 
                     let text_start = batch.len();
 
                     // Shadow layers, back to front, behind the glyphs. Each is a
-                    // re-layout against a styled atlas cell, so the dilation and
+                    // placement against a styled atlas cell, so the dilation and
                     // fade are baked per glyph rather than faked with offset
-                    // copies. Layout is identical to the plain pass, so the
-                    // shadow stays registered with the text it backs.
+                    // copies. The glyphs are the plain pass's, so the shadow
+                    // stays registered with the text it backs.
                     for layer in label
                         .style
                         .shadows
@@ -1023,54 +2029,46 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
-                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+                            [layer.offset[0] * grid.scale, layer.offset[1] * grid.scale],
                         );
-                        let sl = if let Some(max_w) = label.max_width {
-                            self.resources.content.glyph_atlas.layout_text_wrapped(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                max_w,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        } else {
-                            self.resources.content.glyph_atlas.layout_text(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        };
+                        let origin = [text_x + layer.offset[0], text_y + ascent + layer.offset[1]];
+                        let quads = self.resources.content.glyph_atlas.place_text(
+                            &shaped,
+                            label.text_style.size,
+                            label.text_style.font,
+                            origin,
+                            grid,
+                            device,
+                            style,
+                        );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
-                        emit_glyph_quads(
-                            &mut batch,
-                            &sl.quads,
-                            text_x + layer.offset[0],
-                            text_y + ascent + layer.offset[1],
-                            col,
-                            vp_w,
-                            vp_h,
-                        );
+                        emit_glyph_quads(&mut batch, &quads, origin[0], origin[1], col, vp_w, vp_h);
                     }
 
                     // The glyphs start white and `style.fill` multiplies into
                     // them below, so a label has one colour source.
                     let text_colour = apply_opacity([1.0, 1.0, 1.0, 1.0], opacity);
                     // The label origin is the top-left of the text box; add the
-                    // ascent to reach the first baseline the quads are relative to.
+                    // ascent to reach the first baseline the glyphs are relative to.
+                    let baseline = [text_x, text_y + ascent];
+                    let quads = self.resources.content.glyph_atlas.place_text(
+                        &shaped,
+                        label.text_style.size,
+                        label.text_style.font,
+                        baseline,
+                        grid,
+                        device,
+                        GlyphStyle::PLAIN,
+                    );
                     let glyph_start = batch.len();
                     emit_glyph_quads(
                         &mut batch,
-                        &layout.quads,
-                        text_x,
-                        text_y + ascent,
+                        &quads,
+                        baseline[0],
+                        baseline[1],
                         text_colour,
                         vp_w,
                         vp_h,
@@ -1081,7 +2079,9 @@ impl ViewportRenderer {
                             glyph_start,
                             &label.style.fill,
                             [text_x, text_y],
-                            [layout.total_width, layout.height],
+                            [shaped.total_width, shaped.height],
+                            &mut text_fills,
+                            image.flatten().unwrap_or([1, 1]),
                         );
                     }
                     tint_vertices_from(&mut batch, glyph_start, label.style.tint);
@@ -1097,39 +2097,28 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_inner_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
                         );
                         if style == GlyphStyle::PLAIN {
                             continue;
                         }
-                        let sl = if let Some(max_w) = label.max_width {
-                            self.resources.content.glyph_atlas.layout_text_wrapped(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                max_w,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        } else {
-                            self.resources.content.glyph_atlas.layout_text(
-                                &label.text,
-                                label.text_style.size,
-                                label.text_style.font,
-                                ppp,
-                                device,
-                                style,
-                            )
-                        };
+                        let quads = self.resources.content.glyph_atlas.place_text(
+                            &shaped,
+                            label.text_style.size,
+                            label.text_style.font,
+                            baseline,
+                            grid,
+                            device,
+                            style,
+                        );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
                         emit_glyph_quads(
                             &mut batch,
-                            &sl.quads,
-                            text_x,
-                            text_y + ascent,
+                            &quads,
+                            baseline[0],
+                            baseline[1],
                             col,
                             vp_w,
                             vp_h,
@@ -1138,12 +2127,25 @@ impl ViewportRenderer {
 
                     rotate_vertices_from(&mut batch, text_start, rot);
 
-                    stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
-                    batches.push((label.z_order, batch));
+                    let clip = stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        label.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
+                    batches.push(TextBatch {
+                        z_order: label.z_order,
+                        texture: label.style.fill.texture_id(),
+                        blend: label.style.blend,
+                        clip,
+                        verts: batch,
+                        layer: record_layer,
+                    });
                 }
 
                 // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
-                for run in &frame.overlays.glyph_runs {
+                for (item_index, run) in space.overlays.glyph_runs.iter().enumerate() {
                     if run.glyphs.is_empty() || run.style.opacity <= 0.0 {
                         continue;
                     }
@@ -1163,11 +2165,51 @@ impl ViewportRenderer {
                         animated_storage = owned;
                         &animated_storage
                     };
+                    let layer_storage;
+                    let run: &crate::renderer::types::GlyphRunItem = match ov
+                        .layer_plan
+                        .adjusted_style(LayerFamily::GlyphRun, item_index, &run.style)
+                    {
+                        Some(style) => {
+                            let mut owned = run.clone();
+                            owned.style = style;
+                            layer_storage = owned;
+                            &layer_storage
+                        }
+                        None => run,
+                    };
+                    // A world-sized run scales its size and glyph positions
+                    // together, so it grows about its anchor.
+                    let sized_storage;
+                    let (run, stepped) =
+                        match space.text_size(&run.text_style, &run.anchoring.origin) {
+                            TextSize::Unchanged => (run, false),
+                            TextSize::Hidden => continue,
+                            TextSize::Sized { scale, opacity } => {
+                                let mut owned = run.clone();
+                                owned.text_style.size *= scale;
+                                for g in &mut owned.glyphs {
+                                    g.x *= scale;
+                                    g.y *= scale;
+                                }
+                                scale_text_style(&mut owned.style, scale, opacity);
+                                sized_storage = owned;
+                                (&sized_storage, true)
+                            }
+                        };
+                    let record_layer = ov
+                        .layer_plan
+                        .record_layer(LayerFamily::GlyphRun, item_index);
                     super::overlay_style_check::warn_inert_style(
                         "GlyphRunItem",
                         crate::renderer::types::OverlayStyleSupport::for_glyphs(),
                         &run.style,
                     );
+                    let image =
+                        fill_image(&run.style.fill, &self.resources.content.overlay_textures);
+                    if image == Some(None) {
+                        continue;
+                    }
 
                     // Resolve the anchor origin; skip the run when a world anchor
                     // is culled. Alignment shifts the whole run by its glyph-extent
@@ -1192,11 +2234,21 @@ impl ViewportRenderer {
                         + run.anchoring.align.y.align_shift(ext_h, Some(min_y));
 
                     let opacity = run.style.opacity.clamp(0.0, 1.0);
-                    // Each glyph carries its multiplier through layout so the
+                    // The run turns about its glyph-extent box, shadows included,
+                    // and its transform's scale picks the raster size.
+                    let pivot = OverlayRotation::pivot_point(
+                        [run_x + min_x, run_y + min_y],
+                        [ext_w, ext_h],
+                        run.transform.pivot,
+                    );
+                    let rot = OverlayRotation::new(&run.transform, pivot);
+                    let grid = GlyphGrid::for_transform(run.transform.linear(), pivot, ppp)
+                        .with_stepped(stepped);
+                    // Each glyph carries its multiplier through placement so the
                     // per-glyph entries stay aligned with the quads after
                     // zero-area skips. White is "the fill unmodified": the fill
                     // multiplies into the quads below.
-                    let quads = self.resources.content.glyph_atlas.layout_glyph_run(
+                    let quads = self.resources.content.glyph_atlas.place_glyphs(
                         run.glyphs.iter().enumerate().map(|(i, g)| {
                             let tint = run
                                 .glyph_tints
@@ -1207,7 +2259,8 @@ impl ViewportRenderer {
                         }),
                         run.text_style.size,
                         run.text_style.font,
-                        ppp,
+                        [run_x, run_y],
+                        grid,
                         device,
                         GlyphStyle::PLAIN,
                     );
@@ -1216,16 +2269,6 @@ impl ViewportRenderer {
                     }
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    // The run turns about its glyph-extent box, shadows included.
-                    let rot = OverlayRotation::new(
-                        run.transform.rotation,
-                        run.transform.scale,
-                        OverlayRotation::pivot_point(
-                            [run_x + min_x, run_y + min_y],
-                            [ext_w, ext_h],
-                            run.transform.pivot,
-                        ),
-                    );
 
                     // Shadow layers, back to front, behind the run. Per-glyph
                     // colours do not carry into a shadow: the whole layer draws
@@ -1239,28 +2282,23 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
-                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+                            [layer.offset[0] * grid.scale, layer.offset[1] * grid.scale],
                         );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
-                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                        let origin = [run_x + layer.offset[0], run_y + layer.offset[1]];
+                        let sq = self.resources.content.glyph_atlas.place_glyphs(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
                             run.text_style.size,
                             run.text_style.font,
-                            ppp,
+                            origin,
+                            grid,
                             device,
                             style,
                         );
-                        emit_glyph_quads_colored(
-                            &mut batch,
-                            &sq,
-                            run_x + layer.offset[0],
-                            run_y + layer.offset[1],
-                            vp_w,
-                            vp_h,
-                        );
+                        emit_glyph_quads_colored(&mut batch, &sq, origin[0], origin[1], vp_w, vp_h);
                     }
 
                     // Positions are already relative to the run origin, so the
@@ -1275,6 +2313,8 @@ impl ViewportRenderer {
                             &run.style.fill,
                             [run_x + min_x, run_y + min_y],
                             [ext_w, ext_h],
+                            &mut text_fills,
+                            image.flatten().unwrap_or([1, 1]),
                         );
                     }
                     tint_vertices_from(&mut batch, glyph_start, run.style.tint);
@@ -1289,19 +2329,20 @@ impl ViewportRenderer {
                         .filter(|l| l.is_visible())
                     {
                         let style = GlyphStyle::from_inner_shadow(
-                            layer.spread * ppp,
-                            layer.blur * ppp,
+                            layer.spread * grid.scale,
+                            layer.blur * grid.scale,
                             layer.falloff,
                         );
                         if style == GlyphStyle::PLAIN {
                             continue;
                         }
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
-                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                        let sq = self.resources.content.glyph_atlas.place_glyphs(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
                             run.text_style.size,
                             run.text_style.font,
-                            ppp,
+                            [run_x, run_y],
+                            grid,
                             device,
                             style,
                         );
@@ -1310,30 +2351,94 @@ impl ViewportRenderer {
 
                     rotate_vertices_from(&mut batch, 0, rot);
 
-                    stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
-                    batches.push((run.z_order, batch));
+                    let clip = stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
+                    super::overlay_fill::matrix_vertices_from(
+                        &mut batch,
+                        0,
+                        run.style.colour_matrix.as_ref(),
+                        &mut text_fills,
+                    );
+                    batches.push(TextBatch {
+                        z_order: run.z_order,
+                        texture: run.style.fill.texture_id(),
+                        blend: run.style.blend,
+                        clip,
+                        verts: batch,
+                        layer: record_layer,
+                    });
                 }
 
-                // Upload atlas if new glyphs were rasterized.
+                // Upload the atlases if new glyphs or cells were rasterized.
                 self.resources.content.glyph_atlas.upload_if_dirty(queue);
+                self.resources.content.coverage_atlas.upload_if_dirty(queue);
 
-                // Stable sort preserves submission order for equal z_order values.
-                batches.sort_by_key(|(z, _)| *z);
-                // Flatten into one buffer, recording a draw segment per distinct
-                // z_order run so this batch can interleave with other families.
-                use crate::renderer::overlay_draw_order::OverlayDrawSegment;
-                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                for (z, v) in batches {
-                    let start = verts.len() as u32;
-                    verts.extend(v);
-                    if ov.overlay_uses_zorder {
-                        OverlayDrawSegment::push_text(
-                            &mut ov.overlay_draw_segments,
-                            z,
-                            start,
-                            verts.len() as u32 - start,
-                        );
+                // Record each batch as one item: its vertices go on the
+                // frame's text stream as emitted, and the draw list puts them
+                // in draw order once every family has recorded its items.
+                use crate::renderer::overlay_draw_order::{
+                    OverlayItemSource, OverlayOrderItem, family_rank, intersect, points_bounds,
+                };
+                // The images text-stream items are filled from; an item's fill
+                // bind group is its image's index plus one, zero being the
+                // blank image.
+                let mut text_images: Vec<crate::renderer::types::OverlayTextureId> = Vec::new();
+                for batch in batches {
+                    let fill =
+                        match batch.texture {
+                            None => 0,
+                            Some(id) => {
+                                let i = text_images.iter().position(|t| *t == id).unwrap_or_else(
+                                    || {
+                                        text_images.push(id);
+                                        text_images.len() - 1
+                                    },
+                                );
+                                i as u32 + 1
+                            }
+                        };
+                    if batch.verts.is_empty() {
+                        continue;
                     }
+                    let mut bounds = points_bounds(batch.verts.iter().map(|v| v.position));
+                    // A fringe's outer row draws past its vertex position by
+                    // half a device pixel along its direction, and a
+                    // hairline's by a whole one.
+                    let reach = batch
+                        .verts
+                        .iter()
+                        .filter(|v| v.aa[2] > 0.5)
+                        .map(|v| {
+                            let px = if v.aa[3] < 0.0 { 1.0 } else { 0.5 };
+                            v.aa[0].hypot(v.aa[1]) * px
+                        })
+                        .fold(0.0f32, f32::max)
+                        / ppp.max(1e-3);
+                    if reach > 0.0 {
+                        bounds = [
+                            bounds[0] - reach,
+                            bounds[1] - reach,
+                            bounds[2] + reach,
+                            bounds[3] + reach,
+                        ];
+                    }
+                    if let Some(clip) = batch.clip {
+                        bounds = intersect(bounds, clip);
+                    }
+                    let start = ov.overlay_text_verts.len() as u32;
+                    ov.overlay_text_verts.extend_from_slice(&batch.verts);
+                    ov.overlay_order_items.push(OverlayOrderItem {
+                        z_order: batch.z_order,
+                        family_rank: family_rank::TEXT_MERGED,
+                        bounds,
+                        blend: batch.blend,
+                        source: OverlayItemSource::Text {
+                            start,
+                            count: batch.verts.len() as u32,
+                            fill,
+                        },
+                        layer: batch.layer,
+                        dst: crate::renderer::overlay_draw_order::dst_read::NONE,
+                    });
                 }
 
                 // Retained overlay groups: resolve each submitted group to its
@@ -1342,19 +2447,45 @@ impl ViewportRenderer {
                 // draw. Slot 0 of the instance buffer is the identity that every
                 // immediate draw reads.
                 let mut instances = vec![crate::resources::OverlayInstance::IDENTITY];
+                // Collected text-stream draws, finished once the frame's fill
+                // records exist: (vbuf, count, the group's fill records,
+                // instance_index, z_order, screen bounds).
+                let mut pending_text: Vec<(
+                    crate::gpu::Buffer,
+                    u32,
+                    Option<crate::gpu::TextureView>,
+                    u32,
+                    i32,
+                    crate::renderer::overlay_draw_order::Bounds,
+                    u32,
+                )> = Vec::new();
                 // Collected shape-stream draws, finished after the instance buffer
-                // exists: (shape_vbuf, count, shadow_buf, instance_index, z_order).
+                // exists: (shape_vbuf, count, shadow_tex, fill_tex,
+                // instance_index, z_order, screen bounds).
                 let mut pending_shapes: Vec<(
                     crate::gpu::Buffer,
                     u32,
                     crate::gpu::TextureView,
+                    crate::gpu::TextureView,
                     u32,
                     i32,
+                    crate::renderer::overlay_draw_order::Bounds,
+                    u32,
                 )> = Vec::new();
-                for r in &frame.overlays.retained {
+                for (item_index, r) in space.overlays.retained.iter().enumerate() {
+                    let record_layer = ov
+                        .layer_plan
+                        .record_layer(LayerFamily::Retained, item_index);
                     // Re-emit the group first if its baked glyph UVs went stale
-                    // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
-                    if self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp) {
+                    // (atlas grew or pixels_per_point changed, by a ladder step
+                    // in a world layer); cheap no-op otherwise.
+                    if self.reemit_overlay_geometry_if_stale(
+                        device,
+                        queue,
+                        r.id,
+                        ppp,
+                        space.world.is_some(),
+                    ) {
                         self.overlay_retained_counters.reemitted += 1;
                     }
                     // Resolve the group's tracks. Every channel they drive rides
@@ -1367,7 +2498,7 @@ impl ViewportRenderer {
                         let mut owned = r.clone();
                         if let Some(anims) = owned.animations.take() {
                             anims.apply(
-                                frame.overlays.time,
+                                space.overlays.time,
                                 &mut owned.transform,
                                 &mut owned.opacity,
                                 &mut owned.tint,
@@ -1379,14 +2510,28 @@ impl ViewportRenderer {
                     let (text, shape, (compiled_anchor, bounds)) =
                         match self.resources.content.overlay_geometry.get(r.id) {
                             Some(c) => {
-                                let text = (c.vertex_count > 0)
-                                    .then(|| (c.vertex_buf.clone(), c.vertex_count));
-                                let shape = match (&c.shape_vertex_buf, &c.shadow_tex) {
-                                    (Some(sv), Some(sh)) if c.shape_vertex_count > 0 => {
-                                        Some((sv.clone(), c.shape_vertex_count, sh.clone()))
-                                    }
-                                    _ => None,
-                                };
+                                let text = (c.vertex_count > 0).then(|| {
+                                    (
+                                        c.vertex_buf.clone(),
+                                        c.vertex_count,
+                                        c.text_fill_tex.clone(),
+                                    )
+                                });
+                                let shape =
+                                    match (&c.shape_instance_buf, &c.shadow_tex, &c.shape_fill_tex)
+                                    {
+                                        (Some(sv), Some(sh), Some(fl))
+                                            if c.shape_instance_count > 0 =>
+                                        {
+                                            Some((
+                                                sv.clone(),
+                                                c.shape_instance_count,
+                                                sh.clone(),
+                                                fl.clone(),
+                                            ))
+                                        }
+                                        _ => None,
+                                    };
                                 (text, shape, (c.anchor, c.bounds))
                             }
                             None => continue,
@@ -1454,49 +2599,56 @@ impl ViewportRenderer {
                         [0.0, 0.0, 0.0, 0.0]
                     };
                     let instance_index = instances.len() as u32;
-                    instances.push(crate::resources::OverlayInstance {
+                    let mut instance = crate::resources::OverlayInstance {
                         translate,
                         opacity: r.opacity,
                         clip_index,
                         clip_rect,
                         tint: r.tint,
-                        scale: r.transform.scale,
-                        rotation: r.transform.rotation,
-                        // Logical pixels, like `translate`: the instance's
-                        // transform is applied to vertex positions, which are
-                        // logical. Only `clip_rect` is in framebuffer pixels,
-                        // because it is compared against @builtin(position).
-                        pivot: r.transform.pivot,
-                    });
+                        ..crate::resources::OverlayInstance::IDENTITY
+                    };
+                    // Logical pixels, like `translate`: the instance's transform
+                    // is applied to vertex positions, which are logical. Only
+                    // `clip_rect` is in framebuffer pixels, because it is
+                    // compared against @builtin(position).
+                    instance.set_transform(&r.transform);
+                    instances.push(instance);
+                    // The group is one item for ordering: both streams share
+                    // its compiled extent under this frame's instance.
+                    let group_bounds = retained_bounds(bounds, &instance, ppp);
                     // Past every skip: the group has an instance slot and at
                     // least one of the two streams below records a draw.
                     self.overlay_retained_counters.drawn += 1;
-                    if let Some((vbuf, vcount)) = text {
-                        let draw_index = ov.overlay_retained_draws.len() as u32;
-                        ov.overlay_retained_draws.push(
-                            crate::renderer::overlay_buffers::RetainedDraw {
-                                vertex_buf: vbuf,
-                                vertex_count: vcount,
-                                instance_index,
-                            },
-                        );
-                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
-                            &mut ov.overlay_draw_segments,
+                    if let Some((vbuf, vcount, fill_tex)) = text {
+                        pending_text.push((
+                            vbuf,
+                            vcount,
+                            fill_tex,
+                            instance_index,
                             r.z_order,
-                            draw_index,
-                        );
+                            group_bounds,
+                            record_layer,
+                        ));
                     }
-                    if let Some((svbuf, svcount, shbuf)) = shape {
-                        pending_shapes.push((svbuf, svcount, shbuf, instance_index, r.z_order));
+                    if let Some((svbuf, svcount, shbuf, fill_tex)) = shape {
+                        pending_shapes.push((
+                            svbuf,
+                            svcount,
+                            shbuf,
+                            fill_tex,
+                            instance_index,
+                            r.z_order,
+                            group_bounds,
+                            record_layer,
+                        ));
                     }
                 }
 
-                if !verts.is_empty()
-                    || !ov.overlay_retained_draws.is_empty()
+                if !ov.overlay_text_verts.is_empty()
+                    || !pending_text.is_empty()
                     || !pending_shapes.is_empty()
                 {
-                    let vertex_buf = ov.overlay_text_vbuf.write(device, queue, &verts);
-                    Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h);
+                    Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h, ppp);
                     let clip_buf = ov.overlay_bindings.clip.write_changed(
                         device,
                         queue,
@@ -1507,7 +2659,79 @@ impl ViewportRenderer {
                     ov.overlay_bindings
                         .instances
                         .write_changed(device, queue, &instances);
+                    ov.overlay_bindings.instances_uniform.write_changed(
+                        device,
+                        queue,
+                        &crate::resources::OverlayInstance::padded_uniform_bytes(&instances),
+                    );
                     ov.overlay_instances_ready = true;
+
+                    // The frame's fill records and the fill bind groups over
+                    // them: the blank image first, then one per image a
+                    // text-stream item is filled from. Last frame's groups are
+                    // reused where the pair is the same, and dropped otherwise.
+                    let text_records = ov.overlay_bindings.text_fills.write_changed(
+                        device,
+                        queue,
+                        text_fills.texels(),
+                    );
+                    let mut fill_cache = std::mem::take(&mut ov.overlay_bindings.text_fill_bgs);
+                    let mut fill_used = Default::default();
+                    let mut fill_bind_groups = vec![self.resources.overlay_fill_bind_group(
+                        device,
+                        &mut fill_cache,
+                        &mut fill_used,
+                        &text_records,
+                        None,
+                    )];
+                    for id in &text_images {
+                        let view = self
+                            .resources
+                            .content
+                            .overlay_textures
+                            .get(*id)
+                            .map(|t| t.view.clone());
+                        fill_bind_groups.push(self.resources.overlay_fill_bind_group(
+                            device,
+                            &mut fill_cache,
+                            &mut fill_used,
+                            &text_records,
+                            view.as_ref(),
+                        ));
+                    }
+
+                    // Finish retained text-stream draws: each reads its own
+                    // group's fill records, or the frame's when it has none.
+                    for (vbuf, vcount, fill_tex, instance_index, z, bounds, layer) in
+                        pending_text.drain(..)
+                    {
+                        let records = fill_tex.as_ref().unwrap_or(&text_records);
+                        let fill_bind_group = self.resources.overlay_fill_bind_group(
+                            device,
+                            &mut fill_cache,
+                            &mut fill_used,
+                            records,
+                            None,
+                        );
+                        let draw_index = ov.overlay_retained_draws.len() as u32;
+                        ov.overlay_retained_draws.push(
+                            crate::renderer::overlay_buffers::RetainedDraw {
+                                vertex_buf: vbuf,
+                                vertex_count: vcount,
+                                instance_index,
+                                fill_bind_group,
+                            },
+                        );
+                        ov.overlay_order_items.push(OverlayOrderItem {
+                            z_order: z,
+                            family_rank: family_rank::TEXT_MERGED,
+                            bounds,
+                            blend: crate::renderer::types::OverlayBlend::SourceOver,
+                            source: OverlayItemSource::Retained { draw_index },
+                            layer,
+                            dst: crate::renderer::overlay_draw_order::dst_read::NONE,
+                        });
+                    }
 
                     // Finish retained shape-stream draws: build each group's shape
                     // bind group (its shadow-layer texture plus the shared clip and
@@ -1517,16 +2741,37 @@ impl ViewportRenderer {
                     } else {
                         self.resources.ensure_overlay_shape_pipeline(device);
                         let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                        let inst_buf = ov
+                            .overlay_bindings
+                            .instances_uniform
+                            .buffer()
+                            .expect("written just above")
+                            .clone();
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
                             let mut previous =
                                 std::mem::take(&mut ov.overlay_bindings.retained_shape_bgs);
-                            for (svbuf, svcount, shbuf, instance_index, z) in
-                                pending_shapes.drain(..)
+                            for (
+                                svbuf,
+                                svcount,
+                                shbuf,
+                                fill_tex,
+                                instance_index,
+                                z,
+                                bounds,
+                                layer,
+                            ) in pending_shapes.drain(..)
                             {
+                                let fill_bind_group = self.resources.overlay_fill_bind_group(
+                                    device,
+                                    &mut fill_cache,
+                                    &mut fill_used,
+                                    &fill_tex,
+                                    None,
+                                );
                                 let mut cached = previous.remove(&shbuf).unwrap_or_else(
                                     crate::resources::cached_bind_group::CachedBindGroup::new,
                                 );
-                                let key = [clip_buf.clone(), vp_buf.clone()];
+                                let key = [clip_buf.clone(), vp_buf.clone(), inst_buf.clone()];
                                 let bind_group = cached.get(key, || {
                                     device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                         label: Some("overlay_retained_shape_bg"),
@@ -1548,6 +2793,12 @@ impl ViewportRenderer {
                                                 binding: 2,
                                                 resource: vp_buf.as_entire_binding(),
                                             },
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 3,
+                                                resource: crate::resources::overlay::overlay_shape::group_instance_binding(
+                                                    &inst_buf,
+                                                ),
+                                            },
                                         ],
                                     })
                                 });
@@ -1555,25 +2806,38 @@ impl ViewportRenderer {
                                 let draw_index = ov.overlay_retained_shape_draws.len() as u32;
                                 ov.overlay_retained_shape_draws.push(
                                     crate::renderer::overlay_buffers::RetainedShapeDraw {
-                                        vertex_buf: svbuf,
-                                        vertex_count: svcount,
+                                        instance_buf: svbuf,
+                                        instance_count: svcount,
                                         bind_group,
                                         instance_index,
+                                        fill_bind_group,
                                     },
                                 );
-                                crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained_shape(
-                                    &mut ov.overlay_draw_segments,
-                                    z,
-                                    draw_index,
-                                );
+                                ov.overlay_order_items.push(OverlayOrderItem {
+                                    z_order: z,
+                                    family_rank: family_rank::SHAPE,
+                                    bounds,
+                                    blend: crate::renderer::types::OverlayBlend::SourceOver,
+                                    source: OverlayItemSource::RetainedShape { draw_index },
+                                    layer,
+                                    dst: crate::renderer::overlay_draw_order::dst_read::NONE,
+                                });
                             }
                         }
                     }
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                    let atlas_view = &self.resources.content.glyph_atlas.view;
-                    let key = (atlas_view.clone(), clip_buf.clone(), vp_buf.clone());
+                    let atlas_view = self.resources.content.glyph_atlas.coverage_view();
+                    let colour_view = self.resources.content.glyph_atlas.colour_view();
+                    let coverage_view = &self.resources.content.coverage_atlas.view;
+                    let key = (
+                        atlas_view.clone(),
+                        clip_buf.clone(),
+                        vp_buf.clone(),
+                        coverage_view.clone(),
+                        colour_view.clone(),
+                    );
                     let bind_group = ov.overlay_bindings.label_bg.get(key, || {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_label_bg"),
@@ -1598,12 +2862,23 @@ impl ViewportRenderer {
                                     binding: 3,
                                     resource: vp_buf.as_entire_binding(),
                                 },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: crate::gpu::BindingResource::TextureView(
+                                        coverage_view,
+                                    ),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource: crate::gpu::BindingResource::TextureView(colour_view),
+                                },
                             ],
                         })
                     });
+                    ov.overlay_bindings.text_fill_bgs = fill_used;
                     ov.label_gpu_data = Some(crate::resources::LabelGpuData {
-                        vertex_buf,
-                        vertex_count: verts.len() as u32,
+                        vertex_buf: None,
+                        fill_bind_groups,
                         bind_group,
                         _clip_buf: clip_buf,
                     });
@@ -1616,7 +2891,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        frame: &FrameData,
+        space: &OverlaySpace<'_>,
         ov: &mut crate::renderer::ViewportOverlay,
     ) {
         // ------------------------------------------------------------------
@@ -1624,1107 +2899,1191 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         ov.overlay_shape_gpu_data = None;
         // The bottom-left orientation indicator draws as overlay shapes too.
-        let axes_shapes = self.axes_overlay_items(frame);
-        let has_textured_polyline_fill = frame.overlays.polylines.iter().any(|p| {
-            p.closed
-                && p.style.fill.texture_id().is_some()
-                && p.style.opacity > 0.0
-                && p.points.len() >= 3
-        });
-        if !frame.overlays.shapes.is_empty()
-            || !axes_shapes.is_empty()
-            || has_textured_polyline_fill
-        {
-            let vp_w = frame.camera.viewport_size[0];
-            let vp_h = frame.camera.viewport_size[1];
-            if vp_w > 0.0 && vp_h > 0.0 {
-                Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h);
-                Self::ensure_overlay_instances_default(ov, device, queue);
-                let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
-                    .overlays
-                    .shapes
-                    .iter()
-                    .chain(axes_shapes.iter())
-                    .collect();
-                sorted.sort_by_key(|s| s.z_order);
+        let axes_shapes = self.axes_overlay_items(space);
+        if space.overlays.shapes.is_empty() && axes_shapes.is_empty() {
+            return;
+        }
+        let vp_w = space.size[0];
+        let vp_h = space.size[1];
+        if vp_w <= 0.0 || vp_h <= 0.0 {
+            return;
+        }
+        let ppp = space.ppp;
+        Self::ensure_overlay_viewport_buf(ov, device, queue, vp_w, vp_h, ppp);
+        Self::ensure_overlay_instances_default(ov, device, queue);
+        // Each with its index in the frame's list, which names its layer; the
+        // axes indicator's shapes belong to none. The draw list orders them.
+        let mut sorted: Vec<(usize, &crate::renderer::types::OverlayShapeItem)> = space
+            .overlays
+            .shapes
+            .iter()
+            .enumerate()
+            .chain(axes_shapes.iter().map(|s| (usize::MAX, s)))
+            .collect();
+        sorted.sort_by_key(|(_, s)| s.z_order);
 
-                let has_solid = sorted.iter().any(|s| {
-                    !matches!(s.shape, crate::renderer::types::OverlayShape::Vector { .. })
-                        && s.style.fill.texture_id().is_none()
-                        && s.style.backdrop.blur <= 0.0
-                });
-                let has_tex = sorted.iter().any(|s| s.style.fill.texture_id().is_some())
-                    || has_textured_polyline_fill;
-                let has_blur = sorted
-                    .iter()
-                    .any(|s| s.style.backdrop.blur > 0.0 && s.style.fill.texture_id().is_none());
-                if has_solid {
-                    self.resources.ensure_overlay_shape_pipeline(device);
+        let is_vector = |s: &crate::renderer::types::OverlayShapeItem| {
+            matches!(s.shape, crate::renderer::types::OverlayShape::Vector { .. })
+        };
+        let has_instances = sorted.iter().any(|(_, s)| !is_vector(s));
+        let has_blur = sorted
+            .iter()
+            .any(|(_, s)| s.style.backdrop.blur > 0.0 && s.style.fill.texture_id().is_none());
+        if has_instances {
+            self.resources.ensure_overlay_fill_resources(device, queue);
+            self.resources.ensure_overlay_shape_pipeline(device);
+        }
+        if has_blur {
+            self.resources.ensure_overlay_shape_tex_pipeline(device);
+            self.resources.ensure_backdrop_blur_pipeline(device);
+            self.resources.ensure_dyn_res_pipeline(device);
+        }
+
+        // The images textured shapes sample, in order of first appearance; a
+        // shape's fill bind group is its image's index plus one, zero being
+        // the blank image. Each shape is one instance and one item for the
+        // draw list, which puts the instances in draw order.
+        let mut tex_images: Vec<crate::renderer::types::OverlayTextureId> = Vec::new();
+        // Stacked shadow layers for every shape, shared across the whole
+        // frame. Each shape references a contiguous run (outer layers first,
+        // then inner) via its `shadow_meta`.
+        let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
+        // The fill records the shapes' gradients and images read.
+        let mut fills = super::overlay_fill::FillTable::new();
+        let mut blur_verts: Vec<crate::resources::OverlayBackdropVertex> = Vec::new();
+        let mut max_blur_radius: f32 = 0.0;
+
+        let overlay_time = space.overlays.time;
+
+        // The SDF clip registry, plus each mask's bounding box (framebuffer
+        // pixels) for the shader's cheap pre-reject. Built from
+        // `space.overlays.shapes` (not `sorted`) so the mask indices match
+        // exactly what the label pass assigned, since text and shapes reference
+        // the same masks by index. The bbox is looked up by that same index, so
+        // `clip_rect` and `clip_index` always describe the same mask.
+        // World anchors project through the camera relative to the
+        // world origin, with the origin subtracted in f64.
+        let world_origin = space.world_origin;
+        let view = &space.view;
+        let proj = &space.proj;
+        let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
+            &space.overlays.shapes,
+            ppp,
+            [vp_w, vp_h],
+            view,
+            proj,
+            world_origin,
+        );
+        self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
+
+        for &(item_index, shape_orig) in &sorted {
+            // Mask-only shapes contribute a clip rectangle but are
+            // not drawn themselves.
+            if shape_orig.provides_mask.is_some() {
+                continue;
+            }
+            let adjusted =
+                ov.layer_plan
+                    .adjusted_style(LayerFamily::Shape, item_index, &shape_orig.style);
+            let record_layer = ov.layer_plan.record_layer(LayerFamily::Shape, item_index);
+            // A vector shape has no distance field, so its fill (an image
+            // fill included) and shadows draw as triangles in the label pass.
+            // Only a backdrop blur comes here, as the tessellated triangles
+            // through the backdrop pipeline. As on an analytic shape, an image
+            // fill takes the place of the backdrop.
+            if let crate::renderer::types::OverlayShape::Vector {
+                subpaths,
+                fill_rule,
+                inverse,
+                ..
+            } = &shape_orig.shape
+            {
+                let style = adjusted.as_ref().unwrap_or(&shape_orig.style);
+                if style.fill.texture_id().is_some() || style.backdrop.blur <= 0.0 {
+                    continue;
                 }
-                if has_tex || has_blur {
-                    self.resources.ensure_overlay_shape_tex_pipeline(device);
+                let mut owned = (*shape_orig).clone();
+                if let Some(style) = adjusted {
+                    owned.style = style;
                 }
-                if has_blur {
-                    self.resources.ensure_backdrop_blur_pipeline(device);
-                    self.resources.ensure_dyn_res_pipeline(device);
+                if let Some(anims) = owned.animations.take() {
+                    anims.apply(
+                        overlay_time,
+                        &mut owned.transform,
+                        &mut owned.style.opacity,
+                        &mut owned.style.tint,
+                    );
                 }
-
-                let mut solid_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
-                // Stacked shadow layers for solid shapes, shared across the
-                // whole frame. Each solid shape references a contiguous run
-                // (outer layers first, then inner) via its `shadow_index`.
-                let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
-                // One vertex list per unique texture ID, in order of first appearance.
-                let mut tex_groups: Vec<(
-                    crate::renderer::types::OverlayTextureId,
-                    Vec<crate::resources::OverlayShapeTexVertex>,
-                )> = Vec::new();
-                // Lowest z_order contributing to each tex group, parallel to
-                // `tex_groups`. A textured batch draws as one unit, so it orders
-                // against other families at its frontmost (lowest-z) shape.
-                let mut tex_group_z: Vec<i32> = Vec::new();
-                // One entry per drawn textured shape (and textured polyline
-                // fill), in z-sorted emission order: `(z_order, group_idx,
-                // vertex_start, vertex_count)` where the range indexes into that
-                // group's vertex buffer. Each becomes its own draw segment so a
-                // solid shape can layer between two shapes sharing a texture,
-                // instead of the whole texture group collapsing to its lowest z.
-                let mut tex_shape_segs: Vec<(i32, usize, u32, u32)> = Vec::new();
-                // Blur backdrop vertices (share the tex vertex layout with screen UVs).
-                let mut blur_verts: Vec<crate::resources::OverlayShapeTexVertex> = Vec::new();
-                let mut max_blur_radius: f32 = 0.0;
-
-                let overlay_time = frame.overlays.time;
-
-                // The SDF clip registry, plus each mask's bounding box (framebuffer
-                // pixels) for the shader's cheap pre-reject. Built from
-                // `frame.overlays.shapes` (not `sorted`) so the mask indices match
-                // exactly what the label pass assigned, since text and shapes reference
-                // the same masks by index. The bbox is looked up by that same index, so
-                // `clip_rect` and `clip_index` always describe the same mask.
-                let ppp = frame.camera.pixels_per_point;
-                // World anchors project through the camera relative to the
-                // world origin, with the origin subtracted in f64.
-                let world_origin = self.origin.origin();
-                let view = &self.origin.camera(&frame.camera.render_camera).view();
-                let proj = &frame.camera.render_camera.projection();
-                let (clip_shapes, clip_index_of, clip_bboxes, clips_dropped) = build_clip_shapes(
-                    &frame.overlays.shapes,
-                    ppp,
-                    [vp_w, vp_h],
-                    view,
-                    proj,
-                    world_origin,
-                );
-                self.overlay_retained_counters.clip_masks_dropped = clips_dropped;
-
-                for shape_orig in &sorted {
-                    // Mask-only shapes contribute a clip rectangle but are
-                    // not drawn themselves.
-                    if shape_orig.provides_mask.is_some() {
-                        continue;
-                    }
-                    // A vector shape has no distance field, so its fill and
-                    // shadows draw as triangles in the label pass. Only an image
-                    // fill and a backdrop blur come here, as the tessellated
-                    // triangles through the texture pipeline. As on an analytic
-                    // shape, an image fill takes the place of the backdrop.
-                    if let crate::renderer::types::OverlayShape::Vector {
-                        subpaths,
-                        fill_rule,
-                    } = &shape_orig.shape
-                    {
-                        let textured = shape_orig.style.fill.texture_id().is_some();
-                        if !textured && shape_orig.style.backdrop.blur <= 0.0 {
-                            continue;
-                        }
-                        let mut owned = (*shape_orig).clone();
-                        if let Some(anims) = owned.animations.take() {
-                            anims.apply(
-                                overlay_time,
-                                &mut owned.transform,
-                                &mut owned.style.opacity,
-                                &mut owned.style.tint,
-                            );
-                        }
-                        let Some(tl) =
-                            owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
-                        else {
-                            continue;
-                        };
-                        owned.transform.translate = tl;
-                        if owned.style.opacity <= 0.0 {
-                            continue;
-                        }
-                        let mesh = super::overlay_vector::tessellate(
+                let Some(tl) = owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
+                else {
+                    continue;
+                };
+                owned.transform.translate = tl;
+                if owned.style.opacity <= 0.0 {
+                    continue;
+                }
+                // An inverse fill blurs behind the box less the path.
+                let mesh = if *inverse {
+                    let region: Vec<crate::renderer::types::SubPath> =
+                        super::overlay_vector::inverse_contours(
                             subpaths,
                             *fill_rule,
+                            owned.size,
                             VECTOR_FILL_TOLERANCE,
-                        );
-                        let Some((lmin, lmax)) = polyline_bounds(&mesh.positions) else {
-                            continue;
-                        };
-                        if mesh.indices.is_empty() {
-                            continue;
-                        }
-                        let positions = transform_vector_positions(&mesh.positions, &owned);
-                        if let crate::renderer::types::OverlayFill::Texture {
-                            id: tex_id,
-                            transform: tex_transform,
-                            tint: tex_tint,
-                            ..
-                        } = &owned.style.fill
-                        {
-                            let mut colour = tex_tint.to_linear_rgba();
-                            colour[3] *= owned.style.opacity;
-                            for (c, t) in colour.iter_mut().zip(owned.style.tint) {
-                                *c *= t;
-                            }
-                            let clip_index_i = owned
-                                .clip
-                                .mask
-                                .and_then(|id| clip_index_of.get(&id).copied())
-                                .unwrap_or(-1);
-                            let mask_rect = if clip_index_i >= 0 {
-                                clip_bboxes[clip_index_i as usize]
-                            } else {
-                                [0.0; 4]
-                            };
-                            let clip_rect = match owned.clip.rect {
-                                Some(r) => {
-                                    combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp))
-                                }
-                                None => mask_rect,
-                            };
-                            let group_idx = tex_groups
-                                .iter()
-                                .position(|(id, _)| id == tex_id)
-                                .unwrap_or_else(|| {
-                                    tex_groups.push((*tex_id, Vec::new()));
-                                    tex_group_z.push(i32::MAX);
-                                    tex_groups.len() - 1
-                                });
-                            tex_group_z[group_idx] = tex_group_z[group_idx].min(owned.z_order);
-                            let group_verts = &mut tex_groups[group_idx].1;
-                            let seg_start = group_verts.len() as u32;
-                            // UVs come from the path-local positions over the
-                            // path's own extent, so the image turns and scales
-                            // with the shape.
-                            let lsize =
-                                [(lmax[0] - lmin[0]).max(1e-6), (lmax[1] - lmin[1]).max(1e-6)];
-                            push_tessellated_tex_verts(
-                                group_verts,
-                                &positions,
-                                &mesh.indices,
-                                |i| {
-                                    let lp = mesh.positions[i as usize];
-                                    [(lp[0] - lmin[0]) / lsize[0], (lp[1] - lmin[1]) / lsize[1]]
-                                },
-                                colour,
-                                [0.0; 4],
-                                texture_transform_gpu(tex_transform),
-                                clip_index_i as f32,
-                                clip_rect,
-                                vp_w,
-                                vp_h,
-                            );
-                            tex_shape_segs.push((
-                                owned.z_order,
-                                group_idx,
-                                seg_start,
-                                group_verts.len() as u32 - seg_start,
-                            ));
-                        } else {
-                            let backdrop = &owned.style.backdrop;
-                            max_blur_radius = max_blur_radius.max(backdrop.blur);
-                            // A transparent tint leaves the filtered backdrop
-                            // alone: the shape's own fill draws over it in the
-                            // label pass, which keeps a gradient fill intact.
-                            // Like an analytic backdrop, it is not clipped by a
-                            // mask.
-                            push_tessellated_tex_verts(
-                                &mut blur_verts,
-                                &positions,
-                                &mesh.indices,
-                                |i| {
-                                    let p = positions[i as usize];
-                                    [p[0] / vp_w, p[1] / vp_h]
-                                },
-                                [0.0; 4],
-                                [
-                                    1.0,
-                                    backdrop.saturation,
-                                    backdrop.brightness,
-                                    backdrop.hue_shift,
-                                ],
-                                ([0.0, 0.0, 1.0, 1.0], [0.0; 4]),
-                                -1.0,
-                                [0.0; 4],
-                                vp_w,
-                                vp_h,
-                            );
-                        }
-                        continue;
-                    }
-                    super::overlay_style_check::warn_inert_style(
-                        "OverlayShapeItem",
-                        crate::renderer::types::OverlayStyleSupport::for_shape(&shape_orig.shape),
-                        &shape_orig.style,
-                    );
-                    // Clone so per-frame animation overrides are local and
-                    // the input frame data stays untouched.
-                    let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
-                    if let Some(anims) = owned.animations.take() {
-                        anims.apply(
-                            overlay_time,
-                            &mut owned.transform,
-                            &mut owned.style.opacity,
-                            &mut owned.style.tint,
-                        );
-                    }
-                    // Resolve the anchor origin + animated position + alignment
-                    // to an absolute top-left, then draw the shape as if it were
-                    // positioned there. A culled world anchor skips the shape for
-                    // this frame. Everything below (fill, texture, clip, shadow,
-                    // rotation pivot) reads `position`, so this one resolution
-                    // covers all of them. The `animations.position` track has
-                    // already been applied above, so it drives the nudge that is
-                    // layered on the resolved origin here.
-                    let Some(resolved_tl) =
-                        owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
-                    else {
-                        continue;
-                    };
-                    owned.transform.translate = resolved_tl;
-                    let shape = &owned;
-                    let resolved_opacity = shape.style.opacity;
-
-                    if resolved_opacity <= 0.0 {
-                        continue;
-                    }
-
-                    let hw = shape.size[0] * 0.5;
-                    let hh = shape.size[1] * 0.5;
-                    let cx = shape.transform.translate[0] + hw;
-                    let cy = shape.transform.translate[1] + hh;
-
-                    // Outer-shadow extent that reaches past the shape edge.
-                    // Inner shadows stay inside the shape, so they need no quad
-                    // padding. Both the legacy single shadow and the stacked
-                    // `shadows` layers contribute.
-                    let mut shadow_pad = 0.0f32;
-                    for l in &shape.style.shadows {
-                        shadow_pad = shadow_pad.max(l.extent());
-                    }
-
-                    // Extra quad expansion for shapes whose stroke extends
-                    // beyond the item's position/size bounding box.
-                    let extra_expand = match &shape.shape {
-                        crate::renderer::types::OverlayShape::Line { thickness, .. } => {
-                            thickness * 0.5
-                        }
-                        _ => 0.0,
-                    };
-
-                    // Base half-extents before rotation.
-                    let bx = hw + extra_expand;
-                    let by = hh + extra_expand;
-
-                    // Rotation about the pivot moves the shape's corners out of
-                    // the axis-aligned box, so grow the quad to the AABB of the
-                    // rotated bounding box (matching how the fragment shader maps
-                    // the rotated shape into the quad). Without this a rotated
-                    // rect, capsule, or off-centre pivot clips against its own
-                    // quad. A zero rotation with a zero pivot leaves bx/by
-                    // unchanged.
-                    let (rx, ry) = if shape.transform.rotation != 0.0 {
-                        let c = shape.transform.rotation.cos();
-                        let s = shape.transform.rotation.sin();
-                        let piv = shape.transform.pivot;
-                        let mut mx = 0.0_f32;
-                        let mut my = 0.0_f32;
-                        for cxp in [-bx, bx] {
-                            for cyp in [-by, by] {
-                                let dx = cxp - piv[0];
-                                let dy = cyp - piv[1];
-                                let rxp = c * dx - s * dy + piv[0];
-                                let ryp = s * dx + c * dy + piv[1];
-                                mx = mx.max(rxp.abs());
-                                my = my.max(ryp.abs());
-                            }
-                        }
-                        (mx, my)
-                    } else {
-                        (bx, by)
-                    };
-
-                    let ex = rx + shadow_pad + 1.0; // +1 for AA
-                    let ey = ry + shadow_pad + 1.0;
-
-                    // Encode shape type and radii.
-                    let (shape_type, radii) = match &shape.shape {
-                        crate::renderer::types::OverlayShape::Rect { corner_radius } => {
-                            let r = corner_radius.min(hw).min(hh).max(0.0);
-                            (0.0, [r, r, r, r])
-                        }
-                        crate::renderer::types::OverlayShape::RoundedRect { radii: r } => {
-                            // Input: [tl, tr, br, bl].
-                            // Shader expects iq convention: [tr, br, bl, tl].
-                            let clamped = [
-                                r[1].min(hw).min(hh).max(0.0), // top-right
-                                r[2].min(hw).min(hh).max(0.0), // bottom-right
-                                r[3].min(hw).min(hh).max(0.0), // bottom-left
-                                r[0].min(hw).min(hh).max(0.0), // top-left
-                            ];
-                            (0.0, clamped)
-                        }
-                        crate::renderer::types::OverlayShape::Circle => (1.0, [0.0; 4]),
-                        crate::renderer::types::OverlayShape::Ellipse => (2.0, [0.0; 4]),
-                        crate::renderer::types::OverlayShape::Capsule => (3.0, [0.0; 4]),
-                        crate::renderer::types::OverlayShape::Ring { inner_radius_frac } => {
-                            (4.0, [inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
-                        }
-                        crate::renderer::types::OverlayShape::Arc {
-                            inner_radius_frac,
-                            start_angle,
-                            end_angle,
-                        } => (
-                            5.0,
-                            [
-                                inner_radius_frac.clamp(0.0, 1.0),
-                                *start_angle,
-                                *end_angle,
-                                0.0,
-                            ],
-                        ),
-                        crate::renderer::types::OverlayShape::Triangle { direction } => {
-                            let dir_f = match direction {
-                                crate::renderer::types::TriangleDirection::Up => 0.0,
-                                crate::renderer::types::TriangleDirection::Down => 1.0,
-                                crate::renderer::types::TriangleDirection::Left => 2.0,
-                                crate::renderer::types::TriangleDirection::Right => 3.0,
-                            };
-                            (6.0, [dir_f, 0.0, 0.0, 0.0])
-                        }
-                        crate::renderer::types::OverlayShape::Line { thickness, cap } => {
-                            let cap_f = match cap {
-                                crate::renderer::types::LineCap::Round => 0.0,
-                                crate::renderer::types::LineCap::Square => 1.0,
-                            };
-                            (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
-                        }
-                        crate::renderer::types::OverlayShape::Star {
-                            points,
-                            inner_radius_frac,
-                        } => {
-                            let n = (*points).max(3) as f32;
-                            (8.0, [n, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0])
-                        }
-                        crate::renderer::types::OverlayShape::RegularPolygon { sides } => {
-                            let n = (*sides).max(3) as f32;
-                            (9.0, [n, 0.0, 0.0, 0.0])
-                        }
-                        crate::renderer::types::OverlayShape::Cross { arm_width_frac } => {
-                            (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
-                        }
-                        // Skipped earlier in the loop; this keeps the match
-                        // exhaustive without drawing the vector shape as a rect.
-                        crate::renderer::types::OverlayShape::Vector { .. } => (0.0, [0.0; 4]),
-                        // OverlayShape is non_exhaustive; encode unknown shapes as a plain rect.
-                        _ => (0.0, [0.0; 4]),
-                    };
-
-                    // Resolve the fill into four colour stops + positions +
-                    // a gradient type. Solid and 2-stop variants set
-                    // count = 2 and use only stops[0..2]; multi-stop fills
-                    // pack up to OVERLAY_MAX_GRADIENT_STOPS stops.
-                    let mut stop_colours = [[0.0f32; 4]; 4];
-                    let mut stop_positions = [0.0_f32, 1.0, 1.0, 1.0];
-                    let stop_count: f32;
-                    let gradient_params = match &shape.style.fill {
-                        crate::renderer::types::OverlayFill::Solid(c) => {
-                            stop_colours[0] = c.to_linear_rgba();
-                            stop_colours[1] = c.to_linear_rgba();
-                            stop_count = 0.0;
-                            [0.0_f32, 0.0]
-                        }
-                        crate::renderer::types::OverlayFill::LinearGradient {
-                            start_colour,
-                            end_colour,
-                            angle,
-                        } => {
-                            stop_colours[0] = start_colour.to_linear_rgba();
-                            stop_colours[1] = end_colour.to_linear_rgba();
-                            stop_count = 2.0;
-                            [1.0_f32, *angle]
-                        }
-                        crate::renderer::types::OverlayFill::RadialGradient {
-                            centre_colour,
-                            edge_colour,
-                        } => {
-                            stop_colours[0] = centre_colour.to_linear_rgba();
-                            stop_colours[1] = edge_colour.to_linear_rgba();
-                            stop_count = 2.0;
-                            [2.0_f32, 0.0]
-                        }
-                        crate::renderer::types::OverlayFill::ConicalGradient {
-                            start_colour,
-                            end_colour,
-                            offset_angle,
-                        } => {
-                            stop_colours[0] = start_colour.to_linear_rgba();
-                            stop_colours[1] = end_colour.to_linear_rgba();
-                            stop_count = 2.0;
-                            [3.0_f32, *offset_angle]
-                        }
-                        crate::renderer::types::OverlayFill::LinearGradientMulti {
-                            stops,
-                            angle,
-                        } => {
-                            stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
-                            [1.0_f32, *angle]
-                        }
-                        crate::renderer::types::OverlayFill::RadialGradientMulti { stops } => {
-                            stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
-                            [2.0_f32, 0.0]
-                        }
-                        crate::renderer::types::OverlayFill::ConicalGradientMulti {
-                            stops,
-                            offset_angle,
-                        } => {
-                            stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
-                            [3.0_f32, *offset_angle]
-                        }
-                        // A texture fill has no gradient: its tint is the
-                        // colour the sample is multiplied by.
-                        crate::renderer::types::OverlayFill::Texture { tint, .. } => {
-                            stop_colours[0] = tint.to_linear_rgba();
-                            stop_colours[1] = stop_colours[0];
-                            stop_count = 0.0;
-                            [0.0_f32, 0.0]
-                        }
-                        // OverlayFill is non_exhaustive; render unknown fills as a flat no-op gradient.
-                        _ => {
-                            stop_count = 0.0;
-                            [0.0_f32, 0.0]
-                        }
-                    };
-                    let start_colour = stop_colours[0];
-                    let end_colour = stop_colours[1];
-                    // Apply opacity to every stop (stops[0..4]) so multi-stop
-                    // gradients fade as a whole when the item's opacity changes.
-                    for colour in &mut stop_colours {
-                        colour[3] *= resolved_opacity;
-                    }
-                    // Fold the item tint into the fill and gradient colours. It
-                    // stops there: a tint never reaches a shadow layer,
-                    // matching the group tint the shaders apply.
-                    let tint = shape.style.tint;
-                    for colour in &mut stop_colours {
-                        for (c, t) in colour.iter_mut().zip(tint) {
-                            *c *= t;
-                        }
-                    }
-                    let fc = stop_colours[0];
-                    let fc2 = stop_colours[1];
-                    let _ = (start_colour, end_colour);
-
-                    let half_size = [hw, hh];
-
-                    // Build the stacked shadow layers for this shape: outer
-                    // layers first, then inner, appended to the shared frame
-                    // buffer. The solid, textured and backdrop-blur pipelines
-                    // all read that buffer, so a shape takes the same layers
-                    // whichever one draws it.
-                    let base_index = shadow_layers.len();
-                    let mut outer_count = 0usize;
-                    let mut inner_count = 0usize;
-                    let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
-                    for l in shape.style.shadows.iter().take(max_layers) {
-                        let mut col = l.colour.to_linear_rgba();
-                        col[3] *= resolved_opacity;
-                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                            colour: col,
-                            params: [l.blur, l.offset[0], l.offset[1], 0.0],
-                            params2: [l.spread, l.falloff, 0.0, 0.0],
-                        });
-                        outer_count += 1;
-                    }
-                    for l in shape.style.inner_shadows.iter().take(max_layers) {
-                        let mut col = l.colour.to_linear_rgba();
-                        col[3] *= resolved_opacity;
-                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                            colour: col,
-                            params: [l.blur, l.offset[0], l.offset[1], 1.0],
-                            params2: [l.spread, l.falloff, 0.0, 0.0],
-                        });
-                        inner_count += 1;
-                    }
-                    let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
-
-                    // Emit 6 vertices (two triangles) for the bounding quad.
-                    // Scale the quad about the pivot while `local_pos`,
-                    // `half_size` and `radii` stay in the shape's own frame, so
-                    // the SDF is evaluated unscaled and the quad carries the
-                    // scaling, the same way the group transform does in the
-                    // shader. Rotation is not folded in here: it rides the
-                    // `rotation_pivot` vertex attribute and turns the sample
-                    // point instead.
-                    let item_scale = shape.transform.scale;
-                    let pivot_px = [cx + shape.transform.pivot[0], cy + shape.transform.pivot[1]];
-                    let scaled = |x: f32, y: f32| {
-                        if item_scale == 1.0 {
-                            (x, y)
-                        } else {
-                            (
-                                pivot_px[0] + (x - pivot_px[0]) * item_scale,
-                                pivot_px[1] + (y - pivot_px[1]) * item_scale,
-                            )
-                        }
-                    };
-                    let corner = |x: f32, y: f32, lx: f32, ly: f32| {
-                        let (px, py) = scaled(x, y);
-                        (px, py, lx, ly)
-                    };
-                    let corners_px = [
-                        corner(cx - ex, cy - ey, -ex, -ey),
-                        corner(cx + ex, cy - ey, ex, -ey),
-                        corner(cx + ex, cy + ey, ex, ey),
-                        corner(cx - ex, cy - ey, -ex, -ey),
-                        corner(cx + ex, cy + ey, ex, ey),
-                        corner(cx - ex, cy + ey, -ex, ey),
-                    ];
-
-                    // Resolve the clip mask for this shape (shared by the solid,
-                    // textured, and blur branches). Missing or unmatched ids fall
-                    // through to a -1 index and an all-zero rect, which the shaders
-                    // treat as no clipping. The bbox and index come from the same
-                    // registry entry, so they never disagree.
-                    let clip_index_i = shape
-                        .clip
-                        .mask
-                        .and_then(|id| clip_index_of.get(&id).copied())
-                        .unwrap_or(-1);
-                    let mask_rect = if clip_index_i >= 0 {
-                        clip_bboxes[clip_index_i as usize]
-                    } else {
-                        [0.0, 0.0, 0.0, 0.0]
-                    };
-                    let clip_rect = match shape.clip.rect {
-                        Some(r) => combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp)),
-                        None => mask_rect,
-                    };
-                    let clip_index = clip_index_i as f32;
-
-                    if let crate::renderer::types::OverlayFill::Texture {
-                        id: tex_id,
-                        transform: tex_transform,
-                        nine_slice: tex_nine_slice,
-                        ..
-                    } = &shape.style.fill
-                    {
-                        let tex_id = *tex_id;
-                        // Find or create a group for this texture ID.
-                        let group_idx = tex_groups
-                            .iter()
-                            .position(|(id, _)| *id == tex_id)
-                            .unwrap_or_else(|| {
-                                tex_groups.push((tex_id, Vec::new()));
-                                tex_group_z.push(i32::MAX);
-                                tex_groups.len() - 1
-                            });
-                        tex_group_z[group_idx] = tex_group_z[group_idx].min(shape.z_order);
-                        let group_verts = &mut tex_groups[group_idx].1;
-                        let tex_seg_start = group_verts.len() as u32;
-
-                        // UV maps local_pos to [0,1] over the shape content area.
-                        // hw/hh safe-guarded so we never divide by zero.
-                        let hw_s = if hw > 0.0 { hw } else { 1.0 };
-                        let hh_s = if hh > 0.0 { hh } else { 1.0 };
-
-                        // 9-slice: convert pixel insets to texture UV ratios
-                        // (using the bound texture's size) and to shape-fraction
-                        // ratios for the shader's piecewise UV remap.
-                        let (nine_uv, nine_frac, nine_extras_yzw) =
-                            if let Some(ns) = *tex_nine_slice {
-                                let tex_size = self
-                                    .resources
-                                    .content
-                                    .overlay_textures
-                                    .get(tex_id)
-                                    .map(|t| (t.size[0] as f32, t.size[1] as f32))
-                                    .unwrap_or((1.0, 1.0));
-                                let tw = tex_size.0.max(1.0);
-                                let th = tex_size.1.max(1.0);
-                                let shape_w = (shape.size[0]).max(1.0);
-                                let shape_h = (shape.size[1]).max(1.0);
-                                let inset_uv = [
-                                    (ns.insets_px[0] / th).clamp(0.0, 0.5),
-                                    (ns.insets_px[1] / tw).clamp(0.0, 0.5),
-                                    (ns.insets_px[2] / th).clamp(0.0, 0.5),
-                                    (ns.insets_px[3] / tw).clamp(0.0, 0.5),
-                                ];
-                                let inset_frac = [
-                                    (ns.insets_px[0] / shape_h).clamp(0.0, 0.5),
-                                    (ns.insets_px[1] / shape_w).clamp(0.0, 0.5),
-                                    (ns.insets_px[2] / shape_h).clamp(0.0, 0.5),
-                                    (ns.insets_px[3] / shape_w).clamp(0.0, 0.5),
-                                ];
-                                let centre = tile_mode_to_f(ns.centre_mode);
-                                let edge = tile_mode_to_f(ns.edge_mode);
-                                (inset_uv, inset_frac, [centre, edge, 1.0])
-                            } else {
-                                ([0.0; 4], [0.0; 4], [0.0, 0.0, 0.0])
-                            };
-
-                        let (tt_a, tt_b) = texture_transform_gpu(tex_transform);
-                        for (px, py, lx, ly) in corners_px {
-                            group_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: overlay_local_px(px, py, vp_w, vp_h),
-                                local_pos: [lx, ly],
-                                fill_colour: fc,
-                                half_size,
-                                radii,
-                                shape_type,
-                                uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
-                                shadow_index,
-                                extras: [
-                                    0.0,
-                                    nine_extras_yzw[0],
-                                    nine_extras_yzw[1],
-                                    nine_extras_yzw[2],
-                                ],
-                                nine_slice_uv: nine_uv,
-                                nine_slice_frac: nine_frac,
-                                texture_transform_a: tt_a,
-                                texture_transform_b: tt_b,
-                                clip_index,
-                                clip_rect,
-                            });
-                        }
-                        tex_shape_segs.push((
-                            shape.z_order,
-                            group_idx,
-                            tex_seg_start,
-                            group_verts.len() as u32 - tex_seg_start,
-                        ));
-                    } else if shape.style.backdrop.blur > 0.0 {
-                        max_blur_radius = max_blur_radius.max(shape.style.backdrop.blur);
-                        // Blur backdrop: same tex vertex layout but UV is screen-space.
-                        for (px, py, lx, ly) in corners_px {
-                            blur_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: overlay_local_px(px, py, vp_w, vp_h),
-                                local_pos: [lx, ly],
-                                fill_colour: fc,
-                                half_size,
-                                radii,
-                                shape_type,
-                                uv: [px / vp_w, py / vp_h],
-                                shadow_index,
-                                // extras.x = 1.0 flags the blur path; yzw carry
-                                // the backdrop colour filters (saturation,
-                                // brightness, hue-shift radians).
-                                extras: [
-                                    1.0,
-                                    shape.style.backdrop.saturation,
-                                    shape.style.backdrop.brightness,
-                                    shape.style.backdrop.hue_shift,
-                                ],
-                                nine_slice_uv: [0.0; 4],
-                                nine_slice_frac: [0.0; 4],
-                                texture_transform_a: [0.0, 0.0, 1.0, 1.0],
-                                texture_transform_b: [0.0, 0.0, 0.0, 0.0],
-                                // Backdrop blur is composited separately and is
-                                // not clipped by a mask.
-                                clip_index: -1.0,
-                                clip_rect: [0.0; 4],
-                            });
-                        }
-                    } else {
-                        // gradient_params is now vec4: [type, angle, stop_count, _pad]
-                        let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
-
-                        let rotation_pivot = [
-                            shape.transform.rotation,
-                            shape.transform.pivot[0],
-                            shape.transform.pivot[1],
-                        ];
-                        let solid_seg_start = solid_verts.len() as u32;
-                        for (px, py, lx, ly) in corners_px {
-                            solid_verts.push(crate::resources::OverlayShapeVertex {
-                                position: overlay_local_px(px, py, vp_w, vp_h),
-                                local_pos: [lx, ly],
-                                fill_colour: fc,
-                                half_size,
-                                radii,
-                                shape_type,
-                                fill_colour2: fc2,
-                                gradient_params: gp4,
-                                shadow_index,
-                                rotation_pivot,
-                                clip_rect,
-                                clip_index,
-                                stop_colour_c: stop_colours[2],
-                                stop_colour_d: stop_colours[3],
-                                stop_positions,
-                            });
-                        }
-                        if ov.overlay_uses_zorder {
-                            crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
-                                &mut ov.overlay_draw_segments,
-                                shape.z_order,
-                                solid_seg_start,
-                                solid_verts.len() as u32 - solid_seg_start,
-                            );
-                        }
-                    }
-                }
-
-                for poly in &frame.overlays.polylines {
-                    let crate::renderer::types::OverlayFill::Texture {
-                        id: tex_id,
-                        transform: tex_transform,
-                        tint: tex_tint,
-                        ..
-                    } = &poly.style.fill
-                    else {
-                        continue;
-                    };
-                    let tex_id = *tex_id;
-                    if !poly.closed || poly.style.opacity <= 0.0 || poly.points.len() < 3 {
-                        continue;
-                    }
-                    // Resolve the anchor to a screen offset and translate the
-                    // points, matching the stroke/fill path in the label pass, so
-                    // an anchored textured polygon fills where it draws.
-                    let Some(offset) =
-                        poly.resolve_offset_at([vp_w, vp_h], view, proj, world_origin)
-                    else {
-                        continue;
-                    };
-                    let translated_storage;
-                    let poly: &crate::renderer::types::OverlayPolylineItem = if offset == [0.0, 0.0]
-                    {
-                        poly
-                    } else {
-                        let mut ts = poly.clone();
-                        ts.points = poly
-                            .points
-                            .iter()
-                            .map(|p| [p[0] + offset[0], p[1] + offset[1]])
-                            .collect();
-                        translated_storage = ts;
-                        &translated_storage
-                    };
-                    let Some((min, max)) = polyline_bounds(&poly.points) else {
-                        continue;
-                    };
-                    let mesh = super::overlay_vector::tessellate_polygon(&poly.points);
-                    if mesh.indices.is_empty() {
-                        continue;
-                    }
-                    // Same clip resolution as a textured shape: an unmatched or
-                    // absent mask id falls through to a -1 index and an all-zero
-                    // rect, which the shader reads as no clipping.
-                    let clip_index_i = poly
-                        .clip
-                        .mask
-                        .and_then(|id| clip_index_of.get(&id).copied())
-                        .unwrap_or(-1);
-                    let poly_clip_rect = if clip_index_i >= 0 {
-                        clip_bboxes[clip_index_i as usize]
-                    } else {
-                        [0.0, 0.0, 0.0, 0.0]
-                    };
-                    let group_idx = tex_groups
+                        )
                         .iter()
-                        .position(|(id, _)| *id == tex_id)
-                        .unwrap_or_else(|| {
-                            tex_groups.push((tex_id, Vec::new()));
-                            tex_group_z.push(i32::MAX);
-                            tex_groups.len() - 1
-                        });
-                    tex_group_z[group_idx] = tex_group_z[group_idx].min(poly.z_order);
-                    let group_verts = &mut tex_groups[group_idx].1;
-                    let poly_seg_start = group_verts.len() as u32;
-                    let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
-                    let mut tint = tex_tint.to_linear_rgba();
-                    tint[3] *= poly.style.opacity;
-                    let explicit_uvs = poly
-                        .uvs
-                        .as_ref()
-                        .filter(|uvs| uvs.len() == poly.points.len());
-                    push_tessellated_tex_verts(
-                        group_verts,
-                        &mesh.positions,
-                        &mesh.indices,
-                        |i| {
-                            let p = mesh.positions[i as usize];
-                            // Explicit UVs belong to the input points; a
-                            // tessellated vertex takes them from the outline
-                            // point or edge it came from.
-                            explicit_uvs.map_or(
-                                [(p[0] - min[0]) / size[0], (p[1] - min[1]) / size[1]],
-                                |uvs| {
-                                    let (from, to, t) = mesh.sources[i as usize];
-                                    let (a, b) = (uvs[from], uvs[to]);
-                                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-                                },
-                            )
+                        .map(|c| crate::renderer::types::SubPath::polygon(c))
+                        .collect();
+                    super::overlay_vector::tessellate(
+                        &region,
+                        crate::renderer::types::FillRule::EvenOdd,
+                        VECTOR_FILL_TOLERANCE,
+                    )
+                } else {
+                    super::overlay_vector::tessellate(subpaths, *fill_rule, VECTOR_FILL_TOLERANCE)
+                };
+                if mesh.indices.is_empty() {
+                    continue;
+                }
+                let positions = transform_vector_positions(&mesh.positions, &owned);
+                let backdrop = &owned.style.backdrop;
+                max_blur_radius = max_blur_radius.max(backdrop.blur);
+                let start = blur_verts.len() as u32;
+                // Like an analytic backdrop, it is not clipped by a mask.
+                push_tessellated_backdrop_verts(
+                    &mut blur_verts,
+                    &positions,
+                    &mesh.indices,
+                    [
+                        0.0,
+                        backdrop.saturation,
+                        backdrop.brightness,
+                        backdrop.hue_shift,
+                    ],
+                    vp_w,
+                    vp_h,
+                );
+                ov.overlay_order_items.push(
+                    crate::renderer::overlay_draw_order::OverlayOrderItem {
+                        z_order: owned.z_order,
+                        family_rank: crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                        bounds: crate::renderer::overlay_draw_order::points_bounds(
+                            positions.iter().copied(),
+                        ),
+                        blend: crate::renderer::types::OverlayBlend::SourceOver,
+                        source: crate::renderer::overlay_draw_order::OverlayItemSource::Backdrop {
+                            start,
+                            count: blur_verts.len() as u32 - start,
                         },
-                        tint,
-                        [0.0; 4],
-                        texture_transform_gpu(tex_transform),
-                        clip_index_i as f32,
-                        poly_clip_rect,
-                        vp_w,
-                        vp_h,
-                    );
-                    tex_shape_segs.push((
-                        poly.z_order,
-                        group_idx,
-                        poly_seg_start,
-                        group_verts.len() as u32 - poly_seg_start,
-                    ));
+                        layer: record_layer,
+                        dst: crate::renderer::overlay_draw_order::dst_read::BACKDROP,
+                    },
+                );
+                continue;
+            }
+            super::overlay_style_check::warn_inert_style(
+                "OverlayShapeItem",
+                crate::renderer::types::OverlayStyleSupport::for_shape(&shape_orig.shape),
+                &shape_orig.style,
+            );
+            // Clone so per-frame animation overrides are local and
+            // the input frame data stays untouched.
+            let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
+            if let Some(style) = adjusted {
+                owned.style = style;
+            }
+            if let Some(anims) = owned.animations.take() {
+                anims.apply(
+                    overlay_time,
+                    &mut owned.transform,
+                    &mut owned.style.opacity,
+                    &mut owned.style.tint,
+                );
+            }
+            // Resolve the anchor origin + animated position + alignment
+            // to an absolute top-left, then draw the shape as if it were
+            // positioned there. A culled world anchor skips the shape for
+            // this frame. Everything below (fill, texture, clip, shadow,
+            // rotation pivot) reads `position`, so this one resolution
+            // covers all of them. The `animations.position` track has
+            // already been applied above, so it drives the nudge that is
+            // layered on the resolved origin here.
+            let Some(resolved_tl) =
+                owned.resolve_top_left_at([vp_w, vp_h], view, proj, world_origin)
+            else {
+                continue;
+            };
+            owned.transform.translate = resolved_tl;
+            let shape = &owned;
+            let resolved_opacity = shape.style.opacity;
+
+            if resolved_opacity <= 0.0 {
+                continue;
+            }
+            // An image fill whose texture is gone skips the shape.
+            let image = match shape.style.fill.texture_id() {
+                Some(id) => match self.resources.content.overlay_textures.get(id) {
+                    Some(t) => Some((id, t.size)),
+                    None => continue,
+                },
+                None => None,
+            };
+
+            let hw = shape.size[0] * 0.5;
+            let hh = shape.size[1] * 0.5;
+            let cx = shape.transform.translate[0] + hw;
+            let cy = shape.transform.translate[1] + hh;
+
+            // Outer-shadow extent that reaches past the shape edge.
+            // Inner shadows stay inside the shape, so they need no quad
+            // padding.
+            let mut shadow_pad = 0.0f32;
+            for l in &shape.style.shadows {
+                shadow_pad = shadow_pad.max(l.extent());
+            }
+
+            // Extra quad expansion for shapes whose stroke extends
+            // beyond the item's position/size bounding box.
+            let extra_expand = match &shape.shape {
+                crate::renderer::types::OverlayShape::Line { thickness, cap } => {
+                    overlay_geometry::line_quad_reach(*thickness, *cap)
                 }
+                _ => 0.0,
+            };
 
-                let solid_vbuf = if !solid_verts.is_empty() {
-                    Some(ov.overlay_shape_vbuf.write(device, queue, &solid_verts))
-                } else {
-                    None
-                };
+            // Where the shape lands under its transform, with room for
+            // its outer shadows and a pixel of anti-aliasing. A map with
+            // no inverse (a zero stretch) draws nothing.
+            let Some(shape_frame) = overlay_geometry::shape_frame(
+                &shape.transform,
+                [cx, cy],
+                [hw + extra_expand, hh + extra_expand],
+                shadow_pad + 1.0,
+            ) else {
+                continue;
+            };
 
-                // One shadow-layer texture per frame, read by all three shape
-                // pipelines. A layer is always present, even when no shape has
-                // shadows, so the binding has something to point at.
-                let shadow_tex = if solid_vbuf.is_some() || has_tex || has_blur {
-                    if shadow_layers.is_empty() {
-                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                            colour: [0.0; 4],
-                            params: [0.0; 4],
-                            params2: [0.0, 1.0, 0.0, 0.0],
-                        });
-                    }
-                    Some(ov.overlay_bindings.shape_shadow.write_changed(
-                        device,
-                        queue,
-                        &shadow_layers,
-                    ))
-                } else {
-                    None
-                };
+            let (shape_type, radii) = encode_overlay_shape(&shape.shape, hw, hh);
 
-                let (shadow_bind_group, shape_clip_buf) =
-                    if let (true, Some(shadow)) = (solid_vbuf.is_some(), shadow_tex.as_ref()) {
-                        let clip_buf = ov.overlay_bindings.clip.write_changed(
-                            device,
-                            queue,
-                            clip_data(&clip_shapes),
-                        );
-                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                        let key = (shadow.clone(), clip_buf.clone(), vp_buf.clone());
-                        let cache = &mut ov.overlay_bindings.shape_shadow_bg;
-                        let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
-                            cache.get(key, || {
-                                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                label: Some("overlay_shape_shadow_bg"),
-                                layout: bgl,
-                                entries: &[
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: crate::gpu::BindingResource::TextureView(shadow),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource:
-                                            crate::resources::overlay::overlay_shape::clip_binding(
-                                                &clip_buf,
-                                            ),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: vp_buf.as_entire_binding(),
-                                    },
-                                ],
-                            })
-                            })
-                        });
-                        (bg, Some(clip_buf))
-                    } else {
-                        (None, None)
-                    };
+            // The flat colour: a solid fill, a gradient's first stop, or a
+            // texture's tint, with the item's opacity on every alpha and then
+            // its tint on every component. It stops there: a tint never
+            // reaches a shadow layer, matching the group tint the shaders
+            // apply.
+            let tint = shape.style.tint;
+            let mut fc = super::overlay_fill::leading_colour(&shape.style.fill);
+            fc[3] *= resolved_opacity;
+            for (c, t) in fc.iter_mut().zip(tint) {
+                *c *= t;
+            }
 
-                let mut tex_batches = Vec::new();
-                // Maps a texture group index to its batch index in `tex_batches`
-                // (groups with no drawable verts or a missing texture have none),
-                // so per-shape segments can reference the right batch.
-                let mut group_to_batch: Vec<Option<u32>> = vec![None; tex_groups.len()];
-                if has_tex {
-                    if let (Some(bgl), Some(sampler)) = (
-                        self.resources.overlay_shape.tex_bgl.as_ref(),
-                        self.resources.overlay_shape.tex_sampler.as_ref(),
-                    ) {
-                        let mut previous = std::mem::take(&mut ov.overlay_bindings.tex_bgs);
-                        for (group_idx, (tex_id, verts)) in tex_groups.iter().enumerate() {
-                            if verts.is_empty() {
-                                continue;
-                            }
-                            let Some(entry) = self.resources.content.overlay_textures.get(*tex_id)
-                            else {
-                                continue;
-                            };
-                            let view = &entry.view;
-                            let bind_group = match previous
-                                .remove(view)
-                                .or_else(|| ov.overlay_bindings.tex_bgs.get(view).cloned())
-                            {
-                                Some(bg) => bg,
-                                None => {
-                                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                        label: Some("overlay_shape_tex_bg"),
-                                        layout: bgl,
-                                        entries: &[
-                                            crate::gpu::BindGroupEntry {
-                                                binding: 0,
-                                                resource: crate::gpu::BindingResource::TextureView(
-                                                    view,
-                                                ),
-                                            },
-                                            crate::gpu::BindGroupEntry {
-                                                binding: 1,
-                                                resource: crate::gpu::BindingResource::Sampler(
-                                                    sampler,
-                                                ),
-                                            },
-                                        ],
-                                    })
-                                }
-                            };
-                            ov.overlay_bindings
-                                .tex_bgs
-                                .insert(view.clone(), bind_group.clone());
-                            let batch_index = tex_batches.len();
-                            if batch_index >= ov.overlay_shape_tex_vbufs.len() {
-                                ov.overlay_shape_tex_vbufs.push(
-                                    crate::renderer::overlay_buffers::GrowBuffer::vertex(
-                                        "overlay_shape_tex_vbuf",
-                                    ),
-                                );
-                            }
-                            let vertex_buf =
-                                ov.overlay_shape_tex_vbufs[batch_index].write(device, queue, verts);
-                            group_to_batch[group_idx] = Some(batch_index as u32);
-                            tex_batches.push(crate::resources::OverlayShapeTexBatch {
-                                vertex_buf,
-                                vertex_count: verts.len() as u32,
-                                bind_group,
-                            });
-                        }
-                    }
+            // Build the stacked shadow layers for this shape: outer
+            // layers first, then inner, appended to the shared frame
+            // texture. The shape and backdrop pipelines both read it,
+            // so a shape takes the same layers whichever one draws it.
+            let base_index = shadow_layers.len();
+            let mut outer_count = 0usize;
+            let mut inner_count = 0usize;
+            let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
+            for l in shape.style.shadows.iter().take(max_layers) {
+                let mut col = l.colour.to_linear_rgba();
+                col[3] *= resolved_opacity;
+                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                    colour: col,
+                    params: [l.blur, l.offset[0], l.offset[1], 0.0],
+                    params2: [l.spread, l.falloff, 0.0, 0.0],
+                });
+                outer_count += 1;
+            }
+            for l in shape.style.inner_shadows.iter().take(max_layers) {
+                let mut col = l.colour.to_linear_rgba();
+                col[3] *= resolved_opacity;
+                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                    colour: col,
+                    params: [l.blur, l.offset[0], l.offset[1], 1.0],
+                    params2: [l.spread, l.falloff, 0.0, 0.0],
+                });
+                inner_count += 1;
+            }
+            let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
+            let pivot_local = shape.transform.pivot;
 
-                    // Emit one draw segment per textured shape (coalescing
-                    // contiguous same-texture, same-z runs) at the shape's own
-                    // z_order, so a solid shape can layer between two shapes that
-                    // share a texture. The whole batch no longer collapses to its
-                    // lowest z.
-                    if ov.overlay_uses_zorder {
-                        for &(z, group_idx, vstart, vcount) in &tex_shape_segs {
-                            if let Some(batch_index) =
-                                group_to_batch.get(group_idx).copied().flatten()
-                            {
-                                crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape_tex(
-                                    &mut ov.overlay_draw_segments,
-                                    z,
-                                    batch_index,
-                                    vstart,
-                                    vcount,
-                                );
-                            }
-                        }
-                    }
-                }
+            // Resolve the clip mask for this shape. Missing or unmatched ids
+            // fall through to a -1 index and an all-zero rect, which the
+            // shaders treat as no clipping. The bbox and index come from the
+            // same registry entry, so they never disagree.
+            let clip_index_i = shape
+                .clip
+                .mask
+                .and_then(|id| clip_index_of.get(&id).copied())
+                .unwrap_or(-1);
+            let mask_rect = if clip_index_i >= 0 {
+                clip_bboxes[clip_index_i as usize]
+            } else {
+                [0.0, 0.0, 0.0, 0.0]
+            };
+            let clip_rect = match shape.clip.rect {
+                Some(r) => combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp)),
+                None => mask_rect,
+            };
+            let clip_index = clip_index_i as f32;
 
-                // Clip-mask bind group (group 1) for the texture pipeline, used by
-                // both textured shape batches and blur shapes. Built whenever the
-                // texture pipeline runs this frame so `with_clip` is honoured on a
-                // textured shape the same way it is on a solid one.
-                let (tex_clip_bind_group, tex_clip_buf) = if has_tex || has_blur {
-                    if let Some(bgl) = self.resources.overlay_shape.tex_clip_bgl.as_ref() {
-                        let clip_buf = ov.overlay_bindings.clip.write_changed(
-                            device,
-                            queue,
-                            clip_data(&clip_shapes),
-                        );
-                        let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
-                        let shadow = shadow_tex.as_ref().unwrap();
-                        let key = (clip_buf.clone(), vp_buf.clone(), shadow.clone());
-                        let bg = ov.overlay_bindings.tex_clip_bg.get(key, || {
-                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                                label: Some("overlay_shape_tex_clip_bg"),
-                                layout: bgl,
-                                entries: &[
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource:
-                                            crate::resources::overlay::overlay_shape::clip_binding(
-                                                &clip_buf,
-                                            ),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: vp_buf.as_entire_binding(),
-                                    },
-                                    crate::gpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: crate::gpu::BindingResource::TextureView(shadow),
-                                    },
-                                ],
-                            })
-                        });
-                        (Some(bg), Some(clip_buf))
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                };
-
-                let blur_vbuf = if !blur_verts.is_empty() {
-                    Some(ov.overlay_shape_blur_vbuf.write(device, queue, &blur_verts))
-                } else {
-                    None
-                };
-
-                if solid_vbuf.is_some() || !tex_batches.is_empty() || blur_vbuf.is_some() {
-                    ov.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
-                        vertex_buf: solid_vbuf,
-                        vertex_count: solid_verts.len() as u32,
-                        shadow_bind_group,
-                        _shadow_tex: shadow_tex,
-                        _clip_buf: shape_clip_buf,
-                        tex_batches,
-                        tex_clip_bind_group,
-                        _tex_clip_buf: tex_clip_buf,
-                        blur_vertex_buf: blur_vbuf,
-                        blur_vertex_count: blur_verts.len() as u32,
-                        max_blur_radius,
+            if image.is_none() && shape.style.backdrop.blur > 0.0 {
+                max_blur_radius = max_blur_radius.max(shape.style.backdrop.blur);
+                // A backdrop blur draws through the backdrop pipeline, as the
+                // shape's quad in six vertices, at its place in the draw
+                // order; it is not clipped by a mask.
+                let start = blur_verts.len() as u32;
+                let [qx, qy, qhx, qhy] = shape_frame.quad;
+                ov.overlay_order_items.push(
+                    crate::renderer::overlay_draw_order::OverlayOrderItem {
+                        z_order: shape.z_order,
+                        family_rank: crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                        bounds: [qx - qhx, qy - qhy, qx + qhx, qy + qhy],
+                        blend: crate::renderer::types::OverlayBlend::SourceOver,
+                        source: crate::renderer::overlay_draw_order::OverlayItemSource::Backdrop {
+                            start,
+                            count: 6,
+                        },
+                        layer: record_layer,
+                        dst: crate::renderer::overlay_draw_order::dst_read::BACKDROP,
+                    },
+                );
+                for (pos, local) in shape_frame.corners() {
+                    blur_verts.push(crate::resources::OverlayBackdropVertex {
+                        position: overlay_local_px(pos[0], pos[1], vp_w, vp_h),
+                        local_pos: local,
+                        tint: fc,
+                        half_size: [hw, hh],
+                        radii,
+                        shape_meta: [shape_type, -1.0, pivot_local[0], pivot_local[1]],
+                        clip_rect: [0.0; 4],
+                        shadow_index,
+                        filters: [
+                            0.0,
+                            shape.style.backdrop.saturation,
+                            shape.style.backdrop.brightness,
+                            shape.style.backdrop.hue_shift,
+                        ],
+                        linv: shape_frame.linv,
+                        item_params: [
+                            shape_frame.item_scale,
+                            super::overlay_compile::crisp_lane(&shape.style),
+                            0.0,
+                            0.0,
+                        ],
                     });
                 }
+                continue;
             }
+
+            // A gradient or an image is a fill record, evaluated in the
+            // shape's own frame; a solid fill is the flat colour alone.
+            let fill_index = super::overlay_fill::shape_fill_index(
+                &shape.style,
+                [hw, hh],
+                resolved_opacity,
+                image.map_or([1, 1], |(_, size)| size),
+                &mut fills,
+            );
+            let instance = crate::resources::OverlayShapeInstance {
+                quad: shape_frame.quad,
+                pivot_half: [shape_frame.pivot_px[0], shape_frame.pivot_px[1], hw, hh],
+                linv: shape_frame.linv,
+                fill_colour: fc,
+                radii,
+                shadow_meta: [
+                    shadow_index[0],
+                    shadow_index[1],
+                    shadow_index[2],
+                    shape_type,
+                ],
+                clip_rect,
+                misc: [
+                    clip_index,
+                    pivot_local[0],
+                    pivot_local[1],
+                    shape_frame.item_scale,
+                ],
+                fill: [
+                    fill_index,
+                    super::overlay_compile::crisp_lane(&shape.style),
+                    0.0,
+                    0.0,
+                ],
+            };
+            let fill = match image {
+                Some((tex_id, _)) => {
+                    let i = tex_images
+                        .iter()
+                        .position(|id| *id == tex_id)
+                        .unwrap_or_else(|| {
+                            tex_images.push(tex_id);
+                            tex_images.len() - 1
+                        });
+                    i as u32 + 1
+                }
+                None => 0,
+            };
+            let [qx, qy, qhx, qhy] = shape_frame.quad;
+            let mut bounds = [qx - qhx, qy - qhy, qx + qhx, qy + qhy];
+            if let Some(clip) = clip_bounds(clip_rect, ppp) {
+                bounds = crate::renderer::overlay_draw_order::intersect(bounds, clip);
+            }
+            ov.overlay_order_items
+                .push(crate::renderer::overlay_draw_order::OverlayOrderItem {
+                    z_order: shape.z_order,
+                    family_rank: crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                    bounds,
+                    blend: shape.style.blend,
+                    source: crate::renderer::overlay_draw_order::OverlayItemSource::Shape {
+                        index: ov.overlay_shape_instances.len() as u32,
+                        fill,
+                    },
+                    layer: record_layer,
+                    dst: crate::renderer::overlay_draw_order::dst_read::NONE,
+                });
+            ov.overlay_shape_instances.push(instance);
+        }
+
+        // The instance buffer is written in draw order once the draw list is
+        // built.
+        let has_instances = !ov.overlay_shape_instances.is_empty();
+
+        // One shadow-layer texture per frame, read by the shape and backdrop
+        // pipelines. A layer is always present, even when no shape has
+        // shadows, so the binding has something to point at.
+        let shadow_tex = if has_instances || has_blur {
+            if shadow_layers.is_empty() {
+                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                    colour: [0.0; 4],
+                    params: [0.0; 4],
+                    params2: [0.0, 1.0, 0.0, 0.0],
+                });
+            }
+            Some(
+                ov.overlay_bindings
+                    .shape_shadow
+                    .write_changed(device, queue, &shadow_layers),
+            )
+        } else {
+            None
+        };
+
+        let (shadow_bind_group, shape_clip_buf, fill_bind_groups) = if let (true, Some(shadow)) =
+            (has_instances, shadow_tex.as_ref())
+        {
+            let clip_buf =
+                ov.overlay_bindings
+                    .clip
+                    .write_changed(device, queue, clip_data(&clip_shapes));
+            let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+            let inst_buf = ov
+                .overlay_bindings
+                .instances_uniform
+                .buffer()
+                .expect("the identity instance is written before the shapes")
+                .clone();
+            let key = (
+                shadow.clone(),
+                clip_buf.clone(),
+                vp_buf.clone(),
+                inst_buf.clone(),
+            );
+            let cache = &mut ov.overlay_bindings.shape_shadow_bg;
+            let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                    cache.get(key, || {
+                        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                            label: Some("overlay_shape_shadow_bg"),
+                            layout: bgl,
+                            entries: &[
+                                crate::gpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: crate::gpu::BindingResource::TextureView(shadow),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource:
+                                        crate::resources::overlay::overlay_shape::clip_binding(
+                                            &clip_buf,
+                                        ),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: vp_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource:
+                                        crate::resources::overlay::overlay_shape::group_instance_binding(
+                                            &inst_buf,
+                                        ),
+                                },
+                            ],
+                        })
+                    })
+                });
+            // The fill bind groups: the frame's records with the blank
+            // image, then with each image a textured shape samples.
+            let records =
+                ov.overlay_bindings
+                    .shape_fills
+                    .write_changed(device, queue, fills.texels());
+            let mut cache = std::mem::take(&mut ov.overlay_bindings.shape_fill_bgs);
+            let mut used = Default::default();
+            let mut groups = vec![
+                self.resources
+                    .overlay_fill_bind_group(device, &mut cache, &mut used, &records, None),
+            ];
+            for tex_id in &tex_images {
+                let view = self
+                    .resources
+                    .content
+                    .overlay_textures
+                    .get(*tex_id)
+                    .map(|t| t.view.clone());
+                groups.push(self.resources.overlay_fill_bind_group(
+                    device,
+                    &mut cache,
+                    &mut used,
+                    &records,
+                    view.as_ref(),
+                ));
+            }
+            ov.overlay_bindings.shape_fill_bgs = used;
+            (bg, Some(clip_buf), groups)
+        } else {
+            (None, None, Vec::new())
+        };
+
+        // Clip-mask bind group (group 1) for the backdrop pipeline.
+        let (tex_clip_bind_group, tex_clip_buf) = if has_blur {
+            if let Some(bgl) = self.resources.overlay_shape.tex_clip_bgl.as_ref() {
+                let clip_buf =
+                    ov.overlay_bindings
+                        .clip
+                        .write_changed(device, queue, clip_data(&clip_shapes));
+                let vp_buf = ov.overlay_viewport_buf.as_ref().unwrap();
+                let shadow = shadow_tex.as_ref().unwrap();
+                let key = (clip_buf.clone(), vp_buf.clone(), shadow.clone());
+                let bg = ov.overlay_bindings.tex_clip_bg.get(key, || {
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("overlay_shape_tex_clip_bg"),
+                        layout: bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::resources::overlay::overlay_shape::clip_binding(
+                                    &clip_buf,
+                                ),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: vp_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: crate::gpu::BindingResource::TextureView(shadow),
+                            },
+                        ],
+                    })
+                });
+                (Some(bg), Some(clip_buf))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let blur_vbuf = (!blur_verts.is_empty())
+            .then(|| ov.overlay_shape_blur_vbuf.write(device, queue, &blur_verts));
+
+        if has_instances || blur_vbuf.is_some() {
+            ov.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
+                instance_buf: None,
+                fill_bind_groups,
+                shadow_bind_group,
+                _shadow_tex: shadow_tex,
+                _clip_buf: shape_clip_buf,
+                tex_clip_bind_group,
+                _tex_clip_buf: tex_clip_buf,
+                blur_vertex_buf: blur_vbuf,
+                max_blur_radius,
+            });
         }
     }
 
-    /// Sort the overlay draw list into paint order. The family passes have
-    /// already recorded their own segments; this orders them by
-    /// `(z_order, family_rank)` for the ordered emit path.
-    pub(super) fn finalize_overlay_draw_order(ov: &mut crate::renderer::ViewportOverlay) {
-        // When no overlay uses z_order, the family passes recorded nothing and
-        // the emit path keeps its fixed order; there is nothing to finalize.
-        if !ov.overlay_uses_zorder {
-            return;
+    /// The key the shape and text streams of the overlay prepared in `space`
+    /// are uploaded under: a hash of everything they are built from. That is
+    /// the items and the space they are laid out in, the size of each texture
+    /// a fill reads, and the caches the geometry comes from, through counters
+    /// that move whenever a glyph cell, coverage cell or cached tessellation
+    /// could have changed. Taken once the items are prepared, so the counters
+    /// take in this frame's misses.
+    fn overlay_stream_key(&self, space: &OverlaySpace<'_>) -> u64 {
+        use crate::renderer::types::OverlayContentHash;
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let o = space.overlays;
+        o.content_hash(&mut h);
+        let textures = &self.resources.content.overlay_textures;
+        let fills = (o.shapes.iter().map(|i| &i.style.fill))
+            .chain(o.labels.iter().map(|i| &i.style.fill))
+            .chain(o.glyph_runs.iter().map(|i| &i.style.fill))
+            .chain(o.polylines.iter().map(|i| &i.style.fill))
+            .chain(o.meshes.iter().map(|i| &i.style.fill));
+        for fill in fills {
+            if let Some(id) = fill.texture_id() {
+                hash_image_size(&mut h, Some(textures.get(id).map(|t| t.size)));
+            }
         }
-        use crate::renderer::overlay_draw_order::sort_overlay_segments;
-        sort_overlay_segments(&mut ov.overlay_draw_segments);
+        for v in space.size {
+            h.write_u32(v.to_bits());
+        }
+        h.write_u32(space.ppp.to_bits());
+        // The camera reaches the streams through world anchors and
+        // world-sized text only, so a screen overlay over a moving camera
+        // keeps its key.
+        use crate::renderer::types::{OverlayOrigin, TextSizing};
+        let world = |a: &crate::renderer::types::OverlayAnchoring| {
+            matches!(a.origin, OverlayOrigin::World(_))
+        };
+        let reads_camera = o.shapes.iter().any(|i| world(&i.anchoring))
+            || o.polylines.iter().any(|i| world(&i.anchoring))
+            || o.meshes.iter().any(|i| world(&i.anchoring))
+            || o.retained
+                .iter()
+                .any(|i| i.anchoring.as_ref().is_some_and(world))
+            || o.labels.iter().any(|i| {
+                world(&i.anchoring) || matches!(i.text_style.sizing, TextSizing::World(_))
+            })
+            || o.glyph_runs.iter().any(|i| {
+                world(&i.anchoring) || matches!(i.text_style.sizing, TextSizing::World(_))
+            });
+        h.write_u8(reads_camera as u8);
+        if reads_camera {
+            for v in space.view.to_cols_array() {
+                h.write_u32(v.to_bits());
+            }
+            for v in space.proj.to_cols_array() {
+                h.write_u32(v.to_bits());
+            }
+            for v in space.world_origin.to_array() {
+                h.write_u64(v.to_bits());
+            }
+        }
+        match space.axes {
+            Some(q) => {
+                h.write_u8(1);
+                for v in q.to_array() {
+                    h.write_u32(v.to_bits());
+                }
+            }
+            None => h.write_u8(0),
+        }
+        match &space.world {
+            Some(w) => {
+                h.write_u8(1);
+                for v in w.map.layer_to_clip.to_cols_array() {
+                    h.write_u32(v.to_bits());
+                }
+                for v in [w.map.device_size[0], w.map.device_size[1]] {
+                    h.write_u32(v.to_bits());
+                }
+                h.write_u32(w.map.screen_ppp.to_bits());
+                h.write_u32(w.map.ppp.to_bits());
+                std::hash::Hash::hash(&w.pass, &mut h);
+                for v in w.screen_size {
+                    h.write_u32(v.to_bits());
+                }
+            }
+            None => h.write_u8(0),
+        }
+        h.write_u32(space.screen_ppp.to_bits());
+        // A glyph or coverage cell moves only when its page grows or is
+        // cleared (the version) or when a cell is packed, which follows a
+        // rasterisation. Fonts are only ever added.
+        let glyphs = &self.resources.content.glyph_atlas;
+        h.write_u64(glyphs.version());
+        h.write_u64(glyphs.rasters());
+        h.write_usize(glyphs.font_count());
+        let coverage = &self.resources.content.coverage_atlas;
+        h.write_u64(coverage.version());
+        h.write_u64(coverage.rasters());
+        h.write_u64(self.overlay_tess_cache.recorded());
+        h.finish()
+    }
+
+    /// Build the overlay draw list from the items the family passes recorded,
+    /// upload the shape instances and text vertices in draw order, and build
+    /// the pipeline variant for every blend mode the list draws with.
+    ///
+    /// Items recorded into a layer that draws through a scratch target are
+    /// ranked among themselves into a list of their own, and the layer joins
+    /// the frame's list as one composite. Returns the command buffer that
+    /// draws the layers' members into their targets, which has to be
+    /// submitted before the overlay pass.
+    pub(super) fn finalize_overlay_draw_order(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        space: &OverlaySpace<'_>,
+        ov: &mut crate::renderer::ViewportOverlay,
+    ) -> Option<crate::gpu::CommandBuffer> {
+        use crate::renderer::overlay_draw_order::{
+            NO_LAYER, OverlayItemSource, OverlayOrderItem, build_draw_list, family_rank, union,
+        };
+        let mut shapes = std::mem::take(&mut ov.overlay_sorted_shapes);
+        let mut text = std::mem::take(&mut ov.overlay_sorted_text);
+        let mut items = std::mem::take(&mut ov.overlay_order_items);
+        shapes.clear();
+        text.clear();
+        ov.overlay_draw_segments.clear();
+        ov.overlay_breaks.clear();
+        ov.layer_targets.draws.clear();
+        let vp = space.size;
+        let ppp = space.ppp;
+
+        // Each composited layer joins the list of the target it draws into,
+        // innermost first so a layer's bounds take in the layers inside it.
+        // Then the items are grouped by the target they record into, the
+        // frame's own last; the sort is stable, so each group keeps its
+        // recording order.
+        let mut member_ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        ov.layer_targets.breaks.clear();
+        ov.layer_targets.world = space.world.as_ref().map(|w| w.map);
+        let main_start = if ov.layer_plan.has_targets() {
+            let plan = &ov.layer_plan;
+            let mut content: Vec<Option<crate::renderer::overlay_draw_order::Bounds>> =
+                vec![None; plan.layers.len()];
+            for i in &items {
+                let b = i.bounds;
+                if let Some(c) = content.get_mut(i.layer as usize)
+                    && b[0] < b[2]
+                    && b[1] < b[3]
+                {
+                    *c = Some(c.map_or(b, |c| union(c, b)));
+                }
+            }
+            let needs_masks = plan.layers.iter().any(|l| l.clip.mask.is_some());
+            let registry = needs_masks.then(|| {
+                let world_origin = space.world_origin;
+                let view = space.view;
+                let proj = space.proj;
+                let (_, index_of, bboxes, _) =
+                    build_clip_shapes(&space.overlays.shapes, ppp, vp, &view, &proj, world_origin);
+                (index_of, bboxes)
+            });
+            let mut order: Vec<u32> = (0..plan.layers.len() as u32)
+                .filter(|&l| {
+                    plan.layers[l as usize].mode
+                        == crate::renderer::overlay_layers::LayerMode::Target
+                })
+                .collect();
+            order.sort_by_key(|&l| std::cmp::Reverse(plan.layers[l as usize].depth));
+            let mut draw_of = vec![u32::MAX; plan.layers.len()];
+            for l in order {
+                let layer = &plan.layers[l as usize];
+                let Some(content_bounds) = content[l as usize] else {
+                    continue;
+                };
+                // The composite's clip: the mask's box and index, cut to the
+                // clip rect, as an item's clip is resolved. A world layer's
+                // composite draws over the screen, where the layer's clips do
+                // not apply.
+                let mask = layer.clip.mask.and_then(|id| {
+                    registry.as_ref().and_then(|(index_of, bboxes)| {
+                        index_of.get(&id).map(|i| (*i, bboxes[*i as usize]))
+                    })
+                });
+                let mask_rect = mask.map_or([0.0; 4], |(_, b)| b);
+                let clip_rect = match layer.clip.rect {
+                    Some(r) => combine_clip_rects(mask_rect, clip_rect_to_framebuffer(r, ppp)),
+                    None => mask_rect,
+                };
+                // A world layer's extent does not clip it.
+                let area = match space.world {
+                    Some(_) => crate::renderer::overlay_draw_order::UNBOUNDED,
+                    None => [0.0, 0.0, vp[0], vp[1]],
+                };
+                let bounds = crate::renderer::overlay_layers::composite_bounds(
+                    content_bounds,
+                    &layer.style,
+                    clip_bounds(clip_rect, ppp),
+                    area,
+                    ppp,
+                );
+                if !(bounds[0] < bounds[2] && bounds[1] < bounds[3]) {
+                    continue;
+                }
+                let shadow = layer.style.shadow.map_or([0.0; 2], |s| s.offset);
+                let (quad, shadow_offset, clip_rect, clip_index) = match &space.world {
+                    Some(w) => (
+                        w.map.screen_box(bounds),
+                        w.map.screen_offset(
+                            [
+                                (content_bounds[0] + content_bounds[2]) * 0.5,
+                                (content_bounds[1] + content_bounds[3]) * 0.5,
+                            ],
+                            shadow,
+                        ),
+                        [0.0; 4],
+                        -1.0,
+                    ),
+                    None => (
+                        bounds,
+                        shadow,
+                        clip_rect,
+                        mask.map_or(-1.0, |(i, _)| i as f32),
+                    ),
+                };
+                let parent = plan.target_of(layer.parent);
+                let draw = crate::renderer::overlay_layers::LayerDraw {
+                    segments: 0..0,
+                    breaks: 0..0,
+                    scratch: 0,
+                    level: plan.level_of(l),
+                    bounds,
+                    quad,
+                    shadow_offset,
+                    style: layer.style.clone(),
+                    clip_rect,
+                    clip_index,
+                };
+                let index = ov.layer_targets.draws.len() as u32;
+                items.push(OverlayOrderItem {
+                    z_order: layer.z_order,
+                    family_rank: family_rank::LAYER,
+                    bounds,
+                    blend: layer.style.blend,
+                    source: OverlayItemSource::Layer { index },
+                    layer: parent,
+                    dst: draw.dst_read(),
+                });
+                if let Some(c) = content.get_mut(parent as usize) {
+                    *c = Some(c.map_or(bounds, |c| union(c, bounds)));
+                }
+                draw_of[l as usize] = index;
+                ov.layer_targets.draws.push(draw);
+            }
+            items.sort_by_key(|i| i.layer);
+            let main_start = items
+                .iter()
+                .position(|i| i.layer == NO_LAYER)
+                .unwrap_or(items.len());
+            member_ranges.resize(ov.layer_targets.draws.len(), 0..0);
+            let mut k = 0;
+            while k < main_start {
+                let l = items[k].layer;
+                let end = k + items[k..main_start]
+                    .iter()
+                    .take_while(|i| i.layer == l)
+                    .count();
+                if let Some(&d) = draw_of.get(l as usize).filter(|&&d| d != u32::MAX) {
+                    member_ranges[d as usize] = k..end;
+                }
+                k = end;
+            }
+            main_start
+        } else {
+            0
+        };
+
+        build_draw_list(
+            &mut items[main_start..],
+            &ov.overlay_shape_instances,
+            &ov.overlay_text_verts,
+            &mut shapes,
+            &mut text,
+            &mut ov.overlay_draw_segments,
+            &mut ov.overlay_breaks,
+            &mut ov.overlay_order_scratch,
+        );
+        ov.overlay_main_segments = ov.overlay_draw_segments.len() as u32;
+        for (d, range) in ov.layer_targets.draws.iter_mut().zip(member_ranges) {
+            let start = ov.overlay_draw_segments.len() as u32;
+            let first_break = ov.layer_targets.breaks.len() as u32;
+            build_draw_list(
+                &mut items[range],
+                &ov.overlay_shape_instances,
+                &ov.overlay_text_verts,
+                &mut shapes,
+                &mut text,
+                &mut ov.overlay_draw_segments,
+                &mut ov.layer_targets.breaks,
+                &mut ov.overlay_order_scratch,
+            );
+            d.segments = start..ov.overlay_draw_segments.len() as u32;
+            d.breaks = first_break..ov.layer_targets.breaks.len() as u32;
+        }
+        ov.overlay_order_items = items;
+
+        for seg in &ov.overlay_draw_segments {
+            if seg.blend == crate::renderer::types::OverlayBlend::SourceOver {
+                continue;
+            }
+            if seg.is_shape() {
+                self.resources.ensure_overlay_shape_blend(device, seg.blend);
+            } else if seg.is_text() {
+                self.resources.ensure_overlay_text_blend(device, seg.blend);
+            }
+        }
+        // Each stream is uploaded unless its buffer was written under the same
+        // key, which covers everything the stream is built from.
+        let key = self.overlay_stream_key(space);
+        ov.overlay_stream_uploads = 0;
+        if let Some(sd) = ov.overlay_shape_gpu_data.as_mut() {
+            sd.instance_buf = (!shapes.is_empty()).then(|| {
+                let (buf, uploaded) = ov
+                    .overlay_shape_vbuf
+                    .write_keyed(device, queue, &shapes, key);
+                ov.overlay_stream_uploads += uploaded as u32;
+                buf
+            });
+        }
+        if let Some(ld) = ov.label_gpu_data.as_mut() {
+            // A frame with only retained groups still binds a buffer here.
+            let (buf, uploaded) = ov.overlay_text_vbuf.write_keyed(device, queue, &text, key);
+            ov.overlay_stream_uploads += uploaded as u32;
+            ld.vertex_buf = Some(buf);
+        }
+        ov.overlay_sorted_shapes = shapes;
+        ov.overlay_sorted_text = text;
+
+        let max_backdrop_radius = ov
+            .overlay_shape_gpu_data
+            .as_ref()
+            .map_or(0.0, |d| d.max_blur_radius);
+        let backdrop_radius = ov
+            .layer_targets
+            .draws
+            .iter()
+            .filter(|d| d.style.backdrop.is_active())
+            .map(|d| d.style.backdrop.blur)
+            .fold(max_backdrop_radius, f32::max);
+        // The backdrop blur is sized in device pixels: a world layer's radii
+        // are layer units.
+        ov.layer_targets.backdrop_radius = match space.world {
+            Some(_) => backdrop_radius * ppp,
+            None => backdrop_radius,
+        };
+        let size = match &space.world {
+            Some(w) => [
+                (w.map.device_size[0].round() as u32).max(1),
+                (w.map.device_size[1].round() as u32).max(1),
+            ],
+            None => [
+                ((vp[0] * ppp).round() as u32).max(1),
+                ((vp[1] * ppp).round() as u32).max(1),
+            ],
+        };
+        let lt = &ov.layer_targets;
+        let needs_backdrop = ov.has_backdrops();
+        let needs_inner_backdrop = lt.breaks.iter().any(|b| b.blur);
+        let needs_snapshot = ov.has_breaks() || lt.has_breaks();
+        let (format, composite_pass, world) = match &space.world {
+            Some(w) => (
+                w.pass.format,
+                (w.pass.format, w.pass.samples),
+                Some((
+                    crate::resources::overlay::world::WorldPassKey {
+                        format: w.pass.format,
+                        samples: 1,
+                        depth_test: false,
+                    },
+                    w.screen_size,
+                    space.screen_ppp,
+                )),
+            ),
+            None => (
+                self.resources.target_format,
+                (self.resources.target_format, 1),
+                None,
+            ),
+        };
+        if let Some((key, _, _)) = world {
+            // The world pipelines the members draw with inside a layer target.
+            for k in ov.overlay_main_segments as usize..ov.overlay_draw_segments.len() {
+                let seg = ov.overlay_draw_segments[k];
+                if let Some(pipe) = seg.world_pipe() {
+                    self.resources
+                        .ensure_overlay_world_pipeline(device, key, pipe, seg.blend);
+                }
+            }
+        }
+        self.prepare_layer_targets(
+            device,
+            queue,
+            ov,
+            crate::renderer::overlay_layers::LayerFrame {
+                size,
+                ppp,
+                needs_backdrop,
+                needs_inner_backdrop,
+                needs_snapshot,
+                format,
+                composite_pass,
+                world,
+            },
+        )
+    }
+}
+
+/// Feed an image size (`None` for a fill that is not a texture, `Some(None)`
+/// for a missing image) into a cache key.
+fn hash_image_size(h: &mut impl std::hash::Hasher, image: Option<Option<[u32; 2]>>) {
+    match image {
+        None => h.write_u8(0),
+        Some(None) => h.write_u8(1),
+        Some(Some([w, ht])) => {
+            h.write_u8(2);
+            h.write_u32(w);
+            h.write_u32(ht);
+        }
+    }
+}
+
+/// The tessellation-cache key of a vector shape placed at its resolved
+/// top-left: its content measured from there, the pixels per point, and, when
+/// its fill may draw from the coverage atlas, the sub-pixel phase of its
+/// position, which picks the cell.
+fn vector_cache_key(
+    shape: &crate::renderer::types::OverlayShapeItem,
+    ppp: f32,
+    atlas_offered: bool,
+    image: Option<Option<[u32; 2]>>,
+) -> u64 {
+    use crate::renderer::types::OverlayContentHash;
+    use std::hash::Hasher;
+    let mut h = super::overlay_tess_cache::key_hasher();
+    h.write_u8(1);
+    shape.content_hash_at(shape.transform.translate, &mut h);
+    h.write_u32(ppp.to_bits());
+    hash_image_size(&mut h, image);
+    if atlas_offered {
+        let (_, b) = vector_device_affine(shape, ppp);
+        let (_, phase) = split_device_translation(b);
+        h.write_u8(1);
+        h.write_u8(phase[0]);
+        h.write_u8(phase[1]);
+    } else {
+        h.write_u8(0);
+    }
+    h.finish()
+}
+
+/// The tessellation-cache key of a polyline before its anchor offset is
+/// applied: everything that shapes its geometry except where it sits. The
+/// offset (and with it `translate`) moves the geometry without changing it.
+fn polyline_cache_key(
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    image: Option<Option<[u32; 2]>>,
+) -> u64 {
+    use crate::renderer::types::OverlayContentHash;
+    use std::hash::Hasher;
+    let mut h = super::overlay_tess_cache::key_hasher();
+    h.write_u8(0);
+    let mut transform = poly.transform;
+    transform.translate = [0.0, 0.0];
+    transform.content_hash(&mut h);
+    h.write_usize(poly.points.len());
+    for p in &poly.points {
+        h.write_u32(p[0].to_bits());
+        h.write_u32(p[1].to_bits());
+    }
+    poly.style.content_hash(&mut h);
+    poly.stroke.content_hash(&mut h);
+    match &poly.widths {
+        None => h.write_u8(0),
+        Some(w) => {
+            h.write_u8(1);
+            h.write_usize(w.len());
+            for x in w {
+                h.write_u32(x.to_bits());
+            }
+        }
+    }
+    h.write_u8(poly.closed as u8);
+    match &poly.uvs {
+        None => h.write_u8(0),
+        Some(uvs) => {
+            h.write_u8(1);
+            h.write_usize(uvs.len());
+            for uv in uvs {
+                h.write_u32(uv[0].to_bits());
+                h.write_u32(uv[1].to_bits());
+            }
+        }
+    }
+    hash_image_size(&mut h, image);
+    h.finish()
+}
+
+/// One text-stream item before it is recorded for the draw list.
+struct TextBatch {
+    z_order: i32,
+    texture: Option<crate::renderer::types::OverlayTextureId>,
+    blend: crate::renderer::types::OverlayBlend,
+    /// The clip box the item cannot draw outside, in logical pixels.
+    clip: Option<crate::renderer::overlay_draw_order::Bounds>,
+    verts: Vec<crate::resources::OverlayTextVertex>,
+    /// The layer it records into, or `NO_LAYER`.
+    layer: u32,
+}
+
+/// The logical-pixel box a framebuffer-pixel clip rect lets an item draw in,
+/// or `None` for the no-clip sentinel (a box without area). The shaders keep a
+/// fragment on the clip's far edges, so the box reaches a pixel past them.
+fn clip_bounds(cr: [f32; 4], ppp: f32) -> Option<crate::renderer::overlay_draw_order::Bounds> {
+    if !(cr[2] > cr[0] && cr[3] > cr[1]) || ppp <= 0.0 {
+        return None;
+    }
+    Some([
+        cr[0] / ppp,
+        cr[1] / ppp,
+        (cr[2] + 1.0) / ppp,
+        (cr[3] + 1.0) / ppp,
+    ])
+}
+
+/// A retained group's screen bounds: its compiled extent under the frame's
+/// instance transform, a pixel wider for the edge anti-aliasing the transform
+/// may stretch, cut to the instance's clip rect. Unbounded when the extent is
+/// unknown.
+fn retained_bounds(
+    extent: Option<([f32; 2], [f32; 2])>,
+    instance: &crate::resources::OverlayInstance,
+    ppp: f32,
+) -> crate::renderer::overlay_draw_order::Bounds {
+    use crate::renderer::overlay_draw_order::{UNBOUNDED, intersect, points_bounds};
+    let Some((min, max)) = extent else {
+        return UNBOUNDED;
+    };
+    // The shaders' `group_apply`: the linear map about the pivot, then the
+    // translation.
+    let m = instance.linear;
+    let piv = instance.pivot;
+    let apply = |p: [f32; 2]| {
+        let d = [p[0] - piv[0], p[1] - piv[1]];
+        [
+            piv[0] + m[0] * d[0] + m[1] * d[1] + instance.translate[0],
+            piv[1] + m[2] * d[0] + m[3] * d[1] + instance.translate[1],
+        ]
+    };
+    let b = points_bounds(
+        [
+            [min[0], min[1]],
+            [max[0], min[1]],
+            [min[0], max[1]],
+            [max[0], max[1]],
+        ]
+        .map(apply),
+    );
+    let b = [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0];
+    match clip_bounds(instance.clip_rect, ppp) {
+        Some(clip) => intersect(b, clip),
+        None => b,
     }
 }
 
@@ -2865,6 +4224,8 @@ mod clip_registry_tests {
             OverlayShape::Vector {
                 subpaths: vec![SubPath::default()],
                 fill_rule: FillRule::NonZero,
+                stroke: None,
+                inverse: false,
             },
             [0.0, 0.0],
             [100.0, 100.0],
@@ -2885,5 +4246,125 @@ mod clip_registry_tests {
         assert!(!map.contains_key(&7), "mask 7 must be absent, not wrong");
         assert_eq!(map[&8], 0);
         assert_eq!(bboxes.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod vector_atlas_tests {
+    use super::{plan_vector_cell, rasterise_vector};
+    use crate::renderer::types::{FillRule, SubPath};
+
+    const IDENTITY: [[f32; 2]; 2] = [[1.0, 0.0], [0.0, 1.0]];
+
+    fn square(min: f32, max: f32) -> SubPath {
+        SubPath::polygon(&[[min, min], [max, min], [max, max], [min, max]])
+    }
+
+    fn raster(subpaths: &[SubPath], fill_rule: FillRule, b: [f32; 2]) -> (Vec<u8>, [u32; 2]) {
+        raster_box(subpaths, fill_rule, None, b)
+    }
+
+    fn raster_box(
+        subpaths: &[SubPath],
+        fill_rule: FillRule,
+        inverse_box: Option<[f32; 2]>,
+        b: [f32; 2],
+    ) -> (Vec<u8>, [u32; 2]) {
+        let cell = plan_vector_cell(subpaths, fill_rule, inverse_box, IDENTITY, b, None).unwrap();
+        let mut out = vec![0u8; (cell.size[0] * cell.size[1]) as usize];
+        rasterise_vector(
+            subpaths,
+            fill_rule,
+            inverse_box,
+            IDENTITY,
+            cell.shift,
+            cell.size,
+            &mut out,
+        );
+        (out, cell.size)
+    }
+
+    #[test]
+    fn an_inverse_cell_is_the_box_with_the_path_cut_out() {
+        // A 4..8 square inside a 12 px box: the cell spans the box, the box
+        // is full, and the square is a hole.
+        let (px, size) = raster_box(
+            &[square(4.0, 8.0)],
+            FillRule::NonZero,
+            Some([12.0, 12.0]),
+            [0.0, 0.0],
+        );
+        assert_eq!(size, [14, 14]);
+        let at = |x: u32, y: u32| px[(y * size[0] + x) as usize];
+        assert_eq!(at(0, 0), 0);
+        assert_eq!(at(2, 2), 255);
+        assert_eq!(at(12, 12), 255);
+        assert_eq!(at(7, 7), 0);
+        assert_eq!(at(13, 13), 0);
+    }
+
+    #[test]
+    fn a_square_rasterises_to_full_coverage_inside_and_none_outside() {
+        // A 10 px square on whole pixels: a one-pixel empty border round it,
+        // then exactly full or empty pixels.
+        let (px, size) = raster(&[square(0.0, 10.0)], FillRule::NonZero, [5.0, 5.0]);
+        assert_eq!(size, [12, 12]);
+        let at = |x: u32, y: u32| px[(y * size[0] + x) as usize];
+        for y in 0..12 {
+            for x in 0..12 {
+                let inside = (1..11).contains(&x) && (1..11).contains(&y);
+                assert_eq!(at(x, y), if inside { 255 } else { 0 }, "({x}, {y})");
+            }
+        }
+        // Half a pixel along: the edge pixels on that axis are half covered,
+        // a one-pixel ramp, and the interior stays full.
+        let (px, size) = raster(&[square(0.0, 10.0)], FillRule::NonZero, [5.5, 5.0]);
+        let at = |x: u32, y: u32| px[(y * size[0] + x) as usize] as i32;
+        let row: Vec<i32> = (0..size[0]).map(|x| at(x, 5)).collect();
+        let first = row.iter().position(|&c| c > 0).unwrap();
+        let last = row.iter().rposition(|&c| c > 0).unwrap();
+        assert!((row[first] - 128).abs() <= 2, "{row:?}");
+        assert!((row[last] - 128).abs() <= 2, "{row:?}");
+        assert!(row[first + 1..last].iter().all(|&c| c == 255), "{row:?}");
+    }
+
+    #[test]
+    fn fill_rules_rasterise_a_hole_or_not() {
+        let paths = [square(0.0, 10.0), square(3.0, 7.0)];
+        let (eo, size) = raster(&paths, FillRule::EvenOdd, [0.0, 0.0]);
+        let (nz, _) = raster(&paths, FillRule::NonZero, [0.0, 0.0]);
+        let centre = (6 * size[0] + 6) as usize;
+        let ring = (6 * size[0] + 2) as usize;
+        assert_eq!(eo[centre], 0);
+        assert_eq!(eo[ring], 255);
+        assert_eq!(nz[centre], 255);
+    }
+
+    #[test]
+    fn cells_share_a_key_across_whole_pixel_moves() {
+        let paths = [square(0.0, 10.0)];
+        let a =
+            plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.25, 7.0], None).unwrap();
+        let b = plan_vector_cell(
+            &paths,
+            FillRule::NonZero,
+            None,
+            IDENTITY,
+            [105.25, 9.0],
+            None,
+        )
+        .unwrap();
+        let c =
+            plan_vector_cell(&paths, FillRule::NonZero, None, IDENTITY, [5.5, 7.0], None).unwrap();
+        assert_eq!(a.key, b.key);
+        assert_eq!(
+            [b.origin[0] - a.origin[0], b.origin[1] - a.origin[1]],
+            [100.0, 2.0]
+        );
+        assert_ne!(a.key, c.key);
+        let turned = [[0.0, -1.0], [1.0, 0.0]];
+        let d =
+            plan_vector_cell(&paths, FillRule::NonZero, None, turned, [5.25, 7.0], None).unwrap();
+        assert_ne!(a.key, d.key);
     }
 }

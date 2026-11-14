@@ -48,7 +48,12 @@ mod pick_pipelines;
 /// A pipeline built on first use, on the calling thread or a worker.
 pub(crate) mod pipeline_slot;
 pub use pipeline_slot::PipelineCompilation;
+/// Painter mask layouts, fallbacks and the per-viewport mask target.
+pub(crate) mod painter_mask;
 mod plugin_builders;
+pub use painter_mask::{
+    MAX_PAINTER_LIGHT_RANGES, PAINTER_LIGHTS_UNIFORM_BYTES, PAINTER_MASK_BLEND, PAINTER_MASK_FORMAT,
+};
 pub(crate) mod postprocess;
 pub(crate) use postprocess::TargetGroups;
 /// A GPU readback that can be polled instead of waited on.
@@ -99,6 +104,7 @@ pub use self::mesh_sidecar::shade::{
 };
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
+pub(crate) use self::overlay::highlight::{PluginOutlines, plugin_outlines_hash};
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, INDIRECT_FRACTION_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
     PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PipelineBuilder, PluginPipelineOpts,
@@ -124,10 +130,10 @@ pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, DofUniform, FrustumPlane, FrustumUniform, GpuProjectedTetMesh,
     GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, MeshInstanceGpuData,
-    OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
-    OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
-    ProjectedTetUniform, ShadowAtlasUniform, ShadowCullState, SsaoUniform,
-    SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
+    OutlineObjectBuffers, OutlineUniform, OverlayBackdropVertex, OverlayShadowLayerGpu,
+    OverlayShapeGpuData, OverlayShapeInstance, OverlayTextVertex, ProjectedTetUniform,
+    ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform,
+    ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

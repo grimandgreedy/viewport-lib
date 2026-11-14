@@ -11,7 +11,7 @@ use crate::input::action_frame::ActionFrame;
 use crate::input::context::ViewportContext;
 use crate::input::event::ViewportEvent;
 use crate::input::mode::NavigationMode;
-use crate::input::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
+use crate::input::preset::{BindingPreset, preset_bindings};
 use crate::input::viewport_binding::ViewportBinding;
 use crate::input::viewport_input::ViewportInput;
 
@@ -127,13 +127,7 @@ impl OrbitCameraController {
     /// [`apply`](Self::apply), so the preset chosen here has no effect there. Set the
     /// scheme on the session instead, with `ViewportInstance::with_bindings`.
     pub fn new(preset: BindingPreset) -> Self {
-        let bindings = match preset {
-            BindingPreset::Default => viewport_default_bindings(),
-            BindingPreset::Viewer => viewer_bindings(),
-            // BindingPreset is non_exhaustive; an unknown preset gets the default set.
-            _ => viewport_default_bindings(),
-        };
-        Self::from_bindings(bindings)
+        Self::from_bindings(preset_bindings(preset))
     }
 
     fn from_bindings(bindings: Vec<ViewportBinding>) -> Self {

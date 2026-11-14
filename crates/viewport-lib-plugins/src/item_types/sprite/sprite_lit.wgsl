@@ -12,7 +12,8 @@
 //
 // Group 0: camera + clip + lighting bindings (shared with the mesh path).
 // Group 1: SpriteUniform + sprite texture + sampler + per-instance buffer.
-// Group 2: soft-particle scene depth + sampler (same as the emissive path).
+// Group 2: soft-particle scene depth + sampler and the painter masks (same as
+//          the emissive path).
 // Group 3: optional tangent-space normal map + sampler. A 1x1 default texture
 //          backs the binding when no normal map is supplied; `NormalMap` mode
 //          falls back to the spherical normal in that case.
@@ -26,6 +27,12 @@ struct Camera {
     exposure:      f32,
     inv_view_proj: mat4x4<f32>,
     view:          mat4x4<f32>,
+    proj:          mat4x4<f32>,
+    inv_proj:      mat4x4<f32>,
+    viewport:      vec4<f32>,
+    clip:          vec4<f32>,
+    // Seconds as f32, the f64 remainder, delta seconds, frame index.
+    time:          vec4<f32>,
 };
 
 struct ClipPlanes {
@@ -61,36 +68,7 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-struct SpriteUniform {
-    model:                  mat4x4<f32>,
-    world_space:            u32,
-    has_texture:            u32,
-    soft_particle_distance: f32,
-    orientation:            u32,
-    axis:                   vec3<f32>,
-    refraction_strength:    f32,
-    lit:                    u32,
-    normal_mode:            u32,   // 0=Spherical, 1=Flat, 2=NormalMap
-    has_normal_map:         u32,
-    ambient_scale:          f32,
-    roughness:              f32,
-    receive_shadows:        u32,
-    _pad_lit_b:             u32,
-    _pad_lit_c:             u32,
-};
-
 // `ShadowAtlas` comes from the shared shadow atlas section.
-
-struct SpriteInstance {
-    colour:        vec4<f32>,
-    size:          f32,
-    rotation:      f32,
-    soft_distance: f32,
-    _pad1:         f32,
-    uv_rect:       vec4<f32>,
-    velocity:      vec3<f32>,
-    _pad2:         f32,
-};
 
 @group(0) @binding(0) var<uniform>       camera:        Camera;
 @group(0) @binding(1) var                shadow_map:    texture_depth_2d;
@@ -107,6 +85,10 @@ struct SpriteInstance {
 
 @group(2) @binding(0) var scene_depth_tex:  texture_2d<f32>;
 @group(2) @binding(1) var scene_depth_samp: sampler;
+@group(2) @binding(2) var painter_mask_tex: texture_2d<f32>;
+@group(2) @binding(3) var<uniform> painter_masks: PainterMasks;
+@group(2) @binding(4) var painter_light_tex: texture_2d_array<f32>;
+@group(2) @binding(5) var<uniform> painter_lights: PainterLights;
 
 @group(3) @binding(0) var normal_map_tex:  texture_2d<f32>;
 @group(3) @binding(1) var normal_map_samp: sampler;
@@ -115,6 +97,7 @@ struct VertexIn {
     @location(0)             position:       vec3<f32>,
     @builtin(vertex_index)   vertex_index:   u32,
     @builtin(instance_index) instance_index: u32,
+    // <sprite-fx:vertex-in>
 };
 
 struct VertexOut {
@@ -127,26 +110,20 @@ struct VertexOut {
     @location(5)       tangent_world:  vec3<f32>,
     @location(6)       bitangent_world:vec3<f32>,
     @location(7)       facing_world:   vec3<f32>,
+    // Position across the quad, 0 to 1 from its bottom-left corner.
+    @location(8)       draw_local:     vec2<f32>,
+    @location(9) @interpolate(flat) draw_size: vec2<f32>,
+    @location(10) @interpolate(flat) draw_rect: vec4<f32>,
+    @location(11) @interpolate(flat) draw_word: vec4<u32>,
+    // <sprite-fx:varyings>
 };
-
-fn quad_corner(vi: u32) -> vec2<f32> {
-    switch vi {
-        case 0u: { return vec2<f32>(-1.0, -1.0); }
-        case 1u: { return vec2<f32>( 1.0, -1.0); }
-        case 2u: { return vec2<f32>(-1.0,  1.0); }
-        case 3u: { return vec2<f32>(-1.0,  1.0); }
-        case 4u: { return vec2<f32>( 1.0, -1.0); }
-        default: { return vec2<f32>( 1.0,  1.0); }
-    }
-}
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
     let inst = instance_buf[in.instance_index];
-
-    let world_pos = (sprite_ub.model * vec4<f32>(in.position, 1.0)).xyz;
-    let corner    = quad_corner(in.vertex_index);
+    let corner = quad_corner(in.vertex_index);
+    let placed = sprite_corner(in.position, corner, inst);
 
     let c = cos(inst.rotation);
     let s = sin(inst.rotation);
@@ -155,86 +132,61 @@ fn vs_main(in: VertexIn) -> VertexOut {
         s * corner.x + c * corner.y,
     );
 
-    let cam_right_default = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
-    let cam_up_default    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
-    let cam_forward       = vec3<f32>(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
-
-    var local_right = cam_right_default;
-    var local_up    = cam_up_default;
-    var stretch_x   = 1.0;
-
-    if sprite_ub.orientation == 1u {
-        let v = inst.velocity;
-        let speed = length(v);
-        if speed > 1e-4 {
-            let v_screen = v - cam_forward * dot(v, cam_forward);
-            let s_len    = length(v_screen);
-            if s_len > 1e-4 {
-                local_right = v_screen / s_len;
-                local_up    = normalize(cross(cam_forward, local_right));
-                stretch_x   = 1.0 + speed * 0.25;
-            }
-        }
-    } else if sprite_ub.orientation == 2u {
-        let axis = normalize(sprite_ub.axis);
-        local_up = axis;
-        let right = cross(axis, cam_forward);
-        let r_len = length(right);
-        if r_len > 1e-4 {
-            local_right = right / r_len;
-        } else {
-            local_right = cam_right_default;
-        }
-    }
-
-    var quad_world_pos = world_pos;
+    out.clip_pos = placed.clip;
     if sprite_ub.world_space != 0u {
-        let half = inst.size * 0.5;
-        quad_world_pos = world_pos
-                       + local_right * (rotated.x * half * stretch_x)
-                       + local_up    * (rotated.y * half);
-        out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
+        out.world_pos = placed.world;
     } else {
-        let centre  = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let half_px = inst.size * 0.5;
-        let inv_vp  = vec2<f32>(1.0, 1.0)
-                    / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        if sprite_ub.orientation == 0u {
-            let ndc_off = rotated * half_px * inv_vp;
-            out.clip_pos = vec4<f32>(
-                centre.x + ndc_off.x * centre.w,
-                centre.y + ndc_off.y * centre.w,
-                centre.z,
-                centre.w,
-            );
-        } else {
-            let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
-            let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
-            let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
-                            + up_clip    * (rotated.y * half_px * inv_vp.y);
-            out.clip_pos = centre + offset_clip * centre.w;
-        }
         // Approximate world position on the screen-space quad for lighting.
         // The hemispherical normal uses the same offsets so the result lines
         // up with the camera-facing quad's centre.
-        quad_world_pos = world_pos
-                       + local_right * (rotated.x * stretch_x)
-                       + local_up    *  rotated.y;
+        out.world_pos = placed.anchor
+                      + placed.right * (rotated.x * placed.stretch)
+                      + placed.up    *  rotated.y;
     }
-
-    out.world_pos = quad_world_pos;
     out.colour     = inst.colour;
     out.soft_distance = inst.soft_distance;
-    out.local_offset  = vec2<f32>(rotated.x * stretch_x, rotated.y);
-    out.tangent_world   = local_right;
-    out.bitangent_world = local_up;
-    out.facing_world    = -cam_forward;
+    out.local_offset  = vec2<f32>(rotated.x * placed.stretch, rotated.y);
+    out.tangent_world   = placed.right;
+    out.bitangent_world = placed.up;
+    out.facing_world    = -placed.forward;
 
-    let u  = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
-    let v  = mix(inst.uv_rect.y, inst.uv_rect.w, (corner.y + 1.0) * 0.5);
-    out.uv = vec2<f32>(u, v);
+    out.uv = sprite_corner_uv(corner, inst);
+    out.draw_local = (corner + 1.0) * 0.5;
+    out.draw_size = inst.size;
+    out.draw_rect = inst.uv_rect;
+    out.draw_word = inst.draw;
 
     return out;
+}
+
+// The texel of a `dims`-sized texture over the scene (the painter masks, the
+// light layers) under a fragment at `frag` (pixels of the target drawn into).
+// The painter pass's target is the scene depth's size; where a 1x1
+// placeholder stands in for the depth, it is the texture's own.
+fn sprite_target_texel(frag: vec2<f32>, dims: vec2<u32>) -> vec2<i32> {
+    let depth_dims = textureDimensions(scene_depth_tex);
+    let target_px = vec2<f32>(select(dims, depth_dims, depth_dims.x > 1u));
+    let p = vec2<i32>(floor(frag / target_px * vec2<f32>(dims)));
+    return clamp(p, vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+}
+
+// The texel of the painter mask under a fragment at `frag`.
+fn sprite_mask_texel(frag: vec2<f32>) -> vec2<i32> {
+    return sprite_target_texel(frag, textureDimensions(painter_mask_tex));
+}
+
+// `colour` lit by the 2D light layer of the batch's painter range (layer 0
+// for a batch in depth order) under a fragment at `frag`. An unlit batch, a
+// multiply blend (whose destination is lit already) and a layer no range
+// holds keep their colour.
+fn sprite_light(colour: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
+    let slice = painter_light_slice(painter_lights, sprite_ub.mask.y);
+    if slice < 0 || sprite_ub.mask.z != 0u || ((sprite_ub.flags >> 1u) & 3u) == 1u {
+        return colour;
+    }
+    let texel = sprite_target_texel(frag, textureDimensions(painter_light_tex));
+    let light = textureLoad(painter_light_tex, texel, slice, 0);
+    return vec4<f32>(painter_light_apply(colour.rgb, light, painter_lights), colour.a);
 }
 
 // Cascaded shadow map sampling: cascade selection, receiver bias, and the
@@ -262,7 +214,16 @@ fn build_normal(local_offset: vec2<f32>,
     return normalize(n);
 }
 
-fn fs_main_body(in: VertexOut) -> vec4<f32> {
+fn fs_main_body(input: VertexOut) -> vec4<f32> {
+    // The draw mode's sample position, and the derivatives of its unwrapped
+    // form, taken here while control flow is uniform.
+    var in = input;
+    let texels = select(vec2<f32>(0.0), vec2<f32>(textureDimensions(sprite_texture)), sprite_ub.has_texture != 0u);
+    let drawn = sprite_draw_uv(in.uv, in.draw_local, in.draw_size, in.draw_rect, in.draw_word, texels);
+    in.uv = drawn.uv;
+    let uv_ddx = dpdx(drawn.continuous);
+    let uv_ddy = dpdy(drawn.continuous);
+
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
         if dot(vec4<f32>(in.world_pos, 1.0), clip_planes.planes[i]) < 0.0 {
             discard;
@@ -272,8 +233,9 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
 
     var colour = in.colour;
     if sprite_ub.has_texture != 0u {
-        colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
+        colour = colour * textureSampleGrad(sprite_texture, sprite_sampler, in.uv, uv_ddx, uv_ddy);
     }
+    // <sprite-fx:base>
 
     if sprite_ub.lit != 0u {
         let n = build_normal(
@@ -318,6 +280,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
             colour = vec4<f32>(lit_rgb, colour.a);
         }
     }
+    // <sprite-fx:shaded>
 
     var soft_dist = sprite_ub.soft_particle_distance;
     if in.soft_distance > 0.0 {
@@ -355,8 +318,19 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
         colour.a = colour.a * fade;
     }
 
+    colour = sprite_light(colour, in.clip_pos.xy);
+
+    // The painter mask: what the batch's test keeps of the fragment.
+    let mask = painter_mask_keep(
+        textureLoad(painter_mask_tex, sprite_mask_texel(in.clip_pos.xy), 0),
+        painter_masks,
+        sprite_ub.mask.x,
+        sprite_ub.mask.y,
+    );
+    colour = sprite_fade(colour, mask, sprite_ub.flags);
+
     if colour.a <= 0.001 { discard; }
-    return colour;
+    return sprite_blend_output(colour, sprite_ub.flags);
 }
 
 @fragment

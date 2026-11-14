@@ -45,6 +45,30 @@ fn webgl2_profile_builds_a_forward_renderer() {
 
 /// WebGL2's limits with two bind groups: below the compatibility tier, so only the
 /// overlay family builds.
+/// `sampler_for` answers on the compatibility tier as on the full tier, and
+/// shares one sampler per key.
+#[test]
+fn sampler_for_works_on_the_compatibility_tier() {
+    let Some(harness) = Harness::with_profile(&DeviceProfile::downlevel_webgl2("tier-sampler-for"))
+    else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    assert_eq!(harness.renderer.tier(), Tier::Compatibility);
+    let resources = harness.renderer.resources();
+    let nearest = viewport_lib::SamplerKey {
+        wrap_u: viewport_lib::WrapMode::ClampToEdge,
+        wrap_v: viewport_lib::WrapMode::ClampToEdge,
+        filter: viewport_lib::TextureFilter::Nearest,
+        ..Default::default()
+    };
+    let a = resources.sampler_for(&harness.device, nearest);
+    let b = resources.sampler_for(&harness.device, nearest);
+    assert!(a == b, "one key resolves to one shared sampler");
+    let linear = resources.sampler_for(&harness.device, viewport_lib::SamplerKey::default());
+    assert!(a != linear, "different keys resolve to different samplers");
+}
+
 fn overlay_only_profile() -> DeviceProfile {
     DeviceProfile::downlevel_webgl2("tier-overlay-only").max_bind_groups(2)
 }
@@ -576,6 +600,11 @@ fn compatibility_tier_registers_item_types_that_accept_it() {
                     viewport_lib_plugins::item_types::gaussian_splat::TYPE_NAME,
                     true,
                 ),
+                (viewport_lib_plugins::item_types::tilemap::TYPE_NAME, true),
+                (
+                    viewport_lib_plugins::item_types::lighting_2d::TYPE_NAME,
+                    true,
+                ),
                 (viewport_lib_plugins::item_types::sprite::TYPE_NAME, false),
                 ("vpl.polyline", true),
             ] {
@@ -659,14 +688,23 @@ fn forward_light_list_caps_and_counts_what_it_drops() {
             eprintln!("skipping: no GPU adapter available");
             return;
         };
-        // Lights and no scene content: the compatibility tier has no meshes to draw
-        // yet, and the cap does not depend on what they light.
+        // Lights over one hidden mesh: the cap does not depend on what they
+        // light, but a frame whose scene submits nothing is drawn as overlays
+        // alone and prepares no lights at all.
+        let mesh = harness
+            .renderer
+            .resources_mut()
+            .upload_mesh_data(&harness.device, &viewport_lib::primitives::cube(1.0))
+            .expect("upload cube");
+        let mut item = viewport_lib::SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.settings.hidden = true;
         let mut frame = viewport_lib::FrameData::new(
             viewport_lib::CameraFrame::from_camera(
                 &viewport_lib::Camera::default(),
                 [W as f32, H as f32],
             ),
-            viewport_lib::SceneFrame::default(),
+            viewport_lib::SceneFrame::from_surface_items(vec![item]),
         );
         // The default lighting carries a light of its own.
         frame.effects.lighting.lights.clear();

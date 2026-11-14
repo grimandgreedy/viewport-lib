@@ -37,12 +37,11 @@ pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;
 pub(crate) use crate::resources::overlay::highlight::OutlineUniform;
 pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::ClipShapeGpu;
+pub(crate) use crate::resources::overlay::overlay_shape::OverlayBackdropVertex;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShadowLayerGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeGpuData;
-pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeTexBatch;
-pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeTexVertex;
+pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeInstance;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeTextureEntry;
-pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeVertex;
 pub(crate) use crate::resources::overlay::overlay_text::LabelGpuData;
 pub(crate) use crate::resources::overlay::overlay_text::OverlayTextVertex;
 pub(crate) use crate::resources::overlay::overlays::BackdropBlurState;
@@ -187,7 +186,8 @@ pub struct CameraUniform {
     /// Viewport size in physical pixels: width, height, 1 / width, 1 / height.
     pub viewport: [f32; 4],
     /// Near plane, far plane, 1 for an orthographic projection (0 for
-    /// perspective), and a reserved zero.
+    /// perspective), and the device pixels per point of the target the scene
+    /// draws into (0 for a camera uniform no viewport wrote).
     pub clip: [f32; 4],
     /// Frame time: seconds as f32, the remainder f32 drops from the f64
     /// seconds, delta seconds, and the frame index modulo 2^24.
@@ -586,4 +586,9 @@ pub struct MeshInstanceGpuData {
     /// The batch's instance records, bound at group 1 binding 0 and as
     /// vertex buffer slot 1.
     pub(crate) instance_buf: crate::gpu::Buffer,
+    /// The source item's painter placement: such a batch draws in the
+    /// painter sequence rather than the scene pass.
+    pub(crate) painter: Option<crate::PainterPlacement>,
+    /// Index of the source item in `SceneFrame::mesh_instances`.
+    pub(crate) item_index: usize,
 }

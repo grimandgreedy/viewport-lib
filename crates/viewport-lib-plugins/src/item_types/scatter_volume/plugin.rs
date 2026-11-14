@@ -69,11 +69,18 @@ pub struct ScatterVolumePlugin {
     viewports: std::sync::Mutex<Vec<Option<pipeline::ScatterViewportState>>>,
     /// The world origin of the last prepare, which `draws` are relative to.
     origin: glam::DVec3,
+    /// Draws encoded since the last prepare: the blit, refraction, march,
+    /// resolve and composite passes.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for ScatterVolumePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// An emissive volume lights the opaque surfaces around it. Derived from
@@ -106,6 +113,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         let volumes = items.of::<ScatterVolumeItem>();
         let origin = ctx.world_origin();
         self.origin = origin;
@@ -546,6 +554,8 @@ impl ScatterVolumePlugin {
             pass.set_pipeline(blit_pipeline);
             pass.set_bind_group(0, &blit_bg, &[]);
             pass.draw(0..3, 0..1);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
         if let Some(per_vol_bg) = self.gpu.refraction_per_volume_bg.as_ref() {
@@ -572,6 +582,8 @@ impl ScatterVolumePlugin {
             for i in 0..n_ref {
                 pass.set_bind_group(1, per_vol_bg, &[i * self.gpu.refraction_per_volume_stride]);
                 pass.draw(0..6, 0..1);
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -613,6 +625,8 @@ impl ScatterVolumePlugin {
             pass.set_bind_group(1, per_vol_bg, &[i as u32 * self.gpu.per_volume_stride]);
             pass.set_bind_group(2, tex_bg, &[]);
             pass.draw(0..6, 0..1);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -669,6 +683,8 @@ impl ScatterVolumePlugin {
             pass.set_pipeline(resolve_pipeline);
             pass.set_bind_group(0, &resolve_bg, &[]);
             pass.draw(0..3, 0..1);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         source
     }
@@ -702,6 +718,8 @@ impl ScatterVolumePlugin {
         pass.set_pipeline(composite_pipeline);
         pass.set_bind_group(0, source, &[]);
         pass.draw(0..3, 0..1);
+        self.issued
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

@@ -249,6 +249,15 @@ pub struct GpuParticleSystemItem {
     pub time_step: f32,
     /// Per-item render settings (visibility, picking, selection).
     pub settings: ItemSettings,
+    /// Where the system draws in the painter sequence. `None` (the default)
+    /// draws it in the scene pass after the opaque content.
+    ///
+    /// With a placement the live particles draw in painter's order among
+    /// sprites, blended tile layers and the other painter content on the HDR
+    /// path, testing scene depth without writing it; within the system they
+    /// keep their buffer order. The system does not draw on the LDR path
+    /// either way.
+    pub painter: Option<viewport_lib_types::render_item::PainterPlacement>,
 }
 
 impl GpuParticleSystemItem {
@@ -260,6 +269,7 @@ impl GpuParticleSystemItem {
             forces: Vec::new(),
             time_step,
             settings: ItemSettings::default(),
+            painter: None,
         }
     }
 }

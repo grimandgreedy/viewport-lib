@@ -488,7 +488,7 @@ fn build_sprites(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [1.4 * theta.cos(), 1.4 * theta.sin(), 0.0]
         })
         .collect();
-    ring.sizes = (0..8).map(|i| 0.4 + 0.05 * i as f32).collect();
+    ring.sizes = SpriteItem::square_sizes((0..8).map(|i| 0.4 + 0.05 * i as f32));
     ring.default_colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
     ring.size_mode = SpriteSizeMode::WorldSpace;
     ring.depth_write = true;
@@ -1387,7 +1387,7 @@ fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [2.8 + 0.7 * theta.cos(), 0.7 * theta.sin(), 0.0]
         })
         .collect();
-    sprites.sizes = (0..6).map(|i| 0.3 + 0.07 * i as f32).collect();
+    sprites.sizes = SpriteItem::square_sizes((0..6).map(|i| 0.3 + 0.07 * i as f32));
     sprites.default_colour = Colour::linear(0.85, 0.85, 0.9, 1.0);
     sprites.size_mode = SpriteSizeMode::WorldSpace;
     sprites.depth_write = true;

@@ -17,6 +17,8 @@ path = "src/lib.rs"
 viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["app"] }
 # The built-in item types, which `web-scivis-smoke` draws on each tier.
 viewport-lib-plugins = { path = "../../viewport-lib-plugins", default-features = false, features = ["item-types"] }
+# The level, tileset image and sprite sheet the 2D examples draw.
+viewport-lib-io = { version = "0.9.0", features = ["png", "tiled", "aseprite"] }
 glam = { workspace = true }
 winit = "0.30"
 pollster = "0.4"
@@ -58,6 +60,18 @@ web-sys = { version = "0.3", features = [
 [[example]]
 name = "winit-minimal"
 path = "examples/winit_minimal/main.rs"
+
+[[example]]
+name = "winit-camera2d"
+path = "examples/winit_camera2d/main.rs"
+
+[[example]]
+name = "winit-sprites-2d"
+path = "examples/winit_sprites_2d/main.rs"
+
+[[example]]
+name = "winit-tilemap-2d"
+path = "examples/winit_tilemap_2d/main.rs"
 
 [[example]]
 name = "winit-basic-interaction"

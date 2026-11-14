@@ -34,6 +34,8 @@ pub struct ExternalInstancesPlugin {
     gpu: Option<pipeline::ExternalInstancesGpu>,
     /// Per submitted item, rebuilt each prepare.
     frame: Vec<ExternalInstancesGpuData>,
+    /// Colour draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ExternalInstancesPlugin {
@@ -152,6 +154,10 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         gpu.pipelines.get(pipeline::COLOUR_HDR);
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -159,6 +165,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         let items = items.of::<ExternalInstancesItem>();
         if items.is_empty() {
@@ -206,11 +213,14 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
             pass.set_bind_group(1, &gd.bind_group, &[]);
             // The instance range is the buffer window: `instance_index` in the
             // shader starts at `first_instance` for direct draws.
-            ctx.meshes.draw_indexed_instance_range(
+            if ctx.meshes.draw_indexed_instance_range(
                 pass,
                 gd.mesh_id,
                 gd.first_instance..gd.first_instance + gd.instance_count,
-            );
+            ) {
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 }

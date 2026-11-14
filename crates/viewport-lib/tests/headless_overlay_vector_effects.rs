@@ -41,6 +41,8 @@ fn triangle(style: OverlayStyle) -> OverlayFrame {
                 [16.0, 80.0],
             ])],
             fill_rule: viewport_lib::FillRule::NonZero,
+            stroke: None,
+            inverse: false,
         },
         [0.0, 0.0],
         [96.0, 96.0],

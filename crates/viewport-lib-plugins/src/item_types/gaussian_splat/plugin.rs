@@ -100,6 +100,8 @@ pub struct GaussianSplatPlugin {
     packed: bool,
     packed_gpu: Option<super::packed::PackedGpu>,
     packed_sets: std::collections::HashMap<GaussianSplatId, super::packed::PackedSet>,
+    /// Colour draws recorded since the last prepare, packed and sorted.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for GaussianSplatPlugin {
@@ -138,6 +140,10 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         gpu.pipelines.request_all();
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &gpu::Device,
@@ -145,6 +151,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.outlines.clear();
         self.pick_items.clear();
@@ -295,6 +302,8 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 pass.set_bind_group(1, &state.bind_group, &[]);
                 pass.set_vertex_buffer(0, state.index_buf.slice(..));
                 pass.draw(0..6, 0..fd.count);
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             return;
         }
@@ -322,6 +331,8 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             }
             pass.set_bind_group(1, &sort.render_bg, &[]);
             pass.draw(0..6, 0..fd.count);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -408,7 +419,9 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             ) {
                 // pick_gaussian_splat_cpu returns SubObjectRef::Point; remap
                 // to Splat, or clear it for object-level queries.
-                let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
+                let toi = (hit.world_pos.as_vec3() - ray.origin)
+                    .dot(ray.direction)
+                    .max(0.0);
                 if wants_splat {
                     if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                         hit.sub_object = Some(SubObjectRef::Splat(idx));
@@ -786,7 +799,9 @@ impl GaussianSplatPlugin {
                 gpu,
                 set,
                 ctx.viewport_index,
-                (ctx.camera.eye_position() - ctx.world_origin()).as_vec3().to_array(),
+                (ctx.camera.eye_position() - ctx.world_origin())
+                    .as_vec3()
+                    .to_array(),
                 rel_model(item.model, ctx.world_origin()),
                 viewport_size,
                 item.settings.ignore_clip,

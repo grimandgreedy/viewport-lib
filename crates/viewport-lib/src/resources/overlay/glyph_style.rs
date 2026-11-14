@@ -164,7 +164,7 @@ pub(crate) fn style_coverage(
     w: u32,
     h: u32,
     style: GlyphStyle,
-) -> (Vec<[u8; 4]>, u32, u32, u32) {
+) -> (Vec<u8>, u32, u32, u32) {
     let pad = style.pad();
     let ow = w + pad * 2;
     let oh = h + pad * 2;
@@ -236,8 +236,7 @@ pub(crate) fn style_coverage(
         }
     }
 
-    let cell: Vec<[u8; 4]> = a.iter().map(|&v| [255, 255, 255, v]).collect();
-    (cell, ow, oh, pad)
+    (a, ow, oh, pad)
 }
 
 /// Grow coverage by taking the maximum over a disc of `radius` pixels.

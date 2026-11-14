@@ -10,8 +10,8 @@ use super::transform::OverlayTransform;
 /// A text label rendered as a screen-space overlay.
 ///
 /// Anchored to a viewport corner or a projected world point. The text colour is
-/// `style.fill`, which can be a gradient across the text box as well as a flat
-/// colour.
+/// `style.fill`, which can be a flat colour, a gradient across the text box, or
+/// an image sampled across it.
 ///
 /// A label draws text and nothing else. A backing panel behind it is an
 /// [`OverlayShapeItem`](crate::overlay::OverlayShapeItem) with the same
@@ -56,6 +56,15 @@ pub struct LabelItem {
     /// content turns within it. See [`OverlayTransform`] for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
+    ///
+    /// The scale picks the size glyphs are rasterised at, so text scaled 2x
+    /// draws like text at twice the size rather than a magnified copy. An
+    /// axis-aligned item at a uniform scale lands each pen on whole device
+    /// pixels down and the nearest quarter pixel across, rasterising the glyph
+    /// at that quarter. A rotated, stretched or skewed item rasterises at its
+    /// largest stretch with no sub-pixel offset, and its glyphs are resampled
+    /// where they land. Sizes above 48 device pixels rasterise at a nearby
+    /// step and are scaled to fit, so a zoom reuses a bounded set of glyphs.
     pub transform: OverlayTransform,
     /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///
@@ -77,7 +86,10 @@ pub struct LabelItem {
     /// Text content to display.
     pub text: String,
 
-    /// Which font to draw the text in, and at what size.
+    /// Which font to draw the text in, and at what size: logical pixels by
+    /// default, or world units with
+    /// [`TextSizing::World`](crate::overlay::TextSizing::World), so the text
+    /// scales with the camera.
     pub text_style: crate::overlay::TextStyle,
 
     /// Maximum text width in logical pixels.  When set, text that exceeds
@@ -140,8 +152,8 @@ impl LabelItem {
         self
     }
 
-    /// Set what the glyphs are filled with: a colour, or a gradient across the
-    /// text box. This is the text colour, and the only source of it.
+    /// Set what the glyphs are filled with: a colour, or a gradient or an image
+    /// across the text box. This is the text colour, and the only source of it.
     pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
         self.style.fill = fill;
         self
@@ -183,6 +195,14 @@ impl LabelItem {
     /// Set the font size in logical pixels.
     pub fn with_font_size(mut self, font_size: f32) -> Self {
         self.text_style.size = font_size;
+        self
+    }
+
+    /// Size the text in world units: `height` world units tall, measured as
+    /// `world` says. See [`TextSizing`](crate::overlay::TextSizing).
+    pub fn with_world_size(mut self, height: f32, world: crate::overlay::WorldTextSize) -> Self {
+        self.text_style.size = height;
+        self.text_style.sizing = crate::overlay::TextSizing::World(world);
         self
     }
 
@@ -275,6 +295,12 @@ impl LabelItem {
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
         self.style.opacity = opacity;
+        self
+    }
+
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: crate::overlay::OverlayBlend) -> Self {
+        self.style.blend = blend;
         self
     }
 

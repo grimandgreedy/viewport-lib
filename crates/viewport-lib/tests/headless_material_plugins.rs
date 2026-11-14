@@ -142,8 +142,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // HDR path (and, with a transparent second item, the OIT path).
     let mut transparent = item.clone();
     transparent.settings.opacity = 0.5;
-    transparent.model =
-        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
+    transparent.model = glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, transparent].into());
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -986,9 +985,9 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
     };
 
     let (mut blocking, frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, true);
-    let expected = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
+    let expected = settled_reference(&mut blocking, &device, &queue, &frame);
     let (mut empty, empty_frame, _) = setup(viewport_lib::PipelineCompilation::Blocking, false);
-    let nothing = render_presented(&mut empty, &device, &queue, &empty_frame, 64, 64);
+    let nothing = settled_reference(&mut empty, &device, &queue, &empty_frame);
     assert!(expected != nothing, "the plugin item has to be visible");
 
     let (mut renderer, frame, plugin) = setup(viewport_lib::PipelineCompilation::Background, true);
@@ -1016,9 +1015,25 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    assert_eq!(
-        renderer.resources().material_plugin_stats()[0].pipelines_built,
-        1
+    // The draw selects one feature-set pipeline. A frame that ran while it
+    // compiled may also have drawn with the set's universal member standing
+    // in, which then counts as built too.
+    let built = renderer.resources().material_plugin_stats()[0].pipelines_built;
+    assert!(
+        (1..=2).contains(&built),
+        "built {built} plugin pipelines for one draw"
+    );
+    renderer.wait_for_pipelines(&device);
+    let settled = render_presented(&mut renderer, &device, &queue, &frame, 64, 64);
+    assert!(
+        settled == expected,
+        "the image changed once the stand-in compiled"
+    );
+    assert_eq!(renderer.last_frame_stats().pipelines_pending, 0);
+    let built = renderer.resources().material_plugin_stats()[0].pipelines_built;
+    assert!(
+        (1..=2).contains(&built),
+        "a settled frame built {built} plugin pipelines"
     );
 }
 

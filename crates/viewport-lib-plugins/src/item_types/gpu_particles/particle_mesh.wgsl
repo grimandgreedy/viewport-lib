@@ -8,10 +8,12 @@
 // optional albedo sample.
 
 struct MeshDrawUniform {
-    align:       u32,        // 0=Identity, 1=Velocity, 2=Random
-    has_texture: u32,
-    _pad0:       u32,
-    _pad1:       u32,
+    align:         u32,        // 0=Identity, 1=Velocity, 2=Random
+    has_texture:   u32,
+    // The painter layer whose 2D light the system samples, and 1 when it is
+    // not lit by 2D lighting.
+    painter_layer: u32,
+    unlit:         u32,
     // The simulation anchor relative to the world origin.
     offset:      vec4<f32>,
 };
@@ -46,6 +48,7 @@ struct VertexOut {
     @location(0)       colour:    vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
     @location(2)       uv:        vec2<f32>,
+    @location(3)       light_clip: vec4<f32>,
 };
 
 // PCG-style hash. Same kernel as the emit shader; reused so the random
@@ -158,8 +161,12 @@ fn vs_main(in: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
     out.colour    = p.colour;
     out.world_pos = world_pos;
     out.uv        = in.uv;
+    out.light_clip = out.clip_pos;
     return out;
 }
+
+// `particle_light(colour, clip)`, the colour lit by the 2D light layer of
+// the system's painter range, is composed in beside this source.
 
 fn fs_main_body(in: VertexOut) -> vec4<f32> {
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
@@ -173,7 +180,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
         colour = colour * textureSample(albedo, albedo_samp, in.uv);
     }
     if colour.a <= 0.001 { discard; }
-    return colour;
+    return particle_light(colour, in.light_clip);
 }
 
 @fragment

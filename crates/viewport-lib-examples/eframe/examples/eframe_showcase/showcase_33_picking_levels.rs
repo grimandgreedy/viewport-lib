@@ -804,7 +804,7 @@ impl App {
                     arc_centre[2] + arc_radius * angle.sin(),
                 ]);
                 // Small to large along the arc.
-                sizes.push(14.0 + 22.0 * t);
+                sizes.push(7.0 + 11.0 * t);
                 // Yellow -> orange gradient.
                 colours.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
             }
@@ -825,7 +825,7 @@ impl App {
             for i in 0..n {
                 positions.push([x_start + x_step * i as f32, 0.0, -6.0]);
                 // Alternate between small and large.
-                sizes.push(if i % 2 == 0 { 20.0 } else { 40.0 });
+                sizes.push(if i % 2 == 0 { 10.0 } else { 20.0 });
                 // Alternate cyan and magenta.
                 if i % 2 == 0 {
                     colours.push([0.2, 0.9, 0.9, 1.0]);
@@ -2105,7 +2105,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.sprite_positions.is_empty() {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.sprite_positions.clone();
-        s.sizes = app.pl_state.sprite_sizes.clone();
+        s.sizes = SpriteItem::square_sizes(app.pl_state.sprite_sizes.iter().copied());
         s.colours = app
             .pl_state
             .sprite_colours
@@ -2114,7 +2114,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .map(Colour::from_linear_array)
             .collect();
         s.default_colour = Colour::linear(1.0, 0.90, 0.20, 1.0);
-        s.default_size = 28.0;
+        s.default_size = 14.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(33);
         s.settings.selected = app.pl_state.selection.contains(33);
@@ -2127,7 +2127,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.xo_sprite_positions.is_empty() {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.xo_sprite_positions.clone();
-        s.sizes = app.pl_state.xo_sprite_sizes.clone();
+        s.sizes = SpriteItem::square_sizes(app.pl_state.xo_sprite_sizes.iter().copied());
         s.colours = app
             .pl_state
             .xo_sprite_colours
@@ -2136,7 +2136,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .map(Colour::from_linear_array)
             .collect();
         s.default_colour = Colour::linear(0.5, 0.5, 1.0, 1.0);
-        s.default_size = 30.0;
+        s.default_size = 15.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(34);
         s.settings.selected = app.pl_state.selection.contains(34);

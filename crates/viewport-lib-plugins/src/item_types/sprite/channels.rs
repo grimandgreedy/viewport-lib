@@ -1,56 +1,74 @@
 //! The sprite batch's writable channels.
 //!
 //! Two channels: the positions, which are a vertex stream of their own, and the
-//! per-sprite records, which are one interleaved 64-byte block each. Splitting
+//! per-sprite records, which are one interleaved 80-byte block each. Splitting
 //! them matters because a particle feed usually moves every sprite and recolours
 //! none of them, so the position write is a quarter of the traffic of a full
-//! update.
+//! update. A batch uploaded with effects has a third, its packed effect words,
+//! so a hit flash on one sprite writes four bytes.
 //!
 //! The record is not what a caller holds, so [`Sprite`] is the input and the
 //! write builds the record: a [`Colour`] becomes linear RGBA, and the defaults an
 //! item applies to short per-sprite lists are already resolved by the time a
 //! ranged write supplies a value.
 //!
+//! A batch uploaded in painter's order also takes [`SortKeys`]. Elements are
+//! addressed by the sprite's index in the uploaded item whatever order the
+//! batch draws in, and a write to the keys re-sorts the batch at the next
+//! frame; writes to the other channels never re-sort. A painter batch's
+//! channels share one live count, so a write past it raises it for all of
+//! them.
+//!
 //! These cover the batch a `SpriteSetId` names. The instance-set store keeps its
 //! own handle type and is not writable this way.
 
-use super::types::SpriteSetId;
+use super::types::{SpriteFlip, SpriteSetId};
 use viewport_lib::Colour;
 use viewport_lib::plugin_api::Channel;
 
 /// One sprite of a batch, as the caller supplies it for a ranged write.
 ///
-/// Total rather than partial: the store keeps no CPU copy of a record, so
-/// "leave the colour alone" would mean reading it back off the GPU. Every write
-/// supplies every field, and the values are final rather than defaults to be
-/// filled in.
+/// Total rather than partial: every write supplies every field, and the
+/// values are final rather than defaults to be filled in.
 #[derive(Copy, Clone, Debug)]
 pub struct Sprite {
     /// Final colour, multiplied into the texture sample.
     pub colour: Colour,
-    /// Size in the unit the batch's size mode measures in.
-    pub size: f32,
-    /// Rotation about the view axis, in radians.
+    /// Size as `[width, height]` in the unit the batch's size mode measures in.
+    pub size: [f32; 2],
+    /// Rotation about the view axis, in radians, about the pivot.
     pub rotation: f32,
+    /// The point of the quad at the sprite's position, in `0..=1` of the quad
+    /// from its bottom-left corner. `[0.5, 0.5]` is the centre.
+    pub pivot: [f32; 2],
+    /// Mirrors the UV rect horizontally and/or vertically.
+    pub flip: SpriteFlip,
     /// Soft-particle fade distance. `0.0` disables the fade for this sprite.
     pub soft_distance: f32,
-    /// Sub-rectangle of the batch's texture as `[u0, v0, u1, v1]`. Use
-    /// `[0.0, 0.0, 1.0, 1.0]` for the whole texture.
+    /// Sub-rectangle of the batch's texture as `[u0, v0, u1, v1]`, `v = 0`
+    /// at the image's top row. Use `[0.0, 0.0, 1.0, 1.0]` for the whole
+    /// texture.
     pub uv_rect: [f32; 4],
     /// Velocity, read only when the batch orients itself by it.
     pub velocity: [f32; 3],
+    /// The sprite's user value, as [`SpriteItem::user_values`](super::SpriteItem::user_values).
+    pub user: u32,
 }
 
 impl Default for Sprite {
-    /// A white sprite of unit size, unrotated, covering its whole texture.
+    /// A white sprite of unit size, unrotated and unflipped, pivoted at its
+    /// centre, covering its whole texture.
     fn default() -> Self {
         Self {
             colour: Colour::WHITE,
-            size: 1.0,
+            size: [1.0, 1.0],
             rotation: 0.0,
+            pivot: [0.5, 0.5],
+            flip: SpriteFlip::NONE,
             soft_distance: 0.0,
             uv_rect: [0.0, 0.0, 1.0, 1.0],
             velocity: [0.0; 3],
+            user: 0,
         }
     }
 }
@@ -60,8 +78,8 @@ impl Default for Sprite {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Positions;
 
-/// The interleaved per-sprite records: colour, size, rotation, soft-particle
-/// distance, uv rect and velocity.
+/// The interleaved per-sprite records: colour, size, rotation, pivot, flip,
+/// soft-particle distance, uv rect, velocity and user value.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Sprites;
 
@@ -75,4 +93,45 @@ impl Channel for Sprites {
     type Id = SpriteSetId;
     type Input = Sprite;
     const NAME: &'static str = "sprites";
+}
+
+/// One sprite's effect values for a ranged write into a batch uploaded with
+/// [`SpriteItem::effects`](super::SpriteItem::effects) set.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SpriteEffect {
+    /// Flash amount in `0..=1`.
+    pub flash: f32,
+    /// Dissolve threshold in `0..=1`.
+    pub dissolve: f32,
+    /// Palette row.
+    pub palette_row: u16,
+}
+
+/// The per-sprite effect values: flash, dissolve and palette row. Present only
+/// on a batch uploaded with effects; a write to one without them fails with
+/// `ViewportError::ChannelNotPresent`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Effects;
+
+impl Channel for Effects {
+    type Id = SpriteSetId;
+    type Input = SpriteEffect;
+    const NAME: &'static str = "effects";
+}
+
+/// Per-sprite sort keys of a batch uploaded with
+/// [`SpriteOrder::Painter`](super::SpriteOrder::Painter), as in
+/// [`SpriteItem::sort_keys`](super::SpriteItem::sort_keys). A write re-sorts
+/// the batch at the next frame, moving every sprite to its place by key; ties
+/// keep the order of the sprites' indices. A set whose keys follow its
+/// positions (a top-down set sorted by `-y`) writes both channels for the
+/// sprites that moved. A write to a batch in depth order fails with
+/// `ViewportError::ChannelNotPresent`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SortKeys;
+
+impl Channel for SortKeys {
+    type Id = SpriteSetId;
+    type Input = f32;
+    const NAME: &'static str = "sort_keys";
 }

@@ -11,30 +11,62 @@
 //! - writes depth: the opaque scene pass, through `paint`.
 //! - refractive: its own pass over a copy of the scene colour, through
 //!   `encode` at [`EncoderScope::AfterOpaque`].
-//! - blended with no soft fade and no refraction: the OIT pass, through
-//!   `paint_transparent`.
-//! - anything else transparent: the read-only-depth pass, through
-//!   `paint_depth_read`, which is the only one of the four that can sample
-//!   scene depth for the soft fade.
+//! - alpha or premultiplied blend in depth order, with no soft fade and no
+//!   refraction: the OIT pass, through `paint_transparent`.
+//! - anything else transparent, and every batch in painter's order: the
+//!   read-only-depth pass, through `paint_depth_read`, which is the only one
+//!   of the four that can sample scene depth for the soft fade. Painter
+//!   batches draw there last, sorted by layer and then by sort key.
+//!
+//! The LDR path has neither the OIT pass nor the read-only-depth pass. There
+//! the blended batches those two draw go in `paint` after the depth-writing
+//! batches, in submission order, testing depth without writing it and with no
+//! soft fade; painter batches follow them in their own order. Refractive
+//! batches draw on the HDR path only.
+//!
+//! A batch with [`SpriteEffects`] (flash, dissolve, palette swap, outline, or a
+//! custom material registered through [`SpriteMaterials`]) draws through effect
+//! pipelines composed from the plain shaders, in the same place it would draw
+//! otherwise except that it never goes through order-independent transparency.
+//! A frame without effects never builds or binds them.
 //!
 //! The data types here build without the `gpu` feature; the plugin and its
 //! upload calls need it.
 //!
 //! [`ItemTypePlugin`]: viewport_lib::plugin_api::ItemTypePlugin
 //! [`EncoderScope::AfterOpaque`]: viewport_lib::plugin_api::EncoderScope::AfterOpaque
+//! [`SpriteMaterials`]: crate::item_types::sprite::SpriteMaterials
 
 mod types;
 
 pub use types::{
-    SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
-    SpriteOrientation, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
+    MAX_SPRITE_DEFORMERS, MaskSource, PaletteIndex, SpriteDeformerId, SpriteDeformerSet,
+    SpriteDrawMode, SpriteEffects, SpriteFlip, SpriteInstanceSetId, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteLitParams, SpriteMaskItem, SpriteMaterial, SpriteMaterialId,
+    SpriteNormalMode, SpriteOrder, SpriteOrientation, SpriteOutline, SpriteOverrides,
+    SpritePalette, SpriteSetId, SpriteSetRefItem, SpriteSizeMode, TileMode,
 };
+pub use viewport_lib_types::render_item::MaskTest;
 
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.sprite";
 
+/// Stable name [`SpriteMaskItem`]s submit and register under.
+pub const MASK_TYPE_NAME: &str = "vpl.sprite_mask";
+
+/// The structs and helpers every sprite shader shares, spliced in front of
+/// each body.
+#[cfg(feature = "gpu")]
+const SPRITE_COMMON: &str = crate::item_types::shader::wgsl_source!("sprite_common");
+
 #[cfg(feature = "gpu")]
 pub mod channels;
+#[cfg(feature = "gpu")]
+mod deform;
+#[cfg(feature = "gpu")]
+mod effects;
+#[cfg(feature = "gpu")]
+mod mask;
 #[cfg(feature = "gpu")]
 mod pipeline;
 #[cfg(feature = "gpu")]
@@ -45,10 +77,20 @@ mod store;
 mod uploads;
 
 #[cfg(feature = "gpu")]
+pub use deform::SpriteDeformerDesc;
+#[cfg(feature = "gpu")]
+pub(crate) use deform::{
+    SpriteDeformerEntry, tile_module as tile_deformer_module, validate as validate_deformer_modules,
+};
+#[cfg(feature = "gpu")]
+pub(crate) use effects::{TileMaterialEntry, compose_tile, material_lanes, validate_tile_material};
+#[cfg(feature = "gpu")]
+pub use mask::SpriteMaskPlugin;
+#[cfg(feature = "gpu")]
 pub use plugin::SpritePlugin;
 #[cfg(feature = "gpu")]
 pub(crate) use plugin::shader_sources;
 #[cfg(feature = "gpu")]
 pub(crate) use store::encode_sprites;
 #[cfg(feature = "gpu")]
-pub use uploads::SpriteInstanceUploads;
+pub use uploads::{SpriteDeformers, SpriteInstanceUploads, SpriteMaterials};

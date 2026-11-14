@@ -266,6 +266,7 @@ impl DeviceResources {
             crate::resources::mesh::geometry_slab::GeometrySlab::new(device, geometry_chunk_bytes);
 
         let glyph_atlas = crate::resources::overlay::font::GlyphAtlas::new(device);
+        let coverage_atlas = crate::resources::overlay::coverage_atlas::CoverageAtlas::new(device);
         mark("glyph_atlas");
 
         // The scene tier: the layouts, bind groups and textures the scene
@@ -1211,9 +1212,10 @@ impl DeviceResources {
                 let lut_sampler =
                     crate::resources::builders::clamp_linear_sampler(device, "lut_sampler");
 
-                // Read-only-depth plugin pass: non-filtering clamp sampler + group-1
-                // BGL (depth texture + sampler). The renderer builds the matching bind
-                // group each frame from the scene depth-only view.
+                // Read-only-depth plugin pass: non-filtering clamp sampler + the
+                // layout (depth texture + sampler, then the painter masks). The
+                // renderer builds the matching bind group each frame from the
+                // scene depth-only view.
                 let depth_read_sampler =
                     crate::resources::builders::clamp_nearest_sampler(device, "depth_read_sampler");
                 let depth_read_bgl =
@@ -1240,6 +1242,13 @@ impl DeviceResources {
                                 ),
                                 count: None,
                             },
+                            // The painter masks and light layers, for
+                            // painter content that binds this group and
+                            // tests a mask or samples its light.
+                            crate::resources::painter_mask::painter_mask_entries(2)[0],
+                            crate::resources::painter_mask::painter_mask_entries(2)[1],
+                            crate::resources::painter_mask::painter_mask_entries(2)[2],
+                            crate::resources::painter_mask::painter_mask_entries(2)[3],
                         ],
                     });
 
@@ -1557,15 +1566,7 @@ impl DeviceResources {
                         emissive: fallback_emissive_texture,
                         emissive_view: fallback_emissive_texture_view,
                         sampler: material_sampler,
-                        mesh_sampler: mesh_sampler.clone(),
-                        sampler_palette: std::sync::Mutex::new(std::collections::HashMap::from([
-                            (
-                                crate::resources::material::fallbacks::sampler_palette_key(
-                                    crate::scene::material::SamplerKey::default(),
-                                ),
-                                mesh_sampler,
-                            ),
-                        ])),
+                        mesh_sampler,
                         lut_sampler,
                         depth_read_sampler,
                         depth_read_bgl,
@@ -1637,6 +1638,7 @@ impl DeviceResources {
             _ => None,
         };
         let resources = Self {
+            painter_mask: crate::resources::painter_mask::PainterMaskResources::new(device),
             compatibility_tier,
             outline: None,
             group0_profile,
@@ -1652,6 +1654,15 @@ impl DeviceResources {
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
             plugin_texture_budget,
+            // The full tier's default-key sampler is the palette's entry for
+            // that key, so a material that sets the default key binds it.
+            sampler_palette: match &scene_tier {
+                Some(tier) => crate::resources::material::fallbacks::SamplerPalette::seeded(
+                    crate::scene::material::SamplerKey::default(),
+                    tier.material.mesh_sampler.clone(),
+                ),
+                None => Default::default(),
+            },
             scene_tier: crate::resources::device_resources::SceneTierSlot::new(scene_tier),
             mesh_store: {
                 let mut store = crate::resources::mesh::mesh_store::MeshStore::new();
@@ -1682,6 +1693,7 @@ impl DeviceResources {
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas,
+                coverage_atlas,
                 overlay_textures: crate::resources::handle::SlotStore::default(),
                 overlay_geometry: crate::resources::handle::SlotStore::default(),
                 matcap_textures: Vec::new(),
@@ -1713,10 +1725,13 @@ impl DeviceResources {
 
             sub_highlight: crate::resources::types::SubHighlightResources::default(),
             overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources::default(),
+            overlay_custom_fills: Vec::new(),
             overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources::default(
             ),
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
+            overlay_layer: Default::default(),
+            overlay_world: Default::default(),
             material_gpu_buf,
             material_gpu_capacity: crate::resources::material_gpu::MATERIAL_GPU_INITIAL_CAPACITY,
             material_gpu_limit: (device.limits().max_storage_buffer_binding_size as usize

@@ -47,7 +47,7 @@ impl ViewportInstance {
         let camera = &self.frame.camera;
         let ctx = crate::GpuFrameContext::new(
             &self.camera,
-            physical_size(camera),
+            physical_size(&self.frame),
             self.runtime_dt,
             self.gpu_frame_index,
         )
@@ -88,7 +88,7 @@ impl ViewportInstance {
         let camera = &self.frame.camera;
         let ctx = crate::GpuFrameContext::new(
             &self.camera,
-            physical_size(camera),
+            physical_size(&self.frame),
             self.runtime_dt,
             self.gpu_frame_index,
         )
@@ -115,11 +115,10 @@ impl ViewportInstance {
     }
 }
 
-/// The viewport size in physical pixels, as the renderer sizes its targets.
-fn physical_size(camera: &crate::CameraFrame) -> glam::Vec2 {
-    let ppp = camera.pixels_per_point;
-    glam::Vec2::new(
-        (camera.viewport_size[0] * ppp).round(),
-        (camera.viewport_size[1] * ppp).round(),
-    )
+/// The size in physical pixels of the targets the scene draws into: the
+/// viewport's, or the reference target's.
+fn physical_size(frame: &crate::FrameData) -> glam::Vec2 {
+    let ppp = frame.scene_ppp();
+    let [w, h] = frame.scene_size();
+    glam::Vec2::new((w * ppp).round(), (h * ppp).round())
 }

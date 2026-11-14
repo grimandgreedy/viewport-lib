@@ -53,6 +53,15 @@ pub struct MeshInstanceItem {
     /// cheaper one, all from a single submitted item. `mesh_id` is ignored.
     /// Set `pick_id` for the per-instance level to use hysteresis across frames.
     pub lod_group: Option<crate::resources::LodGroupId>,
+    /// Where the batch draws in the painter sequence. `None` (the default)
+    /// draws it in the scene pass with the other blended content.
+    ///
+    /// With a placement the batch draws in painter's order among sprites,
+    /// blended tile layers and the other painter content, testing scene depth
+    /// without writing it, and picks in that order. Compose the placement
+    /// with [`painter_key`](crate::painter_key) to keep it with the other
+    /// parts of an entity.
+    pub painter: Option<crate::PainterPlacement>,
 }
 
 impl Default for MeshInstanceItem {
@@ -65,6 +74,7 @@ impl Default for MeshInstanceItem {
             blend: SpriteBlend::AlphaBlend,
             settings: ItemSettings::default(),
             lod_group: None,
+            painter: None,
         }
     }
 }

@@ -8,11 +8,18 @@
 // buffer.
 
 struct SpriteUniform {
-    model:       mat4x4<f32>,
-    world_space: u32,
-    has_texture: u32,
-    _pad0:       u32,
-    _pad1:       u32,
+    model:          mat4x4<f32>,
+    world_space:    u32,
+    has_texture:    u32,
+    // Read by the lit shader only.
+    normal_mode:    u32,
+    has_normal_map: u32,
+    ambient_scale:  f32,
+    roughness:      f32,
+    // The painter layer whose 2D light the system samples, and 1 when it is
+    // not lit by 2D lighting.
+    painter_layer:  u32,
+    unlit:          u32,
 };
 
 struct Particle {
@@ -37,6 +44,7 @@ struct VertexOut {
     @location(0)       colour:    vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
     @location(2)       uv:        vec2<f32>,
+    @location(3)       light_clip: vec4<f32>,
 };
 
 fn quad_corner(vi: u32) -> vec2<f32> {
@@ -95,8 +103,12 @@ fn vs_main(
     out.world_pos = world_pos;
     out.colour    = p.colour;
     out.uv        = vec2<f32>((corner.x + 1.0) * 0.5, (corner.y + 1.0) * 0.5);
+    out.light_clip = out.clip_pos;
     return out;
 }
+
+// `particle_light(colour, clip)`, the colour lit by the 2D light layer of
+// the system's painter range, is composed in beside this source.
 
 fn fs_main_body(in: VertexOut) -> vec4<f32> {
     for (var i = 0u; i < clip_planes.count; i = i + 1u) {
@@ -111,7 +123,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     }
 
     if colour.a <= 0.001 { discard; }
-    return colour;
+    return particle_light(colour, in.light_clip);
 }
 
 @fragment

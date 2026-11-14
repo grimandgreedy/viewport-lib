@@ -13,6 +13,9 @@ pub(crate) struct BasicMeshDraws {
     capacity: usize,
     bind_groups: Vec<crate::gpu::BindGroup>,
     draws: Vec<BasicMeshDraw>,
+    /// Painter-placed surfaces, drawn blended in the painter sequence rather
+    /// than with `draws`: one entry per drawn range, in submission order.
+    painter: Vec<(crate::PainterPlacement, BasicMeshDraw)>,
 }
 
 struct BasicMeshDraw {
@@ -115,9 +118,12 @@ impl ViewportRenderer {
         );
         // The compatibility tier draws through the LDR path, which keeps the lit
         // term in [0, 1] and has no meter for an automatic exposure.
-        let mut camera_uniform = frame
-            .camera
-            .camera_uniform(&self.frame_clock.current(), &self.origin);
+        let mut camera_uniform = frame.camera.camera_uniform(
+            &self.frame_clock.current(),
+            &self.origin,
+            frame.scene_size(),
+            frame.scene_ppp(),
+        );
         camera_uniform.exposure = viewport_interaction::frame_exposure(frame);
         queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
     }
@@ -198,11 +204,9 @@ impl ViewportRenderer {
         if !self.outline_active(frame) {
             return;
         }
-        let ppp = frame.camera.pixels_per_point;
-        let size = [
-            (frame.camera.viewport_size[0] * ppp).round() as u32,
-            (frame.camera.viewport_size[1] * ppp).round() as u32,
-        ];
+        let ppp = frame.scene_ppp();
+        let [sw, sh] = frame.scene_size();
+        let size = [(sw * ppp).round() as u32, (sh * ppp).round() as u32];
         self.encode_outline_passes(device, queue, frame, size, true, sink);
     }
 
@@ -236,6 +240,8 @@ impl ViewportRenderer {
         let mut records: Vec<BasicInstance> = Vec::new();
         let mut opaque: Vec<BasicMeshDraw> = Vec::new();
         let mut blended: Vec<(f32, BasicMeshDraw)> = Vec::new();
+        let mut painter: Vec<(crate::PainterPlacement, BasicMeshDraw)> = Vec::new();
+        let cull_mask = frame.camera.cull_mask;
         let mut bind_groups: Vec<crate::gpu::BindGroup> = Vec::new();
         let mut bind_group_index: std::collections::HashMap<
             (
@@ -246,13 +252,17 @@ impl ViewportRenderer {
         > = std::collections::HashMap::new();
 
         for item in items.iter() {
-            if item.settings.hidden {
+            if item.settings.hidden
+                || (item.painter.is_some()
+                    && !crate::renderer::painter::painter_surface(item, cull_mask))
+            {
                 continue;
             }
             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                 continue;
             };
-            let edges = wireframe(item);
+            // A painter surface draws its triangles blended in the sequence.
+            let edges = item.painter.is_none() && wireframe(item);
             if edges && mesh.edge_index_buffer.is_none() {
                 // No retained indices to extract edges from.
                 continue;
@@ -363,7 +373,8 @@ impl ViewportRenderer {
                 });
                 // Edge lines draw opaque whatever the item's opacity, as on the
                 // full tier: a translucent wireframe item draws its lines.
-                let blend = !edges && (item.settings.opacity < 1.0 || m.is_blend());
+                let blend = !edges
+                    && (item.painter.is_some() || item.settings.opacity < 1.0 || m.is_blend());
                 let draw = BasicMeshDraw {
                     mesh_id: item.mesh_id,
                     key: BasicMeshKey {
@@ -378,7 +389,9 @@ impl ViewportRenderer {
                     scalar: scalar.clone().filter(|_| !edges),
                     edges,
                 };
-                if blend {
+                if let Some(placement) = item.painter {
+                    painter.push((placement, draw));
+                } else if blend {
                     blended.push((centre.length_squared(), draw));
                 } else {
                     opaque.push(draw);
@@ -415,7 +428,7 @@ impl ViewportRenderer {
             .as_deref_mut()
             .expect("checked above");
         let layouts = [&compat.camera_bgl, &compat.mesh_bgl];
-        for draw in &draws {
+        for draw in draws.iter().chain(painter.iter().map(|(_, d)| d)) {
             compat.mesh_pipelines.ensure(
                 device,
                 &self.resources.capabilities,
@@ -425,6 +438,29 @@ impl ViewportRenderer {
             );
         }
         self.basic_mesh_draws.draws = draws;
+        self.basic_mesh_draws.painter = painter;
+    }
+
+    /// The placements of the compatibility tier's painter mesh draws, in the
+    /// order their batch handles count them.
+    pub(crate) fn basic_painter_placements(
+        &self,
+    ) -> impl Iterator<Item = crate::PainterPlacement> + '_ {
+        self.basic_mesh_draws.painter.iter().map(|(p, _)| *p)
+    }
+
+    /// Issue painter mesh draw `index` into the LDR scene pass. `camera_bg` is
+    /// the viewport's group 0.
+    pub(crate) fn paint_basic_painter(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        index: usize,
+    ) {
+        let Some((_, draw)) = self.basic_mesh_draws.painter.get(index) else {
+            return;
+        };
+        self.paint_basic_draws(pass, camera_bg, std::slice::from_ref(draw));
     }
 
     /// The compatibility tier's scene content in the LDR scene pass: the basic mesh
@@ -437,10 +473,11 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         self.paint_basic_meshes(pass, camera_bg);
+        pass.set_bind_group(0, camera_bg, &[]);
         if !self.item_type_plugins.is_empty() {
-            pass.set_bind_group(0, camera_bg, &[]);
             self.dispatch_plugin_paint(pass, frame, false);
         }
+        self.paint_painters_and_world(pass, frame, camera_bg, None);
     }
 
     /// Issue the basic mesh draws into the LDR scene pass. `camera_bg` is the
@@ -450,6 +487,16 @@ impl ViewportRenderer {
         pass: &mut crate::gpu::RenderPass<'_>,
         camera_bg: &crate::gpu::BindGroup,
     ) {
+        self.paint_basic_draws(pass, camera_bg, &self.basic_mesh_draws.draws);
+    }
+
+    /// Issue `draws`, basic mesh draws of this frame, into the LDR scene pass.
+    fn paint_basic_draws(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        draws: &[BasicMeshDraw],
+    ) {
         let (Some(compat), Some(instances)) = (
             self.resources.compatibility_tier.as_deref(),
             self.basic_mesh_draws.instances.as_ref(),
@@ -457,7 +504,7 @@ impl ViewportRenderer {
             return;
         };
         pass.set_bind_group(0, camera_bg, &[]);
-        for draw in &self.basic_mesh_draws.draws {
+        for draw in draws {
             let (Some(pipeline), Some(mesh)) = (
                 compat.mesh_pipelines.get(draw.key),
                 self.resources.mesh_store.get(draw.mesh_id),

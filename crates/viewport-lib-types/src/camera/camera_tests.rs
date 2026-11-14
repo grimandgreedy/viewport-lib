@@ -279,3 +279,73 @@ fn frustum_far_from_origin_matches_the_world_origin() {
         }
     }
 }
+
+#[test]
+fn set_ortho_height_survives_set_pose() {
+    let mut cam = ortho();
+    cam.set_ortho_height(7.5);
+    cam.set_pose(Pose::new(
+        DVec3::new(3.0, -4.0, 20.0),
+        glam::DQuat::IDENTITY,
+    ));
+    assert_eq!(cam.view_height_at(1.0), 7.5);
+    assert_eq!(cam.focus_distance(), Camera::default().focus_distance());
+
+    // A perspective camera turns orthographic, keeping its planes.
+    let mut persp = Camera::default();
+    persp.set_clip_planes(0.5, 80.0);
+    persp.set_ortho_height(3.0);
+    assert_eq!(
+        persp.projection,
+        Projection::Orthographic {
+            height: 3.0,
+            near: Some(0.5),
+            far: Some(80.0),
+        }
+    );
+}
+
+#[test]
+fn lerp_returns_the_ends_exactly_and_the_mean_height_halfway() {
+    let mut a = Camera::orbit(
+        DVec3::new(1.0, 2.0, 0.0),
+        12.0,
+        Quat::from_rotation_z(0.3) * Quat::from_rotation_x(0.9),
+    )
+    .with_projection(Projection::orthographic(4.0));
+    a.aspect = 16.0 / 9.0;
+    let b = Camera::orbit(
+        DVec3::new(-7.0, 0.5, 3.0),
+        30.0,
+        Quat::from_rotation_z(-1.2) * Quat::from_rotation_x(0.2),
+    )
+    .with_projection(Projection::orthographic(10.0))
+    .with_aspect(4.0 / 3.0);
+
+    assert_eq!(Camera::lerp(&a, &b, 0.0), a);
+    assert_eq!(Camera::lerp(&a, &b, 1.0), b);
+    assert_eq!(Camera::lerp(&a, &b, -2.0), a);
+    assert_eq!(Camera::lerp(&a, &b, 3.0), b);
+
+    let mid = Camera::lerp(&a, &b, 0.5);
+    assert_eq!(mid.view_height_at(1.0), 7.0);
+    assert!(mid.is_orthographic());
+    assert!((mid.eye() - (a.eye() + b.eye()) * 0.5).length() < 1e-9);
+    let half_angle = a.pose.orientation.angle_between(b.pose.orientation) * 0.5;
+    assert!((a.pose.orientation.angle_between(mid.pose.orientation) - half_angle).abs() < 1e-6);
+    assert!((mid.focus_distance() - 21.0).abs() < 1e-5);
+
+    // Perspective to perspective lerps the field of view.
+    let pa = Camera::default().with_fov_y(0.5);
+    let pb = Camera::default().with_fov_y(1.5);
+    assert!((Camera::lerp(&pa, &pb, 0.25).fov_y() - 0.75).abs() < 1e-6);
+}
+
+#[test]
+fn lerp_between_kinds_switches_at_the_halfway_point() {
+    let a = Camera::default().with_projection(Projection::orthographic(4.0));
+    let b = Camera::default().with_fov_y(1.0);
+    assert_eq!(Camera::lerp(&a, &b, 0.49).projection, a.projection);
+    assert_eq!(Camera::lerp(&a, &b, 0.5).projection, b.projection);
+    assert_eq!(Camera::lerp(&a, &b, 0.9).projection, b.projection);
+}

@@ -70,9 +70,10 @@ impl RibbonKey {
 
     fn blend_index(self) -> usize {
         match self.blend {
-            SpriteBlend::AlphaBlend => 0,
             SpriteBlend::Additive => 1,
             SpriteBlend::Premultiplied => 2,
+            // The store maps the overlay blends to alpha before keying.
+            SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => 0,
         }
     }
 
@@ -172,9 +173,11 @@ fn build_variant(r: &RibbonRecipe, key: RibbonKey, hdr: bool) -> viewport_lib::g
     };
 
     let blend = match key.blend {
-        SpriteBlend::AlphaBlend => viewport_lib::gpu::BlendState::ALPHA_BLENDING,
         SpriteBlend::Additive => additive_blend,
         SpriteBlend::Premultiplied => premultiplied_blend,
+        SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => {
+            viewport_lib::gpu::BlendState::ALPHA_BLENDING
+        }
     };
     // Additive never writes depth: successive segments accumulate rather than
     // clipping each other where they overlap.
@@ -375,6 +378,8 @@ pub struct RibbonPlugin {
     /// Every inline item from the last prepared frame. Reference items are not
     /// here: their geometry lives on the GPU, so they answer the GPU pick only.
     pick_items: Vec<RibbonItem>,
+    /// Colour draws recorded since the last prepare, opaque and OIT.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl RibbonPlugin {
@@ -457,6 +462,10 @@ impl ItemTypePlugin for RibbonPlugin {
         self.stored.allocated_bytes()
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -464,6 +473,7 @@ impl ItemTypePlugin for RibbonPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.revalidate_store(device, queue, ctx.resources);
         let items = items.of::<RibbonItem>();
@@ -573,6 +583,8 @@ impl ItemTypePlugin for RibbonPlugin {
             };
             pass.set_pipeline(pl);
             draw_mesh(pass, gd);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -600,6 +612,8 @@ impl ItemTypePlugin for RibbonPlugin {
             pass.set_pipeline(pl);
             pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
             draw_solid_indexed(pass, &entry.gpu);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -681,7 +695,9 @@ impl ItemTypePlugin for RibbonPlugin {
                     ctx.viewport_size,
                     radius_px.max(8.0),
                 ) {
-                    let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
+                    let toi = (hit.world_pos.as_vec3() - ray.origin)
+                        .dot(ray.direction)
+                        .max(0.0);
                     consider(toi, hit);
                 }
             }

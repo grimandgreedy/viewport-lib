@@ -29,6 +29,7 @@ const FORWARD_SHADERS: &[&str] = &[
     "mc_isosurface.wgsl",
     "gaussian_splat_packed.wgsl",
     "gaussian_splat_pack.wgsl",
+    "tilemap.wgsl",
 ];
 
 fn webgl2_caps() -> Capabilities {

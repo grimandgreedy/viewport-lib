@@ -209,6 +209,9 @@ pub(crate) struct EmitState {
     /// The `anchor - origin` offset the draw uniform holds, or `None` when it
     /// has not been written since the bindings were built.
     pub drawn_offset: Option<[f32; 3]>,
+    /// The painter layer and unlit flag the draw uniform holds, or `None`
+    /// when they have not been written since the bindings were built.
+    pub drawn_light: Option<[u32; 2]>,
 }
 
 /// One particle as it lives on the GPU. Layout matches `Particle` in
@@ -530,8 +533,8 @@ pub(super) fn build_particle_draw_bindings(
                 has_normal_map: u32,
                 ambient_scale: f32,
                 roughness: f32,
-                _pad0: u32,
-                _pad1: u32,
+                painter_layer: u32,
+                unlit: u32,
             }
             let normal_mode_u32 = match lit_params.normal_mode {
                 crate::item_types::sprite::SpriteNormalMode::Spherical => 0u32,
@@ -548,8 +551,8 @@ pub(super) fn build_particle_draw_bindings(
                 has_normal_map: normal_live as u32,
                 ambient_scale: lit_params.ambient_scale,
                 roughness: lit_params.roughness,
-                _pad0: 0,
-                _pad1: 0,
+                painter_layer: 0,
+                unlit: 0,
             };
             let uniform_buf =
                 device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
@@ -636,8 +639,8 @@ pub(super) fn build_particle_draw_bindings(
             struct MeshDrawUniform {
                 align: u32,
                 has_texture: u32,
-                _pad0: u32,
-                _pad1: u32,
+                painter_layer: u32,
+                unlit: u32,
                 offset: [f32; 4],
             }
             let align_u32 = match align {
@@ -649,8 +652,8 @@ pub(super) fn build_particle_draw_bindings(
             let uniform = MeshDrawUniform {
                 align: align_u32,
                 has_texture: texture_live as u32,
-                _pad0: 0,
-                _pad1: 0,
+                painter_layer: 0,
+                unlit: 0,
                 offset: [0.0; 4],
             };
             let uniform_buf =

@@ -362,8 +362,9 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         let (w, h) = (32u32, 96u32);
         let mut pixels = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {
-            // v = 0 at the wide base, 1 at the narrow tip.
-            let v = y as f32 / (h - 1) as f32;
+            // v = 0 at the wide base (the last row), 1 at the narrow tip
+            // (row 0, the top of the quad).
+            let v = 1.0 - y as f32 / (h - 1) as f32;
             // Half-width of the flame at this height (texture-space).
             let taper = (1.0 - v * 0.85).max(0.05);
             for x in 0..w {
@@ -1292,7 +1293,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
                 item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-                item.default_size = 14.0;
+                item.default_size = 7.0;
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
                 items.push(item);
@@ -1327,7 +1328,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                     // phase=TAU is the tail (dim, small) just behind the head.
                     let t = phase / std::f32::consts::TAU;
                     let alpha = (1.0 - t).powf(1.4) * 0.90 + 0.05;
-                    let size = 6.0 + (1.0 - t) * 14.0; // head=20, tail=6
+                    let size = 3.0 + (1.0 - t) * 7.0; // head=10, tail=3
 
                     let [r, g, b] = ring.colour;
                     colours.push([r, g, b, alpha]);
@@ -1338,7 +1339,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
                 item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-                item.sizes = sizes;
+                item.sizes = SpriteItem::square_sizes(sizes);
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
                 items.push(item);
@@ -1482,7 +1483,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
                 item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-                item.sizes = sizes;
+                item.sizes = SpriteItem::square_sizes(sizes);
                 item.default_size = 1.5;
                 item.size_mode = SpriteSizeMode::WorldSpace;
                 item.blend = SpriteBlend::AlphaBlend;
@@ -1523,7 +1524,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 .into_iter()
                 .map(Colour::from_linear_array)
                 .collect();
-            item.sizes = vec![radius * 2.0];
+            item.sizes = vec![[radius * 2.0; 2]];
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = false;
             item.refraction_strength = Some(app.sprite_state.distortion_strength);
@@ -1548,7 +1549,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             item.texture_id = Some(app.sprite_state.glow_tex);
             item.positions = positions;
             item.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-            item.default_size = 24.0;
+            item.default_size = 12.0;
             item.size_mode = SpriteSizeMode::ScreenSpace;
             item.blend = SpriteBlend::Additive;
             item.depth_write = false;
@@ -1941,7 +1942,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             points.texture_id = Some(app.sprite_state.glow_tex);
             points.positions = positions;
             points.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-            points.default_size = 9.0;
+            points.default_size = 4.5;
             points.size_mode = SpriteSizeMode::ScreenSpace;
             points.blend = SpriteBlend::Additive;
             points.depth_write = false;
@@ -1995,7 +1996,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             item.positions = app.sprite_state.rain_positions.clone();
             item.velocities = app.sprite_state.rain_velocities.clone();
             item.default_colour = Colour::linear(0.75, 0.85, 1.0, 0.85);
-            item.default_size = 18.0;
+            item.default_size = 9.0;
             item.size_mode = SpriteSizeMode::ScreenSpace;
             item.blend = SpriteBlend::AlphaBlend;
             item.orientation = SpriteOrientation::VelocityStretched;
@@ -2039,7 +2040,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.flame_tex);
             item.positions = positions;
-            item.sizes = sizes;
+            item.sizes = SpriteItem::square_sizes(sizes);
             item.default_colour = Colour::linear(1.0, 0.85, 0.55, 1.0);
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.blend = SpriteBlend::Additive;

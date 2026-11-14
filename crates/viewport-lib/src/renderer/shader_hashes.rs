@@ -339,6 +339,7 @@ return a;
             ("SHARED_OIT_WGSL", s::SHARED_OIT_WGSL),
             ("SHARED_DEPTH_READ_WGSL", s::SHARED_DEPTH_READ_WGSL),
             ("SHARED_MASK_WGSL", s::SHARED_MASK_WGSL),
+            ("SHARED_PAINTER_MASK_WGSL", s::SHARED_PAINTER_MASK_WGSL),
             (
                 "SHARED_SHADOW_BINDINGS_WGSL",
                 s::SHARED_SHADOW_BINDINGS_WGSL,

@@ -11,9 +11,12 @@ mod lighting;
 mod math;
 mod mesh_material;
 mod overlay_compile;
+mod overlay_fill;
 mod overlay_geometry;
 mod overlay_style_check;
+pub(crate) mod overlay_tess_cache;
 mod overlay_vector;
+mod painter_masks;
 mod per_object;
 mod projection;
 mod scene_uploads;
@@ -22,6 +25,7 @@ mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
 mod viewport_overlays;
+mod world_overlays;
 
 use math::*;
 use mesh_material::*;
@@ -152,12 +156,16 @@ impl ViewportRenderer {
     ///
     /// Reads `scene_fx` for lighting and IBL, `frame.scene` for the items, and
     /// `frame.camera` for shadow cascade computation.
+    ///
+    /// Without `scene_content` only the frame's start runs (timestamps, origin,
+    /// clock, atlases, uploads), for an overlays-only frame.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
+        scene_content: bool,
         sink: &mut crate::renderer::SubmitSink,
     ) {
         let _cache = self.resources.pipeline_compiler.cache_scope();
@@ -180,25 +188,21 @@ impl ViewportRenderer {
 
         self.resolve_world_origin(frame);
 
-        let scene_tier = self.resources.scene_tier.is_built();
-        if scene_tier {
-            self.ensure_frame_pipelines(device, frame);
-        }
-
         // The time this frame renders at, for the camera uniform and the
         // deform header.
-        let time = self.frame_clock.resolve(
-            frame.time,
-            self.render_advances_state(),
-            self.frame_counter,
-        );
+        let time =
+            self.frame_clock
+                .resolve(frame.time, self.render_advances_state(), self.frame_counter);
         self.resources.feed_deform_time(queue, time.seconds as f32);
 
-        // A glyph atlas that filled up last frame is cleared here, before any
-        // text this frame is laid out against it. A derivative render leaves it
-        // alone: the presented frame it runs beside may still draw the old cells.
+        // A new frame of glyph use: plots drawn only in earlier frames become
+        // evictable, and a coverage atlas that filled up last frame is cleared,
+        // before any text or shape this frame is laid out against them. A
+        // derivative render leaves both alone: the presented frame it runs
+        // beside may still draw the cells.
         if self.render_advances_state() {
-            self.resources.content.glyph_atlas.evict_if_full();
+            self.resources.content.glyph_atlas.begin_frame();
+            self.resources.content.coverage_atlas.evict_if_full();
         }
 
         // Drain the upload-job runner. Worker results received since the last
@@ -221,6 +225,13 @@ impl ViewportRenderer {
                 ),
                 None => self.resources.process_uploads(device, queue),
             }
+        }
+        if !scene_content {
+            return;
+        }
+        let scene_tier = self.resources.scene_tier.is_built();
+        if scene_tier {
+            self.ensure_frame_pipelines(device, frame);
         }
         // The rest is the scene's full-tier work. The compatibility tier draws the
         // surfaces through its basic mesh path and lights them and its item
@@ -300,6 +311,14 @@ impl ViewportRenderer {
         // camera still runs its full GPU cull regardless of per-light channels.
         let cull_mask = frame.camera.cull_mask;
         scene_items_owned.retain(|item| (item.settings.visibility_mask & cull_mask) != 0);
+        // Painter-placed surfaces draw in the painter sequence from their own
+        // records, so every scene pass skips them. Hidden rather than removed,
+        // to keep the list in step with the submission.
+        for item in &mut scene_items_owned {
+            if item.painter.is_some() {
+                item.settings.hidden = true;
+            }
+        }
 
         // Resolve LOD groups to concrete meshes before anything reads the draw
         // list. Items with a `lod_group` get their `mesh_id` overwritten with the
@@ -665,12 +684,18 @@ impl ViewportRenderer {
                 triangles += (indices / 3) as u64 * batch.instance_count as u64;
             }
 
+            // A painter surface draws once, in the painter sequence.
+            draw_calls += match &frame.scene.surfaces {
+                SurfaceSubmission::Flat(items) => items
+                    .iter()
+                    .filter(|i| {
+                        crate::renderer::painter::painter_surface(i, frame.camera.cull_mask)
+                    })
+                    .count() as u32,
+            };
             let deform = resources.scene_tier.deform.take_counters();
-            let plugin_draw_calls = self
-                .item_type_plugins
-                .values()
-                .map(|p| p.draw_calls())
-                .sum();
+            let plugin_draw_calls =
+                plugin_draw_calls(&self.item_type_plugins, &self.plugins_with_items);
             let plugin_upload_bytes = self
                 .item_type_plugins
                 .values()
@@ -835,12 +860,13 @@ impl ViewportRenderer {
         }
     }
 
-    /// The plugin items in `frame` that a registered item type paints on the
-    /// LDR path, which is every plugin item the compatibility tier draws.
+    /// The plugin items in `frame` that a registered item type paints or
+    /// encodes on the LDR path, which is every plugin item the compatibility
+    /// tier draws.
     fn ldr_plugin_item_count(&self, frame: &FrameData) -> u32 {
         self.item_type_plugins
             .iter()
-            .filter(|(_, plugin)| plugin.draws_ldr())
+            .filter(|(_, plugin)| plugin.draws_ldr() || plugin.encodes_ldr())
             .map(|(name, _)| {
                 crate::renderer::item_plugins::plugin_collections_for(frame, name)
                     .map(|c| c.len())
@@ -942,14 +968,17 @@ impl ViewportRenderer {
         )
         .entered();
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
-        if self.resources.scene_tier.is_built() {
+        if self.draws_overlays_only(frame) {
+            // Nothing of the scene draws: the overlays alone are prepared.
+        } else if self.resources.scene_tier.is_built() {
             self.prepare_viewport_scene(device, queue, frame, viewport_fx, sink);
         } else {
             self.prepare_viewport_compatibility(queue, frame, viewport_fx);
             self.prepare_compatibility_outlines(device, queue, frame, sink);
             self.prepare_sub_highlight(device, queue, frame);
         }
-        self.prepare_viewport_overlays(device, queue, frame);
+        self.prepare_viewport_overlays(device, queue, frame, sink);
+        self.prepare_painter_masks(device, queue, frame, sink);
         self.prepare_debug_buffer(frame);
         if self.resources.scene_tier.is_built() {
             self.prepare_atlas_blit(queue, frame, viewport_fx);
@@ -1022,10 +1051,11 @@ impl ViewportRenderer {
         Self::prepare_foreground_objects(
             &mut self.resources,
             &mut self.viewport_slots[vp_idx].foreground_objects,
-            &frame.scene.foreground_items,
+            frame.scene.foreground_items.iter(),
             device,
             queue,
         );
+        self.prepare_painter_surfaces(device, queue, frame);
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
         self.resources.upload_material_gpu(device, queue);
@@ -1043,17 +1073,14 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         let vp_idx = frame.camera.viewport_index;
 
-        // Overlay families each build a per-family vertex buffer. When any item
-        // carries a non-zero `z_order`, they also record their draw segments into
-        // `overlay_draw_segments`, which `finalize_overlay_draw_order` sorts into
-        // a single cross-family paint order; otherwise the emit path keeps its
-        // fixed family order and the list stays empty.
-        // Retained groups always draw through the sorted segment list (they carry
-        // their own z_order and are separate draws), so force the ordered path
-        // whenever any are present, even if no immediate item sets a z_order.
+        // Overlay families each record their items, with bounds, into
+        // `overlay_order_items`; `finalize_overlay_draw_order` then puts them in
+        // paint order, batching items that do not overlap, and uploads the
+        // shape instances and text vertices in that order.
         let overlay_start = web_time::Instant::now();
         let overlay_span = tracing::debug_span!(target: "viewport_lib::frame", "overlay").entered();
         // Each viewport keeps its own overlay buffers: the split API prepares
@@ -1063,16 +1090,34 @@ impl ViewportRenderer {
             &mut self.viewport_slots[vp_idx].overlay,
             crate::renderer::ViewportOverlay::new(),
         );
-        ov.overlay_uses_zorder =
-            frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
         ov.overlay_draw_segments.clear();
+        ov.overlay_order_items.clear();
+        ov.overlay_shape_instances.clear();
+        ov.overlay_text_verts.clear();
         ov.overlay_retained_draws.clear();
         ov.overlay_retained_shape_draws.clear();
         ov.overlay_instances_ready = false;
         self.overlay_retained_counters = Default::default();
-        self.prepare_overlay_labels(device, queue, frame, &mut ov);
-        self.prepare_overlay_shapes(device, queue, frame, &mut ov);
-        Self::finalize_overlay_draw_order(&mut ov);
+        let vector_rasters_before = self.resources.content.coverage_atlas.rasters();
+        let glyph_rasters_before = self.resources.content.glyph_atlas.rasters();
+        ov.layer_plan.build(&frame.overlays);
+        self.report_layer_plan(&ov.layer_plan);
+        self.overlay_tess_cache.begin_pass();
+        let space = viewport_overlays::OverlaySpace::screen(frame, &self.origin);
+        self.prepare_overlay_labels(device, queue, &space, &mut ov);
+        self.prepare_overlay_shapes(device, queue, &space, &mut ov);
+        // The layers' members draw into their targets before the overlay
+        // pass, so their command buffer goes out with the prepare passes.
+        if let Some(layers) = self.finalize_overlay_draw_order(device, queue, &space, &mut ov) {
+            sink.push(layers);
+        }
+        let overlay_draw_calls = ov.draw_call_count();
+        let layer_stats = (
+            ov.layer_targets.draws.len() as u32,
+            ov.layer_targets.targets_used,
+            ov.layer_targets.allocations,
+        );
+        let overlay_stream_uploads = ov.overlay_stream_uploads;
         self.viewport_slots[vp_idx].overlay = ov;
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
         drop(overlay_span);
@@ -1087,6 +1132,17 @@ impl ViewportRenderer {
         self.last_stats.overlay_retained_reemitted = overlay_counters.reemitted;
         self.last_stats.overlay_retained_bytes =
             self.resources.content.overlay_geometry.allocated_bytes();
+        self.last_stats.overlay_draw_calls = overlay_draw_calls;
+        self.last_stats.overlay_layers_composited = layer_stats.0;
+        self.last_stats.overlay_layer_targets = layer_stats.1;
+        self.last_stats.overlay_layer_target_allocations = layer_stats.2;
+        self.last_stats.overlay_vector_rasters =
+            (self.resources.content.coverage_atlas.rasters() - vector_rasters_before) as u32;
+        self.last_stats.overlay_glyph_rasters =
+            (self.resources.content.glyph_atlas.rasters() - glyph_rasters_before) as u32;
+        self.last_stats.overlay_tessellations = self.overlay_tess_cache.tessellations;
+        self.last_stats.overlay_stream_uploads = overlay_stream_uploads;
+        self.prepare_world_overlays(device, queue, frame, sink);
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.
@@ -1439,8 +1495,14 @@ impl ViewportRenderer {
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();
-        self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
-        if self.resources.scene_tier.is_built() {
+        // An overlays-only frame skips scene prepare; the split API's
+        // `prepare_scene` always runs it, since its viewports' frames are not
+        // known yet.
+        let overlays_only = self.draws_overlays_only(frame);
+        self.prepare_scene_internal(device, queue, frame, &scene_fx, !overlays_only, sink);
+        if overlays_only {
+            self.clear_scene_stats();
+        } else if self.resources.scene_tier.is_built() {
             // Rebuild or drop the cached batch render bundle now that this
             // frame's batch list and its bind groups are final.
             self.update_per_object_bundle(device, frame);
@@ -1538,6 +1600,7 @@ impl ViewportRenderer {
                 Self::scene_item_count(frame)
             },
             hdr_drawn_as_ldr: false,
+            frame_path: self.frame_path(frame),
             lights_dropped: self.last_lights_dropped,
             notices: self.resources.notices.counts(),
             ..self.last_stats
@@ -1552,6 +1615,20 @@ impl ViewportRenderer {
 /// for them under the compilation policy, and under `Background` the
 /// frames until they are built take the CPU path, which draws the same
 /// image.
+/// The draw calls the item types that had items this frame report. A type
+/// with none was not prepared, so whatever it last counted is not this
+/// frame's.
+pub(crate) fn plugin_draw_calls(
+    plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
+    with_items: &std::collections::HashSet<&'static str>,
+) -> u32 {
+    plugins
+        .iter()
+        .filter(|(name, _)| with_items.contains(name))
+        .map(|(_, p)| p.draw_calls())
+        .sum()
+}
+
 fn settle_gpu_culling(
     inst: &mut InstancingState,
     compiler: &crate::resources::pipeline_slot::PipelineCompiler,

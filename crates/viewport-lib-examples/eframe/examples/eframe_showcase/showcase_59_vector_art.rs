@@ -5,13 +5,14 @@
 //! path end to end: an SVG file becomes subpaths, which become a tessellated
 //! overlay fill.
 //!
-//! io returns the renderer's own `SubPath`, `FillRule` and `Colour`, so the
-//! only work here is fitting each drawing to its rect.
+//! io returns the renderer's own `SubPath`, `FillRule` and `Colour`, and its
+//! paints and strokes convert to overlay fills and strokes, so the only work
+//! here is fitting each drawing to its rect.
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{OutlineMode, OverlayFill, OverlayShapeItem};
+use vpl::{OutlineMode, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
 
 use crate::App;
 
@@ -84,6 +85,36 @@ fn ensure_loaded(state: &mut VectorArtState) {
     }
 }
 
+/// The bounding box of a shape's control points, `[min_x, min_y, max_x, max_y]`
+/// in the art's units: the box a gradient paint is converted against.
+fn shape_bounds(subpaths: &[SubPath]) -> [f32; 4] {
+    let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    let mut take = |p: [f32; 2]| {
+        b[0] = b[0].min(p[0]);
+        b[1] = b[1].min(p[1]);
+        b[2] = b[2].max(p[0]);
+        b[3] = b[3].max(p[1]);
+    };
+    for sub in subpaths {
+        take(sub.start);
+        for seg in &sub.segments {
+            match *seg {
+                PathSegment::Line { to } => take(to),
+                PathSegment::Quad { ctrl, to } => {
+                    take(ctrl);
+                    take(to);
+                }
+                PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                    take(ctrl1);
+                    take(ctrl2);
+                    take(to);
+                }
+            }
+        }
+    }
+    if b[0] > b[2] { [0.0; 4] } else { b }
+}
+
 /// Fit one art into the rect `(rx, ry, rw, rh)`, centred, and append its items.
 fn place_art(
     art: &viewport_lib_io::VectorArt,
@@ -108,13 +139,18 @@ fn place_art(
             .collect();
         let mut item =
             OverlayShapeItem::vector(subpaths, shape.fill_rule, origin, size).with_z_order(10);
-        item = match shape.fill {
-            Some(colour) => item.with_fill(OverlayFill::Solid(colour)),
-            // Stroke-only paths (fill "none", or gradients we do not resolve)
-            // carry no fill; the outline below makes them visible.
+        // Gradients are relative to the path's own extent, so the paint
+        // converts against the shape's bounds in the art's units.
+        item = match &shape.fill {
+            Some(paint) => item.with_fill(paint.to_overlay_fill(shape_bounds(&shape.subpaths))),
+            // Stroke-only paths (fill "none", or patterns the loader does not
+            // resolve) carry no fill; the stroke or outline makes them visible.
             None => item.with_fill(OverlayFill::Solid(Colour::linear(0.0, 0.0, 0.0, 0.0))),
         };
-        if outline || shape.fill.is_none() {
+        if let Some(stroke) = &shape.stroke {
+            item = item.with_stroke(stroke.to_overlay_stroke(s));
+        }
+        if outline || (shape.fill.is_none() && shape.stroke.is_none()) {
             item = item.with_outline(
                 Colour::linear(0.08, 0.08, 0.08, 0.9),
                 1.0,
@@ -203,9 +239,9 @@ pub(crate) fn controls_vector_art(app: &mut App, ui: &mut egui::Ui) {
         ui.label(&app.va_state.info);
     }
     ui.label(
-        "Loader: viewport_lib_io::loaders::svg::vector_from_path. Solid fills \
-         resolve to colour; gradients and patterns are left unfilled and shown \
-         as outlines.",
+        "Loader: viewport_lib_io::loaders::svg::vector_from_path. Solid and \
+         gradient paints become overlay fills and strokes keep their caps, \
+         joins and dashes; patterns are left unfilled and shown as outlines.",
     );
 }
 

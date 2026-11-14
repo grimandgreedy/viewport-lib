@@ -48,11 +48,17 @@ pub struct VolumeSurfaceSlicePlugin {
     /// Whether the frame's selection outline is active; the mask hook draws
     /// nothing when it is off.
     outline_active: bool,
+    /// Slice draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn warm(&mut self, device: &gpu::Device, resources: &viewport_lib::DeviceResources) {
@@ -69,6 +75,7 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.outline_active = ctx.outline_selected;
         let items = items.of::<VolumeSurfaceSliceItem>();
@@ -115,7 +122,10 @@ impl ItemTypePlugin for VolumeSurfaceSlicePlugin {
         pass.set_pipeline(pl);
         for entry in &self.frame {
             pass.set_bind_group(1, &entry.bind_group, &[]);
-            ctx.meshes.draw_indexed(pass, entry.mesh_id);
+            if ctx.meshes.draw_indexed(pass, entry.mesh_id) {
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 

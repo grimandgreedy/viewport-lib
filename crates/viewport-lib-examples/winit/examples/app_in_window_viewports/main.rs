@@ -217,9 +217,11 @@ fn main() {
                     );
                 }
                 if panes.left.as_ref().is_some_and(|p| p.blit.is_none()) {
-                    let blit = ctx
-                        .renderer_mut()
-                        .create_blit(&device, panes.left.as_ref().unwrap().target.render_view());
+                    let blit = ctx.renderer_mut().create_blit(
+                        &device,
+                        panes.left.as_ref().unwrap().target.render_view(),
+                        vpl::BlitFilter::Linear,
+                    );
                     panes.left.as_mut().unwrap().blit = Some(blit);
                 }
 
@@ -241,9 +243,11 @@ fn main() {
                     );
                 }
                 if panes.right.as_ref().is_some_and(|p| p.blit.is_none()) {
-                    let blit = ctx
-                        .renderer_mut()
-                        .create_blit(&device, panes.right.as_ref().unwrap().target.render_view());
+                    let blit = ctx.renderer_mut().create_blit(
+                        &device,
+                        panes.right.as_ref().unwrap().target.render_view(),
+                        vpl::BlitFilter::Linear,
+                    );
                     panes.right.as_mut().unwrap().blit = Some(blit);
                 }
             },

@@ -8,3 +8,5 @@ pub mod exposure;
 pub(crate) mod hiz;
 /// Depth reset for a render pass the host owns.
 pub(crate) mod host_depth_reset;
+/// The reference target of a reference presentation.
+pub(crate) mod reference;

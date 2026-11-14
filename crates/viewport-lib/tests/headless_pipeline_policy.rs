@@ -117,7 +117,7 @@ fn a_mesh_frame_under_background_catches_up() {
         let mut blocking = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
         blocking.set_pipeline_compilation(PipelineCompilation::Blocking);
         let frame = scene(&mut blocking, &device, hdr);
-        let expected = render_presented(&mut blocking, &device, &queue, &frame, 64, 64);
+        let expected = settled_reference(&mut blocking, &device, &queue, &frame);
 
         let mut background = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
         background.set_pipeline_compilation(PipelineCompilation::Background);
@@ -147,6 +147,15 @@ fn a_mesh_frame_under_background_catches_up() {
             background.wait_for_pipelines(&device);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+        // A matching frame may still have drawn a universal stand-in while
+        // its feature-set pipeline compiled. Once that is done the frame
+        // draws the same image with nothing left on the workers.
+        background.wait_for_pipelines(&device);
+        let settled = render_presented(&mut background, &device, &queue, &frame, 64, 64);
+        assert!(
+            settled == expected,
+            "hdr {hdr}: the image changed once the stand-ins compiled"
+        );
         assert_eq!(background.last_frame_stats().pipelines_pending, 0);
     }
 }

@@ -1085,6 +1085,7 @@ impl Scene {
                 lod_group: node.lod_group,
                 indirect_light: node.indirect_light,
                 lightmap_placement: None,
+                painter: None,
             });
         }
         // Nodes live in a `HashMap`, whose iteration order is randomised per
@@ -1174,6 +1175,7 @@ impl Scene {
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
                     lightmap_placement: None,
+                    painter: None,
                 });
             }
 
@@ -1233,6 +1235,7 @@ impl Scene {
                     lod_group: node.lod_group,
                     indirect_light: node.indirect_light,
                     lightmap_placement: None,
+                    painter: None,
                 });
             }
 

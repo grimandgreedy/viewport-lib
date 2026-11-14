@@ -43,6 +43,7 @@ use crate::interaction::select::selection::NodeId;
 /// - [`Segment`](SubObjectRef::Segment) : polyline, tube, or ribbon segment, by index.
 /// - [`Strip`](SubObjectRef::Strip) : connected curve strip within a multi-strip item,
 ///   by strip index.
+/// - [`Tile`](SubObjectRef::Tile) : cell of a tilemap, by column and row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -78,6 +79,14 @@ pub enum SubObjectRef {
     Segment(u32),
     /// A connected curve strip within a multi-strip item, identified by its strip index.
     Strip(u32),
+    /// A cell of a tilemap, by column and row. Column 0 is the map's left
+    /// edge and row 0 its bottom; either may be negative.
+    Tile {
+        /// Column of the cell.
+        col: i32,
+        /// Row of the cell.
+        row: i32,
+    },
 }
 
 impl SubObjectRef {
@@ -111,7 +120,10 @@ impl SubObjectRef {
         matches!(self, Self::Cell(_))
     }
 
-    /// Returns the raw index regardless of variant.
+    /// Returns the raw index regardless of variant. For a
+    /// [`Tile`](SubObjectRef::Tile) it is the cell as the pick channel
+    /// carries it: the column in the low 16 bits and the row in the high 16,
+    /// each two's complement.
     pub fn index(&self) -> u32 {
         match *self {
             Self::Face(i)
@@ -124,6 +136,7 @@ impl SubObjectRef {
             | Self::Instance(i)
             | Self::Segment(i)
             | Self::Strip(i) => i,
+            Self::Tile { col, row } => (col as u16 as u32) | ((row as u16 as u32) << 16),
         }
     }
 

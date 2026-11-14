@@ -48,6 +48,10 @@ const GLYPH_THICKNESS: f32 = 2.65;
 /// z_order spacing between the three axes so a nearer axis stacks over a farther
 /// one; the four sub-parts of one axis occupy the slots in between.
 const AXIS_Z_STRIDE: i32 = 10;
+/// z_order of the farthest axis. The indicator sorts with the frame's own
+/// shapes, so it takes the top of the range and draws over everything the
+/// host submits.
+const AXES_Z_BASE: i32 = i32::MAX - 3 * AXIS_Z_STRIDE + 1;
 
 // ---------------------------------------------------------------------------
 // Overlay geometry
@@ -57,7 +61,8 @@ const AXIS_Z_STRIDE: i32 = 10;
 ///
 /// `viewport_w` / `viewport_h` are the logical viewport size; `orientation` is
 /// the current camera orientation. The indicator sits in the bottom-left corner.
-/// Shapes carry per-axis `z_order`s so the axis nearest the camera draws on top.
+/// Shapes carry per-axis `z_order`s so the axis nearest the camera draws on top,
+/// all above any `z_order` a host shape can carry.
 pub(crate) fn build_axes_overlays(
     viewport_w: f32,
     viewport_h: f32,
@@ -94,7 +99,7 @@ pub(crate) fn build_axes_overlays(
     });
 
     for (rank, &i) in order.iter().enumerate() {
-        let base_z = rank as i32 * AXIS_Z_STRIDE;
+        let base_z = AXES_Z_BASE + rank as i32 * AXIS_Z_STRIDE;
         let tip = tip_of(axes_world[i]);
         let colour = colours[i];
 
@@ -294,6 +299,19 @@ mod tests {
         build_axes_overlays(800.0, 600.0, glam::Quat::IDENTITY, &mut shapes);
         // Per axis: 1 line + 1 circle + letter strokes (X=2, Y=3, Z=3).
         assert_eq!(shapes.len(), 3 + 3 + (2 + 3 + 3));
+    }
+
+    #[test]
+    fn draws_over_every_host_z_order() {
+        let mut shapes = Vec::new();
+        build_axes_overlays(800.0, 600.0, glam::Quat::IDENTITY, &mut shapes);
+        // Every part sits above the host's range, and the nearest axis's
+        // letter is the topmost part without wrapping round.
+        assert!(shapes.iter().all(|s| s.z_order >= AXES_Z_BASE));
+        assert_eq!(
+            shapes.iter().map(|s| s.z_order).max(),
+            Some(AXES_Z_BASE + 2 * AXIS_Z_STRIDE + 2)
+        );
     }
 
     #[test]

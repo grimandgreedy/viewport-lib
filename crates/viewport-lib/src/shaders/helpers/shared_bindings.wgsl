@@ -18,7 +18,8 @@ struct Camera {
     inv_proj:      mat4x4<f32>,
     // Viewport in physical pixels: width, height, 1 / width, 1 / height.
     viewport:      vec4<f32>,
-    // Near, far, 1 when orthographic (0 when perspective), reserved.
+    // Near, far, 1 when orthographic (0 when perspective), and the target's
+    // device pixels per point (0 where a pass does not set it).
     clip:          vec4<f32>,
     // Frame time: seconds as f32, the remainder f32 drops from the f64
     // seconds, delta seconds, frame index modulo 2^24.
