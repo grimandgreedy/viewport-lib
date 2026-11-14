@@ -524,6 +524,16 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// An overlay fill function could not be registered: its name is not a
+    /// fresh WGSL identifier, its body defines no `fill` function, or the
+    /// overlay shaders it composes into fail validation. The reason names
+    /// which.
+    #[error("overlay fill invalid: {reason}")]
+    OverlayFillInvalid {
+        /// What was wrong, with the validator message where there is one.
+        reason: String,
+    },
+
     /// A plugin's `install` needed a piece the install context did not carry,
     /// most often a `ViewportRuntime` on a host that does not use one. The
     /// message names what was missing.
@@ -531,6 +541,15 @@ pub enum ViewportError {
     PluginInstallMissing {
         /// Name of the missing piece, e.g. "a ViewportRuntime".
         needed: &'static str,
+    },
+
+    /// A feature's `uninstall` cannot take out what it installed. Returned in
+    /// place of `Ok(())` so a removal that did nothing does not read as one
+    /// that worked.
+    #[error("{feature} cannot be uninstalled")]
+    PluginUninstallUnsupported {
+        /// Name of the feature.
+        feature: &'static str,
     },
 
     /// Content was uploaded for, or freed from, an item type whose plugin is

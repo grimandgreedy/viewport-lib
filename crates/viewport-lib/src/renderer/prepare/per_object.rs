@@ -8,7 +8,7 @@ use super::*;
 /// the caller. Shared by every packer so the two draw paths cannot drift.
 pub(crate) fn build_instance_record(
     resources: &DeviceResources,
-    item: &SceneRenderItem,
+    item: &MeshItem,
     mesh: Option<&crate::resources::GpuMesh>,
     wireframe_mode: bool,
     light_probe_index: Option<u32>,
@@ -94,11 +94,7 @@ pub(crate) fn build_instance_record(
     let backface_pattern_scale = match m.backface_policy {
         crate::scene::material::BackfacePolicy::Pattern(cfg) => {
             let world_extent = mesh
-                .map(|m| {
-                    m.aabb
-                        .transformed(&item.model.to_mat4())
-                        .longest_side()
-                })
+                .map(|m| m.aabb.transformed(&item.model.to_mat4()).longest_side())
                 .unwrap_or(1.0)
                 .max(1e-6);
             cfg.scale / world_extent
@@ -188,7 +184,7 @@ pub(crate) fn build_instance_record(
 /// for consumers that never call `set_light_probes`.
 pub(super) fn prepare_light_probe_sh(
     resources: &DeviceResources,
-    scene_items: &[SceneRenderItem],
+    scene_items: &[MeshItem],
     queue: &crate::gpu::Queue,
     origin: &crate::renderer::origin::OriginState,
 ) -> Vec<Option<u32>> {
@@ -248,16 +244,19 @@ impl ViewportRenderer {
     /// keyed cache over a second list would collide with the scene items'
     /// entries. `entries` is index-aligned with `items`; an entry whose mesh
     /// is missing keeps `bind_group: None` and the draw path skips it.
-    pub(super) fn prepare_foreground_objects(
+    ///
+    /// Also used for a viewport's painter surfaces, which keep their own
+    /// records the same way.
+    pub(in crate::renderer) fn prepare_foreground_objects<'i>(
         resources: &mut DeviceResources,
         entries: &mut Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
-        items: &[SceneRenderItem],
+        items: impl ExactSizeIterator<Item = &'i MeshItem>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
         entries.truncate(items.len());
         let uniform_size = std::mem::size_of::<InstanceData>() as u64;
-        for (idx, item) in items.iter().enumerate() {
+        for (idx, item) in items.enumerate() {
             if entries.len() <= idx {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("foreground_object_uniform"),
@@ -428,6 +427,7 @@ impl ViewportRenderer {
             self.resources.material_plugin_epoch.hash(&mut h);
             self.resources.force_po_discard.hash(&mut h);
             self.resources.mesh_universal.hash(&mut h);
+            self.resources.frame_features.hash(&mut h);
             Some(h.finish())
         };
 

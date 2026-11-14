@@ -535,7 +535,7 @@ fn a_warmed_mc_type_builds_nothing_on_its_first_frame() {
         };
         frame.effects.lighting.lights = vec![light];
         frame.effects.lighting.shadows.enabled = true;
-        let mut inner = viewport_lib::SceneRenderItem::default();
+        let mut inner = viewport_lib::MeshItem::default();
         inner.mesh_id = box_id;
         frame.scene.surfaces = viewport_lib::SurfaceSubmission::Flat(vec![inner].into());
 

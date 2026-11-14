@@ -25,6 +25,7 @@ pub mod material;
 pub mod notice;
 pub mod overlay;
 pub mod plugin;
+pub mod presentation;
 pub mod render_item;
 pub mod scene;
 pub mod tier;

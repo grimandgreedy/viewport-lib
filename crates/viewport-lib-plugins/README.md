@@ -209,7 +209,7 @@ One item struct behind **two stores**, because a batch of billboards and a set o
 
 `SurfaceLicItem`, with `SurfaceLicConfig`.
 
-Line integral convolution: streaks along a vector field on a mesh, the dense counterpart to arrow glyphs. The field is a `VertexVector` attribute the mesh was uploaded with, named on the item. The item draws no surface of its own; it modulates the colour of whatever is on screen where the mesh is the visible surface, so submit it beside the `SceneRenderItem` that draws the same `MeshId`, with the same transform. A surface in front of the mesh is left alone.
+Line integral convolution: streaks along a vector field on a mesh, the dense counterpart to arrow glyphs. The field is a `VertexVector` attribute the mesh was uploaded with, named on the item. The item draws no surface of its own; it modulates the colour of whatever is on screen where the mesh is the visible surface, so submit it beside the `MeshItem` that draws the same `MeshId`, with the same transform. A surface in front of the mesh is left alone.
 
 `strength` is per item. `steps` and `step_size` come from the first visible item in the frame, because every flow surface is advected in one fullscreen pass. Only the HDR render path draws it, and it registers after decals so a decal on a flow surface takes the streaks too.
 
@@ -217,7 +217,7 @@ Line integral convolution: streaks along a vector field on a mesh, the dense cou
 
 `SurfaceContourItem`, with `ContourLevels`.
 
-Contour lines of a scalar field on a mesh, found per pixel in a fragment shader. The field is a per-vertex scalar attribute the mesh was uploaded with (`Vertex`, or `Cell` and `Edge` averaged to the vertices), named on the item, and it need not be the one that colours the surface. Submit the item beside the `SceneRenderItem` that draws the same `MeshId`, with the same transform; the lines are depth-tested against that surface. For a volume mesh, name its `boundary_mesh_id` and a `node_scalars` entry.
+Contour lines of a scalar field on a mesh, found per pixel in a fragment shader. The field is a per-vertex scalar attribute the mesh was uploaded with (`Vertex`, or `Cell` and `Edge` averaged to the vertices), named on the item, and it need not be the one that colours the surface. Submit the item beside the `MeshItem` that draws the same `MeshId`, with the same transform; the lines are depth-tested against that surface. For a volume mesh, name its `boundary_mesh_id` and a `node_scalars` entry.
 
 `ContourLevels::Values` draws a line at each listed value, up to `MAX_CONTOUR_LEVELS` (32); `ContourLevels::Spaced` draws one every `interval` from `origin`, with no limit. `width` is in logical pixels. A static field costs one extra draw of the mesh a frame; a changing one is `replace_attribute` on the mesh. Draws on both render paths.
 
@@ -289,13 +289,13 @@ One wgpu leg, matching the viewport-lib the crate is built against: `wgpu27` (th
 One feature per module, both on by default: `item-types` and `deformers`. A dependent on a non-default wgpu leg turns default features off, so it names the modules it wants beside the leg:
 
 ```toml
-viewport-lib-plugins = { version = "0.1", default-features = false, features = ["wgpu29", "item-types", "deformers"] }
+viewport-lib-plugins = { version = "0.2", default-features = false, features = ["wgpu29", "item-types", "deformers"] }
 ```
 
 `gpu` holds the plugins themselves: stores, pipelines, shaders and the upload calls. It is on by default and every wgpu leg turns it on. Without it the crate builds only the data types a consumer constructs, against viewport-lib-types and viewport-lib-geometry, with neither viewport-lib nor wgpu in the tree. That is for code that names the types without drawing them, such as a file loader, a scene format or an ECS:
 
 ```toml
-viewport-lib-plugins = { version = "0.1", default-features = false, features = ["item-types"] }
+viewport-lib-plugins = { version = "0.2", default-features = false, features = ["item-types"] }
 ```
 
 Every item type's data builds this way: the item structs, the data they upload, their option enums and their handles. What needs `gpu` is anything that holds a GPU resource or reads the renderer's own state: `ExternalInstanceSetConfig`, `PointCloudItem::from_debug_draw` and `VolumeItem::region`, plus the deformers. `scripts/check_plugin_types.sh` checks that the data-only build stays free of viewport-lib and wgpu.

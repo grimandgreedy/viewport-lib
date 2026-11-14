@@ -50,8 +50,8 @@ use viewport_lib::vplg::volume::grid::VolumeData;
 use viewport_lib::vplg::volume::marching_cubes::extract_isosurface;
 use viewport_lib::{
     Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LabelItem,
-    Material, MaterialId, MeshId, MouseButton, OrbitCameraController, OverlayFill, OverlayShape,
-    OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, SceneRenderItem, Tier,
+    Material, MaterialId, MeshId, MeshItem, MouseButton, OrbitCameraController, OverlayFill,
+    OverlayShape, OverlayShapeItem, PickAccelerator, RendererConfig, Scene, SceneFrame, Tier,
     ViewportContext, ViewportError, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
 };
 use winit::application::ApplicationHandler;
@@ -157,7 +157,7 @@ struct State {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
     /// Kept so a click can re-run a pick against the same geometry.
     accelerator: PickAccelerator,
     mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
@@ -428,7 +428,7 @@ async fn build_state(window: Arc<Window>) -> State {
             .resources_mut()
             .upload_material(Material::from_colour(Colour::linear_rgb(0.35, 0.72, 0.95)))
             .expect("upload material");
-        scene_items.push(SceneRenderItem::new(mesh_id, material));
+        scene_items.push(MeshItem::new(mesh_id, material));
         mesh_id
     } else {
         match renderer.resources_mut().upload_mesh_data(&device, &mesh) {

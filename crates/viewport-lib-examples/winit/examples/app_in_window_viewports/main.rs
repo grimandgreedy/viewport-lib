@@ -122,7 +122,7 @@ fn main() {
                 .with_title("viewport-lib : two viewports in one window")
                 .with_window_size(1200, 700),
             // The window's own instance is an empty compositor (clears the backdrop).
-            |_vp, _device| {},
+            |_setup| {},
             move |ctx| {
                 let device = ctx.device().clone();
                 let queue = ctx.queue().clone();
@@ -217,9 +217,11 @@ fn main() {
                     );
                 }
                 if panes.left.as_ref().is_some_and(|p| p.blit.is_none()) {
-                    let blit = ctx
-                        .renderer_mut()
-                        .create_blit(&device, panes.left.as_ref().unwrap().target.render_view());
+                    let blit = ctx.renderer_mut().create_blit(
+                        &device,
+                        panes.left.as_ref().unwrap().target.render_view(),
+                        vpl::BlitFilter::Linear,
+                    );
                     panes.left.as_mut().unwrap().blit = Some(blit);
                 }
 
@@ -241,9 +243,11 @@ fn main() {
                     );
                 }
                 if panes.right.as_ref().is_some_and(|p| p.blit.is_none()) {
-                    let blit = ctx
-                        .renderer_mut()
-                        .create_blit(&device, panes.right.as_ref().unwrap().target.render_view());
+                    let blit = ctx.renderer_mut().create_blit(
+                        &device,
+                        panes.right.as_ref().unwrap().target.render_view(),
+                        vpl::BlitFilter::Linear,
+                    );
                     panes.right.as_mut().unwrap().blit = Some(blit);
                 }
             },

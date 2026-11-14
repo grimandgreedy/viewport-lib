@@ -65,7 +65,7 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
         frame.viewport.show_axes_indicator = false;
         frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh_id;
         mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);
@@ -155,7 +155,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_id;
     mat.base_colour = Colour::linear_rgb(1.0, 0.0, 0.0);

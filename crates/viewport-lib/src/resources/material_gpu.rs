@@ -350,7 +350,7 @@ impl ItemShading {
     /// Read the item's shading facts off the item, its material and its
     /// resident mesh.
     pub(crate) fn from_item(
-        item: &crate::renderer::SceneRenderItem,
+        item: &crate::renderer::MeshItem,
         material: &Material,
         mesh: Option<&crate::resources::GpuMesh>,
     ) -> ItemShading {

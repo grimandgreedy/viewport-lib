@@ -190,7 +190,8 @@ fn main() {
                 .with_window_size(1280, 800),
             // The parent's own scene: a ring of bars the children drift over, so
             // there is something recognisable to see through them.
-            |vp, device| {
+            |vp| {
+                let device = &vp.device().clone();
                 let bar = vp
                     .resources_mut()
                     .upload_mesh_data(device, &primitives::cube(1.0))
@@ -277,9 +278,11 @@ fn main() {
                         // `create_blit_composite`, not `create_blit`: this one
                         // builds the premultiplied-blend pipelines, and a plain
                         // blit would replace the parent rather than draw over it.
-                        let blit = ctx
-                            .renderer_mut()
-                            .create_blit_composite(&device, child.target.render_view());
+                        let blit = ctx.renderer_mut().create_blit_composite(
+                            &device,
+                            child.target.render_view(),
+                            vpl::BlitFilter::Linear,
+                        );
                         child.blit = Some(blit);
                     }
                 }

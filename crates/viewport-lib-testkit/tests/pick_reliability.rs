@@ -3,8 +3,8 @@
 //! `MeshInstanceItem` batch.
 
 use viewport_lib::{
-    CameraFrame, Colour, FrameData, Material, MeshId, MeshInstanceItem, PickBackend, PickId,
-    PickMask, RuntimeMode, SceneFrame, SceneRenderItem, SubObjectRef, primitives,
+    CameraFrame, Colour, FrameData, Material, MeshId, MeshInstanceItem, MeshItem, PickBackend,
+    PickId, PickMask, RuntimeMode, SceneFrame, SubObjectRef, primitives,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -58,7 +58,7 @@ fn blocking_picks_hit_on_every_playback_frame() {
         return;
     };
     let mesh = sphere(&mut harness);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.material = harness
         .renderer

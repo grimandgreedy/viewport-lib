@@ -3,7 +3,7 @@
 use super::ViewportInstance;
 use crate::Colour;
 use crate::interaction::input::ViewportContext;
-use crate::runtime::RuntimeFrameContext;
+use crate::runtime::{RuntimeFrameContext, RuntimeOutput};
 use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,
 };
@@ -33,6 +33,36 @@ impl ViewportInstance {
         self.action = self.input.resolve();
         self.assemble();
         &self.frame
+    }
+
+    /// Resolve input, drive the camera with `controller`, assemble the frame,
+    /// then run `inject` against it. The controller first hears the size the
+    /// scene draws at through
+    /// [`CameraController::set_viewport`](crate::CameraController::set_viewport).
+    #[cfg(feature = "app")]
+    pub(crate) fn update_camera_with(
+        &mut self,
+        controller: &mut dyn crate::CameraController,
+        dt: f32,
+        inject: impl FnOnce(&mut FrameData),
+    ) -> &FrameData {
+        self.action = self.input.resolve();
+        let (size, ppp) = self.scene_size();
+        controller.set_viewport(size, ppp);
+        controller.apply(&mut self.camera, &self.action, dt);
+        self.assemble();
+        inject(&mut self.frame);
+        &self.frame
+    }
+
+    /// The size in logical pixels the scene draws at and its device pixels per
+    /// point: the reference size and one under a reference presentation (set
+    /// on [`frame_data_mut`](Self::frame_data_mut)), the viewport's otherwise.
+    fn scene_size(&self) -> ([f32; 2], f32) {
+        match self.frame.reference_size() {
+            Some([w, h]) => ([w as f32, h as f32], 1.0),
+            None => (self.viewport_size, self.pixels_per_point),
+        }
     }
 
     /// Like [`update_orbit`](Self::update_orbit), then run `inject` against the
@@ -73,17 +103,29 @@ impl ViewportInstance {
     }
 
     /// Step the attached runtime by `dt` seconds, writing simulated transforms
-    /// back into the scene. No-op when no runtime is attached. Call before the
-    /// per-frame camera update so assembly reads the stepped scene.
+    /// back into the scene, and return the step's output. Call before the
+    /// per-frame camera update so assembly reads the stepped scene. `dt` is
+    /// also what the runtime's GPU plugins get as `GpuFrameContext::dt` on
+    /// the next render (0 until this is first called). With no runtime
+    /// attached this does nothing and returns an empty output.
+    ///
+    /// Transform and selection ops are already applied. The events are this
+    /// step's only and are for the host to read or drain, as after
+    /// [`ViewportRuntime::step`](crate::ViewportRuntime::step): for example
+    /// `SkinnedPoseUpdate`s for a skinned actor feature's handle to upload,
+    /// and the camera follow target and commands for
+    /// [`apply_camera_commands`](crate::runtime::apply_camera_commands).
+    /// Ignoring the output is fine for a runtime with neither.
     ///
     /// The per-frame drive lives here rather than on
     /// [`runtime_mut`](Self::runtime_mut) because `step` needs the scene and
     /// selection at the same time as the runtime, which only works as disjoint
     /// borrows of the session's own fields.
-    pub fn step_runtime(&mut self, dt: f32) {
+    pub fn step_runtime(&mut self, dt: f32) -> RuntimeOutput {
         let Some(runtime) = self.runtime.as_mut() else {
-            return;
+            return RuntimeOutput::default();
         };
+        self.runtime_dt = dt;
         let pointer = self.action.pointer;
         let mut ctx = RuntimeFrameContext {
             dt,
@@ -99,7 +141,7 @@ impl ViewportInstance {
             ..Default::default()
         };
         ctx.pick_hit = None;
-        let _output = runtime.step(&mut self.scene, &mut self.selection, &ctx);
+        runtime.step(&mut self.scene, &mut self.selection, &ctx)
     }
 
     /// Rebuild the per-frame sub-frames of the retained [`FrameData`].
@@ -110,7 +152,9 @@ impl ViewportInstance {
     /// re-stamped; and `overlays` are cleared so the host re-injects per-frame
     /// overlays and direct items after this call, before rendering.
     fn assemble(&mut self) {
-        let [w, h] = self.viewport_size;
+        // The scene's aspect, which is the reference size's when the viewport
+        // presents at one.
+        let ([w, h], _) = self.scene_size();
         self.camera.set_aspect_ratio(w, h);
         self.frame.camera = CameraFrame::from_camera(&self.camera, self.viewport_size)
             .with_pixels_per_point(self.pixels_per_point);

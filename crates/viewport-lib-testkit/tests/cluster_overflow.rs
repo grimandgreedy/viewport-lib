@@ -1,26 +1,26 @@
-//! Cluster light-index overflow must stay deterministic and drop no light.
+//! Crowded clusters must stay deterministic and drop no light.
 //!
-//! Every cluster owns a fixed slice of the light index list. A cluster whose
-//! light demand exceeds the slice shades its fragments with the full light
-//! array instead, so a crowded cell renders the same as the unclustered path
-//! and no other cluster is affected.
+//! Every cluster holds a bitmask over the light array, so a cell reached by
+//! more lights than the old fixed 64-entry list held still shades with every
+//! one of them, renders the same as the unclustered path, and leaves every
+//! other cluster alone.
 
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
-/// A frame whose lights all overlap the view region, so per-cluster demand
-/// far exceeds the per-cluster index capacity.
+/// A frame whose lights all overlap the view region, so cells hold far more
+/// than 64 lights each.
 fn overflow_frame(h: &mut Harness, lights: usize) -> FrameData {
     let ground_id = h
         .renderer
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::heightfield(32, 32, 60.0, 1.0))
         .expect("ground");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
@@ -83,17 +83,16 @@ fn overflowing_clusters_render_deterministically() {
         "test premise: 200 lights must run the clustered path"
     );
     assert!(
-        stats.max_punctual > 64,
-        "test premise: per-cluster demand must exceed the slice capacity; got {}",
+        stats.max_punctual > 128,
+        "test premise: some cell must hold more than 128 lights; got {}",
         stats.max_punctual
     );
-    assert!(
-        stats.dropped_punctual_slots > 0,
-        "overflowing clusters must report the cells that fell back"
+    assert_eq!(
+        stats.dropped_punctual_slots, 0,
+        "a cell holds every light that reaches it"
     );
-    // Every cluster that wanted lights got some: with fixed slices no cluster
-    // can be starved to zero by another, so slots used covers all non-empty
-    // cells (each kept at least min(demand, capacity) > 0 lights).
+    // Every cluster that wanted lights holds them: no cluster can be starved
+    // to zero by another, so the lights held cover all non-empty cells.
     assert!(
         stats.total_index_slots_used >= stats.non_empty_cells,
         "no populated cluster may end up with an empty light list; {} slots over {} cells",
@@ -120,8 +119,8 @@ fn assert_matches_unclustered(h: &mut Harness, mut fd: FrameData, scene: &str) {
     let clustered = h.render(&fd, 200, 150);
     let stats = h.renderer.cluster_stats().expect("stats requested");
     assert!(
-        !stats.fallback_active && stats.dropped_punctual_slots > 0,
-        "test premise ({scene}): the clustered path must run with overflowing cells"
+        !stats.fallback_active && stats.max_punctual > 64 && stats.dropped_punctual_slots == 0,
+        "test premise ({scene}): the clustered path must run with cells over 64 lights, dropping none"
     );
 
     fd.effects.debug.force_cluster_fallback = true;
@@ -157,7 +156,7 @@ fn ranked_last_frame(h: &mut Harness, with_bright: bool) -> FrameData {
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::heightfield(32, 32, 60.0, 0.0))
         .expect("ground");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
@@ -224,8 +223,8 @@ fn light_past_slice_capacity_still_shades() {
     let lit = h.render(&fd, 200, 150);
     let stats = h.renderer.cluster_stats().expect("stats requested");
     assert!(
-        !stats.fallback_active && stats.max_punctual > 64 && stats.dropped_punctual_slots > 0,
-        "test premise: 71 lights must run the clustered path with overflowing cells"
+        !stats.fallback_active && stats.max_punctual > 64 && stats.dropped_punctual_slots == 0,
+        "test premise: 71 lights must run the clustered path with cells over 64 lights"
     );
 
     let without = ranked_last_frame(&mut h, false);

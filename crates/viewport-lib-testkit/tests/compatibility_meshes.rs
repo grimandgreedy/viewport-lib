@@ -10,7 +10,7 @@
 use std::path::Path;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, Camera, Colour, FrameData,
-    Material, MaterialId, RenderCamera, SceneRenderItem, SurfaceSubmission, Tier,
+    Material, MaterialId, MeshItem, RenderCamera, SurfaceSubmission, Tier,
 };
 use viewport_lib_testkit::golden::{self, GoldenMode, Outcome, RgbaImage, Tolerance};
 use viewport_lib_testkit::{DeviceProfile, Harness, catalogue, frame_for};
@@ -32,7 +32,7 @@ fn scene_camera() -> Camera {
     camera
 }
 
-fn frame(items: Vec<SceneRenderItem>) -> FrameData {
+fn frame(items: Vec<MeshItem>) -> FrameData {
     let camera = scene_camera();
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&camera);
@@ -44,8 +44,8 @@ fn frame(items: Vec<SceneRenderItem>) -> FrameData {
     frame
 }
 
-fn item(mesh_id: viewport_lib::MeshId, material: MaterialId, at: [f32; 3]) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+fn item(mesh_id: viewport_lib::MeshId, material: MaterialId, at: [f32; 3]) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = material;
     item.model = glam::Mat4::from_translation(glam::Vec3::from(at)).into();
@@ -425,7 +425,7 @@ fn compatibility_tier_draws_mesh_wireframes() {
         let _ = render(harness, &frame);
         render(harness, &frame)
     };
-    let surfaces = |frame: &mut FrameData, f: &dyn Fn(&mut SceneRenderItem)| {
+    let surfaces = |frame: &mut FrameData, f: &dyn Fn(&mut MeshItem)| {
         let SurfaceSubmission::Flat(items) = &frame.scene.surfaces else {
             panic!("the catalogue submits flat surfaces");
         };

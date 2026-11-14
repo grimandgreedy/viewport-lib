@@ -6,13 +6,13 @@
 
 use viewport_lib::Colour;
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame};
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_plugins::item_types::point_cloud::{PointCloudItem, PointCloudRefItem};
 use viewport_lib_plugins::item_types::volume::VolumeItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
-fn mesh_frame(item: SceneRenderItem, size: [f32; 2]) -> FrameData {
+fn mesh_frame(item: MeshItem, size: [f32; 2]) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 6.0, 0.6, 1.0);
     FrameData::new(
         CameraFrame::from_camera(&camera, size),
@@ -48,7 +48,7 @@ fn first_decal_frame_builds_no_pipelines() {
         .expect("mesh upload");
     let tex_id = checker_texture(&mut h);
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = h
         .renderer
@@ -93,7 +93,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
         .expect("mesh upload");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = h
         .renderer
@@ -146,7 +146,7 @@ fn volume_pipelines_are_owned_by_the_plugin() {
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
         .expect("mesh upload");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = h
         .renderer
@@ -207,7 +207,7 @@ fn prebuilt_sidecars_render() {
         .resources_mut()
         .prebuild_mesh_debug_sidecars(&h.device, mesh_id);
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = h
         .renderer
@@ -237,7 +237,7 @@ fn curve_pipelines_are_owned_by_the_plugins() {
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
         .expect("mesh upload");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = h
         .renderer

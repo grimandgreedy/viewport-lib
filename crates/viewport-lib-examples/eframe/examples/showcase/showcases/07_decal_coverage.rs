@@ -622,13 +622,13 @@ impl Showcase for DecalCoverageShowcase {
                     centre.y,
                     centre.z + radius * angle.sin(),
                 ]);
-                sizes.push(14.0 + 20.0 * t);
+                sizes.push(7.0 + 10.0 * t);
                 colours.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
             }
             self.sprites.positions = positions.clone();
-            self.sprites.sizes = sizes;
+            self.sprites.sizes = SpriteItem::square_sizes(sizes);
             self.sprites.colours = colours.into_iter().map(Colour::from_linear_array).collect();
-            self.sprites.default_size = 24.0;
+            self.sprites.default_size = 12.0;
             self.sprites.depth_write = true;
             self.sprites.settings.pick_id = PickId(SPRITE);
             self.instance_lookup.insert(SPRITE, positions);
@@ -1004,7 +1004,7 @@ impl Showcase for DecalCoverageShowcase {
             &mut self.meshes_receive,
             "Meshes receive decals (layers 0 to 7)",
         );
-        ui.weak("Only SceneRenderItem has that flag: the other types cannot decline.");
+        ui.weak("Only MeshItem has that flag: the other types cannot decline.");
         ui.add(egui::Slider::new(&mut self.decal_depth, 0.05..=4.0).text("box half-depth (Z)"));
         ui.checkbox(&mut self.tri_planar, "Tri-planar projection");
         ui.weak(

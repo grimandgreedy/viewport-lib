@@ -40,8 +40,8 @@ fn flat(
     mesh: MeshId,
     model: glam::Mat4,
     colour: [f32; 3],
-) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = model.into();
     item.material = upload_material(

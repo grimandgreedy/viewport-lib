@@ -11,7 +11,7 @@
 //! the bindless feature set it also covers the path that carried the bug; the
 //! bindless-specific test below skips where that is unavailable.
 
-use viewport_lib::{Material, MaterialId, SceneRenderItem, TextureData, primitives};
+use viewport_lib::{Material, MaterialId, MeshItem, TextureData, primitives};
 use viewport_lib_testkit::{DeviceProfile, Harness, orbit_camera};
 
 const W: u32 = 96;
@@ -56,7 +56,7 @@ fn shot(
     generation: u64,
 ) -> Vec<u8> {
     let quad = |x: f32| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         item.material = material;

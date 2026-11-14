@@ -20,8 +20,8 @@ use glam::{Mat4, Vec3};
 use std::collections::HashMap;
 use viewport_lib::Colour;
 use viewport_lib::{
-    Aabb, BackfacePolicy, Camera, CameraFrame, FrameData, Frustum, Material, MeshId,
-    PickAccelerator, Scene, SceneFrame, SceneRenderItem, primitives,
+    Aabb, BackfacePolicy, Camera, CameraFrame, FrameData, Frustum, Material, MeshId, MeshItem,
+    PickAccelerator, Scene, SceneFrame, primitives,
 };
 use viewport_lib_testkit::{Harness, meshes};
 
@@ -121,17 +121,13 @@ fn bench_upload(c: &mut Criterion) {
 /// Build a scene of `count` cubes. When `instanced` they share one mesh and
 /// material (one batch); otherwise each carries a styled back-face policy that
 /// forces the per-object path.
-fn cube_scene(
-    mesh: MeshId,
-    material: viewport_lib::MaterialId,
-    count: usize,
-) -> Vec<SceneRenderItem> {
+fn cube_scene(mesh: MeshId, material: viewport_lib::MaterialId, count: usize) -> Vec<MeshItem> {
     let side = (count as f64).cbrt().ceil() as i32;
     let mut items = Vec::with_capacity(count);
     'outer: for x in 0..side {
         for y in 0..side {
             for z in 0..side {
-                let mut it = SceneRenderItem::default();
+                let mut it = MeshItem::default();
                 it.mesh_id = mesh;
                 it.model =
                     Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5).into();

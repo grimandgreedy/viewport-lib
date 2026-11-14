@@ -27,8 +27,8 @@ use viewport_lib::plugin_api::Uploads;
 use viewport_lib::vplg::volume::grid::VolumeData;
 use viewport_lib::wgpu;
 use viewport_lib::{
-    CameraFrame, ClipObject, Colour, ColourSource, ColourmapId, Material, MeshId, PolylineItem,
-    SceneFrame, SceneRenderItem, SizeSource, SurfaceSubmission, primitives,
+    CameraFrame, ClipObject, Colour, ColourSource, ColourmapId, Material, MeshId, MeshItem,
+    PolylineItem, SceneFrame, SizeSource, SurfaceSubmission, primitives,
 };
 use viewport_lib_plugins::item_types::curves::TubeItem;
 use viewport_lib_plugins::item_types::gaussian_splat::{
@@ -469,7 +469,7 @@ const CPU_PICKED: [&str; 3] = ["surface mesh", "GPU implicit", "Gaussian splats"
 
 fn surface(mesh: MeshId) -> Scene {
     Box::new(move |ignore_clip: bool| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.settings.colour = Some(Colour::linear_rgb(0.6, 0.6, 0.7));
         item.settings.pick_id = PickId(ID);

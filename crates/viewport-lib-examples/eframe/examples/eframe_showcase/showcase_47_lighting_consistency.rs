@@ -40,7 +40,7 @@ use viewport_lib_plugins::item_types::{
 };
 use vpl::{
     ColourmapId, FrameData, ItemSettings, LightSource, LightingSettings, Material, MeshId,
-    PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeMeshItem, VolumeTransparency,
+    MeshItem, PolylineItem, ViewportRenderer, VolumeId, VolumeMeshItem, VolumeTransparency,
 };
 
 use crate::App;
@@ -412,9 +412,7 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
 // Scene-item collection (mesh-family items via Scene).
 // ---------------------------------------------------------------------------
 
-pub(crate) fn lc_collect_scene_items(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn lc_collect_scene_items(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     // When the second-light rotate toggle is on, advance the anim time by a
     // fixed step per frame. Wall-clock dt isn't readily available here, so
     // 0.02 rad/frame keeps the motion subtle and consistent.

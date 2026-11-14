@@ -25,7 +25,45 @@ impl DeviceResources {
         if self.pick.camera_bgl.is_none() {
             self.create_pick_layouts(device);
         }
+        let pipeline = self.build_object_pick_pipeline(
+            device,
+            "pick_pipeline",
+            true,
+            crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
+        );
+        self.pick.pipeline = Some(pipeline);
+    }
 
+    /// Lazily create the object pick pipeline's painter twin: the same shader,
+    /// testing the pick depth with `LessEqual` without writing it, so mesh
+    /// content drawn in the painter sequence picks in that order. Built the
+    /// first time a pick meets painter-placed meshes.
+    pub(crate) fn ensure_pick_painter_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.painter_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+        if self.pick.camera_bgl.is_none() {
+            self.create_pick_layouts(device);
+        }
+        let pipeline = self.build_object_pick_pipeline(
+            device,
+            "pick_painter_pipeline",
+            false,
+            crate::plugin_api::depth::DEPTH_COMPARE,
+        );
+        self.pick.painter_pipeline = Some(pipeline);
+    }
+
+    /// The object pick pipeline over the registered deformers, with the given
+    /// depth state. The pick layouts must exist.
+    fn build_object_pick_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        depth_write: bool,
+        depth_compare: crate::gpu::CompareFunction,
+    ) -> crate::gpu::RenderPipeline {
         // The object pick runs the registered deformers, so a deformed mesh is
         // picked where it is drawn and a deformer's `keep` removes surface from
         // the pick as it does from the colour pass. Composed like the other mesh
@@ -80,10 +118,10 @@ impl DeviceResources {
             }],
         };
 
-        let pipeline = crate::resources::builders::render_pipeline(
+        crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
-                label: "pick_pipeline",
+                label,
                 layout: &layout,
                 vertex_module: &shader,
                 vertex_entry: "vs_main",
@@ -121,8 +159,8 @@ impl DeviceResources {
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     self.scene_depth_format(),
-                    true,
-                    crate::plugin_api::depth::DEPTH_COMPARE_STRICT,
+                    depth_write,
+                    depth_compare,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: 1, // pick pass is always 1x (no MSAA)
@@ -130,9 +168,7 @@ impl DeviceResources {
                 },
                 cache: None,
             },
-        );
-
-        self.pick.pipeline = Some(pipeline);
+        )
     }
 
     /// The group 0 and group 1 layouts every surface pick pipeline shares.

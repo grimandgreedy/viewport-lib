@@ -88,44 +88,51 @@ impl PipelineKey {
 /// a family are built universal, and a draw whose set is not built yet draws
 /// the universal member while it compiles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
-pub(crate) struct FeatureSet(u16);
+pub(crate) struct FeatureSet(u32);
 
 impl FeatureSet {
     /// The mesh's sidecar record: the override windows and every stream read.
-    pub const RECORD: u16 = 1;
+    pub const RECORD: u32 = 1;
     /// The scalar or face-colour stream, the LUT and NaN colour, face colours.
-    pub const COLOUR_STREAM: u16 = 2;
+    pub const COLOUR_STREAM: u32 = 2;
     /// The warp stream.
-    pub const WARP: u16 = 4;
+    pub const WARP: u32 = 4;
     /// The position and normal override buffers.
-    pub const OVERRIDES: u16 = 8;
+    pub const OVERRIDES: u32 = 8;
     /// Lightmap UVs and sampling, the shadowmask, the subtractive mode.
-    pub const LIGHTMAP: u16 = 16;
+    pub const LIGHTMAP: u32 = 16;
     /// Matcap shading.
-    pub const MATCAP: u16 = 32;
+    pub const MATCAP: u32 = 32;
     /// The deformer hooks.
-    pub const DEFORM: u16 = 64;
+    pub const DEFORM: u32 = 64;
     /// The emissive map: its slot lookup and sample. A material without one
     /// adds its emissive colour and custom data only.
-    pub const EMISSIVE_MAP: u16 = 128;
+    pub const EMISSIVE_MAP: u32 = 128;
     /// The second UV set: the uv1 stream read and the per-slot choice between
     /// the two sets. Off, every slot samples uv0.
-    pub const UV1: u16 = 1 << 8;
+    pub const UV1: u32 = 1 << 8;
     /// The per-slot UV offset, scale and rotation. Off, every slot samples
     /// the mesh UV as it is.
-    pub const UV_TRANSFORM: u16 = 1 << 9;
+    pub const UV_TRANSFORM: u32 = 1 << 9;
     /// Light-probe indirect diffuse. Off, the environment's specular is not
     /// held past the ambient block for a probe to keep.
-    pub const LIGHT_PROBE: u16 = 1 << 10;
+    pub const LIGHT_PROBE: u32 = 1 << 10;
     /// The clear coat layer.
-    pub const CLEARCOAT: u16 = 1 << 11;
+    pub const CLEARCOAT: u32 = 1 << 11;
     /// The sheen layer.
-    pub const SHEEN: u16 = 1 << 12;
+    pub const SHEEN: u32 = 1 << 12;
     /// The anisotropic base specular lobe.
-    pub const ANISOTROPY: u16 = 1 << 13;
+    pub const ANISOTROPY: u32 = 1 << 13;
     /// Transmission: the diffuse lobe gives way to light refracted through
-    /// the surface. Bit 15 is the one left in the set.
-    pub const TRANSMISSION: u16 = 1 << 14;
+    /// the surface.
+    pub const TRANSMISSION: u32 = 1 << 14;
+    /// The PCSS blocker search and filter, for the cascades and the point and
+    /// spot lights. Set from the frame's shadow filter, not from a record:
+    /// off, a PCSS filter setting draws with PCF.
+    pub const SHADOW_PCSS: u32 = 1 << 15;
+    /// Point and spot light shadow sampling. Set when the frame places any
+    /// punctual shadow layer: off, every point and spot light is unshadowed.
+    pub const PUNCTUAL_SHADOWS: u32 = 1 << 16;
 
     /// Every feature compiled out.
     pub const NONE: Self = Self(0);
@@ -141,7 +148,7 @@ impl FeatureSet {
     };
 
     /// The WGSL constant each bit sets.
-    const CONSTANTS: &'static [(u16, &'static str)] = &[
+    const CONSTANTS: &'static [(u32, &'static str)] = &[
         (Self::RECORD, "FEAT_RECORD"),
         (Self::COLOUR_STREAM, "FEAT_COLOUR_STREAM"),
         (Self::WARP, "FEAT_WARP"),
@@ -157,17 +164,23 @@ impl FeatureSet {
         (Self::SHEEN, "FEAT_SHEEN"),
         (Self::ANISOTROPY, "FEAT_ANISOTROPY"),
         (Self::TRANSMISSION, "FEAT_TRANSMISSION"),
+        (Self::SHADOW_PCSS, "FEAT_SHADOW_PCSS"),
+        (Self::PUNCTUAL_SHADOWS, "FEAT_PUNCTUAL_SHADOWS"),
     ];
 
-    pub fn bits(self) -> u16 {
+    /// The bits a set can hold, so a pipeline-slot key can pack a member
+    /// index above them.
+    pub const BITS: u32 = 17;
+
+    pub fn bits(self) -> u32 {
         self.0
     }
 
-    pub fn has(self, bit: u16) -> bool {
+    pub fn has(self, bit: u32) -> bool {
         self.0 & bit != 0
     }
 
-    pub fn with(self, bit: u16, on: bool) -> Self {
+    pub fn with(self, bit: u32, on: bool) -> Self {
         if on { Self(self.0 | bit) } else { self }
     }
 
@@ -239,6 +252,21 @@ impl FeatureSet {
 mod feature_set_tests {
     use super::FeatureSet;
     use crate::resources::mesh::instancing::{InstanceData, instance_flags};
+
+    #[test]
+    fn the_shadow_features_come_from_the_frame_not_the_record() {
+        let mut inst: InstanceData = bytemuck::Zeroable::zeroed();
+        inst.flags = u32::MAX;
+        let from_record = FeatureSet::of_record(&inst, [u32::MAX; 4]);
+        assert!(!from_record.has(FeatureSet::SHADOW_PCSS));
+        assert!(!from_record.has(FeatureSet::PUNCTUAL_SHADOWS));
+        assert!(FeatureSet::UNIVERSAL.has(FeatureSet::SHADOW_PCSS));
+        assert!(FeatureSet::UNIVERSAL.has(FeatureSet::PUNCTUAL_SHADOWS));
+        let names: Vec<_> = FeatureSet::NONE.constants().into_iter().map(|(n, _)| n).collect();
+        assert!(names.contains(&"FEAT_SHADOW_PCSS"));
+        assert!(names.contains(&"FEAT_PUNCTUAL_SHADOWS"));
+        assert!(FeatureSet::UNIVERSAL.bits() < 1 << FeatureSet::BITS);
+    }
 
     #[test]
     fn only_a_record_with_a_light_probe_needs_the_probe_feature() {

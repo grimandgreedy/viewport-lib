@@ -346,7 +346,7 @@ impl crate::resources::DeviceResources {
     /// Set the screen size, as a fraction of viewport height, below which
     /// objects in this group stop drawing. `None` disables size culling.
     ///
-    /// Applies to both `SceneRenderItem`s and individual `MeshInstanceItem`
+    /// Applies to both `MeshItem`s and individual `MeshInstanceItem`
     /// instances that use the group.
     ///
     /// # Errors
@@ -401,7 +401,7 @@ impl crate::resources::DeviceResources {
                 });
             }
             // A level swap must not change which material applies where:
-            // `SceneRenderItem::submesh_materials` is indexed by range, so
+            // `MeshItem::submesh_materials` is indexed by range, so
             // every level needs the same range count as level 0.
             let submeshes = self.mesh_store.get(mesh).map_or(0, |m| m.submeshes.len());
             if submeshes != base_submeshes {

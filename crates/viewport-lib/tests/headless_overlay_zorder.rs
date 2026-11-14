@@ -17,7 +17,7 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem, PolylineCap};
+use viewport_lib::{LineCap, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem};
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
 fn overlay_frame(size: u32) -> FrameData {
@@ -43,7 +43,7 @@ fn overlapping_items(shape_z: i32, poly_z: i32) -> (OverlayShapeItem, OverlayPol
         .with_z_order(shape_z);
     let poly = OverlayPolylineItem::new(vec![[16.0, 32.0], [48.0, 32.0]])
         .with_thickness(32.0)
-        .with_cap(PolylineCap::Square)
+        .with_cap(LineCap::Square)
         .with_colour(Colour::linear(0.0, 0.0, 1.0, 1.0))
         .with_z_order(poly_z);
     (shape, poly)

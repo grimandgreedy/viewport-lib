@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use crate::MeshId;
-use crate::error::ViewportResult;
+use crate::error::{ViewportError, ViewportResult};
 use crate::plugin_api::{PluginInstallCtx, PluginInstaller};
 use crate::plugins::skinning::{SkinWeights, SkinnedPoseUpdate, SkinningPlugin};
 use crate::resources::DeviceResources;
@@ -76,8 +76,30 @@ impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
         })
     }
 
+    /// Detach the skin weights and remove the pose plugin. Both are
+    /// attempted; a missing runtime is reported after the weights are
+    /// detached.
     fn uninstall(handle: SkinnedMeshHandle, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<()> {
+        let has_runtime = ctx.runtime.is_some();
         handle.uninstall(ctx);
+        if has_runtime {
+            Ok(())
+        } else {
+            Err(ViewportError::PluginInstallMissing {
+                needed: "a ViewportRuntime for the skinned mesh feature",
+            })
+        }
+    }
+
+    /// Register the skinning deformer on the new renderer and point the
+    /// handle at it. The pose plugin stays on the runtime. Skin weights are
+    /// per mesh and are not restored: attach them to the meshes uploaded
+    /// again.
+    fn reattach_renderer(
+        handle: &mut SkinnedMeshHandle,
+        ctx: &mut PluginInstallCtx<'_>,
+    ) -> ViewportResult<()> {
+        handle.skinning = SkinningPlugin::install(ctx.renderer.resources_mut(), ctx.device)?;
         Ok(())
     }
 }
@@ -326,6 +348,51 @@ mod tests {
             ctx.runtime.as_deref().map(|r| r.plugin_count()),
             Some(0),
             "uninstall removed the pose plugin from the runtime"
+        );
+    }
+
+    #[test]
+    fn reattach_registers_skinning_on_the_new_renderer_only() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        let mut old = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mut runtime = ViewportRuntime::new();
+        let mut handle = crate::plugin_api::install_plugin(
+            SkinnedMeshFeature::new(gpu_skeleton_plugin(MeshId::from_index(0))),
+            &device,
+            &queue,
+            Some(&mut runtime),
+            &mut old,
+        )
+        .expect("install");
+        let plugins = runtime.plugin_ids().collect::<Vec<_>>();
+        drop(old);
+
+        let mut new = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        assert!(
+            new.resources()
+                .deformer_id_by_name("viewport_skin")
+                .is_none()
+        );
+        crate::plugin_api::reattach_plugin::<SkinnedMeshFeature<SkeletonPlugin>>(
+            &mut handle,
+            &device,
+            &queue,
+            Some(&mut runtime),
+            &mut new,
+        )
+        .expect("reattach");
+        assert_eq!(
+            new.resources().deformer_id_by_name("viewport_skin"),
+            Some(handle.skinning().deformer_id())
+        );
+        assert_eq!(
+            runtime.plugin_ids().collect::<Vec<_>>(),
+            plugins,
+            "reattach leaves the pose plugin as it was"
         );
     }
 

@@ -903,7 +903,7 @@ impl DeviceResources {
     /// length must be a multiple of `stride_bytes` and 4.
     ///
     /// The drawn item must select this instance to read it: set the
-    /// `SceneRenderItem`'s (or scene node's) `deform_instance` to the same
+    /// `MeshItem`'s (or scene node's) `deform_instance` to the same
     /// `instance_id`. Attaching data here but leaving `deform_instance` at its
     /// `None` default renders the mesh undeformed with no error.
     pub fn attach_deform_slot_instance(
@@ -1554,6 +1554,21 @@ impl DeviceResources {
             .map(|r| self.scene_tier.deform.id_for_slot(r.slot))
     }
 
+    /// The deformers a host registered with [`Self::register_deformer`], in
+    /// registration order. The in-crate deformers on the reserved slots
+    /// (skinning) are left out: renderer construction registers no deformer,
+    /// and those come back through their own plugin's install.
+    pub(crate) fn host_deformers(&self) -> impl Iterator<Item = (DeformerId, &str)> + '_ {
+        let deform = self.scene_tier.is_built().then(|| &self.scene_tier.deform);
+        deform.into_iter().flat_map(|deform| {
+            deform
+                .registrations
+                .iter()
+                .filter(|r| r.slot < DEFORM_INTERNAL_SLOT_START)
+                .map(move |r| (deform.id_for_slot(r.slot), r.desc.name.as_ref()))
+        })
+    }
+
     /// Build a [`DeformSlotHandle`] for the given deformer. Plugins stash
     /// the handle at registration time and use it to write that slot's
     /// `slot_params` block from contexts (e.g. a `GpuPlugin::pre_prepare`)
@@ -1644,6 +1659,7 @@ impl DeviceResources {
         // The object pick deforms too, so a deformed mesh is picked where it is
         // drawn. Rebuilt on the next pick; its layouts are kept.
         self.pick.pipeline = None;
+        self.pick.painter_pipeline = None;
 
         // The GPU-culled families rebuild through their own `ensure_*` too,
         // which build the bindless twins beside them, so a bindless bind group

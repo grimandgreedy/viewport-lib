@@ -8,7 +8,7 @@
 use viewport_lib::Colour;
 mod common;
 use common::*;
-use viewport_lib::{AttributeData, MeshId, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{AttributeData, MeshId, MeshItem, SurfaceSubmission};
 use viewport_lib_plugins::item_types::surface_lic::SurfaceLicItem;
 
 const SIZE: u32 = 96;
@@ -56,8 +56,8 @@ fn quad_model(x: f32) -> [[f32; 4]; 4] {
 
 /// A flat grey unlit quad at `x`: without streaks every pixel of it is the
 /// same colour.
-fn surface(mesh: MeshId, x: f32) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+fn surface(mesh: MeshId, x: f32) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = quad_model(x).into();
     item.settings.colour = Some(Colour::linear_rgb(0.7, 0.7, 0.7));
@@ -189,7 +189,7 @@ fn streaks_are_clipped_with_the_surface() {
     backdrop.settings.ignore_clip = true;
 
     // Keep x <= 0.5: the flow quad at 0.5 loses its right half.
-    let frame = |items: Vec<SceneRenderItem>, lics: Vec<SurfaceLicItem>| {
+    let frame = |items: Vec<MeshItem>, lics: Vec<SurfaceLicItem>| {
         let mut frame = base_frame();
         frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
         *frame.scene.items_mut::<SurfaceLicItem>() = lics;

@@ -55,7 +55,11 @@ impl PositionedGlyph {
 #[non_exhaustive]
 pub struct GlyphRunItem {
     /// Which font the glyph ids index into, and the size the bitmaps are
-    /// rasterised at. The glyph positions themselves come from `glyphs`.
+    /// rasterised at. The glyph positions themselves come from `glyphs`, in
+    /// the same units as the size: with
+    /// [`TextSizing::World`](crate::overlay::TextSizing::World) the run is
+    /// drawn as if laid out at `size` logical pixels and then scaled to its
+    /// on-screen size, positions included.
     pub text_style: crate::overlay::TextStyle,
 
     /// Where the item hangs from and which point of its own box lands there.
@@ -72,6 +76,15 @@ pub struct GlyphRunItem {
     /// content turns within it. See [`OverlayTransform`](crate::overlay::OverlayTransform) for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
+    ///
+    /// The scale picks the size glyphs are rasterised at, so text scaled 2x
+    /// draws like text at twice the size rather than a magnified copy. An
+    /// axis-aligned item at a uniform scale lands each pen on whole device
+    /// pixels down and the nearest quarter pixel across, rasterising the glyph
+    /// at that quarter. A rotated, stretched or skewed item rasterises at its
+    /// largest stretch with no sub-pixel offset, and its glyphs are resampled
+    /// where they land. Sizes above 48 device pixels rasterise at a nearby
+    /// step and are scaled to fit, so a zoom reuses a bounded set of glyphs.
     pub transform: crate::overlay::OverlayTransform,
     /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///
@@ -148,8 +161,17 @@ impl GlyphRunItem {
         self
     }
 
-    /// Set what the glyphs are filled with: a colour, or a gradient across the
-    /// text box. This is the text colour, and the only source of it.
+    /// Size the text in world units: `height` world units tall, measured as
+    /// `world` says. See [`TextSizing`](crate::overlay::TextSizing).
+    pub fn with_world_size(mut self, height: f32, world: crate::overlay::WorldTextSize) -> Self {
+        self.text_style.size = height;
+        self.text_style.sizing = crate::overlay::TextSizing::World(world);
+        self
+    }
+
+    /// Set what the glyphs are filled with: a colour, or a gradient or an image
+    /// across the run's extent. This is the text colour, and the only source of
+    /// it.
     pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
         self.style.fill = fill;
         self
@@ -241,6 +263,12 @@ impl GlyphRunItem {
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
         self.style.opacity = opacity;
+        self
+    }
+
+    /// Set how the item combines with what is drawn under it.
+    pub fn with_blend(mut self, blend: crate::overlay::OverlayBlend) -> Self {
+        self.style.blend = blend;
         self
     }
 

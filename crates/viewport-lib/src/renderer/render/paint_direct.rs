@@ -54,21 +54,81 @@ impl ViewportRenderer {
             );
         }
         self.report_auto_exposure_on_ldr(frame);
+        // Nor can it be ended to copy the destination for the overlays that
+        // read it.
+        let reads = self
+            .viewport_slots
+            .get(vp_idx)
+            .is_some_and(|s| s.overlay.has_breaks())
+            || self.world_overlays_read(vp_idx);
+        if reads {
+            self.resources.notices.report(
+                crate::notice::NoticeKey::single(
+                    crate::NoticeCategory::Pipeline,
+                    "overlay_destination_reads_on_path",
+                ),
+                crate::Severity::Warning,
+                || crate::NoticeDetail::OverlayDestinationReadsOnPath,
+            );
+        }
+        // An overlays-only frame draws its overlays and nothing else: they
+        // ignore depth, so the host's depth needs no reset.
+        let overlays_only = self.draws_overlays_only(frame);
+        // A host-owned pass cannot be ended for the plugins that encode after
+        // the scene.
+        if !overlays_only {
+            for (name, plugin) in self.item_type_plugins.iter() {
+                if Self::plugin_encodes_at(
+                    frame,
+                    name,
+                    plugin,
+                    crate::plugin_api::EncoderScope::AfterTransparent,
+                    false,
+                ) {
+                    self.resources.notices.report(
+                        crate::notice::NoticeKey::new(
+                            crate::NoticeCategory::Pipeline,
+                            "encode_skipped_on_path",
+                            [crate::notice::name_id(name), 0],
+                        ),
+                        crate::Severity::Warning,
+                        || crate::NoticeDetail::EncodeSkippedOnPath {
+                            plugin: name.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+
         // The host cleared this pass's depth to a value of its own; reset the
         // viewport rect to the renderer's clear value before drawing.
-        if let Some(reset) = &self.resources.post.host_depth_reset_pipeline {
+        if let (false, Some(reset)) = (
+            overlays_only,
+            &self.resources.post.host_depth_reset_pipeline,
+        ) {
             render_pass.set_pipeline(reset);
             render_pass.draw(0..3, 0..1);
         }
-        if self.resources.scene_tier.is_built() {
+        if overlays_only {
+            // Nothing of the scene to draw.
+        } else if self.resources.scene_tier.is_built() {
             self.paint_slot_scene(render_pass, vp_idx, frame);
         } else if let Some(slot) = self.viewport_slots.get(vp_idx) {
             self.paint_compatibility_scene(render_pass, &slot.camera_bind_group, frame);
             emit_outline_composite!(&self.resources, &mut *render_pass, Some(slot));
             self.paint_ldr_sub_highlight(render_pass, vp_idx, &slot.camera_bind_group);
         }
+        // A pass the host owns cannot be ended at a break: no destination
+        // reads, so layers draw with their fallback blend and backdrops are
+        // skipped.
         let ov = &self.viewport_slots[vp_idx].overlay;
-        emit_overlay_2d!(self, ov, render_pass);
+        emit_overlay_segments(
+            &self.resources,
+            ov,
+            render_pass,
+            ov.main_segments(),
+            &OverlayEmit::NO_DESTINATION,
+        );
         // Shadow atlas viewer overlay.
         if let (true, true, Some(pipeline)) = (
             self.resources.scene_tier.is_built(),
@@ -138,6 +198,7 @@ impl ViewportRenderer {
         // Item-type plugin paint (LDR opt-in only): after all built-in scene
         // content, mirroring the HDR scene-pass position.
         self.dispatch_plugin_paint(render_pass, frame, false);
+        self.paint_painters_and_world(render_pass, frame, camera_bg, None);
         // Outline composite after all scene content so translucent layers don't overdraw.
         emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
         // Sub-object highlight: face fill, edge lines, vertex/point sprites.

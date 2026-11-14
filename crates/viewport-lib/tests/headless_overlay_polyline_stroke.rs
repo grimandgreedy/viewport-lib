@@ -3,8 +3,8 @@
 //! `OverlayPolylineItem::stroke` holds the line itself: width, colour, pattern,
 //! joins and caps. `None` means no line at all, which is what a closed polyline
 //! with an interior fill and no outline wants. These tests pin that an absent
-//! stroke draws the fill and nothing else, and that a stroke of zero width is
-//! the same picture.
+//! stroke draws the fill and nothing else, and that a stroke of zero width is a
+//! hairline one device pixel wide.
 //!
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
@@ -48,9 +48,9 @@ fn rgb(px: &[u8], x: u32, y: u32) -> (u8, u8, u8) {
     (px[i], px[i + 1], px[i + 2])
 }
 
-/// No stroke draws the interior fill and leaves the edge alone, and a stroke of
-/// zero width is the same frame: `stroke: None` is how a fill-only polyline is
-/// spelled, and it has to match what a zero-width line already did.
+/// No stroke draws the interior fill and leaves the edge alone: `stroke: None`
+/// is how a fill-only polyline is spelled. A stroke of zero width is a
+/// hairline, which reaches the edge and nothing a pixel past it.
 #[test]
 fn an_absent_stroke_draws_the_fill_and_no_outline() {
     let Some((device, queue)) = headless_device() else {
@@ -82,10 +82,22 @@ fn an_absent_stroke_draws_the_fill_and_no_outline() {
         Colour::linear(1.0, 0.0, 0.0, 1.0),
     )))];
     let zero_px = renderer.render_offscreen(&device, &queue, &zero_frame, SIZE, SIZE);
-    assert_eq!(
-        none_px, zero_px,
-        "an absent stroke and a zero-width one should render the same frame"
+    // The edge at y = 16 falls between pixel rows 15 and 16, so the hairline's
+    // one pixel of weight splits between them; the rows either side of those
+    // are untouched.
+    let (hr, _, _) = rgb(&zero_px, 32, 15);
+    let (nr, _, _) = rgb(&none_px, 32, 15);
+    assert!(
+        hr > nr + 40,
+        "a zero-width stroke should draw a hairline, got r {hr}"
     );
+    for y in [13, 18] {
+        assert_eq!(
+            rgb(&zero_px, 32, y),
+            rgb(&none_px, 32, y),
+            "a hairline reached row {y}"
+        );
+    }
 
     // A real stroke does reach the edge, so the checks above are not passing on
     // an empty frame.

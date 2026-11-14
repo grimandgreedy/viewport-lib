@@ -100,9 +100,14 @@ pub(crate) struct ViewportHdrState {
     pub tone_map_bg_views: Option<[crate::gpu::TextureView; 9]>,
     /// The foreground view the DOF bind group was last built with.
     pub dof_bg_foreground: Option<crate::gpu::TextureView>,
-    /// Scene depth + sampler, handed to plugins that draw in the depth-read pass.
-    pub depth_read_bg:
-        crate::resources::cached_bind_group::CachedBindGroup<crate::gpu::TextureView>,
+    /// Scene depth + sampler, the painter masks and the light layers, handed
+    /// to plugins that draw in the depth-read and painter passes. Keyed on
+    /// the depth view, the mask view and the light view.
+    pub depth_read_bg: crate::resources::cached_bind_group::CachedBindGroup<(
+        crate::gpu::TextureView,
+        crate::gpu::TextureView,
+        crate::gpu::TextureView,
+    )>,
     /// A copy of the scene depth for the depth-read pass to sample, on a device
     /// that cannot sample a depth attachment it binds read-only (wgpu's GL
     /// backend). Allocated the first time that pass runs there.
@@ -202,6 +207,9 @@ pub(crate) struct PickResources {
     /// the primitive channel. Reuses `vertex_mesh_bgl` for group 2. Only built with
     /// SHADER_PRIMITIVE_INDEX.
     pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// `pipeline`'s twin for mesh content drawn in the painter sequence: it
+    /// tests the pick depth without writing it, so the later draw wins.
+    pub(crate) painter_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 /// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.
@@ -316,6 +324,9 @@ pub struct ContentResources {
         crate::resources::handle::SlotStore<GpuProjectedTetMesh, crate::resources::ProjectedTetId>,
     /// Glyph atlas for overlay text rendering (labels and glyph runs).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
+    /// Coverage cells that small and retained vector overlay shapes draw
+    /// their fills from.
+    pub(crate) coverage_atlas: crate::resources::overlay::coverage_atlas::CoverageAtlas,
     /// Textures for overlay shape fills: one-shot uploads (`upload_overlay_texture`)
     /// and reusable streaming textures (`create_streaming_overlay_texture`). Slotted
     /// with generational ids so a freed slot cannot alias a later upload, and the
@@ -599,6 +610,10 @@ pub struct DeviceResources {
     /// The scene draws' layouts, bind groups and textures. Absent on a device
     /// below the full tier, where only the overlay family draws.
     pub(crate) scene_tier: SceneTierSlot,
+    /// Samplers resolved from material sampler keys, on every tier.
+    pub(crate) sampler_palette: crate::resources::material::fallbacks::SamplerPalette,
+    /// The painter mask layout and its fallbacks, on every tier.
+    pub(crate) painter_mask: crate::resources::painter_mask::PainterMaskResources,
     /// Group 0 on the compatibility tier: built there in place of the scene tier,
     /// `None` on every other tier.
     pub(crate) compatibility_tier:
@@ -686,10 +701,17 @@ pub struct DeviceResources {
     // --- Overlay text / SDF shape / backdrop-blur pipelines (lazily created) ---
     /// Overlay text pipeline, layout, and sampler.
     pub(crate) overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources,
+    /// Fill functions registered with `register_overlay_fill`, in id order,
+    /// spliced into the overlay fill module when the overlay pipelines build.
+    pub(crate) overlay_custom_fills: Vec<crate::resources::overlay::custom_fill::StoredOverlayFill>,
     /// SDF overlay shape pipelines (solid + textured) and sampler.
     pub(crate) overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources,
     /// Backdrop blur pipeline, layout, and sampler.
     pub(crate) backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources,
+    /// Overlay layer composite pipelines, layouts and sampler.
+    pub(crate) overlay_layer: crate::resources::overlay::overlay_layer::OverlayLayerResources,
+    /// The world-layer variants of the shape and text pipelines.
+    pub(crate) overlay_world: crate::resources::overlay::world::OverlayWorldResources,
 
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.
@@ -802,6 +824,10 @@ pub struct DeviceResources {
     /// features its batch uses. The two draw the same image, so this is the
     /// check that they do. Measurement knob only.
     pub(crate) mesh_universal: bool,
+    /// The shader features the frame's settings decide rather than the
+    /// records: the PCSS shadow filter and punctual shadow sampling. Set in
+    /// prepare and added to every mesh draw's feature set.
+    pub(crate) frame_features: crate::renderer::pipeline_key::FeatureSet,
     /// Draws this frame that stayed on the universal pipeline because their
     /// family already held its limit of feature sets. Bumped during encode
     /// through `&self` and latched into `FrameStats` after paint.
@@ -1156,6 +1182,13 @@ impl DeviceResources {
     /// The MSAA sample count every render pipeline here was built with.
     pub fn sample_count(&self) -> u32 {
         self.sample_count
+    }
+
+    /// Whether the full tier's scene resources were built: the HDR path, and
+    /// with it blended `Rgba16Float` render targets, is available. `false` on
+    /// the compatibility tier, which draws every frame on the LDR path.
+    pub fn has_hdr_path(&self) -> bool {
+        self.scene_tier.is_built()
     }
 
     /// The scene depth-stencil format every scene pipeline here was built

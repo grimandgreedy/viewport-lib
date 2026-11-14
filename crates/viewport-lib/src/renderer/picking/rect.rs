@@ -13,6 +13,9 @@ impl ViewportRenderer {
     /// Dispatches across all item types retained from the last `prepare()` call.
     /// The `mask` controls which item types and sub-element levels participate.
     ///
+    /// When the last prepared frame used a reference presentation, the
+    /// rectangle is mapped through its fit into the reference target.
+    ///
     /// # Arguments
     /// * `rect_min`      - top-left corner of the selection rect in viewport pixels
     /// * `rect_max`      - bottom-right corner of the selection rect in viewport pixels
@@ -20,6 +23,30 @@ impl ViewportRenderer {
     /// * `view_proj`     - combined view x projection matrix from the last frame
     /// * `mask`          - which item types and sub-element levels to include
     pub fn pick_rect(
+        &self,
+        rect_min: glam::Vec2,
+        rect_max: glam::Vec2,
+        viewport_size: glam::Vec2,
+        view_proj: glam::Mat4,
+        mask: PickMask,
+    ) -> PickRectResult {
+        match self.cached_pick_placement(viewport_size) {
+            Some(p) => {
+                let size = glam::Vec2::new(p.reference_size[0] as f32, p.reference_size[1] as f32);
+                let map = |w: glam::Vec2| {
+                    ((w * p.pixels_per_point - glam::Vec2::from(p.origin_px))
+                        / glam::Vec2::from(p.scale))
+                    .clamp(glam::Vec2::ZERO, size)
+                };
+                self.pick_rect_scene(map(rect_min), map(rect_max), size, view_proj, mask)
+            }
+            None => self.pick_rect_scene(rect_min, rect_max, viewport_size, view_proj, mask),
+        }
+    }
+
+    /// [`pick_rect`](Self::pick_rect) with the rectangle and viewport already
+    /// in the scene's pixels.
+    pub(crate) fn pick_rect_scene(
         &self,
         rect_min: glam::Vec2,
         rect_max: glam::Vec2,

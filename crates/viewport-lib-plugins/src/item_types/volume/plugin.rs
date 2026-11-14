@@ -47,11 +47,17 @@ pub struct VolumePlugin {
     /// Whether the frame's selection outline is active; the mask hook draws
     /// nothing when it is off.
     outline_active: bool,
+    /// Volume draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for VolumePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn warm(
@@ -72,6 +78,7 @@ impl ItemTypePlugin for VolumePlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.outline_active = ctx.outline_selected;
         let items = items.of::<VolumeItem>();
@@ -141,6 +148,8 @@ impl ItemTypePlugin for VolumePlugin {
             }
             bind_cube(pass, entry);
             pass.draw_indexed(0..36, 0, 0..1);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 

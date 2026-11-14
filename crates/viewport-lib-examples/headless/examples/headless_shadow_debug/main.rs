@@ -13,8 +13,8 @@ use viewport_lib::Colour;
 use vpl::wgpu;
 use vpl::{
     AtlasViewerCorner, BackfacePolicy, Camera, CameraFrame, DebugOutputMode, DebugQuantity,
-    DebugVis, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem, ShadowFilter, ViewportRenderer, primitives,
+    DebugVis, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem, SceneFrame,
+    ShadowFilter, ViewportRenderer, primitives,
 };
 
 const W: u32 = 1280;
@@ -95,25 +95,25 @@ fn main() {
     // Same scene as the eframe_lighting_shadows Basic tab.
     let build_items = || {
         let mut items = Vec::new();
-        let mut ground = SceneRenderItem::default();
+        let mut ground = MeshItem::default();
         ground.mesh_id = m_ground;
         ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         ground.material = ground_mat;
         items.push(ground);
 
-        let mut sphere = SceneRenderItem::default();
+        let mut sphere = MeshItem::default();
         sphere.mesh_id = m_sphere;
         sphere.model = glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).into();
         sphere.material = sphere_mat;
         items.push(sphere);
 
-        let mut cube = SceneRenderItem::default();
+        let mut cube = MeshItem::default();
         cube.mesh_id = m_cube;
         cube.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
         cube.material = cube_mat;
         items.push(cube);
 
-        let mut torus = SceneRenderItem::default();
+        let mut torus = MeshItem::default();
         torus.mesh_id = m_torus;
         torus.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).into();
         torus.material = torus_mat;

@@ -32,6 +32,10 @@ pub(crate) struct HdrMeshContext {
     shader: crate::resources::pipeline_slot::LazyModule,
     shader_nodiscard: crate::resources::pipeline_slot::LazyModule,
     depth_format: crate::gpu::TextureFormat,
+    /// The fragment entry a painter member draws through: `fs_painter`
+    /// where the painter module samples the 2D light layers, `fs_main`
+    /// otherwise.
+    painter_entry: &'static str,
 }
 
 /// Base and HDR-variant pipelines for core scene surfaces.
@@ -52,6 +56,14 @@ pub(crate) struct SceneCorePipelines {
     /// batch draws whose bind groups are bindless draw through these.
     pub(crate) ldr_bindless: Option<LazyFamily<LdrMeshContext, 6>>,
     pub(crate) hdr_bindless: Option<LazyFamily<HdrMeshContext, 8>>,
+    /// The HDR painter pass's mesh pipelines, one per blend: the scene module
+    /// drawing into the single HDR colour target with depth read-only, for
+    /// mesh instances and surfaces placed in the painter sequence. Composed
+    /// with `hdr`; each member is built the first time a painter draw asks.
+    pub(crate) hdr_painter: Option<LazyFamily<HdrMeshContext, 3>>,
+    /// Whether the painter members sample the 2D light layers at group 3:
+    /// on a device with four bind groups.
+    pub(crate) hdr_painter_lit: bool,
 }
 
 const LDR_SOLID: usize = 0;
@@ -70,6 +82,37 @@ const HDR_WIREFRAME: usize = 5;
 /// ask for, beside the alpha-blended `HDR_TRANSPARENT`.
 const HDR_ADDITIVE: usize = 6;
 const HDR_PREMULTIPLIED: usize = 7;
+
+/// Members of the HDR painter family, by blend.
+const PAINTER_ALPHA: usize = 0;
+const PAINTER_ADDITIVE: usize = 1;
+const PAINTER_PREMULTIPLIED: usize = 2;
+
+fn build_hdr_painter(ctx: &HdrMeshContext, i: usize) -> crate::gpu::RenderPipeline {
+    let (label, blend) = match i {
+        PAINTER_ALPHA => (
+            "hdr_painter_mesh_pipeline",
+            crate::gpu::BlendState::ALPHA_BLENDING,
+        ),
+        PAINTER_ADDITIVE => (
+            "hdr_painter_mesh_additive_pipeline",
+            crate::resources::mesh::mesh_pipelines::ADDITIVE_BLEND,
+        ),
+        _ => (
+            "hdr_painter_mesh_premultiplied_pipeline",
+            crate::resources::mesh::mesh_pipelines::PREMULTIPLIED_BLEND,
+        ),
+    };
+    crate::resources::mesh::mesh_pipelines::hdr_painter_mesh_pipeline(
+        &ctx.device,
+        &ctx.layout,
+        ctx.shader.get(),
+        ctx.depth_format,
+        label,
+        blend,
+        ctx.painter_entry,
+    )
+}
 
 fn hdr_opaque_slot(key: PipelineKey) -> usize {
     HDR_OPAQUE + key.two_sided as usize + 2 * key.no_discard_eligible as usize
@@ -265,7 +308,7 @@ impl SceneCorePipelines {
     /// transparent member, so a plain lit scene draws no stand-in after
     /// warm-up. Asks for no universal member: see
     /// [`request_members_hdr`](Self::request_members_hdr).
-    pub(crate) fn request_plain_hdr(&self) {
+    pub(crate) fn request_plain_hdr(&self, sets: &[FeatureSet]) {
         for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
             for key in [false, true].into_iter().flat_map(|two_sided| {
                 [false, true].map(|no_discard_eligible| PipelineKey {
@@ -274,9 +317,13 @@ impl SceneCorePipelines {
                     ..PipelineKey::default()
                 })
             }) {
-                f.request_features(hdr_opaque_slot(key), FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(hdr_opaque_slot(key), s);
+                }
             }
-            f.request_features(HDR_TRANSPARENT, FeatureSet::NONE);
+            for &s in sets {
+                f.request_features(HDR_TRANSPARENT, s);
+            }
         }
     }
 
@@ -290,7 +337,7 @@ impl SceneCorePipelines {
     }
 
     /// [`request_plain_hdr`](Self::request_plain_hdr) for the LDR families.
-    pub(crate) fn request_plain_ldr(&self) {
+    pub(crate) fn request_plain_ldr(&self, sets: &[FeatureSet]) {
         for f in [&self.ldr, &self.ldr_bindless].into_iter().flatten() {
             for slot in [
                 LDR_SOLID,
@@ -299,7 +346,9 @@ impl SceneCorePipelines {
                 LDR_SOLID_TWO_SIDED_NODISCARD,
                 LDR_TRANSPARENT,
             ] {
-                f.request_features(slot, FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(slot, s);
+                }
             }
         }
     }
@@ -331,10 +380,33 @@ impl SceneCorePipelines {
     ) -> Option<&crate::gpu::RenderPipeline> {
         use crate::renderer::SpriteBlend;
         self.hdr.as_ref()?.get(match blend {
-            SpriteBlend::AlphaBlend => HDR_TRANSPARENT,
             SpriteBlend::Additive => HDR_ADDITIVE,
             SpriteBlend::Premultiplied => HDR_PREMULTIPLIED,
+            // Mesh instances have no multiply or screen member; those draw as alpha.
+            SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => {
+                HDR_TRANSPARENT
+            }
         })
+    }
+
+    /// The HDR painter pass pipeline a painter-placed mesh draws with.
+    pub(crate) fn hdr_painter(
+        &self,
+        blend: crate::renderer::SpriteBlend,
+    ) -> Option<&crate::gpu::RenderPipeline> {
+        use crate::renderer::SpriteBlend;
+        self.hdr_painter.as_ref()?.get(match blend {
+            SpriteBlend::Additive => PAINTER_ADDITIVE,
+            SpriteBlend::Premultiplied => PAINTER_PREMULTIPLIED,
+            SpriteBlend::AlphaBlend | SpriteBlend::Multiply | SpriteBlend::Screen => PAINTER_ALPHA,
+        })
+    }
+
+    /// The pipeline a painter-placed mesh draws with in the LDR scene pass:
+    /// the alpha-blended member, whatever the blend, since the LDR family has
+    /// no additive or premultiplied member.
+    pub(crate) fn ldr_painter(&self) -> Option<&crate::gpu::RenderPipeline> {
+        self.ldr.as_ref()?.get(LDR_TRANSPARENT)
     }
 
     /// Whether the opaque pipeline for `key` in the `hdr` or LDR family is
@@ -655,16 +727,58 @@ impl crate::resources::DeviceResources {
                     shader,
                     shader_nodiscard,
                     depth_format: self.scene_depth_format(),
+                    painter_entry: "fs_main",
                 },
                 std::sync::Arc::clone(&self.pipeline_compiler),
                 build_hdr,
             )
             .with_features(build_hdr_features)
         };
+        // The painter members read the 2D light layers at group 3 through
+        // `fs_painter`, composed into a module of their own so the rest of
+        // the family binds no fourth group. A device with fewer groups draws
+        // them unlit by 2D lighting.
+        let painter_lit = device.limits().max_bind_groups >= 4;
+        let (painter_layout, painter_shader, painter_entry) = if painter_lit {
+            let source = format!(
+                "{final_src}\n{}",
+                crate::resources::mesh::mesh_pipelines::MESH_PAINTER_LIGHT_WGSL
+            );
+            (
+                crate::resources::builders::pipeline_layout(
+                    device,
+                    "hdr_painter_mesh_pipeline_layout",
+                    &[
+                        &self.scene_tier.binds.camera_bgl,
+                        &self.scene_tier.binds.object_bgl,
+                        &self.painter_mask.empty_bgl,
+                        &self.painter_mask.light_pick_bgl,
+                    ],
+                ),
+                self.shared_module(device, "mesh_shader_hdr_painter", &source),
+                "fs_painter",
+            )
+        } else {
+            (layout.clone(), shader.clone(), "fs_main")
+        };
+        let painter = LazyFamily::new(
+            HdrMeshContext {
+                device: device.clone(),
+                layout: painter_layout,
+                shader: painter_shader,
+                shader_nodiscard: shader_nodiscard.clone(),
+                depth_format: self.scene_depth_format(),
+                painter_entry,
+            },
+            std::sync::Arc::clone(&self.pipeline_compiler),
+            build_hdr_painter,
+        );
         let hdr = family(layout, shader, shader_nodiscard);
         let hdr_bindless = bindless.map(|(s, n, l)| family(l, s, n));
         self.scene.hdr = Some(hdr);
         self.scene.hdr_bindless = hdr_bindless;
+        self.scene.hdr_painter = Some(painter);
+        self.scene.hdr_painter_lit = painter_lit;
     }
 }
 
@@ -736,17 +850,20 @@ mod tests {
             2 + 2 * b,
             "the LDR mesh family is the lit module and its discard-free twin"
         );
+        // The painter members have a module of their own with the 2D light
+        // layers composed in, on a device with the group for them.
         res.ensure_hdr_mesh_pipelines(&device);
+        let p = usize::from(res.scene.hdr_painter_lit);
         assert_eq!(
             modules(&res),
-            2 + 2 * b,
+            2 + 2 * b + p,
             "the HDR mesh family shares the LDR family's two modules"
         );
 
         res.ensure_hdr_cull_pipelines(&device);
         assert_eq!(
             modules(&res),
-            2 + 2 * b,
+            2 + 2 * b + p,
             "the culled HDR family reuses the modules above"
         );
 
@@ -754,7 +871,7 @@ mod tests {
         res.ensure_oit_mesh_pipelines(&device);
         assert_eq!(
             modules(&res),
-            3 + 3 * b,
+            3 + 3 * b + p,
             "the OIT family and its culled twin share one module"
         );
         assert_eq!(compiled(&res), 0, "composing a family compiled a module");

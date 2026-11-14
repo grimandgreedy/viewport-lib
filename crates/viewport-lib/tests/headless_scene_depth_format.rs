@@ -48,7 +48,7 @@ fn trio_frame(renderer: &mut ViewportRenderer, device: &wgpu::Device, hdr: bool)
             .resources_mut()
             .upload_mesh_data(device, &mesh)
             .unwrap();
-        let mut item = SceneRenderItem::new(
+        let mut item = MeshItem::new(
             mesh_id,
             upload_material(renderer, Material::pbr(colour, 0.2, 0.5)),
         );

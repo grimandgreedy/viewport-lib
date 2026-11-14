@@ -8,8 +8,8 @@
 use glam::Vec3;
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, Candela, FrameData, FrameStats, LightSource, LightingSettings, Material,
-    SceneFrame, SceneRenderItem,
+    CameraFrame, Candela, FrameData, FrameStats, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -17,7 +17,7 @@ const W: u32 = 160;
 const H: u32 = 120;
 
 /// A ground slab and a cube on it, uploaded once.
-fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
+fn scene(h: &mut Harness) -> Vec<MeshItem> {
     let resources = h.renderer.resources_mut();
     let ground_mesh = resources
         .upload_mesh_data(
@@ -31,11 +31,11 @@ fn scene(h: &mut Harness) -> Vec<SceneRenderItem> {
     let material = resources
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
         .expect("material");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_mesh;
     ground.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, -0.1)).into();
     ground.material = material;
-    let mut cube = SceneRenderItem::default();
+    let mut cube = MeshItem::default();
     cube.mesh_id = cube_mesh;
     cube.model = glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 0.5)).into();
     cube.material = material;
@@ -60,7 +60,7 @@ fn spot(x: f32, y: f32) -> LightSource {
 
 /// A frame looking at `target` from 4 m away, from -Y and above, so the eye
 /// sits at `target.x`.
-fn frame(items: &[SceneRenderItem], lights: Vec<LightSource>, target: Vec3) -> FrameData {
+fn frame(items: &[MeshItem], lights: Vec<LightSource>, target: Vec3) -> FrameData {
     let camera = orbit_camera(target, 4.0, 0.0, 1.0);
     let mut fd = FrameData::new(
         CameraFrame::from_camera(&camera, [W as f32, H as f32]),

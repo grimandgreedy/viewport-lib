@@ -148,6 +148,7 @@ fn build_and_upload_draw_groups(
             batch.bind_key.hash(&mut h);
         }
         resources.mesh_universal.hash(&mut h);
+        resources.frame_features.hash(&mut h);
         h.finish()
     };
     let want = (instancing.batches_gen, clipping_active, bind_hash);
@@ -338,7 +339,7 @@ enum RecordKind {
 /// O(n log n) times.
 struct Entry<'a> {
     idx: usize,
-    item: &'a SceneRenderItem,
+    item: &'a MeshItem,
     kind: RecordKind,
     key: BatchKey,
     /// The scene index of a blended record on an LDR frame, which draws as its
@@ -359,7 +360,7 @@ impl Entry<'_> {
 /// The batch key for an item record. `None` when the record names a submesh
 /// range its mesh does not have.
 fn batch_key(
-    item: &SceneRenderItem,
+    item: &MeshItem,
     material: &crate::scene::material::Material,
     kind: RecordKind,
     resources: &DeviceResources,
@@ -432,7 +433,7 @@ pub(crate) fn feature_set_violations(
                 );
                 if needs.union(batch.features) != batch.features {
                     out.push(format!(
-                        "batch {bi} (mesh {:?}): set {:02x}, record needs {:02x}",
+                        "batch {bi} (mesh {:?}): set {:05x}, record needs {:05x}",
                         batch.mesh_id,
                         batch.features.bits(),
                         needs.bits()
@@ -456,7 +457,7 @@ pub(crate) fn feature_set_violations(
 /// lightmaps, deform slot data) move `mesh_sidecar_epoch` or the deform
 /// epoch instead.
 fn featured_item_count(
-    scene_items: &[SceneRenderItem],
+    scene_items: &[MeshItem],
     resources: &DeviceResources,
     wireframe_mode: bool,
 ) -> usize {
@@ -659,7 +660,7 @@ impl ViewportRenderer {
     pub(super) fn instanced_cache_valid(
         resources: &DeviceResources,
         instancing: &InstancingState,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         frame: &FrameData,
         hdr_family: bool,
         origin_epoch: u32,
@@ -727,7 +728,7 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         mesh_uniforms: &mut crate::renderer::per_object_state::PerObjectState,
         cache_valid: bool,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         probe_indices: &[Option<u32>],
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
@@ -946,7 +947,7 @@ impl ViewportRenderer {
                                 }
                             } else {
                                 // A range record draws with its range's material.
-                                let record_item: std::borrow::Cow<SceneRenderItem> =
+                                let record_item: std::borrow::Cow<MeshItem> =
                                     if let RecordKind::Range(_) = entry.kind {
                                         let mut range_item = item.clone();
                                         range_item.material = entry.material();
@@ -1222,7 +1223,7 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         instancing: &mut InstancingState,
         mesh_uniforms: &mut crate::renderer::per_object_state::PerObjectState,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         device: &crate::gpu::Device,
         frame_index: u64,
     ) -> u32 {

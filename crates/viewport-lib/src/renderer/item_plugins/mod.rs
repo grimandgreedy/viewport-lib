@@ -4,7 +4,7 @@
 //!
 //! Internal plugins register at renderer construction under a
 //! `vpl.`-prefixed type name and read their items from the matching
-//! `SceneFrame` field via [`plugin_items_for`], so the consumer-facing
+//! `SceneFrame` field via [`plugin_collections_slice`], so the consumer-facing
 //! submission surface is unchanged: consumers keep filling the field, and
 //! the dispatchers route it to the plugin as if it had been submitted under
 //! the plugin's name.
@@ -15,25 +15,6 @@ pub(crate) mod polyline;
 
 use crate::plugin_api::PluginItemCollection;
 use crate::renderer::types::FrameData;
-
-/// The first collection submitted under `name` this frame.
-///
-/// Kept for the `items` argument the draw hooks still take. A type with
-/// several item forms reads each by type with
-/// [`ItemFrameContext::items_of`](crate::plugin_api::ItemFrameContext::items_of)
-/// instead, which is what every built-in type does; an external plugin
-/// submitting one collection sees no difference.
-pub(crate) fn plugin_items_for<'f>(
-    frame: &'f FrameData,
-    name: &str,
-) -> Option<&'f dyn PluginItemCollection> {
-    frame
-        .scene
-        .plugin_items
-        .get(name)
-        .and_then(|slot| slot.first())
-        .map(|boxed| boxed.as_ref())
-}
 
 /// Every collection submitted under `name` this frame, in submission order.
 pub(crate) fn plugin_collections_slice<'f>(

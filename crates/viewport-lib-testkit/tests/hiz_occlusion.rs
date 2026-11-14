@@ -7,7 +7,7 @@ use glam::{Mat4, Vec3};
 use viewport_lib::Colour;
 use viewport_lib::primitives::cube;
 use viewport_lib::wgpu;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame};
 use viewport_lib_testkit::Harness;
 use viewport_lib_testkit::scenes::orbit_camera;
 
@@ -42,7 +42,7 @@ fn box_behind_wall_is_occluded_and_box_in_front_is_not() {
     // X and covers the middle of the view; the background shows around it so
     // the wall never occludes itself.
     let placed = |m: Mat4| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.model = m.into();
         item.material = grey;

@@ -37,7 +37,7 @@ impl ViewportRenderer {
         plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         // The batches' group-1 bind groups, built by the packer before
         // the shadow pass.
         per_object: &crate::renderer::per_object_state::PerObjectState,

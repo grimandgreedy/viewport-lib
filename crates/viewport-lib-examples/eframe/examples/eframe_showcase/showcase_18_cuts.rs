@@ -18,7 +18,7 @@ use viewport_lib::Colour;
 use viewport_lib_plugins::deformers::cut::{Cut, CutDeformer};
 use vpl::{
     AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, Material,
-    MaterialId, MeshId, SceneRenderItem,
+    MaterialId, MeshId, MeshItem,
 };
 
 /// Which shape the torus is cut by.
@@ -135,7 +135,7 @@ pub(crate) fn build(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     );
 }
 
-pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn scene_items(app: &App) -> Vec<MeshItem> {
     let state = &app.cut_state;
     let (Some(torus), Some(column), Some(floor)) = (state.torus, state.column, state.floor) else {
         return Vec::new();
@@ -143,13 +143,13 @@ pub(crate) fn scene_items(app: &App) -> Vec<SceneRenderItem> {
     let [floor_material, column_material, torus_material] = state.materials;
     let mut items = Vec::new();
 
-    items.push(SceneRenderItem::new(floor, floor_material));
+    items.push(MeshItem::new(floor, floor_material));
 
-    let mut column_item = SceneRenderItem::new(column, column_material);
+    let mut column_item = MeshItem::new(column, column_material);
     column_item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.3)).into();
     items.push(column_item);
 
-    let mut torus_item = SceneRenderItem::new(torus, torus_material);
+    let mut torus_item = MeshItem::new(torus, torus_material);
     torus_item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, TORUS_Z)).into();
     torus_item.deform_instance = Some(TORUS_INSTANCE);
     torus_item.settings.selected = state.outline;

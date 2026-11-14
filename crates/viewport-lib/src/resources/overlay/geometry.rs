@@ -13,21 +13,29 @@ pub(crate) struct CompiledOverlay {
     pub vertex_buf: crate::gpu::Buffer,
     /// Number of vertices in `vertex_buf`.
     pub vertex_count: u32,
-    /// GPU bytes held by the shape stream: `shape_vertex_buf` plus `shadow_tex`.
+    /// The text stream's fill records (gradient fills on its labels, runs,
+    /// polylines and vector shapes). `None` when it has none.
+    pub text_fill_tex: Option<crate::gpu::TextureView>,
+    /// GPU bytes held by `text_fill_tex`.
+    pub text_fill_bytes: u64,
+    /// GPU bytes held by the shape stream: `shape_instance_buf`, `shadow_tex`
+    /// and `shape_fill_tex`.
     ///
     /// The entry's total charge lives on its store slot. Only the text stream is
     /// rebuilt on a re-emit, so the shape half is kept here rather than measured
     /// again to work out the new total.
     pub shape_bytes: u64,
-    /// Analytic SDF shape vertices (`OverlayShapeVertex`), drawn through the shape
-    /// pipeline. `None` when the group has no SDF shapes.
-    pub shape_vertex_buf: Option<crate::gpu::Buffer>,
-    /// Number of vertices in `shape_vertex_buf`.
-    pub shape_vertex_count: u32,
+    /// Analytic SDF shapes, one `OverlayShapeInstance` each, drawn through the
+    /// shape pipeline. `None` when the group has no SDF shapes.
+    pub shape_instance_buf: Option<crate::gpu::Buffer>,
+    /// Number of instances in `shape_instance_buf`.
+    pub shape_instance_count: u32,
     /// The stacked shadow-layer texture the SDF shapes reference. Kept alive
-    /// alongside `shape_vertex_buf`; always at least one (dummy) layer when the
+    /// alongside `shape_instance_buf`; always at least one (dummy) layer when the
     /// shape stream is present.
     pub shadow_tex: Option<crate::gpu::TextureView>,
+    /// The SDF shapes' fill records. Present whenever the shape stream is.
+    pub shape_fill_tex: Option<crate::gpu::TextureView>,
     /// Retained source items for re-emission, present only when the group carries
     /// glyphs. Glyph geometry bakes atlas UVs at a physical size, so it goes stale
     /// when the atlas grows or `pixels_per_point` changes; the renderer re-emits
@@ -52,14 +60,18 @@ pub(crate) struct CompiledOverlay {
 #[derive(Clone)]
 pub(crate) struct CompiledSource {
     pub polylines: Vec<viewport_lib_types::overlay::OverlayPolylineItem>,
+    pub meshes: Vec<viewport_lib_types::overlay::OverlayMeshItem>,
     pub vector_shapes: Vec<viewport_lib_types::overlay::OverlayShapeItem>,
     pub glyph_runs: Vec<viewport_lib_types::overlay::GlyphRunItem>,
     /// Labels retained for re-emission. A label lays its text out at compile time
     /// (glyphs, background box, and leader line, all on the text stream); a DPI or
     /// atlas change re-lays it out from here.
     pub labels: Vec<viewport_lib_types::overlay::LabelItem>,
-    /// The atlas growth version the current geometry baked UVs against.
-    pub baked_atlas_version: u64,
+    /// The glyph atlas cells the current geometry baked UVs against.
+    pub baked_glyphs: crate::resources::overlay::font::GlyphDeps,
+    /// The coverage atlas's version the current geometry baked vector-shape
+    /// cell UVs against.
+    pub baked_coverage_version: u64,
     /// The `pixels_per_point` the current geometry baked glyphs at.
     pub baked_ppp: f32,
 }
@@ -67,14 +79,16 @@ pub(crate) struct CompiledSource {
 /// Per-draw instance data shared by immediate and retained overlay draws.
 ///
 /// Slot 0 is the identity used by every immediate draw (no transform, full
-/// opacity, no clip); each retained group gets its own slot. The text and shape
-/// pipelines read it as a per-instance vertex stream, four `vec4` attributes, so
-/// a draw over instances `i..i + 1` sees slot `i`.
+/// opacity, no clip); each retained group gets its own slot. The text pipeline
+/// reads it as a per-instance vertex stream of five `vec4` attributes, so a
+/// draw over instances `i..i + 1` sees slot `i`. The shape pipeline, whose
+/// instances are the shapes themselves, reads the same record from a uniform
+/// buffer at a dynamic offset of `i * INSTANCE_UNIFORM_STRIDE`.
 ///
-/// `translate` / `scale` / `rotation` / `pivot` mirror the group's
-/// `OverlayTransform` and are applied as `translate . rotate_about(pivot) .
-/// scale`, the outer half of the composition contract. An immediate item has no
-/// slot of its own, so its transform is folded into the vertex stream at emit.
+/// `translate`, `linear` and `pivot` mirror the group's `OverlayTransform` and
+/// are applied as `pivot + linear . (p - pivot) + translate`, the outer half of
+/// the composition contract. An immediate item has no slot of its own, so its
+/// transform is folded into the vertex stream at emit.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OverlayInstance {
@@ -94,33 +108,35 @@ pub(crate) struct OverlayInstance {
     /// `[1, 1, 1, 1]`. Lets a colour flash or fade ride the instance instead of the
     /// vertex stream.
     pub tint: [f32; 4],
-    /// Uniform scale about `pivot`, applied before `rotation` and `translate`;
-    /// identity `1.0`.
-    pub scale: f32,
-    /// Rotation in radians about `pivot`, applied after `scale` and before
-    /// `translate`.
-    pub rotation: f32,
-    /// Centre of rotation and scaling, in logical pixels in the group's own
-    /// space.
+    /// The linear part of the group transform, row-major `[a, b, c, d]` for
+    /// `x' = a x + b y`, `y' = c x + d y`: rotation, scale, stretch and skew
+    /// about `pivot`. Identity `[1, 0, 0, 1]`.
+    pub linear: [f32; 4],
+    /// Centre of the linear part, in logical pixels in the group's own space.
     pub pivot: [f32; 2],
+    /// The length a unit distance covers after `linear`, its mean scale: the
+    /// shape shader divides its anti-aliasing band by it so an edge stays one
+    /// pixel wide whatever size the group is drawn at. Identity `1.0`.
+    pub aa_scale: f32,
+    pub _pad: f32,
 }
 
-// The four attributes cover the whole struct.
-const _: () = assert!(std::mem::size_of::<OverlayInstance>() == 64);
+// The five attributes cover the whole struct.
+const _: () = assert!(std::mem::size_of::<OverlayInstance>() == 80);
 
-/// The instance stream's attributes in the shape pipeline, after the shape
-/// vertex's twelve.
-pub(crate) const SHAPE_INSTANCE_ATTRIBUTES: [crate::gpu::VertexAttribute; 4] =
-    instance_attributes(12);
+/// Byte stride between instance records in the uniform copy of the instance
+/// list the shape pipeline binds at a dynamic offset. Every tier guarantees a
+/// dynamic-offset alignment no stricter than this.
+pub(crate) const INSTANCE_UNIFORM_STRIDE: u64 = 256;
 
 /// The instance stream's attributes in the text pipeline, after the text
 /// vertex's seven.
-pub(crate) const TEXT_INSTANCE_ATTRIBUTES: [crate::gpu::VertexAttribute; 4] =
+pub(crate) const TEXT_INSTANCE_ATTRIBUTES: [crate::gpu::VertexAttribute; 5] =
     instance_attributes(7);
 
-/// `[translate, opacity, clip_index]`, `clip_rect`, `tint` and
-/// `[scale, rotation, pivot]` at `first`, `first + 1`, ...
-const fn instance_attributes(first: u32) -> [crate::gpu::VertexAttribute; 4] {
+/// `[translate, opacity, clip_index]`, `clip_rect`, `tint`, `linear` and
+/// `[pivot, aa_scale, pad]` at `first`, `first + 1`, ...
+const fn instance_attributes(first: u32) -> [crate::gpu::VertexAttribute; 5] {
     const fn at(offset: u64, shader_location: u32) -> crate::gpu::VertexAttribute {
         crate::gpu::VertexAttribute {
             offset,
@@ -133,12 +149,13 @@ const fn instance_attributes(first: u32) -> [crate::gpu::VertexAttribute; 4] {
         at(16, first + 1),
         at(32, first + 2),
         at(48, first + 3),
+        at(64, first + 4),
     ]
 }
 
 impl OverlayInstance {
-    /// The instance stream's layout over `attributes`, one of
-    /// `SHAPE_INSTANCE_ATTRIBUTES` and `TEXT_INSTANCE_ATTRIBUTES`.
+    /// The instance stream's layout over `attributes`
+    /// (`TEXT_INSTANCE_ATTRIBUTES`).
     pub(crate) fn buffer_layout(
         attributes: &'static [crate::gpu::VertexAttribute],
     ) -> crate::gpu::VertexBufferLayout<'static> {
@@ -150,15 +167,36 @@ impl OverlayInstance {
     }
 
     /// The identity instance immediate draws use: no offset, full opacity, no clip,
-    /// no tint, no scale.
+    /// no tint, no transform.
     pub const IDENTITY: OverlayInstance = OverlayInstance {
         translate: [0.0, 0.0],
         opacity: 1.0,
         clip_index: -1.0,
         clip_rect: [0.0, 0.0, 0.0, 0.0],
         tint: [1.0, 1.0, 1.0, 1.0],
-        scale: 1.0,
-        rotation: 0.0,
+        linear: [1.0, 0.0, 0.0, 1.0],
         pivot: [0.0, 0.0],
+        aa_scale: 1.0,
+        _pad: 0.0,
     };
+
+    /// The group half of a transform as an instance's `linear`, `pivot` and
+    /// `aa_scale`.
+    pub(crate) fn set_transform(&mut self, t: &viewport_lib_types::overlay::OverlayTransform) {
+        let m = t.linear();
+        self.linear = [m[0][0], m[0][1], m[1][0], m[1][1]];
+        self.pivot = t.pivot;
+        self.aa_scale = t.uniform_scale_factor();
+    }
+
+    /// `instances` laid out one record per `INSTANCE_UNIFORM_STRIDE` bytes, for
+    /// the uniform copy the shape pipeline binds at a dynamic offset.
+    pub(crate) fn padded_uniform_bytes(instances: &[OverlayInstance]) -> Vec<u8> {
+        let stride = INSTANCE_UNIFORM_STRIDE as usize;
+        let mut out = vec![0u8; instances.len().max(1) * stride];
+        for (i, inst) in instances.iter().enumerate() {
+            out[i * stride..i * stride + 80].copy_from_slice(bytemuck::bytes_of(inst));
+        }
+        out
+    }
 }

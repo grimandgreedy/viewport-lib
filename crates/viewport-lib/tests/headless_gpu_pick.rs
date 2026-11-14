@@ -35,7 +35,7 @@ fn gpu_pick_returns_object_id_under_cursor() {
     frame.viewport.show_axes_indicator = false;
 
     // A single box at the origin with a nonzero pick id.
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
@@ -66,7 +66,7 @@ fn gpu_pick_async_begin_poll_returns_hit() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
@@ -133,7 +133,7 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
@@ -221,7 +221,7 @@ fn gpu_pick_object_honors_type_mask() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
@@ -270,7 +270,7 @@ fn gpu_pick_surface_resolves_face_and_vertex() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -331,7 +331,7 @@ fn pick_auto_backend_routes_to_gpu_when_feature_present() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(777);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -431,7 +431,7 @@ fn gpu_pick_surface_resolves_edge() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -482,7 +482,7 @@ fn gpu_pick_vertex_fills_snap_world_pos() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -533,7 +533,7 @@ fn gpu_pick_face_fills_geometric_normal() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -593,7 +593,7 @@ fn gpu_snap_query_snaps_to_surface_vertex() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -662,7 +662,7 @@ fn gpu_snap_query_begin_poll_matches_the_blocking_query() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -736,7 +736,7 @@ fn gpu_snap_query_begin_poll_reaches_an_object_the_pixel_misses() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(7);
@@ -1447,7 +1447,7 @@ fn gpu_pick_rect_returns_unique_object_ids() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(654);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1508,7 +1508,7 @@ fn gpu_pick_rect_resolves_surface_vertex() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.pick_id = PickId(321);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1558,7 +1558,7 @@ fn cpu_pick_hits_mesh_via_cached_trimesh() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(111);
@@ -1590,7 +1590,7 @@ fn cpu_pick_matches_gpu_pick_under_non_uniform_scale() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     // Non-uniform scale: the cached TriMesh is mesh-local, so this exercises
     // the inverse-model ray transform and the inverse-transpose normal fix-up
@@ -1673,12 +1673,12 @@ fn cpu_pick_reuses_cached_trimesh_across_instances() {
 
     // Two instances of the same mesh_id at different positions along the ray
     // through screen centre; the nearer one (closer to the camera) should win.
-    let mut near_item = SceneRenderItem::default();
+    let mut near_item = MeshItem::default();
     near_item.mesh_id = mesh_id;
     near_item.model = glam::Mat4::IDENTITY.into();
     near_item.settings.pick_id = PickId(11);
 
-    let mut far_item = SceneRenderItem::default();
+    let mut far_item = MeshItem::default();
     far_item.mesh_id = mesh_id;
     far_item.model =
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.0)).into();
@@ -1712,7 +1712,7 @@ fn cpu_pick_invalidates_cache_after_replace_mesh_data() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .expect("upload box mesh");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.pick_id = PickId(333);

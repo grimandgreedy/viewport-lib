@@ -254,11 +254,17 @@ pub struct SurfaceContourPlugin {
     )>,
     /// This frame's draw list, built in `prepare`.
     draws: Vec<ContourDraw>,
+    /// Contour draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for SurfaceContourPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn warm(
@@ -279,6 +285,7 @@ impl ItemTypePlugin for SurfaceContourPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.draws.clear();
         let viewport_width = ctx.viewport_size.x.max(1.0);
         let visible: Vec<(&SurfaceContourItem, ContourUniform)> = items
@@ -371,8 +378,10 @@ impl ItemTypePlugin for SurfaceContourPlugin {
             if ctx
                 .meshes
                 .bind_scalar_attribute(pass, 1, draw.mesh_id, &draw.scalar_attribute)
+                && ctx.meshes.draw_indexed(pass, draw.mesh_id)
             {
-                ctx.meshes.draw_indexed(pass, draw.mesh_id);
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }

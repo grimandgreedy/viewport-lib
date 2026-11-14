@@ -87,6 +87,14 @@ pub struct RetainedOverlay {
     /// animated group re-draws from its compiled buffers with no
     /// re-tessellation. Boxed and `None` for a static group.
     pub animations: Option<Box<crate::overlay::OverlayAnimations>>,
+    /// Draw the group as a layer: its members into a scratch target, then the
+    /// result composited once with this style, at the group's `z_order` and
+    /// inside its clip. `opacity` above still multiplies each member; the
+    /// layer's own opacity fades the group as a whole, so overlapping members
+    /// do not show through each other.
+    ///
+    /// `None` (the default) draws the members straight into the frame.
+    pub layer: Option<crate::overlay::OverlayLayerStyle>,
 }
 
 impl RetainedOverlay {
@@ -102,6 +110,7 @@ impl RetainedOverlay {
             tint: [1.0, 1.0, 1.0, 1.0],
             anchoring: None,
             animations: None,
+            layer: None,
         }
     }
 
@@ -192,9 +201,69 @@ impl RetainedOverlay {
         self
     }
 
+    /// Draw the group as a layer composited with `style`.
+    pub fn with_layer(mut self, style: crate::overlay::OverlayLayerStyle) -> Self {
+        self.layer = Some(style);
+        self
+    }
+
     /// Set the per-frame uniform scale about the group pivot (identity `1.0`).
     pub fn with_scale(mut self, scale: f32) -> Self {
         self.transform.scale = scale;
+        self
+    }
+}
+
+/// The items a retained overlay group is compiled from, by family.
+///
+/// Every list is optional: leave the ones a group does not use empty. A
+/// compiled group draws in family order, not `z_order`: polylines, meshes,
+/// vector shapes and analytic shapes, then glyph runs, then labels, each list
+/// in the order given.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct OverlayGroupItems {
+    /// Stroked and filled polylines.
+    pub polylines: Vec<crate::overlay::OverlayPolylineItem>,
+    /// Shapes: vector paths draw on the text stream, analytic shapes on the
+    /// shape stream.
+    pub shapes: Vec<crate::overlay::OverlayShapeItem>,
+    /// Coloured triangle lists.
+    pub meshes: Vec<crate::overlay::OverlayMeshItem>,
+    /// Pre-positioned glyph runs.
+    pub glyph_runs: Vec<crate::overlay::GlyphRunItem>,
+    /// Laid-out text labels.
+    pub labels: Vec<crate::overlay::LabelItem>,
+}
+
+impl OverlayGroupItems {
+    /// Set the polylines.
+    pub fn with_polylines(mut self, polylines: Vec<crate::overlay::OverlayPolylineItem>) -> Self {
+        self.polylines = polylines;
+        self
+    }
+
+    /// Set the shapes.
+    pub fn with_shapes(mut self, shapes: Vec<crate::overlay::OverlayShapeItem>) -> Self {
+        self.shapes = shapes;
+        self
+    }
+
+    /// Set the meshes.
+    pub fn with_meshes(mut self, meshes: Vec<crate::overlay::OverlayMeshItem>) -> Self {
+        self.meshes = meshes;
+        self
+    }
+
+    /// Set the glyph runs.
+    pub fn with_glyph_runs(mut self, glyph_runs: Vec<crate::overlay::GlyphRunItem>) -> Self {
+        self.glyph_runs = glyph_runs;
+        self
+    }
+
+    /// Set the labels.
+    pub fn with_labels(mut self, labels: Vec<crate::overlay::LabelItem>) -> Self {
+        self.labels = labels;
         self
     }
 }

@@ -47,8 +47,7 @@ pub const PICK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForm
 /// written as `bitcast<u32>(z)`, so the renderer can reconstruct world position
 /// on read-back. An integer target because GL renders to `R32Float` only with
 /// `EXT_color_buffer_float`.
-pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
-    crate::gpu::TextureFormat::R32Uint;
+pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::R32Uint;
 
 impl DeviceResources {
     // ------------------------------------------------------------------
@@ -268,6 +267,16 @@ impl DeviceResources {
         self.content.textures.get(id).map(|t| &t.view)
     }
 
+    /// The width and height in texels of the texture behind `id`. `None` for
+    /// a stale id, and for a caller-owned view registered with
+    /// [`register_texture_view`](crate::ViewportGpuResources::register_texture_view),
+    /// whose size the store does not hold.
+    pub fn texture_extent(&self, id: crate::resources::TextureId) -> Option<[u32; 2]> {
+        let texture = self.content.textures.get(id)?.texture.as_ref()?;
+        let size = texture.size();
+        Some([size.width, size.height])
+    }
+
     /// Borrow the sampler the texture was uploaded with.
     ///
     /// Most user textures are uploaded with a shared linear-repeat sampler;
@@ -291,6 +300,21 @@ impl DeviceResources {
         slot: crate::scene::material::TextureSlot,
     ) -> &crate::gpu::TextureView {
         self.scene_tier.material.slot_view(slot)
+    }
+
+    /// A sampler with the wrap, filter and anisotropy `key` names, shared
+    /// with every other caller that asks for the same state.
+    ///
+    /// Use this when a plugin samples user textures with state other than
+    /// [`material_sampler`](Self::material_sampler)'s, such as nearest
+    /// filtering for pixel art. `key.lod_bias` is not applied. Works on every
+    /// tier.
+    pub fn sampler_for(
+        &self,
+        device: &crate::gpu::Device,
+        key: crate::scene::material::SamplerKey,
+    ) -> crate::gpu::Sampler {
+        self.sampler_palette.resolve(device, key)
     }
 
     /// Shared linear-repeat sampler used by the lib's material pipelines.
@@ -317,8 +341,15 @@ impl DeviceResources {
     }
 
     /// Bind group layout for the read-only-depth pass: binding 0 is the scene
-    /// depth texture (`texture_depth_2d`), binding 1 the non-filtering sampler.
-    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group).
+    /// depth texture (`texture_depth_2d`), binding 1 the non-filtering sampler,
+    /// bindings 2 and 3 the painter masks and bindings 4 and 5 the 2D light
+    /// layers, as bindings 0 to 3 of
+    /// [`painter_mask_bind_group_layout`](Self::painter_mask_bind_group_layout).
+    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group),
+    /// [`PainterContext::depth_read_bind_group`](crate::plugin_api::PainterContext::depth_read_bind_group)
+    /// and [`PaintContext::depth_read_bind_group`](crate::plugin_api::PaintContext::depth_read_bind_group).
+    /// A shader that does not test masks or sample light leaves bindings 2 to
+    /// 5 undeclared.
     ///
     /// A convenience for plugins that have a spare bind group: place this at
     /// whatever free slot of `extra_bind_group_layouts` when building the
@@ -331,6 +362,19 @@ impl DeviceResources {
     /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
     pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
         &self.scene_tier.material.depth_read_bgl
+    }
+
+    /// Bind group layout of the painter masks and 2D light layers, on every
+    /// tier: binding 0 the mask texture (`texture_2d<f32>`, unfilterable,
+    /// read with `textureLoad`), binding 1 the `PainterMasks` uniform,
+    /// binding 2 the light layers (`texture_2d_array<f32>`, unfilterable,
+    /// read with `textureLoad`) and binding 3 the `PainterLights` uniform,
+    /// both structs from
+    /// [`SHARED_PAINTER_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL).
+    /// Matches [`PainterContext::mask_bind_group`](crate::plugin_api::PainterContext::mask_bind_group)
+    /// and [`PaintContext::mask_bind_group`](crate::plugin_api::PaintContext::mask_bind_group).
+    pub fn painter_mask_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
+        &self.painter_mask.bgl
     }
 
     /// Shared linear-clamp sampler used by the lib for colourmap LUTs.
@@ -580,7 +624,9 @@ impl DeviceResources {
     /// `@location(0)`, a sub-object index (or 0) at `@location(1)`, and the
     /// framebuffer `z` at `@location(2)`. Use
     /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL),
-    /// whose `viewport_pick_fs` produces exactly that output.
+    /// whose `viewport_pick_fs` produces exactly that output. Depth is tested
+    /// with `LessEqual` and written unless
+    /// [`depth_write`](PluginPipelineOpts::depth_write) is `false`.
     pub fn build_pick_pipeline(
         &self,
         device: &crate::gpu::Device,
@@ -1000,7 +1046,7 @@ impl PipelineBuilder {
                 primitive: opts.primitive,
                 depth_stencil: Some(crate::resources::builders::depth_stencil(
                     desc.depth_stencil_format,
-                    true,
+                    opts.depth_write,
                     crate::plugin_api::depth::DEPTH_COMPARE,
                 )),
                 multisample: crate::gpu::MultisampleState {
@@ -1100,8 +1146,10 @@ pub struct PluginPipelineOpts<'a> {
     /// (the default for opaque pipelines). Ignored by OIT / mask / pick /
     /// shadow builders, which use their pass-specific blend state.
     pub color_blend: Option<crate::gpu::BlendState>,
-    /// Whether the opaque builder writes depth. Ignored by the other
-    /// builders. Default `true`.
+    /// Whether the opaque and pick builders write depth. Ignored by the other
+    /// builders. Default `true`. A pick pipeline for painter's-order content
+    /// sets it `false`, so the last draw in the sequence wins as it does on
+    /// screen.
     pub depth_write: bool,
     /// Depth-compare function for the opaque and shadow builders, written
     /// for scene depth. Ignored by the others. Default

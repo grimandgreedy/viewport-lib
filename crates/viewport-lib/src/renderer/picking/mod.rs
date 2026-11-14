@@ -39,7 +39,7 @@ impl ViewportRenderer {
         let surfaces = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
-        // Opaque volume meshes appear as boundary SceneRenderItems for face/vertex
+        // Opaque volume meshes appear as boundary MeshItems for face/vertex
         // picking; cell-level remapping is driven from `pick_volume_mesh_items`.
         self.pick_scene_items = surfaces
             .iter()
@@ -54,9 +54,30 @@ impl ViewportRenderer {
             )
             .collect();
         self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
+        self.pick_presentation = (frame.viewport.presentation, frame.camera.pixels_per_point);
 
         // Refresh the revs that tell the surface pick BVH when to rebuild vs refit.
         self.update_pick_bvh_revs();
+    }
+
+    /// Where the reference target of the frame the CPU pick caches were taken
+    /// from lands in a viewport of `viewport_size`, or `None` when it presented
+    /// natively.
+    pub(crate) fn cached_pick_placement(
+        &self,
+        viewport_size: glam::Vec2,
+    ) -> Option<crate::renderer::ReferencePlacement> {
+        match self.pick_presentation.0 {
+            Presentation::Reference { size, fit, .. } => {
+                Some(crate::renderer::ReferencePlacement::new(
+                    size,
+                    fit,
+                    viewport_size.to_array(),
+                    self.pick_presentation.1,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Empty the CPU pick caches populated by `cache_pick_items`, freeing their
@@ -202,12 +223,18 @@ impl ViewportRenderer {
         } else {
             return None;
         };
-        let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
+        let viewport_size = glam::Vec2::from(frame.scene_size());
         let view_proj = frame.camera.render_camera.view_proj();
         let hit = match backend {
-            PickBackend::Cpu => {
-                self.pick_clipped(cursor, viewport_size, view_proj, mask, &frame.effects.clip.objects)
-            }
+            // Under a reference presentation the ray is cast through the
+            // reference pixel under the cursor.
+            PickBackend::Cpu => self.pick_clipped(
+                frame.scene_point(cursor)?,
+                viewport_size,
+                view_proj,
+                mask,
+                &frame.effects.clip.objects,
+            ),
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
         };
@@ -312,9 +339,10 @@ impl ViewportRenderer {
                 Some(a + ab * t.clamp(0.0, 1.0))
             }
             // The hit point already lies on these features.
-            SubObjectRef::Face(_) | SubObjectRef::Splat(_) | SubObjectRef::Instance(_) => {
-                Some(world_pos)
-            }
+            SubObjectRef::Face(_)
+            | SubObjectRef::Splat(_)
+            | SubObjectRef::Instance(_)
+            | SubObjectRef::Tile { .. } => Some(world_pos),
             // No single snap point.
             SubObjectRef::Cell(_)
             | SubObjectRef::Voxel(_)
@@ -366,6 +394,43 @@ impl ViewportRenderer {
             );
             plugin.sub_object_position(&items, crate::renderer::PickId(id), sub_object)
         })
+    }
+
+    /// The outline of each selected sub-object only an item type can place,
+    /// keyed by its `(node id, sub-object)` pair, asked of every plugin
+    /// through [`sub_object_outline`](crate::plugin_api::ItemTypePlugin::sub_object_outline).
+    pub(crate) fn plugin_sub_object_outlines(
+        &self,
+        selection: &SubSelectionRef,
+        frame: &FrameData,
+    ) -> crate::resources::PluginOutlines {
+        let mut out = crate::resources::PluginOutlines::default();
+        let mut corners = Vec::new();
+        for &(id, sub_object) in selection.items() {
+            if !matches!(sub_object, SubObjectRef::Tile { .. }) {
+                continue;
+            }
+            for (name, plugin) in self.item_type_plugins.iter() {
+                let items = crate::plugin_api::ItemCollections::new(
+                    crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                );
+                corners.clear();
+                plugin.sub_object_outline(
+                    &items,
+                    crate::renderer::PickId(id),
+                    sub_object,
+                    &mut corners,
+                );
+                if !corners.is_empty() {
+                    out.insert(
+                        (id, sub_object),
+                        corners.iter().map(|c| c.to_array()).collect(),
+                    );
+                    break;
+                }
+            }
+        }
+        out
     }
 
     /// Whether this device can resolve GPU sub-object picking for triangle-meshed
@@ -444,9 +509,15 @@ impl ViewportRenderer {
         };
         match backend {
             PickBackend::Cpu => {
-                let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
+                let viewport_size = glam::Vec2::from(frame.scene_size());
                 let view_proj = frame.camera.render_camera.view_proj();
-                self.pick_rect(rect_min, rect_max, viewport_size, view_proj, mask)
+                self.pick_rect_scene(
+                    frame.scene_point_clamped(rect_min),
+                    frame.scene_point_clamped(rect_max),
+                    viewport_size,
+                    view_proj,
+                    mask,
+                )
             }
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),

@@ -14,7 +14,7 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{OverlayPolylineItem, OverlayShape, OverlayShapeItem, PolylineCap};
+use viewport_lib::{LineCap, OverlayPolylineItem, OverlayShape, OverlayShapeItem};
 
 const SIZE: u32 = 64;
 
@@ -46,7 +46,7 @@ fn left_half_mask() -> OverlayShapeItem {
 fn full_width_stroke() -> OverlayPolylineItem {
     OverlayPolylineItem::new(vec![[0.0, 32.0], [64.0, 32.0]])
         .with_thickness(16.0)
-        .with_cap(PolylineCap::Square)
+        .with_cap(LineCap::Square)
         .with_colour(Colour::linear(0.0, 0.0, 1.0, 1.0))
 }
 

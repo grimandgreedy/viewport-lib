@@ -28,6 +28,7 @@ pub(crate) enum HdrPass {
     Transmission,
     ScopeAfterOpaque,
     Oit,
+    Painter,
     ScopeAfterTransparent,
     OutlineComposite,
     Foreground,
@@ -217,11 +218,7 @@ impl ViewportRenderer {
     }
 
     /// Whether the OIT pass has anything to draw this frame.
-    pub(super) fn hdr_has_transparent(
-        &self,
-        frame: &FrameData,
-        scene_items: &[SceneRenderItem],
-    ) -> bool {
+    pub(super) fn hdr_has_transparent(&self, frame: &FrameData, scene_items: &[MeshItem]) -> bool {
         (if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
             // Every transparent item is in a blended batch, which goes through OIT.
             self.instancing.batches.iter().any(|b| b.is_transparent)
@@ -237,14 +234,7 @@ impl ViewportRenderer {
             .any(|i| !i.settings.hidden && i.transparency.is_some())
             // Item-type plugins draw into the OIT pass through
             // `paint_transparent`.
-            || self.any_plugin_items_submitted(frame)
-    }
-
-    /// Whether any item-type plugin encodes at `scope`.
-    pub(super) fn any_plugin_encodes_at(&self, scope: crate::plugin_api::EncoderScope) -> bool {
-        self.item_type_plugins
-            .values()
-            .any(|p| p.encoder_scopes().contains(&scope))
+            || self.any_plugin_draws_transparent(frame)
     }
 
     /// Fill viewport `vp_idx`'s pass table for `frame`. The slot must exist.
@@ -252,7 +242,7 @@ impl ViewportRenderer {
     pub(super) fn plan_hdr_passes(
         &mut self,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         vp_idx: usize,
         w: u32,
         h: u32,
@@ -308,7 +298,11 @@ impl ViewportRenderer {
         table.declare_side_effect(
             HdrPass::ScopeOnOpaqueSurfaces,
             "scope_on_opaque_surfaces",
-            self.any_plugin_encodes_at(crate::plugin_api::EncoderScope::OnOpaqueSurfaces),
+            self.any_plugin_encodes_at(
+                frame,
+                crate::plugin_api::EncoderScope::OnOpaqueSurfaces,
+                true,
+            ),
         );
         table.declare(
             HdrPass::SubHighlight,
@@ -320,7 +314,7 @@ impl ViewportRenderer {
         table.declare(
             HdrPass::DepthRead,
             "depth_read",
-            self.any_plugin_draws_depth_read(frame),
+            self.hdr_depth_read_active(frame),
             scene.with(T::SurfaceStencil),
             TargetSet::of(T::HdrColour),
         );
@@ -346,7 +340,7 @@ impl ViewportRenderer {
         table.declare_side_effect(
             HdrPass::ScopeAfterOpaque,
             "scope_after_opaque",
-            self.any_plugin_encodes_at(crate::plugin_api::EncoderScope::AfterOpaque),
+            self.any_plugin_encodes_at(frame, crate::plugin_api::EncoderScope::AfterOpaque, true),
         );
         table.declare(
             HdrPass::Oit,
@@ -357,10 +351,23 @@ impl ViewportRenderer {
                 .with(T::OitAccum)
                 .with(T::OitReveal),
         );
+        // Painter's-order content and world overlay layers, after the OIT
+        // composite so they draw over resolved transparency.
+        table.declare(
+            HdrPass::Painter,
+            "painter",
+            self.hdr_painter_active(frame),
+            scene,
+            TargetSet::of(T::HdrColour),
+        );
         table.declare_side_effect(
             HdrPass::ScopeAfterTransparent,
             "scope_after_transparent",
-            self.any_plugin_encodes_at(crate::plugin_api::EncoderScope::AfterTransparent),
+            self.any_plugin_encodes_at(
+                frame,
+                crate::plugin_api::EncoderScope::AfterTransparent,
+                true,
+            ),
         );
         table.declare(
             HdrPass::OutlineComposite,
@@ -475,7 +482,11 @@ impl ViewportRenderer {
         table.declare(
             HdrPass::Overlay,
             "overlay",
-            slot.overlay.overlay_shape_gpu_data.is_some() || slot.overlay.label_gpu_data.is_some(),
+            // Overlays drawn over a reference presentation's upscale are not
+            // drawn in the scene's passes.
+            frame.overlays_in_scene()
+                && (slot.overlay.overlay_shape_gpu_data.is_some()
+                    || slot.overlay.label_gpu_data.is_some()),
             TargetSet::of(T::HdrDepth),
             TargetSet::of(T::Output),
         );

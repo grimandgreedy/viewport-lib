@@ -1,17 +1,14 @@
-// Cluster light assignment: builds the per-cluster light index list each frame.
+// Cluster light assignment: builds the per-cluster light bitmask each frame.
 //
 // One workgroup per cluster cell, threads grid-stride over the active light
-// array. Each cluster owns a fixed slice of `light_indices`
-// (MAX_PER_CLUSTER entries at cluster_id * MAX_PER_CLUSTER), so no cluster
-// can starve another and the same scene always produces the same lists.
+// array. Each cluster owns MASK_WORDS words of `light_indices` (at
+// cluster_id * MASK_WORDS), one bit per light, so a cell holds every light
+// that reaches it and the same scene always produces the same masks.
 // Each workgroup:
 //   1. Marks the lights intersecting its cluster AABB in a workgroup-shared
 //      bitmask (parallel across threads).
-//   2. Thread 0 compacts the set bits into the cluster's slice in light-index
-//      order and records the cell's punctual demand next to the punctual
-//      count it kept. When demand exceeds the kept count the slice
-//      overflowed, and `cluster_light_range` makes that cell's fragments walk
-//      the full light array instead, so no light is dropped.
+//   2. Stores the mask and counts its lights, all and punctual, into the
+//      cell's header.
 //
 // Spot lights are tested with the conservative sphere-vs-AABB on their
 // bounding sphere. A tighter cone-vs-AABB test would be a useful follow-up if
@@ -47,13 +44,13 @@ struct GridUniform {
 @group(0) @binding(4) var<storage, read>      active_lights:  array<ActiveLight>;
 
 const WG_SIZE: u32 = 64u;
-// Fixed per-cluster capacity of the light index list. Must match
-// `clustered::MAX_LIGHTS_PER_CLUSTER` on the Rust side.
-const MAX_PER_CLUSTER: u32 = 64u;
-// Bitmask words covering MAX_SCENE_LIGHTS (512) bits.
+// Bitmask words covering MAX_SCENE_LIGHTS (512) bits. Must match
+// `clustered::CLUSTER_MASK_WORDS` on the Rust side.
 const MASK_WORDS: u32 = 16u;
 
 var<workgroup> wg_hits: array<atomic<u32>, 16>;
+var<workgroup> wg_count: atomic<u32>;
+var<workgroup> wg_punctual: atomic<u32>;
 
 fn sphere_intersects_aabb(c: vec3<f32>, r: f32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
     let q = clamp(c, lo, hi);
@@ -153,6 +150,10 @@ fn main(
     if lid.x < MASK_WORDS {
         atomicStore(&wg_hits[lid.x], 0u);
     }
+    if lid.x == 0u {
+        atomicStore(&wg_count, 0u);
+        atomicStore(&wg_punctual, 0u);
+    }
     workgroupBarrier();
 
     // Pass 1 : mark intersecting lights in the shared bitmask.
@@ -166,36 +167,32 @@ fn main(
     }
     workgroupBarrier();
 
-    // Pass 2 : thread 0 compacts set bits into the cluster's fixed slice in
-    // light-index order. On overflow the slice stops filling; the recorded
-    // demand tells the lit shaders to ignore it and walk every light.
-    if lid.x == 0u {
-        let base = cluster_id * MAX_PER_CLUSTER;
-        var written = 0u;
-        var punctual_kept = 0u;
-        var punctual_demand = 0u;
-        var j = 0u;
+    // Pass 2 : each of the first MASK_WORDS threads stores its word of the
+    // cell's bitmask and counts the lights in it, all and punctual, for the
+    // cell's header.
+    if lid.x < MASK_WORDS {
+        let word = atomicLoad(&wg_hits[lid.x]);
+        light_indices[cluster_id * MASK_WORDS + lid.x] = word;
+        var bits = word;
+        var punctual = 0u;
         loop {
-            if j >= n_lights { break; }
-            let hit = (atomicLoad(&wg_hits[j / 32u]) & (1u << (j % 32u))) != 0u;
-            if hit {
-                let is_punctual = active_lights[j].type_pad.x != 0u;
-                if is_punctual {
-                    punctual_demand = punctual_demand + 1u;
-                }
-                if written < MAX_PER_CLUSTER {
-                    light_indices[base + written] = j;
-                    written = written + 1u;
-                    if is_punctual {
-                        punctual_kept = punctual_kept + 1u;
-                    }
-                }
+            if bits == 0u { break; }
+            let b = firstTrailingBit(bits);
+            bits = bits & (bits - 1u);
+            if active_lights[lid.x * 32u + b].type_pad.x != 0u {
+                punctual = punctual + 1u;
             }
-            j = j + 1u;
         }
-        cluster_grid[cluster_id].offset          = base;
-        cluster_grid[cluster_id].count           = written;
-        cluster_grid[cluster_id].punctual_count  = punctual_kept;
-        cluster_grid[cluster_id].punctual_demand = punctual_demand;
+        atomicAdd(&wg_count, countOneBits(word));
+        atomicAdd(&wg_punctual, punctual);
+    }
+    workgroupBarrier();
+
+    if lid.x == 0u {
+        let punctual = atomicLoad(&wg_punctual);
+        cluster_grid[cluster_id].offset          = cluster_id * MASK_WORDS;
+        cluster_grid[cluster_id].count           = atomicLoad(&wg_count);
+        cluster_grid[cluster_id].punctual_count  = punctual;
+        cluster_grid[cluster_id].punctual_demand = punctual;
     }
 }

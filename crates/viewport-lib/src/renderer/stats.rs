@@ -158,6 +158,12 @@ pub struct PluginFrameCounters {
     pub draw_calls: u32,
     /// Bytes this plugin reported uploading for the frame.
     pub upload_bytes: u64,
+    /// Batches this plugin reported into the last painter sequence drawn,
+    /// through
+    /// [`ItemTypePlugin::painter_batches`](crate::plugin_api::ItemTypePlugin::painter_batches).
+    /// Zero for a plugin whose painter's-order content, if any, did not join
+    /// the sequence.
+    pub painter_batches: u32,
 }
 
 /// CPU time spent in each phase of `prepare()`, in milliseconds.
@@ -207,8 +213,9 @@ pub struct PrepareBreakdown {
     /// Uploading non-mesh geometry: fields, point clouds, polylines, decals,
     /// images, tubes, ribbons, slices, and volumes.
     pub geometry_ms: f32,
-    /// Recording the shadow depth pass (directional cascades into the atlas,
-    /// point and spot light layers into the punctual array).
+    /// Fitting the directional cascades to the scene, and recording the shadow
+    /// depth pass (directional cascades into the atlas, point and spot light
+    /// layers into the punctual array).
     pub shadow_ms: f32,
     /// Per-viewport prepare: camera and clip uniforms, grid, outlines, and
     /// interaction state. Runs once per viewport. Overlay prepare is measured
@@ -310,6 +317,25 @@ pub struct GpuBreakdown {
     pub overlay_ms: f32,
 }
 
+/// The render path a frame was drawn through, reported in
+/// [`FrameStats::frame_path`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum FramePath {
+    /// The HDR path: the scene pass into the HDR target, then the post chain
+    /// and tone map into the output.
+    Hdr,
+    /// The LDR path: one scene pass straight into the output, with the
+    /// overlays drawn over it.
+    #[default]
+    Ldr,
+    /// The overlay pass alone, cleared to the background. Taken when a frame
+    /// on the LDR path submits nothing the scene pass would draw; scene
+    /// prepare is skipped too.
+    OverlaysOnly,
+}
+
 /// Per-frame rendering statistics for the last prepared frame, read back with
 /// [`ViewportRenderer::last_frame_stats`](crate::ViewportRenderer::last_frame_stats).
 #[derive(Debug, Clone, Copy, Default)]
@@ -377,7 +403,8 @@ pub struct FrameStats {
     /// A plugin reports this itself through
     /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls)
     /// and one that has not implemented it contributes zero whatever it draws,
-    /// so this is a floor, not a guarantee. Per-plugin breakdown:
+    /// so this is a floor, not a guarantee. Every built-in item type reports
+    /// its colour draws. Per-plugin breakdown:
     /// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
     pub plugin_draw_calls: u32,
     /// Bytes uploaded by item-type plugins this frame, summed across every
@@ -387,6 +414,11 @@ pub struct FrameStats {
     /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
     /// renderer observed.
     pub plugin_upload_bytes: u64,
+    /// Batches in the last painter sequence drawn: every plugin's reported
+    /// batches plus the renderer's own painter-placed mesh draws. Per-plugin
+    /// counts are in
+    /// [`PluginFrameCounters::painter_batches`].
+    pub painter_batches: u32,
     /// Sidecar records moved or created by deform-slot changes since the
     /// previous `prepare()`.
     ///
@@ -631,12 +663,87 @@ pub struct FrameStats {
     /// here. A value that stays non-zero frame after frame means groups are
     /// paying a full rebuild instead of being drawn from their buffers.
     pub overlay_retained_reemitted: u32,
+    /// Retained overlay groups in world overlay layers rebuilt this frame, for
+    /// the most recently prepared viewport. Kept out of
+    /// [`overlay_retained_reemitted`](Self::overlay_retained_reemitted), which
+    /// counts the screen overlays.
+    ///
+    /// A world layer's scale follows the camera's zoom, so its groups re-emit
+    /// only when that scale moves to another step of the text size ladder: a
+    /// smooth zoom reads non-zero on the frames that cross a step and zero
+    /// between them.
+    pub world_overlay_retained_reemitted: u32,
     /// Live compiled overlay geometry, in bytes: vertex, shape, and shadow
     /// buffers across every group that has been compiled and not freed.
     ///
     /// A level, not a per-frame count, and independent of what was submitted
     /// this frame.
     pub overlay_retained_bytes: u64,
+    /// Draw calls the overlay pass issues for the most recently prepared
+    /// viewport: one per run of items that share a pipeline, fill image and
+    /// blend mode, plus one per retained group stream. Not included in
+    /// [`Self::draw_calls`], which counts the scene.
+    ///
+    /// Items that do not overlap batch whatever their `z_order`, so a panel
+    /// that gives every item its own `z_order` to keep painter's order pays a
+    /// draw only where overlapping items alternate between families, images
+    /// or blend modes; this is the counter that shows it.
+    pub overlay_draw_calls: u32,
+    /// Vector overlay shapes whose coverage was rasterised into the overlay
+    /// atlas this frame, for the most recently prepared viewport.
+    ///
+    /// A small vector shape (and one in a retained group) draws its fill from
+    /// a cached coverage cell keyed by its path, scale, rotation and sub-pixel
+    /// position, so a static shape reads zero after its first frame, and a
+    /// retained one from the frame after it was compiled. A value that tracks
+    /// the shape count every frame means the shapes are moving in ways that
+    /// miss the cache. Cells rasterised by `compile_overlay_geometry` are not
+    /// counted.
+    pub overlay_vector_rasters: u32,
+    /// Glyph cells rasterised into the glyph atlas this frame, for the most
+    /// recently prepared viewport: the glyph cache misses.
+    ///
+    /// A glyph is cached per font, raster size, style and quarter-pixel
+    /// horizontal position, so static text reads zero after its first frame.
+    /// Text that moves by fractions of a pixel reads up to four cells per
+    /// glyph before it settles, and text whose scale animates reads a cell
+    /// per glyph per new size. Glyphs rasterised by `compile_overlay_geometry`
+    /// are not counted.
+    pub overlay_glyph_rasters: u32,
+    /// Immediate vector shapes and polylines tessellated this frame, for the
+    /// most recently prepared viewport: the tessellation cache misses.
+    ///
+    /// An item's tessellated geometry is kept and reused while its content,
+    /// rotation, scale and pixels per point stay the same; moving it does not
+    /// miss. So a static or merely moving item reads zero after its first
+    /// frame, and a value that tracks the item count every frame means their
+    /// shape, style or transform changes every frame.
+    pub overlay_tessellations: u32,
+    /// Overlay vertex streams uploaded this frame, for the most recently
+    /// prepared viewport: 0, 1 or 2, for its shape instances and its text and
+    /// geometry vertices.
+    ///
+    /// A stream is uploaded only when something it is built from changed:
+    /// an item, the viewport size or pixels per point, the camera when an
+    /// item is anchored in the world or sized in world units, the clock when
+    /// an item animates, a fill texture's size, or a glyph, coverage cell or
+    /// cached tessellation it draws from. So an unchanged overlay reads zero
+    /// after its first frame.
+    pub overlay_stream_uploads: u32,
+    /// Overlay layers composited from a scratch target this frame, for the
+    /// most recently prepared viewport: each `OverlayLayer` and retained-group
+    /// layer that could not fold into its members, and each item whose blend
+    /// reads the destination. A layer that folds draws no composite and is
+    /// not counted.
+    pub overlay_layers_composited: u32,
+    /// Scratch targets those layers drew into. Layers whose bounds do not
+    /// overlap share one; a layer that blurs or casts a shadow has its own.
+    pub overlay_layer_targets: u32,
+    /// Textures created for overlay layers this frame: scratch targets, their
+    /// blur textures, and the destination copy and backdrop blur. The targets
+    /// are pooled per viewport, so a frame whose layers fit last frame's pool
+    /// reads zero.
+    pub overlay_layer_target_allocations: u32,
     /// Section cap meshes generated this frame, for the most recently
     /// prepared viewport.
     ///
@@ -647,7 +754,7 @@ pub struct FrameStats {
 
     /// Objects that resolved through a LOD group this frame.
     ///
-    /// Counts `SceneRenderItem`s with a `lod_group` set, plus each individual
+    /// Counts `MeshItem`s with a `lod_group` set, plus each individual
     /// `MeshInstanceItem` instance whose level was selected. Zero when nothing
     /// uses LOD.
     pub lod_items_resolved: u32,
@@ -660,7 +767,7 @@ pub struct FrameStats {
     /// motion, or thresholds spaced too tightly for the hysteresis margin).
     pub lod_switches: u32,
     /// Objects dropped this frame because they fell below their LOD group's cull
-    /// size. Counts hidden `SceneRenderItem`s plus individual mesh instances that
+    /// size. Counts hidden `MeshItem`s plus individual mesh instances that
     /// were left out of every batch. Zero unless a group sets `cull_below`.
     pub lod_culled: u32,
     /// LOD objects drawn this frame at a reduced level (level index > 0, i.e.
@@ -687,6 +794,11 @@ pub struct FrameStats {
     /// Set when the frame asked for the HDR path and was drawn through the LDR
     /// path, which is what a renderer below the full tier does.
     pub hdr_drawn_as_ldr: bool,
+    /// The path the frame was drawn through. [`FramePath::OverlaysOnly`] when
+    /// its scene submitted nothing and it drew through the LDR path
+    /// (`PipelineMode::Direct`, or a renderer below the full tier): then only
+    /// the overlay pass ran. Set by `prepare` and again by the render step.
+    pub frame_path: FramePath,
     /// Lights left out of this frame's light list because it was full, after
     /// the frustum cull and ranked lowest first. The list holds 512 on the full
     /// tier and [`COMPATIBILITY_MAX_LIGHTS`](crate::resources::COMPATIBILITY_MAX_LIGHTS) on

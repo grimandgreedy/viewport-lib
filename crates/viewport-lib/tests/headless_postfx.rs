@@ -61,7 +61,7 @@ fn transparent_over_empty_background_not_darker() {
     let bg = [0.3, 0.3, 0.3, 1.0];
     let mut frame = tonemap_frame(size, bg);
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     // Cover the centre but leave the corners as background.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
@@ -123,7 +123,7 @@ fn bloom_glows_into_empty_background() {
     let glow = upload_material(&mut renderer, glow);
     let mut render = |bloom: bool| -> Vec<u8> {
         let mut frame = tonemap_frame(size, bg);
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         // Small, so there is surrounding background for the halo to fall on.
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).into();
@@ -191,8 +191,8 @@ fn coloured_item(
     mesh_id: MeshId,
     colour: [f32; 3],
     model: glam::Mat4,
-) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = upload_material(
         renderer,
@@ -616,7 +616,7 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -694,7 +694,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     frame.effects.post_process.bloom.enabled = true;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.into();
     let mut mat = Material::from_colour(Colour::linear_rgb(1.0, 1.0, 1.0));
@@ -1037,7 +1037,7 @@ fn post_effect_producer_fills_slot() {
                 .unwrap();
         }
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).into();
         item.material = upload_material(
@@ -1234,7 +1234,7 @@ fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
                 .unwrap();
         }
         let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
         item.material = upload_material(

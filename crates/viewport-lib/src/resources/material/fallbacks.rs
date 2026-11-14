@@ -38,27 +38,9 @@ pub(crate) struct MaterialFallbacks {
     pub(crate) sampler: crate::gpu::Sampler,
     /// The sampler `SamplerKey::default()` builds (repeat, trilinear). Bound at
     /// group-1 binding 2 on both mesh paths for a material that sets no key, so
-    /// setting the default key changes nothing. Also the palette's entry for
-    /// the default key.
+    /// setting the default key changes nothing. Also the sampler palette's
+    /// entry for the default key.
     pub(crate) mesh_sampler: crate::gpu::Sampler,
-    /// Deduped palette of samplers resolved from material [`SamplerKey`]s
-    /// (`crate::scene::material::SamplerKey`). Built lazily on the per-object
-    /// path so a material with a non-default sampler binds its own at binding 2.
-    /// Keyed by the parts a sampler actually depends on (wrap U/V, filter,
-    /// clamped anisotropy); `lod_bias` is excluded because it is not applied to
-    /// the sampler. `Mutex` (not `RefCell`) so it resolves from `&self` while
-    /// keeping `DeviceResources` `Send + Sync` for the egui callback bound.
-    pub(crate) sampler_palette: std::sync::Mutex<
-        std::collections::HashMap<
-            (
-                crate::scene::material::WrapMode,
-                crate::scene::material::WrapMode,
-                crate::scene::material::TextureFilter,
-                u16,
-            ),
-            crate::gpu::Sampler,
-        >,
-    >,
     /// Shared linear-clamp sampler for colourmap LUT lookups.
     pub(crate) lut_sampler: crate::gpu::Sampler,
     /// Non-filtering clamp sampler for the read-only-depth plugin pass. Bound
@@ -95,19 +77,52 @@ impl MaterialFallbacks {
             Emissive => &self.emissive_view,
         }
     }
+}
 
-    /// Resolve a material [`SamplerKey`](crate::scene::material::SamplerKey) to a
-    /// wgpu sampler, deduped through [`sampler_palette`](Self::sampler_palette).
-    /// Repeated keys (the common case: a scene full of the same tiling material)
-    /// share one sampler. Anisotropy is clamped exactly as the builder does, so
-    /// the palette key matches the sampler actually built.
-    pub(crate) fn resolve_sampler(
+/// Samplers resolved from material [`SamplerKey`](crate::scene::material::SamplerKey)s,
+/// deduped so repeated keys (a scene full of the same tiling material) share
+/// one sampler. Keyed by the parts a sampler depends on (wrap U/V, filter,
+/// clamped anisotropy); `lod_bias` is not applied, so it is left out. Held on
+/// `DeviceResources` beside the tiers, since a sampler does not depend on
+/// either. `Mutex` so it resolves from `&self` while keeping
+/// `DeviceResources` `Send + Sync`.
+#[derive(Default)]
+pub(crate) struct SamplerPalette(
+    std::sync::Mutex<
+        std::collections::HashMap<
+            (
+                crate::scene::material::WrapMode,
+                crate::scene::material::WrapMode,
+                crate::scene::material::TextureFilter,
+                u16,
+            ),
+            crate::gpu::Sampler,
+        >,
+    >,
+);
+
+impl SamplerPalette {
+    /// A palette that answers `key` with `sampler` instead of building one.
+    pub(crate) fn seeded(
+        key: crate::scene::material::SamplerKey,
+        sampler: crate::gpu::Sampler,
+    ) -> Self {
+        Self(std::sync::Mutex::new(std::collections::HashMap::from([(
+            sampler_palette_key(key),
+            sampler,
+        )])))
+    }
+
+    /// The sampler for `key`, built on first use. Anisotropy is clamped
+    /// exactly as the builder does, so the palette key matches the sampler
+    /// actually built.
+    pub(crate) fn resolve(
         &self,
         device: &crate::gpu::Device,
         key: crate::scene::material::SamplerKey,
     ) -> crate::gpu::Sampler {
         let palette_key = sampler_palette_key(key);
-        let mut palette = self.sampler_palette.lock().unwrap();
+        let mut palette = self.0.lock().unwrap();
         if let Some(sampler) = palette.get(&palette_key) {
             return sampler.clone();
         }

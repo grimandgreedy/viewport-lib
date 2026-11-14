@@ -33,7 +33,7 @@ use viewport_lib_plugins::item_types::external_instances::{
     ExternalInstancesItem,
 };
 use vpl::{
-    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId, SceneRenderItem,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId, MeshItem,
     ViewportRenderer, runtime::GpuPlugin,
 };
 
@@ -271,13 +271,13 @@ fn app_grid_dim(app: &App) -> u32 {
 // Scene collection (called from the per-frame match in main.rs)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings) {
+pub(crate) fn wave_collect(app: &App) -> (Vec<MeshItem>, LightingSettings) {
     let (Some(plane_id), Some(water)) = (app.wave_state.plane_id, app.wave_state.water_material)
     else {
         return (Vec::new(), LightingSettings::default());
     };
 
-    let mut item = SceneRenderItem::new(plane_id, water);
+    let mut item = MeshItem::new(plane_id, water);
     item.model = glam::Mat4::IDENTITY.into();
     item.settings.selected = app.wave_state.select_surface;
 

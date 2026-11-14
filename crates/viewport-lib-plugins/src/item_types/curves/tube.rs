@@ -42,6 +42,8 @@ pub struct TubePlugin {
     /// Every inline item from the last prepared frame. Reference items are not
     /// here: their geometry lives on the GPU, so they answer the GPU pick only.
     pick_items: Vec<TubeItem>,
+    /// Colour draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 /// The conservative pick radius for a tube: the largest of the uniform radius
@@ -87,6 +89,10 @@ impl ItemTypePlugin for TubePlugin {
         self.stored.allocated_bytes()
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -94,6 +100,7 @@ impl ItemTypePlugin for TubePlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         let items = items.of::<TubeItem>();
         let refs = ctx.refs_of::<TubeRefItem>();
@@ -184,7 +191,9 @@ impl ItemTypePlugin for TubePlugin {
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
-        paint_curve_mesh(pass, ctx, self.gpu.as_ref(), &self.frame);
+        let draws = paint_curve_mesh(pass, ctx, self.gpu.as_ref(), &self.frame);
+        self.issued
+            .fetch_add(draws, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -244,7 +253,9 @@ impl ItemTypePlugin for TubePlugin {
                     ctx.viewport_size,
                     radius_px.max(8.0),
                 ) {
-                    let toi = (hit.world_pos.as_vec3() - ray.origin).dot(ray.direction).max(0.0);
+                    let toi = (hit.world_pos.as_vec3() - ray.origin)
+                        .dot(ray.direction)
+                        .max(0.0);
                     consider(toi, hit);
                 }
             }

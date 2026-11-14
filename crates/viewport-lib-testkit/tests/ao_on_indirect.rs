@@ -18,8 +18,8 @@
 //! pixel's darkening can be bounded by its share of the light.
 
 use viewport_lib::{
-    CameraFrame, Colour, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem, ShadingModel, ToneMapping,
+    CameraFrame, Colour, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame, ShadingModel, ToneMapping,
 };
 use viewport_lib_testkit::{Harness, orbit_camera};
 
@@ -97,13 +97,13 @@ impl Scene {
         fill: f32,
         occlusion: Option<Occlusion>,
     ) -> FrameData {
-        let mut plane = SceneRenderItem::default();
+        let mut plane = MeshItem::default();
         plane.mesh_id = self.plane;
         plane.material = match ground {
             Ground::Diffuse => self.grey,
             Ground::EmissiveCard => self.card,
         };
-        let mut cube = SceneRenderItem::default();
+        let mut cube = MeshItem::default();
         cube.mesh_id = self.cube;
         cube.material = self.grey;
         // The underside 0.15 above the plane, inside the AO radius.

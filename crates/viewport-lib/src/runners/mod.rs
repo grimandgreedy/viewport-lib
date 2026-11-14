@@ -19,6 +19,14 @@
 //! [`renderer_mut`](ViewportInstance::renderer_mut)), so a program can start small
 //! and grow into plugins and custom passes without a rewrite.
 //!
+//! A [`ViewportRuntime`] attached with
+//! [`set_runtime`](ViewportInstance::set_runtime) (or the builder
+//! [`with_runtime`](ViewportInstance::with_runtime)) is driven by the instance:
+//! [`step_runtime`](ViewportInstance::step_runtime) steps it and returns the
+//! step's output for the app to apply, and the render calls run its GPU
+//! plugins' `pre_prepare` and `post_paint`. Features that span the runtime and
+//! the renderer install with [`install_plugin`](ViewportInstance::install_plugin).
+//!
 //! An instance does not own the `device`/`queue` (your application creates those,
 //! and the wgpu version must match it), and it does not weld in a camera-motion
 //! policy: [`update_orbit`](ViewportInstance::update_orbit) is the
@@ -28,6 +36,7 @@
 
 mod assemble;
 mod extras;
+mod gpu_plugins;
 mod offscreen;
 mod rebuild;
 mod render;
@@ -35,7 +44,10 @@ mod settings;
 
 pub use extras::ExtraId;
 pub use offscreen::OffscreenViewportTarget;
-pub use rebuild::StaleHandles;
+pub use rebuild::{
+    StaleDeformer, StaleHandles, StaleItemType, StaleMaterialPlugin, StalePostEffectProducer,
+    StalePostEffectStage, StaleShadingHook,
+};
 
 /// The winit runner: `ViewportApp` owns one or more OS windows, one
 /// `ViewportInstance` each (feature-gated behind `app`).
@@ -71,6 +83,12 @@ pub struct ViewportInstance {
     camera: Camera,
     input: ViewportInput,
     runtime: Option<ViewportRuntime>,
+    /// The `dt` of the last [`step_runtime`](Self::step_runtime), passed to GPU
+    /// plugins.
+    runtime_dt: f32,
+    /// Frames rendered with GPU plugins attached, passed to them as
+    /// `frame_index`.
+    gpu_frame_index: u64,
 
     /// Retained frame. Its `effects` and `viewport` sub-frames hold persistent
     /// settings (never overwritten by assembly); `camera`, `scene`, `interaction`,
@@ -236,6 +254,8 @@ impl ViewportInstance {
             // gizmo's own bindings through `set_bindings`.
             input: ViewportInput::from_preset(BindingPreset::Default),
             runtime: None,
+            runtime_dt: 0.0,
+            gpu_frame_index: 0,
             frame: FrameData::default(),
             action: ActionFrame::default(),
             viewport_size: [1.0, 1.0],
@@ -279,10 +299,90 @@ impl ViewportInstance {
     ///
     /// Drive it each frame with [`step_runtime`](Self::step_runtime). Register
     /// plugins after construction through [`runtime_mut`](Self::runtime_mut)
-    /// using the `add_*` methods.
+    /// using the `add_*` methods. Its GPU plugins' `pre_prepare` and
+    /// `post_paint` run from [`render`](Self::render) and
+    /// [`prepare`](Self::prepare); do not call them yourself as well.
     pub fn with_runtime(mut self, runtime: ViewportRuntime) -> Self {
-        self.runtime = Some(runtime);
+        self.set_runtime(runtime);
         self
+    }
+
+    /// Attach `runtime`, replacing and returning any runtime already attached.
+    ///
+    /// The builder form is [`with_runtime`](Self::with_runtime). The new
+    /// runtime's GPU plugins run `init_gpu` on the next render, even if they
+    /// already ran it on another instance.
+    pub fn set_runtime(&mut self, mut runtime: ViewportRuntime) -> Option<ViewportRuntime> {
+        runtime.reset_gpu_init();
+        self.runtime.replace(runtime)
+    }
+
+    /// Detach the runtime and hand it back, or `None` when none is attached.
+    /// Until another is attached, [`step_runtime`](Self::step_runtime) does
+    /// nothing and no GPU plugin runs.
+    pub fn take_runtime(&mut self) -> Option<ViewportRuntime> {
+        self.runtime.take()
+    }
+
+    /// Install a feature that wires itself into the renderer and, if it uses
+    /// one, the attached runtime, and return its handle.
+    ///
+    /// The instance-side form of [`install_plugin`](crate::install_plugin):
+    /// it passes this instance's renderer and its runtime (`None` when none is
+    /// attached, in which case a feature that needs one fails with
+    /// [`ViewportError::PluginInstallMissing`](crate::ViewportError::PluginInstallMissing)).
+    /// Attach the runtime first.
+    pub fn install_plugin<P: crate::PluginInstaller>(
+        &mut self,
+        feature: P,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::error::ViewportResult<P::Handle> {
+        crate::install_plugin(
+            feature,
+            device,
+            queue,
+            self.runtime.as_mut(),
+            &mut self.renderer,
+        )
+    }
+
+    /// Remove a feature installed with [`install_plugin`](Self::install_plugin),
+    /// consuming its handle. See
+    /// [`PluginInstaller::uninstall`](crate::PluginInstaller::uninstall).
+    pub fn uninstall_plugin<P: crate::PluginInstaller>(
+        &mut self,
+        handle: P::Handle,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::error::ViewportResult<()> {
+        crate::uninstall_plugin::<P>(
+            handle,
+            device,
+            queue,
+            self.runtime.as_mut(),
+            &mut self.renderer,
+        )
+    }
+
+    /// Register a feature's renderer-side pieces again after
+    /// [`rebuild`](Self::rebuild), updating the ids in its handle. The
+    /// attached runtime keeps the feature's runtime pieces, so this does not
+    /// add them a second time, as installing again would. See
+    /// [`PluginInstaller::reattach_renderer`](crate::PluginInstaller::reattach_renderer).
+    pub fn reattach_plugin<P: crate::PluginInstaller>(
+        &mut self,
+        handle: &mut P::Handle,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> crate::error::ViewportResult<()> {
+        crate::reattach_plugin::<P>(
+            handle,
+            device,
+            queue,
+            self.runtime.as_mut(),
+            &mut self.renderer,
+        )
     }
 
     // ---- per-frame input (universal, all setups) --------------------------------
@@ -379,6 +479,12 @@ impl ViewportInstance {
         self.pixels_per_point = pixels_per_point.max(0.001);
     }
 
+    /// The physical pixels per logical pixel, as last set by
+    /// [`set_pixels_per_point`](Self::set_pixels_per_point).
+    pub fn pixels_per_point(&self) -> f32 {
+        self.pixels_per_point
+    }
+
     /// Resolve accumulated events into an [`ActionFrame`] and cache it.
     ///
     /// [`update_orbit`](Self::update_orbit) and [`frame`](Self::frame) call this
@@ -436,9 +542,15 @@ impl ViewportInstance {
         self.renderer.resources_mut()
     }
 
-    /// The runtime, when one is attached: register physics/animation/GPU plugins
-    /// with its `add_*` methods. Per-frame driving is
-    /// [`step_runtime`](Self::step_runtime), not this accessor.
+    /// The runtime, when one is attached: register physics, animation and GPU
+    /// plugins with its `add_*` methods, before the first frame or between
+    /// frames. A feature that also registers on the renderer goes through
+    /// [`install_plugin`](Self::install_plugin) instead.
+    ///
+    /// The instance drives it: [`step_runtime`](Self::step_runtime) steps it,
+    /// and [`render`](Self::render) and [`prepare`](Self::prepare) run its GPU
+    /// plugins. Do not call `step`, `pre_prepare` or `post_paint` on it
+    /// through this accessor as well.
     pub fn runtime_mut(&mut self) -> Option<&mut ViewportRuntime> {
         self.runtime.as_mut()
     }

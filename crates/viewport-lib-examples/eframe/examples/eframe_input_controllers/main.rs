@@ -33,8 +33,8 @@ use viewport_lib_gizmo::{
 };
 use vpl::{
     BindingPreset, Camera, CameraFrame, FirstPersonCameraController, FrameData, KeyCode,
-    LightingSettings, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, SceneFrame,
-    SceneRenderItem, ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput,
+    LightingSettings, MeshId, MeshItem, OffscreenViewportTarget, OrbitCameraController, PickId,
+    SceneFrame, ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer, primitives, viewport_default_bindings, wish_xy_from_actions,
 };
 
@@ -537,7 +537,7 @@ impl eframe::App for App {
                 // ---------------------------------------------------------------
                 // Mode 1: camera only : three static boxes
                 // ---------------------------------------------------------------
-                let scene_items: Vec<SceneRenderItem> = match self.mode {
+                let scene_items: Vec<MeshItem> = match self.mode {
                     Mode::Primitives => {
                         let frame = self.input_primitives.resolve();
                         let dt = ctx.input(|i| i.stable_dt);
@@ -548,7 +548,7 @@ impl eframe::App for App {
                         self.objects
                             .iter()
                             .map(|obj| {
-                                let mut item = SceneRenderItem::default();
+                                let mut item = MeshItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.into();
                                 // The default material, coloured per item.
@@ -594,11 +594,11 @@ impl eframe::App for App {
                             self.ctrl_tp.apply(&mut self.camera, &frame, self.body_pos);
                         }
 
-                        let mut items: Vec<SceneRenderItem> = self
+                        let mut items: Vec<MeshItem> = self
                             .objects
                             .iter()
                             .map(|obj| {
-                                let mut item = SceneRenderItem::default();
+                                let mut item = MeshItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.into();
                                 item.settings.colour =
@@ -610,7 +610,7 @@ impl eframe::App for App {
                         // Third-person: draw a player capsule standing on the
                         // body position (the controllers treat body_pos as feet).
                         if self.mode == Mode::ThirdPerson {
-                            let mut marker = SceneRenderItem::default();
+                            let mut marker = MeshItem::default();
                             marker.mesh_id = self.body_mesh;
                             let stand = self.body_pos + glam::Vec3::Z * (CAPSULE_HEIGHT * 0.5);
                             marker.model = glam::Mat4::from_translation(stand).into();
@@ -680,12 +680,12 @@ impl eframe::App for App {
                             self.pick_cursor = self.cursor_viewport;
                         }
 
-                        // Build scene render items.
+                        // Build mesh items.
                         self.objects
                             .iter()
                             .enumerate()
                             .map(|(i, obj)| {
-                                let mut item = SceneRenderItem::default();
+                                let mut item = MeshItem::default();
                                 item.mesh_id = obj.mesh;
                                 item.model = obj.model.into();
                                 item.settings.colour =

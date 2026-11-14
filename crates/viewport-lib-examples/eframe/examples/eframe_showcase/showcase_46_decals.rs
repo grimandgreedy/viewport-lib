@@ -14,7 +14,7 @@ use viewport_lib_plugins::item_types::decal::{
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalProjection,
     LiveDecals,
 };
-use vpl::{BuiltinMatcap, Material, MeshId, SceneRenderItem, scene::Scene, selection::Selection};
+use vpl::{BuiltinMatcap, Material, MeshId, MeshItem, scene::Scene, selection::Selection};
 
 use crate::App;
 
@@ -898,7 +898,7 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
 // Scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<MeshItem> {
     app.decal46_state
         .scene
         .collect_render_items(&app.decal46_state.selection)

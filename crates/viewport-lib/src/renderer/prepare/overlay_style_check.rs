@@ -95,7 +95,8 @@ mod tests {
             .with_fill(crate::renderer::types::OverlayFill::texture(
                 crate::renderer::types::OverlayTextureId::INVALID,
             ));
-        let support = OverlayStyleSupport::for_glyphs();
+        // An open polyline has no interior, so it draws no fill of any kind.
+        let support = OverlayStyleSupport::for_polyline(false);
 
         // A name of this test's own, so the process-wide set is not shared with
         // whatever the renderer reported in another test.

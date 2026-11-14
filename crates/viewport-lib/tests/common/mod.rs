@@ -27,7 +27,7 @@ pub use viewport_lib::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, PluginPipelineOpts, PluginResources,
         shared_wgsl::SHARED_PICK_WGSL,
     },
-    renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
+    renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission, ViewportRenderer},
     resources::{MeshData, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, SCENE_DEPTH_FORMAT},
 };
 
@@ -174,6 +174,24 @@ pub fn box_mesh() -> MeshData {
 /// and read the result back as RGBA. Unlike `render_offscreen`, which compiles
 /// everything a frame needs before drawing, this follows the renderer's
 /// compilation policy, so under `Background` it shows what a live frame skips.
+/// A presented frame of `frame` drawn once the renderer's background mesh
+/// checks have landed. A presented frame never waits for a mesh's closed
+/// check, so the first frame after an upload can shade a closed mesh as open
+/// on a loaded machine; a read-back render waits for them, so one is drawn
+/// and thrown away first.
+#[allow(dead_code)]
+pub fn settled_reference(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &FrameData,
+) -> Vec<u8> {
+    let [w, h] = frame.camera.viewport_size;
+    let (w, h) = (w as u32, h as u32);
+    let _ = renderer.render_offscreen(device, queue, frame, w, h);
+    render_presented(renderer, device, queue, frame, w, h)
+}
+
 pub fn render_presented(
     renderer: &mut ViewportRenderer,
     device: &wgpu::Device,

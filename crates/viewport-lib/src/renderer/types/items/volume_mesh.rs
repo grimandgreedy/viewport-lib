@@ -1,4 +1,4 @@
-use super::{SceneRenderItem, VolumeTransparency};
+use super::{MeshItem, VolumeTransparency};
 use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
 #[allow(unused_imports)]
@@ -115,13 +115,13 @@ impl VolumeMeshItem {
         }
     }
 
-    /// Build the [`SceneRenderItem`] that the boundary-surface pipeline consumes.
+    /// Build the [`MeshItem`] that the boundary-surface pipeline consumes.
     ///
     /// Used internally by the renderer when [`transparency`](Self::transparency)
     /// is `None`, and by selection-outline / wireframe passes regardless of
     /// render mode. Host code does not usually need to call this.
-    pub fn to_render_item(&self) -> SceneRenderItem {
-        SceneRenderItem {
+    pub fn to_render_item(&self) -> MeshItem {
+        MeshItem {
             mesh_id: self.boundary_mesh_id,
             model: self.model.into(),
             settings: self.settings,
@@ -129,7 +129,7 @@ impl VolumeMeshItem {
             active_attribute: self.active_attribute.clone(),
             scalar_range: self.scalar_range,
             colourmap_id: self.colourmap_id,
-            ..SceneRenderItem::default()
+            ..MeshItem::default()
         }
     }
 

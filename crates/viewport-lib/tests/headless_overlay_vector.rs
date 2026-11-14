@@ -109,11 +109,11 @@ fn gradient_varies_across_shape() {
     let square = SubPath::polygon(&[[8.0, 8.0], [56.0, 8.0], [56.0, 56.0], [8.0, 56.0]]);
     frame.overlays.shapes = vec![
         OverlayShapeItem::vector(vec![square], FillRule::NonZero, [0.0, 0.0], [64.0, 64.0])
-            .with_fill(OverlayFill::LinearGradient {
-                start_colour: Colour::linear(1.0, 0.0, 0.0, 1.0),
-                end_colour: Colour::linear(0.0, 0.0, 1.0, 1.0),
-                angle: 0.0,
-            }),
+            .with_fill(OverlayFill::linear_gradient(
+                Colour::linear(1.0, 0.0, 0.0, 1.0),
+                Colour::linear(0.0, 0.0, 1.0, 1.0),
+                0.0,
+            )),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

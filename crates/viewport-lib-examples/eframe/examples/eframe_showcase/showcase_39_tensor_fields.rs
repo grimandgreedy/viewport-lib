@@ -29,8 +29,8 @@ use vpl::{Material, MaterialId};
 
 use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourSource,
-    ColourmapId, FrameData, MeshId, PickId, SceneRenderItem, SubObjectRef, SubSelection,
-    SubSelectionRef, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    ColourmapId, FrameData, MeshId, MeshItem, PickId, SubObjectRef, SubSelection, SubSelectionRef,
+    ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 const PICK_BEAM_MESH: u64 = 3901;
@@ -387,11 +387,11 @@ pub(crate) fn submit_beam_item(app: &App, fd: &mut FrameData) {
 }
 
 /// Surface render item for the beam (visual display).
-pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn beam_scene_items(app: &App) -> Vec<MeshItem> {
     let Some(mesh_id) = app.tg_state.mesh_id else {
         return vec![];
     };
-    let mut item = SceneRenderItem::new(mesh_id, app.tg_state.material);
+    let mut item = MeshItem::new(mesh_id, app.tg_state.material);
     item.active_attribute = Some(AttributeRef {
         name: "sigma_xx".to_string(),
         kind: AttributeKind::Face,

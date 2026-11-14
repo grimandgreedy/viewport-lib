@@ -29,7 +29,8 @@ struct Camera {
     inv_proj: mat4x4<f32>,
     // Viewport in physical pixels: width, height, 1 / width, 1 / height.
     viewport: vec4<f32>,
-    // Near, far, 1 when orthographic (0 when perspective), reserved.
+    // Near, far, 1 when orthographic (0 when perspective), and the target's
+    // device pixels per point (0 where a pass does not set it).
     clip: vec4<f32>,
     // Frame time: seconds as f32, the remainder f32 drops from the f64
     // seconds, delta seconds, frame index modulo 2^24.
@@ -286,6 +287,9 @@ override FEAT_CLEARCOAT: bool = true;
 override FEAT_SHEEN: bool = true;
 override FEAT_ANISOTROPY: bool = true;
 override FEAT_TRANSMISSION: bool = true;
+// Declared for the family's pipeline constants; this shader samples no point
+// or spot light shadows.
+override FEAT_PUNCTUAL_SHADOWS: bool = true;
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
@@ -1104,11 +1108,12 @@ fn compute_lit(
                                     material_gpu_buf[mid].item_flags.x, saa_kernel);
         }
         var Lo = vec3<f32>(0.0);
-        let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        var pbr_range = cluster_lights(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.
         let light_mask = object.object_mask;
-        for (var j = 0u; j < pbr_range.count; j++) {
-            let i = cluster_light_global(pbr_range, j);
+        loop {
+            let i = cluster_next_light(&pbr_range);
+            if i == CLUSTER_LIGHTS_END { break; }
             if !light_in_channel(lights_storage[i], light_mask) { continue; }
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }
@@ -1151,11 +1156,12 @@ fn compute_lit(
         // </viewport-shade-slot:recolour>
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
-        let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        var bp_range = cluster_lights(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.
         let light_mask = object.object_mask;
-        for (var j = 0u; j < bp_range.count; j++) {
-            let i = cluster_light_global(bp_range, j);
+        loop {
+            let i = cluster_next_light(&bp_range);
+            if i == CLUSTER_LIGHTS_END { break; }
             if !light_in_channel(lights_storage[i], light_mask) { continue; }
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }

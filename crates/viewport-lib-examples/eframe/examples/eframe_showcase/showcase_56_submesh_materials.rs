@@ -4,7 +4,7 @@
 //! vertex/index buffer from five primitive parts, each triangle tagged with a
 //! material id, and `MeshData::sort_triangles_into_submeshes` groups the
 //! triangles into contiguous ranges. At draw time the item carries one
-//! material per range via `SceneRenderItem::submesh_materials`, so the whole
+//! material per range via `MeshItem::submesh_materials`, so the whole
 //! rocket is one upload and one scene item:
 //!
 //!   - body: brushed metal (PBR metallic, live slider)
@@ -25,7 +25,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     AlphaMode, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshData, MeshId,
-    SceneRenderItem, TextureId, ViewportRenderer, primitives,
+    MeshItem, TextureId, ViewportRenderer, primitives,
 };
 
 // Material ids used when tagging triangles. Sparse on purpose (no id 2) to
@@ -263,12 +263,12 @@ fn material_for(id: u32, checker_tex: Option<TextureId>, glass_tex: Option<Textu
     m
 }
 
-pub(crate) fn submesh_scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn submesh_scene_items(app: &App) -> Vec<MeshItem> {
     let s = &app.submesh_state;
     if !s.built {
         return vec![];
     }
-    let mut item = SceneRenderItem::new(s.mesh_id, s.fallback_material);
+    let mut item = MeshItem::new(s.mesh_id, s.fallback_material);
     item.model = glam::Mat4::from_rotation_z(s.angle).into();
     if s.per_range {
         item.submesh_materials = Some(s.range_materials.clone());

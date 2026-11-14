@@ -25,7 +25,7 @@ use viewport_lib::plugin_api::Uploads;
 use viewport_lib_plugins::item_types::gaussian_splat::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
 };
-use vpl::{FrameData, LightingSettings, SceneRenderItem, ViewportRenderer};
+use vpl::{FrameData, LightingSettings, MeshItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // State
@@ -382,9 +382,7 @@ pub(crate) fn gaussian_splat_items(app: &App) -> Vec<GaussianSplatItem> {
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn splat_collect_scene_items(
-    _app: &App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn splat_collect_scene_items(_app: &App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     (vec![], LightingSettings::default(), 0, 0)
 }
 

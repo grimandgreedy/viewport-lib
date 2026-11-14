@@ -21,7 +21,7 @@ use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::volume::VolumeItem;
 use vpl::{
     AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, ItemSettings,
-    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId, SceneRenderItem,
+    LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId, MeshItem,
     ViewportRenderer, VolumeId, scene::Scene, selection::Selection,
 };
 
@@ -555,7 +555,7 @@ impl App {
     /// Translucent fill mesh items for every enabled clip plane. The unit quad
     /// (`fill_mesh_id`) is placed onto each plane and tagged `ignore_clip` so it
     /// stays visible where the scene is cut.
-    fn clip_plane_fill_items(&self) -> Vec<SceneRenderItem> {
+    fn clip_plane_fill_items(&self) -> Vec<MeshItem> {
         let Some(mesh_id) = self.clipvol_state.fill_mesh_id else {
             return Vec::new();
         };
@@ -579,7 +579,7 @@ impl App {
                 settings.ignore_clip = true;
                 settings.cast_shadows = false;
                 settings.receive_shadows = false;
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh_id;
                 item.model = model.into();
                 item.material = self.clipvol_state.fill_material;
@@ -597,7 +597,7 @@ impl App {
 
 pub(crate) fn clipvol_collect_scene_items(
     app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let mut items = if app.clipvol_state.scene_mode == SceneMode::Mesh {
         app.clipvol_state
             .scene

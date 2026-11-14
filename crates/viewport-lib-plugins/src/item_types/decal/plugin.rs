@@ -86,6 +86,8 @@ pub struct DecalPlugin {
     outline_targets: std::sync::Mutex<Option<pipeline::DecalOutlineTargets>>,
     /// The world origin of the last prepare, which the draws are relative to.
     origin: glam::DVec3,
+    /// Decal colour draws recorded since the last prepare, across viewports.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl DecalPlugin {
@@ -123,6 +125,10 @@ impl ItemTypePlugin for DecalPlugin {
         }
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -130,6 +136,7 @@ impl ItemTypePlugin for DecalPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         let decals = items.of::<DecalItem>();
         let res = ctx.resources;
         self.origin = ctx.world_origin();
@@ -448,6 +455,8 @@ impl DecalPlugin {
             pass.set_pipeline(pl);
             pass.set_bind_group(2, &gpu.bind_group, &[]);
             pass.draw(0..6, 0..1);
+            self.issued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }

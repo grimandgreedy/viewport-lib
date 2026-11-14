@@ -260,6 +260,12 @@ pub struct ItemFrameContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter assigned by the lib.
     pub frame_index: u64,
+    /// The time this frame renders at: the value the shaders read as
+    /// `camera.time`, with `seconds` in f64. It is `FrameData::time` when the
+    /// host set one, and the renderer's own clock otherwise. Drive CPU-side
+    /// animation (a tile frame, a flipbook index) from `time.seconds` so it
+    /// stays in step with what the shaders draw.
+    pub time: crate::FrameTime,
     /// The host's scene version counter for this frame (`SceneFrame::generation`).
     ///
     /// A plugin that rebuilds per-frame state from an inline collection can keep
@@ -321,6 +327,16 @@ pub struct ItemFrameContext<'a> {
     /// own, which a ray-marcher generally must, since it tests along the ray
     /// rather than per fragment.
     pub clip_objects: &'a [crate::renderer::ClipObject],
+    /// Device pixels per logical pixel of the scene target, so
+    /// `viewport_size * pixels_per_point` is the scene's size in device
+    /// pixels: the viewport's scale factor, or one under a reference
+    /// presentation.
+    pub pixels_per_point: f32,
+    /// The frame's light sources (`EffectsFrame::lighting.lights`), in world
+    /// coordinates and in submission order, before the renderer ranks or caps
+    /// them. For an item type that lights its own content from the scene's
+    /// lights rather than through the group-0 light list.
+    pub lights: &'a [crate::LightSource],
     /// `true` when the frame budget asked for reduced quality this frame
     /// (reported as `FrameStats::volume_quality_reduced`). A plugin with a
     /// cost knob, such as a march step count or a sample budget, should turn
@@ -378,6 +394,29 @@ impl<'a> ItemFrameContext<'a> {
     /// The two are the same lookup: a reference item is an item.
     pub fn refs_of<T: 'static>(&self) -> &'a [T] {
         self.items_of::<T>()
+    }
+
+    /// Report `detail` as a notice in the [`Item`](crate::NoticeCategory::Item)
+    /// category, for a condition the notice vocabulary already names.
+    ///
+    /// Reports with the same `key` coalesce into one notice with a count, so
+    /// reporting every frame is fine. `detail` is called only for the first
+    /// report of `key` since the host last took the notices.
+    pub fn report_detail(
+        &self,
+        severity: crate::Severity,
+        key: &'static str,
+        detail: impl FnOnce() -> crate::NoticeDetail,
+    ) {
+        self.resources.notices.report(
+            crate::notice::NoticeKey::new(
+                crate::NoticeCategory::Item,
+                key,
+                [crate::notice::name_id(key), 0],
+            ),
+            severity,
+            detail,
+        );
     }
 
     /// Report a condition the host should hear about, such as items this type
@@ -445,6 +484,18 @@ pub struct PaintContext<'a> {
     /// An item type whose geometry is a `MeshId` binds and draws it through
     /// this; one that owns its buffers ignores it.
     pub meshes: crate::resources::MeshDraw<'a>,
+    /// In `paint`, on the full tier, a group laid out as
+    /// [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout)
+    /// over a 1x1 depth (the pass writes the real one), carrying this frame's
+    /// painter masks and light layers. 2D content drawn outside the painter
+    /// sequence samples its light through it as painter layer 0. `None` on
+    /// the compatibility tier and in the other passes.
+    pub depth_read_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// In `paint`, this frame's painter masks and light layers, laid out as
+    /// [`painter_mask_bind_group_layout`](crate::resources::DeviceResources::painter_mask_bind_group_layout),
+    /// on every tier; in the other passes a group with no masks and no light
+    /// layers.
+    pub mask_bind_group: &'a crate::gpu::BindGroup,
     /// Whether the pass is one of the HDR path's passes.
     pub(crate) hdr_pass: bool,
 }
@@ -531,6 +582,241 @@ pub struct DepthReadContext<'a> {
     pub scene_depth_bind_group: &'a crate::gpu::BindGroup,
 }
 
+/// Per-call context for [`ItemTypePlugin::paint_painter`].
+#[non_exhaustive]
+pub struct PainterContext<'a> {
+    /// Active render-camera snapshot for this viewport.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+    /// The painter layers this call draws, inclusive. For a call with
+    /// [`batches`](Self::batches), the layers those batches span.
+    pub layers: std::ops::RangeInclusive<u32>,
+    /// For a plugin that reports
+    /// [`painter_batches`](ItemTypePlugin::painter_batches): the batch handles
+    /// this call draws, in the order to draw them. `None` for a plugin that
+    /// reports none, which draws everything it has in
+    /// [`layers`](Self::layers).
+    pub batches: Option<&'a [u32]>,
+    /// On the HDR path, the painter pass's ready-made scene depth bind group
+    /// (laid out as [`DepthReadContext::scene_depth_bind_group`]); `None` in
+    /// the LDR scene pass, whose depth attachment is writable.
+    pub scene_depth_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// On the full tier, a group laid out as
+    /// [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout)
+    /// in either pass: the scene depth on the HDR path (the same group as
+    /// [`scene_depth_bind_group`](Self::scene_depth_bind_group)), a 1x1 depth
+    /// in the LDR scene pass. Its bindings 2 and 3 carry this frame's painter
+    /// masks and bindings 4 and 5 its light layers, so a plugin with no spare
+    /// group tests masks and samples light through it. `None` on the
+    /// compatibility tier.
+    pub depth_read_bind_group: Option<&'a crate::gpu::BindGroup>,
+    /// This frame's painter masks and light layers, laid out as
+    /// [`painter_mask_bind_group_layout`](crate::resources::DeviceResources::painter_mask_bind_group_layout),
+    /// on every tier. Content that honours a [`MaskTest`](crate::MaskTest)
+    /// or is lit by 2D lighting binds it at a spare group and tests or
+    /// samples through
+    /// [`SHARED_PAINTER_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PAINTER_MASK_WGSL).
+    /// A frame with no masks or light layers binds empty ones.
+    pub mask_bind_group: &'a crate::gpu::BindGroup,
+    /// Draws an uploaded mesh by id, for a painter draw built on one.
+    pub meshes: crate::resources::MeshDraw<'a>,
+}
+
+impl PainterContext<'_> {
+    /// `true` in the HDR path's painter pass (`HDR_COLOR_FORMAT`, the
+    /// renderer's sample count, one colour target, scene depth read-only),
+    /// `false` in the LDR scene pass (the renderer's output format, one
+    /// sample).
+    pub fn is_hdr_pass(&self) -> bool {
+        self.scene_depth_bind_group.is_some()
+    }
+
+    /// Whether `layer` is drawn by this call.
+    pub fn includes(&self, layer: u32) -> bool {
+        self.layers.contains(&layer)
+    }
+}
+
+/// A painter mask a plugin draws this frame, as reported by
+/// [`ItemTypePlugin::painter_masks`]: the slot its coverage goes into and the
+/// painter layers it applies to.
+///
+/// Several masks may share a slot: their coverage is the union, and the
+/// slot's layers run from the lowest first layer to the highest last layer
+/// any of them names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PainterMask {
+    /// The slot, `0` to `PAINTER_MASK_SLOTS - 1`; higher values wrap.
+    pub slot: u8,
+    /// The painter layers content testing this slot is cut on.
+    pub layers: std::ops::RangeInclusive<u32>,
+}
+
+impl PainterMask {
+    /// A mask in `slot` over `layers`.
+    pub fn new(slot: u8, layers: std::ops::RangeInclusive<u32>) -> Self {
+        Self { slot, layers }
+    }
+}
+
+/// Per-call context for [`ItemTypePlugin::paint_painter_masks`].
+#[non_exhaustive]
+pub struct PainterMaskContext<'a> {
+    /// Active render-camera snapshot for this viewport.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+}
+
+/// One of a plugin's painter's-order draws this frame, as reported by
+/// [`ItemTypePlugin::painter_batches`].
+///
+/// The renderer sorts every plugin's batches into one sequence: ascending
+/// `layer`, then ascending `sort_key`, then registration order of the plugins,
+/// then the order each plugin reported them in. The renderer's own painter
+/// content (mesh instances and surfaces with a
+/// [`PainterPlacement`](crate::PainterPlacement)) sorts as if registered
+/// before every plugin. A world overlay layer draws after every batch whose
+/// layer is at or below its `order`.
+///
+/// A batch marked [`unlit`](Self::unlit) on a layer in the range of a light
+/// layer (see [`PainterLightLayers`]) moves to after every other batch and
+/// world overlay layer of that range: the unlit content of a range draws
+/// above its lit content, in its own layer and key order.
+///
+/// The sequence places each batch by its one key, so a batch must hold draws
+/// at a single key. A plugin whose draw covers several keys reports it as one
+/// batch per run of equal keys and draws consecutive batches of its own that
+/// the sequence hands back together as one draw where it can, as the sprite
+/// type does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct PainterBatch {
+    /// Painter layer: lower layers draw first.
+    pub layer: u32,
+    /// Order within the layer, across plugins: lower keys draw first.
+    /// Compared with `f32::total_cmp`. Compose it with
+    /// [`painter_key`](crate::painter_key) to keep an entity's parts together.
+    pub sort_key: f32,
+    /// The plugin's own handle for the batch, handed back in
+    /// [`PainterContext::batches`].
+    pub batch: u32,
+    /// Not lit by 2D lighting: the content does not sample its range's light
+    /// layer, and draws after the range's lit content. With no light layer
+    /// over `layer` it draws in its place.
+    pub unlit: bool,
+}
+
+impl PainterBatch {
+    /// A batch at `layer` with `sort_key`, named `batch` by the plugin.
+    pub fn new(layer: u32, sort_key: f32, batch: u32) -> Self {
+        Self {
+            layer,
+            sort_key,
+            batch,
+            unlit: false,
+        }
+    }
+
+    /// A batch at `placement`, named `batch` by the plugin, unlit when the
+    /// placement is.
+    pub fn at(placement: crate::PainterPlacement, batch: u32) -> Self {
+        Self::new(placement.layer, placement.key, batch).with_unlit(placement.unlit)
+    }
+
+    /// This batch with [`unlit`](Self::unlit) set to `unlit`.
+    pub fn with_unlit(mut self, unlit: bool) -> Self {
+        self.unlit = unlit;
+        self
+    }
+}
+
+/// A plugin's 2D light layers this frame, as reported by
+/// [`ItemTypePlugin::painter_light_layers`]: one array layer of light per run
+/// of painter layers, which lit content multiplies its colour by under its
+/// fragment.
+///
+/// The renderer binds the view and a `PainterLights` uniform describing the
+/// ranges in the painter mask and depth-read groups, so every lit draw reads
+/// the light of the range its own layer lies in, and only that one.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct PainterLightLayers {
+    /// A `D2Array` view, one array layer per range and at least two, at the
+    /// scene's device size, of a format sampled as unfilterable float.
+    pub view: crate::gpu::TextureView,
+    /// The painter layers each array layer lights, array layer 0 first. At
+    /// most [`MAX_PAINTER_LIGHT_RANGES`](crate::resources::MAX_PAINTER_LIGHT_RANGES)
+    /// are bound. Ranges should not overlap: a layer reads the first range
+    /// that holds it.
+    pub ranges: Vec<std::ops::RangeInclusive<u32>>,
+    /// Multiplied into what is sampled: `1.0` for a layer holding the light
+    /// itself, `2.0` for one holding half of it.
+    pub scale: f32,
+    /// Per range, the array layer of [`view`](Self::view) holding the
+    /// direction the range's light arrives from, for content with a normal
+    /// map; `None` (or a short list) for a range lit flat. Each texel holds
+    /// the sum over lights of `w * l` in `rgb` and of `w` in `a`, `l` the unit
+    /// world-space direction to the light and `w` the luminance it adds.
+    pub directions: Vec<Option<u32>>,
+}
+
+impl PainterLightLayers {
+    /// Light layers in `view` over `ranges`, sampled times `scale`, lit flat.
+    pub fn new(
+        view: crate::gpu::TextureView,
+        ranges: Vec<std::ops::RangeInclusive<u32>>,
+        scale: f32,
+    ) -> Self {
+        Self {
+            view,
+            ranges,
+            scale,
+            directions: Vec::new(),
+        }
+    }
+
+    /// These layers with a direction layer per range, as
+    /// [`directions`](Self::directions) describes.
+    pub fn with_directions(mut self, directions: Vec<Option<u32>>) -> Self {
+        self.directions = directions;
+        self
+    }
+}
+
+/// The painter's-order draws one
+/// [`render_pick_painter`](ItemTypePlugin::render_pick_painter) call covers:
+/// the same run of the sequence a
+/// [`paint_painter`](ItemTypePlugin::paint_painter) call draws.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct PainterRun<'a> {
+    /// The painter layers this run covers, inclusive.
+    pub layers: std::ops::RangeInclusive<u32>,
+    /// For a plugin that reports
+    /// [`painter_batches`](ItemTypePlugin::painter_batches): the batch handles
+    /// of the run, in draw order. `None` for a plugin that reports none, which
+    /// picks everything it has in [`layers`](Self::layers).
+    pub batches: Option<&'a [u32]>,
+}
+
+impl PainterRun<'_> {
+    /// Whether `layer` is covered by this run.
+    pub fn includes(&self, layer: u32) -> bool {
+        self.layers.contains(&layer)
+    }
+}
+
 /// Where in the HDR frame an [`encode`](ItemTypePlugin::encode) call is
 /// happening.
 ///
@@ -563,12 +849,19 @@ pub enum EncoderScope {
     /// composites onto surfaces rather than sampling them, use
     /// [`OnOpaqueSurfaces`](Self::OnOpaqueSurfaces).
     AfterOpaque,
-    /// After the OIT resolve and before the outline composite and foreground
-    /// pass.
+    /// After the OIT resolve and the painter's-order content, and before the
+    /// outline composite and foreground pass.
     ///
-    /// The scene colour now holds opaque plus resolved transparency, which is
-    /// what a participating-media or volumetric effect wants to composite
-    /// over. Depth is still opaque-only: the OIT pass writes none.
+    /// The scene colour now holds opaque plus resolved transparency and the
+    /// painter sequence (blended sprites and tiles, world overlay layers),
+    /// which is what a participating-media or volumetric effect wants to
+    /// composite over. Depth is still opaque-only: neither the OIT pass nor
+    /// the painter pass writes any.
+    ///
+    /// The one scope the LDR path also has, for plugins that opt in through
+    /// [`encodes_ldr`](ItemTypePlugin::encodes_ldr): after the scene content,
+    /// the painter's-order content and the world overlay layers, and before
+    /// the selection outline and the overlays.
     AfterTransparent,
 }
 
@@ -611,15 +904,21 @@ pub struct EncoderScopeContext<'a> {
     /// Size in pixels of the scene attachments below, render scale applied.
     /// Size intermediate targets from this, not from the viewport extent.
     pub scene_size: [u32; 2],
+    /// Format of [`scene_colour`](Self::scene_colour):
+    /// [`HDR_COLOR_FORMAT`](crate::resources::HDR_COLOR_FORMAT) on the HDR
+    /// path, the renderer's output format on the LDR path.
+    pub target_format: crate::gpu::TextureFormat,
+
     /// The shared group-0 bind group for this viewport, the same one the lib
     /// binds before the draw hooks. Bind it at group 0 in passes of the
     /// plugin's own so its shaders can use the shared camera, lighting and
     /// clip declarations.
     pub camera_bind_group: &'a crate::gpu::BindGroup,
-    /// The scene colour target, as a view to attach and render into. This is
-    /// the HDR target at scene resolution even under supersampling: the SSAA
-    /// resolve runs before either scope, so from here on the frame is drawing
-    /// into the same target it would without SSAA.
+    /// The scene colour target, as a view to attach and render into. On the
+    /// HDR path this is the HDR target at scene resolution even under
+    /// supersampling: the SSAA resolve runs before either scope, so from here
+    /// on the frame is drawing into the same target it would without SSAA. On
+    /// the LDR path it is the target the scene pass drew into.
     pub scene_colour: &'a crate::gpu::TextureView,
     /// The same target as a texture, as the source for a
     /// `copy_texture_to_texture` into a sampleable copy. An effect that reads
@@ -680,6 +979,18 @@ pub struct EncoderScopeContext<'a> {
     /// `true` when the frame budget asked for reduced quality this frame, the
     /// same signal [`ItemFrameContext::quality_reduced`] carries.
     pub quality_reduced: bool,
+    /// Whether this is the HDR path's scope.
+    pub(crate) hdr_pass: bool,
+}
+
+impl EncoderScopeContext<'_> {
+    /// `true` on the HDR path, `false` at the LDR path's
+    /// [`AfterTransparent`](EncoderScope::AfterTransparent) point. Choose the
+    /// pipelines that write [`scene_colour`](Self::scene_colour) by this or by
+    /// [`target_format`](Self::target_format).
+    pub fn is_hdr_pass(&self) -> bool {
+        self.hdr_pass
+    }
 }
 
 /// Information forwarded to a plugin's `cast_shadow_pass`.
@@ -984,9 +1295,13 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// frame's draw-call figure however much it draws.
     ///
     /// This is a per-frame count, not a running total: reset it in your
-    /// `prepare` and accumulate as you record draws. The renderer reads it
-    /// during `prepare` and does not reset it for you, so a plugin that only
-    /// ever adds will report a number that climbs for the process lifetime.
+    /// `prepare` and accumulate as you record draws. The paint hooks take
+    /// `&self`, so a count kept as draws are recorded lives in an atomic or a
+    /// `Cell`. The renderer reads it when the host asks for the frame's
+    /// stats, after the frame has painted, and does not reset it for you, so
+    /// a plugin that only ever adds reports a number that climbs for the
+    /// process lifetime. A frame with none of the plugin's items reports
+    /// zero for it without calling this.
     fn draw_calls(&self) -> u32 {
         0
     }
@@ -1021,6 +1336,15 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ///
     /// If no collection has been submitted, the renderer skips this
     /// method for the frame.
+    ///
+    /// With several viewports over one scene, this runs once per viewport
+    /// (`prepare_viewport`), each with that viewport's camera, viewport and
+    /// interaction state, before any of them paints. State built from those,
+    /// and anything [`cull`](Self::cull) narrows, has to be kept per
+    /// [`ItemFrameContext::viewport_index`] and read back by the draw hooks
+    /// from their own context's `viewport_index`, or the first viewport
+    /// paints what the last one prepared.
+    /// [`PerViewport`](crate::plugin_api::PerViewport) holds such state.
     fn prepare(
         &mut self,
         _device: &crate::gpu::Device,
@@ -1065,10 +1389,12 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// (and the renderer warns once), never handed a pass their pipeline
     /// cannot draw into.
     ///
-    /// Only `paint` runs on the LDR path: the OIT, read-only-depth, and
-    /// foreground passes exist on the HDR path alone, so
+    /// `paint` and `paint_painter` run on the LDR path: the OIT,
+    /// read-only-depth, and foreground passes exist on the HDR path alone, so
     /// `paint_transparent`, `paint_depth_read`, and `paint_foreground` are
-    /// HDR-only regardless of this value.
+    /// HDR-only regardless of this value. An encode after the scene opts in
+    /// separately, through [`encodes_ldr`](Self::encodes_ldr).
+
     fn draws_ldr(&self) -> bool {
         false
     }
@@ -1092,13 +1418,27 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ) {
     }
 
-    /// `true` when this plugin draws in the read-only-depth pass.
+    /// `false` when this frame's items have nothing for
+    /// [`paint_transparent`](Self::paint_transparent) in the viewport
+    /// `viewport_index`.
+    ///
+    /// Read after [`prepare`](Self::prepare). The renderer runs the OIT pass
+    /// when any plugin with items says `true`, so the default keeps a plugin
+    /// that never overrides this drawing there; a plugin that knows its frame
+    /// has no OIT draws returns `false` and, when nothing else is transparent,
+    /// the frame skips the pass and its composite.
+    fn draws_transparent(&self, _viewport_index: usize) -> bool {
+        true
+    }
+
+    /// `true` when this plugin draws in the read-only-depth pass of the
+    /// viewport `viewport_index`.
     ///
     /// The renderer opens that pass only when some plugin opts in;
     /// implementing [`paint_depth_read`](Self::paint_depth_read) without
     /// overriding this to `true` means the hook is never called, and a frame
     /// with no opted-in plugin issues no extra pass.
-    fn draws_depth_read(&self) -> bool {
+    fn draws_depth_read(&self, _viewport_index: usize) -> bool {
         false
     }
 
@@ -1125,12 +1465,122 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ///
     /// Only called when [`draws_depth_read`](Self::draws_depth_read) returns
     /// `true`.
+    ///
+    /// Content that should sort with painter layers (blended sprites, tiles,
+    /// 2D meshes, particles in a 2D scene) does not belong here: the renderer
+    /// cannot tell such draws from depth-read effects, so they draw before the
+    /// painter sequence whatever their layer. Report them through
+    /// [`painter_batches`](Self::painter_batches) and draw them in
+    /// [`paint_painter`](Self::paint_painter);
+    /// [`PluginFrameCounters::painter_batches`](crate::renderer::stats::PluginFrameCounters::painter_batches)
+    /// shows what joined the sequence.
     fn paint_depth_read(
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &DepthReadContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
+    }
+
+    /// `true` when this frame's items have painter's-order draws for
+    /// [`paint_painter`](Self::paint_painter) in the viewport `viewport_index`.
+    ///
+    /// Read after [`prepare`](Self::prepare). A frame where some plugin says
+    /// `true` draws them on the HDR path in a read-only-depth pass of their
+    /// own after the order-independent transparency resolves, and on the LDR
+    /// path in the scene pass, after every plugin's [`paint`](Self::paint).
+    fn draws_painter(&self, _viewport_index: usize) -> bool {
+        false
+    }
+
+    /// This frame's painter's-order draws in the viewport `viewport_index`,
+    /// pushed onto `out`, so they take
+    /// their place in the sequence the renderer sorts across every plugin.
+    ///
+    /// Read after [`prepare`](Self::prepare) and [`cull`](Self::cull), only
+    /// when [`draws_painter`](Self::draws_painter) returns `true`. Push one
+    /// [`PainterBatch`] per draw that can be ordered on its own; the renderer
+    /// then calls [`paint_painter`](Self::paint_painter) once per run of
+    /// consecutive batches of this plugin, naming them in
+    /// [`PainterContext::batches`]. Pushing nothing, the default, keeps the
+    /// plugin out of the sequence: see `paint_painter` for where it draws then.
+    ///
+    /// Each batch is placed by its one key (see [`PainterBatch`]): report a
+    /// draw that covers several keys as one batch per run of equal keys.
+    /// Content meant to sort with painter layers must come through here; the
+    /// renderer cannot see draws a plugin makes in
+    /// [`paint`](Self::paint) or [`paint_depth_read`](Self::paint_depth_read)
+    /// and does not warn about them. The count reported each frame is in
+    /// [`PluginFrameCounters::painter_batches`](crate::renderer::stats::PluginFrameCounters::painter_batches).
+    fn painter_batches(&self, _viewport_index: usize, _out: &mut Vec<PainterBatch>) {}
+
+    /// Issue this frame's painter's-order draws.
+    ///
+    /// Painter's-order content (blended sprites, blended tile layers) is
+    /// ordered by a `u32` layer, and world overlay layers interleave with it by
+    /// the same number. A plugin that reports
+    /// [`painter_batches`](Self::painter_batches) is called once per run of
+    /// its own batches in the renderer's sequence and draws exactly the
+    /// batches [`PainterContext::batches`] names, in that order, so its
+    /// content interleaves with other plugins' by layer and sort key.
+    ///
+    /// A plugin that reports none is called once per run of layers between
+    /// world overlay layers and the unlit content of light ranges, ascending,
+    /// after the sequenced batches of that run, and draws its content whose
+    /// layer lies in [`PainterContext::layers`]; then the world layers or the
+    /// range's unlit content at the run's top layer draw. A frame with
+    /// neither makes one such call covering every layer. Such plugins draw in
+    /// registration order within a run, and their content is never unlit.
+    ///
+    /// The pass has the viewport's camera bind group at group 0 on entry.
+    /// Only called when [`draws_painter`](Self::draws_painter) returns `true`,
+    /// and on the LDR path only for a plugin that [`draws_ldr`](Self::draws_ldr).
+
+    fn paint_painter(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PainterContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// The painter masks this plugin draws in the viewport `viewport_index`
+    /// this frame, pushed onto `out`.
+    ///
+    /// Read after [`prepare`](Self::prepare). A frame where some plugin
+    /// reports one clears the viewport's mask target and calls
+    /// [`paint_painter_masks`](Self::paint_painter_masks) on every plugin that
+    /// reported, before any painter content draws; content testing a slot
+    /// nobody reported is not cut.
+    fn painter_masks(&self, _viewport_index: usize, _out: &mut Vec<PainterMask>) {}
+
+    /// Draw this frame's painter masks into the viewport's mask target.
+    ///
+    /// The target is [`PAINTER_MASK_FORMAT`](crate::resources::PAINTER_MASK_FORMAT)
+    /// at the scene's device size, one sample, with no depth attachment and
+    /// the viewport's camera bind group at group 0 on entry. Write a mask's
+    /// coverage (`0` to `1`) into the channel of its slot (red for slot 0 to
+    /// alpha for slot 3) and zero into the others, through
+    /// [`PAINTER_MASK_BLEND`](crate::resources::PAINTER_MASK_BLEND). Runs on
+    /// every tier, during prepare, so it needs no pass of the frame itself.
+    fn paint_painter_masks(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PainterMaskContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// The 2D light layers this plugin accumulated for the viewport
+    /// `viewport_index` this frame, if any.
+    ///
+    /// Read after [`prepare`](Self::prepare), on every tier. The first plugin
+    /// with items that returns some has them bound for the frame's lit
+    /// content; the ranges also place [`PainterBatch::unlit`] content. The
+    /// layers must be complete by the end of `prepare`: accumulate them in
+    /// the command buffers it returns.
+    fn painter_light_layers(&self, _viewport_index: usize) -> Option<PainterLightLayers> {
+        None
     }
 
     /// `true` when this plugin draws in the foreground pass.
@@ -1317,11 +1767,48 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// passes of its own, and the renderer will call `encode` once per listed
     /// scope, in the order the frame reaches them rather than the order listed.
     ///
-    /// HDR-only, like the OIT, read-only-depth and foreground hooks: the LDR
-    /// path has no intermediate scene target to read or composite into, so a
-    /// plugin listing scopes is simply not called there.
+    /// Read after [`prepare`](Self::prepare), and only for a plugin with items
+    /// this frame: a scope no plugin with items lists opens no pass.
+    ///
+    /// On the HDR path every scope runs. The LDR path runs
+    /// [`AfterTransparent`](EncoderScope::AfterTransparent) alone, and only
+    /// for a plugin that opts in through [`encodes_ldr`](Self::encodes_ldr).
     fn encoder_scopes(&self) -> &[EncoderScope] {
         &[]
+    }
+
+    /// `true` when this plugin's [`AfterTransparent`](EncoderScope::AfterTransparent)
+    /// encode also runs on the LDR path.
+    ///
+    /// There the renderer ends its scene pass after the painter's-order
+    /// content and world overlay layers, calls `encode`, and resumes with the
+    /// selection outline, the sub-object highlight and the overlays. The
+    /// context's scene colour is the LDR target in the renderer's output
+    /// format ([`EncoderScopeContext::target_format`], with
+    /// [`EncoderScopeContext::is_hdr_pass`] `false`), at one sample, so the
+    /// plugin needs pipelines for that format as well. The scene colour is a
+    /// texture that can be copied from: when the output cannot be, the frame
+    /// draws into an intermediate target and copies it to the output at the
+    /// end.
+    ///
+    /// The host-owned render pass (`pass().paint`, `paint_to`,
+    /// `paint_viewport`) cannot be ended mid-frame, so there the encode is
+    /// skipped and the renderer reports it once.
+    fn encodes_ldr(&self) -> bool {
+        false
+    }
+
+    /// `false` when this plugin's encode at `scope` never reads the scene
+    /// depth.
+    ///
+    /// Without [`direct_depth_sampling`](crate::Capabilities::direct_depth_sampling)
+    /// the renderer copies the scene depth before a scope so
+    /// [`EncoderScopeContext::scene_depth_only`] can be sampled; it skips the
+    /// copy when no plugin encoding at the scope says `true`. On such a frame
+    /// `scene_depth_only` views the live depth buffer, which must not then be
+    /// sampled while `scene_depth` is attached.
+    fn encode_reads_depth(&self, _scope: EncoderScope) -> bool {
+        true
     }
 
     /// Encode passes of this plugin's own into the frame's command encoder.
@@ -1350,7 +1837,9 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
 
     /// Update internal culling state for the current camera frustum.
     ///
-    /// Called once per frame before `paint`. The plugin records which
+    /// Called once per frame and viewport, after `prepare` and before
+    /// `paint`. Keep the result per [`ItemFrameContext::viewport_index`] (see
+    /// [`prepare`](Self::prepare)). The plugin records which
     /// items are inside the frustum so subsequent `paint` /
     /// `paint_transparent` / `cast_shadow_pass` calls can skip culled
     /// entries. The lib does not pre-filter the collection; the plugin
@@ -1458,6 +1947,10 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// [`pick`](Self::pick); a plugin implements whichever fits, or both.
     /// Default no-op: plugins relying on the CPU path leave this empty.
     ///
+    /// Painter's-order content picks in
+    /// [`render_pick_painter`](Self::render_pick_painter) instead, which runs
+    /// after every plugin's `render_pick` in the painter sequence's order.
+    ///
     /// For sub-object picking (face / vertex / edge on the drawn geometry),
     /// use the primitive-index fragment helper
     /// ([`SHARED_PICK_PRIM_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_PRIM_WGSL))
@@ -1469,6 +1962,30 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
+        _items: &ItemCollections<'_>,
+    ) {
+    }
+
+    /// Issue pick draws for one run of this frame's painter sequence.
+    ///
+    /// The pick pass draws every plugin's [`render_pick`](Self::render_pick)
+    /// first, then walks the painter sequence in draw order and calls this
+    /// once per run of this plugin, as [`paint_painter`](Self::paint_painter)
+    /// is called: with the batch handles of the run, or for a plugin that
+    /// reports no batches with the run's layers. The draw drawn last on
+    /// screen therefore wins the pick across plugins, provided the pipeline
+    /// tests the pick depth without writing it:
+    /// [`build_pick_pipeline`](PluginResources::build_pick_pipeline) with
+    /// `depth_write: false` and the
+    /// [`DEPTH_COMPARE`](crate::plugin_api::depth::DEPTH_COMPARE) test.
+    ///
+    /// Only called when [`draws_painter`](Self::draws_painter) returns `true`.
+    /// Default no-op.
+    fn render_pick_painter(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        _run: &PainterRun<'_>,
         _items: &ItemCollections<'_>,
     ) {
     }
@@ -1540,6 +2057,27 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         _sub_object: crate::renderer::SubObjectRef,
     ) -> Option<glam::Vec3> {
         None
+    }
+
+    /// World-space outline of a resolved sub-object, for the sub-object
+    /// highlight: the corners of a convex polygon in order, which the
+    /// highlight fills and traces.
+    ///
+    /// Asked for each selected sub-object whose geometry only the item type
+    /// knows, such as a [`SubObjectRef::Tile`](crate::renderer::SubObjectRef::Tile),
+    /// with the collection submitted this frame. Push the corners into `out`
+    /// for a sub-object of one of this plugin's items and nothing otherwise;
+    /// the first plugin to push wins. The highlight is rebuilt when an
+    /// outline changes, so an item that moves keeps its highlight under it.
+    ///
+    /// Default: nothing, so the sub-object draws no highlight.
+    fn sub_object_outline(
+        &self,
+        _items: &ItemCollections<'_>,
+        _pick_id: PickId,
+        _sub_object: crate::renderer::SubObjectRef,
+        _out: &mut Vec<glam::Vec3>,
+    ) {
     }
 }
 

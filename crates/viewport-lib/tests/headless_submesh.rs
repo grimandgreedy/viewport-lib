@@ -48,7 +48,7 @@ fn submesh_frame(
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.into();

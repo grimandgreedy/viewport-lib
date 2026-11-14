@@ -77,6 +77,8 @@ pub struct GpuMarchingCubesPlugin {
     iso_gpu: Option<iso::McIsoGpu>,
     /// Per drawn item on the ray-marched path, rebuilt each prepare.
     iso_frame: Vec<iso::McIsoFrame>,
+    /// Colour draws recorded since the last prepare: surface, wireframe and ray-marched isosurface.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for GpuMarchingCubesPlugin {
@@ -120,6 +122,10 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         gpu.pipelines.request_all();
     }
 
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn prepare(
         &mut self,
         device: &viewport_lib::gpu::Device,
@@ -127,6 +133,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         self.iso_frame.clear();
         self.pick_bgs.clear();
@@ -187,6 +194,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
             for entry in &self.iso_frame {
                 pass.set_bind_group(1, &entry.bind_group, &[]);
                 pass.draw(0..36, 0..1);
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             return;
         }
@@ -210,6 +219,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                 for (slab, wire_bg) in entry.slabs.iter().zip(entry.wire_slab_bgs.iter()) {
                     pass.set_bind_group(1, wire_bg, &[]);
                     pass.draw_indirect(&slab.wire_indirect_buf, 0);
+                    self.issued
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             } else {
                 let member = if is_hdr {
@@ -225,6 +236,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                 for slab in &entry.slabs {
                     pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
                     pass.draw_indirect(&slab.indirect_buf, 0);
+                    self.issued
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }

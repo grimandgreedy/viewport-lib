@@ -26,6 +26,7 @@ fn every_scene_builds_and_renders() {
             || !built.streamtube_items.is_empty()
             || !built.ribbon_items.is_empty()
             || !built.sprite_items.is_empty()
+            || !built.tilemaps.is_empty()
             || !built.volumes.is_empty()
             || !built.gaussian_splats.is_empty()
             || !built.image_slices.is_empty()

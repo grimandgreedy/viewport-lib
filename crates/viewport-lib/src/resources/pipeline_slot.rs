@@ -407,6 +407,14 @@ pub struct LazyFamily<C, const N: usize, P = crate::gpu::RenderPipeline> {
 /// stays on the universal member.
 pub(crate) const FEATURE_SETS_PER_FAMILY: usize = 32;
 
+/// The key a feature-set slot is found by: the member index above the set's
+/// bits, plus one so no key is zero (an empty slot).
+fn feature_slot_key(i: usize, feats: crate::renderer::pipeline_key::FeatureSet) -> u32 {
+    use crate::renderer::pipeline_key::FeatureSet;
+    debug_assert!(i < (1 << (32 - FeatureSet::BITS)) - 1);
+    ((i as u32) << FeatureSet::BITS | feats.bits()) + 1
+}
+
 /// The scoped lazy axis beside a family's eager members: member `i` built
 /// with a [`FeatureSet`](crate::renderer::pipeline_key::FeatureSet), keyed by
 /// value. Entries are only ever added, so a slot's address is stable and a
@@ -513,7 +521,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         feats: crate::renderer::pipeline_key::FeatureSet,
     ) -> Option<Option<&P>> {
         let f = self.features.as_deref()?;
-        let key = ((i as u32) << 16 | feats.bits() as u32) + 1;
+        let key = feature_slot_key(i, feats);
         let find = |len: usize| {
             f.keys[..len]
                 .iter()
@@ -553,7 +561,7 @@ impl<C: Send + Sync + 'static, const N: usize, P: Send + 'static> LazyFamily<C, 
         let Some(f) = self.features.as_deref() else {
             return false;
         };
-        let key = ((i as u32) << 16 | feats.bits() as u32) + 1;
+        let key = feature_slot_key(i, feats);
         f.keys[..f.len.load(Ordering::Acquire)]
             .iter()
             .position(|k| k.load(Ordering::Acquire) == key)

@@ -22,4 +22,12 @@ pub enum SpriteBlend {
     Additive,
     /// Premultiplied alpha: `src.rgb + dst.rgb * (1 - src.a)`.
     Premultiplied,
+    /// Multiply: `dst.rgb * mix(1, src.rgb, src.a)`. Darkens what is behind,
+    /// for shadow and tint overlays. Sprites only: instanced mesh batches,
+    /// ribbons and GPU particles draw it as `AlphaBlend`.
+    Multiply,
+    /// Screen: `1 - (1 - dst.rgb) * (1 - src.rgb * src.a)`. Lightens what is
+    /// behind without passing white, for light and glow overlays. Sprites
+    /// only, as for `Multiply`.
+    Screen,
 }

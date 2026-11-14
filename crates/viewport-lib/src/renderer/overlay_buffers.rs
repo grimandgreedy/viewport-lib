@@ -25,6 +25,9 @@ pub(crate) struct GrowBuffer {
     min_capacity: u64,
     /// The bytes last written, kept by `write_changed` to skip identical writes.
     written: Vec<u8>,
+    /// The key the buffer's contents were last written under by
+    /// `write_keyed`, or `None` once anything else has written it.
+    key: Option<u64>,
 }
 
 impl GrowBuffer {
@@ -56,6 +59,7 @@ impl GrowBuffer {
             usage: usage | crate::gpu::BufferUsages::COPY_DST,
             min_capacity: 0,
             written: Vec::new(),
+            key: None,
         }
     }
 
@@ -85,6 +89,28 @@ impl GrowBuffer {
         buf
     }
 
+    /// Like `write`, but skips the upload when the buffer was last written
+    /// under the same `key`. The caller derives `key` from everything `data`
+    /// is built from, so data that stays the same from frame to frame costs
+    /// neither a copy nor a comparison of the bytes. Also returns whether the
+    /// data was uploaded.
+    pub(crate) fn write_keyed<T: bytemuck::Pod>(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: &[T],
+        key: u64,
+    ) -> (crate::gpu::Buffer, bool) {
+        if self.key == Some(key)
+            && let Some(buf) = &self.buf
+        {
+            return (buf.clone(), false);
+        }
+        let buf = self.write(device, queue, data);
+        self.key = Some(key);
+        (buf, true)
+    }
+
     /// Ensure capacity for `verts`, upload them at offset 0, and return a handle
     /// to the buffer. Reallocates only when the current buffer is too small;
     /// otherwise the existing allocation is reused and overwritten. The tail past
@@ -111,6 +137,7 @@ impl GrowBuffer {
         let buf = self.buf.as_ref().unwrap();
         queue.write_buffer(buf, 0, bytes);
         self.written.clear();
+        self.key = None;
         buf.clone()
     }
 }
@@ -186,31 +213,57 @@ impl OverlayGeometrySlot {
     }
 }
 
-/// A shadow-layer data texture that persists across frames, grows by rows when
-/// a frame has more layers than it holds, and is rewritten only when the
-/// layers change. The layout is `shadow_layer_texels`'s.
-pub(crate) struct ShadowLayerTexture {
+/// An `Rgba32Float` data texture (the shadow layers, the fill records) that
+/// persists across frames, grows by rows when a frame has more texels than it
+/// holds, and is rewritten only when its contents change.
+pub(crate) struct DataTexture {
+    label: &'static str,
+    row_texels: u32,
     texture: Option<(crate::gpu::Texture, crate::gpu::TextureView)>,
     /// The texels last written, so an unchanged frame skips the upload.
     written: Vec<u8>,
 }
 
-impl ShadowLayerTexture {
-    pub(crate) fn new() -> Self {
+impl DataTexture {
+    pub(crate) fn new(label: &'static str, row_texels: u32) -> Self {
         Self {
+            label,
+            row_texels,
             texture: None,
             written: Vec::new(),
         }
     }
 
-    /// Upload `layers` (at least one) and return the view to bind.
-    pub(crate) fn write_changed(
+    /// The shadow-layer texture, laid out as `shadow_layer_texels`.
+    pub(crate) fn shadow_layers() -> Self {
+        Self::new(
+            "overlay_shadow_layers",
+            crate::resources::overlay::overlay_shape::SHADOW_ROW_TEXELS,
+        )
+    }
+
+    /// A fill-record texture, as the fill module reads it.
+    pub(crate) fn fill_records() -> Self {
+        Self::new(
+            "overlay_fill_records",
+            crate::resources::overlay::overlay_shape::FILL_TEXELS_PER_ROW,
+        )
+    }
+
+    /// The view last written, if any.
+    pub(crate) fn view(&self) -> Option<crate::gpu::TextureView> {
+        self.texture.as_ref().map(|(_, v)| v.clone())
+    }
+
+    /// Upload `data` (whole texels, at least one) and return the view to bind.
+    pub(crate) fn write_changed<T: bytemuck::Pod>(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        layers: &[crate::resources::OverlayShadowLayerGpu],
+        data: &[T],
     ) -> crate::gpu::TextureView {
-        let (texels, rows) = crate::resources::overlay::overlay_shape::shadow_layer_texels(layers);
+        use crate::resources::overlay::overlay_shape as os;
+        let (texels, rows) = os::data_texels(bytemuck::cast_slice(data), self.row_texels);
         let fits = self
             .texture
             .as_ref()
@@ -219,17 +272,14 @@ impl ShadowLayerTexture {
             // Grow in steps so a frame-to-frame wobble in the count does not
             // reallocate each time.
             let rows = rows.next_power_of_two();
-            let texture =
-                crate::resources::overlay::overlay_shape::create_shadow_layer_texture(device, rows);
+            let texture = os::create_data_texture(device, self.label, self.row_texels, rows);
             let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
             self.texture = Some((texture, view));
             self.written.clear();
         }
         let (texture, view) = self.texture.as_ref().unwrap();
         if self.written != texels {
-            crate::resources::overlay::overlay_shape::write_shadow_layer_texels(
-                queue, texture, &texels, rows,
-            );
+            os::write_data_texels(queue, texture, &texels, self.row_texels, rows);
             self.written = texels;
         }
         view.clone()
@@ -245,17 +295,32 @@ pub(crate) struct OverlayBindings {
     /// a uniform array of `MAX_OVERLAY_CLIP_SHAPES`.
     pub clip: GrowBuffer,
     /// Slot 0 identity plus one instance per retained group, bound as the
-    /// per-instance vertex stream of the text and shape pipelines.
+    /// per-instance vertex stream of the text pipeline.
     pub instances: GrowBuffer,
-    /// Shape shadow layers, read by all three shape pipelines.
-    pub shape_shadow: ShadowLayerTexture,
+    /// The same instances, one per `INSTANCE_UNIFORM_STRIDE` bytes, bound by
+    /// the shape pipeline as a uniform at a dynamic offset.
+    pub instances_uniform: GrowBuffer,
+    /// Shape shadow layers, read by the shape and backdrop pipelines.
+    pub shape_shadow: DataTexture,
+    /// The frame's fill records for the shape pass.
+    pub shape_fills: DataTexture,
+    /// The frame's fill records for the text stream.
+    pub text_fills: DataTexture,
+    /// Fill bind groups (group 1) the shape pass drew with last frame.
+    pub shape_fill_bgs: crate::resources::overlay::overlay_shape::OverlayFillBindGroups,
+    /// Fill bind groups the text stream and the retained groups drew with
+    /// last frame.
+    pub text_fill_bgs: crate::resources::overlay::overlay_shape::OverlayFillBindGroups,
     pub label_bg: crate::resources::cached_bind_group::CachedBindGroup<(
         crate::gpu::TextureView,
         crate::gpu::Buffer,
         crate::gpu::Buffer,
+        crate::gpu::TextureView,
+        crate::gpu::TextureView,
     )>,
     pub shape_shadow_bg: crate::resources::cached_bind_group::CachedBindGroup<(
         crate::gpu::TextureView,
+        crate::gpu::Buffer,
         crate::gpu::Buffer,
         crate::gpu::Buffer,
     )>,
@@ -267,10 +332,8 @@ pub(crate) struct OverlayBindings {
     /// Per retained group, keyed by the group's own shadow-layer texture.
     pub retained_shape_bgs: std::collections::HashMap<
         crate::gpu::TextureView,
-        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 2]>,
+        crate::resources::cached_bind_group::CachedBindGroup<[crate::gpu::Buffer; 3]>,
     >,
-    /// Per overlay texture.
-    pub tex_bgs: std::collections::HashMap<crate::gpu::TextureView, crate::gpu::BindGroup>,
 }
 
 impl OverlayBindings {
@@ -281,12 +344,19 @@ impl OverlayBindings {
                 crate::resources::overlay::overlay_shape::CLIP_UNIFORM_BYTES,
             ),
             instances: GrowBuffer::vertex("overlay_instances_buf"),
-            shape_shadow: ShadowLayerTexture::new(),
+            instances_uniform: GrowBuffer::uniform(
+                "overlay_instances_uniform",
+                crate::resources::overlay::geometry::INSTANCE_UNIFORM_STRIDE,
+            ),
+            shape_shadow: DataTexture::shadow_layers(),
+            shape_fills: DataTexture::fill_records(),
+            text_fills: DataTexture::fill_records(),
+            shape_fill_bgs: Default::default(),
+            text_fill_bgs: Default::default(),
             label_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             shape_shadow_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             tex_clip_bg: crate::resources::cached_bind_group::CachedBindGroup::new(),
             retained_shape_bgs: std::collections::HashMap::new(),
-            tex_bgs: std::collections::HashMap::new(),
         }
     }
 }
@@ -300,17 +370,23 @@ pub(crate) struct RetainedDraw {
     pub vertex_buf: crate::gpu::Buffer,
     pub vertex_count: u32,
     pub instance_index: u32,
+    /// Group 1: the group's own fill records (or the frame's, when it has
+    /// none) with the blank image.
+    pub fill_bind_group: crate::gpu::BindGroup,
 }
 
-/// One retained group's SDF shape-stream draw: the group's cached shape vertex
-/// buffer, its count, a bind group (the group's shadow-layer texture plus the
-/// shared clip and viewport), and the per-draw instance index. Drawn through the
-/// overlay shape pipeline.
+/// One retained group's SDF shape-stream draw: the group's cached shape
+/// instance buffer, its count, a bind group (the group's shadow-layer texture
+/// plus the shared clip, viewport and group-instance uniform), and the index of
+/// its group instance, which the draw binds at a dynamic offset. Drawn through
+/// the overlay shape pipeline.
 pub(crate) struct RetainedShapeDraw {
-    pub vertex_buf: crate::gpu::Buffer,
-    pub vertex_count: u32,
+    pub instance_buf: crate::gpu::Buffer,
+    pub instance_count: u32,
     pub bind_group: crate::gpu::BindGroup,
     pub instance_index: u32,
+    /// Group 1: the group's own shape fill records with the blank image.
+    pub fill_bind_group: crate::gpu::BindGroup,
 }
 
 /// Grow the capacity to hold at least `needed` bytes, in 1.5x steps from a small

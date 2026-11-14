@@ -94,28 +94,22 @@ impl SceneColourTargets {
 /// scales, and the direct share in green, which contact shadows scale.
 ///
 /// A fragment entry that writes it outputs `vec4(indirect, direct, 0, alpha)`
-/// with the colour target's alpha (see `scene_fragment` in
-/// [`SHARED_SCENE_FRAGMENT_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SCENE_FRAGMENT_WGSL)),
-/// and the target takes the colour target's `blend`, so an alpha-blended draw
-/// mixes the fraction the way it mixes the colour. A draw that does not write
-/// it gets an empty write mask and leaves the pixel's value as it was: 1 where
-/// nothing else drew, so both terms darken it in full. Only an opaque
-/// (`blend: None`) or [`ALPHA_BLENDING`](crate::gpu::BlendState::ALPHA_BLENDING)
-/// draw writes it; under any other blend (additive, premultiplied) the
-/// fraction would not mix as a weight, so the mask is empty whatever
-/// `writes` says.
+/// (see `scene_fragment` in
+/// [`SHARED_SCENE_FRAGMENT_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SCENE_FRAGMENT_WGSL)).
+/// Only an opaque (`blend: None`) draw writes it. Every blended draw gets an
+/// empty write mask, whatever `writes` says, and leaves the pixel's value as
+/// it was: the share of the surface behind it, or 1 where nothing opaque
+/// drew, so the terms darken a blended item the way they darken what it
+/// covers. Writing a second target from blended draws, which are mostly
+/// overdraw, costs more than the split is worth for them.
 pub fn indirect_fraction_target(
     blend: Option<crate::gpu::BlendState>,
     writes: bool,
 ) -> crate::gpu::ColorTargetState {
-    let writes = writes
-        && match blend {
-            None => true,
-            Some(b) => b == crate::gpu::BlendState::ALPHA_BLENDING,
-        };
+    let writes = writes && blend.is_none();
     crate::gpu::ColorTargetState {
         format: crate::resources::INDIRECT_FRACTION_FORMAT,
-        blend: if writes { blend } else { None },
+        blend: None,
         write_mask: if writes {
             crate::gpu::ColorWrites::ALL
         } else {
@@ -290,3 +284,24 @@ pub const OIT_REVEAL_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
         operation: crate::gpu::BlendOperation::Add,
     },
 };
+
+#[cfg(test)]
+mod fraction_tests {
+    use super::indirect_fraction_target;
+    use crate::gpu::{BlendState, ColorWrites};
+
+    #[test]
+    fn only_opaque_draws_write_the_indirect_fraction() {
+        assert_eq!(indirect_fraction_target(None, true).write_mask, ColorWrites::ALL);
+        assert_eq!(indirect_fraction_target(None, false).write_mask, ColorWrites::empty());
+        for blend in [
+            BlendState::ALPHA_BLENDING,
+            BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            BlendState::REPLACE,
+        ] {
+            let target = indirect_fraction_target(Some(blend), true);
+            assert_eq!(target.write_mask, ColorWrites::empty(), "{blend:?}");
+            assert!(target.blend.is_none());
+        }
+    }
+}

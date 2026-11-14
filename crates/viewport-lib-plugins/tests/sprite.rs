@@ -28,7 +28,7 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 fn sample_sprites() -> SpriteItem {
     let mut item = SpriteItem::default();
     item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-    item.sizes = vec![8.0; 3];
+    item.sizes = vec![[8.0; 2]; 3];
     item
 }
 
@@ -216,7 +216,7 @@ fn a_reserved_sprite_batch_takes_ranged_writes_per_channel() {
     let recoloured = vec![
         sp::Sprite {
             colour: viewport_lib::Colour::linear_rgb(1.0, 0.0, 0.0),
-            size: 2.0,
+            size: [2.0; 2],
             ..Default::default()
         };
         100

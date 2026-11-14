@@ -18,8 +18,7 @@ use std::f32::consts::TAU;
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, FrameData, Material, MeshId, SceneRenderItem, ViewportRenderer,
-    primitives,
+    BackfacePolicy, Camera, FrameData, Material, MeshId, MeshItem, ViewportRenderer, primitives,
 };
 use viewport_lib_testkit::{BuildCtx, BuiltScene, frame_for, orbit_camera, rigs, scene_by_name};
 
@@ -43,12 +42,7 @@ struct Cell {
     build: Box<dyn Fn(&mut BuildCtx<'_>) -> BuiltScene>,
 }
 
-fn cube_grid(
-    ctx: &mut BuildCtx<'_>,
-    mesh: MeshId,
-    count: u32,
-    instanced: bool,
-) -> Vec<SceneRenderItem> {
+fn cube_grid(ctx: &mut BuildCtx<'_>, mesh: MeshId, count: u32, instanced: bool) -> Vec<MeshItem> {
     let mut material = Material::pbr(Colour::linear_rgb(0.7, 0.6, 0.5), 0.2, 0.5);
     if !instanced {
         material.backface_policy = BackfacePolicy::Tint(0.4);
@@ -63,7 +57,7 @@ fn cube_grid(
     'outer: for x in 0..side {
         for y in 0..side {
             for z in 0..side {
-                let mut it = SceneRenderItem::default();
+                let mut it = MeshItem::default();
                 it.mesh_id = mesh;
                 it.model =
                     glam::Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32) * 1.5)
@@ -126,7 +120,7 @@ fn mesh_cell(id: &'static str, sub: u32, tris: u64) -> Cell {
                 .resources_mut()
                 .upload_mesh_data(ctx.device, &primitives::icosphere(1.5, sub))
                 .expect("icosphere");
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = m;
             it.material = ctx
                 .renderer

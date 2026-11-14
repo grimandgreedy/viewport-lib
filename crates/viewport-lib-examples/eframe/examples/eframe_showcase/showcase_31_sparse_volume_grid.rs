@@ -39,7 +39,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, GridCells, LightingSettings,
-    MeshId, SceneRenderItem, ViewportRenderer,
+    MeshId, MeshItem, ViewportRenderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -427,7 +427,7 @@ impl App {
     }
 
     /// Produce scene items for all three shapes with the active attribute mode.
-    pub(crate) fn svg_scene_items(&self) -> Vec<SceneRenderItem> {
+    pub(crate) fn svg_scene_items(&self) -> Vec<MeshItem> {
         if !self.svg_state.built {
             return vec![];
         }
@@ -457,14 +457,14 @@ impl App {
         };
 
         // Three attribute-driven objects side by side along X.
-        let mut items: Vec<SceneRenderItem> = [
+        let mut items: Vec<MeshItem> = [
             (self.svg_state.mesh_id, translate(-9.0, 0.0, 0.0)),
             (self.svg_state.shell_id, translate(0.0, 0.0, 0.0)),
             (self.svg_state.terrain_id, translate(9.0, 0.0, 0.0)),
         ]
         .into_iter()
         .map(|(mesh_id, model)| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = model.into();
             item.active_attribute = active_attribute.clone();
@@ -475,7 +475,7 @@ impl App {
 
         // Paint grid: always uses cell_colours["paint"], independent of the
         // attribute selector above.
-        let mut paint = SceneRenderItem::default();
+        let mut paint = MeshItem::default();
         paint.mesh_id = self.svg_state.paint_mesh_id;
         paint.model = translate(PAINT_OFFSET[0], PAINT_OFFSET[1], PAINT_OFFSET[2]).into();
         paint.active_attribute = Some(AttributeRef {

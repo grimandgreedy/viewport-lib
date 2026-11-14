@@ -4,7 +4,7 @@ use crate::scene::material::ItemSettings;
 /// Per-object render data for one frame.
 #[derive(Clone)]
 #[non_exhaustive]
-pub struct SceneRenderItem {
+pub struct MeshItem {
     /// `MeshId` of the uploaded GPU mesh for this object.
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// World-space placement: an f64 translation and an f32 rotation-scale.
@@ -52,7 +52,7 @@ pub struct SceneRenderItem {
     ///   (or a plugin handle like
     ///   [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)).
     ///
-    /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to
+    /// Allows multiple `MeshItem`s that share a bind-pose mesh to
     /// each pose independently (crowd / instanced characters with GPU
     /// skinning).
     ///
@@ -84,6 +84,18 @@ pub struct SceneRenderItem {
     /// mesh's lightmap was registered with. Lets copies of one lightmapped
     /// mesh sample their own rects of a shared atlas.
     pub lightmap_placement: Option<crate::resources::LightmapPlacementId>,
+    /// Where this object draws in the painter sequence. `None` (the default)
+    /// draws it in the scene passes like any other surface.
+    ///
+    /// With a placement the object leaves the opaque, transparent and shadow
+    /// passes and draws in painter's order among sprites, blended tile layers
+    /// and the other painter content: alpha blended at the item's opacity,
+    /// testing scene depth without writing it, with the item's deformers
+    /// (GPU skinning included) and its single material, and picked in that
+    /// order. This is how a flat or skinned 2D mesh sits between two sprites.
+    /// Submesh materials and shading-plugin materials are not applied there;
+    /// the object draws whole with the built-in shading of `material`.
+    pub painter: Option<crate::PainterPlacement>,
 }
 
 /// Source of an object's indirect diffuse light.
@@ -103,7 +115,7 @@ pub enum IndirectLightSource {
     ProbeVolume,
 }
 
-impl SceneRenderItem {
+impl MeshItem {
     /// An item drawing `mesh_id` with `material`, at the identity transform,
     /// with default settings.
     pub fn new(mesh_id: crate::resources::mesh::mesh_store::MeshId, material: MaterialId) -> Self {
@@ -115,7 +127,7 @@ impl SceneRenderItem {
     }
 }
 
-impl Default for SceneRenderItem {
+impl Default for MeshItem {
     fn default() -> Self {
         Self {
             mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,
@@ -134,6 +146,7 @@ impl Default for SceneRenderItem {
             lod_group: None,
             indirect_light: IndirectLightSource::default(),
             lightmap_placement: None,
+            painter: None,
         }
     }
 }

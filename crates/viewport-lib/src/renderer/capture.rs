@@ -133,6 +133,7 @@ impl ViewportRenderer {
         let saved_ssaa = frame.effects.post_process.ssaa_factor;
         let saved_exposure = frame.effects.display.exposure;
         let saved_scale = self.current_render_scale;
+        let saved_presentation = frame.viewport.presentation;
 
         // Mark this an auxiliary render for its duration: it reads the resident
         // scene and must not advance shared per-frame state. `render_mode`
@@ -152,6 +153,7 @@ impl ViewportRenderer {
         // hdr_texture is exactly `size` x `size` and reads back one-to-one.
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.camera.pixels_per_point = 1.0;
+        frame.viewport.presentation = crate::renderer::Presentation::Native;
         frame.effects.display.mode = crate::renderer::types::PipelineMode::Hdr;
         frame.effects.post_process.ssaa_factor = 1;
         self.current_render_scale = 1.0;
@@ -195,6 +197,7 @@ impl ViewportRenderer {
         frame.camera.render_camera = saved_camera;
         frame.camera.viewport_size = saved_viewport_size;
         frame.camera.pixels_per_point = saved_ppp;
+        frame.viewport.presentation = saved_presentation;
         frame.effects.display.mode = saved_display_mode;
         frame.effects.post_process.ssaa_factor = saved_ssaa;
         frame.effects.display.exposure = saved_exposure;
@@ -1284,7 +1287,7 @@ mod tests {
         assert!(renderer.frame_fully_resident(&empty_frame()));
 
         // A frame referencing the resident mesh is fully resident.
-        let item = crate::SceneRenderItem {
+        let item = crate::MeshItem {
             mesh_id: mesh,
             ..Default::default()
         };
@@ -1335,7 +1338,7 @@ mod tests {
         let mut items = Vec::new();
         for i in 0..8 {
             let x = (i as f32 - 3.5) * 1.2;
-            let mut item = crate::SceneRenderItem {
+            let mut item = crate::MeshItem {
                 mesh_id: mesh,
                 ..Default::default()
             };
@@ -1443,7 +1446,7 @@ mod tests {
 
             // A bright unlit box, submitted only as a foreground item (not a
             // scene surface), in layer 0b01.
-            let mut item = crate::SceneRenderItem {
+            let mut item = crate::MeshItem {
                 mesh_id: mesh,
                 ..Default::default()
             };

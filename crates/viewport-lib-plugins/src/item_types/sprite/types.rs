@@ -1,6 +1,8 @@
 use viewport_lib_types::colour::Colour;
-use viewport_lib_types::material::ItemSettings;
-use viewport_lib_types::render_item::SpriteBlend;
+use viewport_lib_types::ids::TextureId;
+use viewport_lib_types::material::{ItemSettings, TextureFilter};
+use viewport_lib_types::plugin::material::ParamValue;
+use viewport_lib_types::render_item::{MaskTest, SpriteBlend};
 
 viewport_lib_types::slot_handle! {
     /// Handle to a sprite batch uploaded once through
@@ -16,14 +18,76 @@ viewport_lib_types::slot_handle! {
     pub struct SpriteInstanceSetId;
 }
 
-/// Controls whether sprite sizes are measured in screen-space pixels or world-space units.
+/// Controls whether sprite sizes are measured in screen-space points or world-space units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpriteSizeMode {
-    /// Sizes in screen-space pixels. Sprites maintain constant apparent size at all distances.
+    /// Sizes in points (device-independent pixels): a sprite of size `s`
+    /// covers `s` points, `s * pixels_per_point` device pixels, at every
+    /// distance and zoom. The default, for markers and particles in a 3D view.
+    /// A sprite in painter's order with this size raises
+    /// `NoticeDetail::PainterSpriteScreenSized`, since a 2D scene wants
+    /// world sizes.
     #[default]
     ScreenSpace,
     /// Sizes in world-space units. Sprites shrink with distance like regular geometry.
     WorldSpace,
+}
+
+/// How a sprite's image fills its quad.
+///
+/// Evaluated per fragment against the sprite's UV rect and size, so resizing
+/// a sliced or tiled sprite costs nothing on the CPU. Flips, pivots, the
+/// texture filter, effects and masks all apply after it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum SpriteDrawMode {
+    /// The UV rect stretched across the quad. The default.
+    #[default]
+    Simple,
+    /// Nine-slice: the borders keep their size and the centre stretches.
+    /// Build one with [`SpriteDrawMode::sliced`] for one size unit per texel.
+    Sliced {
+        /// Border widths `[left, bottom, right, top]` in texels of the
+        /// texture (in size units for an untextured sprite): how much of the
+        /// image each border shows.
+        border: [f32; 4],
+        /// Size units one texel of border covers on the quad, so a border
+        /// draws `border * units_per_texel` units wide. `1.0` suits sprites
+        /// sized in pixels; a world sized at 16 pixels per unit uses
+        /// `1.0 / 16.0`. A quad too small for two opposite borders shrinks
+        /// them in proportion.
+        units_per_texel: f32,
+    },
+    /// The UV rect repeated across the quad from its top-left corner.
+    Tiled {
+        /// One tile's size in the sprite's size units.
+        tile_size: [f32; 2],
+        /// What happens where the quad is not a whole number of tiles.
+        mode: TileMode,
+    },
+}
+
+impl SpriteDrawMode {
+    /// A nine-slice with `border` (`[left, bottom, right, top]` in texels)
+    /// drawn one size unit per texel.
+    pub const fn sliced(border: [f32; 4]) -> Self {
+        Self::Sliced {
+            border,
+            units_per_texel: 1.0,
+        }
+    }
+}
+
+/// How a [`SpriteDrawMode::Tiled`] sprite fills a quad that is not a whole
+/// number of tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TileMode {
+    /// Tiles keep their size and the last one along each axis (the right
+    /// and bottom ones, unflipped) is cut off. The default.
+    #[default]
+    Continuous,
+    /// The nearest whole number of tiles (at least one) is drawn, each
+    /// stretched to fill the quad.
+    Adaptive,
 }
 
 /// A batch of instanced billboard sprites rendered as camera-facing textured quads.
@@ -57,18 +121,40 @@ pub struct SpriteItem {
     /// Per-instance RGBA colour tints. Empty = use `default_colour` for all.
     /// Multiplied with the texture sample (or used directly when `texture_id` is `None`).
     pub colours: Vec<viewport_lib_types::colour::Colour>,
-    /// Per-instance sizes. Empty = use `default_size` for all.
-    /// Interpretation depends on `size_mode`.
-    pub sizes: Vec<f32>,
+    /// Per-instance sizes as `[width, height]` along the quad's right and up
+    /// axes. Empty = use `default_size` for all. Interpretation depends on
+    /// `size_mode`. [`SpriteItem::square_sizes`] builds the list from one edge
+    /// length per sprite.
+    pub sizes: Vec<[f32; 2]>,
     /// Per-instance rotation angles in radians, CCW around the camera-forward axis.
-    /// Empty = no rotation applied.
+    /// Empty = no rotation applied. The quad rotates about its pivot.
     pub rotations: Vec<f32>,
-    /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions.
-    /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
+    /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions,
+    /// with `v = 0` at the image's top row: `(u0, v0)` draws at the quad's
+    /// top-left corner, so an image uploaded top row first, as image loaders
+    /// return it, draws upright. Empty = full texture `[0.0, 0.0, 1.0, 1.0]`
+    /// for all.
     pub uv_rects: Vec<[f32; 4]>,
+    /// Per-instance pivots: the point of the quad that sits at the sprite's
+    /// position, as `[x, y]` in `0..=1` of the quad (`[0, 0]` the bottom-left
+    /// corner, `[1, 1]` the top-right, along the quad's right and up axes).
+    /// Rotation and size act about it. Empty = `default_pivot` for all.
+    pub pivots: Vec<[f32; 2]>,
+    /// Pivot used when `pivots` is empty or shorter than `positions`.
+    /// Default `[0.5, 0.5]`, the quad's centre.
+    pub default_pivot: [f32; 2],
+    /// Per-instance flips, mirroring the sprite's UV rect horizontally and/or
+    /// vertically. Empty = no flip for all.
+    pub flips: Vec<SpriteFlip>,
+    /// Per-instance user values, opaque to the renderer: a vertex hook reads
+    /// one as `SpriteVertex::user` and a material as `SpriteFragment::user`.
+    /// A hook can pack a weight and a phase into it (`pack2x16float`) or keep
+    /// an index into data of its own. Empty or short = `0` for the rest.
+    pub user_values: Vec<u32>,
     /// Fallback RGBA colour tint used when `colours` is empty. Default: opaque white.
     pub default_colour: viewport_lib_types::colour::Colour,
-    /// Default size when `sizes` is empty. Pixels (ScreenSpace) or world units (WorldSpace).
+    /// Default edge length when `sizes` is empty or shorter than `positions`:
+    /// a square sprite. Pixels (ScreenSpace) or world units (WorldSpace).
     pub default_size: f32,
     /// Whether sizes are in screen-space pixels or world-space units.
     pub size_mode: SpriteSizeMode,
@@ -135,8 +221,152 @@ pub struct SpriteItem {
     /// Directions, not colour, so upload it linear
     /// ([`TextureData::normal_map`](viewport_lib_types::data::texture::TextureData::normal_map)).
     pub normal_texture_id: Option<viewport_lib_types::ids::TextureId>,
+    /// How the batch's texture is filtered. Default [`TextureFilter::Linear`];
+    /// [`TextureFilter::Nearest`] keeps pixel art crisp under magnification.
+    pub filter: TextureFilter,
+    /// When `true`, each sprite's position is snapped to a whole device pixel
+    /// after projection, so pixel art drawn at an integer scale keeps every
+    /// texel on the pixel grid. Sprites whose size covers an odd number of
+    /// pixels need a pivot on a pixel boundary (a corner, say) to stay aligned.
+    /// Default `false`.
+    pub pixel_snap: bool,
+    /// How blended sprites in this batch are ordered against other blended
+    /// content. Default [`SpriteOrder::Depth`].
+    pub order: SpriteOrder,
+    /// Not lit by 2D lighting: the sprites do not sample the light layer of
+    /// their painter range (layer 0 for `SpriteOrder::Depth`) and keep their
+    /// colour (an emissive sprite, a glow). A [`SpriteOrder::Painter`] batch
+    /// also draws after its range's lit content, so it sits over what it
+    /// lights. Unrelated to [`lit`](Self::lit), which shades with the scene's
+    /// 3D lights. Default `false`.
+    pub unlit: bool,
+    /// Per-instance sort keys for [`SpriteOrder::Painter`]: lower keys draw
+    /// first and higher keys draw on top, within the batch and across the
+    /// painter batches on the same layer, of this type or another (a blended
+    /// tile layer sorts at key `0.0`). A top-down game passes `-y` so sprites
+    /// further down the screen cover the ones behind them. Empty keeps
+    /// submission order and sorts at `0.0`. Ignored by `SpriteOrder::Depth`.
+    ///
+    /// Every sprite takes its place in the painter sequence by its own key,
+    /// against this type's batches and every other type's painter content
+    /// (compose keys with `viewport_lib::painter_key` to keep an entity's
+    /// parts together). Consecutive sprites of one batch with nothing of
+    /// another batch between them still draw as one call, so batches whose
+    /// key ranges do not overlap draw whole, and two large batches with evenly
+    /// mixed keys cost up to a draw per sprite.
+    ///
+    /// The batch is sorted when it is built. An uploaded painter set is
+    /// re-sorted only by a ranged write to its sort keys
+    /// ([`channels::SortKeys`](crate::item_types::sprite::channels::SortKeys)),
+    /// at the next frame; a write that does not include keys never re-sorts,
+    /// so moved sprites keep their place in the order. The renderer does not
+    /// derive keys from positions: a set sorted by `-y` writes its keys
+    /// together with its positions, and a positions-only write suits a set
+    /// whose keys do not depend on where its sprites are.
+    pub sort_keys: Vec<f32>,
+    /// When set, a GPU pick discards the sprite's fragments whose alpha (the
+    /// texel's alpha times the sprite's colour alpha) is below the threshold,
+    /// so a pick on a transparent part of a cut-out sprite misses it and finds
+    /// what is underneath. `None` (the default) picks the whole quad.
+    pub pick_alpha_threshold: Option<f32>,
+    /// How the image fills each quad: stretched, nine-sliced or tiled.
+    /// Default [`SpriteDrawMode::Simple`].
+    pub draw_mode: SpriteDrawMode,
+    /// Whether a painter mask cuts this batch. Read only in painter's order
+    /// ([`SpriteOrder::Painter`]): the batch is cut when its layer is in the
+    /// range of the mask in the slot it names. Default [`MaskTest::None`].
+    pub mask: MaskTest,
+    /// Flash, dissolve, palette swap, outline and a custom sprite material.
+    /// `None` (the default) draws through the plain sprite pipelines and costs
+    /// nothing; `Some` draws through the effect pipelines. See
+    /// [`SpriteEffects`].
+    pub effects: Option<SpriteEffects>,
+    /// The registered sprite deformers that move this batch's quads. Empty
+    /// (the default) runs none.
+    pub deformers: SpriteDeformerSet,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
+}
+
+impl SpriteItem {
+    /// `sizes` for square sprites, from one edge length per sprite.
+    pub fn square_sizes(sizes: impl IntoIterator<Item = f32>) -> Vec<[f32; 2]> {
+        sizes.into_iter().map(|s| [s, s]).collect()
+    }
+}
+
+/// Which of a sprite's axes are mirrored. Flipping swaps the matching edges
+/// of the sprite's UV rect, so the quad, its pivot and its rotation are
+/// unchanged and only the image is mirrored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct SpriteFlip {
+    /// Mirror left to right.
+    pub horizontal: bool,
+    /// Mirror top to bottom.
+    pub vertical: bool,
+}
+
+impl SpriteFlip {
+    /// No flip.
+    pub const NONE: Self = Self {
+        horizontal: false,
+        vertical: false,
+    };
+    /// Mirrored left to right.
+    pub const HORIZONTAL: Self = Self {
+        horizontal: true,
+        vertical: false,
+    };
+    /// Mirrored top to bottom.
+    pub const VERTICAL: Self = Self {
+        horizontal: false,
+        vertical: true,
+    };
+    /// Mirrored on both axes.
+    pub const BOTH: Self = Self {
+        horizontal: true,
+        vertical: true,
+    };
+
+    /// `uv_rect` with the flipped edges swapped.
+    pub fn apply(self, uv_rect: [f32; 4]) -> [f32; 4] {
+        let [mut u0, mut v0, mut u1, mut v1] = uv_rect;
+        if self.horizontal {
+            std::mem::swap(&mut u0, &mut u1);
+        }
+        if self.vertical {
+            std::mem::swap(&mut v0, &mut v1);
+        }
+        [u0, v0, u1, v1]
+    }
+}
+
+/// How a batch's blended sprites are ordered against other blended content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpriteOrder {
+    /// The scene's usual rules: a depth-writing batch is ordered by the depth
+    /// buffer, and a blended one composites through order-independent
+    /// transparency (or, with a soft fade or a blend mode transparency cannot
+    /// carry, draws after the opaque scene in submission order).
+    #[default]
+    Depth,
+    /// Drawn in an exact order after the opaque scene and the resolved
+    /// order-independent transparency, never through it: by `layer` (lower
+    /// first), then by [`SpriteItem::sort_keys`], then submission order, in
+    /// one sequence with the other painter's-order content (blended tile
+    /// layers, painter-placed meshes and particles) and the world overlay
+    /// layers. A 3D transparent surface in front of a painter sprite therefore
+    /// draws behind it. Depth writes are off whatever `depth_write` says. Use
+    /// for 2D scenes that stack cutouts.
+    Painter {
+        /// Layer order, for example the `order` of the scene layer the batch
+        /// belongs to. Lower layers draw first.
+        layer: u32,
+        /// When `true` the sprites still test against scene depth, so nearer
+        /// 3D geometry covers them; when `false` they draw over everything
+        /// already in the scene.
+        depth_test: bool,
+    },
 }
 
 /// How a lit sprite recovers a per-fragment normal for shading.
@@ -215,6 +445,10 @@ impl Default for SpriteItem {
             sizes: Vec::new(),
             rotations: Vec::new(),
             uv_rects: Vec::new(),
+            pivots: Vec::new(),
+            default_pivot: [0.5, 0.5],
+            flips: Vec::new(),
+            user_values: Vec::new(),
             default_colour: Colour::linear(1.0, 1.0, 1.0, 1.0),
             default_size: 32.0,
             size_mode: SpriteSizeMode::ScreenSpace,
@@ -230,6 +464,16 @@ impl Default for SpriteItem {
             lit: false,
             lit_params: SpriteLitParams::default(),
             normal_texture_id: None,
+            filter: TextureFilter::Linear,
+            pixel_snap: false,
+            order: SpriteOrder::Depth,
+            unlit: false,
+            sort_keys: Vec::new(),
+            effects: None,
+            deformers: SpriteDeformerSet::NONE,
+            pick_alpha_threshold: None,
+            draw_mode: SpriteDrawMode::Simple,
+            mask: MaskTest::None,
             settings: ItemSettings::default(),
         }
     }
@@ -300,6 +544,10 @@ pub struct SpriteSetRefItem {
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload)
     /// or `Uploads::begin_upload`.
     pub source: SpriteSetId,
+    /// The deformers the set runs from this frame on, in place of the ones
+    /// it was uploaded with. `None` (the default) keeps them. Stored on the
+    /// set, so two references to one set in a frame share the last one's.
+    pub deformers: Option<SpriteDeformerSet>,
     /// Per-item render settings (visibility, wireframe, selection).
     pub settings: ItemSettings,
 }
@@ -309,6 +557,7 @@ impl SpriteSetRefItem {
     pub fn new(id: SpriteSetId) -> Self {
         Self {
             source: id,
+            deformers: None,
             settings: ItemSettings::default(),
         }
     }
@@ -316,10 +565,9 @@ impl SpriteSetRefItem {
 
 /// Per-frame reference to a pre-uploaded sprite instance set (entity sprites).
 ///
-/// The sprite definition (texture, blend, size mode, default size) is baked
-/// at upload time. The current implementation uses the same upload-time
-/// instance transforms as `SpriteSetRefItem`; full per-frame instance
-/// transform override against the stable definition is a planned follow-up.
+/// The sprites (texture, blend, size mode and every sprite's record) are
+/// baked at upload time and drawn as uploaded, unless
+/// [`overrides`](Self::overrides) changes some of them for this frame.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SpriteInstanceSetRefItem {
@@ -327,15 +575,406 @@ pub struct SpriteInstanceSetRefItem {
     /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload)
     /// or `Uploads::begin_upload`.
     pub source: SpriteInstanceSetId,
+    /// Positions, colours and sort keys for some of the set's sprites, for
+    /// this frame only. `None` (the default) draws the set as uploaded.
+    pub overrides: Option<SpriteOverrides>,
+    /// The deformers the set runs from this frame on, in place of the ones
+    /// it was uploaded with. `None` (the default) keeps them. Stored on the
+    /// set, so two references to one set in a frame share the last one's.
+    pub deformers: Option<SpriteDeformerSet>,
     /// Per-item render settings.
     pub settings: ItemSettings,
 }
 
 impl SpriteInstanceSetRefItem {
-    /// Visible reference at the upload-time transform.
+    /// Visible reference drawing the set as uploaded.
     pub fn new(id: SpriteInstanceSetId) -> Self {
         Self {
             source: id,
+            overrides: None,
+            deformers: None,
+            settings: ItemSettings::default(),
+        }
+    }
+
+    /// This reference with `overrides` applied for the frame.
+    pub fn with_overrides(mut self, overrides: SpriteOverrides) -> Self {
+        self.overrides = Some(overrides);
+        self
+    }
+}
+
+/// Per-frame values for a subset of an uploaded instance set's sprites,
+/// applied on top of the set for one frame without changing it.
+///
+/// `indices` names the sprites by their index in the uploaded set. The other
+/// lists run parallel to it: entry `j` of `positions` replaces the position of
+/// sprite `indices[j]`, and likewise for `colours` and `sort_keys`. A list that
+/// is empty, or shorter than `indices`, keeps the uploaded value for the
+/// sprites past its end. Indices past the end of the set are ignored; a
+/// repeated index takes its last entry.
+///
+/// On a painter set ([`SpriteOrder::Painter`]) an overridden sort key moves
+/// the sprite to its place in the key order for the frame, so a sprite that
+/// walks down a y-sorted set can carry its new key here.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct SpriteOverrides {
+    /// Indices into the uploaded set of the sprites to change.
+    pub indices: Vec<u32>,
+    /// World-space positions, parallel to `indices`.
+    pub positions: Vec<[f32; 3]>,
+    /// Colour tints, parallel to `indices`. They replace the uploaded tint.
+    pub colours: Vec<Colour>,
+    /// Sort keys, parallel to `indices`. Read by painter sets only.
+    pub sort_keys: Vec<f32>,
+}
+
+impl SpriteOverrides {
+    /// Overrides for the sprites at `indices`, with no values yet.
+    pub fn new(indices: Vec<u32>) -> Self {
+        Self {
+            indices,
+            ..Self::default()
+        }
+    }
+
+    /// Whether applying these changes nothing.
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+            || (self.positions.is_empty() && self.colours.is_empty() && self.sort_keys.is_empty())
+    }
+}
+
+/// Effects drawn over a sprite batch: a flash towards a colour, a dissolve
+/// against a noise texture with a burning rim, a palette swap, an outline, and
+/// a custom [`SpriteMaterial`].
+///
+/// The flash amount, the dissolve threshold and the palette row are per
+/// sprite, each from a list that falls back to a batch default where it is
+/// empty or short, so one enemy in a batch can flash while the rest do not.
+/// The colours, the textures and the outline are per batch.
+///
+/// The order is fixed: the palette swap replaces the sampled texel, the tint
+/// multiplies it, then (after lighting, for a lit batch) the flash mixes the
+/// colour towards `flash_colour`, the dissolve cuts it away, the outline draws
+/// behind it and the material's `shade_sprite` runs last.
+///
+/// A batch with effects draws after the opaque scene in submission order (or
+/// in painter's order, or in the opaque pass when it writes depth), never
+/// through order-independent transparency.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct SpriteEffects {
+    /// Per-sprite flash amounts in `0..=1`: `0` leaves the colour alone, `1`
+    /// draws the sprite's shape in `flash_colour`. Empty = `default_flash`.
+    pub flash: Vec<f32>,
+    /// Flash amount for sprites past the end of `flash`. Default `0`.
+    pub default_flash: f32,
+    /// What a flash mixes towards. Default white.
+    pub flash_colour: Colour,
+    /// Per-sprite dissolve thresholds in `0..=1`: texels whose noise value is
+    /// below the threshold are cut away, so `0` shows the whole sprite and `1`
+    /// none of it. Empty = `default_dissolve`.
+    pub dissolve: Vec<f32>,
+    /// Dissolve threshold for sprites past the end of `dissolve`. Default `0`.
+    pub default_dissolve: f32,
+    /// Noise the dissolve thresholds against, read from its red channel across
+    /// the sprite's quad (not its atlas cell). Upload it linear
+    /// ([`TextureData::linear`](viewport_lib_types::data::texture::TextureData::linear)).
+    /// `None` uses a built-in value noise.
+    pub dissolve_noise: Option<TextureId>,
+    /// How many times the noise repeats across the quad. Default `1`.
+    pub noise_scale: f32,
+    /// Colour of the rim a dissolve leaves, drawn where the noise is within
+    /// `dissolve_edge_width` above the threshold. Default orange.
+    pub dissolve_edge_colour: Colour,
+    /// Width of the rim in noise units (`0..1`). `0` draws no rim. Default
+    /// `0.05`.
+    pub dissolve_edge_width: f32,
+    /// Palette swap: when set, each texel's index picks a column of the
+    /// palette texture and the sprite's palette row picks the row. `None`
+    /// samples the texture as colour.
+    pub palette: Option<SpritePalette>,
+    /// Per-sprite palette rows. Empty = `default_palette_row`.
+    pub palette_rows: Vec<u16>,
+    /// Palette row for sprites past the end of `palette_rows`. Default `0`.
+    pub default_palette_row: u16,
+    /// An outline around the sprite's opaque texels. `None` draws none.
+    pub outline: Option<SpriteOutline>,
+    /// A custom fragment stage registered with
+    /// [`SpriteMaterials::register_sprite_material`](crate::item_types::sprite::SpriteMaterials::register_sprite_material).
+    pub material: Option<SpriteMaterial>,
+}
+
+impl Default for SpriteEffects {
+    fn default() -> Self {
+        Self {
+            flash: Vec::new(),
+            default_flash: 0.0,
+            flash_colour: Colour::WHITE,
+            dissolve: Vec::new(),
+            default_dissolve: 0.0,
+            dissolve_noise: None,
+            noise_scale: 1.0,
+            dissolve_edge_colour: Colour::linear(1.0, 0.45, 0.05, 1.0),
+            dissolve_edge_width: 0.05,
+            palette: None,
+            palette_rows: Vec::new(),
+            default_palette_row: 0,
+            outline: None,
+            material: None,
+        }
+    }
+}
+
+impl SpriteEffects {
+    /// The packed per-sprite word the effect shaders read for sprite `i`:
+    /// flash in bits 0-7 and dissolve in bits 8-15 (both unorm8), palette row
+    /// in bits 16-31.
+    #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+    pub(crate) fn instance_word(&self, i: usize) -> u32 {
+        pack_effect_word(
+            self.flash.get(i).copied().unwrap_or(self.default_flash),
+            self.dissolve
+                .get(i)
+                .copied()
+                .unwrap_or(self.default_dissolve),
+            self.palette_rows
+                .get(i)
+                .copied()
+                .unwrap_or(self.default_palette_row),
+        )
+    }
+}
+
+/// Pack one sprite's flash, dissolve and palette row the way the effect
+/// shaders unpack them.
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+pub(crate) fn pack_effect_word(flash: f32, dissolve: f32, palette_row: u16) -> u32 {
+    let unorm8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    unorm8(flash) | (unorm8(dissolve) << 8) | ((palette_row as u32) << 16)
+}
+
+/// A palette texture for [`SpriteEffects::palette`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpritePalette {
+    /// The palette: one palette per row, one colour per column. Colour, so
+    /// upload it sRGB.
+    pub texture: TextureId,
+    /// What in the sprite's texel picks the column.
+    pub index: PaletteIndex,
+}
+
+/// How a palette-swapped sprite's texel picks its palette column. A value `v`
+/// in `0..=1` picks column `round(v * (width - 1))`, so an index map for a
+/// 16-colour palette stores `i / 15`. Upload the index map linear so the value
+/// reads back as stored, and draw it with `TextureFilter::Nearest` so
+/// neighbouring indices are not blended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PaletteIndex {
+    /// The red channel.
+    #[default]
+    Red,
+    /// Rec. 709 luminance of the RGB channels.
+    Luminance,
+}
+
+/// An outline around a sprite's opaque texels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpriteOutline {
+    /// Outline colour; its alpha scales the outline's coverage.
+    pub colour: Colour,
+    /// Width in device pixels, whatever the sprite's size, the camera's zoom
+    /// or `pixel_snap`. The quad grows by this much on each side so the
+    /// outline is not cut off at its edge.
+    pub width_px: f32,
+}
+
+impl SpriteOutline {
+    /// An outline of `colour`, `width_px` device pixels wide.
+    pub fn new(colour: Colour, width_px: f32) -> Self {
+        Self { colour, width_px }
+    }
+}
+
+/// Handle to a sprite material registered with
+/// [`SpriteMaterials::register_sprite_material`](crate::item_types::sprite::SpriteMaterials::register_sprite_material).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SpriteMaterialId(pub(crate) u32);
+
+/// Most sprite deformers that register at once.
+pub const MAX_SPRITE_DEFORMERS: usize = 8;
+
+/// A sprite and tile deformer registered with
+/// `SpriteDeformers::register_sprite_deformer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SpriteDeformerId(pub(crate) u32);
+
+/// The registered sprite deformers a sprite batch or tile layer runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SpriteDeformerSet(u32);
+
+impl SpriteDeformerSet {
+    /// No deformers.
+    pub const NONE: Self = Self(0);
+
+    /// This set with `id` in it.
+    pub const fn with(self, id: SpriteDeformerId) -> Self {
+        Self(self.0 | (1 << id.0))
+    }
+
+    /// This set without `id`.
+    pub const fn without(self, id: SpriteDeformerId) -> Self {
+        Self(self.0 & !(1 << id.0))
+    }
+
+    /// Whether the set holds `id`.
+    pub const fn contains(self, id: SpriteDeformerId) -> bool {
+        self.0 & (1 << id.0) != 0
+    }
+
+    /// Whether the set holds no deformer.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The set as the shaders read it, one bit per deformer.
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<SpriteDeformerId> for SpriteDeformerSet {
+    fn from(id: SpriteDeformerId) -> Self {
+        Self::NONE.with(id)
+    }
+}
+
+impl SpriteMaterialId {
+    /// Registry index.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// A batch's custom sprite material: the registered plugin and the values of
+/// the parameters and textures it declares.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpriteMaterial {
+    /// The registered material.
+    pub id: SpriteMaterialId,
+    /// Parameter values by name. Parameters not named take the defaults the
+    /// plugin declares.
+    pub params: Vec<(String, ParamValue)>,
+    /// Texture per declared slot, `material_texture_0..N`. A missing or `None`
+    /// slot binds 1x1 white.
+    pub textures: Vec<Option<TextureId>>,
+}
+
+impl SpriteMaterial {
+    /// The material `id` with every parameter at its default and no textures.
+    pub fn new(id: SpriteMaterialId) -> Self {
+        Self {
+            id,
+            params: Vec::new(),
+            textures: Vec::new(),
+        }
+    }
+
+    /// Set parameter `name`.
+    pub fn with_param(mut self, name: impl Into<String>, value: impl Into<ParamValue>) -> Self {
+        let name = name.into();
+        let value = value.into();
+        match self.params.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = value,
+            None => self.params.push((name, value)),
+        }
+        self
+    }
+
+    /// Bind `texture` to slot `slot`.
+    pub fn with_texture(mut self, slot: usize, texture: TextureId) -> Self {
+        if self.textures.len() <= slot {
+            self.textures.resize(slot + 1, None);
+        }
+        self.textures[slot] = Some(texture);
+        self
+    }
+}
+
+#[cfg(test)]
+mod effect_tests {
+    use super::*;
+
+    #[test]
+    fn effect_word_packs_flash_dissolve_and_row() {
+        assert_eq!(pack_effect_word(0.0, 0.0, 0), 0);
+        assert_eq!(pack_effect_word(1.0, 0.0, 0), 0xff);
+        assert_eq!(pack_effect_word(0.0, 1.0, 3), 0xff00 | (3 << 16));
+        let fx = SpriteEffects {
+            flash: vec![0.5],
+            default_dissolve: 1.0,
+            ..SpriteEffects::default()
+        };
+        assert_eq!(fx.instance_word(0), 128 | (255 << 8));
+        assert_eq!(fx.instance_word(1), 255 << 8);
+    }
+}
+
+/// What a [`SpriteMaskItem`] covers.
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum MaskSource {
+    /// Every quad of `sprite` where its texel alpha times its tint alpha is
+    /// at least `threshold`. The quads are placed as the sprite batch would
+    /// draw them (position, size, pivot, rotation, size mode, orientation and
+    /// model); its order, blend, effects and draw mode are ignored.
+    Alpha {
+        /// The sprites whose alpha is the mask.
+        sprite: SpriteItem,
+        /// Alpha at and above which a texel is inside the mask.
+        threshold: f32,
+    },
+    /// `shape` inscribed in every quad of `sprite`, as an overlay shape is
+    /// inscribed in its box, with radii in the sprite's size units. Rect,
+    /// rounded rect, circle, ellipse, capsule and ring are evaluated exactly;
+    /// any other shape covers the whole quad. The sprite's texture is ignored.
+    Shape {
+        /// The shape.
+        shape: viewport_lib_types::overlay::OverlayShape,
+        /// The quads it fills.
+        sprite: SpriteItem,
+    },
+}
+
+/// A painter mask drawn from sprites or shapes: its coverage goes into
+/// `slot` of the frame's mask target, and painter content on a layer in
+/// `layers` that tests that slot ([`SpriteItem::mask`], `TilemapItem::mask`,
+/// `WorldOverlayLayer::mask`) shows only inside or only outside it.
+///
+/// The mask itself is not drawn. Masks in one slot combine into their union,
+/// and the slot's layers run from the lowest to the highest any of them names.
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct SpriteMaskItem {
+    /// What the mask covers.
+    pub source: MaskSource,
+    /// The painter layers content testing the slot is cut on.
+    pub layers: std::ops::RangeInclusive<u32>,
+    /// The slot, `0` to `PAINTER_MASK_SLOTS - 1`; higher values wrap.
+    pub slot: u8,
+    /// Visibility; only `hidden` is read.
+    pub settings: ItemSettings,
+}
+
+impl SpriteMaskItem {
+    /// A mask in `slot` over `layers` covering `source`.
+    pub fn new(source: MaskSource, slot: u8, layers: std::ops::RangeInclusive<u32>) -> Self {
+        Self {
+            source,
+            layers,
+            slot,
             settings: ItemSettings::default(),
         }
     }

@@ -86,7 +86,7 @@ fn sprite_batch(tex: TextureId) -> viewport_lib_plugins::item_types::sprite::Spr
         [-1.0, 1.0, 0.0],
         [1.0, 1.0, 0.0],
     ];
-    item.sizes = vec![1.6; 4];
+    item.sizes = vec![[1.6; 2]; 4];
     item.size_mode = viewport_lib_plugins::item_types::sprite::SpriteSizeMode::WorldSpace;
     item.texture_id = Some(tex);
     item

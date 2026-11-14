@@ -204,15 +204,19 @@ impl CullResources {
 
     /// Ask for the plain feature set of every culled member. Asks for no
     /// universal member: see [`request_members`](Self::request_members).
-    pub(crate) fn request_plain(&self) {
+    pub(crate) fn request_plain(&self, sets: &[crate::renderer::pipeline_key::FeatureSet]) {
         for f in [&self.hdr, &self.hdr_bindless].into_iter().flatten() {
             for i in 0..4 {
-                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(i, s);
+                }
             }
         }
         for f in [&self.oit, &self.oit_bindless].into_iter().flatten() {
             for i in 0..2 {
-                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(i, s);
+                }
             }
         }
     }
@@ -612,8 +616,16 @@ impl DeviceResources {
             mesh_id,
             instance_count,
             bind_group,
-            blend: item.blend,
+            // Mesh instances have no multiply or screen member; those draw as alpha.
+            blend: match item.blend {
+                crate::renderer::SpriteBlend::Multiply | crate::renderer::SpriteBlend::Screen => {
+                    crate::renderer::SpriteBlend::AlphaBlend
+                }
+                other => other,
+            },
             instance_buf,
+            painter: item.painter,
+            item_index: 0,
         })
     }
 }

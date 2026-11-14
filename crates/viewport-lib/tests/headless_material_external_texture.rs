@@ -137,7 +137,7 @@ fn external_view_is_sampled_by_a_material() {
     light.intensity = 3.0;
     frame.effects.lighting.lights = vec![light];
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.into();

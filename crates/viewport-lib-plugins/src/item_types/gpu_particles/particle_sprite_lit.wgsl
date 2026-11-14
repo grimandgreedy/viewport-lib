@@ -24,8 +24,10 @@ struct SpriteUniform {
     has_normal_map: u32,
     ambient_scale:  f32,
     roughness:      f32,
-    _pad0:          u32,
-    _pad1:          u32,
+    // The painter layer whose 2D light the system samples, and 1 when it is
+    // not lit by 2D lighting.
+    painter_layer:  u32,
+    unlit:          u32,
 };
 
 struct Particle {
@@ -59,6 +61,7 @@ struct VertexOut {
     @location(4)       tangent_world:  vec3<f32>,
     @location(5)       bitangent_world:vec3<f32>,
     @location(6)       facing_world:   vec3<f32>,
+    @location(7)       light_clip:     vec4<f32>,
 };
 
 fn quad_corner(vi: u32) -> vec2<f32> {
@@ -127,6 +130,7 @@ fn vs_main(
     out.tangent_world   = cam_right;
     out.bitangent_world = cam_up;
     out.facing_world    = -cam_forward;
+    out.light_clip      = out.clip_pos;
     return out;
 }
 
@@ -150,6 +154,9 @@ fn build_normal(local_offset: vec2<f32>,
     let n  = tangent * local_offset.x + bitangent * local_offset.y + facing * z;
     return normalize(n);
 }
+
+// `particle_light(colour, clip)`, the colour lit by the 2D light layer of
+// the system's painter range, is composed in beside this source.
 
 fn fs_main_body(in: VertexOut) -> vec4<f32> {
     // `clip_planes` and the clip tests come from SHARED_CLIP_WGSL.
@@ -177,7 +184,7 @@ fn fs_main_body(in: VertexOut) -> vec4<f32> {
     scene_light_split(colour.rgb * lit_rgb_terms.indirect, colour.rgb * lit_rgb_terms.direct, vec3<f32>(0.0));
 
     if colour.a <= 0.001 { discard; }
-    return vec4<f32>(lit_rgb, colour.a);
+    return particle_light(vec4<f32>(lit_rgb, colour.a), in.light_clip);
 }
 
 @fragment

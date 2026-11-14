@@ -567,20 +567,23 @@ impl Default for CameraFrame {
 
 impl CameraFrame {
     /// The GPU camera uniform for this frame rendered at `time`: the render
-    /// camera's matrices relative to `origin`, plus the physical viewport size
-    /// and the frame time.
+    /// camera's matrices relative to `origin`, plus the physical size of the
+    /// target the scene draws into (`scene_size` logical pixels at
+    /// `scene_ppp`) and the frame time.
     pub(crate) fn camera_uniform(
         &self,
         time: &FrameTime,
         origin: &crate::renderer::origin::OriginState,
+        scene_size: [f32; 2],
+        scene_ppp: f32,
     ) -> CameraUniform {
         let mut u = origin.camera(&self.render_camera).camera_uniform();
         u.world_origin = origin.origin().as_vec3().to_array();
         u.origin_epoch = origin.epoch();
-        let ppp = self.pixels_per_point;
-        let w = (self.viewport_size[0] * ppp).round().max(1.0);
-        let h = (self.viewport_size[1] * ppp).round().max(1.0);
+        let w = (scene_size[0] * scene_ppp).round().max(1.0);
+        let h = (scene_size[1] * scene_ppp).round().max(1.0);
         u.viewport = [w, h, 1.0 / w, 1.0 / h];
+        u.clip[3] = scene_ppp;
         u.time = crate::renderer::frame_clock::pack_time(time);
         u
     }
@@ -641,13 +644,13 @@ impl CameraFrame {
 /// public type.
 #[non_exhaustive]
 pub enum SurfaceSubmission {
-    /// A flat, reference-counted list of scene render items.
+    /// A flat, reference-counted list of mesh items.
     ///
-    /// Holding an `Arc<[SceneRenderItem]>` instead of a `Vec` means the per-frame
+    /// Holding an `Arc<[MeshItem]>` instead of a `Vec` means the per-frame
     /// submission cost is a single atomic refcount increment rather than a full deep
     /// copy of all items. Use [`SceneFrame::from_surface_items`] or
     /// [`SceneFrame::from_scene`] to construct this variant.
-    Flat(std::sync::Arc<[SceneRenderItem]>),
+    Flat(std::sync::Arc<[MeshItem]>),
 }
 
 impl Default for SurfaceSubmission {
@@ -698,9 +701,9 @@ pub struct SceneFrame {
     /// override projection) via `EffectsFrame::foreground`.
     ///
     /// Empty by default; an empty list adds no pass and no allocations.
-    pub foreground_items: Vec<SceneRenderItem>,
+    pub foreground_items: Vec<MeshItem>,
     /// Lightmap placements the frame's items name through
-    /// [`SceneRenderItem::lightmap_placement`]. Kept here rather than on each
+    /// [`MeshItem::lightmap_placement`]. Kept here rather than on each
     /// item so an item stays small; empty by default.
     pub lightmap_placements: Vec<crate::resources::LightmapPlacement>,
     /// Plugin item collections, keyed by
@@ -717,6 +720,12 @@ pub struct SceneFrame {
     /// Replaces [`RendererConfig::world_origin`](crate::RendererConfig::world_origin)
     /// for this frame. Default `None`.
     pub world_origin: Option<crate::renderer::WorldOrigin>,
+    /// Overlay frames placed on a world plane and drawn inside the scene under
+    /// the camera: vector art, labels and markers in world units that scale
+    /// with the camera and take bloom and tone mapping. See
+    /// [`WorldOverlayLayer`](crate::WorldOverlayLayer). Empty by default;
+    /// an empty list draws nothing and allocates nothing.
+    pub world_overlays: Vec<crate::renderer::types::WorldOverlayLayer>,
 }
 
 impl Default for SceneFrame {
@@ -731,6 +740,7 @@ impl Default for SceneFrame {
             lightmap_placements: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
             world_origin: None,
+            world_overlays: Vec::new(),
         }
     }
 }
@@ -746,7 +756,7 @@ impl SceneFrame {
 
     /// Build a scene frame from a flat list of surface render items.
     ///
-    /// The `Vec` is converted to an `Arc<[SceneRenderItem]>` so callers that
+    /// The `Vec` is converted to an `Arc<[MeshItem]>` so callers that
     /// submit the same list repeatedly can cheaply clone the `Arc` instead of
     /// cloning the underlying data.
     ///
@@ -764,7 +774,7 @@ impl SceneFrame {
     /// // scene.version() is the right source when writeback drives the items.
     /// SceneFrame::from_surface_items(items).with_generation(scene.version())
     /// ```
-    pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
+    pub fn from_surface_items(items: Vec<MeshItem>) -> Self {
         Self::new(SurfaceSubmission::Flat(items.into()))
     }
 
@@ -791,7 +801,7 @@ impl SceneFrame {
     }
 
     /// Set the lightmap placements the items index (see
-    /// [`SceneRenderItem::lightmap_placement`]).
+    /// [`MeshItem::lightmap_placement`]).
     pub fn with_lightmap_placements(
         mut self,
         placements: Vec<crate::resources::LightmapPlacement>,
@@ -876,7 +886,7 @@ impl SceneFrame {
     /// // Every frame: zero-cost clone.
     /// SceneFrame::from_shared_items(Arc::clone(&self.items_arc), scene.version())
     /// ```
-    pub fn from_shared_items(items: std::sync::Arc<[SceneRenderItem]>, generation: u64) -> Self {
+    pub fn from_shared_items(items: std::sync::Arc<[MeshItem]>, generation: u64) -> Self {
         Self {
             generation,
             surfaces: SurfaceSubmission::Flat(items),
@@ -952,12 +962,27 @@ pub struct ViewportFrame {
     pub grid_z: f32,
     /// RGB colour for the grid lines. None = renderer default (mid-grey).
     pub grid_colour: Option<crate::Colour>,
-    /// Whether to draw the axes orientation indicator overlay. Default: true.
+    /// Whether to draw the axes orientation indicator overlay, which sits in
+    /// the bottom-left corner above every overlay the frame submits. Default:
+    /// true.
     pub show_axes_indicator: bool,
     /// What this viewport draws behind the scene. Default: the lighting
     /// environment, or `background_colour` when there is none. Drawn only on
     /// the HDR pipeline.
     pub environment_background: EnvironmentBackground,
+    /// How the frame reaches the output. Default: [`Presentation::Native`].
+    ///
+    /// Under [`Presentation::Reference`] the scene draws into a target of the
+    /// reference size and is scaled into the viewport with nearest sampling.
+    /// `CameraFrame::viewport_size` and `pixels_per_point` stay the viewport's
+    /// own, and picks keep taking viewport positions: the renderer maps them
+    /// through the fit (see `ViewportRenderer::window_to_reference`).
+    ///
+    /// The scaled result needs a target of the renderer's own, so on the
+    /// `pass()` path a reference frame draws through `prepare` and `paint`
+    /// (or `prepare_hdr_viewport` and `paint_hdr_blit` for several
+    /// viewports), not `paint_viewport`.
+    pub presentation: Presentation,
 }
 
 impl Default for ViewportFrame {
@@ -972,6 +997,7 @@ impl Default for ViewportFrame {
             grid_colour: None,
             show_axes_indicator: true,
             environment_background: EnvironmentBackground::default(),
+            presentation: Presentation::Native,
         }
     }
 }
@@ -1054,6 +1080,12 @@ impl InteractionFrame {
         }
     }
 }
+
+// Presentation settings live in viewport-lib-types; re-exported so
+// `crate::renderer::types::*` paths hold.
+pub use viewport_lib_types::presentation::{
+    OverlayResolution, Presentation, ReferenceFit, ReferencePlacement,
+};
 
 // Ground-plane config (`GroundPlaneMode`, `GroundPlane`) lives in
 // viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.

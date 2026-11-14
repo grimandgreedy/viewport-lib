@@ -44,6 +44,19 @@ pub enum BindingPreset {
     /// thumbnail preview. In anything with a selection, left drag has two claimants
     /// and the camera will fight the tool.
     Viewer,
+
+    /// Flat navigation for a 2D view: the bindings from [`planar_bindings`].
+    ///
+    /// - Left drag or middle drag -> Pan
+    /// - Scroll (or Ctrl + Scroll) -> Zoom
+    /// - Shift + Scroll -> Pan
+    /// - One- or two-finger touch drag -> Pan, pinch -> Zoom
+    ///
+    /// Nothing resolves to orbit. Meant for `Camera2dController`, which zooms
+    /// about the cursor. Like [`Viewer`](Self::Viewer) it takes left drag, so an
+    /// application that selects or drags things with the left button should
+    /// start from [`planar_camera_bindings`] instead, which leaves it free.
+    Planar,
 }
 
 /// Former name for the camera-only scheme. Resolves to [`BindingPreset::Viewer`],
@@ -131,9 +144,71 @@ pub fn viewer_bindings() -> Vec<ViewportBinding> {
     bindings
 }
 
+/// The bindings for [`BindingPreset::Planar`]: [`planar_camera_bindings`] plus
+/// `Left drag -> Pan`.
+pub fn planar_bindings() -> Vec<ViewportBinding> {
+    let mut bindings = planar_camera_bindings();
+    bindings.push(ViewportBinding::new(
+        Action::Pan,
+        ViewportGesture::Drag {
+            button: MouseButton::Left,
+            modifiers: ModifiersMatch::Exact(Modifiers::NONE),
+        },
+    ));
+    bindings
+}
+
+/// Flat navigation with left drag left to the application: middle drag pans,
+/// the wheel zooms (shift + wheel pans), and on touch one or two fingers pan
+/// and a pinch zooms. No orbit and no keyboard shortcuts.
+pub fn planar_camera_bindings() -> Vec<ViewportBinding> {
+    vec![
+        ViewportBinding::new(
+            Action::Pan,
+            ViewportGesture::Drag {
+                button: MouseButton::Middle,
+                modifiers: ModifiersMatch::Any,
+            },
+        ),
+        ViewportBinding::new(
+            Action::Zoom,
+            ViewportGesture::WheelY {
+                modifiers: ModifiersMatch::Exact(Modifiers::NONE),
+            },
+        ),
+        // Browsers and some trackpad drivers report a pinch as ctrl + wheel.
+        ViewportBinding::new(
+            Action::Zoom,
+            ViewportGesture::WheelY {
+                modifiers: ModifiersMatch::Exact(Modifiers::CTRL),
+            },
+        ),
+        ViewportBinding::new(
+            Action::Pan,
+            ViewportGesture::WheelXY {
+                modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
+            },
+        ),
+        ViewportBinding::new(Action::Pan, ViewportGesture::TouchDrag { contacts: 1 }),
+        ViewportBinding::new(Action::Pan, ViewportGesture::TouchDrag { contacts: 2 }),
+        ViewportBinding::new(Action::Zoom, ViewportGesture::TouchPinch),
+    ]
+}
+
+/// The bindings a [`BindingPreset`] names.
+pub fn preset_bindings(preset: BindingPreset) -> Vec<ViewportBinding> {
+    match preset {
+        BindingPreset::Default => viewport_default_bindings(),
+        BindingPreset::Viewer => viewer_bindings(),
+        BindingPreset::Planar => planar_bindings(),
+    }
+}
+
 /// Former name for the camera-only set. The scheme has changed: left drag and right
 /// drag are no longer bound to the camera.
-#[deprecated(note = "renamed: use viewport_camera_bindings (note the new scheme) or viewer_bindings")]
+#[deprecated(
+    note = "renamed: use viewport_camera_bindings (note the new scheme) or viewer_bindings"
+)]
 pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
     viewer_bindings()
 }

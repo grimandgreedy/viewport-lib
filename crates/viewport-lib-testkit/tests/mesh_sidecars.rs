@@ -4,10 +4,10 @@
 //! buffer is built on first use rather than at upload time.
 
 use viewport_lib::Colour;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem, ViewportError};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame, ViewportError};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
-fn frame_for_item(item: SceneRenderItem, distance: f32, size: [f32; 2]) -> FrameData {
+fn frame_for_item(item: MeshItem, distance: f32, size: [f32; 2]) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, distance, 0.6, 1.0);
     FrameData::new(
         CameraFrame::from_camera(&camera, size),
@@ -33,7 +33,7 @@ fn big_mesh_uploads_within_device_limit() {
         .upload_mesh_data(&h.device, &data)
         .expect("a mesh within device limits must upload");
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = id;
     item.material = h
         .renderer
@@ -75,7 +75,7 @@ fn oversized_mesh_is_refused_cleanly() {
         .resources_mut()
         .upload_mesh_data(&h.device, &small)
         .expect("small upload after refusal");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = id;
     item.material = h
         .renderer
@@ -103,7 +103,7 @@ fn normals_view_renders_lazily() {
         .upload_mesh_data(&h.device, &data)
         .expect("upload");
 
-    let mut plain = SceneRenderItem::default();
+    let mut plain = MeshItem::default();
     plain.mesh_id = id;
     plain.material = h
         .renderer

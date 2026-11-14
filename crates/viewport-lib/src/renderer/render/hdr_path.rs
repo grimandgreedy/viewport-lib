@@ -14,11 +14,9 @@ struct HdrFrameCtx<'a> {
     device: &'a crate::gpu::Device,
     queue: &'a crate::gpu::Queue,
     frame: &'a FrameData,
-    scene_items: &'a [SceneRenderItem],
+    scene_items: &'a [MeshItem],
     output_view: &'a crate::gpu::TextureView,
     vp_idx: usize,
-    w: u32,
-    h: u32,
     ssaa_factor: u32,
     hdr_clear_rgb: [f32; 3],
     /// The frame's composite inputs and tone-map uniform as computed in the
@@ -105,7 +103,7 @@ fn post_effect_ctx<'a>(
 pub(super) fn draw_mesh_item(
     resources: &DeviceResources,
     render_pass: &mut crate::gpu::RenderPass<'_>,
-    item: &SceneRenderItem,
+    item: &MeshItem,
     obj_override: Option<(&crate::gpu::BindGroup, &crate::gpu::Buffer)>,
     // Object-data element index the whole-mesh draw selects with
     // @builtin(instance_index). Must be 0 when `obj_override` is None (the
@@ -344,12 +342,11 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         bg_colour: [f32; 4],
-        w: u32,
-        h: u32,
         ssaa_factor: u32,
-    ) -> crate::gpu::CommandBuffer {
+        mut encoder: crate::gpu::CommandEncoder,
+    ) -> crate::gpu::CommandEncoder {
         // HDR path. `bg_colour` is premultiplied linear RGBA; it reaches the
         // tone-map uniform below and is composited under transparent content
         // there, in display space, exactly once.
@@ -616,7 +613,7 @@ impl ViewportRenderer {
                     .any(|i| !i.settings.hidden && i.transparency.is_some());
             // Item-type plugins may draw into the OIT pass through
             // `paint_transparent`.
-            let needs_oit = mesh_transparency || self.any_plugin_items_submitted(frame);
+            let needs_oit = mesh_transparency || self.any_plugin_draws_transparent(frame);
             if needs_oit {
                 if mesh_transparency {
                     self.resources.ensure_oit_mesh_pipelines(device);
@@ -636,13 +633,6 @@ impl ViewportRenderer {
         }
 
         self.ensure_transmission_target(device, vp_idx);
-
-        // -----------------------------------------------------------------------
-        // Build the command encoder.
-        // -----------------------------------------------------------------------
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("hdr_encoder"),
-        });
 
         // An automatic exposure lives on the GPU: copy the one the last frame
         // resolved into this viewport's camera copies ahead of every draw, so
@@ -674,8 +664,6 @@ impl ViewportRenderer {
             scene_items,
             output_view,
             vp_idx,
-            w,
-            h,
             ssaa_factor,
             hdr_clear_rgb,
             composite_inputs,
@@ -720,6 +708,7 @@ impl ViewportRenderer {
                     crate::plugin_api::EncoderScope::AfterOpaque,
                 ),
                 HdrPass::Oit => self.hdr_oit(&ctx, &mut encoder),
+                HdrPass::Painter => self.hdr_painter_pass(&ctx, &mut encoder),
                 // The second scope: opaque plus resolved transparency, which is
                 // what a volumetric effect composites over. The scatter-volume
                 // plugin encodes its ray-march, temporal blend and composite
@@ -792,7 +781,7 @@ impl ViewportRenderer {
             }
         }
 
-        encoder.finish()
+        encoder
     }
 
     fn hdr_surface_mask(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
@@ -1382,13 +1371,72 @@ impl ViewportRenderer {
     /// pass begins and the depth attachment sees no transition.
     fn hdr_depth_read_pass(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         let frame = ctx.frame;
-        if !self.any_plugin_draws_depth_read(frame) {
+        if !self.hdr_depth_read_active(frame) {
             return;
         }
         self.mark_pass_ran(ctx.vp_idx, HdrPass::DepthRead);
-        // The depth plugins sample. Where a read-only depth attachment cannot
-        // also be sampled (wgpu's GL backend counts it as written), that is a
-        // copy taken just before the pass; elsewhere the scene depth itself.
+        let (sample_view, depth_bg) = self.depth_read_bindings(ctx, encoder);
+        let resources = &self.resources;
+        let slot = &self.viewport_slots[ctx.vp_idx];
+        let slot_hdr = slot.hdr.as_ref().unwrap();
+        let mut pass = begin_depth_read_pass(encoder, slot_hdr, "hdr_depth_read_pass");
+        pass.set_bind_group(0, &slot.camera_bind_group, &[]);
+        self.dispatch_plugin_paint_depth_read(
+            &mut pass,
+            frame,
+            &sample_view,
+            &resources.scene_tier.material.depth_read_sampler,
+            &depth_bg,
+        );
+    }
+
+    /// The painter pass: painter's-order content and world overlay layers in
+    /// their sequence, after the OIT composite, so painter content draws over
+    /// every transparent surface whatever its depth. The scene depth is bound
+    /// read-only and handed to the painter draws for sampling, as in the
+    /// read-only-depth pass.
+    fn hdr_painter_pass(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let frame = ctx.frame;
+        if !self.hdr_painter_active(frame) {
+            return;
+        }
+        self.mark_pass_ran(ctx.vp_idx, HdrPass::Painter);
+        let (_, depth_bg) = self.depth_read_bindings(ctx, encoder);
+        let vp_idx = ctx.vp_idx;
+        let slot = &self.viewport_slots[vp_idx];
+        let camera_bg = &slot.camera_bind_group;
+        let slot_hdr = slot.hdr.as_ref().unwrap();
+        // A world layer that reads what is drawn under it ends the pass at
+        // each of its breaks.
+        if !self.world_overlays_break(vp_idx, &slot_hdr.hdr_texture) {
+            let mut pass = begin_depth_read_pass(encoder, slot_hdr, "hdr_painter_pass");
+            pass.set_bind_group(0, camera_bg, &[]);
+            self.paint_painters_and_world(&mut pass, frame, camera_bg, Some(&depth_bg));
+            return;
+        }
+        self.paint_painters_and_world_in_passes(
+            encoder,
+            frame,
+            &crate::renderer::ScenePassTarget {
+                colour: &slot_hdr.hdr_view,
+                depth: &slot_hdr.hdr_depth_view,
+                depth_ops: None,
+                label: "hdr_world_overlay_pass",
+            },
+            camera_bg,
+            Some(&depth_bg),
+        );
+    }
+
+    /// The scene depth a read-only-depth draw samples, and the ready-made
+    /// bind group around it. Where a read-only depth attachment cannot also be
+    /// sampled (wgpu's GL backend counts it as written), the depth is a copy
+    /// taken now; elsewhere the scene depth itself.
+    fn depth_read_bindings(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) -> (crate::gpu::TextureView, crate::gpu::BindGroup) {
         let sample_view = if self.resources.capabilities.direct_depth_sampling {
             self.viewport_slots[ctx.vp_idx]
                 .hdr
@@ -1402,110 +1450,76 @@ impl ViewportRenderer {
         // Prebuilt group handed to plugins that have a spare bind group. Plugins
         // at the four-group limit ignore it and bake the same depth-only view +
         // sampler into a group of their own.
-        let depth_bg = {
-            let resources = &self.resources;
-            let hdr = self.viewport_slots[ctx.vp_idx].hdr.as_mut().unwrap();
-            let view = sample_view.clone();
-            hdr.depth_read_bg.get(view.clone(), || {
-                ctx.device
-                    .create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("plugin_depth_read_bg"),
-                        layout: &resources.scene_tier.material.depth_read_bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::TextureView(&view),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: crate::gpu::BindingResource::Sampler(
-                                    &resources.scene_tier.material.depth_read_sampler,
-                                ),
-                            },
-                        ],
-                    })
-            })
-        };
-        let vp_idx = ctx.vp_idx;
         let resources = &self.resources;
-        let slot = &self.viewport_slots[vp_idx];
-        let camera_bg = &slot.camera_bind_group;
-        let slot_hdr = slot.hdr.as_ref().unwrap();
-
-        // The HDR views, not the supersampled ones. This pass runs after the
-        // SSAA resolve, which is encoded once per frame and never again, so a
-        // draw into the supersampled colour here would land in a texture
-        // nothing reads afterwards and vanish from the frame. It used to select
-        // the ssaa_* views by copying the sprite passes, which make the same
-        // choice correctly because it runs *before* the resolve.
-        let colour_view = &slot_hdr.hdr_view;
-        let depth_view = &slot_hdr.hdr_depth_view;
-
-        // Depth attachment read-only (`depth_ops: None`) so `sample_view`, a
-        // depth-aspect view of the same buffer where the device allows it, can
-        // be sampled in the pass.
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
-            multiview_mask: None,
-            label: Some("hdr_depth_read_pass"),
-            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                view: colour_view,
-                resolve_target: None,
-                ops: crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: None,
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        pass.set_bind_group(0, camera_bg, &[]);
-
-        self.dispatch_plugin_paint_depth_read(
-            &mut pass,
-            frame,
-            &sample_view,
-            &resources.scene_tier.material.depth_read_sampler,
-            &depth_bg,
-        );
+        let slot = &mut self.viewport_slots[ctx.vp_idx];
+        let masks = &slot.painter_masks;
+        let mask_view = masks.bound_view(&resources.painter_mask).clone();
+        let light_view = masks.bound_light_view(&resources.painter_mask).clone();
+        let hdr = slot.hdr.as_mut().unwrap();
+        let view = sample_view.clone();
+        let depth_bg = hdr
+            .depth_read_bg
+            .get((view.clone(), mask_view, light_view), || {
+                masks.depth_read_group(
+                    ctx.device,
+                    &resources.painter_mask,
+                    &resources.scene_tier.material.depth_read_bgl,
+                    &resources.scene_tier.material.depth_read_sampler,
+                    &view,
+                )
+            });
+        (sample_view, depth_bg.clone())
     }
 
-    /// Hand the encoder to the plugins that encode at `scope`. Without direct
-    /// depth sampling their `scene_depth_only` is the depth-read copy, taken
-    /// here so it holds the depth as of this scope.
+    /// Hand the encoder to the plugins with items that encode at `scope`.
+    /// Without direct depth sampling their `scene_depth_only` is the
+    /// depth-read copy, taken here when one of them reads depth so it holds
+    /// the depth as of this scope.
     fn encode_scope(
         &mut self,
         ctx: &HdrFrameCtx,
         encoder: &mut crate::gpu::CommandEncoder,
         scope: crate::plugin_api::EncoderScope,
     ) {
-        if !self.resources.capabilities.direct_depth_sampling
-            && self
-                .item_type_plugins
-                .values()
-                .any(|p| p.encoder_scopes().contains(&scope))
-        {
+        if !self.any_plugin_encodes_at(ctx.frame, scope, true) {
+            return;
+        }
+        let copied = !self.resources.capabilities.direct_depth_sampling
+            && self.any_plugin_scope_reads_depth(ctx.frame, scope, true);
+        if copied {
             self.copy_depth_for_read(ctx, encoder);
         }
-        if self.any_plugin_encodes_at(scope) {
-            self.mark_pass_ran(
-                ctx.vp_idx,
-                match scope {
-                    crate::plugin_api::EncoderScope::OnOpaqueSurfaces => {
-                        HdrPass::ScopeOnOpaqueSurfaces
-                    }
-                    crate::plugin_api::EncoderScope::AfterOpaque => HdrPass::ScopeAfterOpaque,
-                    _ => HdrPass::ScopeAfterTransparent,
-                },
-            );
-        }
-        self.dispatch_plugin_encode(encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx);
+        self.mark_pass_ran(
+            ctx.vp_idx,
+            match scope {
+                crate::plugin_api::EncoderScope::OnOpaqueSurfaces => HdrPass::ScopeOnOpaqueSurfaces,
+                crate::plugin_api::EncoderScope::AfterOpaque => HdrPass::ScopeAfterOpaque,
+                _ => HdrPass::ScopeAfterTransparent,
+            },
+        );
+        let slot = &self.viewport_slots[ctx.vp_idx];
+        let Some(slot_hdr) = slot.hdr.as_ref() else {
+            return;
+        };
+        // The HDR attachments, not the supersampled ones: under SSAA the
+        // resolve has already run by the time any scope fires, so from here
+        // on the frame draws into the HDR target like every other frame.
+        let targets = crate::renderer::ScopeTargets {
+            scene_size: slot_hdr.scene_size,
+            colour: &slot_hdr.hdr_view,
+            colour_texture: &slot_hdr.hdr_texture,
+            depth: &slot_hdr.hdr_depth_view,
+            depth_only: match (copied, slot_hdr.depth_read_copy.as_ref()) {
+                (true, Some(c)) => &c.depth_only_view,
+                _ => &slot_hdr.hdr_depth_only_view,
+            },
+            stencil_only: &slot_hdr.hdr_stencil_only_view,
+            target_format: crate::resources::HDR_COLOR_FORMAT,
+            hdr: true,
+        };
+        self.dispatch_plugin_encode(
+            encoder, ctx.frame, scope, ctx.device, ctx.queue, ctx.vp_idx, &targets,
+        );
     }
 
     /// Copy the scene depth into the viewport's depth-read copy with the depth
@@ -1638,8 +1652,9 @@ impl ViewportRenderer {
                 .any(|i| !i.settings.hidden && i.transparency.is_some())
                 // Item-type plugins draw into the OIT pass through
                 // `paint_transparent` for any registered plugin with a
-                // non-empty submitted collection (mirrors `needs_oit` above).
-                || self.any_plugin_items_submitted(frame);
+                // non-empty submitted collection that has OIT draws (mirrors
+                // `needs_oit` above).
+                || self.any_plugin_draws_transparent(frame);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -2055,12 +2070,12 @@ impl ViewportRenderer {
         // back-to-front (or blend order). Foreground transparency is plain
         // sorted alpha blending against the foreground depth, not OIT.
         let eye = fg_camera.eye_position();
-        let dist_from_eye = |item: &SceneRenderItem| -> f32 {
+        let dist_from_eye = |item: &MeshItem| -> f32 {
             (item.model.translation - glam::DVec3::from(eye)).length() as f32
         };
         let items = &frame.scene.foreground_items;
-        let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
-        let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+        let mut opaque: Vec<(usize, &MeshItem)> = Vec::new();
+        let mut transparent: Vec<(usize, &MeshItem)> = Vec::new();
         for (idx, item) in items.iter().enumerate() {
             if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                 continue;
@@ -2704,7 +2719,7 @@ impl ViewportRenderer {
                                 view: &slot_hdr.output_depth_view,
                                 depth_ops: Some(crate::gpu::Operations {
                                     load: crate::gpu::LoadOp::Load,
-                                    store: crate::gpu::StoreOp::Discard,
+                                    store: self.scene_depth_store_op(),
                                 }),
                                 stencil_ops: None,
                             },
@@ -2758,86 +2773,69 @@ impl ViewportRenderer {
     fn hdr_final_overlay(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         let _span = tracing::debug_span!(target: "viewport_lib::frame", "overlay_pass").entered();
         let device = ctx.device;
-        let queue = ctx.queue;
         let output_view = ctx.output_view;
         let vp_idx = ctx.vp_idx;
-        let w = ctx.w;
-        let h = ctx.h;
-        // Overlay shapes and the merged text batch (HDR path): drawn last.
-        let has_overlay = {
-            let ov = &self.viewport_slots[vp_idx].overlay;
-            ov.overlay_shape_gpu_data.is_some() || ov.label_gpu_data.is_some()
-        };
-
-        // HDR backdrop blur: the tonemapped scene is on an intermediate so we
-        // can sample it for the blur. When blur is needed we redirect the
-        // tonemapped output to a managed intermediate, blur it, then draw
-        // overlays there and blit to output_view at the end.
-        let needs_hdr_blur = self.has_backdrop_blur_shapes(vp_idx);
-        let hdr_blur_bg: Option<crate::gpu::BindGroup> = if needs_hdr_blur && has_overlay {
-            self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
-            // Blit output_view content to the intermediate so we have a
-            // samplable copy. We already have the tonemapped result on
-            // output_view. Unfortunately surface textures can't be sampled,
-            // so we blit to our intermediate first.
-            //
-            // Actually for HDR: the tone-map wrote to output_view (or
-            // upscale_view). We need the scene in a samplable texture. The
-            // HDR colour texture (hdr_colour_view) is samplable but it's HDR.
-            // For simplicity, use the HDR colour texture as the blur source;
-            // the blur result will be HDR-ish but clamped by the LDR target
-            // format of the blur textures. This looks acceptable in practice.
-            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-            let source = &slot_hdr.hdr_view;
-            let spread = self.viewport_slots[vp_idx]
-                .overlay
-                .overlay_shape_gpu_data
-                .as_ref()
-                .map(|d| d.max_blur_radius)
-                .unwrap_or(8.0);
-            Some(self.run_backdrop_blur(encoder, device, queue, source, spread))
-        } else {
-            None
-        };
-
-        if has_overlay {
-            self.mark_pass_ran(vp_idx, HdrPass::Overlay);
-            let hdr_depth_view = &self.viewport_slots[vp_idx]
-                .hdr
-                .as_ref()
-                .unwrap()
-                .output_depth_view;
-            let overlay_ts_writes = self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
-            let mut overlay_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("overlay_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                    view: hdr_depth_view,
-                    depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: overlay_ts_writes,
-                occlusion_query_set: None,
-            });
-            // Blur backdrop shapes drawn first (behind normal shapes).
-            if let Some(ref bg) = hdr_blur_bg {
-                self.draw_blur_shapes(&mut overlay_pass, bg, vp_idx);
-            }
-            let ov = &self.viewport_slots[vp_idx].overlay;
-            emit_overlay_2d!(self, ov, overlay_pass);
+        // Overlay shapes and the merged text batch (HDR path): drawn last,
+        // here unless they draw over a reference presentation's upscale.
+        if !ctx.frame.overlays_in_scene() {
+            return;
         }
+        let ov = &self.viewport_slots[vp_idx].overlay;
+        let has_overlay = ov.overlay_shape_gpu_data.is_some()
+            || ov.label_gpu_data.is_some()
+            || !ov.overlay_draw_segments.is_empty();
+        if !has_overlay {
+            return;
+        }
+        self.mark_pass_ran(vp_idx, HdrPass::Overlay);
+        let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+        let depth = hdr.output_depth_view.clone();
+        // Without a copy of the output, a backdrop is the scene alone: the HDR
+        // colour, blurred into the LDR backdrop texture.
+        let scene = hdr.hdr_view.clone();
+        self.draw_overlay_passes(
+            encoder,
+            device,
+            vp_idx,
+            output_view,
+            &depth,
+            self.scene_depth_store_op(),
+            Some(&scene),
+            None,
+            ctx.frame.overlay_space().1,
+            "overlay_pass",
+        );
     }
+}
+
+/// Begin a pass over the HDR scene colour with the scene depth attached
+/// read-only (`depth_ops: None`), so a depth-aspect view of the same buffer can
+/// be sampled in it where the device allows. The HDR views, not the
+/// supersampled ones: these passes run after the SSAA resolve.
+fn begin_depth_read_pass<'e>(
+    encoder: &'e mut crate::gpu::CommandEncoder,
+    slot_hdr: &crate::resources::ViewportHdrState,
+    label: &'static str,
+) -> crate::gpu::RenderPass<'e> {
+    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+        #[cfg(any(wgpu29, wgpu30))]
+        multiview_mask: None,
+        label: Some(label),
+        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            view: &slot_hdr.hdr_view,
+            resolve_target: None,
+            ops: crate::gpu::Operations {
+                load: crate::gpu::LoadOp::Load,
+                store: crate::gpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+            view: &slot_hdr.hdr_depth_view,
+            depth_ops: None,
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
 }

@@ -18,8 +18,7 @@ use crate::shared::upload_material;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    LightKind, LightSource, LightingSettings, Material, SceneRenderItem, Selection,
-    ViewportRenderer,
+    LightKind, LightSource, LightingSettings, Material, MeshItem, Selection, ViewportRenderer,
     scene::{Scene, build_light_indicators},
 };
 
@@ -461,7 +460,7 @@ fn submit_stress(app: &mut App, fd: &mut vpl::FrameData) {
 // Scene item collection
 // ---------------------------------------------------------------------------
 
-pub(crate) fn sl_collect(app: &mut App) -> (Vec<SceneRenderItem>, LightingSettings, u64) {
+pub(crate) fn sl_collect(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64) {
     let items = app.sl_state.scene.collect_render_items(&Selection::new());
     let mut l = LightingSettings::default();
     l.lights = vec![];

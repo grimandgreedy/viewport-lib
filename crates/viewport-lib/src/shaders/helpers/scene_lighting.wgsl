@@ -129,7 +129,7 @@ struct ClusterGrid {
 // END_LIGHT_LIST
 @group(0) @binding(14) var<uniform>       cluster_grid_uniform:  ClusterGrid;
 // The cluster cells, four words each (offset, count, punctual_count,
-// punctual_demand), then the global light index list from CLUSTER_INDEX_BASE.
+// punctual_demand), then each cell's light bitmask from CLUSTER_INDEX_BASE.
 // One buffer so the pair costs one fragment storage binding.
 @group(0) @binding(15) var<storage, read> cluster_data:          array<u32>;
 // Start of the light index list in cluster_data, in u32 words. Must equal
@@ -209,52 +209,82 @@ fn cluster_index_for(view_pos: vec3<f32>) -> u32 {
          + xi;
 }
 
-// Iteration bounds for the per-fragment light loop. `fallback` is true when
-// the host short-circuited the cluster build or the fragment's cell overflowed
-// its index slice: in that case `start` is 0 and `count` is the total active
-// light count, and `cluster_light_global` returns the loop index directly.
-struct LightRange {
+// The lights that reach a fragment, walked one at a time:
+//
+//     var lights = cluster_lights(world_pos, lights_uniform.count);
+//     loop {
+//         let i = cluster_next_light(&lights);
+//         if i == CLUSTER_LIGHTS_END { break; }
+//         // lights_storage[i] ...
+//     }
+//
+// A cell holds a bitmask over the light array (CLUSTER_MASK_WORDS words), so
+// a crowded cell walks only the lights that reach it, in light-index order,
+// and none is dropped. When the host short-circuited the cluster build
+// (`cluster_grid_uniform.screen.z != 0`) the cursor walks every light.
+const CLUSTER_LIGHTS_END: u32 = 0xffffffffu;
+const CLUSTER_MASK_WORDS: u32 = 16u;
+
+struct ClusterLights {
     fallback: bool,
-    start:    u32,
+    // The cell's first mask word in the list at CLUSTER_INDEX_BASE.
+    base:     u32,
+    // Mask words that can hold a set bit: those covering `count` lights.
+    words:    u32,
+    word:     u32,
+    bits:     u32,
+    next:     u32,
     count:    u32,
 };
 
-fn cluster_light_range(world_pos: vec3<f32>, total_count: u32) -> LightRange {
-    var r: LightRange;
+fn cluster_lights(world_pos: vec3<f32>, total_count: u32) -> ClusterLights {
+    var c: ClusterLights;
+    c.fallback = true;
+    c.base = 0u;
+    c.words = min(CLUSTER_MASK_WORDS, (total_count + 31u) / 32u);
+    c.word = 0u;
+    c.bits = 0u;
+    c.next = 0u;
+    c.count = total_count;
     // BEGIN_CLUSTER_LOOKUP
-    r.fallback = cluster_grid_uniform.screen.z != 0.0;
-    if r.fallback {
-        r.start = 0u;
-        r.count = total_count;
-    } else {
+    c.fallback = cluster_grid_uniform.screen.z != 0.0;
+    if !c.fallback && c.words > 0u {
         let view_pos = (cluster_grid_uniform.view * vec4<f32>(world_pos, 1.0)).xyz;
         let cid = cluster_index_for(view_pos);
-        r.start = cluster_data[cid * 4u];
-        r.count = cluster_data[cid * 4u + 1u];
-        // A cell whose punctual demand outgrew its slice walks every light
-        // instead of dropping the overflow; `eval_light`'s range test keeps
-        // that walk cheap.
-        if cluster_data[cid * 4u + 3u] > cluster_data[cid * 4u + 2u] {
-            r.fallback = true;
-            r.start = 0u;
-            r.count = total_count;
-        }
+        c.base = cluster_data[cid * 4u];
+        c.bits = cluster_data[CLUSTER_INDEX_BASE + c.base];
     }
-    // ALT(UNCLUSTERED): r.fallback = true;
-    // ALT(UNCLUSTERED): r.start = 0u;
-    // ALT(UNCLUSTERED): r.count = total_count;
+    // ALT(UNCLUSTERED): c.fallback = true;
     // END_CLUSTER_LOOKUP
-    return r;
+    return c;
 }
 
-fn cluster_light_global(range: LightRange, j: u32) -> u32 {
-    if range.fallback {
-        return j;
+// The next light index the cursor reaches, or CLUSTER_LIGHTS_END.
+fn cluster_next_light(c: ptr<function, ClusterLights>) -> u32 {
+    if (*c).fallback {
+        if (*c).next >= (*c).count {
+            return CLUSTER_LIGHTS_END;
+        }
+        let i = (*c).next;
+        (*c).next = i + 1u;
+        return i;
     }
-    // BEGIN_CLUSTER_INDEX
-    return cluster_data[CLUSTER_INDEX_BASE + range.start + j];
-    // ALT(UNCLUSTERED): return j;
-    // END_CLUSTER_INDEX
+    loop {
+        if (*c).bits != 0u {
+            let b = firstTrailingBit((*c).bits);
+            (*c).bits = (*c).bits & ((*c).bits - 1u);
+            return (*c).word * 32u + b;
+        }
+        (*c).word = (*c).word + 1u;
+        if (*c).word >= (*c).words {
+            return CLUSTER_LIGHTS_END;
+        }
+        // BEGIN_CLUSTER_INDEX
+        (*c).bits = cluster_data[CLUSTER_INDEX_BASE + (*c).base + (*c).word];
+        // ALT(UNCLUSTERED): (*c).bits = 0u;
+        // END_CLUSTER_INDEX
+    }
+    return CLUSTER_LIGHTS_END;
 }
 
 // Per-light geometry and unshadowed radiance for one fragment. `radiance`
@@ -343,9 +373,10 @@ fn scene_lighting_terms(
                   * (lights.hemisphere_intensity * camera.exposure);
 
     var direct = vec3<f32>(0.0);
-    let range = cluster_light_range(world_pos, lights.count);
-    for (var j: u32 = 0u; j < range.count; j = j + 1u) {
-        let idx = cluster_light_global(range, j);
+    var range = cluster_lights(world_pos, lights.count);
+    loop {
+        let idx = cluster_next_light(&range);
+        if idx == CLUSTER_LIGHTS_END { break; }
         let ev = eval_light(lights_storage[idx], world_pos);
         if !ev.in_range { continue; }
         let raw = dot(normal, ev.l);

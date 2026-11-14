@@ -50,7 +50,7 @@ fn bvh_cpu_pick_matches_gpu_pick_many_objects() {
     ];
     let mut items = Vec::new();
     for (t, scale, id) in placements {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(scale),
@@ -159,7 +159,7 @@ fn bvh_cpu_rect_pick_matches_oracle() {
     ];
     let mut items = Vec::new();
     for (t, s, id) in placements {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(s),

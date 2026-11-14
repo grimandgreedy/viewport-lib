@@ -175,3 +175,117 @@ fn gpu_fixture_removal_keeps_order_and_rejects_stale_ids() {
     assert!(runtime.remove_gpu_plugin(b).is_none());
     assert_eq!(runtime.gpu_plugin_count(), 2);
 }
+
+/// A GPU plugin added after the first frame is initialised on the next frame
+/// on its own: the plugin already running is not initialised again.
+#[test]
+fn gpu_fixture_added_mid_session_initialises_only_itself() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let first_log = CallLog::new();
+    let added_log = CallLog::new();
+    let mut runtime = ViewportRuntime::new().with_gpu_plugin(LoggingGpuPlugin::new(
+        first_log.clone(),
+        gpu_phase::PRE_PREPARE,
+    ));
+    let (colour, depth) = probe_targets(&device, SIZE, COLOUR_FORMAT);
+
+    frame(&mut runtime, &device, &queue, &colour, &depth, 0);
+    first_log.clear();
+
+    runtime.add_gpu_plugin(LoggingGpuPlugin::new(
+        added_log.clone(),
+        gpu_phase::PRE_PREPARE,
+    ));
+    frame(&mut runtime, &device, &queue, &colour, &depth, 1);
+    first_log.assert_take(&[
+        "pre_prepare:1",
+        &format!("post_paint:1:{COLOUR_FORMAT:?}:pick=false"),
+    ]);
+    added_log.assert_take(&[
+        "init_gpu",
+        "pre_prepare:1",
+        &format!("post_paint:1:{COLOUR_FORMAT:?}:pick=false"),
+    ]);
+}
+
+/// A GPU plugin registered between `pre_prepare` and `post_paint` gets no
+/// `post_paint` that frame; its first call is `init_gpu` on the next one.
+#[test]
+fn gpu_fixture_registered_before_post_paint_is_skipped() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let (colour, depth) = probe_targets(&device, SIZE, COLOUR_FORMAT);
+    let camera = Camera::default();
+    let ctx = GpuFrameContext::new(&camera, glam::Vec2::new(SIZE as f32, SIZE as f32), 0.0, 0);
+
+    let pre = runtime.pre_prepare(&device, &queue, &ctx);
+    runtime.add_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
+    let targets = PostPaintTargets::new(&colour, &depth, COLOUR_FORMAT);
+    let post = runtime.post_paint(&device, &queue, &targets, &ctx);
+    queue.submit(pre.into_iter().chain(post));
+    assert!(
+        log.entries().is_empty(),
+        "called before init: {:?}",
+        log.entries()
+    );
+
+    frame(&mut runtime, &device, &queue, &colour, &depth, 1);
+    log.assert_take(&[
+        "init_gpu",
+        "pre_prepare:1",
+        &format!("post_paint:1:{COLOUR_FORMAT:?}:pick=false"),
+    ]);
+}
+
+struct GreedyGpu;
+
+impl viewport_lib::runtime::GpuPlugin for GreedyGpu {
+    fn type_name(&self) -> &'static str {
+        "fixture_test.greedy_gpu"
+    }
+    fn requires(&self) -> viewport_lib::Requirements {
+        viewport_lib::Requirements::full_tier().with_bind_groups(u32::MAX)
+    }
+    fn init_gpu(&mut self, _: &wgpu::Device) {
+        panic!("init_gpu ran for a declined GPU plugin");
+    }
+}
+
+/// A plugin the device cannot run, added mid-session, is removed and listed
+/// as declined; the plugin already running is neither initialised again nor
+/// removed.
+#[test]
+fn gpu_fixture_declined_mid_session_leaves_others_alone() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    let mut runtime = ViewportRuntime::new();
+    let kept = runtime.add_gpu_plugin(LoggingGpuPlugin::new(log.clone(), gpu_phase::PRE_PREPARE));
+    let (colour, depth) = probe_targets(&device, SIZE, COLOUR_FORMAT);
+
+    frame(&mut runtime, &device, &queue, &colour, &depth, 0);
+    log.clear();
+
+    runtime.add_gpu_plugin(GreedyGpu);
+    frame(&mut runtime, &device, &queue, &colour, &depth, 1);
+    assert!(matches!(
+        runtime.declined_gpu_plugins(),
+        [viewport_lib::ViewportError::PluginUnsupported { type_name, .. }]
+            if type_name == "fixture_test.greedy_gpu"
+    ));
+    assert_eq!(runtime.gpu_plugin_ids().collect::<Vec<_>>(), vec![kept]);
+    assert!(runtime.gpu_initialized());
+    log.assert_take(&[
+        "pre_prepare:1",
+        &format!("post_paint:1:{COLOUR_FORMAT:?}:pick=false"),
+    ]);
+}

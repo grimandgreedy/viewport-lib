@@ -13,7 +13,7 @@
 //! # let device: &viewport_lib::gpu::Device = unimplemented!();
 //! # let queue: &viewport_lib::gpu::Queue = unimplemented!();
 //! # let mesh_id: viewport_lib::MeshId = unimplemented!();
-//! # let mut item = viewport_lib::SceneRenderItem::default();
+//! # let mut item = viewport_lib::MeshItem::default();
 //! // Once.
 //! let cut = CutDeformer::install(renderer.resources_mut(), device)?;
 //!

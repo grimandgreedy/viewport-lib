@@ -7,6 +7,12 @@ use crate::overlay::*;
 ///
 /// This frame section is the right place for any visual element that belongs
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
+///
+/// Items paint in `z_order` order, lowest first. At an equal `z_order`
+/// analytic shapes paint under everything else (labels, glyph runs, polylines,
+/// meshes and vector shapes), and each list paints in its own order. The order is kept between items that overlap on screen; items
+/// that do not overlap may be drawn in any order, which is what lets the
+/// renderer batch them across `z_order` values and families.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct OverlayFrame {
@@ -28,24 +34,19 @@ pub struct OverlayFrame {
     /// Stroked polylines. Rendered through the same pipeline as labels; share
     /// their z-order space.
     pub polylines: Vec<OverlayPolylineItem>,
+    /// Coloured triangle lists the consumer tessellates itself. Rendered
+    /// through the same pipeline as labels and polylines, and batched with
+    /// them.
+    pub meshes: Vec<OverlayMeshItem>,
     /// Retained overlay groups: geometry compiled once with
     /// `compile_overlay_geometry` and re-drawn from cached buffers, each carrying
     /// its per-frame translate, opacity, z-order, and clip. Empty by default and
     /// costs nothing when unused; this is the opt-in path for a UI that draws many
     /// mostly-static overlays without re-tessellating them every frame.
     pub retained: Vec<RetainedOverlay>,
-}
-
-impl OverlayFrame {
-    /// Whether any overlay item carries a non-zero `z_order`. When every item is
-    /// at the default `0`, the renderer keeps its fixed family draw order and
-    /// skips building the cross-family ordering list, so the common case pays
-    /// nothing for the feature.
-    #[doc(hidden)]
-    pub fn uses_nonzero_z_order(&self) -> bool {
-        self.shapes.iter().any(|i| i.z_order != 0)
-            || self.labels.iter().any(|i| i.z_order != 0)
-            || self.glyph_runs.iter().any(|i| i.z_order != 0)
-            || self.polylines.iter().any(|i| i.z_order != 0)
-    }
+    /// Layers: runs of the items above composited as one, with an opacity,
+    /// blend, colour filter, blur, drop shadow or backdrop applied to the
+    /// whole. Empty by default. Build one with [`layer_mark`](Self::layer_mark)
+    /// and [`push_layer`](Self::push_layer).
+    pub layers: Vec<OverlayLayer>,
 }

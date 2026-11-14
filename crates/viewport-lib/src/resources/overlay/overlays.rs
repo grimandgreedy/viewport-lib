@@ -149,55 +149,25 @@ pub(crate) struct OverlayUniform {
     pub(crate) model: [[f32; 4]; 4],
     pub(crate) colour: [f32; 4], // RGBA with alpha for transparency
 }
-/// Cached GPU textures for the backdrop blur (frosted glass) effect.
+/// The LDR path's intermediate target for a frame whose overlays read the
+/// destination when the output cannot be copied from.
 ///
 /// Stored on `ViewportRenderer` and recreated when the viewport size changes.
-/// Contains a full-resolution intermediate (for rendering the scene when the
-/// output surface lacks `TEXTURE_BINDING`), two half-resolution ping-pong
-/// textures for the separable blur passes, and pre-built bind groups.
+/// The scene and overlays are drawn here instead of to the output, so the
+/// overlay pass can copy what it has drawn at a break, then the result is
+/// blitted to the output.
 pub(crate) struct BackdropBlurState {
-    /// Full-resolution intermediate render target. The scene is rendered here
-    /// instead of directly to the surface so the result can be sampled. Kept
-    /// alive so the matching view remains valid.
+    /// Full-resolution intermediate render target. Kept alive so the matching
+    /// view remains valid.
     #[allow(dead_code)]
     pub intermediate_texture: crate::gpu::Texture,
     pub intermediate_view: crate::gpu::TextureView,
-    /// Half-resolution blur ping-pong texture A. Kept alive for its view.
-    #[allow(dead_code)]
-    pub blur_a_texture: crate::gpu::Texture,
-    pub blur_a_view: crate::gpu::TextureView,
-    /// Half-resolution blur ping-pong texture B. Kept alive for its view.
-    #[allow(dead_code)]
-    pub blur_b_texture: crate::gpu::Texture,
-    pub blur_b_view: crate::gpu::TextureView,
-    /// Viewport physical size the textures were created for.
+    /// Viewport physical size the texture was created for.
     pub size: [u32; 2],
-    /// Format the textures were created with.
+    /// Format the texture was created with.
     pub format: crate::gpu::TextureFormat,
-    /// Bind groups and uniforms over the textures above, built on the first
-    /// blur and reused until the textures are recreated.
-    pub binds: std::sync::Mutex<BackdropBlurBinds>,
-}
-
-/// The backdrop blur's per-texture-set bind groups. The downsample source can
-/// change between frames (the dynamic-resolution target or the intermediate),
-/// so that one is keyed on the source view.
-#[derive(Default)]
-pub(crate) struct BackdropBlurBinds {
-    pub downsample: Option<(crate::gpu::TextureView, crate::gpu::BindGroup)>,
-    pub fixed: Option<BackdropBlurFixed>,
-    /// The LDR path's blit of the intermediate to the output.
-    pub blit: Option<crate::gpu::BindGroup>,
-}
-
-pub(crate) struct BackdropBlurFixed {
-    pub h_uniform: crate::gpu::Buffer,
-    pub v_uniform: crate::gpu::Buffer,
-    pub h_bg: crate::gpu::BindGroup,
-    pub v_bg: crate::gpu::BindGroup,
-    pub overlay_bg: crate::gpu::BindGroup,
-    /// The spread the uniforms hold.
-    pub spread: f32,
+    /// The blit of the intermediate to the output, built on first use.
+    pub blit: std::sync::Mutex<Option<crate::gpu::BindGroup>>,
 }
 
 /// Uniform buffer layout for the full-screen ground plane shader.

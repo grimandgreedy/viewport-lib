@@ -505,7 +505,7 @@ pub(crate) fn draw_features(
     if resources.mesh_universal {
         crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
     } else {
-        batch.features
+        batch.features.union(resources.frame_features)
     }
 }
 
@@ -741,6 +741,102 @@ impl Default for FrameData {
 }
 
 impl FrameData {
+    /// Where the reference target lands in the viewport, or `None` when the
+    /// frame presents at the viewport's own resolution.
+    pub(crate) fn reference_placement(&self) -> Option<ReferencePlacement> {
+        match self.viewport.presentation {
+            Presentation::Reference { size, fit, .. } => Some(ReferencePlacement::new(
+                size,
+                fit,
+                self.camera.viewport_size,
+                self.camera.pixels_per_point,
+            )),
+            _ => None,
+        }
+    }
+
+    /// The reference size, or `None` when the frame presents natively.
+    pub(crate) fn reference_size(&self) -> Option<[u32; 2]> {
+        match self.viewport.presentation {
+            Presentation::Reference { size, .. } => Some([size[0].max(1), size[1].max(1)]),
+            _ => None,
+        }
+    }
+
+    /// The size in logical pixels the scene is drawn at: the viewport's, or
+    /// the reference size.
+    pub(crate) fn scene_size(&self) -> [f32; 2] {
+        match self.reference_size() {
+            Some([w, h]) => [w as f32, h as f32],
+            None => self.camera.viewport_size,
+        }
+    }
+
+    /// Device pixels per logical pixel of the scene: the viewport's, or one
+    /// for a reference target.
+    pub(crate) fn scene_ppp(&self) -> f32 {
+        match self.reference_size() {
+            Some(_) => 1.0,
+            None => self.camera.pixels_per_point,
+        }
+    }
+
+    /// Whether the screen overlays draw into the scene's target rather than
+    /// over the upscaled result.
+    pub(crate) fn overlays_in_scene(&self) -> bool {
+        !matches!(
+            self.viewport.presentation,
+            Presentation::Reference {
+                overlays: OverlayResolution::Native,
+                ..
+            }
+        )
+    }
+
+    /// The size and pixels per point the screen overlays are laid out in.
+    pub(crate) fn overlay_space(&self) -> ([f32; 2], f32) {
+        if self.overlays_in_scene() {
+            (self.scene_size(), self.scene_ppp())
+        } else {
+            (self.camera.viewport_size, self.camera.pixels_per_point)
+        }
+    }
+
+    /// The scene position, in the scene's logical pixels, under the viewport
+    /// position `window`: unchanged when presenting natively, the reference
+    /// pixel position otherwise, and `None` in the bars.
+    pub(crate) fn scene_point(&self, window: glam::Vec2) -> Option<glam::Vec2> {
+        match self.reference_placement() {
+            Some(p) => p.window_to_reference(window),
+            None => Some(window),
+        }
+    }
+
+    /// `window` as a scene position like [`scene_point`](Self::scene_point),
+    /// clamped to the reference target rather than dropped outside it, for
+    /// the corners of a rectangle.
+    pub(crate) fn scene_point_clamped(&self, window: glam::Vec2) -> glam::Vec2 {
+        match self.reference_placement() {
+            Some(p) => {
+                let r = (window * p.pixels_per_point - glam::Vec2::from(p.origin_px))
+                    / glam::Vec2::from(p.scale);
+                r.clamp(
+                    glam::Vec2::ZERO,
+                    glam::Vec2::new(p.reference_size[0] as f32, p.reference_size[1] as f32),
+                )
+            }
+            None => window,
+        }
+    }
+
+    /// A length in the viewport's logical pixels as a length in the scene's.
+    pub(crate) fn scene_length(&self, window: f32) -> f32 {
+        match self.reference_placement() {
+            Some(p) => window * p.pixels_per_point / p.scale[0].max(1.0e-6),
+            None => window,
+        }
+    }
+
     /// Build frame data from the required camera and scene groups.
     pub fn new(camera: CameraFrame, scene: SceneFrame) -> Self {
         Self {
@@ -858,7 +954,7 @@ macro_rules! emit_draw_calls {
         // level chosen for its on-screen size, and culled items are hidden.
         // Matches `frame.scene.surfaces` in order and length, so the per-object
         // bind groups (indexed by position) line up unchanged.
-        let _scene_items: &[SceneRenderItem] = $scene_items;
+        let _scene_items: &[MeshItem] = $scene_items;
 
         render_pass.set_bind_group(0, camera_bg, &[]);
 

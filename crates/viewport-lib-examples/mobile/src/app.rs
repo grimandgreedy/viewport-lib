@@ -12,8 +12,8 @@ use viewport_lib::Colour;
 
 use viewport_lib::interaction::input::adapters::{AdapterCtx, winit as vpl_winit};
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, OrbitCameraController,
-    PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, MeshItem,
+    OrbitCameraController, PostProcessSettings, SceneFrame, ViewportContext, ViewportInput,
     ViewportRenderer, primitives, viewport_default_bindings,
 };
 use winit::application::ApplicationHandler;
@@ -43,7 +43,7 @@ struct AppState {
     /// When the last frame was drawn, for the frame time fly movement reads.
     last_frame: Instant,
     input: ViewportInput,
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
     /// Elapsed-seconds clock. The viewport reads no clock of its own, and the
     /// double-tap and long-press recognisers need one.
     start: Instant,
@@ -139,7 +139,7 @@ impl ApplicationHandler for App {
             .unwrap();
 
         let make_item = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             // The default material, coloured per item.

@@ -43,7 +43,7 @@ fn capture_hdr_preserves_values_above_one() {
     light.intensity = 20.0;
     frame.effects.lighting.lights = vec![light];
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
@@ -185,7 +185,7 @@ fn directional_lightmap_responds_to_normal() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         frame.effects.lighting.lights = Vec::new();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.into();
@@ -292,7 +292,7 @@ fn shadowmask_attenuates_direct_light() {
         key.intensity = 1.0;
         frame.effects.lighting.lights = vec![key];
         frame.effects.lighting.hemisphere_intensity = 0.0;
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.into();
@@ -357,7 +357,7 @@ fn hdr_lightmap_survives_above_one() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         frame.effects.lighting.lights = Vec::new();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.into();
@@ -462,7 +462,7 @@ fn multi_page_lightmap_selects_layer_per_vertex() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         frame.effects.lighting.lights = Vec::new();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.into();
@@ -571,7 +571,7 @@ fn scene_lightmap_addresses_shared_atlas_per_object() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         frame.effects.lighting.lights = Vec::new();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         let mut mat = Material::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::IDENTITY.into();
@@ -628,7 +628,7 @@ fn capture_equirect_maps_direction_like_the_shader() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     // Place the box along +X so it fills only the +X face from the origin.
@@ -696,7 +696,7 @@ fn capture_equirect_gpu_matches_the_cpu_resolve() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).into();
@@ -808,7 +808,7 @@ fn light_probe_object_is_lit_by_the_probe_field() {
     // No direct lights: the object colour is purely its indirect (probe) term.
     frame.effects.lighting.lights = vec![];
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
@@ -880,7 +880,7 @@ fn probe_volume_lights_object_per_fragment() {
     frame.viewport.show_axes_indicator = false;
     frame.effects.lighting.lights = vec![];
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     // Scale the unit box up so it spans the volume's X gradient.
@@ -941,7 +941,7 @@ fn bake_light_probes_captures_directional_radiance() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)).into();
@@ -985,7 +985,7 @@ fn capture_reflection_probe_bakes_a_parallax_zone() {
     frame.viewport.show_axes_indicator = false;
 
     // A bright emissive box off to +X, so the captured probe has structure.
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
@@ -1010,7 +1010,7 @@ fn capture_reflection_probe_bakes_a_parallax_zone() {
     // Drive a render with the probe active: exercises the parallax + specular
     // occlusion path in the mesh shader without wgpu validation errors.
     renderer.set_environment_zones(&queue, &[zone]);
-    let mut lit = SceneRenderItem::default();
+    let mut lit = MeshItem::default();
     lit.mesh_id = mesh_idx;
     lit.material = upload_material(
         &mut renderer,
@@ -1095,7 +1095,7 @@ fn environment_zones_select_the_second_zone() {
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
@@ -1166,10 +1166,10 @@ fn render_spheres(
     frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     frame.effects.environment = environment;
     frame.effects.lighting.lights = lights;
-    let items: Vec<SceneRenderItem> = spheres
+    let items: Vec<MeshItem> = spheres
         .iter()
         .map(|(centre, material)| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.model = glam::Mat4::from_translation(*centre).into();
             item.material = upload_material(renderer, material.clone());
@@ -1238,7 +1238,7 @@ fn captured_probe_ignores_the_lighting_rotation() {
     let mut capture_frame = FrameData::default();
     capture_frame.viewport.show_grid = false;
     capture_frame.viewport.show_axes_indicator = false;
-    let mut emitter = SceneRenderItem::default();
+    let mut emitter = MeshItem::default();
     let mut mat = Material::default();
     emitter.mesh_id = box_idx;
     emitter.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).into();
@@ -1566,7 +1566,7 @@ fn environment_lit_sphere(
     frame.viewport.environment_background = viewport_lib::EnvironmentBackground::colour();
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
@@ -1701,7 +1701,7 @@ fn capture_lit_box_max(
     light.channel_mask = channel_mask;
     frame.effects.lighting.lights = vec![light];
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.into();
@@ -1812,7 +1812,7 @@ fn clustered_lighting_matches_the_per_light_fallback() {
                 light
             })
             .collect();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).into();
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());

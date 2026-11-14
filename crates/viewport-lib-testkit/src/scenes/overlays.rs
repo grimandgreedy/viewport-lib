@@ -13,10 +13,11 @@
 
 use glam::Vec3;
 use viewport_lib::{
-    Alignment, AnchorX, AnchorY, Colour, FillRule, GlyphRunItem, LabelItem, LineCap, LineJoin,
-    Material, OutlineMode, OverlayFill, OverlayFrame, OverlayOrigin, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, PolylineCap, PositionedGlyph, RetainedOverlay, ShadowLayer,
-    SubPath, TriangleDirection, primitives,
+    Alignment, AnchorX, AnchorY, BackdropEffects, Colour, ColourMatrix, FillRule, GlyphRunItem,
+    LabelItem, LineCap, LineJoin, Material, OutlineMode, OverlayBlend, OverlayClip, OverlayFill,
+    OverlayFrame, OverlayGroupItems, OverlayLayerStyle, OverlayMeshItem, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, PositionedGlyph,
+    RetainedOverlay, ShadowLayer, StrokePattern, SubPath, TriangleDirection, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs};
@@ -60,6 +61,13 @@ pub fn scenes() -> Vec<NamedScene> {
             ],
             build: build_group_anchor,
         },
+        scene("overlay_blend_modes", build_blend_modes),
+        scene("overlay_strokes", build_strokes),
+        scene("overlay_text_subpixel", build_text_subpixel),
+        scene("overlay_layers", build_layers),
+        scene("overlay_mesh", build_mesh),
+        scene("overlay_layers_nested", build_layers_nested),
+        scene("overlay_ordering", build_ordering),
     ]
 }
 
@@ -119,6 +127,8 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 [0.0, cell[1]],
             ])],
             fill_rule: FillRule::NonZero,
+            stroke: None,
+            inverse: false,
         },
         [140.0, 24.0],
         cell,
@@ -209,7 +219,7 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 ///
 /// An overlay-only renderer has no meshes, so there the overlays draw over the
 /// clear colour.
-fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
+pub(super) fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
     let mesh = match ctx
         .renderer
         .resources_mut()
@@ -224,7 +234,7 @@ fn backdrop(ctx: &mut BuildCtx<'_>, overlays: OverlayFrame) -> BuiltScene {
         }
         Err(e) => panic!("mesh upload: {e}"),
     };
-    let mut item = viewport_lib::SceneRenderItem::default();
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.material = super::material(
         ctx,
@@ -274,11 +284,11 @@ fn build_shapes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [115.0, 20.0],
             [80.0, 50.0],
         )
-        .with_fill(OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(0.1, 0.4, 0.9, 1.0),
-            end_colour: Colour::srgb(0.9, 0.2, 0.6, 1.0),
-            angle: 0.6,
-        })
+        .with_fill(OverlayFill::linear_gradient(
+            Colour::srgb(0.1, 0.4, 0.9, 1.0),
+            Colour::srgb(0.9, 0.2, 0.6, 1.0),
+            0.6,
+        ))
         .with_outline(Colour::srgb(0.95, 0.95, 1.0, 0.9), 2.0, OutlineMode::Outer),
         OverlayShapeItem::new(OverlayShape::Circle, [215.0, 20.0], [50.0, 50.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.8, 0.45, 0.95))),
@@ -333,6 +343,8 @@ fn build_vector(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             OverlayShape::Vector {
                 subpaths: vec![star],
                 fill_rule: FillRule::NonZero,
+                stroke: None,
+                inverse: false,
             },
             [60.0, 60.0],
             [90.0, 90.0],
@@ -342,6 +354,8 @@ fn build_vector(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             OverlayShape::Vector {
                 subpaths: vec![blob],
                 fill_rule: FillRule::NonZero,
+                stroke: None,
+                inverse: false,
             },
             [220.0, 60.0],
             [90.0, 70.0],
@@ -365,7 +379,7 @@ fn build_polylines(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             .with_thickness(6.0)
             .with_colour(Colour::srgb(1.0, 0.55, 0.2, 1.0))
             .with_join(LineJoin::Mitre)
-            .with_cap(PolylineCap::Round),
+            .with_cap(LineCap::Round),
         OverlayPolylineItem::new(
             zigzag
                 .iter()
@@ -375,7 +389,7 @@ fn build_polylines(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .with_thickness(6.0)
         .with_colour(Colour::srgb(0.4, 0.85, 1.0, 1.0))
         .with_join(LineJoin::Bevel)
-        .with_cap(PolylineCap::Square),
+        .with_cap(LineCap::Square),
         // Closed and filled: the tessellated fill path, which is the same
         // machinery a vector shape's fill runs through.
         OverlayPolylineItem::new(vec![
@@ -524,19 +538,19 @@ fn build_group_anchor(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 }
 
 fn build_text_fill(ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // Gradient-filled text. The fill is evaluated per glyph vertex over the
-    // laid-out text box, so a linear gradient is exact and a radial one is
-    // piecewise-linear per glyph: both worth pinning, since the faceting is
-    // the part that would show first if the sampling box drifted.
-    let linear = OverlayFill::LinearGradient {
-        start_colour: Colour::srgb(1.0, 0.85, 0.2, 1.0),
-        end_colour: Colour::srgb(0.9, 0.2, 0.55, 1.0),
-        angle: 0.0,
-    };
-    let radial = OverlayFill::RadialGradient {
-        centre_colour: Colour::srgb(0.6, 1.0, 0.9, 1.0),
-        edge_colour: Colour::srgb(0.1, 0.25, 0.6, 1.0),
-    };
+    // Gradient-filled text. The fill is evaluated per fragment over the
+    // laid-out text box, so a radial gradient is as smooth across a glyph as
+    // a linear one; both are worth pinning, since the box the fill spans is
+    // the part that would show first if it drifted.
+    let linear = OverlayFill::linear_gradient(
+        Colour::srgb(1.0, 0.85, 0.2, 1.0),
+        Colour::srgb(0.9, 0.2, 0.55, 1.0),
+        0.0,
+    );
+    let radial = OverlayFill::radial_gradient(
+        Colour::srgb(0.6, 1.0, 0.9, 1.0),
+        Colour::srgb(0.1, 0.25, 0.6, 1.0),
+    );
 
     let mut wide = LabelItem::new("Gradient")
         .with_position([20.0, 20.0])
@@ -699,7 +713,7 @@ fn build_rotation(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .with_thickness(8.0)
         .with_colour(Colour::srgb(1.0, 0.8, 0.3, 1.0))
         .with_join(LineJoin::Mitre)
-        .with_cap(PolylineCap::Round)
+        .with_cap(LineCap::Round)
         .with_rotation(0.6)
         .with_rotation_pivot(off_centre),
         OverlayPolylineItem::new(vec![
@@ -905,4 +919,842 @@ fn build_composition(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         ovl.retained = retained;
         ovl
     })
+}
+
+// --- blend modes -----------------------------------------------------------
+
+/// One cell per blend mode, each a two-colour plate with a disc drawn over it
+/// in that mode, the disc hanging off the plate's corner onto the backdrop.
+///
+/// Top row: additive brightens, multiply darkens, screen brightens without
+/// clipping to white. Bottom row: destination-out punches a hole through the
+/// plate and the scene; destination-over fills such a hole and nothing else;
+/// source-atop paints a disc only where the plate is left after a hole.
+fn build_blend_modes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let plate = |shapes: &mut Vec<OverlayShapeItem>, at: [f32; 2]| {
+        for (dx, colour) in [
+            (0.0, Colour::srgb(0.95, 0.55, 0.15, 1.0)),
+            (50.0, Colour::srgb(0.1, 0.55, 0.7, 1.0)),
+        ] {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [at[0] + dx, at[1]],
+                    [50.0, 100.0],
+                )
+                .with_fill(OverlayFill::Solid(colour)),
+            );
+        }
+    };
+    let disc = |at: [f32; 2], colour: Colour, blend: OverlayBlend| {
+        OverlayShapeItem::new(
+            OverlayShape::Circle,
+            [at[0] + 40.0, at[1] + 40.0],
+            [76.0, 76.0],
+        )
+        .with_fill(OverlayFill::Solid(colour))
+        .with_blend(blend)
+    };
+    let hole = |at: [f32; 2]| {
+        OverlayShapeItem::new(
+            OverlayShape::Circle,
+            [at[0] + 15.0, at[1] + 15.0],
+            [50.0, 50.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::WHITE))
+        .with_blend(OverlayBlend::DestinationOut)
+    };
+    let mut shapes = Vec::new();
+
+    let grey = Colour::srgb(0.5, 0.5, 0.5, 1.0);
+    for (at, blend, colour) in [
+        ([20.0, 20.0], OverlayBlend::Additive, grey),
+        (
+            [150.0, 20.0],
+            OverlayBlend::Multiply,
+            Colour::srgb(0.7, 0.6, 1.0, 1.0),
+        ),
+        ([280.0, 20.0], OverlayBlend::Screen, grey),
+    ] {
+        plate(&mut shapes, at);
+        shapes.push(disc(at, colour, blend));
+    }
+
+    // Destination-out on its own.
+    let at = [20.0, 160.0];
+    plate(&mut shapes, at);
+    shapes.push(disc(at, Colour::WHITE, OverlayBlend::DestinationOut));
+    // A hole, then a disc that shows only through it.
+    let at = [150.0, 160.0];
+    plate(&mut shapes, at);
+    shapes.push(hole(at));
+    shapes.push(disc(
+        [at[0] - 30.0, at[1] - 30.0],
+        Colour::srgb(0.9, 0.85, 0.2, 1.0),
+        OverlayBlend::DestinationOver,
+    ));
+    // A hole, then a disc kept only where the plate is left.
+    let at = [280.0, 160.0];
+    plate(&mut shapes, at);
+    shapes.push(hole(at));
+    shapes.push(disc(
+        [at[0] - 30.0, at[1] - 30.0],
+        Colour::srgb(0.35, 0.85, 0.35, 1.0),
+        OverlayBlend::SourceAtop,
+    ));
+
+    // A rising z_order per item, the way a toolkit lowers a draw list: the
+    // cells do not overlap, so they still batch.
+    for (z, shape) in shapes.iter_mut().enumerate() {
+        shape.z_order = z as i32;
+    }
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.shapes = shapes;
+        ovl
+    })
+}
+
+/// A circle of radius `r` about `c` from four cubic quarters.
+fn circle_path(c: [f32; 2], r: f32) -> SubPath {
+    let k = r * 0.552_284_8;
+    let [x, y] = c;
+    SubPath::new([x + r, y])
+        .cubic_to([x + r, y + k], [x + k, y + r], [x, y + r])
+        .cubic_to([x - k, y + r], [x - r, y + k], [x - r, y])
+        .cubic_to([x - r, y - k], [x - k, y - r], [x, y - r])
+        .cubic_to([x + k, y - r], [x + r, y - k], [x + r, y])
+        .close()
+}
+
+/// Strokes on any path: a dashed open curve with round joins, a closed star
+/// with mitred tips, a hairline grid under a 3x group scale that must stay one
+/// device pixel wide, a polyline whose width varies point by point, and an
+/// inverse-filled ring at two sizes, one drawn from the coverage atlas and one
+/// past its limit tessellated.
+fn build_strokes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut shapes = Vec::new();
+
+    // An open cubic with a zigzag tail: the fill would close it, the stroke
+    // does not. The dashes are cut before stroking, so each dash gets round
+    // caps and round joins at the zigzag's corners.
+    let curve = SubPath::new([0.0, 90.0])
+        .cubic_to([20.0, -10.0], [80.0, 130.0], [110.0, 30.0])
+        .line_to([130.0, 70.0])
+        .line_to([150.0, 20.0])
+        .line_to([170.0, 80.0]);
+    shapes.push(
+        OverlayShapeItem::vector(vec![curve], FillRule::NonZero, [15.0, 20.0], [170.0, 110.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 0.9, 0.25)))
+            .with_stroke(
+                OverlayStroke::new(5.0, Colour::srgb(0.98, 0.85, 0.3, 1.0))
+                    .with_pattern(StrokePattern::Dashed {
+                        dash_length: 18.0,
+                        gap_length: 9.0,
+                        offset: 4.0,
+                    })
+                    .with_join(LineJoin::Round)
+                    .with_cap(LineCap::Round),
+            ),
+    );
+
+    // A closed star, mitred at every tip and notch.
+    let star: Vec<[f32; 2]> = (0..10)
+        .map(|i| {
+            let a = std::f32::consts::PI * i as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+            let r = if i % 2 == 0 { 48.0 } else { 20.0 };
+            [50.0 + r * a.cos(), 52.0 + r * a.sin()]
+        })
+        .collect();
+    shapes.push(
+        OverlayShapeItem::vector(
+            vec![SubPath::polygon(&star)],
+            FillRule::NonZero,
+            [205.0, 20.0],
+            [100.0, 100.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.3, 0.35, 0.6)))
+        .with_stroke(
+            OverlayStroke::new(4.0, Colour::srgb(0.98, 0.95, 0.9, 1.0))
+                .with_join(LineJoin::Mitre)
+                .with_mitre_limit(8.0),
+        ),
+    );
+
+    // An inverse-filled ring: the box less a ring is its corners and the
+    // central disc. Small enough to come from the coverage atlas.
+    let ring = |c: f32, outer: f32, inner: f32| {
+        vec![circle_path([c, c], outer), circle_path([c, c], inner)]
+    };
+    shapes.push(
+        OverlayShapeItem::vector(
+            ring(35.0, 30.0, 18.0),
+            FillRule::EvenOdd,
+            [315.0, 30.0],
+            [70.0, 70.0],
+        )
+        .with_inverse_fill(true)
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.35, 0.85, 0.5, 1.0))),
+    );
+    // The same past the atlas limit, through the tessellated fallback.
+    shapes.push(
+        OverlayShapeItem::vector(
+            ring(68.0, 58.0, 34.0),
+            FillRule::EvenOdd,
+            [262.0, 155.0],
+            [136.0, 136.0],
+        )
+        .with_inverse_fill(true)
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.35, 0.85, 0.5, 1.0))),
+    );
+
+    // A brush stroke: round joins, round caps, and a width that swells and
+    // tapers point by point.
+    let brush_points: Vec<[f32; 2]> = (0..7)
+        .map(|i| {
+            [
+                140.0 + 18.0 * i as f32,
+                if i % 2 == 0 { 250.0 } else { 175.0 },
+            ]
+        })
+        .collect();
+    let brush = OverlayPolylineItem::new(brush_points)
+        .with_colour(Colour::srgb(0.85, 0.45, 0.95, 1.0))
+        .with_join(LineJoin::Round)
+        .with_cap(LineCap::Round)
+        .with_widths(vec![1.0, 5.0, 10.0, 14.0, 10.0, 5.0, 1.0]);
+
+    // A hairline grid compiled once and drawn at three times its size: the
+    // lines stay one device pixel wide. Line centres land on pixel centres.
+    let mut grid = Vec::new();
+    for i in 0..=6 {
+        let t = 6.0 * i as f32;
+        for points in [vec![[t, 0.0], [t, 36.0]], vec![[0.0, t], [36.0, t]]] {
+            grid.push(
+                OverlayPolylineItem::new(points)
+                    .with_stroke(OverlayStroke::hairline(Colour::srgb(0.95, 0.95, 0.95, 1.0))),
+            );
+        }
+    }
+    let id =
+        ctx.renderer
+            .compile_overlay_geometry(ctx.device, ctx.queue, &grid, &[], &[], &[], 1.0);
+
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.shapes = shapes;
+        ovl.polylines = vec![brush];
+        ovl.retained = vec![
+            RetainedOverlay::new(id)
+                .with_position([15.5, 160.5])
+                .with_scale(3.0),
+        ];
+        ovl
+    })
+}
+
+// --- sub-pixel text ----------------------------------------------------------
+
+/// Small text at fractional pen positions, and text whose transform scale
+/// picks its raster size.
+///
+/// The left column is one label stepped across by a quarter pixel per row,
+/// with whole-pixel row spacing: each row lands on whole device pixels and
+/// differs from the one above only in the glyph edges rasterised at that
+/// quarter. The right column is a small label scaled 1x, 1.5x, 2x and 3x
+/// about its top-left, each rasterised at its drawn size, beside a 3x scaled
+/// rotated copy that rasterises at 3x and resamples.
+fn build_text_subpixel(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let ink = Colour::srgb(1.0, 1.0, 1.0, 1.0);
+    let mut labels = Vec::new();
+    for i in 0..8 {
+        labels.push(
+            LabelItem::new("Quarter pixel steps 0123")
+                .with_position([20.0 + i as f32 * 0.25, 20.0 + i as f32 * 14.0])
+                .with_align_x(AnchorX::Left)
+                .with_align_y(AnchorY::Top)
+                .with_font_size(11.0)
+                .with_colour(ink),
+        );
+    }
+
+    let small = |position: [f32; 2]| {
+        LabelItem::new("Scaled")
+            .with_position(position)
+            .with_align_x(AnchorX::Left)
+            .with_align_y(AnchorY::Top)
+            .with_font_size(9.0)
+            .with_colour(Colour::srgb(1.0, 0.85, 0.5, 1.0))
+    };
+    let box_size = ctx
+        .renderer
+        .resources()
+        .measure_overlay_text("Scaled", 9.0, None);
+    // About the top-left of the text box: the pivot is measured from its centre.
+    let top_left = [-box_size.width * 0.5, -box_size.height * 0.5];
+    let mut y = 20.0;
+    for scale in [1.0, 1.5, 2.0, 3.0] {
+        labels.push(
+            small([220.0, y])
+                .with_scale(scale)
+                .with_rotation_pivot(top_left),
+        );
+        y += box_size.height * scale + 6.0;
+    }
+    labels.push(small([240.0, y + 10.0]).with_scale(3.0).with_rotation(0.2));
+
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.labels = labels;
+        ovl
+    })
+}
+
+/// Layers: overlay items drawn into a scratch target and composited as one.
+///
+/// Top left, a faded layer of overlapping discs beside the same discs faded
+/// one by one: the layer shows only the top disc where they overlap, the twin
+/// shows the lower one through it. Top right, a row of bars with a frosted
+/// card over it, the card a layer with a backdrop blur clipped to a rounded
+/// mask, so the bars blur under it, and a plain item with a backdrop blur over
+/// the bars' feet. Bottom left, a group of overlapping shapes
+/// casting one drop shadow from their union. Bottom middle, a layer composited
+/// with `Difference` over coloured stripes. Bottom right, a gradient rect
+/// beside its twin filtered to greyscale by a colour matrix.
+fn build_layers(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let rect = |at: [f32; 2], size: [f32; 2], r: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: r }, at, size)
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let disc = |at: [f32; 2], d: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Circle, at, [d, d])
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let red = Colour::srgb(0.9, 0.2, 0.2, 1.0);
+    let green = Colour::srgb(0.2, 0.75, 0.3, 1.0);
+    let blue = Colour::srgb(0.2, 0.4, 0.95, 1.0);
+    let yellow = Colour::srgb(0.95, 0.85, 0.2, 1.0);
+    let mut ovl = OverlayFrame::default();
+
+    // A faded layer of overlapping discs, and the same discs faded one by one.
+    let discs = |x: f32| {
+        [
+            disc([x, 20.0], 56.0, red),
+            disc([x + 26.0, 34.0], 56.0, green),
+            disc([x + 8.0, 60.0], 56.0, blue),
+        ]
+    };
+    let mark = ovl.layer_mark();
+    ovl.shapes.extend(discs(14.0));
+    ovl.push_layer(mark, OverlayLayerStyle::default().with_opacity(0.5));
+    for d in discs(100.0) {
+        ovl.shapes.push(d.with_opacity(0.5));
+    }
+
+    // A row of bars, then a frosted card over them: a layer with a backdrop
+    // blur clipped to the card's rounded mask.
+    for (i, colour) in [red, yellow, green, blue, red, yellow]
+        .into_iter()
+        .enumerate()
+    {
+        ovl.shapes.push(rect(
+            [200.0 + i as f32 * 30.0, 20.0],
+            [18.0, 100.0],
+            0.0,
+            colour,
+        ));
+    }
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect {
+                corner_radius: 14.0,
+            },
+            [230.0, 40.0],
+            [120.0, 60.0],
+        )
+        .provides_mask(41),
+    );
+    let mark = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [230.0, 40.0],
+        [120.0, 60.0],
+        14.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.25),
+    ));
+    ovl.shapes.push(rect(
+        [246.0, 62.0],
+        [88.0, 16.0],
+        8.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.6),
+    ));
+    let card = ovl.push_layer(
+        mark,
+        OverlayLayerStyle::default().with_backdrop(BackdropEffects::default().with_blur(6.0)),
+    );
+    card.clip = OverlayClip::mask(41);
+
+    // A plain item with a backdrop blur over the bars' feet: the bars blur
+    // under it too.
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 7.0 },
+            [196.0, 104.0],
+            [52.0, 14.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.15, 0.3)))
+        .with_backdrop_blur(4.0),
+    );
+
+    // A group casting one drop shadow from the union of its members.
+    let mark = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [24.0, 170.0],
+        [70.0, 50.0],
+        10.0,
+        Colour::srgb(0.95, 0.95, 0.98, 1.0),
+    ));
+    ovl.shapes.push(disc([70.0, 196.0], 54.0, yellow));
+    ovl.push_layer(
+        mark,
+        OverlayLayerStyle::default().with_shadow(ShadowLayer::new(
+            Colour::srgb(0.0, 0.0, 0.0, 0.7),
+            6.0,
+            [8.0, 8.0],
+        )),
+    );
+
+    // Coloured stripes under a layer composited by difference.
+    for (i, colour) in [red, green, blue, yellow].into_iter().enumerate() {
+        ovl.shapes.push(rect(
+            [160.0 + i as f32 * 25.0, 160.0],
+            [25.0, 110.0],
+            0.0,
+            colour,
+        ));
+    }
+    let mark = ovl.layer_mark();
+    ovl.shapes.push(disc([170.0, 175.0], 80.0, Colour::WHITE));
+    ovl.shapes.push(rect(
+        [150.0, 240.0],
+        [120.0, 20.0],
+        0.0,
+        Colour::srgb(0.5, 0.5, 0.5, 1.0),
+    ));
+    ovl.push_layer(
+        mark,
+        OverlayLayerStyle::default().with_blend(OverlayBlend::Difference),
+    );
+
+    // A gradient rect and its greyscale twin.
+    let gradient = OverlayFill::linear_gradient(red, blue, 0.0);
+    let coloured = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 6.0 },
+        [290.0, 160.0],
+        [44.0, 110.0],
+    )
+    .with_fill(gradient.clone());
+    let mut grey = coloured.clone();
+    grey.transform.translate = [342.0, 160.0];
+    grey.style.colour_matrix = Some(ColourMatrix::greyscale());
+    ovl.shapes.push(coloured);
+    ovl.shapes.push(grey);
+
+    backdrop(ctx, ovl)
+}
+
+/// Nested layers: layers inside layers, each composited into the target of
+/// the layer around it.
+///
+/// Top left, a blurred group holding a panel, two discs and a faded card of
+/// two overlapping rects: the card is faded as one inside the group, then
+/// the whole group blurs. Top right, a faded layer of coloured bars with a
+/// white disc composited by `Difference` inside it: the disc inverts the
+/// bars it covers, not the scene under the layer. Along the bottom, three
+/// levels: a shadowed group around a faded layer of bars, inside which a
+/// frosted card (a layer with a backdrop blur clipped to a rounded mask)
+/// blurs the bars the faded layer has drawn under it, and a plain item with
+/// a backdrop blur does the same over the bars' feet.
+fn build_layers_nested(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let rect = |at: [f32; 2], size: [f32; 2], r: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: r }, at, size)
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let disc = |at: [f32; 2], d: f32, colour: Colour| {
+        OverlayShapeItem::new(OverlayShape::Circle, at, [d, d])
+            .with_fill(OverlayFill::Solid(colour))
+    };
+    let red = Colour::srgb(0.9, 0.2, 0.2, 1.0);
+    let green = Colour::srgb(0.2, 0.75, 0.3, 1.0);
+    let blue = Colour::srgb(0.2, 0.4, 0.95, 1.0);
+    let yellow = Colour::srgb(0.95, 0.85, 0.2, 1.0);
+    let mut ovl = OverlayFrame::default();
+
+    // A faded card inside a blurred group.
+    let group = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [14.0, 14.0],
+        [170.0, 120.0],
+        12.0,
+        Colour::srgb(0.15, 0.17, 0.22, 1.0),
+    ));
+    ovl.shapes.push(disc([28.0, 30.0], 60.0, red));
+    ovl.shapes.push(disc([62.0, 50.0], 60.0, blue));
+    let card = ovl.layer_mark();
+    ovl.shapes
+        .push(rect([96.0, 36.0], [76.0, 60.0], 8.0, Colour::WHITE));
+    ovl.shapes
+        .push(rect([84.0, 70.0], [76.0, 46.0], 8.0, yellow));
+    ovl.push_layer(card, OverlayLayerStyle::default().with_opacity(0.5));
+    ovl.push_layer(group, OverlayLayerStyle::default().with_blur(2.0));
+
+    // A difference disc inside a faded layer of bars.
+    let faded = ovl.layer_mark();
+    for (i, colour) in [red, green, blue, yellow].into_iter().enumerate() {
+        ovl.shapes.push(rect(
+            [212.0 + i as f32 * 44.0, 14.0],
+            [44.0, 120.0],
+            0.0,
+            colour,
+        ));
+    }
+    ovl.shapes
+        .push(disc([248.0, 30.0], 90.0, Colour::WHITE).with_blend(OverlayBlend::Difference));
+    ovl.push_layer(faded, OverlayLayerStyle::default().with_opacity(0.7));
+
+    // Three levels: a shadowed group, a faded layer of bars, a frosted card.
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect {
+                corner_radius: 14.0,
+            },
+            [120.0, 180.0],
+            [160.0, 70.0],
+        )
+        .provides_mask(51),
+    );
+    let shadowed = ovl.layer_mark();
+    let bars = ovl.layer_mark();
+    for (i, colour) in [red, yellow, green, blue, red, yellow, green, blue]
+        .into_iter()
+        .enumerate()
+    {
+        ovl.shapes.push(rect(
+            [40.0 + i as f32 * 42.0, 166.0],
+            [24.0, 110.0],
+            0.0,
+            colour,
+        ));
+    }
+    let frosted = ovl.layer_mark();
+    ovl.shapes.push(rect(
+        [120.0, 180.0],
+        [160.0, 70.0],
+        14.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.25),
+    ));
+    ovl.shapes.push(rect(
+        [140.0, 206.0],
+        [120.0, 18.0],
+        9.0,
+        Colour::srgb(1.0, 1.0, 1.0, 0.6),
+    ));
+    let card = ovl.push_layer(
+        frosted,
+        OverlayLayerStyle::default().with_backdrop(BackdropEffects::default().with_blur(6.0)),
+    );
+    card.clip = OverlayClip::mask(51);
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 7.0 },
+            [36.0, 258.0],
+            [120.0, 14.0],
+        )
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.15, 0.3)))
+        .with_backdrop_blur(4.0),
+    );
+    ovl.push_layer(bars, OverlayLayerStyle::default().with_opacity(0.9));
+    ovl.push_layer(
+        shadowed,
+        OverlayLayerStyle::default().with_shadow(ShadowLayer::new(
+            Colour::srgb(0.0, 0.0, 0.0, 0.7),
+            6.0,
+            [6.0, 6.0],
+        )),
+    );
+
+    backdrop(ctx, ovl)
+}
+
+/// The hatching fill the mesh scene registers: diagonal lines `p0.x` pixels
+/// apart and `p0.y` wide, in `p1` over `p2`.
+pub const HATCH_FILL_WGSL: &str = "
+fn fill(local: vec2<f32>, params: OverlayFillParams) -> vec4<f32> {
+    let spacing = max(params.p0.x, 1.0);
+    let half_width = params.p0.y * 0.5;
+    let d = (local.x + local.y) * 0.70710678;
+    let m = abs(fract(d / spacing + 0.5) - 0.5) * spacing;
+    let line = 1.0 - smoothstep(half_width - 0.5, half_width + 0.5, m);
+    return mix(params.p2, params.p1, line);
+}
+";
+
+/// The hatching fill, registered on first use.
+pub fn hatch_fill(
+    renderer: &mut viewport_lib::ViewportRenderer,
+    device: &viewport_lib::wgpu::Device,
+) -> viewport_lib::CustomFillId {
+    if let Some(id) = renderer.resources().overlay_fill_id("hatch") {
+        return id;
+    }
+    renderer
+        .resources_mut()
+        .register_overlay_fill(
+            device,
+            viewport_lib::plugin_api::OverlayFillDesc::new("hatch", HATCH_FILL_WGSL),
+        )
+        .expect("the hatch fill composes")
+}
+
+/// The colour of heatmap cell `(i, j)`: a smooth field through a blue to red
+/// ramp.
+fn heat(i: usize, j: usize) -> Colour {
+    let t = ((i as f32 * 0.7).sin() * 0.5 + (j as f32 * 0.9).cos() * 0.5) * 0.5 + 0.5;
+    Colour::srgb(
+        0.1 + 0.85 * t,
+        0.25 + 0.4 * (1.0 - (t - 0.5).abs() * 2.0),
+        0.9 - 0.8 * t,
+        1.0,
+    )
+}
+
+/// Meshes: a heatmap as one mesh beside the same cells as crisp-edged shapes
+/// (the two match wherever cells abut, with no seam between shape cells), a textured mesh over UVs, a rect with a
+/// registered hatching fill, and a mesh compiled into a retained group.
+fn build_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    const COLS: usize = 8;
+    const ROWS: usize = 5;
+    const CELL: f32 = 14.0;
+    let mut ovl = OverlayFrame::default();
+
+    // One mesh, four vertices per cell so each cell is one flat colour.
+    let mut positions = Vec::new();
+    let mut colours = Vec::new();
+    let mut indices = Vec::new();
+    for j in 0..ROWS {
+        for i in 0..COLS {
+            let (x, y) = (i as f32 * CELL, j as f32 * CELL);
+            let base = positions.len() as u32;
+            positions.extend_from_slice(&[
+                [x, y],
+                [x + CELL, y],
+                [x + CELL, y + CELL],
+                [x, y + CELL],
+            ]);
+            colours.extend_from_slice(&[heat(i, j); 4]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+    ovl.meshes.push(
+        OverlayMeshItem::new(positions, indices)
+            .with_colours(colours)
+            .with_position([20.0, 20.0]),
+    );
+    for j in 0..ROWS {
+        for i in 0..COLS {
+            ovl.shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [150.0 + i as f32 * CELL, 20.0 + j as f32 * CELL],
+                    [CELL, CELL],
+                )
+                .with_style(
+                    viewport_lib::OverlayStyle::solid(heat(i, j))
+                        .with_edge(viewport_lib::OverlayEdge::Crisp),
+                ),
+            );
+        }
+    }
+
+    // A hexagon fan with a texture fill sampled at its vertex UVs.
+    let texture = ctx
+        .renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::srgb(
+                2,
+                2,
+                [
+                    [240u8, 90, 60, 255],
+                    [250, 220, 80, 255],
+                    [70, 140, 240, 255],
+                    [90, 210, 120, 255],
+                ]
+                .concat(),
+            ),
+        )
+        .expect("a well-formed sRGB image");
+    let mut hex = vec![[40.0f32, 40.0]];
+    let mut uvs = vec![[0.5f32, 0.5]];
+    for k in 0..6 {
+        let a = k as f32 * std::f32::consts::TAU / 6.0;
+        hex.push([40.0 + 38.0 * a.cos(), 40.0 + 38.0 * a.sin()]);
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+    let fan: Vec<u32> = (0..6).flat_map(|k| [0, 1 + k, 1 + (k + 1) % 6]).collect();
+    ovl.meshes.push(
+        OverlayMeshItem::new(hex, fan)
+            .with_uvs(uvs)
+            .with_fill(OverlayFill::texture(texture))
+            .with_position([20.0, 110.0]),
+    );
+
+    // A rect filled by the registered hatching function.
+    let hatch = hatch_fill(ctx.renderer, ctx.device);
+    let mut params = [0.0f32; 16];
+    params[0] = 9.0;
+    params[1] = 3.0;
+    params[4..8].copy_from_slice(&[0.95, 0.95, 1.0, 1.0]);
+    params[8..12].copy_from_slice(&[0.15, 0.2, 0.45, 0.85]);
+    ovl.shapes.push(
+        OverlayShapeItem::new(
+            OverlayShape::Rect {
+                corner_radius: 10.0,
+            },
+            [120.0, 112.0],
+            [100.0, 70.0],
+        )
+        .with_fill(OverlayFill::custom(hatch, params)),
+    );
+
+    // A per-vertex coloured strip, compiled into a retained group.
+    let strip = OverlayMeshItem::new(
+        vec![
+            [0.0, 0.0],
+            [60.0, 0.0],
+            [0.0, 60.0],
+            [60.0, 60.0],
+            [0.0, 30.0],
+            [60.0, 30.0],
+        ],
+        vec![0, 1, 4, 1, 5, 4, 4, 5, 2, 5, 3, 2],
+    )
+    .with_colours(vec![
+        Colour::srgb(1.0, 0.3, 0.3, 1.0),
+        Colour::srgb(1.0, 0.8, 0.2, 1.0),
+        Colour::srgb(0.3, 0.4, 1.0, 1.0),
+        Colour::srgb(0.6, 0.2, 0.9, 1.0),
+        Colour::srgb(0.3, 0.9, 0.4, 1.0),
+        Colour::srgb(0.2, 0.9, 0.9, 1.0),
+    ]);
+    let id = ctx.renderer.compile_overlay_group(
+        ctx.device,
+        ctx.queue,
+        &OverlayGroupItems::default().with_meshes(vec![strip]),
+        1.0,
+    );
+    ovl.retained
+        .push(RetainedOverlay::new(id).with_position([250.0, 115.0]));
+
+    backdrop(ctx, ovl)
+}
+
+/// Draw order across pipelines and backdrop reads.
+///
+/// Left, a chain of overlapping items at one `z_order`, alternating a textured
+/// fill, a solid fill and a tessellated vector shape: each must cover the one
+/// submitted before it, although they draw through different pipelines and
+/// bindings. Right, over a row of coloured bars, three overlapping items
+/// submitted out of `z_order`: a frosted rect at 3, a frosted disc at 1 and a
+/// solid rect at 2. The disc blurs only the bars, the solid rect covers the
+/// disc, and the top rect blurs both of them.
+fn build_ordering(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut checker = |a: [u8; 4], b: [u8; 4]| {
+        let mut px = Vec::with_capacity(4 * 4 * 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                px.extend_from_slice(if (x + y) % 2 == 0 { &a } else { &b });
+            }
+        }
+        ctx.renderer
+            .resources_mut()
+            .upload_overlay_texture(
+                ctx.device,
+                ctx.queue,
+                viewport_lib::TextureData::srgb(4, 4, px),
+            )
+            .expect("a well-formed sRGB image")
+    };
+    let warm = checker([240, 150, 40, 255], [120, 40, 160, 255]);
+    let cool = checker([40, 200, 220, 255], [250, 250, 250, 255]);
+    let rect = |at: [f32; 2], size: [f32; 2], fill: OverlayFill| {
+        OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 6.0 }, at, size).with_fill(fill)
+    };
+    let solid = |r: f32, g: f32, b: f32| OverlayFill::Solid(Colour::srgb(r, g, b, 1.0));
+    let mut ovl = OverlayFrame::default();
+
+    // One z_order, submission order alone decides what is on top.
+    let size = [70.0, 50.0];
+    let step = [26.0, 30.0];
+    let at = |k: f32| [20.0 + step[0] * k, 24.0 + step[1] * k];
+    ovl.shapes
+        .push(rect(at(0.0), size, OverlayFill::texture(warm)));
+    ovl.shapes.push(rect(at(1.0), size, solid(0.2, 0.75, 0.3)));
+    ovl.shapes
+        .push(rect(at(2.0), size, OverlayFill::texture(cool)));
+    ovl.shapes.push(
+        OverlayShapeItem::vector(
+            vec![SubPath::polygon(&[
+                [0.0, size[1]],
+                [size[0] * 0.5, 0.0],
+                [size[0], size[1]],
+            ])],
+            FillRule::NonZero,
+            at(3.0),
+            size,
+        )
+        .with_fill(solid(0.95, 0.85, 0.2)),
+    );
+    ovl.shapes.push(rect(at(4.0), size, solid(0.2, 0.4, 0.95)));
+    ovl.shapes
+        .push(rect(at(5.0), size, OverlayFill::texture(warm)));
+
+    // Bars under three items submitted out of z_order.
+    for (i, (r, g, b)) in [
+        (0.9, 0.2, 0.2),
+        (0.95, 0.85, 0.2),
+        (0.2, 0.75, 0.3),
+        (0.2, 0.4, 0.95),
+        (0.9, 0.2, 0.2),
+        (0.95, 0.85, 0.2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        ovl.shapes.push(rect(
+            [228.0 + i as f32 * 26.0, 30.0],
+            [14.0, 220.0],
+            solid(r, g, b),
+        ));
+    }
+    ovl.shapes.push(
+        rect(
+            [250.0, 120.0],
+            [120.0, 90.0],
+            OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.25)),
+        )
+        .with_backdrop_blur(6.0)
+        .with_z_order(3),
+    );
+    ovl.shapes.push(
+        OverlayShapeItem::new(OverlayShape::Circle, [214.0, 60.0], [100.0, 100.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.1, 0.15, 0.3)))
+            .with_backdrop_blur(5.0)
+            .with_z_order(1),
+    );
+    ovl.shapes
+        .push(rect([270.0, 90.0], [50.0, 70.0], solid(0.85, 0.3, 0.6)).with_z_order(2));
+
+    backdrop(ctx, ovl)
 }

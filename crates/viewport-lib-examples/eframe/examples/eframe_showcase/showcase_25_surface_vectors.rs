@@ -22,7 +22,7 @@ use viewport_lib_plugins::item_types::vector_field::{
 };
 use vpl::{
     BackfacePolicy, BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings,
-    MeshData, MeshId, SceneRenderItem,
+    MeshData, MeshId, MeshItem,
 };
 use vpl::{Material, MaterialId};
 
@@ -204,13 +204,13 @@ impl App {
     // -------------------------------------------------------------------------
 
     /// Mesh surface render item for the active sub-mode.
-    pub(crate) fn sv_surface_item(&self) -> SceneRenderItem {
+    pub(crate) fn sv_surface_item(&self) -> MeshItem {
         let mesh_id = match self.sv_state.mode {
             SvMode::VertexIntrinsic => self.sv_state.mesh_index[0],
             SvMode::FaceIntrinsic => self.sv_state.mesh_index[1],
             SvMode::EdgeOneForm => self.sv_state.mesh_index[2],
         };
-        let mut item = SceneRenderItem::new(mesh_id, self.sv_state.surface_material);
+        let mut item = MeshItem::new(mesh_id, self.sv_state.surface_material);
         // Lit so the hemisphere light shapes the surface instead of showing a
         // flat gray. The glyphs on top stay unlit for a clean, even colour.
         item.settings.unlit = false;
@@ -542,9 +542,7 @@ fn edge_line_integral(p: glam::Vec3, q: glam::Vec3) -> f32 {
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn sv_collect_scene_items(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn sv_collect_scene_items(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let surface_item = if app.sv_state.built {
         vec![app.sv_surface_item()]
     } else {

@@ -10,8 +10,8 @@
 use glam::Vec3;
 use viewport_lib::Colour;
 use viewport_lib::{
-    BackfacePolicy, ClipObject, LightKind, LightSource, LightingSettings, Material,
-    SceneRenderItem, ShadowFilter, primitives,
+    BackfacePolicy, ClipObject, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    ShadowFilter, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, item, orbit_camera, upload};
@@ -54,7 +54,7 @@ fn interior(lights: Vec<LightSource>) -> LightingSettings {
     l
 }
 
-fn slab(ctx: &mut BuildCtx<'_>, size: [f32; 3], at: [f32; 3], colour: [f32; 3]) -> SceneRenderItem {
+fn slab(ctx: &mut BuildCtx<'_>, size: [f32; 3], at: [f32; 3], colour: [f32; 3]) -> MeshItem {
     let mesh = upload(ctx, &primitives::cuboid(size[0], size[1], size[2]));
     item(
         ctx,
@@ -66,7 +66,7 @@ fn slab(ctx: &mut BuildCtx<'_>, size: [f32; 3], at: [f32; 3], colour: [f32; 3]) 
 
 /// Make `it` two-sided by editing its material in place. Each slab uploads
 /// its own material, so no other item sees the edit.
-fn two_sided(ctx: &mut BuildCtx<'_>, it: SceneRenderItem) -> SceneRenderItem {
+fn two_sided(ctx: &mut BuildCtx<'_>, it: MeshItem) -> MeshItem {
     let resources = ctx.renderer.resources_mut();
     let mut material = resources
         .material(it.material)
@@ -87,7 +87,7 @@ fn two_sided(ctx: &mut BuildCtx<'_>, it: SceneRenderItem) -> SceneRenderItem {
 /// corners, which of the three corner layouts tried shows the least of the
 /// vertical crease column recorded in `vertical-corner-crease-column`.
 /// `open_x` leaves a 1.4 m doorway in the +X wall.
-fn room(ctx: &mut BuildCtx<'_>, open_x: bool) -> Vec<SceneRenderItem> {
+fn room(ctx: &mut BuildCtx<'_>, open_x: bool) -> Vec<MeshItem> {
     const W: f32 = 6.0;
     const H: f32 = 2.8;
     const T: f32 = 0.2;
@@ -118,7 +118,7 @@ fn room(ctx: &mut BuildCtx<'_>, open_x: bool) -> Vec<SceneRenderItem> {
 }
 
 /// A table with four legs and a cube and a sphere resting on it.
-fn table_set(ctx: &mut BuildCtx<'_>, at: Vec3) -> Vec<SceneRenderItem> {
+fn table_set(ctx: &mut BuildCtx<'_>, at: Vec3) -> Vec<MeshItem> {
     let top_z = at.z + 0.75;
     let mut items = vec![slab(
         ctx,
@@ -204,7 +204,7 @@ fn build_room_doorway_sun(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// shade as inside their own shadow: flat, no band, no speckle.
 fn build_room_cut_solids(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // The clip plane is for the solids; the room itself stays whole.
-    let mut items: Vec<SceneRenderItem> = room(ctx, true)
+    let mut items: Vec<MeshItem> = room(ctx, true)
         .into_iter()
         .map(|mut it| {
             it.settings.ignore_clip = true;
@@ -258,7 +258,7 @@ fn build_room_cut_solids(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 /// Five 0.01 m plates stacked with 0.05 m gaps on the ground. The top face of
 /// each plate must not self-shadow and no light may leak between plates.
-fn slab_stack(ctx: &mut BuildCtx<'_>) -> Vec<SceneRenderItem> {
+fn slab_stack(ctx: &mut BuildCtx<'_>) -> Vec<MeshItem> {
     let mut items = vec![super::ground(ctx, 0.0)];
     for i in 0..5 {
         let z = 0.3 + i as f32 * 0.06;

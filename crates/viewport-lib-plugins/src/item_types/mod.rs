@@ -1,4 +1,4 @@
-//! Item types: point clouds, sprites, curves, volumes, vector and tensor
+//! Item types: point clouds, sprites, tilemaps, 2D lighting, curves, volumes, vector and tensor
 //! fields and the rest.
 //!
 //! Each type is an [`ItemTypePlugin`](viewport_lib::plugin_api::ItemTypePlugin)
@@ -165,12 +165,14 @@ pub mod gpu_implicit;
 pub mod gpu_marching_cubes;
 pub mod gpu_particles;
 pub mod image_slice;
+pub mod lighting_2d;
 pub mod point_cloud;
 pub mod scatter_volume;
 pub mod sprite;
 pub mod surface_contour;
 pub mod surface_lic;
 pub mod tensor_field;
+pub mod tilemap;
 pub mod vector_field;
 pub mod volume;
 pub mod volume_surface_slice;
@@ -201,12 +203,14 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(gpu_marching_cubes::shader_sources());
     all.extend(gpu_particles::shader_sources());
     all.extend(image_slice::shader_sources());
+    all.extend(lighting_2d::shader_sources());
     all.extend(point_cloud::shader_sources());
     all.extend(scatter_volume::shader_sources());
     all.extend(sprite::shader_sources());
     all.extend(surface_contour::shader_sources());
     all.extend(surface_lic::shader_sources());
     all.extend(tensor_field::shader_sources());
+    all.extend(tilemap::shader_sources());
     all.extend(vector_field::shader_sources());
     all.extend(volume::shader_sources());
     all.extend(volume_surface_slice::shader_sources());
@@ -265,11 +269,19 @@ pub fn install(
     register(Box::new(
         external_instances::ExternalInstancesPlugin::default(),
     ));
+    // Before sprites, so a blended tile layer draws under painter sprites.
+    register(Box::new(tilemap::TilemapPlugin::default()));
     register(Box::new(sprite::SpritePlugin::default()));
+    // After the types that read masks, which only need the mask target by
+    // the time the painter sequence draws.
+    register(Box::new(sprite::SpriteMaskPlugin::default()));
     register(Box::new(gpu_particles::GpuParticlesPlugin::default()));
     // Scatter composites over the finished scene, so it registers after every
     // type whose pixels it absorbs.
     register(Box::new(scatter_volume::ScatterVolumePlugin::default()));
+    // The 2D light layers are accumulated in `prepare` and sampled by the
+    // types above as they draw.
+    register(Box::new(lighting_2d::Lighting2dPlugin::default()));
     declined
 }
 

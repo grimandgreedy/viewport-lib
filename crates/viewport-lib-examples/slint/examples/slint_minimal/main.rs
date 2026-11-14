@@ -23,7 +23,7 @@ use viewport_lib::Colour;
 use slint::wgpu_29::{self, wgpu};
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
-    Material, MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    Material, MeshItem, MouseButton, OrbitCameraController, SceneFrame, ScrollUnits,
     ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
@@ -78,7 +78,7 @@ struct State {
     /// Owns the bindings and resolves events into an `ActionFrame`. The
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
     events: Vec<ViewportEvent>,
     /// Offscreen target the scene renders into; recreated on resize.
     target: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
@@ -141,7 +141,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let material = res.upload_material(material).unwrap();
 
     let make = |mesh_id, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-        let mut item = SceneRenderItem::new(mesh_id, material);
+        let mut item = MeshItem::new(mesh_id, material);
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
         item.settings.colour = Some(Colour::from_linear_rgb_array(colour));
         item

@@ -41,10 +41,10 @@ use viewport_lib_plugins::item_types::{
 use crate::eframe::egui;
 use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, FrameData,
-    ItemSettings, LightingSettings, Material, MaterialId, MeshId, NodeId, PickBackend, PickId,
-    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
-    SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
-    VolumeMeshData, VolumeMeshItem,
+    ItemSettings, LightingSettings, Material, MaterialId, MeshId, MeshItem, NodeId, PickBackend,
+    PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SizeSource,
+    SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData, VolumeMeshData,
+    VolumeMeshItem,
 };
 
 use crate::App;
@@ -804,7 +804,7 @@ impl App {
                     arc_centre[2] + arc_radius * angle.sin(),
                 ]);
                 // Small to large along the arc.
-                sizes.push(14.0 + 22.0 * t);
+                sizes.push(7.0 + 11.0 * t);
                 // Yellow -> orange gradient.
                 colours.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
             }
@@ -825,7 +825,7 @@ impl App {
             for i in 0..n {
                 positions.push([x_start + x_step * i as f32, 0.0, -6.0]);
                 // Alternate between small and large.
-                sizes.push(if i % 2 == 0 { 20.0 } else { 40.0 });
+                sizes.push(if i % 2 == 0 { 10.0 } else { 20.0 });
                 // Alternate cyan and magenta.
                 if i % 2 == 0 {
                     colours.push([0.2, 0.9, 0.9, 1.0]);
@@ -1794,16 +1794,14 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
 /// Returns `(items, lighting, scene_gen, selection_gen)`. Call this from the
 /// `ShowcaseMode::PickLevels` arm of the frame-data builder and feed the result
 /// into the shared `SceneFrame` and `LightingSettings` slots.
-pub(crate) fn pl_collect_scene_items(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn pl_collect_scene_items(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let mut items = app
         .pl_state
         .scene
         .collect_render_items(&app.pl_state.selection);
     // TVM boundary surface rendered as an opaque mesh alongside the scene nodes.
     if let Some(tvm_mesh_id) = app.pl_state.tvm_mesh_id {
-        let mut tvm_item = SceneRenderItem::new(tvm_mesh_id, app.pl_state.tvm_material);
+        let mut tvm_item = MeshItem::new(tvm_mesh_id, app.pl_state.tvm_material);
         tvm_item.model = glam::Mat4::IDENTITY.into();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
@@ -2105,7 +2103,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.sprite_positions.is_empty() {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.sprite_positions.clone();
-        s.sizes = app.pl_state.sprite_sizes.clone();
+        s.sizes = SpriteItem::square_sizes(app.pl_state.sprite_sizes.iter().copied());
         s.colours = app
             .pl_state
             .sprite_colours
@@ -2114,7 +2112,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .map(Colour::from_linear_array)
             .collect();
         s.default_colour = Colour::linear(1.0, 0.90, 0.20, 1.0);
-        s.default_size = 28.0;
+        s.default_size = 14.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(33);
         s.settings.selected = app.pl_state.selection.contains(33);
@@ -2127,7 +2125,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.xo_sprite_positions.is_empty() {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.xo_sprite_positions.clone();
-        s.sizes = app.pl_state.xo_sprite_sizes.clone();
+        s.sizes = SpriteItem::square_sizes(app.pl_state.xo_sprite_sizes.iter().copied());
         s.colours = app
             .pl_state
             .xo_sprite_colours
@@ -2136,7 +2134,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .map(Colour::from_linear_array)
             .collect();
         s.default_colour = Colour::linear(0.5, 0.5, 1.0, 1.0);
-        s.default_size = 30.0;
+        s.default_size = 15.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(34);
         s.settings.selected = app.pl_state.selection.contains(34);

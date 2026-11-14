@@ -67,11 +67,17 @@ pub struct TensorFieldPlugin {
     /// Reference items are not here: their instances live on the GPU, so they
     /// answer the GPU pick only.
     pick_items: Vec<TensorFieldItem>,
+    /// Glyph draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for TensorFieldPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn init_gpu(
@@ -107,6 +113,7 @@ impl ItemTypePlugin for TensorFieldPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         let items = items.of::<TensorFieldItem>();
         let refs = ctx.refs_of::<TensorFieldRefItem>();
@@ -203,8 +210,13 @@ impl ItemTypePlugin for TensorFieldPlugin {
             }
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
             pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
-            ctx.meshes
-                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
+            if ctx
+                .meshes
+                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count)
+            {
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 

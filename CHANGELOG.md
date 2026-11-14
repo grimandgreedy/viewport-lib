@@ -1,22 +1,49 @@
 # Changelog
 
-## [Unreleased]
+## [0.24.0]
+
+This release adds 2D rendering (sprites, tilemaps, one painter's-order sequence across item types, 2D lighting and `Camera2d`), reworks the overlay renderer (affine shapes, strokes, layers and blend modes, world overlay layers), runs runtime GPU plugins from the runners, cuts lighting and shadow costs, and renames `SceneRenderItem` to `MeshItem`.
 
 ### Features
 
-- **`RendererConfig::with_pipeline_cache`: one pipeline cache shared by several renderers** - renderers on one device (one per window) can share a `PipelineCache`, so each reuses the pipelines the others compiled and the data saved for the next launch covers all of them; `ViewportApp` does this for its windows.
+- **2D sprites** - pivots, flips, non-square sizes, nearest sampling and pixel snapping, effects (flash, dissolve, palette swap, outline), sprite materials, vertex hooks and deformers, per-sprite user values, sliced and tiled draw modes, alpha-threshold picks, and masks (`SpriteMaskItem`) that clip painter content inside or outside a shape.
+- **`TilemapItem`** - chunked tilemaps in `viewport-lib-plugins` with flips, tints, animation and parallax, square, isometric, staggered and hexagonal grids with Tiled's layout, rows sorted against sprites, tall tiles, sparse maps that grow and shrink, in-place edits (`TilemapEdits`), and cell picks and selection (`SubObjectRef::Tile`).
+- **One painter sequence across item types** - sprites, tile layers, meshes, mesh instances, GPU particles and world overlay layers sort together by layer and key (`painter_key`, `PainterPlacement`) and pick in the order drawn; third-party item types join through `painter_batches` and `paint_painter`.
+- **2D lighting** - `Lighting2dItem` lights painter content from point, cone, directional, global, textured and polygon lights with falloffs, per-range light layers, hard or soft shadows from `Occluder2d` (built from sprites or a tilemap), normal maps on sprites and tiles, and unlit content.
+- **`Camera2d`** - a planar orthographic camera with pan, zoom about the cursor, follow, bounds, shake and pixel snapping, driven by `Camera2dController` and `BindingPreset::Planar`, applied to a host's camera with `apply_to`, and run by `ViewportApp` through `WindowConfig::camera_control`; `Camera::lerp` and `set_ortho_height` support camera blends.
+- **Reference-resolution presentation** - `Presentation::Reference` draws the scene at a fixed size and upscales it with nearest sampling (integer bars, integer crop or stretch), and picks still take viewport positions.
+- **World overlay layers** - `SceneFrame::world_overlays` draws overlay frames in world units on a plane inside the scene, lit and bloomed with it, and `TextSizing::World` sizes text in world units with clamps.
+- **Overlay shapes and strokes** - full affine transforms (stretch and skew), per-pixel fills on every family including texture fills and `SweepGradient`, anti-aliased polylines and vector shapes, vector strokes with dashes, hairlines, per-point widths, round joins, inverse fills, soft clip edges and a crisp edge mode for touching cells.
+- **Overlay layers and blending** - `OverlayLayer` composites a run of items as one with opacity, blend, colour matrix, blur, shadow and backdrop, nesting up to eight deep; items take Porter-Duff and destination-reading blend modes and colour filters, and backdrop blur sees the overlays under it.
+- **Overlay meshes, custom fills and bitmap fonts** - `OverlayMeshItem` draws tessellated triangle lists, `register_overlay_fill` adds WGSL fill functions, and `upload_bitmap_font` registers a pixel font face.
+- **Faster overlays** - items that do not overlap batch across `z_order`, small vector shapes draw from a coverage atlas, tessellations are cached, the glyph atlas evicts by plot, text lands on quarter pixels, unchanged streams skip their upload, and a frame with no scene encodes only the overlay pass; `FrameStats` gains counters for each.
+- **Runtimes on `ViewportInstance`** - `set_runtime`, `take_runtime`, `install_plugin`, `uninstall_plugin` and `reattach_plugin`, `step_runtime` returning its `RuntimeOutput`, `FrameCtx::runtime_output_mut`, and GPU plugins scoped to the instance's `viewport_id`.
+- **`StaleHandles` lists lost plugin registrations** - `deformers`, `material_plugins`, `shading_hooks`, `item_types`, `post_effect_producers` and `post_effect_stages` name what to register again after a rebuild.
+- **Shared pipeline cache** - `RendererConfig::with_pipeline_cache` lets renderers on one device share compiled pipelines, which `ViewportApp` does for its windows.
+- **Plugin API additions** - `ItemFrameContext::lights`, `time` and `pixels_per_point`, `plugin_api::wgsl_compose`, `PerViewport`, `draws_transparent` to skip an empty OIT pass, after-scene encodes on the LDR path, `sub_object_outline`, `DeviceResources::texture_extent` and `sampler_for`.
 
 ### Fixes
 
-- **Mirror reflections of a small bright sun on low-precision devices** - the sharpest level of the prefiltered environment is now read texel for texel, so on software rasterisers such as lavapipe and llvmpipe a sun's light no longer spills into the texels beside it as a bright speck in mirror-like materials.
-- **GPU picks before their pipelines have compiled** - under `PipelineCompilation::Background`, the default everywhere but the web and Apple platforms on wgpu 27, a pick, rect pick or snap query that ran before its pipelines finished compiling drew nothing and reported no hit; it now builds the pipelines it needs first, so a click in the first frames hits what is under the cursor.
-- **Pipelines built against another wgpu instance's pipeline cache** - a pipeline found its renderer's cache by device, and wgpu tells devices apart only within one instance, so with two instances in one process a pipeline could be created against the other's cache and wgpu panicked; each renderer now makes its own cache current while it builds, and a pipeline built outside any renderer is built uncached.
-- **Pipeline caching with more than one window in `ViewportApp`** - each window's renderer made a cache of its own on the shared device, which left almost every pipeline uncached once a second window opened; the windows now share one cache.
-- **Instanced draws on DX12 with GPU culling** - wgpu's DX12 multi-draw count leaves each draw's first instance out of `instance_index`, so every batch in a group read the first batch's instances: deformers saw another item's data and a keep-hook cut removed the wrong surface. DX12 now issues one indirect draw per batch.
-- **Renderers built from a device alone on wgpu 27** - `ViewportRenderer::new` could not tell which backend the device was on, so on GL it kept depth-texture loads and the mesh pipelines failed to build. The backend is now read from the device, as on wgpu 29 and 30.
-- **GPU picking on GL without `EXT_color_buffer_float`** - the pick depth channel was an `R32Float` target, which wgpu's GL backend cannot render to without that extension, so every pick pipeline failed to build. `PICK_DEPTH_CHANNEL_FORMAT` is now `R32Uint`: a plugin pick shader declares `@location(2)` as `u32` and writes `bitcast<u32>(depth)`.
-- **Per-vertex mesh data on DX12** - the mesh shaders read `vertex_index` in a helper function, where naga's DX12 output leaves out the draw's base vertex, so scalar colouring, UV1, lightmaps, position overrides and deformer slots read another mesh's vertices. The index is now read in the entry point.
-- **Blocking readbacks on slow devices** - `render_offscreen`, `exposure_state`, `read_debug_pixel` and the path tracer's `accumulate` gave the GPU five seconds (thirty for the tracer), then panicked or read an unmapped buffer. They now wait for the work to finish, so a software adapter or a debug layer makes them slower rather than failing.
+- **Lighting and shadow cost** - PCSS and point and spot shadow sampling compile into lit pipelines only when a frame uses them, the fitted cascade range is cached between frames, blended items no longer write the indirect-fraction target, and a cell reached by more than 64 lights shades with those lights instead of every light.
+- **Overlays** - clips in a viewport offset from the target's origin, the axes indicator drawing under other overlays, blurred scaled text, and faceted gradients on text and paths.
+- **Item types across viewports and paths** - per-viewport plugin state when several viewports prepare before painting, blended sprites missing on the LDR path, reference-only frames skipping depth-read draws, and built-in types reporting no draw calls.
+- **GPU plugins** - `init_gpu` runs once per device instead of again whenever another plugin registers, and an attached runtime no longer allocates its timings every frame.
+- **Pipelines** - a pipeline build that panics no longer hangs the renderer, picks before their pipelines compile now hit, and pipeline caches are no longer crossed between wgpu instances or split between `ViewportApp` windows.
+- **DX12** - instanced batches under GPU culling read their own instances, and per-vertex mesh data reads the draw's base vertex.
+- **GL and software adapters** - renderers built from a device alone on wgpu 27 detect the backend, blocking readbacks wait for slow devices instead of timing out, and a small bright sun no longer specks mirror-like materials on lavapipe and llvmpipe.
+
+### Breaking
+
+- **`SceneRenderItem` is `MeshItem`** - rename the type at each use; its fields are unchanged.
+- **Sprite sizes, rows and blends** - `SpriteItem::sizes` and the channel record's `size` are `[width, height]` (`SpriteItem::square_sizes` builds square ones), a screen-space size is in points instead of half that in device pixels, texture row 0 draws at the top of the quad, and `SpriteBlend` gains `Multiply` and `Screen`. Remove any row flip or size doubling that compensated.
+- **Overlay fills and strokes** - gradients hold a `stops` list (the `*Multi` variants are gone; `OverlayFill::linear_gradient` and friends build two-stop ones), `PolylineCap` is folded into one `LineCap`, `OverlayShape::Vector` gains `stroke` and `inverse`, `OverlayFill::Texture` gains `filter`, `OverlayFillKind` gains `Custom`, and a zero-width polyline stroke draws a hairline instead of nothing.
+- **`create_blit` and `create_blit_composite` take a `BlitFilter`** - pass `BlitFilter::Linear` for the previous sampling.
+- **`ViewportApp` setup and stepping** - setup callbacks take `&mut SetupCtx` (which derefs to the `ViewportInstance` and has `device()` and `queue()`), the runtime steps before the frame callback, and `WindowConfig` is no longer `Clone`.
+- **`ViewportInstance` runs an attached runtime's GPU plugins** - `render` and `prepare` call `pre_prepare` and `post_paint` themselves, so remove a host's own calls or every plugin runs twice.
+- **`PluginInstaller` requires `uninstall` and `reattach_renderer`** - the built-in installers return a `RuntimePluginId` instead of `()`.
+- **Item-type plugin API** - `draws_transparent`, `draws_depth_read`, `draws_painter` and `painter_batches` take a `viewport_index`, the depth-read bind group gains the painter mask and 2D light layer bindings (2 to 5), `build_pick_pipeline` honours `depth_write`, and `PluginFrameCounters`, the sprite channel record and `Tileset` gain fields for struct literals.
+- **Pick depth is `R32Uint`** - `PICK_DEPTH_CHANNEL_FORMAT` changed so GPU picking builds on GL without float render targets; a plugin pick shader declares `@location(2)` as `u32` and writes `bitcast<u32>(depth)`.
+- **Cluster light loop** - shaders walk a fragment's lights with `cluster_lights` and `cluster_next_light` in place of `cluster_light_range` and `cluster_light_global`, and `clustered::MAX_LIGHT_INDICES` is gone.
 
 ## [0.23.0]
 

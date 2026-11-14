@@ -87,11 +87,17 @@ pub struct VectorFieldPlugin {
     /// The device has no vertex storage, so the samples are an
     /// instance-stepped vertex buffer. Set on registration.
     streams: bool,
+    /// Glyph draws recorded since the last prepare.
+    issued: std::sync::atomic::AtomicU32,
 }
 
 impl ItemTypePlugin for VectorFieldPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn draw_calls(&self) -> u32 {
+        self.issued.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn init_gpu(
@@ -133,6 +139,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
     ) -> Vec<viewport_lib::gpu::CommandBuffer> {
+        *self.issued.get_mut() = 0;
         self.frame.clear();
         let items = items.of::<VectorFieldItem>();
         let refs = ctx.refs_of::<VectorFieldRefItem>();
@@ -228,8 +235,13 @@ impl ItemTypePlugin for VectorFieldPlugin {
             }
             pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
             entry.draw.bind_instances(pass);
-            ctx.meshes
-                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
+            if ctx
+                .meshes
+                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count)
+            {
+                self.issued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 

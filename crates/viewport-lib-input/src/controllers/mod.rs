@@ -1,4 +1,5 @@
-//! Camera controllers: orbit, first-person, third-person, turntable, and fly-to animation.
+//! Camera controllers: orbit, first-person, third-person, turntable, a flat 2D
+//! camera, and fly-to animation.
 //!
 //! # What each one reads
 //!
@@ -14,6 +15,7 @@
 //! | [`FirstPersonCameraController`](crate::controllers::first_person::FirstPersonCameraController) | `navigation.orbit`, plus the fly actions through [`wish_xy_from_actions`](crate::controllers::movement::wish_xy_from_actions) | `pan`, `zoom`, `twist` |
 //! | [`ThirdPersonCameraController`](crate::controllers::third_person::ThirdPersonCameraController) | `navigation.orbit`, plus the fly actions | `pan`, `zoom`, `twist` |
 //! | [`TurntableController`](crate::controllers::turntable::TurntableController) | nothing: it advances on `dt` alone | the whole frame |
+//! | [`Camera2dController`](crate::controllers::camera2d::Camera2dController) | `pan`, `zoom`, `pointer.cursor` (the zoom anchor); drives a [`Camera2d`](crate::controllers::camera2d::Camera2d), not a `Camera`; [`Camera2dControl`](crate::controllers::camera2d::Camera2dControl) wraps both as a `CameraController` | `orbit`, `twist` |
 //!
 //! Two consequences worth knowing before switching between them.
 //!
@@ -41,6 +43,8 @@
 
 /// Smooth camera motion with exponential damping and fly-to animations.
 pub mod animator;
+/// Flat orthographic camera for 2D views, and its pan and zoom controller.
+pub mod camera2d;
 /// Body-attached first-person camera controller.
 pub mod first_person;
 /// Movement-input helper for the character cameras.
@@ -53,6 +57,9 @@ pub mod third_person;
 pub mod turntable;
 
 pub use animator::{CameraAnimator, CameraDamping, Easing};
+pub use camera2d::{
+    Camera2d, Camera2dControl, Camera2dController, Plane2d, Rect2d, snap_camera_to_pixels,
+};
 pub use first_person::FirstPersonCameraController;
 pub use movement::{wish_from_actions, wish_xy_from_actions};
 pub use orbit::OrbitCameraController;

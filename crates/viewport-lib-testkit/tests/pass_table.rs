@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 
 use viewport_lib::Colour;
 use viewport_lib::plugin_api::post_effect::stage_order;
-use viewport_lib::{FrameData, Material, PostEffectSlot, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{FrameData, Material, MeshItem, PostEffectSlot, SurfaceSubmission};
 use viewport_lib_testkit::fixtures::{
     CallLog, LoggingPostEffectProducer, PassthroughPostEffectStage, probe_frame, probe_quad,
 };
@@ -25,7 +25,7 @@ fn quad_frame(harness: &mut Harness) -> FrameData {
         .upload_mesh_data(&harness.device, &probe_quad())
         .expect("upload probe quad");
     let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
     item.material = harness
@@ -54,15 +54,9 @@ fn passes(harness: &mut Harness, frame: &FrameData) -> Vec<&'static str> {
 }
 
 /// The passes every HDR frame of the quad scene runs. The harness installs
-/// the built-in item types, some of which encode at every encoder scope.
-const BASE: [&str; 6] = [
-    "scene",
-    "scope_on_opaque_surfaces",
-    "scope_after_opaque",
-    "scope_after_transparent",
-    "exposure",
-    "tone_map",
-];
+/// the built-in item types, some of which encode at the encoder scopes, but
+/// the frame has none of their items, so no scope runs.
+const BASE: [&str; 3] = ["scene", "exposure", "tone_map"];
 
 fn with(extra: &[&'static str]) -> Vec<&'static str> {
     let mut list: Vec<&'static str> = Vec::new();

@@ -21,7 +21,7 @@ use viewport_lib_plugins::item_types::{
 };
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, ColourSource, ColourmapId,
-    FrameData, LightingSettings, SceneRenderItem, SizeSource, ViewportRenderer, VolumeMeshData,
+    FrameData, LightingSettings, MeshItem, SizeSource, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -307,12 +307,8 @@ pub(crate) fn controls_eq(app: &mut App, ui: &mut egui::Ui) {
 impl App {
     pub(crate) fn eq_scene_items(
         &self,
-    ) -> (
-        Vec<SceneRenderItem>,
-        Vec<VectorFieldItem>,
-        Vec<PointCloudItem>,
-    ) {
-        let mut scene_items: Vec<SceneRenderItem> = Vec::new();
+    ) -> (Vec<MeshItem>, Vec<VectorFieldItem>, Vec<PointCloudItem>) {
+        let mut scene_items: Vec<MeshItem> = Vec::new();
         let mut field_items: Vec<VectorFieldItem> = Vec::new();
         let mut pc_items: Vec<PointCloudItem> = Vec::new();
 
@@ -327,7 +323,7 @@ impl App {
                     AttributeKind::Corner,
                 ];
                 for i in 0..3 {
-                    let mut item = SceneRenderItem::default();
+                    let mut item = MeshItem::default();
                     item.mesh_id = self.eq_state.edge_mesh_ids[i];
                     item.model =
                         glam::Mat4::from_translation(glam::vec3(offsets[i], 0.0, 0.0)).into();
@@ -340,7 +336,7 @@ impl App {
                 }
             }
             EqSubMode::VolumeMeshVectors => {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = self.eq_state.vm_mesh_id;
                 scene_items.push(item);
                 // Vertex vectors: blue (Viridis at 0.15).
@@ -370,7 +366,7 @@ impl App {
             }
             EqSubMode::PointCloudRadiusTransparency => {
                 // Opaque sphere behind the point cloud to occlude back-facing points.
-                let mut bg = SceneRenderItem::default();
+                let mut bg = MeshItem::default();
                 bg.mesh_id = self.eq_state.pc_bg_mesh_id;
                 scene_items.push(bg);
 
@@ -395,9 +391,7 @@ impl App {
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn eq_collect_scene_items(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn eq_collect_scene_items(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let (items, _fields, _pcs) = app.eq_scene_items();
     (items, LightingSettings::default(), 0, 0)
 }

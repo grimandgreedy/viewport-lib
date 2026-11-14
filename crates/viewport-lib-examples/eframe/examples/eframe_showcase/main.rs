@@ -7,9 +7,9 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
-    OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer,
+    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, MeshItem,
+    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 mod geometry;
@@ -76,6 +76,7 @@ mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
 mod showcase_59_vector_art;
 mod showcase_60_glass_and_layers;
+mod showcase_61_2d_world;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
@@ -264,6 +265,7 @@ fn main() -> eframe::Result {
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 va_state: showcase_59_vector_art::VectorArtState::default(),
                 glass_state: showcase_60_glass_and_layers::GlassState::default(),
+                world2d_state: showcase_61_2d_world::World2dState::default(),
                 cut_state: showcase_18_cuts::CutViewsState::default(),
                 last_cluster_stats: None,
             }))
@@ -336,6 +338,7 @@ enum ShowcaseMode {
     PhysicallyBasedSurfaces,
     VectorArt,
     GlassAndLayers,
+    World2d,
 }
 
 // `ShowcaseMode::label` and the menu order live in `registry.rs`.
@@ -560,6 +563,7 @@ pub(crate) struct App {
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
     pub(crate) va_state: showcase_59_vector_art::VectorArtState,
     pub(crate) glass_state: showcase_60_glass_and_layers::GlassState,
+    pub(crate) world2d_state: showcase_61_2d_world::World2dState,
     pub(crate) cut_state: showcase_18_cuts::CutViewsState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
@@ -1344,7 +1348,7 @@ impl App {
 /// What a showcase contributes to the frame: its render items, plus the few
 /// per-frame values the host reads back out of it.
 pub(crate) struct SceneContents {
-    pub(crate) items: Vec<SceneRenderItem>,
+    pub(crate) items: Vec<MeshItem>,
     /// Replaces the viewport background for this frame when set.
     pub(crate) bg_colour: Option<[f32; 4]>,
     pub(crate) lighting: LightingSettings,
@@ -1379,7 +1383,7 @@ pub(crate) struct SceneOverrides {
     pub(crate) scene_graph_outline_width: f32,
     /// Hands the host a cached item list to draw instead of `items`, so a large
     /// static scene is not deep-cloned every frame.
-    pub(crate) cached_items: Option<std::sync::Arc<[SceneRenderItem]>>,
+    pub(crate) cached_items: Option<std::sync::Arc<[MeshItem]>>,
 }
 
 impl Default for SceneOverrides {

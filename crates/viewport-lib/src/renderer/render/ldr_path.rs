@@ -17,11 +17,12 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         bg_colour: [f32; 4],
         w: u32,
         h: u32,
-    ) -> crate::gpu::CommandBuffer {
+        mut encoder: crate::gpu::CommandEncoder,
+    ) -> crate::gpu::CommandEncoder {
         let _span =
             tracing::debug_span!(target: "viewport_lib::frame", "ldr_scene_pass", vp = vp_idx)
                 .entered();
@@ -31,8 +32,9 @@ impl ViewportRenderer {
         // Report each dropped feature instead of silently omitting it.
         for (name, plugin) in self.item_type_plugins.iter() {
             let skipped = !plugin.draws_ldr()
-                && crate::renderer::item_plugins::plugin_items_for(frame, name)
-                    .is_some_and(|items| !items.is_empty());
+                && !plugin.encodes_ldr()
+                && crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                    .any(|items| !items.is_empty());
             if skipped {
                 self.resources.notices.report(
                     crate::notice::NoticeKey::new(
@@ -68,12 +70,29 @@ impl ViewportRenderer {
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
         // Otherwise render directly to output_view.
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("ldr_encoder"),
-        });
 
         let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
-        let needs_blur = self.has_backdrop_blur_shapes(vp_idx);
+        // Overlays that read the destination draw in passes of their own after
+        // the scene, into a target they can copy from: the output when it
+        // allows that, or an intermediate blitted to it at the end.
+        // Screen overlays drawn over a reference presentation's upscale are
+        // not drawn here.
+        let overlays = frame.overlays_in_scene();
+        let has_breaks = overlays && self.viewport_slots[vp_idx].overlay.has_breaks();
+        // Plugins that encode after the scene end the scene pass there; they
+        // are handed a target they can copy from, so an output that cannot be
+        // copied from routes the frame through the intermediate.
+        let scope = self.ldr_scope_active(frame);
+        // A world layer that reads what is drawn under it ends the scene pass
+        // at its breaks, so it too needs a target it can copy from.
+        let world_reads = self.resources.scene_tier.is_built() && self.world_overlays_read(vp_idx);
+        let needs_blur = self.ldr_overlay_intermediate(frame, vp_idx, Some(output_view))
+            || ((scope || world_reads)
+                && !use_dyn_res
+                && !output_view
+                    .texture()
+                    .usage()
+                    .contains(crate::gpu::TextureUsages::COPY_SRC));
 
         if use_dyn_res {
             let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
@@ -81,10 +100,7 @@ impl ViewportRenderer {
             self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w.max(1), h.max(1)]);
         }
 
-        // When blur backdrops are needed and we'd otherwise render directly
-        // to the surface (no dyn_res), force an intermediate so it can be
-        // sampled for the blur passes.
-        if needs_blur && !use_dyn_res {
+        if needs_blur {
             self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
         }
 
@@ -93,7 +109,13 @@ impl ViewportRenderer {
         // next frame's reprojection. The copy happens after the scene pass below.
         let store_scene_depth =
             self.resources.occlusion_culling_enabled() && self.resources.scene_tier.is_built();
+        let depth_store = if store_scene_depth || self.keep_scene_depth {
+            crate::gpu::StoreOp::Store
+        } else {
+            crate::gpu::StoreOp::Discard
+        };
 
+        let world_breaks;
         {
             let slot = &self.viewport_slots[vp_idx];
             let ldr_depth_view = self.ldr_depth_view(vp_idx);
@@ -112,6 +134,8 @@ impl ViewportRenderer {
             } else {
                 (output_view, ldr_depth_view)
             };
+            world_breaks =
+                world_reads && self.world_overlays_break(vp_idx, &scene_colour_view.texture());
             let ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
                     1 << crate::renderer::GPU_TS_SCENE,
@@ -145,10 +169,12 @@ impl ViewportRenderer {
                     view: scene_depth_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(crate::plugin_api::depth::DEPTH_CLEAR),
-                        store: if store_scene_depth {
+                        // The pass after the scope or a world layer's
+                        // break loads it.
+                        store: if scope || world_breaks {
                             crate::gpu::StoreOp::Store
                         } else {
-                            crate::gpu::StoreOp::Discard
+                            depth_store
                         },
                     }),
                     stencil_ops: None,
@@ -210,22 +236,84 @@ impl ViewportRenderer {
                 // Item-type plugin paint (LDR opt-in only): after all built-in
                 // scene content, mirroring the HDR scene-pass position.
                 self.dispatch_plugin_paint(&mut render_pass, frame, false);
-                // Outline composite after all scene content.
-                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
+                if !world_breaks {
+                    self.paint_painters_and_world(&mut render_pass, frame, camera_bg, None);
+                }
             } else {
                 self.paint_compatibility_scene(&mut render_pass, camera_bg, frame);
-                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             }
-            // The sub-object highlight, over the scene and the outline.
-            self.paint_ldr_sub_highlight(&mut render_pass, vp_idx, camera_bg);
-            // When blur backdrops are needed, skip overlays here. They'll
-            // be drawn in a second pass after the blur is applied.
-            if !needs_blur {
-                let ov = &self.viewport_slots[vp_idx].overlay;
-                emit_overlay_2d!(self, ov, render_pass);
+            if !scope && !world_breaks {
+                // Overlays that read the destination are drawn after this pass.
+                self.paint_ldr_scene_finish(&mut render_pass, vp_idx, overlays && !has_breaks);
             }
         }
         // -- End of scene render pass (dropped above). ---
+
+        // Painter's-order content and the world layers, in passes of their
+        // own that end at each world layer break, then the rest of the scene
+        // pass's content unless the after-scene scope follows.
+        if world_breaks {
+            let slot = &self.viewport_slots[vp_idx];
+            let (colour, depth) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (&dr.colour_view, &dr.depth_view)
+            } else if needs_blur {
+                let bs = self.backdrop_blur_state.as_ref().unwrap();
+                (&bs.intermediate_view, self.ldr_depth_view(vp_idx))
+            } else {
+                (output_view, self.ldr_depth_view(vp_idx))
+            };
+            self.paint_painters_and_world_in_passes(
+                &mut encoder,
+                frame,
+                &crate::renderer::ScenePassTarget {
+                    colour,
+                    depth,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
+                    }),
+                    label: "ldr_world_overlay_pass",
+                },
+                &slot.camera_bind_group,
+                None,
+            );
+            if !scope {
+                let mut pass = begin_ldr_resume_pass(&mut encoder, colour, depth, depth_store);
+                self.paint_ldr_scene_finish(&mut pass, vp_idx, overlays && !has_breaks);
+            }
+        }
+
+        // The after-scene scope, then the rest of the scene pass's content in
+        // a pass of its own over the same targets.
+        if scope {
+            let slot = &self.viewport_slots[vp_idx];
+            let (colour, depth, size) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (&dr.colour_view, &dr.depth_view, dr.scaled_size)
+            } else if needs_blur {
+                let bs = self.backdrop_blur_state.as_ref().unwrap();
+                (&bs.intermediate_view, self.ldr_depth_view(vp_idx), bs.size)
+            } else {
+                (
+                    output_view,
+                    self.ldr_depth_view(vp_idx),
+                    [w.max(1), h.max(1)],
+                )
+            };
+            self.encode_ldr_scope(
+                &mut encoder,
+                device,
+                queue,
+                frame,
+                vp_idx,
+                colour,
+                depth,
+                size,
+            );
+            let mut pass = begin_ldr_resume_pass(&mut encoder, colour, depth, depth_store);
+            self.paint_ldr_scene_finish(&mut pass, vp_idx, overlays && !has_breaks);
+        }
 
         // Foreground pass: draw foreground items over the finished scene
         // against a freshly cleared own depth target, into the same colour
@@ -264,12 +352,12 @@ impl ViewportRenderer {
                     .render_camera
                     .foreground_camera(frame.effects.foreground.as_ref());
                 let eye = fg_camera.eye_position();
-                let dist_from_eye = |item: &SceneRenderItem| -> f32 {
+                let dist_from_eye = |item: &MeshItem| -> f32 {
                     (item.model.translation - glam::DVec3::from(eye)).length() as f32
                 };
                 let items = &frame.scene.foreground_items;
-                let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                let mut opaque: Vec<(usize, &MeshItem)> = Vec::new();
+                let mut transparent: Vec<(usize, &MeshItem)> = Vec::new();
                 for (idx, item) in items.iter().enumerate() {
                     if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
@@ -403,78 +491,179 @@ impl ViewportRenderer {
             );
         }
 
-        // Backdrop blur: capture scene, run blur, then draw overlays in a
-        // second render pass so blur shapes can sample the blurred result.
-        if needs_blur {
-            let spread = self.viewport_slots[vp_idx]
-                .overlay
-                .overlay_shape_gpu_data
-                .as_ref()
-                .map(|d| d.max_blur_radius)
-                .unwrap_or(1.0);
-            let blur_bg = {
-                let source = if use_dyn_res {
-                    &self.viewport_slots[vp_idx]
-                        .dyn_res
-                        .as_ref()
-                        .unwrap()
-                        .colour_view
-                } else {
-                    &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
-                };
-                self.run_backdrop_blur(&mut encoder, device, queue, source, spread)
-            };
-
-            // Second render pass for overlays (Load to preserve scene content).
+        // Overlays that read the destination: in passes of their own, which
+        // end at each break to copy what is drawn so far.
+        if has_breaks {
             let slot = &self.viewport_slots[vp_idx];
-            let overlay_colour_view: &crate::gpu::TextureView = if use_dyn_res {
-                &slot.dyn_res.as_ref().unwrap().colour_view
+            let (target, depth, scene) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (
+                    dr.colour_view.clone(),
+                    dr.depth_view.clone(),
+                    Some(dr.colour_view.clone()),
+                )
+            } else if needs_blur {
+                let view = self
+                    .backdrop_blur_state
+                    .as_ref()
+                    .unwrap()
+                    .intermediate_view
+                    .clone();
+                (
+                    view.clone(),
+                    self.ldr_depth_view(vp_idx).clone(),
+                    Some(view),
+                )
             } else {
-                &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
+                (
+                    output_view.clone(),
+                    self.ldr_depth_view(vp_idx).clone(),
+                    None,
+                )
             };
-            let overlay_depth_view: &crate::gpu::TextureView = if use_dyn_res {
-                &slot.dyn_res.as_ref().unwrap().depth_view
-            } else {
-                self.ldr_depth_view(vp_idx)
-            };
-            {
-                let overlay_ts_writes =
-                    self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
-                let mut overlay_pass =
-                    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(any(wgpu29, wgpu30))]
-                        multiview_mask: None,
-                        label: Some("ldr_overlay_blur_pass"),
-                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                            view: overlay_colour_view,
-                            resolve_target: None,
-                            ops: crate::gpu::Operations {
-                                load: crate::gpu::LoadOp::Load,
-                                store: crate::gpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(
-                            crate::gpu::RenderPassDepthStencilAttachment {
-                                view: overlay_depth_view,
-                                depth_ops: Some(crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Load,
-                                    store: crate::gpu::StoreOp::Discard,
-                                }),
-                                stencil_ops: None,
-                            },
-                        ),
-                        timestamp_writes: overlay_ts_writes,
-                        occlusion_query_set: None,
-                    });
-                // Draw blur backdrop shapes first.
-                self.draw_blur_shapes(&mut overlay_pass, &blur_bg, vp_idx);
-                // Then normal shapes.
-                let ov = &self.viewport_slots[vp_idx].overlay;
-                emit_overlay_2d!(self, ov, overlay_pass);
-            }
+            self.draw_overlay_passes(
+                &mut encoder,
+                device,
+                vp_idx,
+                &target,
+                &depth,
+                crate::gpu::StoreOp::Discard,
+                scene.as_ref(),
+                None,
+                frame.overlay_space().1,
+                "ldr_overlay_pass",
+            );
         }
 
+        self.resolve_prev_timestamps(&mut encoder);
+
+        // Upscale blit from dyn_res intermediate to output_view.
+        if use_dyn_res {
+            let upscale_bg = &self.viewport_slots[vp_idx]
+                .dyn_res
+                .as_ref()
+                .unwrap()
+                .upscale_bind_group;
+            let mut upscale_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("dyn_res_upscale_pass"),
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
+                upscale_pass.set_pipeline(pipeline);
+                upscale_pass.set_bind_group(0, upscale_bg, &[]);
+                upscale_pass.draw(0..3, 0..1);
+            }
+        } else if needs_blur {
+            self.blit_backdrop_intermediate(&mut encoder, device, output_view);
+        }
+
+        encoder
+    }
+
+    /// Whether an LDR frame of `frame` ends its scene pass for plugins that
+    /// encode after the scene.
+    pub(crate) fn ldr_scope_active(&self, frame: &FrameData) -> bool {
+        self.any_plugin_encodes_at(
+            frame,
+            crate::plugin_api::EncoderScope::AfterTransparent,
+            false,
+        )
+    }
+
+    /// The LDR path's after-scene point: hand `encoder` to the plugins that
+    /// encode there, with `colour` (the target the scene pass drew into, of
+    /// `size` pixels) and `depth` (its depth target, no longer attached).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_ldr_scope(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        vp_idx: usize,
+        colour: &crate::gpu::TextureView,
+        depth: &crate::gpu::TextureView,
+        size: [u32; 2],
+    ) {
+        let _span =
+            tracing::debug_span!(target: "viewport_lib::frame", "ldr_scope", vp = vp_idx).entered();
+        let colour_texture = colour.texture();
+        let depth_texture = depth.texture();
+        let aspect = |aspect| {
+            depth_texture.create_view(&crate::gpu::TextureViewDescriptor {
+                aspect,
+                ..Default::default()
+            })
+        };
+        let depth_only = aspect(crate::gpu::TextureAspect::DepthOnly);
+        let stencil_only = if depth_texture.format().has_stencil_aspect() {
+            aspect(crate::gpu::TextureAspect::StencilOnly)
+        } else {
+            depth_only.clone()
+        };
+        let targets = crate::renderer::ScopeTargets {
+            scene_size: size,
+            colour,
+            colour_texture: &colour_texture,
+            depth,
+            depth_only: &depth_only,
+            stencil_only: &stencil_only,
+            target_format: colour_texture.format(),
+            hdr: false,
+        };
+        self.dispatch_plugin_encode(
+            encoder,
+            frame,
+            crate::plugin_api::EncoderScope::AfterTransparent,
+            device,
+            queue,
+            vp_idx,
+            &targets,
+        );
+    }
+
+    /// What the LDR scene pass draws after the scene content and the
+    /// after-scene point: the selection outline, the sub-object highlight
+    /// and, with `overlays`, the screen overlays.
+    pub(crate) fn paint_ldr_scene_finish(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        vp_idx: usize,
+        overlays: bool,
+    ) {
+        let slot = &self.viewport_slots[vp_idx];
+        emit_outline_composite!(&self.resources, &mut *pass, Some(slot));
+        // The sub-object highlight, over the scene and the outline.
+        self.paint_ldr_sub_highlight(pass, vp_idx, &slot.camera_bind_group);
+        if overlays {
+            let ov = &slot.overlay;
+            emit_overlay_segments(
+                &self.resources,
+                ov,
+                pass,
+                ov.main_segments(),
+                &OverlayEmit::NO_DESTINATION,
+            );
+        }
+    }
+
+    /// Resolve last frame's timestamp queries into the staging buffer from
+    /// `encoder`, when the previous readback has finished.
+
+    pub(crate) fn resolve_prev_timestamps(&mut self, encoder: &mut crate::gpu::CommandEncoder) {
         // Resolve last frame's timestamp queries -> staging buffer, but only
         // when the previous readback has finished. Skipping while a map is in
         // flight or the buffer holds unread data keeps the single staging
@@ -518,89 +707,97 @@ impl ViewportRenderer {
                 }
             }
         }
-
-        // Upscale blit from dyn_res intermediate to output_view.
-        if use_dyn_res {
-            let upscale_bg = &self.viewport_slots[vp_idx]
-                .dyn_res
-                .as_ref()
-                .unwrap()
-                .upscale_bind_group;
-            let mut upscale_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("dyn_res_upscale_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
-                upscale_pass.set_pipeline(pipeline);
-                upscale_pass.set_bind_group(0, upscale_bg, &[]);
-                upscale_pass.draw(0..3, 0..1);
-            }
-        } else if needs_blur {
-            // Blit backdrop intermediate to the output surface.
-            let bs = self.backdrop_blur_state.as_ref().unwrap();
-            let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
-            let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-            let blit_bg = bs
-                .binds
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .blit
-                .get_or_insert_with(|| {
-                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("backdrop_blit_bg"),
-                        layout: blit_bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: crate::gpu::BindingResource::TextureView(
-                                    &bs.intermediate_view,
-                                ),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: crate::gpu::BindingResource::Sampler(blit_sampler),
-                            },
-                        ],
-                    })
-                })
-                .clone();
-            let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
-                multiview_mask: None,
-                label: Some("backdrop_blit_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
-                blit_pass.set_pipeline(pipeline);
-                blit_pass.set_bind_group(0, &blit_bg, &[]);
-                blit_pass.draw(0..3, 0..1);
-            }
-        }
-
-        return encoder.finish();
     }
+
+    /// Copy the backdrop intermediate target, which a frame whose overlays
+    /// read the destination drew into, to `output_view`.
+    pub(crate) fn blit_backdrop_intermediate(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        output_view: &crate::gpu::TextureView,
+    ) {
+        let bs = self.backdrop_blur_state.as_ref().unwrap();
+        let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
+        let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
+        let blit_bg = bs
+            .blit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_with(|| {
+                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("backdrop_blit_bg"),
+                    layout: blit_bgl,
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &bs.intermediate_view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(blit_sampler),
+                        },
+                    ],
+                })
+            })
+            .clone();
+        let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(any(wgpu29, wgpu30))]
+            multiview_mask: None,
+            label: Some("backdrop_blit_pass"),
+            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Load,
+                    store: crate::gpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
+            blit_pass.set_pipeline(pipeline);
+            blit_pass.set_bind_group(0, &blit_bg, &[]);
+            blit_pass.draw(0..3, 0..1);
+        }
+    }
+}
+
+/// The LDR scene pass resumed after the after-scene point: `colour` and
+/// `depth` loaded, the depth stored by `depth_store`.
+pub(crate) fn begin_ldr_resume_pass<'e>(
+    encoder: &'e mut crate::gpu::CommandEncoder,
+    colour: &crate::gpu::TextureView,
+    depth: &crate::gpu::TextureView,
+    depth_store: crate::gpu::StoreOp,
+) -> crate::gpu::RenderPass<'e> {
+    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+        #[cfg(any(wgpu29, wgpu30))]
+        multiview_mask: None,
+        label: Some("ldr_resume_pass"),
+        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            view: colour,
+            resolve_target: None,
+            ops: crate::gpu::Operations {
+                load: crate::gpu::LoadOp::Load,
+                store: crate::gpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: Some(crate::gpu::Operations {
+                load: crate::gpu::LoadOp::Load,
+                store: depth_store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    })
 }

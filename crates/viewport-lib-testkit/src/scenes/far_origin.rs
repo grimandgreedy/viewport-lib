@@ -12,8 +12,8 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
-    Aabb, Camera, Colour, ColourmapId, Material, PolylineItem, SceneRenderItem, VolumeData,
-    WorldOrigin, primitives,
+    Aabb, Camera, Colour, ColourmapId, Material, MeshItem, PolylineItem, VolumeData, WorldOrigin,
+    primitives,
 };
 use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_plugins::item_types::curves::{RibbonItem, StreamtubeItem, TubeItem};
@@ -213,7 +213,7 @@ fn ground(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(6.0, 6.0, 0.5))
         .expect("slab upload");
-    let mut item = SceneRenderItem::new(
+    let mut item = MeshItem::new(
         slab,
         material(
             ctx,
@@ -349,7 +349,7 @@ fn surface_contour(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
         .upload_mesh_data(ctx.device, &mesh)
         .expect("sphere upload");
     let model = at_model(at, Vec3::new(0.0, 1.0, 0.5));
-    let mut item = SceneRenderItem::new(
+    let mut item = MeshItem::new(
         ball,
         material(
             ctx,
@@ -618,7 +618,7 @@ fn surface_lic(ctx: &mut BuildCtx<'_>, at: Vec3, scene: &mut BuiltScene) {
         .upload_mesh_data(ctx.device, &mesh)
         .expect("sphere upload");
     let model = at_model(at, Vec3::new(0.0, 0.0, 1.0));
-    let mut item = SceneRenderItem::new(
+    let mut item = MeshItem::new(
         ball,
         material(
             ctx,

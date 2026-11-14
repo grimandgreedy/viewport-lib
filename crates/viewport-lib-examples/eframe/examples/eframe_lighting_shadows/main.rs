@@ -34,8 +34,8 @@ use vpl::{
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentBackground, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentMapId, ExposureMode, ExposureReadback, ExposureSettings,
     LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MaterialId, MeshId,
-    OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem, ShadowDebugStats,
-    ShadowFilter, ToneMapping, ViewportContext, ViewportId, ViewportInstance, primitives,
+    MeshItem, OrbitCameraController, PipelineMode, SceneFrame, ShadowDebugStats, ShadowFilter,
+    ToneMapping, ViewportContext, ViewportId, ViewportInstance, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -756,12 +756,12 @@ impl App {
         self.mats_pbr = self.pbr_enabled;
     }
 
-    fn build_basic_items(&self) -> Vec<SceneRenderItem> {
+    fn build_basic_items(&self) -> Vec<MeshItem> {
         let mut items = Vec::new();
 
         // Ground platform: light warm sand. Cuboid with top surface at z=0.
         if self.show_platform {
-            let mut ground = SceneRenderItem::default();
+            let mut ground = MeshItem::default();
             ground.mesh_id = self.m_ground;
             ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
             ground.material = self.mats.ground;
@@ -769,14 +769,14 @@ impl App {
         }
 
         // Sphere: light sage green. Acne is easy to spot on light curved surfaces.
-        let mut sphere = SceneRenderItem::default();
+        let mut sphere = MeshItem::default();
         sphere.mesh_id = self.m_sphere;
         sphere.model = glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).into();
         sphere.material = self.mats.sphere;
         items.push(sphere);
 
         // Cube: light periwinkle. Flat faces isolate bias and gap artifacts.
-        let mut cube = SceneRenderItem::default();
+        let mut cube = MeshItem::default();
         cube.mesh_id = self.m_cube;
         cube.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).into();
         cube.material = self.mats.cube;
@@ -784,7 +784,7 @@ impl App {
 
         // Torus: light peach. Mixed geometry useful for bright-spot test.
         // Z offset 0.18 = torus minor radius, places the bottom of the tube on the ground.
-        let mut torus = SceneRenderItem::default();
+        let mut torus = MeshItem::default();
         torus.mesh_id = self.m_torus;
         torus.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).into();
         torus.material = self.mats.torus;
@@ -792,12 +792,12 @@ impl App {
         items
     }
 
-    fn build_materials_items(&self) -> Vec<SceneRenderItem> {
+    fn build_materials_items(&self) -> Vec<MeshItem> {
         let mut items = Vec::new();
 
         // Ground platform: neutral light grey, top surface at z=0.
         if self.show_platform {
-            let mut ground = SceneRenderItem::default();
+            let mut ground = MeshItem::default();
             ground.mesh_id = self.m_ground2;
             ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
             ground.material = self.mats.ground2;
@@ -806,7 +806,7 @@ impl App {
 
         // Clay matcap sphere (blendable): off-white base exposes matcap tint while keeping
         // surfaces light enough to show shadow detail.
-        let mut clay = SceneRenderItem::default();
+        let mut clay = MeshItem::default();
         clay.mesh_id = self.m_clay;
         clay.model = glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).into();
         clay.material = self.mats.clay;
@@ -814,7 +814,7 @@ impl App {
 
         // Ceramic matcap sphere (static): white base, high-contrast sheen.
         // Good for checking shadow edge quality.
-        let mut ceramic = SceneRenderItem::default();
+        let mut ceramic = MeshItem::default();
         ceramic.mesh_id = self.m_ceramic;
         ceramic.model = glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).into();
         ceramic.material = self.mats.ceramic;
@@ -822,14 +822,14 @@ impl App {
 
         // PBR metallic sphere: near-white, very smooth. Specular response reveals shadow
         // terminator and banding at glancing angles.
-        let mut metal = SceneRenderItem::default();
+        let mut metal = MeshItem::default();
         metal.mesh_id = self.m_metal;
         metal.model = glam::Mat4::from_translation(glam::Vec3::new(1.5, 2.5, 0.7)).into();
         metal.material = self.mats.metal;
         items.push(metal);
 
         // PBR rough sphere: near-white diffuse. High roughness maximises shadow acne visibility.
-        let mut rough = SceneRenderItem::default();
+        let mut rough = MeshItem::default();
         rough.mesh_id = self.m_rough;
         rough.model = glam::Mat4::from_translation(glam::Vec3::new(4.5, 2.5, 0.7)).into();
         rough.material = self.mats.rough;
@@ -837,7 +837,7 @@ impl App {
 
         // Plain diffuse cube: light cream. Flat surfaces at cardinal angles show cascade bands
         // as clean rectangular stripes rather than complex shadow shapes.
-        let mut cube = SceneRenderItem::default();
+        let mut cube = MeshItem::default();
         cube.mesh_id = self.m_cube2;
         cube.model = glam::Mat4::from_translation(glam::Vec3::new(-3.5, -2.5, 0.6)).into();
         cube.material = self.mats.cube2;
@@ -845,7 +845,7 @@ impl App {
 
         // Percy photo plane: lying flat on the ground, slightly raised to avoid Z-fighting.
         // Real-world image content makes acne and bias gaps easy to judge perceptually.
-        let mut percy = SceneRenderItem::default();
+        let mut percy = MeshItem::default();
         percy.mesh_id = self.m_percy;
         percy.model = glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).into();
         percy.material = self.mats.percy;

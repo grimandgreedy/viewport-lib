@@ -83,7 +83,7 @@ fn blit_srgb_source_round_trips_into_srgb_target() {
     });
     let dest_view = dest.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let blit = renderer.create_blit(&device, &source_view);
+    let blit = renderer.create_blit(&device, &source_view, viewport_lib::BlitFilter::Linear);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("blit_test_encoder"),
@@ -128,6 +128,103 @@ fn blit_srgb_source_round_trips_into_srgb_target() {
             "channel {c}: blit gave {px:?}, expected about {src_rgba:?} (diff {diff})",
         );
     }
+}
+
+/// A two-texel source blitted into a target four times as wide: nearest
+/// sampling copies each texel into a block of four with hard edges, where
+/// linear sampling blends the two across the middle.
+#[test]
+fn nearest_blit_upscales_with_hard_edges() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let mut renderer = ViewportRenderer::new(&device, format);
+    let a: [u8; 4] = [200, 40, 30, 255];
+    let b: [u8; 4] = [20, 60, 220, 255];
+    let src_size = wgpu::Extent3d {
+        width: 2,
+        height: 1,
+        depth_or_array_layers: 1,
+    };
+    let source = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("nearest_blit_source"),
+        size: src_size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &source,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[a, b].concat(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(1),
+        },
+        src_size,
+    );
+    let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
+    let (w, h) = (8u32, 1u32);
+    let dest = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("nearest_blit_dest"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let dest_view = dest.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut draw = |filter| {
+        let blit = renderer.create_blit(&device, &source_view, filter);
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                #[cfg(any(wgpu29, wgpu30))]
+                multiview_mask: None,
+                label: Some("nearest_blit_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dest_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rp.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+            renderer.blit(&mut rp, &blit);
+        }
+        read_texture_rgba8(&device, &queue, encoder, &dest, w, h)
+    };
+    let px = |img: &[u8], x: usize| [img[x * 4], img[x * 4 + 1], img[x * 4 + 2], img[x * 4 + 3]];
+    let nearest = draw(viewport_lib::BlitFilter::Nearest);
+    for x in 0..8 {
+        let want = if x < 4 { a } else { b };
+        assert_eq!(px(&nearest, x), want, "nearest blit at column {x}");
+    }
+    let linear = draw(viewport_lib::BlitFilter::Linear);
+    assert_ne!(px(&linear, 3), a, "linear blit blends next to the edge");
 }
 
 /// Copy an `Rgba8Unorm(Srgb)` texture back to the CPU as tightly-packed RGBA8.

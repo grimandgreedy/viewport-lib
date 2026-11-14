@@ -66,6 +66,20 @@ pub enum NoticeDetail {
     /// Transparent volume meshes were skipped because the LDR pipeline has no
     /// order-independent transparency pass.
     VolumeTransparencyOnLdr,
+    /// A plugin that encodes after the scene on the LDR path was skipped
+    /// because the frame was drawn into a host-owned render pass
+    /// (`paint_viewport`), which cannot be ended mid-frame.
+    EncodeSkippedOnPath {
+        /// The item type name the plugin registered.
+        plugin: String,
+    },
+    /// A runtime's GPU plugins have a `post_paint` hook, but this frame left
+    /// no scene colour and depth they can read, so the hook was not called.
+    PostPaintSkipped {
+        /// Why the frame has no readable targets, for example
+        /// `"the LDR frame was drawn into the host's render pass"`.
+        reason: &'static str,
+    },
     /// The frame asked for `ExposureMode::Automatic` on the LDR pipeline, which
     /// has no HDR target to meter, so it was drawn at the passthrough exposure.
     AutoExposureOnLdr,
@@ -148,6 +162,44 @@ pub enum NoticeDetail {
         /// The reason the backend gave.
         reason: String,
     },
+    /// Two overlay layers in one frame name some of the same items without one
+    /// containing the other, so the later one was ignored and its items drew
+    /// as if it were not there.
+    OverlayLayersOverlap {
+        /// Index in `OverlayFrame::layers` of the layer that was ignored.
+        ignored: u32,
+        /// Index of the earlier layer it overlaps, which was kept.
+        kept: u32,
+    },
+    /// Overlay layers were nested deeper than the renderer composites; the
+    /// layers past the limit drew flat, their style applied to each member.
+    OverlayLayersTooDeep {
+        /// How deep the renderer nests layers.
+        limit: u32,
+        /// Layers this frame that drew flat.
+        flattened: u32,
+    },
+    /// The frame's overlays read the destination (a destination-reading blend
+    /// or a backdrop blur), but it was drawn into a host-owned render pass,
+    /// which cannot be ended to copy the destination; those blends drew as
+    /// source-over and the backdrops were not drawn.
+    OverlayDestinationReadsOnPath,
+    /// Painter-ordered sprites were drawn with a screen-space size, which
+    /// keeps them a fixed number of points across whatever the 2D camera's
+    /// zoom; a sprite in a 2D scene almost always wants a world-space size.
+    PainterSpriteScreenSized {
+        /// Sprite batches this frame in painter's order with a screen-space
+        /// size.
+        batches: u32,
+    },
+    /// Two 2D lighting items in one frame light some of the same painter
+    /// layers, so the later one was ignored.
+    OverlappingLightRanges {
+        /// Index of the lighting item that was ignored, in submission order.
+        ignored: u32,
+        /// Index of the earlier item it overlaps, which was kept.
+        kept: u32,
+    },
     /// A notice reported by a plugin.
     Plugin {
         /// The key the plugin reported it under; repeats of one key coalesce.
@@ -178,10 +230,21 @@ impl fmt::Display for NoticeDetail {
                  LDR-format pipeline) or set effects.display.mode = PipelineMode::Hdr to render \
                  them."
             ),
+            Self::EncodeSkippedOnPath { plugin } => write!(
+                f,
+                "'{plugin}' passes after the scene were skipped: paint_viewport() draws into a \
+                 host-owned render pass, which cannot be ended for them. Use pass().prepare and \
+                 pass().paint for one viewport, an owned-encoder path, or the HDR path."
+            ),
             Self::VolumeTransparencyOnLdr => f.write_str(
                 "transparent volume meshes are not drawn on the LDR pipeline \
                  (PipelineMode::Direct): they require the OIT pass, which only exists in the HDR \
                  pipeline. Set effects.display.mode = PipelineMode::Hdr.",
+            ),
+            Self::PostPaintSkipped { reason } => write!(
+                f,
+                "GPU plugin post_paint was not called: {reason}. It runs on HDR frames and on \
+                 LDR frames drawn into a target with TEXTURE_BINDING."
             ),
             Self::AutoExposureOnLdr => f.write_str(
                 "ExposureMode::Automatic has no meter on the LDR pipeline \
@@ -253,6 +316,35 @@ impl fmt::Display for NoticeDetail {
                  ViewportRenderer::recommended_device_features) to use {requested}."
             ),
             Self::DeviceLost { reason } => write!(f, "GPU device lost: {reason}"),
+            Self::OverlayLayersOverlap { ignored, kept } => write!(
+                f,
+                "overlay layer {ignored} names some of layer {kept}'s items without containing \
+                 them or lying inside them, so layer {ignored} was ignored. Nest layers so that \
+                 each one's ranges either hold another's or miss it."
+            ),
+            Self::OverlayLayersTooDeep { limit, flattened } => write!(
+                f,
+                "{flattened} overlay layers sit more than {limit} deep and drew flat: their \
+                 opacity, blend and colour filter were applied to each member, and their blur, \
+                 shadow and backdrop were not drawn."
+            ),
+            Self::OverlayDestinationReadsOnPath => f.write_str(
+                "overlays that read the destination were drawn into a host-owned render pass \
+                 (paint()/paint_viewport()), which cannot be ended to copy it: \
+                 destination-reading blends drew as source-over and backdrops were not drawn. \
+                 Use an owned-encoder render path.",
+            ),
+            Self::PainterSpriteScreenSized { batches } => write!(
+                f,
+                "{batches} sprite batches in painter's order have a screen-space size, so they \
+                 stay the same size on screen at any zoom; set size_mode to \
+                 SpriteSizeMode::WorldSpace for sprites that belong to a 2D scene"
+            ),
+            Self::OverlappingLightRanges { ignored, kept } => write!(
+                f,
+                "2D lighting item {ignored} lights painter layers that item {kept} already \
+                 lights, so it was ignored; give each item its own layer range"
+            ),
             Self::Plugin { key, message } => write!(f, "{key}: {message}"),
         }
     }

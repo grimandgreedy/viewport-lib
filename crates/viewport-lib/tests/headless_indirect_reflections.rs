@@ -44,7 +44,7 @@ fn centre(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     sky: viewport_lib::EnvironmentMapId,
-    mut item: SceneRenderItem,
+    mut item: MeshItem,
     material: MaterialId,
 ) -> [u8; 3] {
     let mut frame = FrameData::default();
@@ -106,7 +106,7 @@ fn light_probe_objects_keep_the_sky_reflection() {
         upload_material(&mut renderer, metal()),
         upload_material(&mut renderer, matte()),
     );
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.indirect_light = IndirectLightSource::LightProbe;
     let metal_px = centre(&mut renderer, &device, &queue, sky, item.clone(), metal);
@@ -151,7 +151,7 @@ fn lightmapped_objects_keep_the_sky_reflection() {
                 mode,
             )
             .unwrap();
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         let metal_px = centre(&mut renderer, &device, &queue, sky, item.clone(), metal);
         let matte_px = centre(&mut renderer, &device, &queue, sky, item, matte);

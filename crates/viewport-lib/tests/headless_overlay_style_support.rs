@@ -16,9 +16,9 @@ mod common;
 use common::*;
 
 use viewport_lib::{
-    BackdropEffects, Colour, GlyphRunItem, GradientStop, LabelItem, OverlayFill, OverlayFrame,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStyle, OverlayStyleSupport,
-    PositionedGlyph, ShadowLayer, SubPath,
+    BackdropEffects, Colour, GlyphRunItem, GradientStop, LabelItem, OverlayEdge, OverlayFill,
+    OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStyle,
+    OverlayStyleSupport, PositionedGlyph, ShadowLayer, SubPath,
 };
 
 const SIZE: u32 = 96;
@@ -37,13 +37,18 @@ fn base_frame() -> FrameData {
 /// The style fields the table reports on, each as "the non-default value to
 /// try". `texture_transform` rides `texture` and is not separately queryable.
 fn probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
-    vec![("fill", |s: &mut OverlayStyle| {
-        s.fill = OverlayFill::LinearGradient {
-            start_colour: Colour::srgb(1.0, 0.0, 0.0, 1.0),
-            end_colour: Colour::srgb(0.0, 0.0, 1.0, 1.0),
-            angle: 0.0,
-        };
-    })]
+    vec![
+        ("fill", |s: &mut OverlayStyle| {
+            s.fill = OverlayFill::linear_gradient(
+                Colour::srgb(1.0, 0.0, 0.0, 1.0),
+                Colour::srgb(0.0, 0.0, 1.0, 1.0),
+                0.0,
+            );
+        }),
+        ("edge", |s: &mut OverlayStyle| {
+            s.edge = OverlayEdge::Crisp;
+        }),
+    ]
 }
 
 /// The two shadow lists, which every family draws. An inner layer needs a
@@ -66,6 +71,7 @@ fn shadow_probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
 fn supported(support: &OverlayStyleSupport, field: &str, style: &OverlayStyle) -> bool {
     match field {
         "fill" => support.draws_fill(&style.fill),
+        "edge" => support.crisp_edges,
         other => panic!("unknown probe field {other}"),
     }
 }
@@ -116,6 +122,8 @@ fn reported_support_matches_what_the_renderer_draws() {
             [-20.0, 20.0],
         ])],
         fill_rule: viewport_lib::FillRule::NonZero,
+        stroke: None,
+        inverse: false,
     };
 
     // (family name, support, builder taking a style and producing a frame).
@@ -147,6 +155,8 @@ fn reported_support_matches_what_the_renderer_draws() {
                             [0.0, 40.0],
                         ])],
                         fill_rule: viewport_lib::FillRule::NonZero,
+                        stroke: None,
+                        inverse: false,
                     },
                     [28.0, 28.0],
                     [40.0, 40.0],
@@ -182,6 +192,8 @@ fn reported_support_matches_what_the_renderer_draws() {
                             [0.0, 40.0],
                         ])],
                         fill_rule: viewport_lib::FillRule::NonZero,
+                        stroke: None,
+                        inverse: false,
                     },
                     [28.0, 28.0],
                     [40.0, 40.0],
@@ -329,11 +341,73 @@ fn an_open_polyline_reports_a_texture_fill_as_inert() {
             .is_empty(),
         "a closed polyline samples a texture across its interior"
     );
-    // The glyph families are the other family that cannot sample an image.
-    assert_eq!(
-        OverlayStyleSupport::for_glyphs().inert_fields(&style),
-        ["fill"]
+    // The glyph families sample an image the way a shape does.
+    assert!(
+        OverlayStyleSupport::for_glyphs()
+            .inert_fields(&style)
+            .is_empty()
     );
+}
+
+/// A texture fill on a label or a glyph run samples the image across the text:
+/// the glyphs take the image's colour where the texture is drawn.
+#[test]
+fn glyph_families_draw_a_texture_fill() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // A red image, so a fill that samples it cannot pass for the white
+    // baseline.
+    let tex = renderer
+        .resources_mut()
+        .upload_overlay_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(2, 2, [255u8, 0, 0, 255].repeat(4)),
+        )
+        .unwrap();
+    let white = OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0));
+    let image = OverlayFill::texture(tex);
+    let label = |fill: &OverlayFill| {
+        let mut ovl = OverlayFrame::default();
+        let mut item = LabelItem::new("Mg")
+            .with_position([20.0, 20.0])
+            .with_font_size(36.0);
+        item.style.fill = fill.clone();
+        ovl.labels = vec![item];
+        ovl
+    };
+    let run = |fill: &OverlayFill| {
+        let mut ovl = OverlayFrame::default();
+        let mut item = GlyphRunItem::new(vec![
+            PositionedGlyph::new(55, 0.0, 0.0),
+            PositionedGlyph::new(82, 22.0, 0.0),
+        ]);
+        item.text_style.size = 36.0;
+        item.transform.translate = [20.0, 40.0];
+        item.style.fill = fill.clone();
+        ovl.glyph_runs = vec![item];
+        ovl
+    };
+    for (name, build) in [
+        ("label", &label as &dyn Fn(&OverlayFill) -> OverlayFrame),
+        ("glyph run", &run),
+    ] {
+        let plain = render(&mut renderer, &device, &queue, build(&white));
+        let filled = render(&mut renderer, &device, &queue, build(&image));
+        // Wherever the white text drew, the textured text is red: green and
+        // blue fall and red stays.
+        let mut covered = 0;
+        for (p, f) in plain.chunks(4).zip(filled.chunks(4)) {
+            if p[1] > 250 && p[2] > 250 {
+                covered += 1;
+                assert!(f[0] > 200 && f[1] < 100 && f[2] < 100, "{name}: {f:?}");
+            }
+        }
+        assert!(covered > 0, "{name}: the baseline drew no text");
+    }
 }
 
 /// A gradient fill on a shape is not the same pixels as a solid one, so the

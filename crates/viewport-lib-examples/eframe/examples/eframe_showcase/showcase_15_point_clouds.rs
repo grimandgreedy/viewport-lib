@@ -18,8 +18,8 @@ use viewport_lib_plugins::item_types::{
     point_cloud::PointCloudItem, vector_field::VectorFieldItem,
 };
 use vpl::{
-    BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings, PostProcessSettings,
-    SceneRenderItem, SizeSource,
+    BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings, MeshItem,
+    PostProcessSettings, SizeSource,
 };
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ impl App {
 
     /// Surface items for Showcase 15 (none: all geometry is submitted as
     /// point clouds or fields directly on `SceneFrame`).
-    pub(crate) fn pc_surface_items() -> Vec<SceneRenderItem> {
+    pub(crate) fn pc_surface_items() -> Vec<MeshItem> {
         vec![]
     }
 }
@@ -385,9 +385,7 @@ fn make_point_cloud(count: usize) -> (Vec<[f32; 3]>, Vec<f32>) {
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn pc_collect_scene_items(
-    _app: &App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn pc_collect_scene_items(_app: &App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let lighting = App::pc_lighting();
     (App::pc_surface_items(), lighting, 0, 0)
 }

@@ -8,7 +8,7 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::Colour;
 use viewport_lib::{
-    AttributeData, CameraFrame, FrameData, Material, PolylineItem, SceneFrame, SceneRenderItem,
+    AttributeData, CameraFrame, FrameData, Material, MeshItem, PolylineItem, SceneFrame,
     extract_isolines, isoline_strips, primitives,
 };
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
@@ -22,7 +22,7 @@ fn field(p: Vec3) -> f32 {
     (1.3 * p.x).sin() * (1.1 * p.y).cos() + 0.3 * p.x
 }
 
-fn frame(surface: SceneRenderItem) -> FrameData {
+fn frame(surface: MeshItem) -> FrameData {
     // Oblique, so the lines are foreshortened as they would be in use.
     let camera = orbit_camera(Vec3::ZERO, 7.0, 0.4, 0.9);
     let mut fd = FrameData::new(
@@ -86,7 +86,7 @@ fn contour_lines_coincide_with_extracted_isolines() {
         .unwrap();
 
     let model = Mat4::IDENTITY;
-    let mut surface = SceneRenderItem::default();
+    let mut surface = MeshItem::default();
     surface.mesh_id = mesh_id;
     surface.model = model.into();
     surface.material = h

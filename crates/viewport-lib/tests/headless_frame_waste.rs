@@ -15,7 +15,7 @@ fn static_frame(renderer: &mut ViewportRenderer, device: &wgpu::Device) -> Frame
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&Camera::default());
     frame.camera.viewport_size = [64.0, 64.0];
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame

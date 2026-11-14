@@ -12,8 +12,8 @@ use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings,
-    MeshId, Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController, RenderCamera,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    MeshId, MeshItem, Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController,
+    RenderCamera, SceneFrame, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
     ViewportRenderer, primitives,
 };
 
@@ -272,13 +272,13 @@ impl shader::Primitive for ViewportPrimitive {
             }
         }
 
-        let scene_items: Vec<SceneRenderItem> = self
+        let scene_items: Vec<MeshItem> = self
             .objects
             .iter()
             .filter_map(|obj| {
                 let mesh_id = *pipeline.uploaded.get(&obj.id)?;
                 let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh_id;
                 item.model = model.into();
                 Some(item)

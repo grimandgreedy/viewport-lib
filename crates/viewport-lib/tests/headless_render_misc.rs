@@ -29,7 +29,7 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame.viewport.show_grid = false;
@@ -123,9 +123,9 @@ fn two_bind_group_device_renders_without_validation_errors() {
 
     // One opaque box, one transparent box so the OIT pipeline family draws
     // too, not just the opaque path.
-    let mut opaque = SceneRenderItem::default();
+    let mut opaque = MeshItem::default();
     opaque.mesh_id = mesh_id;
-    let mut transparent = SceneRenderItem::default();
+    let mut transparent = MeshItem::default();
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
@@ -218,7 +218,7 @@ fn three_bind_group_device_draws_a_material_plugin() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = material;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -271,7 +271,7 @@ fn items_select_distinct_records() {
         m.base_colour = Colour::from_linear_rgb_array(colour);
         // Styled back faces => is_instanceable is false => per-object path.
         m.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = mesh_id;
         it.material = upload_material(&mut renderer, m);
         it.settings.unlit = true;
@@ -334,12 +334,12 @@ fn renderer_fits_recommended_device_limits() {
     // A styled-backface (per-object) opaque item plus a transparent item, so the
     // per-object object-data storage binding, the OIT layout, and the shadow
     // pass (default lighting casts shadows) all build under the capped limits.
-    let mut opaque = SceneRenderItem::default();
+    let mut opaque = MeshItem::default();
     opaque.mesh_id = mesh_id;
     let mut styled = Material::default();
     styled.backface_policy = BackfacePolicy::DifferentColour(Colour::linear_rgb(0.0, 0.0, 0.0));
     opaque.material = upload_material(&mut renderer, styled);
-    let mut transparent = SceneRenderItem::default();
+    let mut transparent = MeshItem::default();
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
     transparent.model =
