@@ -1294,11 +1294,12 @@ fn compute_lit(
         }
 
         var Lo = vec3<f32>(0.0);
-        let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        var pbr_range = cluster_lights(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.
         let light_mask = object.object_mask;
-        for (var j: u32 = 0u; j < pbr_range.count; j = j + 1u) {
-            let i = cluster_light_global(pbr_range, j);
+        loop {
+            let i = cluster_next_light(&pbr_range);
+            if i == CLUSTER_LIGHTS_END { break; }
             let l = lights_storage[i];
             if !light_in_channel(l, light_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
@@ -1392,11 +1393,12 @@ fn compute_lit(
         // Multi-light Blinn-Phong path
         var total_colour_contrib = vec3<f32>(0.0);
 
-        let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        var bp_range = cluster_lights(in.world_pos, lights_uniform.count);
         // The item's light-channel mask, read once rather than per light.
         let light_mask = object.object_mask;
-        for (var j: u32 = 0u; j < bp_range.count; j = j + 1u) {
-            let i = cluster_light_global(bp_range, j);
+        loop {
+            let i = cluster_next_light(&bp_range);
+            if i == CLUSTER_LIGHTS_END { break; }
             let l = lights_storage[i];
             if !light_in_channel(l, light_mask) { continue; }
             let ev = eval_light(l, in.world_pos);

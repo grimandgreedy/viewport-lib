@@ -824,6 +824,10 @@ pub struct DeviceResources {
     /// features its batch uses. The two draw the same image, so this is the
     /// check that they do. Measurement knob only.
     pub(crate) mesh_universal: bool,
+    /// The shader features the frame's settings decide rather than the
+    /// records: the PCSS shadow filter and punctual shadow sampling. Set in
+    /// prepare and added to every mesh draw's feature set.
+    pub(crate) frame_features: crate::renderer::pipeline_key::FeatureSet,
     /// Draws this frame that stayed on the universal pipeline because their
     /// family already held its limit of feature sets. Bumped during encode
     /// through `&self` and latched into `FrameStats` after paint.

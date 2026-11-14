@@ -365,6 +365,28 @@ impl ViewportRenderer {
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
         drop(lighting_span);
 
+        // The shadow code a mesh pipeline compiles in follows the frame's
+        // settings: the PCSS paths only under a PCSS filter, the punctual
+        // sampling only when a point or spot light holds a shadow layer. A set
+        // that changes swaps the draws to pipelines built for it.
+        {
+            use crate::renderer::pipeline_key::FeatureSet;
+            let shadows = &scene_fx.lighting.shadows;
+            resources.frame_features = FeatureSet::NONE
+                .with(
+                    FeatureSet::SHADOW_PCSS,
+                    shadows.enabled
+                        && matches!(
+                            shadows.filter,
+                            crate::ShadowFilter::Pcss | crate::ShadowFilter::PcssFast
+                        ),
+                )
+                .with(
+                    FeatureSet::PUNCTUAL_SHADOWS,
+                    lighting_frame.punctual_layers_in_use > 0,
+                );
+        }
+
         // Every mesh draw is an instanced draw; a one-item scene is one batch.
         self.instancing.use_instancing = true;
 
@@ -450,7 +472,8 @@ impl ViewportRenderer {
         self.instancing.last_origin_epoch = self.origin.epoch();
         settle_gpu_culling(&mut self.instancing, &resources.pipeline_compiler, device);
         // The cascades are fit after the instanced batches are built: only the
-        // shadow pass reads them.
+        // shadow pass reads them, so the fit counts as shadow prepare time.
+        let fit_start = web_time::Instant::now();
         Self::fit_cascades(
             resources,
             &mut self.shadow,
@@ -464,6 +487,7 @@ impl ViewportRenderer {
             &mut lighting_frame,
             &mut self.last_stats,
         );
+        let fit_ms = fit_start.elapsed().as_secs_f32() * 1000.0;
         #[cfg(debug_assertions)]
         {
             let wrong = instanced::feature_set_violations(resources, &self.instancing);
@@ -473,7 +497,7 @@ impl ViewportRenderer {
                 wrong.join("\n  ")
             );
         }
-        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
+        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0 - fit_ms;
         drop(instancing_span);
 
         let geometry_start = web_time::Instant::now();
@@ -768,7 +792,7 @@ impl ViewportRenderer {
             colour_hdr,
             sink,
         );
-        let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
+        let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0 + fit_ms;
         drop(shadow_span);
 
         // Hand the LOD-resolved items to the paint pass. `scene_items_owned`

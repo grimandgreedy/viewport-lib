@@ -2,18 +2,15 @@
 //!
 //! The cluster grid partitions screen space into `X_TILES * Y_TILES * Z_SLICES`
 //! view-frustum cells. Each frame the build compute pass tags each cell with
-//! the list of lights whose volume of influence intersects it; lit pipelines
-//! then read just their cell's slice of the index list instead of scanning
-//! every active light per fragment. Every cluster owns a fixed
-//! `MAX_LIGHTS_PER_CLUSTER` slice of the index list, so a crowded cluster
-//! never disturbs any other. A cell whose lights overflow its slice records
-//! the overflow (`punctual_demand > punctual_count`) and its fragments walk
-//! the full light array instead, so a crowded cell costs more but drops no
-//! light.
+//! the lights whose volume of influence intersects it, as a bitmask over the
+//! light array ([`CLUSTER_MASK_WORDS`] words per cell); lit pipelines then
+//! walk just their cell's lights instead of scanning every active light per
+//! fragment. A cell holds every light that reaches it, so a crowded cell costs
+//! in proportion to its lights and drops none.
 //!
 //! Bindings 14 and 15 of the camera bind group expose the grid uniform and one
-//! storage buffer holding the per-cell offsets followed by the global index
-//! list (at [`CLUSTER_INDEX_BASE_BYTES`]) to every lit pipeline, so the pair
+//! storage buffer holding the per-cell headers followed by the cells' masks
+//! (at [`CLUSTER_INDEX_BASE_BYTES`]) to every lit pipeline, so the pair
 //! costs one fragment storage binding. The build pass uses a separate compute
 //! bind group with read-write access to the two regions as two bindings.
 //!
@@ -35,15 +32,16 @@ pub const CLUSTER_Y_TILES: u32 = 9;
 pub const CLUSTER_Z_SLICES: u32 = 24;
 /// Total cluster cell count (`16 * 9 * 24 = 3456`).
 pub const CLUSTER_COUNT: u32 = CLUSTER_X_TILES * CLUSTER_Y_TILES * CLUSTER_Z_SLICES;
-/// Fixed light-index capacity per cluster cell. Each cluster owns its own
-/// slice of the index list, so a crowded cluster can never starve another.
-/// A cluster that overflows its slice shades with the full light array
-/// instead. Must match `MAX_PER_CLUSTER` in `cluster_build.wgsl`.
-pub const MAX_LIGHTS_PER_CLUSTER: u32 = 64;
-/// Total light-index list capacity: one fixed slice per cluster
-/// (`3456 * 64` entries, 864 KB at 4 bytes per index).
-pub const MAX_LIGHT_INDICES: u32 = CLUSTER_COUNT * MAX_LIGHTS_PER_CLUSTER;
-/// Start of the light index list in the cluster buffer: the cell region,
+/// Lights a cluster cell can hold: every light in the scene's light array.
+pub const MAX_LIGHTS_PER_CLUSTER: u32 = crate::resources::MAX_SCENE_LIGHTS as u32;
+/// Words of one cell's light bitmask, one bit per light. Must match
+/// `MASK_WORDS` in `cluster_build.wgsl` and `CLUSTER_MASK_WORDS` in
+/// `helpers/scene_lighting.wgsl`.
+pub const CLUSTER_MASK_WORDS: u32 = MAX_LIGHTS_PER_CLUSTER.div_ceil(32);
+const _: () = assert!(CLUSTER_MASK_WORDS == 16);
+/// Words of the mask list: one mask per cell (`3456 * 16` words, 216 KB).
+pub const CLUSTER_MASK_LEN: u32 = CLUSTER_COUNT * CLUSTER_MASK_WORDS;
+/// Start of the mask list in the cluster buffer: the cell region,
 /// rounded up to the storage binding offset alignment so the build pass can
 /// bind the list as its own range. Must equal `CLUSTER_INDEX_BASE` (in `u32`
 /// words) in `helpers/scene_lighting.wgsl`.
@@ -149,7 +147,7 @@ pub struct ClusterStats {
     /// Cells with at least one punctual (point or spot) light assigned.
     pub non_empty_cells: u32,
     /// Maximum punctual demand across all cells (lights intersecting the
-    /// cell, before the per-cluster capacity cap).
+    /// cell).
     pub max_punctual: u32,
     /// Median punctual demand across cells with at least one punctual.
     pub median_punctual: u32,
@@ -161,12 +159,11 @@ pub struct ClusterStats {
     /// Sum of `cell.count` across all cells : how many light-index slots the
     /// build pass actually wrote this frame.
     pub total_index_slots_used: u32,
-    /// Capacity of the light index list (one fixed
-    /// `MAX_LIGHTS_PER_CLUSTER` slice per cluster).
+    /// Lights the cells can hold between them: every light in every cell
+    /// (`CLUSTER_COUNT * MAX_LIGHTS_PER_CLUSTER`).
     pub max_index_slots: u32,
-    /// Cells that fell back to the full light array this frame because their
-    /// punctual demand overflowed the per-cluster slice. Zero means no cluster
-    /// overflowed.
+    /// Cells whose punctual demand exceeded the lights they hold. A cell holds
+    /// every light that reaches it, so this is always zero.
     pub dropped_punctual_slots: u32,
     /// Active light count after the CPU frustum cull.
     pub active_light_count: u32,
@@ -176,25 +173,23 @@ pub struct ClusterStats {
     pub fallback_active: bool,
 }
 
-/// One cell in the clustered light grid. Points into the global light index
-/// list and records how many lights of each kind affect the cluster.
+/// One cell in the clustered light grid. Points at its light bitmask in the
+/// mask list and records how many lights of each kind affect the cluster.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ClusterCell {
-    /// Offset into the global light index list at which this cluster's light
-    /// indices start.
+    /// Word offset into the mask list at which this cluster's light bitmask
+    /// starts.
     pub offset: u32,
-    /// Number of light indices owned by this cluster. Includes directionals,
-    /// since the fragment shader iterates this many slots out of the global
-    /// index list.
+    /// Lights that reach this cluster: the set bits of its mask. Includes
+    /// directionals.
     pub count: u32,
     /// Subset of `count` covering point and spot lights only. The debug
     /// overlay reads this so the ever-present directional fill doesn't drown
     /// out the per-cluster light density signal.
     pub punctual_count: u32,
-    /// Punctual lights that intersect this cluster, before the per-cluster
-    /// capacity cap. When it exceeds `punctual_count` the slice overflowed
-    /// and the cluster's fragments iterate the full light array.
+    /// Punctual lights that intersect this cluster. The cell holds them all,
+    /// so this equals `punctual_count`.
     pub punctual_demand: u32,
 }
 
@@ -293,7 +288,7 @@ impl ClusteredResources {
             label: Some("cluster_clear_params_buf"),
             contents: bytemuck::cast_slice(&[ClearParams {
                 cluster_count: CLUSTER_COUNT,
-                index_count: MAX_LIGHT_INDICES,
+                index_count: CLUSTER_MASK_LEN,
                 _pad0: 0,
                 _pad1: 0,
             }]),
@@ -385,7 +380,7 @@ impl ClusteredResources {
         crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
             buffer: &self.cluster_buf,
             offset: CLUSTER_INDEX_BASE_BYTES,
-            size: crate::gpu::BufferSize::new(MAX_LIGHT_INDICES as u64 * 4),
+            size: crate::gpu::BufferSize::new(CLUSTER_MASK_LEN as u64 * 4),
         })
     }
 
@@ -395,7 +390,7 @@ impl ClusteredResources {
         if self.clear_bind_group.is_some() {
             return false;
         }
-        self.cluster_buf = Self::cluster_buffer(device, MAX_LIGHT_INDICES);
+        self.cluster_buf = Self::cluster_buffer(device, CLUSTER_MASK_LEN);
         let clear_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("cluster_clear_bind_group"),
             layout: &self.clear_bgl,
@@ -618,7 +613,7 @@ impl ClusteredResources {
             return;
         };
         if let (false, Some(clear_pipeline)) = (self.grid_zeroed, built(CLUSTER_CLEAR)) {
-            let clear_workgroups = MAX_LIGHT_INDICES.max(CLUSTER_COUNT).div_ceil(64);
+            let clear_workgroups = CLUSTER_MASK_LEN.max(CLUSTER_COUNT).div_ceil(64);
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("cluster_clear_pass"),
                 timestamp_writes: None,
@@ -710,7 +705,7 @@ fn compute_stats(
         p99_punctual: p99,
         mean_punctual: mean,
         total_index_slots_used,
-        max_index_slots: MAX_LIGHT_INDICES,
+        max_index_slots: CLUSTER_COUNT * MAX_LIGHTS_PER_CLUSTER,
         dropped_punctual_slots: dropped,
         active_light_count,
         fallback_active,

@@ -213,8 +213,9 @@ pub struct PrepareBreakdown {
     /// Uploading non-mesh geometry: fields, point clouds, polylines, decals,
     /// images, tubes, ribbons, slices, and volumes.
     pub geometry_ms: f32,
-    /// Recording the shadow depth pass (directional cascades into the atlas,
-    /// point and spot light layers into the punctual array).
+    /// Fitting the directional cascades to the scene, and recording the shadow
+    /// depth pass (directional cascades into the atlas, point and spot light
+    /// layers into the punctual array).
     pub shadow_ms: f32,
     /// Per-viewport prepare: camera and clip uniforms, grid, outlines, and
     /// interaction state. Runs once per viewport. Overlay prepare is measured

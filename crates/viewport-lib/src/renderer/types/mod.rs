@@ -505,7 +505,7 @@ pub(crate) fn draw_features(
     if resources.mesh_universal {
         crate::renderer::pipeline_key::FeatureSet::UNIVERSAL
     } else {
-        batch.features
+        batch.features.union(resources.frame_features)
     }
 }
 

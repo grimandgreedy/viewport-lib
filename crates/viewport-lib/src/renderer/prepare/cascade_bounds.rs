@@ -4,10 +4,12 @@
 //! The instance bounds are bucketed into a coarse grid of cells, each keeping
 //! the union of its casters and of all its instances, so far-apart groups of
 //! instances do not merge into one box spanning the empty space between
-//! them. The cells are rebuilt only when the instance bounds change; each
-//! frame sweeps the caster cells away from the light, clips them to the
-//! receiver cells and the view frustum, and takes the depth span of what is
-//! left.
+//! them. The cells are rebuilt only when the instance bounds change.
+//! The caster cells swept away from the light and clipped to the receiver
+//! cells are kept until the bounds, the light or the sweep length change;
+//! each frame clips those regions to the view frustum and takes the depth
+//! span of what is left, and a frame whose camera has not moved reuses the
+//! last span.
 
 use crate::Frustum;
 use crate::renderer::RenderCamera;
@@ -95,6 +97,12 @@ struct Cell {
 #[derive(Default)]
 pub(crate) struct CascadeBounds {
     key: Option<u64>,
+    /// The swept caster cells clipped to the receiver cells and the ground,
+    /// for `regions_key`.
+    regions: Vec<Bounds>,
+    regions_key: Option<RegionsKey>,
+    /// The last fitted range and the camera it was fitted for.
+    fit: Option<(FitKey, Option<(f32, f32)>)>,
     /// Union of the instances that cast shadows.
     pub(crate) casters: Option<Bounds>,
     /// Union of every instance.
@@ -110,6 +118,8 @@ impl CascadeBounds {
             return false;
         }
         self.key = Some(generation);
+        self.regions_key = None;
+        self.fit = None;
         self.casters = None;
         self.scene = None;
         self.cells.clear();
@@ -179,7 +189,7 @@ pub(super) fn fallback_range(camera_near: f32, camera_far: f32, extent: f32) -> 
 /// `None` when no part of them is visible.
 pub(super) fn fitted_range(
     camera: &RenderCamera,
-    bounds: &CascadeBounds,
+    bounds: &mut CascadeBounds,
     light_dir: glam::Vec3,
     ground: Option<f32>,
 ) -> Option<(f32, f32)> {
@@ -187,10 +197,6 @@ pub(super) fn fitted_range(
     let (camera_near, camera_far) = camera.depth_range();
     let dir = light_dir.normalize_or_zero();
     let mut sweep = (scene.max - scene.min).length();
-    let ground_plane = ground.map(|height| Bounds {
-        min: glam::Vec3::new(f32::MIN, f32::MIN, height),
-        max: glam::Vec3::new(f32::MAX, f32::MAX, height),
-    });
     if let (Some(height), Some(casters)) = (ground, bounds.casters) {
         if dir.z > 1e-3 {
             sweep = sweep.max((casters.max.z - height) / dir.z);
@@ -198,33 +204,131 @@ pub(super) fn fitted_range(
     }
     let sweep = sweep.min(camera_far * 2.0);
 
-    let frustum = Frustum::from_view_proj(&camera.culling_view_proj());
+    let regions_key = RegionsKey {
+        generation: bounds.key,
+        dir: dir.to_array().map(f32::to_bits),
+        ground: ground.map(f32::to_bits),
+        sweep: sweep.to_bits(),
+    };
+    if bounds.regions_key != Some(regions_key) {
+        bounds.regions_key = Some(regions_key);
+        bounds.fit = None;
+        bounds.regions = swept_regions(&bounds.cells, dir, sweep, ground);
+    }
+
+    let view_proj = camera.culling_view_proj();
+    let view = camera.view();
+    let eye = camera.eye_position().as_vec3();
+    let fit_key = FitKey {
+        regions: regions_key,
+        view_proj: view_proj.to_cols_array().map(f32::to_bits),
+        view: view.to_cols_array().map(f32::to_bits),
+        eye: eye.to_array().map(f32::to_bits),
+        depth: [camera_near.to_bits(), camera_far.to_bits()],
+    };
+    if let Some((key, range)) = bounds.fit {
+        if key == fit_key {
+            return range;
+        }
+    }
+
+    let frustum = Frustum::from_view_proj(&view_proj);
     let p = &frustum.planes;
     let planes = [0, 1, 2, 3].map(|i| (p[i].normal, p[i].d));
-    let eye = camera.eye_position().as_vec3();
     let mut span = (f32::MAX, f32::MIN);
-    for casters in bounds.cells.iter().filter_map(|c| c.casters) {
+    let mut widen = |pt: glam::Vec3| {
+        let depth = -view.transform_point3(pt).z;
+        span.0 = span.0.min(depth);
+        span.1 = span.1.max(depth);
+    };
+    let mut eye_inside = false;
+    for region in &bounds.regions {
+        let corners = region.corners();
+        match classify(&corners, &planes) {
+            Side::Outside => {}
+            Side::Inside => corners.iter().for_each(|&c| widen(c)),
+            Side::Straddles => clip_box_faces(&corners, &planes, &mut widen),
+        }
+        eye_inside |= region.contains(eye);
+    }
+    if eye_inside {
+        span.0 = span.0.min(0.0);
+    }
+    let (lo, hi) = span;
+    let near_limit = camera_near * 2.0;
+    let range = if lo > hi || hi <= near_limit || lo >= camera_far {
+        None
+    } else {
+        let near = lo.max(near_limit);
+        let far = hi.min(camera_far);
+        (far > near * 1.001).then_some((near, far))
+    };
+    bounds.fit = Some((fit_key, range));
+    range
+}
+
+/// What the swept regions were built for: the instance bounds' generation,
+/// the light direction, the ground height and the sweep length, as bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RegionsKey {
+    generation: Option<u64>,
+    dir: [u32; 3],
+    ground: Option<u32>,
+    sweep: u32,
+}
+
+/// What a fitted range was computed for: the regions and the camera.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FitKey {
+    regions: RegionsKey,
+    view_proj: [u32; 16],
+    view: [u32; 16],
+    eye: [u32; 3],
+    depth: [u32; 2],
+}
+
+/// Each caster cell swept `sweep` away from the light along `dir` (pointing
+/// towards it), clipped to every receiver cell and to the ground plane at
+/// `ground`: where a visible fragment can be in a cast shadow.
+fn swept_regions(cells: &[Cell], dir: glam::Vec3, sweep: f32, ground: Option<f32>) -> Vec<Bounds> {
+    let ground_plane = ground.map(|height| Bounds {
+        min: glam::Vec3::new(f32::MIN, f32::MIN, height),
+        max: glam::Vec3::new(f32::MAX, f32::MAX, height),
+    });
+    let mut regions = Vec::new();
+    for casters in cells.iter().filter_map(|c| c.casters) {
         let shifted = Bounds {
             min: casters.min - dir * sweep,
             max: casters.max - dir * sweep,
         };
         let swept = casters.union(shifted);
-        let receivers = bounds.cells.iter().map(|c| c.all).chain(ground_plane);
-        for region in receivers.filter_map(|r| swept.intersection(r)) {
-            visible_depth_span(camera, &planes, region, &mut span);
-            if region.contains(eye) {
-                span.0 = span.0.min(0.0);
-            }
+        let receivers = cells.iter().map(|c| c.all).chain(ground_plane);
+        regions.extend(receivers.filter_map(|r| swept.intersection(r)));
+    }
+    regions
+}
+
+/// Where a box lies against a set of half-spaces.
+enum Side {
+    /// Wholly outside one of them: nothing of it survives clipping.
+    Outside,
+    /// Inside every one: clipping leaves it whole.
+    Inside,
+    Straddles,
+}
+
+/// Which side of `planes` (`normal . p + d >= 0` inside, as
+/// [`clip_box_faces`] keeps) the box with `corners` lies on.
+fn classify(corners: &[glam::Vec3; 8], planes: &[(glam::Vec3, f32)]) -> Side {
+    let mut inside = true;
+    for &(normal, d) in planes {
+        let n = corners.iter().filter(|c| normal.dot(**c) + d >= 0.0).count();
+        if n == 0 {
+            return Side::Outside;
         }
+        inside &= n == corners.len();
     }
-    let (lo, hi) = span;
-    let near_limit = camera_near * 2.0;
-    if lo > hi || hi <= near_limit || lo >= camera_far {
-        return None;
-    }
-    let near = lo.max(near_limit);
-    let far = hi.min(camera_far);
-    (far > near * 1.001).then_some((near, far))
+    if inside { Side::Inside } else { Side::Straddles }
 }
 
 impl CascadeBounds {
@@ -241,29 +345,19 @@ impl CascadeBounds {
             (-glam::Vec3::Y, rect[3]),
         ];
         let mut top = None::<f32>;
+        let mut raise = |p: glam::Vec3| {
+            top = Some(top.map_or(p.z, |t: f32| t.max(p.z)));
+        };
         for casters in self.cells.iter().filter_map(|c| c.casters) {
             let corners = casters.corners().map(|c| light_view.transform_point3(c));
-            clip_box_faces(&corners, &planes, |p| {
-                top = Some(top.map_or(p.z, |t| t.max(p.z)));
-            });
+            match classify(&corners, &planes) {
+                Side::Outside => {}
+                Side::Inside => corners.iter().for_each(|&c| raise(c)),
+                Side::Straddles => clip_box_faces(&corners, &planes, &mut raise),
+            }
         }
         top
     }
-}
-
-/// Widen `span` by the view depths of `region`'s part inside the frustum
-/// side `planes`: each face of the box clipped to the planes.
-fn visible_depth_span(
-    camera: &RenderCamera,
-    planes: &[(glam::Vec3, f32)],
-    region: Bounds,
-    span: &mut (f32, f32),
-) {
-    clip_box_faces(&region.corners(), planes, |p| {
-        let depth = -camera.view().transform_point3(p).z;
-        span.0 = span.0.min(depth);
-        span.1 = span.1.max(depth);
-    });
 }
 
 /// Clip each face of the box with `corners` (in [`Bounds::corners`] order)
@@ -348,21 +442,113 @@ mod tests {
         RenderCamera::from_camera(&cam)
     }
 
+    /// The fit the cache must reproduce: every caster cell swept and clipped
+    /// to every receiver and the frustum, from scratch.
+    fn uncached_range(
+        camera: &RenderCamera,
+        bounds: &CascadeBounds,
+        light_dir: Vec3,
+        ground: Option<f32>,
+    ) -> Option<(f32, f32)> {
+        let scene = bounds.scene?;
+        let (camera_near, camera_far) = camera.depth_range();
+        let dir = light_dir.normalize_or_zero();
+        let mut sweep = (scene.max - scene.min).length();
+        let ground_plane = ground.map(|height| Bounds {
+            min: Vec3::new(f32::MIN, f32::MIN, height),
+            max: Vec3::new(f32::MAX, f32::MAX, height),
+        });
+        if let (Some(height), Some(casters)) = (ground, bounds.casters) {
+            if dir.z > 1e-3 {
+                sweep = sweep.max((casters.max.z - height) / dir.z);
+            }
+        }
+        let sweep = sweep.min(camera_far * 2.0);
+        let frustum = Frustum::from_view_proj(&camera.culling_view_proj());
+        let p = &frustum.planes;
+        let planes = [0, 1, 2, 3].map(|i| (p[i].normal, p[i].d));
+        let eye = camera.eye_position().as_vec3();
+        let mut span = (f32::MAX, f32::MIN);
+        for casters in bounds.cells.iter().filter_map(|c| c.casters) {
+            let swept = casters.union(Bounds {
+                min: casters.min - dir * sweep,
+                max: casters.max - dir * sweep,
+            });
+            let receivers = bounds.cells.iter().map(|c| c.all).chain(ground_plane);
+            for region in receivers.filter_map(|r| swept.intersection(r)) {
+                clip_box_faces(&region.corners(), &planes, |pt| {
+                    let depth = -camera.view().transform_point3(pt).z;
+                    span.0 = span.0.min(depth);
+                    span.1 = span.1.max(depth);
+                });
+                if region.contains(eye) {
+                    span.0 = span.0.min(0.0);
+                }
+            }
+        }
+        let (lo, hi) = span;
+        let near_limit = camera_near * 2.0;
+        if lo > hi || hi <= near_limit || lo >= camera_far {
+            return None;
+        }
+        let near = lo.max(near_limit);
+        let far = hi.min(camera_far);
+        (far > near * 1.001).then_some((near, far))
+    }
+
+    #[test]
+    fn the_cached_fit_matches_the_full_fit_as_the_camera_and_light_move() {
+        // A street of casters and receivers spread over the grid, some in
+        // view and some behind, so regions land inside, outside and across
+        // the frustum planes.
+        let mut aabbs = vec![aabb([-60.0, -60.0, -0.1], [60.0, 60.0, 0.0], false)];
+        for i in 0..40 {
+            let x = (i % 8) as f32 * 14.0 - 50.0;
+            let y = (i / 8) as f32 * 22.0 - 45.0;
+            let h = 1.0 + (i % 5) as f32 * 2.5;
+            aabbs.push(aabb([x, y, 0.0], [x + 3.0, y + 4.0, h], i % 3 != 0));
+        }
+        let mut b = bounds_of(&aabbs);
+        for step in 0..60 {
+            let t = step as f32 * 0.17;
+            let cam = crate::camera::Camera::orbit(
+                glam::DVec3::new((t * 7.0).sin() as f64 * 20.0, (t * 5.0).cos() as f64 * 20.0, 2.0),
+                6.0 + (step % 7) as f32 * 9.0,
+                glam::Quat::from_rotation_z(t) * glam::Quat::from_rotation_x(1.2),
+            );
+            let camera = RenderCamera::from_camera(&cam);
+            let light = Vec3::new((t * 0.3).cos(), (t * 0.3).sin(), 0.6 + 0.3 * (t * 0.5).sin());
+            let light = if step % 4 == 0 { light } else { Vec3::new(0.4, 0.2, 1.0) };
+            let ground = (step % 3 == 0).then_some(0.0);
+            let want = uncached_range(&camera, &b, light, ground);
+            // Twice: the second call is served by the cache.
+            for _ in 0..2 {
+                assert_eq!(fitted_range(&camera, &mut b, light, ground), want, "step {step}");
+            }
+        }
+        // New bounds drop the cached regions.
+        aabbs.push(aabb([70.0, 0.0, 0.0], [72.0, 2.0, 30.0], true));
+        b.refresh(1, &aabbs);
+        let camera = camera();
+        let want = uncached_range(&camera, &b, Vec3::Z, None);
+        assert_eq!(fitted_range(&camera, &mut b, Vec3::Z, None), want);
+    }
+
     #[test]
     fn range_spans_the_casters_and_their_shadows_within_the_scene() {
-        let b = bounds_of(&[
+        let mut b = bounds_of(&[
             aabb([-5.0, 0.0, 0.0], [5.0, 40.0, 0.1], false),
             aabb([-1.0, 9.0, 0.0], [1.0, 11.0, 2.0], true),
         ]);
         // Light from straight overhead: shadows fall under the casters.
-        let (near, far) = fitted_range(&camera(), &b, Vec3::Z, None).unwrap();
+        let (near, far) = fitted_range(&camera(), &mut b, Vec3::Z, None).unwrap();
         assert!(
             (near - 9.0).abs() < 1e-3 && (far - 11.0).abs() < 1e-3,
             "{near} {far}"
         );
         // A low light from -Y throws them on along +Y, as far as the floor goes.
         let low = Vec3::new(0.0, -1.0, 0.2);
-        let (near, far) = fitted_range(&camera(), &b, low, None).unwrap();
+        let (near, far) = fitted_range(&camera(), &mut b, low, None).unwrap();
         assert!(
             (near - 9.0).abs() < 1e-3 && (far - 40.0).abs() < 1e-3,
             "{near} {far}"
@@ -371,30 +557,30 @@ mod tests {
 
     #[test]
     fn a_ground_plane_receives_shadows_past_the_scene() {
-        let b = bounds_of(&[aabb([-1.0, 9.0, 0.0], [1.0, 11.0, 2.0], true)]);
+        let mut b = bounds_of(&[aabb([-1.0, 9.0, 0.0], [1.0, 11.0, 2.0], true)]);
         let low = Vec3::new(0.0, -1.0, 0.2).normalize();
-        let (_, far) = fitted_range(&camera(), &b, low, None).unwrap();
+        let (_, far) = fitted_range(&camera(), &mut b, low, None).unwrap();
         assert!((far - 11.0).abs() < 1e-3, "{far}");
         // The top of the caster throws its shadow 2 / 0.2 = 10 m along +Y.
-        let (_, far) = fitted_range(&camera(), &b, low, Some(0.0)).unwrap();
+        let (_, far) = fitted_range(&camera(), &mut b, low, Some(0.0)).unwrap();
         assert!((far - 21.0).abs() < 1e-2, "{far}");
     }
 
     #[test]
     fn casters_behind_the_camera_fit_nothing() {
-        let b = bounds_of(&[aabb([-1.0, -11.0, 0.0], [1.0, -9.0, 2.0], true)]);
-        assert!(fitted_range(&camera(), &b, Vec3::Z, None).is_none());
+        let mut b = bounds_of(&[aabb([-1.0, -11.0, 0.0], [1.0, -9.0, 2.0], true)]);
+        assert!(fitted_range(&camera(), &mut b, Vec3::Z, None).is_none());
     }
 
     #[test]
     fn far_away_instances_do_not_stretch_the_range() {
         // A caster in view, and another far off to the side and below, out of
         // view: one box around both would reach hundreds of metres deep.
-        let b = bounds_of(&[
+        let mut b = bounds_of(&[
             aabb([-1.0, 9.0, 0.0], [1.0, 11.0, 2.0], true),
             aabb([-500.0, -500.0, -500.0], [-499.0, -499.0, -499.0], true),
         ]);
-        let (near, far) = fitted_range(&camera(), &b, Vec3::Z, None).unwrap();
+        let (near, far) = fitted_range(&camera(), &mut b, Vec3::Z, None).unwrap();
         assert!(
             (near - 9.0).abs() < 1e-3 && (far - 11.0).abs() < 1e-3,
             "{near} {far}"
@@ -404,8 +590,8 @@ mod tests {
     #[test]
     fn only_the_visible_part_of_a_receiver_counts() {
         // A long wall beside the eye, mostly out of a 45 degree view.
-        let b = bounds_of(&[aabb([50.0, -100.0, 0.0], [51.0, 100.0, 2.0], true)]);
-        let (near, far) = fitted_range(&camera(), &b, Vec3::Z, None).unwrap();
+        let mut b = bounds_of(&[aabb([50.0, -100.0, 0.0], [51.0, 100.0, 2.0], true)]);
+        let (near, far) = fitted_range(&camera(), &mut b, Vec3::Z, None).unwrap();
         assert!(near > 50.0 && far <= 100.0 + 1e-3, "{near} {far}");
     }
 

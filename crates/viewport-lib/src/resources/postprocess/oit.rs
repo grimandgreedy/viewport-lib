@@ -97,13 +97,15 @@ impl OitResources {
     /// Ask for the plain feature set of every member, on both group-1
     /// members. Asks for no universal member: see
     /// [`request_members`](Self::request_members).
-    pub(crate) fn request_plain(&self) {
+    pub(crate) fn request_plain(&self, sets: &[crate::renderer::pipeline_key::FeatureSet]) {
         for f in [&self.pipeline, &self.pipeline_bindless]
             .into_iter()
             .flatten()
         {
             for i in 0..2 {
-                f.request_features(i, crate::renderer::pipeline_key::FeatureSet::NONE);
+                for &s in sets {
+                    f.request_features(i, s);
+                }
             }
         }
     }

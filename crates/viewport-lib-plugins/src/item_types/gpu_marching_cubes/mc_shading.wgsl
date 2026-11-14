@@ -102,9 +102,10 @@ fn shade_mc(world_pos: vec3<f32>, world_norm: vec3<f32>) -> vec4<f32> {
     // fallback : see `scene_lighting.wgsl`.
     var diffuse  = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
-    let range = cluster_light_range(world_pos, lights_uniform.count);
-    for (var j: u32 = 0u; j < range.count; j = j + 1u) {
-        let i = cluster_light_global(range, j);
+    var range = cluster_lights(world_pos, lights_uniform.count);
+    loop {
+        let i = cluster_next_light(&range);
+        if i == CLUSTER_LIGHTS_END { break; }
         let light = lights_storage[i];
         var L: vec3<f32>;
         var light_rgb: vec3<f32>;
