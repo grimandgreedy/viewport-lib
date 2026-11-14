@@ -289,13 +289,13 @@ One wgpu leg, matching the viewport-lib the crate is built against: `wgpu27` (th
 One feature per module, both on by default: `item-types` and `deformers`. A dependent on a non-default wgpu leg turns default features off, so it names the modules it wants beside the leg:
 
 ```toml
-viewport-lib-plugins = { version = "0.1", default-features = false, features = ["wgpu29", "item-types", "deformers"] }
+viewport-lib-plugins = { version = "0.2", default-features = false, features = ["wgpu29", "item-types", "deformers"] }
 ```
 
 `gpu` holds the plugins themselves: stores, pipelines, shaders and the upload calls. It is on by default and every wgpu leg turns it on. Without it the crate builds only the data types a consumer constructs, against viewport-lib-types and viewport-lib-geometry, with neither viewport-lib nor wgpu in the tree. That is for code that names the types without drawing them, such as a file loader, a scene format or an ECS:
 
 ```toml
-viewport-lib-plugins = { version = "0.1", default-features = false, features = ["item-types"] }
+viewport-lib-plugins = { version = "0.2", default-features = false, features = ["item-types"] }
 ```
 
 Every item type's data builds this way: the item structs, the data they upload, their option enums and their handles. What needs `gpu` is anything that holds a GPU resource or reads the renderer's own state: `ExternalInstanceSetConfig`, `PointCloudItem::from_debug_draw` and `VolumeItem::region`, plus the deformers. `scripts/check_plugin_types.sh` checks that the data-only build stays free of viewport-lib and wgpu.

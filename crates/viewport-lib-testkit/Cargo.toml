@@ -8,7 +8,7 @@
 
 [package]
 name = "viewport-lib-testkit"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-only"
@@ -22,18 +22,18 @@ exclude = ["tests/snapshots/*.png"]
 # build (Cargo unifies it), not forced to the default here. The testkit names
 # wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
 [dependencies]
-viewport-lib = { path = "../viewport-lib", version = "0.23", default-features = false }
-viewport-lib-plugins = { path = "../viewport-lib-plugins", version = "0.1", default-features = false, features = ["item-types"] }
+viewport-lib = { path = "../viewport-lib", version = "0.24", default-features = false }
+viewport-lib-plugins = { path = "../viewport-lib-plugins", version = "0.2", default-features = false, features = ["item-types"] }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
-viewport-lib-io = { version = "0.8", optional = true, features = ["stl"] }
+viewport-lib-io = { version = "0.10", optional = true, features = ["stl"] }
 # PNG load/save for the golden module; optional so the core does not pull it.
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [dev-dependencies]
 # The path tracer, for the raster-versus-tracer parity test only, and the egui
 # adapter for the catalogue-viewer example.
-viewport-lib = { path = "../viewport-lib", version = "0.23", default-features = false, features = ["raytrace", "egui-adapter"] }
+viewport-lib = { path = "../viewport-lib", version = "0.24", default-features = false, features = ["raytrace", "egui-adapter"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 # For the startup-cost examples: they read the library's own init-phase marks off
 # the `viewport_lib::init` tracing target.

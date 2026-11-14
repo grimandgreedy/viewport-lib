@@ -18,7 +18,7 @@ viewport-lib = { path = "../../viewport-lib", default-features = false, features
 # The built-in item types, which `web-scivis-smoke` draws on each tier.
 viewport-lib-plugins = { path = "../../viewport-lib-plugins", default-features = false, features = ["item-types"] }
 # The level, tileset image and sprite sheet the 2D examples draw.
-viewport-lib-io = { version = "0.9.0", features = ["png", "tiled", "aseprite"] }
+viewport-lib-io = { version = "0.10.0", features = ["png", "tiled", "aseprite"] }
 glam = { workspace = true }
 winit = "0.30"
 pollster = "0.4"
