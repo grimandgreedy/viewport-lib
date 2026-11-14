@@ -356,7 +356,9 @@ fn f16_bits(v: f32) -> u16 {
         return sign | (a / 5.960_464_5e-8).round() as u16;
     }
     let abits = a.to_bits();
-    let exp = ((abits >> 23) & 0xff) - 127 + 15;
+    // Signed, since values below 1.0 have a biased exponent under 127. The
+    // subnormal branch above keeps the result at 1 or more.
+    let exp = (((abits >> 23) & 0xff) as i32 - 127 + 15) as u32;
     let mant = abits & 0x7f_ffff;
     let mut h = (exp << 10) | (mant >> 13);
     let rest = mant & 0x1fff;
@@ -1840,5 +1842,17 @@ mod painter_tests {
     fn pivot_packs_centre_to_zero_and_corners_exactly() {
         assert_eq!(pack_pivot([0.5, 0.5]), 0);
         assert_eq!(pack_pivot([0.0, 1.0]), (0x8001u32) | (0x7fff << 16));
+    }
+
+    #[test]
+    fn half_floats_pack_values_below_one() {
+        assert_eq!(f16_bits(0.5), 0x3800);
+        assert_eq!(f16_bits(1.0 / 16.0), 0x2c00);
+        assert_eq!(f16_bits(0.1), 0x2e66);
+        assert_eq!(f16_bits(6.2e-5), 0x0410);
+        assert_eq!(f16_bits(-0.5), 0xb800);
+        assert_eq!(f16_bits(1.0), 0x3c00);
+        assert_eq!(f16_bits(3.0), 0x4200);
+        assert_eq!(f16_bits(65504.0), 0x7bff);
     }
 }
