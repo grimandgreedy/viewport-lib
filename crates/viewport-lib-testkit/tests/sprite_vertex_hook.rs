@@ -152,13 +152,6 @@ fn the_quad_fields_describe_the_drawn_quad() {
         let mut bare = item.clone();
         bare.user_values.clear();
         let plain = harness.render(&sprites(vec![bare]), W, H);
-        {
-            let mut out = format!("P6 {W} {H} 255\n").into_bytes();
-            for p in plain.chunks_exact(4) {
-                out.extend_from_slice(&p[..3]);
-            }
-            std::fs::write("/private/tmp/claude-501/-Users-noah-code-ST-vpl-viewport-lib/53f263ba-c015-422f-aeb6-af0434dd30a5/scratchpad/plain.ppm", out).unwrap();
-        }
         let rebuilt = harness.render(
             &sprites(vec![with_material(item, SpriteMaterial::new(id))]),
             W,
