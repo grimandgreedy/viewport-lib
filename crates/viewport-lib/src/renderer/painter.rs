@@ -43,7 +43,7 @@ impl CoreBatch {
 
 /// Whether a surface draws in the painter sequence of a viewport culling with
 /// `cull_mask`.
-pub(crate) fn painter_surface(item: &SceneRenderItem, cull_mask: u32) -> bool {
+pub(crate) fn painter_surface(item: &MeshItem, cull_mask: u32) -> bool {
     item.painter.is_some()
         && !item.settings.hidden
         && (item.settings.visibility_mask & cull_mask) != 0
@@ -236,7 +236,7 @@ impl ViewportRenderer {
 fn draw_painter_surface(
     resources: &crate::resources::DeviceResources,
     pass: &mut crate::gpu::RenderPass<'_>,
-    item: &SceneRenderItem,
+    item: &MeshItem,
     bind_group: &crate::gpu::BindGroup,
     records: &crate::gpu::Buffer,
     pipeline: &crate::gpu::RenderPipeline,

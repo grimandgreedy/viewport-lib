@@ -39,7 +39,7 @@ fn render_emissive_box(
     frame.effects.lighting.hemisphere_intensity = 0.0;
     frame.effects.display.exposure = viewport_lib::ExposureSettings::passthrough();
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     // Large enough that the measured centre of the frame is all cube.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).into();

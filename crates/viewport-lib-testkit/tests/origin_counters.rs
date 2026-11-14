@@ -3,8 +3,8 @@
 //! the world origin.
 
 use viewport_lib::{
-    CameraFrame, ClipObject, Colour, FrameData, Material, MeshId, RenderCamera, SceneFrame,
-    SceneRenderItem, WorldOrigin, primitives,
+    CameraFrame, ClipObject, Colour, FrameData, Material, MeshId, MeshItem, RenderCamera,
+    SceneFrame, WorldOrigin, primitives,
 };
 use viewport_lib_testkit::Harness;
 
@@ -23,7 +23,7 @@ fn cube(harness: &mut Harness) -> MeshId {
         .expect("cube upload")
 }
 
-fn items(harness: &mut Harness, mesh: MeshId, offset: glam::Vec3) -> Vec<SceneRenderItem> {
+fn items(harness: &mut Harness, mesh: MeshId, offset: glam::Vec3) -> Vec<MeshItem> {
     let material = harness
         .renderer
         .resources_mut()
@@ -32,7 +32,7 @@ fn items(harness: &mut Harness, mesh: MeshId, offset: glam::Vec3) -> Vec<SceneRe
     // A 4 x 4 grid, enough to take the cached-batch path.
     (0..16)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.material = material;
             let at = glam::Vec3::new((i % 4) as f32 * 1.5, (i / 4) as f32 * 1.5, 0.0);
@@ -42,7 +42,7 @@ fn items(harness: &mut Harness, mesh: MeshId, offset: glam::Vec3) -> Vec<SceneRe
         .collect()
 }
 
-fn frame(items: &[SceneRenderItem], eye: glam::Vec3, target: glam::Vec3) -> FrameData {
+fn frame(items: &[MeshItem], eye: glam::Vec3, target: glam::Vec3) -> FrameData {
     let camera = RenderCamera::from_matrices(
         glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z),
         glam::Mat4::perspective_infinite_reverse_rh(0.9, W as f32 / H as f32, 0.1),

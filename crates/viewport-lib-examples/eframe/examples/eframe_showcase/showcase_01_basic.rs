@@ -4,7 +4,7 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use viewport_lib as vpl;
 use viewport_lib::Colour;
-use vpl::{SceneRenderItem, ViewportRenderer};
+use vpl::{MeshItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // State
@@ -45,7 +45,7 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl App {
-    pub(crate) fn basic_scene_items(&self) -> Vec<SceneRenderItem> {
+    pub(crate) fn basic_scene_items(&self) -> Vec<MeshItem> {
         let Some(mesh_id) = self.basic_state.mesh_id else {
             return vec![];
         };
@@ -58,7 +58,7 @@ impl App {
         positions
             .iter()
             .map(|pos| {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh_id;
                 item.model = glam::Mat4::from_translation(glam::Vec3::from(*pos)).into();
                 item

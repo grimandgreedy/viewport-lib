@@ -181,7 +181,7 @@ const ROOM_BOXES: [([f64; 3], [f32; 3]); 8] = [
 /// `WorldOrigin::Zero`, or 6 400 km out under a snapped origin.
 fn render_room(harness: &mut Harness, far: bool, clip: bool, generation: u64) -> Vec<u8> {
     use glam::DVec3;
-    use viewport_lib::{Colour, LightKind, LightSource, Material, SceneRenderItem, primitives};
+    use viewport_lib::{Colour, LightKind, LightSource, Material, MeshItem, primitives};
     let base = DVec3::new(if far { ROOM_FAR } else { 0.0 }, 0.0, 0.0);
     let mut scene = viewport_lib_testkit::BuiltScene::default();
     let res = harness.renderer.resources_mut();
@@ -195,7 +195,7 @@ fn render_room(harness: &mut Harness, far: bool, clip: bool, generation: u64) ->
                 &primitives::cuboid(size[0], size[1], size[2]),
             )
             .expect("mesh upload");
-        let mut item = SceneRenderItem::new(mesh, mat);
+        let mut item = MeshItem::new(mesh, mat);
         item.model = viewport_lib::Transform::from_translation(base + DVec3::from(centre));
         scene.items.push(item);
     }
@@ -460,7 +460,7 @@ fn plugin_cull_frustum_6400_km_from_origin_keeps_what_is_in_view() {
 /// snapped origin.
 fn render_foreground(harness: &mut Harness, far: bool, generation: u64) -> Vec<u8> {
     use glam::DVec3;
-    use viewport_lib::{Colour, Material, SceneRenderItem, primitives};
+    use viewport_lib::{Colour, Material, MeshItem, primitives};
     let base = DVec3::new(if far { ROOM_FAR } else { 0.0 }, 0.0, 0.0);
     let mut scene = viewport_lib_testkit::BuiltScene::default();
     let res = harness.renderer.resources_mut();
@@ -476,7 +476,7 @@ fn render_foreground(harness: &mut Harness, far: bool, generation: u64) -> Vec<u
     let cube = res
         .upload_mesh_data(&harness.device, &primitives::cuboid(0.5, 0.5, 0.5))
         .expect("mesh upload");
-    let mut ground = SceneRenderItem::new(floor, floor_mat);
+    let mut ground = MeshItem::new(floor, floor_mat);
     ground.model = viewport_lib::Transform::from_translation(base + DVec3::new(0.0, 0.0, -0.1));
     scene.items.push(ground);
     scene.generation = generation;
@@ -491,7 +491,7 @@ fn render_foreground(harness: &mut Harness, far: bool, generation: u64) -> Vec<u
         glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
     );
     let mut frame = frame_for(&scene, &camera, [W as f32, H as f32]);
-    let mut held = SceneRenderItem::new(cube, fg_mat);
+    let mut held = MeshItem::new(cube, fg_mat);
     held.model =
         viewport_lib::Transform::from_translation(base + DVec3::new(0.3125, -0.1875, 0.4375));
     frame.scene.foreground_items = vec![held];

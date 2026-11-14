@@ -87,7 +87,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     let mut m = Material::default();
     let mat = upload_material(&mut renderer, m);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
@@ -214,7 +214,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let mut m = Material::default();
     m.shading_plugin = Some(plugin_id);
     let mat = upload_material(&mut renderer, m);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
@@ -283,7 +283,7 @@ fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3
 
     let mut m = Material::default();
     m.shading_plugin = Some(plugin_id);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = plain_id;
     item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
@@ -367,7 +367,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 
     let mut m = Material::default();
     let mat = upload_material(&mut renderer, m);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
@@ -536,7 +536,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     toon.shading_plugin = Some(plugin_id);
     let toon_mat = upload_material(&mut renderer, toon);
     let make = |material: MaterialId| {
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = mesh_id;
         it.material = material;
         it
@@ -626,7 +626,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let toon = upload_material(&mut renderer, toon);
     let items: Vec<_> = (0..4)
         .map(|_| {
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = mesh_id;
             it.material = toon;
             it
@@ -709,7 +709,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     m.shading_plugin = Some(plugin_id);
     let mat = upload_material(&mut renderer, m);
     let sphere = || {
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = mesh_id;
         it.material = mat;
         it
@@ -789,7 +789,7 @@ fn recolour(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3
     m.shading_plugin = Some(plugin_id);
     let mat = upload_material(&mut renderer, m);
     let item = || {
-        let mut it = SceneRenderItem::default();
+        let mut it = MeshItem::default();
         it.mesh_id = mesh_id;
         it.material = mat;
         it
@@ -842,7 +842,7 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
     type Case = (
         &'static str,
         usize,
-        fn(&mut FrameData, &mut SceneRenderItem, &mut Material),
+        fn(&mut FrameData, &mut MeshItem, &mut Material),
     );
     let cases: [Case; 7] = [
         ("direct, one item", 1, |frame, _, _| {
@@ -891,7 +891,7 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
             frame.camera.viewport_size = [64.0, 64.0];
             frame.viewport.show_grid = false;
             frame.viewport.show_axes_indicator = false;
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             let mut material = Material::default();
             configure(&mut frame, &mut item, &mut material);
@@ -899,7 +899,7 @@ fn a_plugin_draws_the_same_built_on_demand_as_built_up_front() {
                 material.shading_plugin = Some(plugin);
             }
             item.material = upload_material(&mut renderer, material);
-            let items: Vec<SceneRenderItem> = (0..count)
+            let items: Vec<MeshItem> = (0..count)
                 .map(|i| {
                     let mut item = item.clone();
                     item.model = glam::Mat4::from_translation(glam::Vec3::new(
@@ -976,7 +976,7 @@ fn a_plugin_compiled_in_the_background_is_skipped_then_drawn() {
         if with_item {
             let mut m = Material::default();
             m.shading_plugin = Some(plugin);
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.material = upload_material(&mut renderer, m);
             frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1087,7 +1087,7 @@ fn a_background_warm_up_is_counted_then_waited_for() {
     frame.viewport.show_axes_indicator = false;
     let mut m = Material::default();
     m.shading_plugin = Some(plugin);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = upload_material(&mut renderer, m);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -1163,7 +1163,7 @@ fn two_box_frame(mesh_id: MeshId, materials: &[MaterialId]) -> FrameData {
         .iter()
         .enumerate()
         .map(|(i, &material)| {
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = mesh_id;
             it.material = material;
             let x = (i as f32 - (n - 1.0) * 0.5) * 0.9;

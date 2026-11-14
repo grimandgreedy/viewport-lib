@@ -66,7 +66,7 @@ fn raster_centre(
     frame.effects.environment = Some(EnvironmentLighting::new(env));
     frame.effects.lighting.lights = vec![];
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(&mut renderer, material);

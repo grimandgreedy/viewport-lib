@@ -31,7 +31,7 @@ use vpl::input::adapters::{AdapterCtx, winit as vpl_winit};
 use vpl::wgpu;
 use vpl::{
     BindingPreset, Camera, CameraFrame, FrameData, InputOwnership, LightingSettings, MeshId,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
+    MeshItem, OrbitCameraController, SceneFrame, ViewportContext, ViewportEvent, ViewportId,
     ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
@@ -165,10 +165,10 @@ impl AppState {
             ([2.0, 2.0, 0.0], [0.9, 0.9, 0.3, 1.0]),
             ([0.0, 0.0, 2.0], [0.9, 0.5, 0.1, 1.0]),
         ];
-        let items: Vec<SceneRenderItem> = positions_colours
+        let items: Vec<MeshItem> = positions_colours
             .iter()
             .map(|&(pos, colour)| {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = self.mesh_id;
                 item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).into();
                 item.settings.colour = Some(Colour::linear_rgb(colour[0], colour[1], colour[2]));

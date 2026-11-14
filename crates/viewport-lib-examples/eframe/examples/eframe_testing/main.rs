@@ -18,8 +18,8 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
-    Material, MaterialId, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ViewportContext, ViewportInput, ViewportRenderer, primitives,
+    Material, MaterialId, MeshId, MeshItem, OffscreenViewportTarget, OrbitCameraController,
+    SceneFrame, ViewportContext, ViewportInput, ViewportRenderer, primitives,
 };
 
 // Solid unlit colours for the subsurface objects. Picked to be visually distinct
@@ -190,9 +190,9 @@ impl App {
         }
     }
 
-    fn build_scene(&self) -> Vec<SceneRenderItem> {
+    fn build_scene(&self) -> Vec<MeshItem> {
         let ground = {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = self.ground_id;
 
             item.material = if self.ground_two_sided {
@@ -214,7 +214,7 @@ impl App {
 
         let mut items = vec![ground];
         for pos in &box_positions {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = self.box_id;
 
             item.material = self.materials.boxes;
@@ -224,7 +224,7 @@ impl App {
 
         // Sphere at the origin, slightly above ground, as a depth-fight probe.
         {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = self.sphere_id;
 
             item.material = self.materials.sphere;
@@ -237,7 +237,7 @@ impl App {
         // offset so both are independently visible.
         if self.show_subsurface {
             {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = self.unlit_sphere_id;
                 item.settings.unlit = true;
                 item.settings.colour = Some(Colour::from_linear_rgb_array(COLOUR_MAGENTA));
@@ -246,7 +246,7 @@ impl App {
             }
 
             {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = self.unlit_box_id;
 
                 item.settings.unlit = true;

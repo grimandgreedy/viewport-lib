@@ -19,7 +19,7 @@ use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
     Camera, LightKind, LightSource, Material,
-    renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
+    renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
 };
 use viewport_lib_post_effects::{ContactShadowEffect, ContactShadowEffectSettings};
@@ -158,7 +158,7 @@ fn run_variant(
     // Ground slab plus a GRID x GRID field of cubes, every eighth emissive
     // so bright sources are spread across the frame.
     let mut items = Vec::new();
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = mesh;
     ground.model =
         (glam::Mat4::from_scale(glam::Vec3::new(grid as f32 * 1.6, grid as f32 * 1.6, 0.1))
@@ -179,7 +179,7 @@ fn run_variant(
     items.push(ground);
     for x in 0..grid {
         for y in 0..grid {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             let pos = glam::Vec3::new(
                 (x - grid / 2) as f32 * 1.5,

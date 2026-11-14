@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 
 use viewport_lib::Colour;
 use viewport_lib::plugin_api::post_effect::stage_order;
-use viewport_lib::{FrameData, Material, PostEffectSlot, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{FrameData, Material, MeshItem, PostEffectSlot, SurfaceSubmission};
 use viewport_lib_testkit::fixtures::{
     CallLog, LoggingPostEffectProducer, PassthroughPostEffectStage, probe_frame, probe_quad,
 };
@@ -25,7 +25,7 @@ fn quad_frame(harness: &mut Harness) -> FrameData {
         .upload_mesh_data(&harness.device, &probe_quad())
         .expect("upload probe quad");
     let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).into();
     item.material = harness

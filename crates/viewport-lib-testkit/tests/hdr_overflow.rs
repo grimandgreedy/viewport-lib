@@ -6,7 +6,7 @@
 //! a glow around the emitter rather than filling the frame.
 
 use viewport_lib::{
-    Camera, Colour, ExposureSettings, Material, PipelineMode, SceneRenderItem, primitives,
+    Camera, Colour, ExposureSettings, Material, MeshItem, PipelineMode, primitives,
 };
 use viewport_lib_testkit::{BuiltScene, Harness, frame_for};
 
@@ -32,7 +32,7 @@ fn bright_emissive_and_oit_stack_read_back_finite() {
     let sphere = res
         .upload_mesh_data(&h.device, &primitives::sphere(0.25, 24, 12))
         .expect("mesh upload");
-    let mut emitter = SceneRenderItem::new(sphere, sun);
+    let mut emitter = MeshItem::new(sphere, sun);
     emitter.model = viewport_lib::Transform::from_translation([-0.9, 0.0, 0.0]);
     scene.items.push(emitter);
 
@@ -44,7 +44,7 @@ fn bright_emissive_and_oit_stack_read_back_finite() {
         .upload_mesh_data(&h.device, &primitives::plane(0.8, 0.8))
         .expect("mesh upload");
     for i in 0..LAYERS {
-        let mut item = SceneRenderItem::new(sheet, glow);
+        let mut item = MeshItem::new(sheet, glow);
         item.settings.opacity = 0.5;
         item.model = viewport_lib::Transform::from_translation([0.7, 0.0, 0.05 * i as f64]);
         scene.items.push(item);

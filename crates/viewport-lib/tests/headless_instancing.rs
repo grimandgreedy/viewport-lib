@@ -72,7 +72,7 @@ fn position_override_takes_effect_through_render_path() {
 
     // Red plane (target of the override) at the origin; blue decoy off to the
     // side so it doesn't overdraw the red region we measure.
-    let mut red_item = SceneRenderItem::default();
+    let mut red_item = MeshItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.into();
     red_item.material = upload_material(
@@ -80,7 +80,7 @@ fn position_override_takes_effect_through_render_path() {
         Material::from_colour(Colour::linear_rgb(1.0, 0.0, 0.0)),
     );
 
-    let mut blue_item = SceneRenderItem::default();
+    let mut blue_item = MeshItem::default();
     blue_item.mesh_id = blue_id;
     blue_item.model = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).into();
     blue_item.material = upload_material(
@@ -168,7 +168,7 @@ fn outline_mask_follows_position_override() {
         .upload_mesh_data(&device, &mesh)
         .unwrap();
 
-    let make_frame = |items: Vec<SceneRenderItem>| -> FrameData {
+    let make_frame = |items: Vec<MeshItem>| -> FrameData {
         let cam = Camera::default();
         let mut frame = FrameData::default();
         frame.camera.render_camera = RenderCamera::from_camera(&cam);
@@ -180,7 +180,7 @@ fn outline_mask_follows_position_override() {
         frame
     };
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.into();
     item.material = upload_material(
@@ -295,7 +295,7 @@ fn position_override_slice_reads_correct_pool_window() {
     }];
     frame.effects.lighting.hemisphere_intensity = 0.5;
 
-    let mut red_item = SceneRenderItem::default();
+    let mut red_item = MeshItem::default();
     red_item.mesh_id = red_id;
     red_item.model = glam::Mat4::IDENTITY.into();
     red_item.material = upload_material(
@@ -396,7 +396,7 @@ fn occlusion_culling_render_path_runs() {
     // -Z by default here): a big near box and several smaller ones behind it.
     let mut items = Vec::new();
     for i in 0..8 {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_idx;
         let z = -(i as f32) * 1.5;
         let s = if i == 0 { 4.0 } else { 1.0 };
@@ -472,7 +472,7 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
 
     let mut items = Vec::new();
     for i in 0..4 {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_idx;
         item.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5)).into();
@@ -518,7 +518,7 @@ fn occlusion_culling_ldr_path_runs() {
 
     let mut items = Vec::new();
     for i in 0..8 {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_idx;
         let z = -(i as f32) * 1.5;
         let s = if i == 0 { 4.0 } else { 1.0 };
@@ -580,7 +580,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
 
     // A single non-instanced (per-object) LOD item filling the view centre. The
     // DifferentColour back-face policy is what forces it onto the per-object path.
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     let mut mat = Material::default();
     item.mesh_id = full;
     item.lod_group = Some(group);
@@ -667,7 +667,7 @@ fn multi_draw_collapse_is_pixel_identical() {
         // Two instances per mesh, offset along X and Y, so instancing engages
         // (visible count well past the threshold) and batches carry >1 instance.
         for inst in 0..2 {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             let x = (i as f32 - 2.0) * 1.3;
             let y = inst as f32 * 1.1;
@@ -810,7 +810,7 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
         .upload_mesh_data(&device, &box_mesh())
         .unwrap();
     let at = |x: f32, opacity: f32| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
         item.settings.opacity = opacity;
@@ -819,7 +819,7 @@ fn opaque_and_translucent_copies_of_a_mesh_draw_independently() {
     let opaque = at(-1.2, 1.0);
     let translucent = at(1.2, 0.5);
     let mut generation = 0;
-    let mut draw = |items: Vec<SceneRenderItem>| {
+    let mut draw = |items: Vec<MeshItem>| {
         let mut frame = FrameData::default();
         frame.camera.render_camera = RenderCamera::from_camera(&Camera::orbit(
             glam::DVec3::ZERO,
@@ -913,7 +913,7 @@ fn textured_casters_share_shadow_draw_runs() {
         let mut surfaces = Vec::new();
         for (i, &mesh_id) in mesh_ids.iter().enumerate() {
             for inst in 0..2 {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh_id;
                 let x = (i as f32 - MESHES as f32 / 2.0) * 1.3;
                 let y = inst as f32 * 1.1;
@@ -985,7 +985,7 @@ fn direct_path_clip_plane_still_discards() {
     );
     let mut surfaces = Vec::new();
     for i in 0..6 {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.material = material;
         let x = (i as f32 - 2.5) * 1.2;

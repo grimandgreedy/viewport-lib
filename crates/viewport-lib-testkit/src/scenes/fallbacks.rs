@@ -10,8 +10,8 @@ use glam::{Mat4, Vec2, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinMatcap,
-    Colour, ColourmapId, Material, MeshData, ParamVis, ParamVisMode, PatternConfig, SamplerKey,
-    SceneRenderItem, ShadingModel, SubmeshRange, TextureSlot, WrapMode, primitives,
+    Colour, ColourmapId, Material, MeshData, MeshItem, ParamVis, ParamVisMode, PatternConfig,
+    SamplerKey, ShadingModel, SubmeshRange, TextureSlot, WrapMode, primitives,
     resources::{LightmapData, LightmapMode},
 };
 
@@ -97,16 +97,16 @@ fn grey() -> Material {
 struct Column {
     mesh: viewport_lib::MeshId,
     material: Material,
-    set: fn(&mut BuildCtx<'_>, &mut SceneRenderItem),
+    set: fn(&mut BuildCtx<'_>, &mut MeshItem),
     /// Model offset applied before the grid translation.
     model: Mat4,
 }
 
-fn no_op(_: &mut BuildCtx<'_>, _: &mut SceneRenderItem) {}
+fn no_op(_: &mut BuildCtx<'_>, _: &mut MeshItem) {}
 
 fn lay_out(
     ctx: &mut BuildCtx<'_>,
-    items: &mut Vec<SceneRenderItem>,
+    items: &mut Vec<MeshItem>,
     columns: &[Column],
     row_pairs: &[f32],
 ) {
@@ -188,7 +188,7 @@ fn build_materials_fallbacks(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         scale: 8.0,
     });
 
-    let plain_col = |material: Material, set: fn(&mut BuildCtx<'_>, &mut SceneRenderItem)| Column {
+    let plain_col = |material: Material, set: fn(&mut BuildCtx<'_>, &mut MeshItem)| Column {
         mesh: plain,
         material,
         set,

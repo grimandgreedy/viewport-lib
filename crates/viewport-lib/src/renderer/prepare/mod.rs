@@ -87,7 +87,7 @@ impl ViewportRenderer {
         resources: &crate::resources::DeviceResources,
         lod_levels: &mut std::collections::HashMap<u64, usize>,
         camera: &RenderCamera,
-        items: &mut [SceneRenderItem],
+        items: &mut [MeshItem],
     ) -> (u32, u32, u32, u32) {
         let mut resolved = 0u32;
         let mut switches = 0u32;
@@ -287,7 +287,7 @@ impl ViewportRenderer {
         // boundary draws contributed by opaque volume meshes (items in
         // `volume_meshes` whose `transparency` is `None`). The owned vector
         // keeps these extra items alive for the whole prepare pass.
-        let mut scene_items_owned: Vec<SceneRenderItem> = {
+        let mut scene_items_owned: Vec<MeshItem> = {
             let surfaces = match &frame.scene.surfaces {
                 SurfaceSubmission::Flat(items) => items.as_ref(),
             };
@@ -340,7 +340,7 @@ impl ViewportRenderer {
                 item.model.translation -= self.origin.origin();
             }
         }
-        let scene_items: &[SceneRenderItem] = &scene_items_owned;
+        let scene_items: &[MeshItem] = &scene_items_owned;
 
         let lighting_start = web_time::Instant::now();
         let lighting_span =
@@ -1675,7 +1675,7 @@ fn settle_gpu_culling(
 mod lod_resolve_tests {
     use super::ViewportRenderer;
     use crate::geometry::primitives;
-    use crate::renderer::{RenderCamera, SceneRenderItem};
+    use crate::renderer::{MeshItem, RenderCamera};
     use crate::resources::{DeviceResources, LodGroupId, MeshData};
     use std::collections::HashMap;
 
@@ -1716,8 +1716,8 @@ mod lod_resolve_tests {
         )
     }
 
-    fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> SceneRenderItem {
-        let mut item = SceneRenderItem::default();
+    fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> MeshItem {
+        let mut item = MeshItem::default();
         item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).into();
         item.lod_group = Some(group);
         item.settings.pick_id = crate::renderer::PickId(pick);
@@ -1774,7 +1774,7 @@ mod lod_resolve_tests {
         let plain_mesh = res
             .upload_mesh_data(&device, &primitives::cube(2.0))
             .unwrap();
-        let mut plain = SceneRenderItem::default();
+        let mut plain = MeshItem::default();
         plain.mesh_id = plain_mesh;
 
         let camera = looking_down_z();

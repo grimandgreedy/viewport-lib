@@ -12,7 +12,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::curves::{RibbonItem, StreamtubeItem, TubeItem};
 use vpl::{
-    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
+    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, MeshItem, PolylineItem,
     SpriteBlend, StrokePattern,
 };
 
@@ -544,7 +544,7 @@ fn flatten_paths(
 
 pub(crate) fn stream_collect_scene_items(
     _app: &App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.5;

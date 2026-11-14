@@ -8,7 +8,7 @@ use super::*;
 /// the caller. Shared by every packer so the two draw paths cannot drift.
 pub(crate) fn build_instance_record(
     resources: &DeviceResources,
-    item: &SceneRenderItem,
+    item: &MeshItem,
     mesh: Option<&crate::resources::GpuMesh>,
     wireframe_mode: bool,
     light_probe_index: Option<u32>,
@@ -184,7 +184,7 @@ pub(crate) fn build_instance_record(
 /// for consumers that never call `set_light_probes`.
 pub(super) fn prepare_light_probe_sh(
     resources: &DeviceResources,
-    scene_items: &[SceneRenderItem],
+    scene_items: &[MeshItem],
     queue: &crate::gpu::Queue,
     origin: &crate::renderer::origin::OriginState,
 ) -> Vec<Option<u32>> {
@@ -250,7 +250,7 @@ impl ViewportRenderer {
     pub(in crate::renderer) fn prepare_foreground_objects<'i>(
         resources: &mut DeviceResources,
         entries: &mut Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
-        items: impl ExactSizeIterator<Item = &'i SceneRenderItem>,
+        items: impl ExactSizeIterator<Item = &'i MeshItem>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {

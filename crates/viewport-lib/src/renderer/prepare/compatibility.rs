@@ -151,7 +151,7 @@ impl ViewportRenderer {
         .into_iter()
         .map(|b| b.mask);
         let crate::renderer::SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
-        let outlined = |item: &crate::renderer::SceneRenderItem| {
+        let outlined = |item: &crate::renderer::MeshItem| {
             frame.interaction.outline_selected && item.settings.selected && !item.settings.hidden
         };
         if items.iter().any(outlined) || self.any_plugin_item_selected(frame) {
@@ -225,9 +225,8 @@ impl ViewportRenderer {
         let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
         // A wireframe item draws its mesh's edges, extracted on first use as
         // on the full tier.
-        let wireframe = |item: &crate::SceneRenderItem| {
-            frame.viewport.wireframe_mode || item.settings.wireframe
-        };
+        let wireframe =
+            |item: &crate::MeshItem| frame.viewport.wireframe_mode || item.settings.wireframe;
         for item in items.iter().filter(|i| !i.settings.hidden && wireframe(i)) {
             self.resources.ensure_edge_indices(device, item.mesh_id);
         }

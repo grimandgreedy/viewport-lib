@@ -21,9 +21,9 @@ use viewport_lib::input::adapters::{AdapterCtx, winit as vpl_winit};
 use vpl::wgpu;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, InputOwnership,
-    LightingSettings, Material, MeshId, OrbitCameraController, OverlayFill, OverlayShape,
-    OverlayShapeItem, PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
+    LightingSettings, Material, MeshId, MeshItem, OrbitCameraController, OverlayFill, OverlayShape,
+    OverlayShapeItem, PostProcessSettings, SceneFrame, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -50,7 +50,7 @@ struct AppState {
     /// controller keeps only its sensitivities and applies the frame.
     input: ViewportInput,
 
-    scene_items: Vec<SceneRenderItem>,
+    scene_items: Vec<MeshItem>,
 
     // Post-process toggles
     bloom: bool,
@@ -138,7 +138,7 @@ impl ApplicationHandler for App {
             // washing out the object colour.
             material.emissive =
                 Colour::linear_rgb(colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2);
-            let mut item = SceneRenderItem::new(mesh_id, res.upload_material(material).unwrap());
+            let mut item = MeshItem::new(mesh_id, res.upload_material(material).unwrap());
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).into();
             item
         };

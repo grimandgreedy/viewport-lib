@@ -7,8 +7,8 @@
 
 use viewport_lib::Colour;
 use viewport_lib::{
-    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
-    SceneRenderItem,
+    CameraFrame, FrameData, LightKind, LightSource, LightingSettings, Material, MeshItem,
+    SceneFrame,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -20,7 +20,7 @@ fn overflow_frame(h: &mut Harness, lights: usize) -> FrameData {
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::heightfield(32, 32, 60.0, 1.0))
         .expect("ground");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer
@@ -156,7 +156,7 @@ fn ranked_last_frame(h: &mut Harness, with_bright: bool) -> FrameData {
         .resources_mut()
         .upload_mesh_data(&h.device, &meshes::heightfield(32, 32, 60.0, 0.0))
         .expect("ground");
-    let mut ground = SceneRenderItem::default();
+    let mut ground = MeshItem::default();
     ground.mesh_id = ground_id;
     ground.material = h
         .renderer

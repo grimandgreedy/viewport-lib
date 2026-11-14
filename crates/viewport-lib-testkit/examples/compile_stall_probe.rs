@@ -267,9 +267,9 @@ fn main() {
         frame.camera.render_camera =
             viewport_lib::RenderCamera::from_camera(&viewport_lib::Camera::default());
         frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
-        let items: Vec<viewport_lib::SceneRenderItem> = (0..4)
+        let items: Vec<viewport_lib::MeshItem> = (0..4)
             .map(|i| {
-                let mut it = viewport_lib::SceneRenderItem::default();
+                let mut it = viewport_lib::MeshItem::default();
                 it.mesh_id = mesh;
                 it.model =
                     glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 2.5 - 4.0, 0.0, 0.0))

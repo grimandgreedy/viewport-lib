@@ -7,7 +7,7 @@ use viewport_lib_types::plugin::material::MATERIAL_PLUGIN_MAX_PARAMS;
 impl DeviceResources {
     /// Upload a material and return its id.
     ///
-    /// Set the id on `SceneRenderItem::material` (or a `Scene` node). Items
+    /// Set the id on `MeshItem::material` (or a `Scene` node). Items
     /// sharing an id share one material block and can share a batch. Each call
     /// makes a distinct material, even for equal values, so editing one with
     /// [`replace_material`](Self::replace_material) never changes another.

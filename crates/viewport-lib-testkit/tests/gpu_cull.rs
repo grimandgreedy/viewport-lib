@@ -6,7 +6,7 @@ use glam::Vec3;
 use viewport_lib::Colour;
 use viewport_lib::primitives::cube;
 use viewport_lib::wgpu;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame};
 use viewport_lib_testkit::Harness;
 use viewport_lib_testkit::scenes::orbit_camera;
 
@@ -38,9 +38,9 @@ fn frustum_cull_rejects_behind_camera() {
         .expect("material upload");
 
     // 20 cubes along x = -47.5 .. 47.5, all in one instanced batch.
-    let items: Vec<SceneRenderItem> = (0..20)
+    let items: Vec<MeshItem> = (0..20)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(Vec3::new(-47.5 + 5.0 * i as f32, 0.0, 0.0))
                 .into();

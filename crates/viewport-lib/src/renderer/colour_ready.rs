@@ -9,7 +9,7 @@
 
 use crate::renderer::pipeline_key::PipelineKey;
 use crate::renderer::types::InstancedBatch;
-use crate::renderer::{FrameData, SceneRenderItem};
+use crate::renderer::{FrameData, MeshItem};
 use crate::resources::DeviceResources;
 
 impl DeviceResources {
@@ -31,7 +31,7 @@ impl DeviceResources {
     /// opaque key is the one that matters.
     pub(crate) fn item_colour_ready(
         &self,
-        item: &SceneRenderItem,
+        item: &MeshItem,
         hdr: bool,
         clipping_active: bool,
     ) -> bool {

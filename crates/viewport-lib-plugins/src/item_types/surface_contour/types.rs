@@ -20,7 +20,7 @@ pub enum ContourLevels {
 
 /// Contour lines of a scalar field on one mesh.
 ///
-/// The item draws only the lines. Submit it beside the `SceneRenderItem` that
+/// The item draws only the lines. Submit it beside the `MeshItem` that
 /// draws the same mesh, with the same `model`: the lines are depth-tested
 /// against that surface, so they show where it is the visible one. The field
 /// that is contoured need not be the one that colours the surface.

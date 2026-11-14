@@ -27,7 +27,7 @@ pub use viewport_lib::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, PluginPipelineOpts, PluginResources,
         shared_wgsl::SHARED_PICK_WGSL,
     },
-    renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
+    renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission, ViewportRenderer},
     resources::{MeshData, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, SCENE_DEPTH_FORMAT},
 };
 

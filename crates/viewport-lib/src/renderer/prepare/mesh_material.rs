@@ -8,7 +8,7 @@ use super::*;
 /// `submesh_materials`, the mesh has no ranges, or the two disagree on
 /// count (the mismatch falls back rather than guessing an assignment).
 pub(crate) fn active_submesh_materials<'a>(
-    item: &'a SceneRenderItem,
+    item: &'a MeshItem,
     mesh: &crate::resources::GpuMesh,
 ) -> Option<&'a [crate::resources::MaterialId]> {
     let mats = item.submesh_materials.as_deref()?;
@@ -30,7 +30,7 @@ pub(crate) fn active_submesh_materials<'a>(
 /// Whether any of the item's draws belong in the transparent pass (OIT on
 /// the HDR path). Per range for a per-range item: a
 /// per-range item can be in both passes at once. A wireframe item has none.
-pub(crate) fn has_transparent_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
+pub(crate) fn has_transparent_draws(item: &MeshItem, resources: &DeviceResources) -> bool {
     if item.settings.wireframe {
         return false;
     }
@@ -68,7 +68,7 @@ pub(super) struct CommonMaterial {
 /// has to say there is no texture, or the shader samples the fallback as though
 /// it were authored.
 pub(super) fn common_material(
-    item: &SceneRenderItem,
+    item: &MeshItem,
     m: &crate::scene::material::Material,
     resolved: crate::resources::material_gpu::MaterialSlots,
 ) -> CommonMaterial {

@@ -1,4 +1,4 @@
-//! The basic mesh path the compatibility tier draws `SceneRenderItem`s with: the
+//! The basic mesh path the compatibility tier draws `MeshItem`s with: the
 //! per-instance record its vertex stage reads as a vertex stream, the
 //! pipeline variants and the mesh records its uploads build.
 

@@ -60,11 +60,11 @@ fn render_batch(
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     frame.scene.generation = generation;
 
-    let items: Vec<SceneRenderItem> = ids
+    let items: Vec<MeshItem> = ids
         .iter()
         .zip(XS)
         .map(|(id, x)| {
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = *id;
             it.material = red;
             it.settings.unlit = true;

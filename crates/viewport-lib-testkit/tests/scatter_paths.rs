@@ -44,7 +44,7 @@ fn scene(harness: &mut Harness, refraction: bool) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(&harness.device, &primitives::cuboid(8.0, 0.4, 6.0))
         .expect("slab upload");
-    let mut wall = viewport_lib::SceneRenderItem::default();
+    let mut wall = viewport_lib::MeshItem::default();
     wall.mesh_id = slab;
     wall.model = glam::Mat4::from_translation(Vec3::new(0.0, 2.5, 0.0)).into();
     wall.material = harness

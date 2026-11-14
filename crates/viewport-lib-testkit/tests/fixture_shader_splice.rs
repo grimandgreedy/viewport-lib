@@ -9,7 +9,7 @@
 
 use viewport_lib::Colour;
 use viewport_lib::wgpu;
-use viewport_lib::{Material, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{Material, MeshItem, SurfaceSubmission};
 use viewport_lib_testkit::fixtures::{
     ConstantOffsetDeformer, FlatColourMaterialPlugin, constant_offset_deformer, probe_frame,
     probe_quad,
@@ -71,7 +71,7 @@ fn deformer_fixture_moves_the_mesh() {
     );
 
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = harness
         .renderer
@@ -141,7 +141,7 @@ fn material_plugin_fixture_changes_shading() {
 
     let render = |harness: &mut Harness, shading: Option<viewport_lib::MaterialPluginId>| {
         let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).into();
         let mut red = Material::from_colour(Colour::linear_rgb(0.8, 0.1, 0.1));
@@ -313,10 +313,10 @@ fn surface_emissive_and_alpha(mode: viewport_lib::PipelineMode) {
         let mut frame = probe_frame(SIZE, [background, background, background, 1.0]);
         frame.camera.render_camera = render_camera.clone();
         frame.effects.display.mode = mode;
-        let items: Vec<SceneRenderItem> = xs
+        let items: Vec<MeshItem> = xs
             .iter()
             .map(|&centre| {
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh_id;
                 item.material = material;
                 item.model = glam::Mat4::from_translation(centre).into();
@@ -452,7 +452,7 @@ fn quad_frame(
     material: Material,
 ) -> viewport_lib::FrameData {
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(1.5)).into();
     item.material = harness
@@ -651,11 +651,11 @@ fn three_quads(
     let mut frame = probe_frame(SIZE, [0.0, 0.0, 0.0, 1.0]);
     frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     let xs = [-1.3f32, 0.0, 1.3];
-    let items: Vec<SceneRenderItem> = xs
+    let items: Vec<MeshItem> = xs
         .iter()
         .zip(materials)
         .map(|(&x, material)| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
             item.material = harness

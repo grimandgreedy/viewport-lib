@@ -30,10 +30,10 @@ fn render(
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some(Colour::linear(0.0, 0.0, 0.0, 1.0));
     frame.effects.display.mode = mode;
-    let items: Vec<SceneRenderItem> = boxes
+    let items: Vec<MeshItem> = boxes
         .iter()
         .map(|&(x, wireframe, opacity)| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();

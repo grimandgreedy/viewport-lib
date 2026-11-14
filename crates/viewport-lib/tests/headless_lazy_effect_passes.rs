@@ -33,7 +33,7 @@ fn lazy_effect_passes_render_on_the_frame_that_asks_for_them() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
 
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh_id;
     item.settings.selected = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
@@ -112,7 +112,7 @@ fn a_viewport_can_ask_for_an_effect_the_scene_frame_did_not() {
         let mut busy = base(vp1);
         busy.effects.ground_plane.mode = GroundPlaneMode::SolidColour;
         busy.effects.environment = Some(viewport_lib::EnvironmentLighting::new(env));
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh_id;
         busy.scene.foreground_items = vec![item];
 

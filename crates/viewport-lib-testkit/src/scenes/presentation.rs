@@ -11,9 +11,8 @@
 
 use glam::{Mat4, Quat, Vec2, Vec3};
 use viewport_lib::{
-    Alignment, AnchorX, AnchorY, Camera2d, Colour, Material, OverlayAnchoring, OverlayFill,
-    OverlayShape, OverlayShapeItem, Plane2d, Presentation, ReferenceFit, SceneRenderItem,
-    primitives,
+    Alignment, AnchorX, AnchorY, Camera2d, Colour, Material, MeshItem, OverlayAnchoring,
+    OverlayFill, OverlayShape, OverlayShapeItem, Plane2d, Presentation, ReferenceFit, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, material, rigs};
@@ -57,13 +56,13 @@ fn quad(
     angle: f32,
     z: f32,
     colour: Colour,
-) -> SceneRenderItem {
+) -> MeshItem {
     let mesh = ctx
         .renderer
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::plane(size.x, size.y))
         .expect("quad upload");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = Mat4::from_rotation_translation(
         Quat::from_rotation_z(angle),

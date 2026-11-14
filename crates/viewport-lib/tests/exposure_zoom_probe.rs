@@ -15,7 +15,7 @@ use viewport_lib::ExposureSettings;
 fn sphere_scene(
     renderer: &mut ViewportRenderer,
     device: &viewport_lib::wgpu::Device,
-) -> Vec<SceneRenderItem> {
+) -> Vec<MeshItem> {
     // Bounded geometry (three spheres, no backdrop) so the background fraction
     // changes strongly with camera distance - the condition that exposed the
     // framing-dependent metering swing.
@@ -31,7 +31,7 @@ fn sphere_scene(
     );
     let mut items = Vec::new();
     for i in -1..=1 {
-        let mut s = SceneRenderItem::default();
+        let mut s = MeshItem::default();
         s.mesh_id = sphere_id;
         s.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.8, 0.0, 0.0)).into();
         s.material = grey;
@@ -143,7 +143,7 @@ fn probe_example_scene() {
         .unwrap();
 
     let mut items = Vec::new();
-    let mut g = SceneRenderItem::default();
+    let mut g = MeshItem::default();
     g.mesh_id = ground;
     g.model = glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)).into();
     let mut m = Material::from_colour(Colour::linear_rgb(0.45, 0.45, 0.48));
@@ -152,7 +152,7 @@ fn probe_example_scene() {
     items.push(g);
     for c in 0..cols {
         let a = 0.05 + (c as f32 / (cols - 1) as f32) * 0.85;
-        let mut s = SceneRenderItem::default();
+        let mut s = MeshItem::default();
         s.mesh_id = sphere;
         s.model =
             glam::Mat4::from_translation(glam::Vec3::new(c as f32 * spacing, 0.8, 0.8)).into();

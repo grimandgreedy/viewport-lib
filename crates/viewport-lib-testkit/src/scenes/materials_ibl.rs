@@ -65,7 +65,7 @@ pub(super) fn upload_environment(ctx: &mut BuildCtx<'_>) -> viewport_lib::Enviro
 
 /// A scene of `items` lit only by the procedural environment.
 fn environment_scene(
-    items: Vec<viewport_lib::SceneRenderItem>,
+    items: Vec<viewport_lib::MeshItem>,
     env: viewport_lib::EnvironmentMapId,
 ) -> BuiltScene {
     let mut lighting = LightingSettings::default();

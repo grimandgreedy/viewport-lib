@@ -218,11 +218,7 @@ impl ViewportRenderer {
     }
 
     /// Whether the OIT pass has anything to draw this frame.
-    pub(super) fn hdr_has_transparent(
-        &self,
-        frame: &FrameData,
-        scene_items: &[SceneRenderItem],
-    ) -> bool {
+    pub(super) fn hdr_has_transparent(&self, frame: &FrameData, scene_items: &[MeshItem]) -> bool {
         (if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
             // Every transparent item is in a blended batch, which goes through OIT.
             self.instancing.batches.iter().any(|b| b.is_transparent)
@@ -246,7 +242,7 @@ impl ViewportRenderer {
     pub(super) fn plan_hdr_passes(
         &mut self,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
         vp_idx: usize,
         w: u32,
         h: u32,

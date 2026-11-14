@@ -11,7 +11,7 @@ use viewport_lib::Colour;
 use viewport_lib::wgpu;
 use viewport_lib::{
     Camera, LightKind, LightSource, Material,
-    renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
+    renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
 };
 use viewport_lib_post_effects::{ContactShadowEffect, ContactShadowEffectSettings, vfx_stack};
@@ -90,10 +90,7 @@ fn contact_shadow_frame(light_direction: [f32; 3]) -> FrameData {
     frame
 }
 
-fn contact_shadow_items(
-    renderer: &mut ViewportRenderer,
-    device: &wgpu::Device,
-) -> Vec<SceneRenderItem> {
+fn contact_shadow_items(renderer: &mut ViewportRenderer, device: &wgpu::Device) -> Vec<MeshItem> {
     let ground = renderer
         .resources_mut()
         .upload_mesh_data(device, &quad_mesh())
@@ -102,14 +99,14 @@ fn contact_shadow_items(
         .resources_mut()
         .upload_mesh_data(device, &box_mesh())
         .unwrap();
-    let mut ground_item = SceneRenderItem::default();
+    let mut ground_item = MeshItem::default();
     ground_item.mesh_id = ground;
     ground_item.model = glam::Mat4::from_scale(glam::Vec3::splat(8.0)).into();
     ground_item.material = renderer
         .resources_mut()
         .upload_material(Material::from_colour(Colour::linear_rgb(0.7, 0.7, 0.7)))
         .unwrap();
-    let mut cube_item = SceneRenderItem::default();
+    let mut cube_item = MeshItem::default();
     cube_item.mesh_id = cube;
     cube_item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.25))
         * glam::Mat4::from_scale(glam::Vec3::splat(0.4)))
@@ -211,7 +208,7 @@ fn vfx_stack_chains() {
             }
         }
         let mut frame = base_frame([0.25, 0.3, 0.35, 1.0]);
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = mesh;
         item.settings.colour = Some(Colour::linear_rgb(0.6, 0.6, 0.6));
         item.settings.unlit = true;

@@ -18,7 +18,7 @@
 use glam::{Mat4, Vec2, Vec3};
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
-    Camera2d, Colour, Material, MeshInstanceItem, PickId, Plane2d, SceneRenderItem, SpriteBlend,
+    Camera2d, Colour, Material, MeshInstanceItem, MeshItem, PickId, Plane2d, SpriteBlend,
     TextureData, painter_key, primitives,
 };
 use viewport_lib_plugins::item_types::gpu_particles::{
@@ -115,7 +115,7 @@ fn build_composed_keys(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     // The entity's middle part: a flat unlit surface.
     let plane = upload_plane(ctx, 40.0);
-    let mut flat = SceneRenderItem::default();
+    let mut flat = MeshItem::default();
     flat.mesh_id = plane;
     let p = at(2.0);
     flat.model = Mat4::from_translation(Vec3::new(p.x, p.y, 0.0)).into();
@@ -244,7 +244,7 @@ fn build_over_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .upload_mesh_data(ctx.device, &primitives::cuboid(70.0, 70.0, 20.0))
         .expect("cube upload");
     let glass = |ctx: &mut BuildCtx<'_>, colour: Colour, x: f32, z: f32| {
-        let mut item = SceneRenderItem::default();
+        let mut item = MeshItem::default();
         item.mesh_id = cube;
         item.model = Mat4::from_translation(Vec3::new(x, 0.0, z)).into();
         item.material = material(ctx, Material::from_colour(colour));
@@ -261,7 +261,7 @@ fn build_over_transparent(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::plane(W, H))
         .expect("plate upload");
-    let mut plate = SceneRenderItem::default();
+    let mut plate = MeshItem::default();
     plate.mesh_id = plate_mesh;
     plate.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -60.0)).into();
     plate.material = material(

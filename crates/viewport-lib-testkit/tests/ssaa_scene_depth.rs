@@ -7,7 +7,7 @@
 //! draw nothing. Decals are the clearest victim, and the cheapest to assert on.
 
 use viewport_lib::Colour;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem, TextureData};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame, TextureData};
 use viewport_lib_plugins::item_types::decal::DecalItem;
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -24,7 +24,7 @@ fn decal_frame(
     material: viewport_lib::MaterialId,
 ) -> FrameData {
     let camera = orbit_camera(glam::Vec3::ZERO, 6.0, 0.6, 1.0);
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.material = material;
     let mut fd = FrameData::new(

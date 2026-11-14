@@ -919,7 +919,7 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
     ) -> crate::gpu::CommandBuffer {
         let paint_start = web_time::Instant::now();
         self.last_frame_kept_scene_depth = self.keep_scene_depth;

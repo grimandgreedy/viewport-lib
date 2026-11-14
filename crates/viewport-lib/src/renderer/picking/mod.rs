@@ -39,7 +39,7 @@ impl ViewportRenderer {
         let surfaces = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
-        // Opaque volume meshes appear as boundary SceneRenderItems for face/vertex
+        // Opaque volume meshes appear as boundary MeshItems for face/vertex
         // picking; cell-level remapping is driven from `pick_volume_mesh_items`.
         self.pick_scene_items = surfaces
             .iter()

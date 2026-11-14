@@ -5,7 +5,7 @@
 //! immediate path and later frames the bundle replay; their images must match.
 
 use viewport_lib::Colour;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame};
 use viewport_lib_testkit::{Harness, orbit_camera};
 
 #[test]
@@ -28,9 +28,9 @@ fn bundle_replay_matches_immediate_draws() {
 
     // 100 items in a grid, some overlapping in depth so wrong draw content
     // would show.
-    let items: Vec<SceneRenderItem> = (0..100)
+    let items: Vec<MeshItem> = (0..100)
         .map(|i| {
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = ids[i];
             let (x, y) = ((i % 10) as f32 * 7.0 - 31.5, (i / 10) as f32 * 7.0 - 31.5);
             it.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, (i % 3) as f32 * 3.0))
@@ -105,9 +105,9 @@ fn plugin_batches_in_bundle(mode: viewport_lib::PipelineMode) {
     // holds only the plugin ones, too few to record; draw everything directly.
     h.renderer.disable_gpu_driven_culling();
     let data = viewport_lib::primitives::icosphere(4.0, 2);
-    let items: Vec<SceneRenderItem> = (0..100)
+    let items: Vec<MeshItem> = (0..100)
         .map(|i| {
-            let mut it = SceneRenderItem::default();
+            let mut it = MeshItem::default();
             it.mesh_id = h
                 .renderer
                 .resources_mut()

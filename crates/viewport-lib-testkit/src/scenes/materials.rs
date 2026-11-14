@@ -7,7 +7,7 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::{
     AlphaMode, BackfacePolicy, Colour, LightKind, LightSource, LightingSettings, Material,
-    MeshData, SceneRenderItem, ShadingModel, TextureSlot, UvTransform, primitives,
+    MeshData, MeshItem, ShadingModel, TextureSlot, UvTransform, primitives,
 };
 
 use super::{
@@ -30,7 +30,7 @@ fn pair_x(i: usize) -> f32 {
 /// mesh relative to that spot.
 fn both_paths(
     ctx: &mut BuildCtx<'_>,
-    items: &mut Vec<SceneRenderItem>,
+    items: &mut Vec<MeshItem>,
     mesh: viewport_lib::MeshId,
     x: f32,
     model: Mat4,
@@ -177,7 +177,7 @@ fn build_materials_alpha_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// Push one item placed by `model`.
 pub(super) fn place(
     ctx: &mut BuildCtx<'_>,
-    items: &mut Vec<SceneRenderItem>,
+    items: &mut Vec<MeshItem>,
     mesh: viewport_lib::MeshId,
     model: Mat4,
     material: Material,

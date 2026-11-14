@@ -644,13 +644,13 @@ impl CameraFrame {
 /// public type.
 #[non_exhaustive]
 pub enum SurfaceSubmission {
-    /// A flat, reference-counted list of scene render items.
+    /// A flat, reference-counted list of mesh items.
     ///
-    /// Holding an `Arc<[SceneRenderItem]>` instead of a `Vec` means the per-frame
+    /// Holding an `Arc<[MeshItem]>` instead of a `Vec` means the per-frame
     /// submission cost is a single atomic refcount increment rather than a full deep
     /// copy of all items. Use [`SceneFrame::from_surface_items`] or
     /// [`SceneFrame::from_scene`] to construct this variant.
-    Flat(std::sync::Arc<[SceneRenderItem]>),
+    Flat(std::sync::Arc<[MeshItem]>),
 }
 
 impl Default for SurfaceSubmission {
@@ -701,9 +701,9 @@ pub struct SceneFrame {
     /// override projection) via `EffectsFrame::foreground`.
     ///
     /// Empty by default; an empty list adds no pass and no allocations.
-    pub foreground_items: Vec<SceneRenderItem>,
+    pub foreground_items: Vec<MeshItem>,
     /// Lightmap placements the frame's items name through
-    /// [`SceneRenderItem::lightmap_placement`]. Kept here rather than on each
+    /// [`MeshItem::lightmap_placement`]. Kept here rather than on each
     /// item so an item stays small; empty by default.
     pub lightmap_placements: Vec<crate::resources::LightmapPlacement>,
     /// Plugin item collections, keyed by
@@ -756,7 +756,7 @@ impl SceneFrame {
 
     /// Build a scene frame from a flat list of surface render items.
     ///
-    /// The `Vec` is converted to an `Arc<[SceneRenderItem]>` so callers that
+    /// The `Vec` is converted to an `Arc<[MeshItem]>` so callers that
     /// submit the same list repeatedly can cheaply clone the `Arc` instead of
     /// cloning the underlying data.
     ///
@@ -774,7 +774,7 @@ impl SceneFrame {
     /// // scene.version() is the right source when writeback drives the items.
     /// SceneFrame::from_surface_items(items).with_generation(scene.version())
     /// ```
-    pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
+    pub fn from_surface_items(items: Vec<MeshItem>) -> Self {
         Self::new(SurfaceSubmission::Flat(items.into()))
     }
 
@@ -801,7 +801,7 @@ impl SceneFrame {
     }
 
     /// Set the lightmap placements the items index (see
-    /// [`SceneRenderItem::lightmap_placement`]).
+    /// [`MeshItem::lightmap_placement`]).
     pub fn with_lightmap_placements(
         mut self,
         placements: Vec<crate::resources::LightmapPlacement>,
@@ -886,7 +886,7 @@ impl SceneFrame {
     /// // Every frame: zero-cost clone.
     /// SceneFrame::from_shared_items(Arc::clone(&self.items_arc), scene.version())
     /// ```
-    pub fn from_shared_items(items: std::sync::Arc<[SceneRenderItem]>, generation: u64) -> Self {
+    pub fn from_shared_items(items: std::sync::Arc<[MeshItem]>, generation: u64) -> Self {
         Self {
             generation,
             surfaces: SurfaceSubmission::Flat(items),

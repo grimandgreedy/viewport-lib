@@ -12,7 +12,7 @@ use glam::{Mat4, Quat, Vec3};
 use viewport_lib::{
     Aabb, AttributeData, AttributeKind, AttributeRef, Colour, ColourmapId, EnvironmentIntensity,
     EnvironmentLighting, EnvironmentOptions, EnvironmentZone, ExposureSettings, LightingSettings,
-    Material, MeshData, PostProcessSettings, SceneRenderItem, TextureData, primitives,
+    Material, MeshData, MeshItem, PostProcessSettings, TextureData, primitives,
 };
 use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
@@ -56,7 +56,7 @@ fn sunny16() -> ExposureSettings {
     ExposureSettings::physical(16.0, 1.0 / 125.0, 100.0)
 }
 
-fn ground_item(ctx: &mut BuildCtx<'_>, albedo: f32) -> SceneRenderItem {
+fn ground_item(ctx: &mut BuildCtx<'_>, albedo: f32) -> MeshItem {
     let ground = upload(ctx, &primitives::plane(200.0, 200.0));
     item_model(ctx, ground, Mat4::IDENTITY, lambert(albedo))
 }
@@ -201,7 +201,7 @@ fn build_bloom_unit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 /// A sphere and a cube carrying every glTF texture slot: base colour,
 /// tangent-space normal, metallic-roughness, occlusion and emissive.
-fn textured_model(ctx: &mut BuildCtx<'_>) -> Vec<SceneRenderItem> {
+fn textured_model(ctx: &mut BuildCtx<'_>) -> Vec<MeshItem> {
     let albedo = textures::checker(256, 4, [200, 170, 120], [90, 95, 110]);
     let albedo = upload_texture(
         ctx,
@@ -432,7 +432,7 @@ fn mapped_plane(
     mesh: viewport_lib::MeshId,
     y: f32,
     unlit: bool,
-) -> SceneRenderItem {
+) -> MeshItem {
     let mut it = item_model(
         ctx,
         mesh,

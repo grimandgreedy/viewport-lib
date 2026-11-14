@@ -9,7 +9,7 @@
 use viewport_lib::Colour;
 mod common;
 use common::*;
-use viewport_lib::{AttributeData, MeshId, SceneRenderItem, SurfaceSubmission};
+use viewport_lib::{AttributeData, MeshId, MeshItem, SurfaceSubmission};
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 
 const SIZE: u32 = 96;
@@ -57,8 +57,8 @@ const MODEL: [[f32; 4]; 4] = [
 ];
 
 /// A flat white unlit quad: without lines every pixel of it is the same.
-fn surface(mesh: MeshId) -> SceneRenderItem {
-    let mut item = SceneRenderItem::default();
+fn surface(mesh: MeshId) -> MeshItem {
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = MODEL.into();
     item.settings.colour = Some(Colour::linear_rgb(1.0, 1.0, 1.0));

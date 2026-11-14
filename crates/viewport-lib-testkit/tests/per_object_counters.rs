@@ -2,7 +2,7 @@
 //! items on one mesh share one batch: one draw of four instances.
 
 use viewport_lib::Colour;
-use viewport_lib::{CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{CameraFrame, FrameData, Material, MeshItem, SceneFrame};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 #[test]
@@ -25,9 +25,9 @@ fn batch_draws_are_counted() {
         .upload_material(Material::from_colour(Colour::linear_rgb(0.6, 0.6, 0.7)))
         .expect("material upload");
     let count = 4usize;
-    let items: Vec<SceneRenderItem> = (0..count)
+    let items: Vec<MeshItem> = (0..count)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 5.0, 0.0, 0.0))
                 .into();

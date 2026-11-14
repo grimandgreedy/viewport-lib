@@ -7,9 +7,9 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
-    OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ViewportContext,
-    ViewportEvent, ViewportInput, ViewportRenderer,
+    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, MeshItem,
+    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 mod geometry;
@@ -1348,7 +1348,7 @@ impl App {
 /// What a showcase contributes to the frame: its render items, plus the few
 /// per-frame values the host reads back out of it.
 pub(crate) struct SceneContents {
-    pub(crate) items: Vec<SceneRenderItem>,
+    pub(crate) items: Vec<MeshItem>,
     /// Replaces the viewport background for this frame when set.
     pub(crate) bg_colour: Option<[f32; 4]>,
     pub(crate) lighting: LightingSettings,
@@ -1383,7 +1383,7 @@ pub(crate) struct SceneOverrides {
     pub(crate) scene_graph_outline_width: f32,
     /// Hands the host a cached item list to draw instead of `items`, so a large
     /// static scene is not deep-cloned every frame.
-    pub(crate) cached_items: Option<std::sync::Arc<[SceneRenderItem]>>,
+    pub(crate) cached_items: Option<std::sync::Arc<[MeshItem]>>,
 }
 
 impl Default for SceneOverrides {

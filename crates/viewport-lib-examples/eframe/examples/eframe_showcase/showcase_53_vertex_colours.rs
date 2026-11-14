@@ -27,7 +27,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     BackfacePolicy, LightKind, LightSource, LightingSettings, Material, MaterialId, MeshId,
-    SceneRenderItem, ViewportRenderer, primitives,
+    MeshItem, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -361,14 +361,14 @@ pub(crate) fn controls_vertex_colour(app: &mut App, ui: &mut egui::Ui) {
 // Frame data
 // ---------------------------------------------------------------------------
 
-pub(crate) fn vcol_scene_items(app: &App) -> Vec<SceneRenderItem> {
+pub(crate) fn vcol_scene_items(app: &App) -> Vec<MeshItem> {
     let s = &app.vcol_state;
     if !s.built {
         return vec![];
     }
 
     let make = |mesh_id: MeshId, origin: glam::Vec3| {
-        let mut item = SceneRenderItem::new(mesh_id, s.material);
+        let mut item = MeshItem::new(mesh_id, s.material);
         item.model = glam::Mat4::from_translation(origin).into();
         item
     };

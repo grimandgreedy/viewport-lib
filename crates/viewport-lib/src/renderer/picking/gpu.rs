@@ -544,7 +544,7 @@ impl ViewportRenderer {
         // every pipeline its pass draws with is built now rather than skipped.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
         // Read scene items from the surface submission.
-        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+        let scene_items: &[MeshItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
@@ -798,7 +798,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         frame: &FrameData,
         mask: PickMask,
-        scene_items: &'a [SceneRenderItem],
+        scene_items: &'a [MeshItem],
         _flags: &PickPipelineFlags,
     ) -> PickDrawSet {
         // --- build PickInstance data ---
@@ -811,7 +811,7 @@ impl ViewportRenderer {
         let clip_flag = |ignore_clip: bool| if ignore_clip { PICK_IGNORE_CLIP } else { 0 };
         let colour_hdr = self.draws_hdr(frame);
         let clipping_active = crate::resources::DeviceResources::clipping_active(frame);
-        let pickable = |item: &SceneRenderItem| {
+        let pickable = |item: &MeshItem| {
             !item.settings.hidden
                 && item.settings.pick_id != PickId::NONE
                 && item.painter.is_none()
@@ -821,7 +821,7 @@ impl ViewportRenderer {
         };
         // The instance reads the same deform table as the item's colour draw,
         // so a deformed mesh is picked where it is drawn.
-        let to_instance = |item: &SceneRenderItem| {
+        let to_instance = |item: &MeshItem| {
             let m = self.origin.rel_transform(&item.model);
             let record = self
                 .resources
@@ -1429,7 +1429,7 @@ impl ViewportRenderer {
         let logical_lo = frame.scene_point_clamped(logical_lo);
         let logical_hi = frame.scene_point_clamped(logical_hi);
 
-        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+        let scene_items: &[MeshItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
@@ -1709,7 +1709,7 @@ impl ViewportRenderer {
         // A pick hands an answer back with no later frame to catch up on, so
         // every pipeline its pass draws with is built now rather than skipped.
         let _blocking = self.resources.pipeline_compiler.blocking_scope();
-        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+        let scene_items: &[MeshItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
@@ -2331,7 +2331,7 @@ impl ViewportRenderer {
     fn build_pick_sub_kinds(
         &self,
         frame: &FrameData,
-        scene_items: &[SceneRenderItem],
+        scene_items: &[MeshItem],
     ) -> std::collections::HashMap<u64, PickSubKind> {
         let mut kinds: std::collections::HashMap<u64, PickSubKind> =
             std::collections::HashMap::new();
@@ -2541,7 +2541,7 @@ mod tests {
                 .resources_mut()
                 .upload_mesh_data(&device, &crate::geometry::primitives::cube(2.0))
                 .expect("cube upload");
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             item.model = glam::Mat4::from_translation(centre).into();
             item.settings.pick_id = PickId(3);

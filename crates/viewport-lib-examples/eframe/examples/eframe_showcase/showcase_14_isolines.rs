@@ -24,8 +24,8 @@ use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::surface_contour::{ContourLevels, SurfaceContourItem};
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
-    FrameData, GridCells, LightingSettings, Material, MaterialId, MeshData, MeshId, PolylineItem,
-    SceneRenderItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem, extract_isolines,
+    FrameData, GridCells, LightingSettings, Material, MaterialId, MeshData, MeshId, MeshItem,
+    PolylineItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem, extract_isolines,
     isoline_strips, scene::Scene,
 };
 
@@ -391,7 +391,7 @@ fn make_wave_grid_iso(cols: u32, rows: u32, size: f32) -> (MeshData, Vec<f32>) {
 
 pub(crate) fn iso_collect_scene_items(
     app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let mut items = app
         .iso_state
         .scene

@@ -61,7 +61,7 @@ fn checksum(bytes: &[u8]) -> u64 {
         .sum()
 }
 
-fn frame_for(items: Vec<viewport_lib::SceneRenderItem>) -> FrameData {
+fn frame_for(items: Vec<viewport_lib::MeshItem>) -> FrameData {
     let cf = CameraFrame::new(
         RenderCamera::from_camera(&top_down_camera()),
         [W as f32, H as f32],
@@ -76,7 +76,7 @@ fn frame_for(items: Vec<viewport_lib::SceneRenderItem>) -> FrameData {
 /// test comparing a textured render against an untextured one has to move the
 /// generation or it measures nothing. Frames that differ by an upload, a free or
 /// a replace do not need this: those move an epoch, which rebuilds on its own.
-fn frame_gen(items: Vec<viewport_lib::SceneRenderItem>, generation: u64) -> FrameData {
+fn frame_gen(items: Vec<viewport_lib::MeshItem>, generation: u64) -> FrameData {
     let mut fd = frame_for(items);
     fd.scene.generation = generation;
     fd
@@ -96,8 +96,8 @@ fn upload_plane_material(renderer: &mut ViewportRenderer, tex: TextureId) -> Mat
 }
 
 /// An unlit plane at world x drawn with `material`, sharing `mesh`.
-fn textured_plane(mesh: MeshId, material: MaterialId, x: f32) -> viewport_lib::SceneRenderItem {
-    let mut item = viewport_lib::SceneRenderItem::default();
+fn textured_plane(mesh: MeshId, material: MaterialId, x: f32) -> viewport_lib::MeshItem {
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).into();
     item.material = material;
@@ -111,11 +111,7 @@ fn two_textured_planes(
     renderer: &mut ViewportRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> (
-    viewport_lib::SceneRenderItem,
-    viewport_lib::SceneRenderItem,
-    TextureId,
-) {
+) -> (viewport_lib::MeshItem, viewport_lib::MeshItem, TextureId) {
     let mesh = renderer
         .resources_mut()
         .upload_mesh_data(device, &viewport_lib::primitives::plane(2.0, 2.0))
@@ -236,7 +232,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
     // `with_casters` toggles the casters for the shadow-present sanity check.
     let build = |with_casters: bool| -> FrameData {
         let mut items = Vec::new();
-        let mut g = viewport_lib::SceneRenderItem::default();
+        let mut g = viewport_lib::MeshItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         g.material = ground_mat;
@@ -245,7 +241,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
             // Two casters sharing one mesh and one texture -> a single instanced
             // batch of 2, which forces the instanced path.
             for x in [-1.0f32, 1.0] {
-                let mut c = viewport_lib::SceneRenderItem::default();
+                let mut c = viewport_lib::MeshItem::default();
                 c.mesh_id = caster_mesh;
                 c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).into();
                 c.material = caster_mat;
@@ -421,7 +417,7 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
     let mut untextured_mat = Material::default();
     untextured_mat.backface_policy = BackfacePolicy::Identical;
     untextured_mat.base_colour = viewport_lib::Colour::srgb(0.85, 0.15, 0.5, 1.0);
-    let mut untextured = viewport_lib::SceneRenderItem::default();
+    let mut untextured = viewport_lib::MeshItem::default();
     untextured.mesh_id = mesh;
     untextured.model = glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).into();
     untextured.material = upload_material(&mut renderer, untextured_mat);
@@ -1107,7 +1103,7 @@ fn freeing_a_texture_used_only_by_a_submesh_material_reaches_the_screen() {
     sub_textured.texture_id = Some(tex);
     let sub_textured = upload_material(&mut renderer, sub_textured);
     let item = |with_submesh_texture: bool| {
-        let mut it = viewport_lib::SceneRenderItem::default();
+        let mut it = viewport_lib::MeshItem::default();
         it.mesh_id = mesh;
         it.material = base;
         it.settings = unlit_settings();
@@ -1270,7 +1266,7 @@ fn a_free_racing_an_in_flight_upload_does_not_resurrect_the_texture() {
         textured_plane(mesh, mat, -1.05),
         textured_plane(mesh, mat, 1.05),
     ];
-    let untextured: Vec<viewport_lib::SceneRenderItem> = items
+    let untextured: Vec<viewport_lib::MeshItem> = items
         .iter()
         .cloned()
         .map(|mut it| {
@@ -1376,13 +1372,13 @@ fn instanced_cutout_shadow_reflects_free_texture() {
     let caster_mat = upload_material(&mut renderer, m);
     let build = || -> FrameData {
         let mut items = Vec::new();
-        let mut g = viewport_lib::SceneRenderItem::default();
+        let mut g = viewport_lib::MeshItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).into();
         g.material = ground_mat;
         items.push(g);
         for x in [-1.0f32, 1.0] {
-            let mut c = viewport_lib::SceneRenderItem::default();
+            let mut c = viewport_lib::MeshItem::default();
             c.mesh_id = caster_mesh;
             c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).into();
             c.material = caster_mat;

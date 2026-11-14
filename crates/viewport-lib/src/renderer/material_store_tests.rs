@@ -3,7 +3,7 @@
 //! the instance record rebuild the batches.
 
 use crate::Colour;
-use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
+use crate::renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission};
 use crate::{Camera, Material, MaterialId, ViewportRenderer};
 
 const SIZE: u32 = 96;
@@ -41,9 +41,9 @@ fn frame(mesh: crate::MeshId, material: MaterialId, colour: Option<Colour>) -> F
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     frame.viewport.background_colour = Some(Colour::linear(0.1, 0.1, 0.12, 1.0));
-    let items: Vec<SceneRenderItem> = (0..3)
+    let items: Vec<MeshItem> = (0..3)
         .map(|i| {
-            let mut item = SceneRenderItem::new(mesh, material);
+            let mut item = MeshItem::new(mesh, material);
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(i as f32 * 1.3 - 1.3, 0.0, 0.0))
                     .into();
@@ -212,7 +212,7 @@ fn foreground_items_on_cache_hit_frames_keep_the_scene_materials() {
     let gizmo_id = renderer.resources_mut().upload_material(gizmo).unwrap();
 
     let mut f = frame(mesh, scene_id, None);
-    let mut fg = SceneRenderItem::new(mesh, gizmo_id);
+    let mut fg = MeshItem::new(mesh, gizmo_id);
     fg.model = glam::Mat4::from_scale_rotation_translation(
         glam::Vec3::splat(0.3),
         glam::Quat::IDENTITY,

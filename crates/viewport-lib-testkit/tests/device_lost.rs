@@ -340,7 +340,7 @@ fn render_stale_scene(
     let mut material =
         viewport_lib::Material::from_colour(viewport_lib::Colour::linear_rgb(0.8, 0.1, 0.1));
     material.shading_plugin = plugin;
-    let mut item = viewport_lib::SceneRenderItem::default();
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh_id;
     item.material = resources.upload_material(material).expect("material");
     let mut frame = probe_frame(STALE_SIZE, [0.0, 0.0, 0.0, 1.0]);

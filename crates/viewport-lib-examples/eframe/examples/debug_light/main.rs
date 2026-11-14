@@ -25,7 +25,7 @@ use viewport_lib::input::adapters::{AdapterCtx, egui as vpl_egui};
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, Camera, CameraFrame, FrameData, LightingSettings, Material, MaterialId,
-    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
+    MeshData, MeshId, MeshItem, OffscreenViewportTarget, OrbitCameraController, SceneFrame,
     ViewportContext, ViewportInput, ViewportRenderer, primitives,
 };
 
@@ -195,7 +195,7 @@ fn main() -> eframe::Result {
                 } else {
                     glam::Vec3::ONE
                 };
-                let mut item = SceneRenderItem::default();
+                let mut item = MeshItem::default();
                 item.mesh_id = mesh_id;
                 item.model = (glam::Mat4::from_translation(translation)
                     * glam::Mat4::from_scale(scale))
@@ -223,7 +223,7 @@ struct App {
     input: ViewportInput,
     floor: (MeshId, MaterialId),
     slab: (MeshId, MaterialId),
-    tvm_items: Vec<SceneRenderItem>,
+    tvm_items: Vec<MeshItem>,
     target: Option<Target>,
 }
 
@@ -237,7 +237,7 @@ impl App {
     fn new(
         floor: (MeshId, MaterialId),
         slab: (MeshId, MaterialId),
-        tvm_items: Vec<SceneRenderItem>,
+        tvm_items: Vec<MeshItem>,
     ) -> Self {
         Self {
             camera: Camera::orbit(
@@ -254,11 +254,11 @@ impl App {
         }
     }
 
-    fn build_items(&self) -> Vec<SceneRenderItem> {
-        let mut floor = SceneRenderItem::new(self.floor.0, self.floor.1);
+    fn build_items(&self) -> Vec<MeshItem> {
+        let mut floor = MeshItem::new(self.floor.0, self.floor.1);
         floor.model = glam::Mat4::IDENTITY.into();
 
-        let mut slab = SceneRenderItem::new(self.slab.0, self.slab.1);
+        let mut slab = MeshItem::new(self.slab.0, self.slab.1);
         slab.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).into();
 
         let mut items = vec![slab, floor];

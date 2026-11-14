@@ -1,7 +1,7 @@
 //! Scene graph with parent-child hierarchy, layers, and dirty-flag transform propagation.
 //!
 //! `Scene` is a standalone struct that apps own alongside `ViewportRenderer`.
-//! It produces `Vec<SceneRenderItem>` via `collect_render_items()`, which feeds
+//! It produces `Vec<MeshItem>` via `collect_render_items()`, which feeds
 //! into `SceneFrame::surfaces` (usually via `SceneFrame::from_surface_items(...)`).
 //! The renderer itself remains stateless.
 
@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::select::selection::{NodeId, Selection};
-use crate::renderer::{PickId, SceneRenderItem};
+use crate::renderer::{MeshItem, PickId};
 use crate::resources::MaterialId;
 use crate::resources::TextureId;
 use crate::resources::mesh::mesh_store::MeshId;
@@ -95,7 +95,7 @@ pub struct SceneNode {
     material: MaterialId,
     /// One material per submesh range of the node's mesh, or `None` to draw
     /// the whole mesh with `material`. See
-    /// [`SceneRenderItem::submesh_materials`](crate::renderer::SceneRenderItem::submesh_materials).
+    /// [`MeshItem::submesh_materials`](crate::renderer::MeshItem::submesh_materials).
     submesh_materials: Option<Vec<MaterialId>>,
     appearance: crate::scene::material::ItemSettings,
     visible: bool,
@@ -107,7 +107,7 @@ pub struct SceneNode {
     layer: LayerId,
     dirty: bool,
     /// Per-node deformer instance ID. See
-    /// [`SceneRenderItem::deform_instance`](crate::renderer::SceneRenderItem::deform_instance).
+    /// [`MeshItem::deform_instance`](crate::renderer::MeshItem::deform_instance).
     deform_instance: Option<u32>,
     /// LOD group this node draws through, if any. When set, the renderer
     /// picks a level each frame from the node's on-screen size and overwrites
@@ -171,7 +171,7 @@ impl SceneNode {
 
     /// Which per-instance deformer slot this node draws with (the GPU-skinning joint
     /// palette / morph weights), or `None` for a non-deformed node. The read counterpart
-    /// of [`Scene::set_deform_instance`]; a consumer building its own `SceneRenderItem`
+    /// of [`Scene::set_deform_instance`]; a consumer building its own `MeshItem`
     /// from this node (e.g. to submit it to the foreground pass) needs this so the item
     /// binds the same palette and is not drawn undeformed.
     pub fn deform_instance(&self) -> Option<u32> {
@@ -1040,7 +1040,7 @@ impl Scene {
     ///
     /// Skips nodes that are invisible, on an invisible layer, or have no mesh.
     /// Marks selected nodes based on the provided `Selection`.
-    pub fn collect_render_items(&mut self, selection: &Selection) -> Vec<SceneRenderItem> {
+    pub fn collect_render_items(&mut self, selection: &Selection) -> Vec<MeshItem> {
         self.update_transforms();
 
         let layer_visible: HashMap<LayerId, bool> =
@@ -1068,7 +1068,7 @@ impl Scene {
             } else {
                 selection.contains(node.id)
             };
-            items.push(SceneRenderItem {
+            items.push(MeshItem {
                 mesh_id,
                 model: node.world_transform,
                 settings: item_settings,
@@ -1112,7 +1112,7 @@ impl Scene {
         selection: &Selection,
         frustum: &crate::camera::frustum::Frustum,
         mesh_aabb_fn: impl Fn(MeshId) -> Option<Aabb>,
-    ) -> (Vec<SceneRenderItem>, crate::camera::frustum::CullStats) {
+    ) -> (Vec<MeshItem>, crate::camera::frustum::CullStats) {
         self.update_transforms();
 
         let layer_visible: HashMap<LayerId, bool> =
@@ -1158,7 +1158,7 @@ impl Scene {
                 } else {
                     selection.contains(node.id)
                 };
-                items.push(SceneRenderItem {
+                items.push(MeshItem {
                     mesh_id,
                     model: node.world_transform,
                     settings: item_settings,
@@ -1218,7 +1218,7 @@ impl Scene {
                 } else {
                     selection.contains(node.id)
                 };
-                items.push(SceneRenderItem {
+                items.push(MeshItem {
                     mesh_id,
                     model: node.world_transform,
                     settings: item_settings,

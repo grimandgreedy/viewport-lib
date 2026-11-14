@@ -696,7 +696,7 @@ fn forward_light_list_caps_and_counts_what_it_drops() {
             .resources_mut()
             .upload_mesh_data(&harness.device, &viewport_lib::primitives::cube(1.0))
             .expect("upload cube");
-        let mut item = viewport_lib::SceneRenderItem::default();
+        let mut item = viewport_lib::MeshItem::default();
         item.mesh_id = mesh;
         item.settings.hidden = true;
         let mut frame = viewport_lib::FrameData::new(
@@ -924,7 +924,7 @@ fn compatibility_sub_object_highlights_draw_through_the_split_and_host_pass_path
         .resources_mut()
         .upload_mesh_data(&harness.device, &cube)
         .expect("meshes upload on the compatibility tier");
-    let mut item = viewport_lib::SceneRenderItem::default();
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     let mut camera = viewport_lib::Camera::default();
@@ -1028,7 +1028,7 @@ fn compatibility_outlines_draw_through_the_split_and_host_pass_paths() {
         .resources_mut()
         .upload_mesh_data(&harness.device, &cube)
         .expect("meshes upload on the compatibility tier");
-    let mut item = viewport_lib::SceneRenderItem::default();
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     item.settings.selected = true;
@@ -1077,7 +1077,7 @@ fn forward_meshes_draw_through_the_split_and_host_pass_paths() {
         .resources_mut()
         .upload_mesh_data(&harness.device, &cube)
         .expect("meshes upload on the compatibility tier");
-    let mut item = viewport_lib::SceneRenderItem::default();
+    let mut item = viewport_lib::MeshItem::default();
     item.mesh_id = mesh;
     item.settings.colour = Some(viewport_lib::Colour::linear_rgb(0.9, 0.3, 0.1));
     let mut camera = viewport_lib::Camera::default();

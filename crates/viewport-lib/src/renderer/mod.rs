@@ -108,7 +108,7 @@ pub use self::types::{
     GradientStop, GradingSpace, GroundPlane, GroundPlaneMode, IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LightKind, LightSource,
     LightingPosture, LightingSettings, LineCap, LineJoin, LogShaper, Lumen, Lux, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
+    MeshItem, NineSlice, OVERLAY_MAX_SHADOW_LAYERS, OperatorCurve, OutlineMode, OverlayAnchoring,
     OverlayAnimations, OverlayBlend, OverlayClip, OverlayContentHash, OverlayEasing, OverlayEdge,
     OverlayFill, OverlayFrame, OverlayGeometryId, OverlayGroupItems, OverlayLayer,
     OverlayLayerMark, OverlayLayerMembers, OverlayLayerStyle, OverlayMeshColours, OverlayMeshItem,
@@ -116,13 +116,12 @@ pub use self::types::{
     OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, PASSTHROUGH_EV100,
     PathSegment, PipelineMode, PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings,
     RenderCamera, RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects,
-    SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
-    StrokePattern, SubPath, SurfaceSubmission, TextFit, TextSizing, TextStyle, TextureTransform,
-    TileMode, ToneCurve, ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace,
-    WorldOverlayHit, WorldOverlayItem, WorldOverlayLayer, WorldPlane, WorldTextSize,
-    aabb_wireframe_polyline, bake_view_transform_lut, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    SceneFrame, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
+    SurfaceSubmission, TextFit, TextSizing, TextStyle, TextureTransform, TileMode, ToneCurve,
+    ToneMapping, TriangleDirection, VIEW_LUT_SHAPER, ViewportEffects, ViewportFrame,
+    VignetteSettings, VolumeMeshItem, VolumeTransparency, WorkingSpace, WorldOverlayHit,
+    WorldOverlayItem, WorldOverlayLayer, WorldPlane, WorldTextSize, aabb_wireframe_polyline,
+    bake_view_transform_lut, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -695,7 +694,7 @@ pub struct ViewportRenderer {
     /// pass draws the resolved level meshes and skips culled items: without
     /// this the draw path re-read the raw `frame.scene.surfaces`, discarding
     /// the LOD level swap and cull for every non-instanced item.
-    prepared_surfaces: Vec<SceneRenderItem>,
+    prepared_surfaces: Vec<MeshItem>,
     /// The compatibility tier's mesh draws for the frame.
     basic_mesh_draws: prepare::compatibility::BasicMeshDraws,
     /// How many of the items a frame renders came from `prepared_surfaces`:
@@ -746,7 +745,7 @@ pub struct ViewportRenderer {
     /// not tracked. Pruned to the instances seen each frame.
     mesh_instance_lod_levels: std::collections::HashMap<(u64, u32), usize>,
     /// Surface items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_scene_items: Vec<SceneRenderItem>,
+    pick_scene_items: Vec<MeshItem>,
     /// Broad-phase BVH over the surface `pick_scene_items`, accelerating the CPU
     /// point pick. Lazily (re)built inside `pick()` behind a `Mutex` so `pick(&self)`
     /// still works on the `Send + Sync` egui-callback path; the two revs below (set

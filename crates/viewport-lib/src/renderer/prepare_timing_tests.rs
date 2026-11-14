@@ -5,7 +5,7 @@
 //! `cargo test --release -p viewport-lib --lib prepare_timing_10k -- --ignored --nocapture`.
 
 use crate::Colour;
-use crate::renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission};
+use crate::renderer::{FrameData, MeshItem, RenderCamera, SurfaceSubmission};
 use crate::{Camera, ViewportRenderer};
 
 #[test]
@@ -21,9 +21,9 @@ fn prepare_timing_10k() {
         .resources_mut()
         .upload_mesh_data(&device, &crate::geometry::primitives::cube(0.4))
         .unwrap();
-    let items: Vec<SceneRenderItem> = (0..10_000)
+    let items: Vec<MeshItem> = (0..10_000)
         .map(|i| {
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh;
             let (x, y) = ((i % 100) as f32, (i / 100) as f32);
             item.model =

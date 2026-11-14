@@ -17,8 +17,8 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
-    Aabb, CameraFollow, FixedTimestep, Material, MaterialId, MeshId, RuntimeFrameContext,
-    RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
+    Aabb, CameraFollow, FixedTimestep, Material, MaterialId, MeshId, MeshItem, RuntimeFrameContext,
+    RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     camera::Camera,
     plugins::animation::{AnimationPlugin, AnimationTrack, Keyframe},
     plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
@@ -366,7 +366,7 @@ fn step_simulation(app: &mut App, dt: f32) {
 // Per-frame scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<MeshItem> {
     let Some(mesh_id) = app.rt_state.mesh_id else {
         return Vec::new();
     };
@@ -391,7 +391,7 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
             } else {
                 world
             };
-            let mut item = SceneRenderItem::default();
+            let mut item = MeshItem::default();
             item.mesh_id = mesh_id;
             item.model = model.into();
             item.material = material;

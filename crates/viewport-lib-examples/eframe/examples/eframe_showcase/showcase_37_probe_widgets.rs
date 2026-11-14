@@ -20,7 +20,7 @@ use viewport_lib::Colour;
 use viewport_lib_plugins::item_types::point_cloud::PointCloudItem;
 use vpl::{
     BoxWidget, CameraFrame, CylinderWidget, DiskWidget, FrameData, LightingSettings,
-    LineProbeWidget, PlaneWidget, PolylineWidget, SceneRenderItem, SphereWidget, ViewportRenderer,
+    LineProbeWidget, MeshItem, PlaneWidget, PolylineWidget, SphereWidget, ViewportRenderer,
     WidgetContext, WidgetResult, scene::Scene,
 };
 
@@ -365,9 +365,7 @@ fn selection_buttons(ui: &mut egui::Ui, state: &mut ProbeWidgetState, mode: PwSu
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn pw_collect_scene_items(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+pub(crate) fn pw_collect_scene_items(app: &mut App) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     let items = app
         .pw_state
         .scene

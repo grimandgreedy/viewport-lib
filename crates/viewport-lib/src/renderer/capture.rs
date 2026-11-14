@@ -1287,7 +1287,7 @@ mod tests {
         assert!(renderer.frame_fully_resident(&empty_frame()));
 
         // A frame referencing the resident mesh is fully resident.
-        let item = crate::SceneRenderItem {
+        let item = crate::MeshItem {
             mesh_id: mesh,
             ..Default::default()
         };
@@ -1338,7 +1338,7 @@ mod tests {
         let mut items = Vec::new();
         for i in 0..8 {
             let x = (i as f32 - 3.5) * 1.2;
-            let mut item = crate::SceneRenderItem {
+            let mut item = crate::MeshItem {
                 mesh_id: mesh,
                 ..Default::default()
             };
@@ -1446,7 +1446,7 @@ mod tests {
 
             // A bright unlit box, submitted only as a foreground item (not a
             // scene surface), in layer 0b01.
-            let mut item = crate::SceneRenderItem {
+            let mut item = crate::MeshItem {
                 mesh_id: mesh,
                 ..Default::default()
             };

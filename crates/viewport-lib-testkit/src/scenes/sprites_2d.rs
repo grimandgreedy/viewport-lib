@@ -18,8 +18,8 @@
 
 use glam::{Mat4, Vec2, Vec3};
 use viewport_lib::{
-    Camera2d, Colour, Material, PickId, Plane2d, SceneRenderItem, SpriteBlend, TextureData,
-    TextureFilter, TextureId, primitives,
+    Camera2d, Colour, Material, MeshItem, PickId, Plane2d, SpriteBlend, TextureData, TextureFilter,
+    TextureId, primitives,
 };
 use viewport_lib_plugins::item_types::sprite::{
     SpriteFlip, SpriteItem, SpriteOrder, SpriteSizeMode,
@@ -86,19 +86,13 @@ fn soft_disc(ctx: &mut BuildCtx<'_>) -> TextureId {
 }
 
 /// An unlit axis-aligned quad `size` across, centred on `centre` at height `z`.
-fn flat_quad(
-    ctx: &mut BuildCtx<'_>,
-    centre: Vec2,
-    size: Vec2,
-    z: f32,
-    colour: Colour,
-) -> SceneRenderItem {
+fn flat_quad(ctx: &mut BuildCtx<'_>, centre: Vec2, size: Vec2, z: f32, colour: Colour) -> MeshItem {
     let mesh = ctx
         .renderer
         .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::plane(size.x, size.y))
         .expect("quad upload");
-    let mut item = SceneRenderItem::default();
+    let mut item = MeshItem::default();
     item.mesh_id = mesh;
     item.model = Mat4::from_translation(Vec3::new(centre.x, centre.y, z)).into();
     item.material = material(ctx, Material::from_colour(colour));

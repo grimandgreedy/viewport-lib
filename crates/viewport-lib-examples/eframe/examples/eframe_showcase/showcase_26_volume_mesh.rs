@@ -32,7 +32,7 @@ use viewport_lib as vpl;
 use viewport_lib::Colour;
 use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CELL_SENTINEL, ClipObject,
-    ColourmapId, FrameData, LightingSettings, SceneRenderItem, ViewportRenderer, VolumeMeshData,
+    ColourmapId, FrameData, LightingSettings, MeshItem, ViewportRenderer, VolumeMeshData,
     VolumeMeshItem, VolumeTransparency,
 };
 use vpl::{Material, MaterialId};
@@ -1143,7 +1143,7 @@ pub(crate) fn controls_volume_mesh(app: &mut App, ui: &mut egui::Ui) {
 pub(crate) fn vm_collect_scene_items(
     app: &mut App,
     frame: &eframe::Frame,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+) -> (Vec<MeshItem>, LightingSettings, u64, u64) {
     // Per-frame CPU clip section: regenerate the clipped mesh slot
     // so section faces reflect the current plane position.
     if app.vm_state.clip_on && app.vm_state.built {
@@ -1196,7 +1196,7 @@ pub(crate) fn vm_collect_scene_items(
 
     // The unified VolumeMeshItem renders itself: in opaque mode the renderer
     // turns its boundary surface into a scene item internally, in transparent
-    // mode it routes through projected-tet. So no extra SceneRenderItems leave
+    // mode it routes through projected-tet. So no extra MeshItems leave
     // this helper.
     (vec![], App::vm_lighting(), 0, 0)
 }
