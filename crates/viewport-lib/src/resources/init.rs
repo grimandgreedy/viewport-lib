@@ -1,21 +1,7 @@
 use super::*;
 use crate::resources::builders::LoggedAlloc;
 
-/// Plain (non-array) sampled textures `entries` make visible to `stage`.
-/// Binding arrays count against a limit of their own.
-fn stage_sampled_textures(
-    entries: &[crate::gpu::BindGroupLayoutEntry],
-    stage: crate::gpu::ShaderStages,
-) -> u32 {
-    entries
-        .iter()
-        .filter(|e| {
-            e.visibility.contains(stage)
-                && e.count.is_none()
-                && matches!(e.ty, crate::gpu::BindingType::Texture { .. })
-        })
-        .count() as u32
-}
+use crate::resources::builders::stage_sampled_textures;
 
 /// Count the storage buffers a set of bind group layout entries costs in one
 /// shader stage. Used to check the layouts built here against the constants
@@ -1221,35 +1207,7 @@ impl DeviceResources {
                 let depth_read_bgl =
                     device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                         label: Some("depth_read_bgl"),
-                        entries: &[
-                            crate::gpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                                ty: crate::gpu::BindingType::Texture {
-                                    sample_type: crate::gpu::TextureSampleType::Float {
-                                        filterable: false,
-                                    },
-                                    view_dimension: crate::gpu::TextureViewDimension::D2,
-                                    multisampled: false,
-                                },
-                                count: None,
-                            },
-                            crate::gpu::BindGroupLayoutEntry {
-                                binding: 1,
-                                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                                ty: crate::gpu::BindingType::Sampler(
-                                    crate::gpu::SamplerBindingType::NonFiltering,
-                                ),
-                                count: None,
-                            },
-                            // The painter masks and light layers, for
-                            // painter content that binds this group and
-                            // tests a mask or samples its light.
-                            crate::resources::painter_mask::painter_mask_entries(2)[0],
-                            crate::resources::painter_mask::painter_mask_entries(2)[1],
-                            crate::resources::painter_mask::painter_mask_entries(2)[2],
-                            crate::resources::painter_mask::painter_mask_entries(2)[3],
-                        ],
+                        entries: &crate::resources::builders::depth_read_layout_entries(),
                     });
 
                 // ------------------------------------------------------------------

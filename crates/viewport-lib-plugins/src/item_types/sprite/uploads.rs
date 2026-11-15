@@ -328,7 +328,11 @@ pub trait SpriteMaterials {
     /// [`ViewportError::ShadeShaderInvalid`](viewport_lib::error::ViewportError::ShadeShaderInvalid)
     /// when the name or a parameter is not a WGSL identifier, the body
     /// defines no `shade_sprite`, too many parameters or textures are
-    /// declared, or a composed module fails validation.
+    /// declared, or a composed module fails validation;
+    /// [`ViewportError::MaterialPluginTextureBudget`](viewport_lib::error::ViewportError::MaterialPluginTextureBudget)
+    /// when the sprite's own textures and the material's together pass the
+    /// device's sampled textures per stage (a device with wgpu's default of
+    /// 16, such as wgpu's GL backend, fits three material textures).
     fn register_sprite_material(
         &mut self,
         device: &gpu::Device,
