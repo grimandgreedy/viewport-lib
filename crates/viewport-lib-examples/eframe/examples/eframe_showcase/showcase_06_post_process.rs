@@ -454,7 +454,7 @@ fn plot_curve(ui: &mut egui::Ui, operator: ToneMapping, post: &PostProcessSettin
             rect.bottom() - y.clamp(0.0, 1.05) / 1.05 * rect.height(),
         )
     };
-    let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(50));
+    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50));
     painter.line_segment([to_screen(0.0, 0.0), to_screen(0.0, 1.05)], grid);
     painter.line_segment([to_screen(lo, 1.0), to_screen(hi, 1.0)], grid);
     let points: Vec<egui::Pos2> = (0..=96)
@@ -467,7 +467,7 @@ fn plot_curve(ui: &mut egui::Ui, operator: ToneMapping, post: &PostProcessSettin
         .collect();
     painter.add(egui::Shape::line(
         points,
-        egui::Stroke::new(1.5, egui::Color32::from_rgb(240, 200, 90)),
+        egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(240, 200, 90)),
     ));
     painter.text(
         rect.left_top() + egui::vec2(4.0, 2.0),

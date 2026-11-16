@@ -1766,7 +1766,7 @@ fn contract_two_viewports(app: &mut App, ui: &mut egui::Ui, cx: &crate::Viewport
     );
     painter.line_segment(
         [egui::pos2(mid, rect.top()), egui::pos2(mid, rect.bottom())],
-        egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(200)),
     );
     painter.text(
         egui::pos2(mid + 6.0, rect.top() + 6.0),

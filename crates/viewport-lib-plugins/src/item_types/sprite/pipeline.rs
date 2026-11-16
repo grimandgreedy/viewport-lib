@@ -732,6 +732,7 @@ fn hook_passes(
             .expect("sprite hook shader composes")
     };
     let name = material.name.as_str();
+    let fx_bgl = &material.bgl;
     let pick_shader = resources.lazy_module(device, &format!("{name}_pick_shader"), compose(&pick));
     let outline_shader =
         resources.lazy_module(device, &format!("{name}_outline_shader"), compose(&outline));
@@ -743,19 +744,19 @@ fn hook_passes(
             pick_layout: viewport_lib::plugin_api::builders::pipeline_layout(
                 device,
                 "sprite_hook_pick_pipeline_layout",
-                &[&base.group0, &base.bgl, &base.pick_id_bgl, &base.fx_bgl],
+                &[&base.group0, &base.bgl, &base.pick_id_bgl, fx_bgl],
             ),
             pick_shader,
             outline_layout: viewport_lib::plugin_api::builders::pipeline_layout(
                 device,
                 "sprite_hook_outline_pipeline_layout",
-                &[&base.group0, &base.bgl, &base.empty_bgl, &base.fx_bgl],
+                &[&base.group0, &base.bgl, &base.empty_bgl, fx_bgl],
             ),
             outline_shader,
             surface_layout: viewport_lib::plugin_api::builders::pipeline_layout(
                 device,
                 "sprite_hook_surface_pipeline_layout",
-                &[&base.group0, &base.bgl, &base.soft_bgl, &base.fx_bgl],
+                &[&base.group0, &base.bgl, &base.soft_bgl, fx_bgl],
             ),
             surface_shader,
             depth_format: base.depth_format,
@@ -782,13 +783,14 @@ fn fx_family(
             .expect("sprite effect shader composes")
     };
     let name = material.map_or("sprite_fx", |m| m.name.as_str());
+    let fx_bgl = material.map_or(&base.fx_bgl, |m| &m.bgl);
     let shader = resources.lazy_module(device, &format!("{name}_shader"), compose(&unlit, false));
     let lit_shader =
         resources.lazy_module(device, &format!("{name}_lit_shader"), compose(&lit, true));
     let layout = viewport_lib::plugin_api::builders::pipeline_layout(
         device,
         "sprite_fx_pipeline_layout",
-        &[&base.group0, &base.bgl, &base.soft_bgl, &base.fx_bgl],
+        &[&base.group0, &base.bgl, &base.soft_bgl, fx_bgl],
     );
     resources.lazy_pipelines(
         SpriteRecipe {

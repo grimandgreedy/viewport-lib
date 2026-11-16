@@ -557,9 +557,9 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
             let fill =
                 egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
             let stroke = if selected {
-                egui::Stroke::new(2.5, egui::Color32::WHITE)
+                egui::Stroke::new(2.5_f32, egui::Color32::WHITE)
             } else {
-                egui::Stroke::new(1.0, egui::Color32::GRAY)
+                egui::Stroke::new(1.0_f32, egui::Color32::GRAY)
             };
             let btn = egui::Button::new("")
                 .min_size(egui::Vec2::splat(22.0))

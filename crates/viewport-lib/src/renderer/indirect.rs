@@ -17,7 +17,7 @@ use crate::plugin_api::{BatchMeta, CullSubmission};
 use crate::resources::{FrustumPlane, FrustumUniform};
 
 /// Bind group layout entry count for the cull compute pass.
-const CULL_BGL_ENTRY_COUNT: usize = 10;
+const CULL_BGL_ENTRY_COUNT: usize = 11;
 
 /// Instances per compaction chunk. Matches `CHUNK` in `cull.wgsl`.
 const COMPACT_CHUNK: u32 = 256;
@@ -124,6 +124,9 @@ pub(super) struct CullResources {
     /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
     /// group layout satisfied; never sampled because `do_occlusion` is 0.
     fallback_hiz_view: crate::gpu::TextureView,
+    /// Nearest, clamp-to-edge sampler bound at binding 10, through which the
+    /// occlusion test reads the HiZ pyramid.
+    hiz_sampler: crate::gpu::Sampler,
     /// One `InstanceData` slot bound at binding 8 when a dispatch does
     /// not run the layer-mask reject (shadow, single-mesh, plugin submissions).
     /// Keeps the bind group layout satisfied; never read because `do_mask_cull`
@@ -317,6 +320,10 @@ impl CullResources {
             scratch_meta_buf,
             scratch_counter_buf,
             fallback_hiz_view,
+            hiz_sampler: crate::resources::builders::clamp_nearest_sampler(
+                device,
+                "cull_hiz_sampler",
+            ),
             fallback_instance_data,
             main_stats_buf,
             scratch_stats_buf,
@@ -523,6 +530,10 @@ impl CullResources {
                 crate::gpu::BindGroupEntry {
                     binding: 9,
                     resource: compact_scratch.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 10,
+                    resource: crate::gpu::BindingResource::Sampler(&self.hiz_sampler),
                 },
             ],
         });
@@ -812,8 +823,8 @@ impl CullResources {
                 },
                 count: None,
             },
-            // binding 6: HiZ max-depth pyramid (R32Float, non-filterable, sampled
-            // via textureLoad).
+            // binding 6: HiZ max-depth pyramid (R32Float, non-filterable, read
+            // through the sampler at binding 10).
             crate::gpu::BindGroupLayoutEntry {
                 binding: 6,
                 visibility: compute,
@@ -853,6 +864,9 @@ impl CullResources {
             // compute stage; a second entry would break devices created with
             // default limits.
             storage_rw(9),
+            // binding 10: the sampler the occlusion test reads the pyramid
+            // through.
+            crate::resources::builders::nearest_sampler_entry(10, compute),
         ]
     }
 }

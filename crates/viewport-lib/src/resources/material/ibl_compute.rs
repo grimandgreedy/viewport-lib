@@ -409,28 +409,49 @@ pub(crate) fn bake_environment_layer(
     });
 
     // ----- Filter pyramid: the source box-downsampled, then halved -----
-    let pyramid = device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some("ibl_filter_pyramid"),
-        size: crate::gpu::Extent3d {
-            width: IBL_FILTER_W,
-            height: IBL_FILTER_H,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: IBL_FILTER_LEVELS,
-        sample_count: 1,
-        dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rgba16Float,
-        usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-            | crate::gpu::TextureUsages::STORAGE_BINDING,
-        view_formats: &[],
-    });
-    let level_view = |level: u32| {
-        pyramid.create_view(&crate::gpu::TextureViewDescriptor {
-            label: Some("ibl_filter_level"),
-            base_mip_level: level,
-            mip_level_count: Some(1),
-            ..Default::default()
+    // Each level is reduced into a texture of its own and then copied into
+    // the pyramid's mips. Reducing straight from one mip of the pyramid into
+    // the next loses the writes on wgpu's GL backend: a view of one mip there
+    // sets the base and max level of the shared texture, and GL discards
+    // image stores to a level outside that range.
+    let pyramid_texture = |label, width, height, mips, usage| {
+        device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some(label),
+            size: crate::gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: mips,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba16Float,
+            usage,
+            view_formats: &[],
         })
+    };
+    let pyramid = pyramid_texture(
+        "ibl_filter_pyramid",
+        IBL_FILTER_W,
+        IBL_FILTER_H,
+        IBL_FILTER_LEVELS,
+        crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+    );
+    let levels: Vec<crate::gpu::Texture> = (0..IBL_FILTER_LEVELS)
+        .map(|level| {
+            pyramid_texture(
+                "ibl_filter_level",
+                IBL_FILTER_W >> level,
+                IBL_FILTER_H >> level,
+                1,
+                crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::STORAGE_BINDING
+                    | crate::gpu::TextureUsages::COPY_SRC,
+            )
+        })
+        .collect();
+    let level_view = |level: u32| {
+        levels[level as usize].create_view(&crate::gpu::TextureViewDescriptor::default())
     };
     for level in 0..IBL_FILTER_LEVELS {
         let src = if level == 0 {
@@ -463,6 +484,18 @@ pub(crate) fn bake_environment_layer(
             (IBL_FILTER_W >> level).div_ceil(8),
             (IBL_FILTER_H >> level).div_ceil(8),
             1,
+        );
+    }
+    for (level, texture) in levels.iter().enumerate() {
+        encoder.copy_texture_to_texture(
+            texture.as_image_copy(),
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &pyramid,
+                mip_level: level as u32,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            texture.size(),
         );
     }
     let irradiance_source = level_view(IBL_IRR_SOURCE_LEVEL);
@@ -556,5 +589,118 @@ pub(crate) fn bake_environment_layer(
         skybox_texture,
         skybox_view,
         submission,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mean RGB of one mip of one layer of an Rgba16Float texture.
+    fn mean_rgb(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        texture: &crate::gpu::Texture,
+        layer: u32,
+        mip: u32,
+    ) -> [f32; 3] {
+        let w = (texture.width() >> mip).max(1);
+        let h = (texture.height() >> mip).max(1);
+        let row = (w * 8).div_ceil(256) * 256;
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("ibl_test_readback"),
+            size: (row * h) as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: mip,
+                origin: crate::gpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
+                },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+        let slice = buf.slice(..);
+        slice.map_async(crate::gpu::MapMode::Read, |_| {});
+        let _ = device.poll(crate::gpu::PollType::wait_indefinitely());
+        let data = slice.get_mapped_range();
+        let mut sum = [0.0f64; 3];
+        for y in 0..h {
+            for x in 0..w {
+                let o = (y * row + x * 8) as usize;
+                for (c, s) in sum.iter_mut().enumerate() {
+                    let bits = u16::from_le_bytes([data[o + c * 2], data[o + c * 2 + 1]]);
+                    *s += half::f16::from_bits(bits).to_f32() as f64;
+                }
+            }
+        }
+        let n = (w * h) as f64;
+        sum.map(|s| (s / n) as f32)
+    }
+
+    /// An environment of one colour has that colour as its irradiance (stored
+    /// divided by pi) and at every roughness of its prefiltered specular. Every
+    /// stage reads the filter pyramid, so an empty pyramid level shows here.
+    #[test]
+    fn a_constant_environment_bakes_to_its_colour() {
+        let Some((device, queue)) = crate::resources::test_support::try_make_device() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        if !compute_bake_possible(&device) {
+            eprintln!("skipping: the device cannot run the compute bake");
+            return;
+        }
+        let colour = [1.0, 0.5, 0.25];
+        let (w, h) = (64, 32);
+        let pixels: Vec<f32> = (0..w * h)
+            .flat_map(|_| [colour[0], colour[1], colour[2], 1.0])
+            .collect();
+        let source = upload_source(&device, &queue, &pixels, w, h);
+        let view = source.create_view(&Default::default());
+        let (irradiance, prefiltered) = create_ibl_arrays(&device, true);
+        bake_environment_layer(
+            &device,
+            &queue,
+            (source, view),
+            &irradiance,
+            &prefiltered,
+            0,
+        );
+        let close = |got: [f32; 3], what: &str| {
+            for c in 0..3 {
+                assert!(
+                    (got[c] - colour[c]).abs() < 0.01,
+                    "{what}: {got:?}, expected {colour:?}"
+                );
+            }
+        };
+        close(mean_rgb(&device, &queue, &irradiance, 0, 0), "irradiance");
+        for mip in 0..IBL_PREFILTER_MIPS {
+            close(
+                mean_rgb(&device, &queue, &prefiltered, 0, mip),
+                &format!("prefiltered mip {mip}"),
+            );
+        }
     }
 }

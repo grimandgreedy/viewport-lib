@@ -600,7 +600,7 @@ fn draw_sparkline(ui: &mut egui::Ui, history: &VecDeque<f32>, target_fps: Option
         // Budget line.
         painter.line_segment(
             [egui::pos2(rect.left(), by), egui::pos2(rect.right(), by)],
-            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(230, 80, 80, 180)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_unmultiplied(230, 80, 80, 180)),
         );
     }
 
@@ -622,7 +622,7 @@ fn draw_sparkline(ui: &mut egui::Ui, history: &VecDeque<f32>, target_fps: Option
     for w in points.windows(2) {
         painter.line_segment(
             [w[0], w[1]],
-            egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 190, 90)),
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(90, 190, 90)),
         );
     }
 }

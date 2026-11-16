@@ -398,7 +398,7 @@ impl App {
         // --- egui overlays: divider lines + quad labels ---
         let painter = ui.painter_at(rect);
         let div_colour = egui::Color32::from_gray(90);
-        let stroke = egui::Stroke::new(1.0, div_colour);
+        let stroke = egui::Stroke::new(1.0_f32, div_colour);
         // Vertical centre line.
         painter.line_segment(
             [
@@ -432,7 +432,7 @@ impl App {
             quad_rects[hq].shrink(0.5),
             0.0,
             egui::Stroke::new(
-                1.5,
+                1.5_f32,
                 egui::Color32::from_rgba_unmultiplied(180, 180, 255, 80),
             ),
             egui::StrokeKind::Middle,

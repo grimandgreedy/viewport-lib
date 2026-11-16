@@ -945,7 +945,7 @@ impl eframe::App for App {
                         0.0,
                         egui::Color32::from_rgba_unmultiplied(255, 215, 0, 20),
                         egui::Stroke::new(
-                            1.5,
+                            1.5_f32,
                             egui::Color32::from_rgba_unmultiplied(255, 215, 0, 200),
                         ),
                         egui::StrokeKind::Outside,

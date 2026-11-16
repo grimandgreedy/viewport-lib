@@ -15,8 +15,9 @@
 //! `fn displace_sprite(v: SpriteVertex) -> vec3<f32>`, which moves each
 //! corner of the quad, or both. Its identifiers are prefixed with its name,
 //! its parameters fill lanes 1.. of `hook_params` and a `params` struct, and
-//! its textures bind as `htex0..htex3` with `sprite_samp`; one pipeline family
-//! is built per material, all over one group-3 layout. A material with a
+//! its textures bind as `htex0..` with `sprite_samp`, one per texture it
+//! declares; one pipeline family is built per material, over a group-3 layout
+//! with exactly those texture slots. A material with a
 //! vertex hook also gets its own pick and outline-mask pipelines, composed the
 //! same way, so a pick, an outline and a surface-mask stamp follow the moved
 //! quad.
@@ -28,9 +29,9 @@ use viewport_lib::{MaterialPlugin, ParamDesc};
 
 use super::types::{PaletteIndex, SpriteEffects};
 
-/// Texture slots a sprite material reads (`htex0..htex3`), as the particle
-/// fragment hook has. Every effect pipeline declares all four; unused slots
-/// bind 1x1 white.
+/// Most texture slots a sprite material reads (`htex0..htex3`), as the
+/// particle fragment hook has. A material's layout declares only the ones it
+/// uses, and the device's sampled-texture limit can allow fewer.
 pub(super) const MATERIAL_TEXTURES: usize = 4;
 
 /// Parameter lanes in the effect block. Lane 0 is reserved (its `.w` carries
@@ -71,6 +72,20 @@ pub(crate) struct MaterialSource<'a> {
     pub shades: bool,
     /// The body defines `displace_sprite`.
     pub displaces: bool,
+    /// Textures the material reads, bound as `htex0..`.
+    pub texture_count: u32,
+}
+
+/// The material texture declarations, one per slot a material reads.
+fn material_textures_wgsl(count: u32) -> String {
+    (0..count)
+        .map(|i| {
+            format!(
+                "@group(3) @binding({}) var htex{i}: texture_2d<f32>;\n",
+                6 + i
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn replace_once(source: &mut String, from: &str, to: &str) -> Result<(), String> {
@@ -122,6 +137,21 @@ pub(super) fn compose(
     if material.is_some_and(|m| m.displaces) {
         replace_once(&mut out, HOOK_MARKER, HOOK_CALL)?;
     }
+    if lit {
+        // The lit body's normal map is the one group 1 already binds, read
+        // through the batch's sampler, so group 3 does not bind it again.
+        replace_once(
+            &mut out,
+            "@group(3) @binding(0) var normal_map_tex:  texture_2d<f32>;",
+            "@group(1) @binding(4) var normal_map_tex:  texture_2d<f32>;",
+        )?;
+        replace_once(
+            &mut out,
+            "@group(3) @binding(1) var normal_map_samp: sampler;\n",
+            "",
+        )?;
+        replace_once(&mut out, "normal_map_samp", "sprite_sampler")?;
+    }
     let mut fx = SPRITE_FX.to_string();
     if let Some(m) = material.filter(|m| m.shades) {
         let call = if m.params.is_empty() {
@@ -139,6 +169,9 @@ pub(super) fn compose(
     }
     out.push('\n');
     out.push_str(SPRITE_HOOK);
+    out.push_str(&material_textures_wgsl(
+        material.map_or(0, |m| m.texture_count),
+    ));
     out.push('\n');
     out.push_str(SPRITE_CONTRACT);
     out.push('\n');
@@ -156,6 +189,7 @@ pub(super) fn compose_hook(base: &str, material: &MaterialSource<'_>) -> Result<
     replace_once(&mut out, HOOK_MARKER, HOOK_CALL)?;
     out.push('\n');
     out.push_str(SPRITE_HOOK);
+    out.push_str(&material_textures_wgsl(material.texture_count));
     out.push('\n');
     out.push_str(SPRITE_CONTRACT);
     push_material(&mut out, material);
@@ -363,10 +397,21 @@ const FX_FLAG_PALETTE_LUMINANCE: u32 = 4;
 /// Bytes per sprite of the effect stream: one packed word.
 pub(super) const FX_STRIDE: u32 = 4;
 
-/// The group-3 layout of every effect pipeline: the lit normal map, the
-/// effect block, the noise and the palette, then a material's sampler and its
-/// four texture slots.
-pub(super) fn fx_layout(device: &viewport_lib::gpu::Device) -> viewport_lib::gpu::BindGroupLayout {
+/// The group-3 layout of an effect pipeline: the effect block, the noise and
+/// the palette, then a material's sampler and `material_textures` texture
+/// slots. Bindings 0 and 1 are unused: the lit normal map is group 1's.
+pub(super) fn fx_layout(
+    device: &viewport_lib::gpu::Device,
+    material_textures: u32,
+) -> viewport_lib::gpu::BindGroupLayout {
+    device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
+        label: Some("sprite_fx_bgl"),
+        entries: &fx_layout_entries(material_textures),
+    })
+}
+
+/// The entries of [`fx_layout`].
+fn fx_layout_entries(material_textures: u32) -> Vec<viewport_lib::gpu::BindGroupLayoutEntry> {
     use viewport_lib::gpu::{
         BindGroupLayoutEntry, BindingType, BufferBindingType, SamplerBindingType, ShaderStages,
         TextureSampleType, TextureViewDimension,
@@ -394,8 +439,6 @@ pub(super) fn fx_layout(device: &viewport_lib::gpu::Device) -> viewport_lib::gpu
         ..texture(binding)
     };
     let mut entries = vec![
-        texture(0),
-        sampler(1),
         BindGroupLayoutEntry {
             binding: 2,
             visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
@@ -413,11 +456,28 @@ pub(super) fn fx_layout(device: &viewport_lib::gpu::Device) -> viewport_lib::gpu
             ..sampler(5)
         },
     ];
-    entries.extend((0..MATERIAL_TEXTURES as u32).map(|i| hook_texture(6 + i)));
-    device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
-        label: Some("sprite_fx_bgl"),
-        entries: &entries,
-    })
+    entries.extend((0..material_textures).map(|i| hook_texture(6 + i)));
+    entries
+}
+
+/// Fragment-stage sampled textures an effect pipeline whose material reads
+/// `material_textures` binds across its four groups. The device's limit
+/// counts them together.
+pub(super) fn fx_sampled_textures(resources: &DeviceResources, material_textures: u32) -> u32 {
+    let fragment = viewport_lib::gpu::ShaderStages::FRAGMENT;
+    let own = |entries: &[viewport_lib::gpu::BindGroupLayoutEntry]| {
+        entries
+            .iter()
+            .filter(|e| {
+                e.visibility.contains(fragment)
+                    && matches!(e.ty, viewport_lib::gpu::BindingType::Texture { .. })
+            })
+            .count() as u32
+    };
+    resources.group0_sampled_textures(fragment)
+        + own(&super::store::sprite_bgl_entries())
+        + resources.depth_read_sampled_textures(fragment)
+        + own(&fx_layout_entries(material_textures))
 }
 
 /// A sprite material as the registry holds it.
@@ -427,6 +487,8 @@ pub(crate) struct SpriteMaterialEntry {
     pub(super) params: Vec<ParamDesc>,
     pub(super) texture_count: u32,
     pub(super) sampler: viewport_lib::gpu::Sampler,
+    /// Group 3 of this material's pipelines, with its texture slots.
+    pub(super) bgl: viewport_lib::gpu::BindGroupLayout,
     /// The body defines `shade_sprite`.
     pub(super) shades: bool,
     /// The body defines `displace_sprite`.
@@ -441,6 +503,7 @@ impl SpriteMaterialEntry {
             params: &self.params,
             shades: self.shades,
             displaces: self.displaces,
+            texture_count: self.texture_count,
         }
     }
 }
@@ -515,6 +578,16 @@ pub(super) fn validate_material(
              {MATERIAL_TEXTURES} fit"
         )));
     }
+    let needed = fx_sampled_textures(resources, texture_count);
+    let limit = viewport_lib::plugin_api::PluginResources::capabilities(resources)
+        .sampled_textures_per_stage;
+    if needed > limit {
+        return Err(ViewportError::MaterialPluginTextureBudget {
+            name: name.to_string(),
+            requested: texture_count,
+            available: limit.saturating_sub(needed - texture_count),
+        });
+    }
     let params = plugin.param_layout();
     if params.len() > LANES - 1 {
         return Err(invalid(format!(
@@ -557,6 +630,7 @@ pub(super) fn validate_material(
         params,
         texture_count,
         sampler: resources.sampler_for(device, plugin.sampler()),
+        bgl: fx_layout(device, texture_count),
         shades,
         displaces,
     };
@@ -607,6 +681,7 @@ impl TileMaterialEntry {
             params: &self.params,
             shades: false,
             displaces: true,
+            texture_count: 0,
         }
     }
 }
@@ -747,11 +822,13 @@ pub(super) struct FxBindings {
     pub palette_view: viewport_lib::gpu::TextureView,
     /// The material's sampler, or `None` to bind the batch's own.
     pub material_sampler: Option<viewport_lib::gpu::Sampler>,
-    /// The four material texture slots.
+    /// The material's texture slots, as many as its `texture_count`.
     pub material_views: Vec<viewport_lib::gpu::TextureView>,
 }
 
-/// Resolve `fx` into the bindings its batch's group 3 needs.
+/// Resolve `fx` into the bindings its batch's group 3 needs. `fx_bgl` is the
+/// built-in effects' layout; a batch with a material binds against the
+/// material's own.
 pub(super) fn resolve(
     resources: &DeviceResources,
     fx_bgl: &viewport_lib::gpu::BindGroupLayout,
@@ -804,7 +881,7 @@ pub(super) fn resolve(
         .as_ref()
         .and_then(|m| materials.get(m.id.0 as usize).map(|e| (m, e)));
     let mut lanes = [[0.0f32; 4]; LANES];
-    let (family, material_sampler, material_views) = match material {
+    let (family, bgl, material_sampler, material_views) = match material {
         Some((m, entry)) => {
             for (i, p) in entry.params.iter().enumerate() {
                 let value = m
@@ -814,22 +891,22 @@ pub(super) fn resolve(
                     .map_or(p.default, |(_, v)| *v);
                 lanes[i + 1] = value.to_vec4();
             }
-            let views = (0..MATERIAL_TEXTURES)
-                .map(|i| {
-                    let id = (i < entry.texture_count as usize)
-                        .then(|| m.textures.get(i).copied().flatten())
-                        .flatten();
-                    view_of(id).unwrap_or_else(white)
-                })
+            let views = (0..entry.texture_count as usize)
+                .map(|i| view_of(m.textures.get(i).copied().flatten()).unwrap_or_else(white))
                 .collect();
-            (1 + m.id.0, Some(entry.sampler.clone()), views)
+            (
+                1 + m.id.0,
+                entry.bgl.clone(),
+                Some(entry.sampler.clone()),
+                views,
+            )
         }
-        None => (0, None, (0..MATERIAL_TEXTURES).map(|_| white()).collect()),
+        None => (0, fx_bgl.clone(), None, Vec::new()),
     };
     let outline = fx.outline.filter(|o| o.width_px > 0.0);
     FxBindings {
         family,
-        bgl: fx_bgl.clone(),
+        bgl,
         uniform: SpriteFxUniform {
             flash_colour: fx.flash_colour.to_linear_rgba(),
             edge_colour: fx.dissolve_edge_colour.to_linear_rgba(),
@@ -861,24 +938,16 @@ pub(super) fn texture_ids(
         )
 }
 
-/// Build one effect batch's group-3 bind group.
+/// Build one effect batch's group-3 bind group. `sampler` is the batch's own,
+/// bound for a batch with no material.
 pub(super) fn bind_group(
     device: &viewport_lib::gpu::Device,
     fx: &FxBindings,
-    normal_view: &viewport_lib::gpu::TextureView,
     sampler: &viewport_lib::gpu::Sampler,
     uniform_buf: &viewport_lib::gpu::Buffer,
 ) -> viewport_lib::gpu::BindGroup {
     use viewport_lib::gpu::{BindGroupEntry, BindingResource};
     let mut entries = vec![
-        BindGroupEntry {
-            binding: 0,
-            resource: BindingResource::TextureView(normal_view),
-        },
-        BindGroupEntry {
-            binding: 1,
-            resource: BindingResource::Sampler(sampler),
-        },
         BindGroupEntry {
             binding: 2,
             resource: uniform_buf.as_entire_binding(),
@@ -945,6 +1014,7 @@ pub(crate) fn sample_material_sources() -> Vec<(&'static str, String)> {
         params: &params,
         shades: true,
         displaces: true,
+        texture_count: 1,
     };
     let tile_body = "fn displace_sprite(v: SpriteVertex) -> vec3<f32> {\n    \
                      return v.world + vec3<f32>(params.sway * sin(v.time + v.anchor.x) * v.local_uv.y, 0.0, 0.0);\n}\n";
@@ -1074,6 +1144,66 @@ mod tests {
         }
     }
 
+    fn fragment_textures(entries: &[viewport_lib::gpu::BindGroupLayoutEntry]) -> usize {
+        entries
+            .iter()
+            .filter(|e| {
+                e.visibility
+                    .contains(viewport_lib::gpu::ShaderStages::FRAGMENT)
+                    && matches!(e.ty, viewport_lib::gpu::BindingType::Texture { .. })
+            })
+            .count()
+    }
+
+    #[test]
+    fn effect_layouts_declare_only_the_material_slots_in_use() {
+        for n in 0..=MATERIAL_TEXTURES as u32 {
+            let entries = fx_layout_entries(n);
+            assert_eq!(
+                fragment_textures(&entries),
+                2 + n as usize,
+                "{n} material textures"
+            );
+            assert!(
+                entries.iter().all(|e| e.binding >= 2),
+                "the lit normal map is group 1's, not group 3's"
+            );
+        }
+    }
+
+    #[test]
+    fn the_lit_effect_body_reads_the_normal_map_from_group_1() {
+        let (_, lit) = base_sources();
+        let out = compose(&lit, true, None).unwrap();
+        assert!(out.contains("@group(1) @binding(4) var normal_map_tex"));
+        assert!(!out.contains("@group(3) @binding(0)"));
+        assert!(!out.contains("@group(3) @binding(1)"));
+        assert!(!out.contains("normal_map_samp"));
+    }
+
+    #[test]
+    fn a_material_declares_one_texture_per_slot_it_reads() {
+        let (unlit, _) = base_sources();
+        for n in 0..=MATERIAL_TEXTURES as u32 {
+            let src = MaterialSource {
+                name: "m",
+                prefixed_body: "fn m__shade_sprite(f: SpriteFragment) -> vec4<f32> { return f.colour; }",
+                params: &[],
+                shades: true,
+                displaces: false,
+                texture_count: n,
+            };
+            let out = compose(&unlit, false, Some(&src)).unwrap();
+            for i in 0..MATERIAL_TEXTURES as u32 {
+                assert_eq!(
+                    out.contains(&format!("var htex{i}:")),
+                    i < n,
+                    "{n} textures, htex{i}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn material_params_unpack_from_the_block() {
         let params = [
@@ -1086,6 +1216,7 @@ mod tests {
             params: &params,
             shades: true,
             displaces: false,
+            texture_count: 0,
         };
         let decl = material_declarations(&src, "sprite_fx.lanes");
         assert!(decl.contains("p.rim = sprite_fx.lanes[1].x;"));

@@ -2,10 +2,11 @@
 // effect shaders after the body of `sprite.wgsl` or `sprite_lit.wgsl`, and in
 // the pick and outline-mask shaders of a material with a vertex hook.
 //
-// Group 3: the lit normal map (bindings 0-1, read only by the lit body), this
-// batch's effect block (2), the dissolve noise (3) and the palette (4), then
-// the sampler (5) and four textures (6-9) a custom material reads. A material
-// body follows the particle hook contract: `sprite_samp`, `htex0..htex3` and
+// Group 3: this batch's effect block (2), the dissolve noise (3) and the
+// palette (4), then the sampler (5) and the textures (6..) a custom material
+// reads, declared by the composer, one per texture it uses. Bindings 0-1 are
+// unused: the lit body reads group 1's normal map. A material body follows
+// the particle hook contract: `sprite_samp`, `htex0..htex3` and
 // `hook_params.lanes` (lane 0 reserved, `.w` the time).
 
 // Per-batch effect block. Must match `SpriteFxUniform` in `effects.rs`.
@@ -29,7 +30,3 @@ struct SpriteFx {
 @group(3) @binding(3) var          sprite_fx_noise:   texture_2d<f32>;
 @group(3) @binding(4) var          sprite_fx_palette: texture_2d<f32>;
 @group(3) @binding(5) var          sprite_samp:       sampler;
-@group(3) @binding(6) var          htex0:             texture_2d<f32>;
-@group(3) @binding(7) var          htex1:             texture_2d<f32>;
-@group(3) @binding(8) var          htex2:             texture_2d<f32>;
-@group(3) @binding(9) var          htex3:             texture_2d<f32>;

@@ -110,7 +110,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let w = max(fwidth(d), 1e-5);
         coverage = clamp(0.5 - d / w, 0.0, 1.0);
     }
-    var out = vec4<f32>(0.0);
-    out[mask_draw.slot & 3u] = coverage;
-    return out;
+    // A select rather than `out[slot] = coverage`: FXC cannot write a vector
+    // component chosen at run time.
+    let channel = vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(mask_draw.slot & 3u);
+    return select(vec4<f32>(0.0), vec4<f32>(coverage), channel);
 }

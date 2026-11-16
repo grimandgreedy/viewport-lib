@@ -1,142 +1,65 @@
 # viewport-lib
 
-`viewport-lib` is a gpu-accelerated 3D viewport library for rust. It works with any GUI framework that gives you access to a wgpu device, queue, and render target. 
+viewport-lib is an embeddable 3D and 2D renderer for Rust. It is the rendering half of scientific and data visualisation applications, CAD and engineering tools, simulators, editors and games. It renders with your application's wgpu device and leaves the event loop to you, so a viewport happily renders in an egui, iced, Slint, Bevy or winit app like any other widget.
 
-<table>
-  <tr>
-    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo1.png?raw=true" alt="demo 1" /></td>
-    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo7.png?raw=true" alt="demo 2" /></td>
-  </tr>
-  <tr>
-    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo3.png?raw=true" alt="demo 3" /></td>
-    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo10.png?raw=true" alt="demo 4" /></td>
-  </tr>
-  <tr>
-    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo2.png?raw=true" alt="demo 5" /></td>
-    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo8.png?raw=true" alt="demo 6" /></td>
-  </tr>
-</table>
+![PBR materials with image-based lighting and soft shadows; tinted glass shapes under coloured spot lights; a height field coloured by a colourmap with contour lines; a spiral galaxy drawn as a point cloud; a gear train with a selection outline and a transform gizmo; a forest clearing built from glTF models at sunset; streamlines around a sphere coloured by speed](https://raw.githubusercontent.com/grimandgreedy/viewport-lib/master/assets/readme/teaser.png)
 
-## Core features
+[![crates.io](https://img.shields.io/crates/v/viewport-lib.svg)](https://crates.io/crates/viewport-lib) [![docs.rs](https://img.shields.io/docsrs/viewport-lib)](https://docs.rs/viewport-lib) [![licence](https://img.shields.io/crates/l/viewport-lib.svg)](LICENSE)
 
-- **Objects**:
-    - Lib Items: tri-meshes, point volumes, scatter volumes, volume meshes (tet-, pyramid-, hex-meshes), point clouds, Gaussian splats, glyphs and tensor glyphs, polylines, tubes, ribbons, streamtubes, sprites, decals, implicit and marching-cubes surfaces.
-    - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
-- **Lighting**: photometric light units (lux, candela, lumens) with physical-camera and automatic exposure; cascaded, point-light, and contact shadows; image-based lighting; baked lightmaps.
-- **Materials & effects**: PBR metallic-roughness shading; bloom, SSAO, and depth of field.
-- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection, snapping helpers and constraint guides for transform tools (the transform gizmo itself is the separate `viewport-lib-gizmo` crate)
-- **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices
-- **Integration**: drop a viewport into any wgpu app (eframe/egui, winit, iced, Slint, bevy) through event adapters.
-- **Performance**: GPU-driven frustum culling and mesh instancing; async streaming uploads with VRAM budgeting; mipmapped and block-compressed textures.
-- **Extensibility**: plugins that hook into the frame loop for CPU simulation and animation, GPU compute and post-process passes, custom item types with their own pipelines, per-vertex mesh deformation (animation, regular motion), and custom material shading.
+## Features
 
+- **Surfaces and materials**: a full physically based material model matching glTF: textures and normal maps, glass with refraction and absorption, clear coat, sheen and brushed metal.
+- **Lighting**: directional, point and spot lights in photometric units; cascaded, point-light and contact shadows; image-based lighting from HDR environments; light probes and baked lightmaps; manual, physical-camera and automatic exposure.
+- **Scientific data types**: volume rendering, volume meshes, contour lines, surface LIC, vector and tensor glyphs, streamtubes and ribbons, point clouds, Gaussian splats, marching-cubes and implicit surfaces.
+- **Overlays**: a 2D drawing layer the renderer draws in the same frame as the scene, for labels, annotations and HUDs: shapes, vector paths and text with solid, gradient or image fills.
+- **2D**: sprites, tilemaps, two-dimensional lights with normal maps and soft shadows.
+- **Camera & input**: built-in orbit, first-person, third-person, turntable and planar 2D input controllers with configurable bindings for mouse, keyboard, and touch; CPU and GPU picking of objects, and sub-object regions.
+- **Performance**: mesh instancing; GPU frustum and occlusion culling with indirect draws; bindless textures; LOD groups; uploads on worker threads within a per-frame budget; block-compressed textures.
+- **Extensibility via plugins**: `RuntimePlugin`s that hook into the frame loop for CPU simulation and animation, `GpuPlugin`s for compute and post-process passes, `ItemTypePlugin`s for custom item types with their own pipelines, deformer plugins for per-vertex mesh deformation (animation, regular motion), and `MaterialPlugin`s for custom material shading.
 
-## Examples
+## Getting started
 
-`crates/viewport-lib-examples/` holds working integrations for several GUI frameworks, one crate per framework, so running an eframe example does not build bevy or slint.
-
-- **eframe-showcase**: run this first and cycle through the feature showcases: this demonstrates many of the viewport's built-in capabilities but is non-exhaustive.
-- **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
-- **eframe-primitives**: demonstrates the built-in geometry primitives.
-- **eframe-multi-viewport**: a mid-complexity example with several viewports in one window.
-- **eframe-input-controllers**: shows custom input bindings and controller configuration.
-- **mobile**: the same scene on Android and iOS, orbited with touch. Needs cargo-mobile2 and a device toolchain; see the crate's README.
+To see what VPL can do, clone the repository and run the showcase. Cycle through the showcases with `ctrl+[/]`.
 
 ```
 cargo run --release -p viewport-lib-examples-eframe --example eframe-showcase
+```
+
+To use it in your application:
+
+```
+cargo add viewport-lib
+```
+
+Then start from the example closest to your application. Every example runs from the repository root.
+
+```sh
+# Full-screen winit
+cargo run --release -p viewport-lib-examples-winit --example winit-minimal
+
+# egui / eframe
 cargo run --release -p viewport-lib-examples-eframe --example eframe-minimal
-cargo run --release -p viewport-lib-examples-winit  --example winit-minimal
-cargo run --release -p viewport-lib-examples-iced   --example iced-viewport
-cargo run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --example slint-minimal
-cargo run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml  --example bevy-swarm
+
+# iced
+cargo run --release -p viewport-lib-examples-iced --example iced-viewport
+
+# Slint
+cargo slint-example
 ```
 
-The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. The mobile crate is outside the workspace too, because cargo-mobile2's generated Xcode and Gradle projects expect its target directory to be its own; it is built and deployed from its own directory, which its README covers. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
+For a browser page, build the `winit-web` example with `scripts/build_web.sh winit-web` and serve its folder. For Android and iOS, see the [mobile crate's README](crates/viewport-lib-examples/mobile).
 
-```
-cargo run --release -p viewport-lib-examples-winit --no-default-features --features wgpu30 --example winit-minimal
-```
+### Choosing a runner
 
-`cargo slint-example` and `cargo bevy-example` are aliases for the two manifest-path commands above.
+| Runner | Use it when |
+| --- | --- |
+| `ViewportApp` | viewport-lib can own the windows and the event loop. You write the scene setup and a per-frame closure. |
+| `ViewportInstance` | Your application owns the window, the wgpu device and the loop. You pass it events and call it each frame. |
+| `ViewportRenderer` | You write your own runner. The two runners above are built on `ViewportRenderer` and are nothing special: read them in [`src/runners/`](crates/viewport-lib/src/runners) and build your own the same way. This is encouraged for more complex applications: several viewports, your own camera and controllers, or your own render passes. |
 
-## Quick start
+## wgpu versions
 
-A viewport is created and managed via a runner. There are two primary runners that we maintain and ship, but for intensive applications you are encouraged to make your own. The runner is an object that manages the viewport's per-frame work.
-
-- **`ViewportApp`**: owns the windows and the run loop -- this is a full app runner, for one window or several. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
-- **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw when you want, and route each event to either the viewport's input controller or your GUI. This is the right fit when you are embedding a viewport into an existing application which already owns the run-loop. 
-- **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., `eframe-multi-viewport` in the eframe example crate, or `wgpu-leg-agnostic` in the headless one.
-
-Native events reach either runner as a `ViewportEvent`, translated by an adapter (`from_winit`, `from_egui`).
-
-### `ViewportApp`
-
-`ViewportApp` owns the windows and event loop, so you only write scene setup and a per-frame closure for each window. One `window` call is a single-window app; call it again for more windows, or open and close them at runtime from a frame callback (see the `app-multi-window` example).
-
-```rust
-use viewport_lib::{AppConfig, Colour, Material, ViewportApp, WindowConfig, primitives};
-
-ViewportApp::new(AppConfig::default())
-    .window(
-        WindowConfig::default().with_title("demo").with_window_size(1280, 720),
-        |viewport, device| {
-            // runs once, with the device in hand: upload meshes and build the scene
-            let mesh = viewport.resources_mut()
-                .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-            let red = viewport.resources_mut()
-                .upload_material(Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2))).unwrap();
-            viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
-        },
-        |_ctx| {
-            // runs once per frame, before rendering: update the scene here
-        },
-    )
-    .run();
-```
-
-To handle input yourself before it reaches the viewport, use `window_with_input`; to draw other viewports into parts of the window, use `window_with_paint`.
-
-### `ViewportInstance`
-
-When your app already owns the window, wgpu device/queue, and event loop, drive a `ViewportInstance` from inside your render loop. The `eframe-minimal` example is this embedded in egui.
-
-```rust
-use viewport_lib::{
-    Colour, InputOwnership, Material, OrbitCameraController, ViewportContext, ViewportInstance,
-    primitives,
-};
-
-// Your app creates the window, wgpu device/queue, and event loop.
-// Once the device is available, create the instance and a camera controller:
-let mut viewport = ViewportInstance::new(&device, target_format);
-// The session owns the bindings (see with_bindings); the controller just applies
-// the frame they resolve to.
-let mut orbit = OrbitCameraController::new_stateless();
-
-let mesh = viewport.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
-let red = viewport.resources_mut().upload_material(Material::from_colour(Colour::srgb_rgb(0.85, 0.25, 0.2)))?;
-viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, red);
-
-// Then, each frame inside your app's render loop:
-// `ownership` is your routing decision: an InputOwnership with the pointer Owned
-// when the viewport won it this frame, Inside when your own chrome over it holds
-// it, Elsewhere otherwise, and the keyboard Owned unless a text field of yours has
-// it. A viewport alone in its window uses InputOwnership::full_window().
-viewport.begin_frame(ViewportContext::new(ownership, [width, height]));
-for ev in native_events {
-    // translate to ViewportEvent (the winit / egui adapters, or by hand); the
-    // viewport drops what the ownership says is not its own
-    viewport.handle_event(ev);
-}
-viewport.update_orbit(&mut orbit, dt);               // resolve input, orbit the camera, assemble
-let cmd = viewport.render(&device, &queue, &view);   // submit cmd to your queue
-```
-
-## wgpu version
-
-viewport-lib's wgpu version must match the GUI framework's, so it ships mutually
-exclusive cargo features, one per supported wgpu version. Select one with
-`default-features = false, features = ["serde", "wgpu29"]`.
+viewport-lib's wgpu version must match your GUI framework's, so it ships one cargo feature per supported wgpu version. Enable exactly one, for example `default-features = false, features = ["serde", "wgpu29"]`.
 
 | Feature | wgpu | GUI frameworks on this version |
 | --- | --- | --- |
@@ -144,8 +67,27 @@ exclusive cargo features, one per supported wgpu version. Select one with
 | `wgpu29` | 29 | egui/eframe 0.35, Slint 1.17, Bevy 0.19 |
 | `wgpu30` | 30 | egui/eframe 0.36 |
 
-The leg and the GUI framework are independent choices: what has to match is the framework *version*, because a framework that embeds wgpu must agree with viewport-lib on it. winit embeds none, so any leg works there. One exception worth knowing: the `egui-adapter` feature (the `from_egui` event translation) is built against egui 0.33, so on the 29 and 30 legs an egui host translates events itself.
+winit embeds no wgpu, so it works on any of them.
 
-## License
+Note that the egui event adapter comes in one feature per egui version: `egui-adapter` (0.33), `egui-adapter-035` and `egui-adapter-036`.
 
-This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details. Get in contact for details on purchasing a commercial license.
+## Platforms
+
+| Platform | Graphics API |
+| --- | --- |
+| Windows | Direct3D 12, Vulkan |
+| macOS | Metal |
+| Linux | Vulkan, OpenGL |
+| Android | Vulkan, OpenGL ES |
+| iOS | Metal |
+| Web | WebGPU, WebGL2 |
+
+Devices without compute shaders, such as WebGL2 and older OpenGL ES devices, run a compatibility tier with a slightly reduced feature set. `Capabilities` reports what the current device supports.
+
+## Status
+
+viewport-lib is under active development, and the API will change between releases.
+
+## Licence
+
+viewport-lib is licensed under the GNU General Public License v3.0; see [LICENSE](LICENSE). Get in contact for information on purchasing a commercial licence.

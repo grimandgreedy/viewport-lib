@@ -111,6 +111,12 @@ struct DrawIndirect {
 // layer-mask reject. Bound with a 1-element fallback when do_mask_cull is off
 // (shadow / single-mesh / plugin dispatches) so the layout is always satisfied.
 @group(0) @binding(8) var<storage, read>       instance_data:      array<InstanceData>;
+// Nearest, clamp-to-edge sampler the occlusion test reads `hiz_tex` through.
+// `textureLoad` above mip 0 reads 0 on GL: the pyramid's format is not
+// filterable, so the texture keeps a filter with no mipmaps and only its base
+// level counts. The sampler's nearest mip filter makes the whole chain
+// readable, and sampled at a texel centre it returns that texel everywhere.
+@group(0) @binding(10) var                     hiz_sampler:        sampler;
 // --- Deterministic compaction -------------------------------------------
 //
 // The visible list has to be packed in instance order, not in the order
@@ -219,7 +225,9 @@ fn aabb_occluded(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> bool {
     let base_dim = textureDimensions(hiz_tex, 0);
     let max_level = i32(firstLeadingBit(max(base_dim.x, base_dim.y)));
     let level = clamp(i32(ceil(log2(max_side))), 0, max_level);
-    let lvl_dim = vec2<f32>(textureDimensions(hiz_tex, level));
+    // From mip 0, not `textureDimensions` at `level`, which GL leaves
+    // undefined above the base level for the same reason as the read below.
+    let lvl_dim = vec2<f32>(max(base_dim >> vec2<u32>(u32(level)), vec2<u32>(1u)));
     let scale = lvl_dim / frustum.viewport;
     let t_min = vec2<i32>(floor(px_min * scale));
     let t_max = vec2<i32>(floor(px_max * scale));
@@ -230,9 +238,10 @@ fn aabb_occluded(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> bool {
         for (var x = t_min.x; x <= t_max.x; x++) {
             let cx = clamp(x, 0, lvl_last.x);
             let cy = clamp(y, 0, lvl_last.y);
+            let uv = (vec2<f32>(f32(cx), f32(cy)) + 0.5) / lvl_dim;
             hiz_far = viewport_depth_farthest(
                 hiz_far,
-                textureLoad(hiz_tex, vec2<i32>(cx, cy), level).r,
+                textureSampleLevel(hiz_tex, hiz_sampler, uv, f32(level)).r,
             );
         }
     }

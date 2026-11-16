@@ -48,7 +48,7 @@ pub fn segmented(ui: &mut egui::Ui, active: usize, options: &[&str]) -> Option<u
     let mut picked = None;
     egui::Frame::new()
         .fill(egui::Color32::from_rgba_unmultiplied(18, 18, 22, 205))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(20)))
+        .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(20)))
         .inner_margin(egui::Margin::same(3))
         .corner_radius(egui::CornerRadius::same(5))
         .show(ui, |ui| {
@@ -78,7 +78,7 @@ pub fn help_button(ui: &mut egui::Ui) -> bool {
         rect.center(),
         14.0,
         fill,
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(20)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(20)),
     );
     painter.text(
         rect.center(),
