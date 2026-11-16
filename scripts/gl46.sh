@@ -7,7 +7,7 @@
 # testkit GPU test skips. 4.6 is NVIDIA's highest core version and clears
 # wgpu-hal's 4.3 storage and compute checks.
 #
-# Usage, from anywhere (TESTKIT defaults to the testkit beside this checkout):
+# Usage, from anywhere (TESTKIT defaults to this checkout's testkit):
 #   gl46.sh <leg> <cargo args...>
 #   gl46.sh 27 test --release --test tier -- --nocapture
 #   BLESS=1 gl46.sh 27 test --release --test snapshots -- --nocapture
@@ -29,7 +29,7 @@ case "$leg" in
     *) echo "leg must be 27, 29 or 30, not '$leg'" >&2; exit 2 ;;
 esac
 
-TESTKIT="${TESTKIT:-$HOME/code/ST/vpl/viewport-lib/crates/viewport-lib-testkit}"
+TESTKIT="${TESTKIT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/crates/viewport-lib-testkit}"
 if [[ ! -f "$TESTKIT/Cargo.toml" ]]; then
     echo "no testkit at $TESTKIT; set TESTKIT=<path to crates/viewport-lib-testkit>" >&2
     exit 1
