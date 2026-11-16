@@ -2,7 +2,7 @@
 name = "viewport-lib"
 version = "0.24.1"
 edition = "2024"
-description = "3D viewport rendering library"
+description = "An embeddable 3D and 2D renderer for scientific and data visualisation, CAD and engineering tools, simulators, editors and games"
 readme = "README.md"
 license = "GPL-3.0-only"
 repository = "https://github.com/grimandgreedy/viewport-lib"
