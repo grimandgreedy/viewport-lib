@@ -1077,6 +1077,38 @@ pub fn nearest_sampler_entry(
     }
 }
 
+/// Plain (non-array) sampled textures `entries` make visible to `stage`.
+/// Binding arrays count against a limit of their own.
+pub(crate) fn stage_sampled_textures(
+    entries: &[crate::gpu::BindGroupLayoutEntry],
+    stage: crate::gpu::ShaderStages,
+) -> u32 {
+    entries
+        .iter()
+        .filter(|e| {
+            e.visibility.contains(stage)
+                && e.count.is_none()
+                && matches!(e.ty, crate::gpu::BindingType::Texture { .. })
+        })
+        .count() as u32
+}
+
+/// The read-only depth layout: the scene depth and its sampler, then the
+/// painter masks and light layers, for painter content that binds this group
+/// and tests a mask or samples its light.
+pub(crate) fn depth_read_layout_entries() -> [crate::gpu::BindGroupLayoutEntry; 6] {
+    let fragment = crate::gpu::ShaderStages::FRAGMENT;
+    let [mask, masks, light, lights] = crate::resources::painter_mask::painter_mask_entries(2);
+    [
+        depth_texel_entry(0, fragment),
+        nearest_sampler_entry(1, fragment),
+        mask,
+        masks,
+        light,
+        lights,
+    ]
+}
+
 /// Nearest-filtered sampler clamped to edge on all axes. Used where
 /// interpolation would blur discrete data (index buffers, nearest blits).
 pub fn clamp_nearest_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {

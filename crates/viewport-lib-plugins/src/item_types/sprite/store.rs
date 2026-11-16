@@ -22,83 +22,86 @@ pub(crate) use super::types::{SpriteInstanceSetId, SpriteSetId};
 ///
 /// Group 1 carries a batch's uniform, texture, sampler, instance buffer and
 /// normal map (read by the 2D light layers); group 3 carries the same normal
-/// map for a lit batch.
-/// Both are built once at startup rather than lazily, because an upload can
+/// map for a lit batch with no effects. An effect batch's lit body reads
+/// group 1's.
+/// They are built once at startup rather than lazily, because an upload can
 /// arrive before the first frame that draws one.
 pub(super) struct SpriteLayouts {
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(super) bgl: viewport_lib::gpu::BindGroupLayout,
     /// Group 3 layout for the optional lit normal map (texture + sampler).
     pub(super) lit_bgl: viewport_lib::gpu::BindGroupLayout,
-    /// Group 3 layout of every effect pipeline: the lit normal map, the effect
-    /// block, the noise and the palette, and a material's sampler and textures.
+    /// Group 3 layout of the built-in effect pipelines: the effect block, the
+    /// noise, the palette and a sampler. A material's family has its own,
+    /// with its texture slots.
     pub(super) fx_bgl: viewport_lib::gpu::BindGroupLayout,
+}
+
+/// The entries of group 1, [`SpriteLayouts::bgl`].
+pub(super) fn sprite_bgl_entries() -> [viewport_lib::gpu::BindGroupLayoutEntry; 5] {
+    [
+        // binding 0: SpriteUniform (model, world_space, has_texture)
+        viewport_lib::gpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: viewport_lib::gpu::ShaderStages::VERTEX
+                | viewport_lib::gpu::ShaderStages::FRAGMENT,
+            ty: viewport_lib::gpu::BindingType::Buffer {
+                ty: viewport_lib::gpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        // binding 1: sprite texture (or fallback 1x1 when has_texture == 0)
+        viewport_lib::gpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+            ty: viewport_lib::gpu::BindingType::Texture {
+                sample_type: viewport_lib::gpu::TextureSampleType::Float { filterable: true },
+                view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+        // binding 2: sampler
+        viewport_lib::gpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+            ty: viewport_lib::gpu::BindingType::Sampler(
+                viewport_lib::gpu::SamplerBindingType::Filtering,
+            ),
+            count: None,
+        },
+        // binding 3: per-sprite instance storage buffer
+        viewport_lib::gpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: viewport_lib::gpu::ShaderStages::VERTEX,
+            ty: viewport_lib::gpu::BindingType::Buffer {
+                ty: viewport_lib::gpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        // binding 4: normal map (or the flat fallback when has_normal_map == 0)
+        viewport_lib::gpu::BindGroupLayoutEntry {
+            binding: 4,
+            visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+            ty: viewport_lib::gpu::BindingType::Texture {
+                sample_type: viewport_lib::gpu::TextureSampleType::Float { filterable: true },
+                view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+    ]
 }
 
 impl SpriteLayouts {
     pub(super) fn new(device: &viewport_lib::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("sprite_bgl"),
-            entries: &[
-                // binding 0: SpriteUniform (model, world_space, has_texture)
-                viewport_lib::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: viewport_lib::gpu::ShaderStages::VERTEX
-                        | viewport_lib::gpu::ShaderStages::FRAGMENT,
-                    ty: viewport_lib::gpu::BindingType::Buffer {
-                        ty: viewport_lib::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 1: sprite texture (or fallback 1x1 when has_texture == 0)
-                viewport_lib::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
-                    ty: viewport_lib::gpu::BindingType::Texture {
-                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
-                            filterable: true,
-                        },
-                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 2: sampler
-                viewport_lib::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
-                    ty: viewport_lib::gpu::BindingType::Sampler(
-                        viewport_lib::gpu::SamplerBindingType::Filtering,
-                    ),
-                    count: None,
-                },
-                // binding 3: per-sprite instance storage buffer
-                viewport_lib::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: viewport_lib::gpu::ShaderStages::VERTEX,
-                    ty: viewport_lib::gpu::BindingType::Buffer {
-                        ty: viewport_lib::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 4: normal map (or the flat fallback when has_normal_map == 0)
-                viewport_lib::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
-                    ty: viewport_lib::gpu::BindingType::Texture {
-                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
-                            filterable: true,
-                        },
-                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &sprite_bgl_entries(),
         });
 
         let lit_bgl = viewport_lib::plugin_api::builders::texture_sampler_bgl(
@@ -107,7 +110,7 @@ impl SpriteLayouts {
             viewport_lib::gpu::ShaderStages::FRAGMENT,
         );
 
-        let fx_bgl = super::effects::fx_layout(device);
+        let fx_bgl = super::effects::fx_layout(device, 0);
 
         Self {
             bgl,
@@ -685,13 +688,8 @@ pub(super) fn build_sprite(
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&fxb.uniform));
-                let bind_group = super::effects::bind_group(
-                    device,
-                    fxb,
-                    normal_view,
-                    &binds.sampler,
-                    &uniform_buf,
-                );
+                let bind_group =
+                    super::effects::bind_group(device, fxb, &binds.sampler, &uniform_buf);
                 let draw = SpriteFxDraw {
                     family: fxb.family,
                     bind_group,
@@ -1722,13 +1720,7 @@ pub(super) fn rebind_sprite(
 
     if let (Some(fx), Some(fxb)) = (&mut data.fx, &binds.fx) {
         queue.write_buffer(&fx.uniform_buf, 0, bytemuck::bytes_of(&fxb.uniform));
-        fx.bind_group = super::effects::bind_group(
-            device,
-            fxb,
-            &binds.normal_view,
-            &binds.sampler,
-            &fx.uniform_buf,
-        );
+        fx.bind_group = super::effects::bind_group(device, fxb, &binds.sampler, &fx.uniform_buf);
     }
 
     // Only a lit batch has the group-3 binding; an unlit one never built it

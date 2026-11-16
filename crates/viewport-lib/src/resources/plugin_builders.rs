@@ -132,6 +132,17 @@ impl DeviceResources {
         self.lit_group0_layouts().expect(NO_LIT_GROUP0).0
     }
 
+    /// Sampled textures [`group0_layout`](Self::group0_layout) makes visible
+    /// to `stage` on this device's tier, 0 on the overlay-only tier. The
+    /// device's `max_sampled_textures_per_shader_stage` counts every group of
+    /// a pipeline layout together, so a plugin adds its own groups' textures
+    /// to this to check a layout fits.
+    pub fn group0_sampled_textures(&self, stage: crate::gpu::ShaderStages) -> u32 {
+        self.group0_profile.as_ref().map_or(0, |p| {
+            crate::resources::builders::stage_sampled_textures(&p.layout_entries(), stage)
+        })
+    }
+
     /// Group 0 of the shadow pass: the cascade light matrix the renderer
     /// binds before calling
     /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
@@ -362,6 +373,17 @@ impl DeviceResources {
     /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
     pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
         &self.scene_tier.material.depth_read_bgl
+    }
+
+    /// Sampled textures
+    /// [`depth_read_bind_group_layout`](Self::depth_read_bind_group_layout)
+    /// makes visible to `stage`. See
+    /// [`group0_sampled_textures`](Self::group0_sampled_textures).
+    pub fn depth_read_sampled_textures(&self, stage: crate::gpu::ShaderStages) -> u32 {
+        crate::resources::builders::stage_sampled_textures(
+            &crate::resources::builders::depth_read_layout_entries(),
+            stage,
+        )
     }
 
     /// Bind group layout of the painter masks and 2D light layers, on every

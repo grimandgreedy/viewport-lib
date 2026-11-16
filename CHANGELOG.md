@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **`DeviceResources::group0_sampled_textures` and `depth_read_sampled_textures`** - the sampled textures group 0 and the read-only depth layout make visible to a stage, so a plugin can check a pipeline layout against the device's `sampled_textures_per_stage`, which counts every group together.
+- **`Capabilities::independent_mip_views`** - false on wgpu's GL backend, where a compute pass that samples one mip of a texture and stores to another loses the store. A plugin that builds a mip chain level by level reduces into separate textures where it is false.
+
+### Fixes
+
+- **Occlusion culling on wgpu's GL backend** - with `set_occlusion_culling(true)`, GPU occlusion culling culled nothing on GL: the HiZ pyramid's levels above the first were empty and the cull could not read them. The pyramid's levels are reduced into separate textures on GL, and the cull reads the pyramid through a sampler on every backend.
+- **Environment lighting on wgpu's GL backend** - an uploaded environment baked to no diffuse light and almost no specular on GL, so environment-lit scenes drew black. The bake's filter pyramid now reduces each level into a texture of its own before copying it into the pyramid.
+- **Sprite effects on wgpu's GL backend and 16-texture devices** - effect and material sprite pipelines bound 18 textures in the fragment stage, which panicked on wgpu's GL backend and failed validation on wgpu 29 and 30 there. Group 3 no longer binds the lit normal map a second time, and a material's layout declares only the textures it reads. `register_sprite_material` returns `MaterialPluginTextureBudget` for a material that cannot fit the device; on a device with 16 sampled textures per stage a sprite material can read three.
+
 ## [0.24.0]
 
 This release adds 2D rendering (sprites, tilemaps, one painter's-order sequence across item types, 2D lighting and `Camera2d`), reworks the overlay renderer (affine shapes, strokes, layers and blend modes, world overlay layers), runs runtime GPU plugins from the runners, cuts lighting and shadow costs, and renames `SceneRenderItem` to `MeshItem`.
