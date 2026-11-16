@@ -69,6 +69,14 @@ pub struct Capabilities {
     /// depth. Set from the backend the same way as
     /// [`depth_texture_loads`](Self::depth_texture_loads).
     pub direct_depth_sampling: bool,
+    /// One-mip views of a texture are independent: a compute pass can sample
+    /// one mip of a texture and store to another. Not on wgpu's GL backend,
+    /// which stands in for a view by setting the texture's base and max level,
+    /// so the store lands outside that range and is dropped. A mip chain built
+    /// level by level reduces into separate textures there instead. Set from
+    /// the backend the same way as
+    /// [`depth_texture_loads`](Self::depth_texture_loads).
+    pub independent_mip_views: bool,
     /// Indexed draws can start at a non-zero base vertex.
     pub base_vertex: bool,
     /// Indirect draws and dispatches run.
@@ -170,14 +178,16 @@ impl Capabilities {
     }
 
     /// These capabilities with what follows from running on `backend`: on
-    /// [`Backend::Gl`](gpu::Backend::Gl), no depth-texture loads and no
-    /// direct depth sampling; on [`Backend::Dx12`](gpu::Backend::Dx12), no
+    /// [`Backend::Gl`](gpu::Backend::Gl), no depth-texture loads, no direct
+    /// depth sampling and no independent mip views; on
+    /// [`Backend::Dx12`](gpu::Backend::Dx12), no
     /// multi-draw count. wgpu's DX12 count draws leave `first_instance` out of
     /// `instance_index`, so every draw in a group would read the first batch's
     /// instances.
     pub fn with_backend(mut self, backend: gpu::Backend) -> Self {
         self.depth_texture_loads = backend != gpu::Backend::Gl;
         self.direct_depth_sampling &= backend != gpu::Backend::Gl;
+        self.independent_mip_views = backend != gpu::Backend::Gl;
         self.multi_draw_indirect_count &= backend != gpu::Backend::Dx12;
         self
     }
@@ -240,6 +250,7 @@ impl Capabilities {
             cube_array_textures: flag(gpu::DownlevelFlags::CUBE_ARRAY_TEXTURES),
             depth_texture_loads: true,
             direct_depth_sampling: flag(gpu::DownlevelFlags::READ_ONLY_DEPTH_STENCIL),
+            independent_mip_views: true,
             base_vertex: flag(gpu::DownlevelFlags::BASE_VERTEX),
             indirect_execution: flag(gpu::DownlevelFlags::INDIRECT_EXECUTION),
             downlevel_known: downlevel.is_some(),
@@ -660,6 +671,26 @@ mod tests {
             caps.with_backend(gpu::Backend::Vulkan)
                 .multi_draw_indirect_count
         );
+    }
+
+    /// Only GL emulates texture views, so only GL loses independent mip views.
+    #[test]
+    fn gl_has_no_independent_mip_views() {
+        let caps = Capabilities::from_parts(&gpu::Limits::default(), gpu::Features::empty(), None);
+        assert!(caps.independent_mip_views);
+        assert!(
+            !caps
+                .clone()
+                .with_backend(gpu::Backend::Gl)
+                .independent_mip_views
+        );
+        for backend in [
+            gpu::Backend::Vulkan,
+            gpu::Backend::Metal,
+            gpu::Backend::Dx12,
+        ] {
+            assert!(caps.clone().with_backend(backend).independent_mip_views);
+        }
     }
 
     #[test]

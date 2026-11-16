@@ -50,6 +50,10 @@ pub(crate) struct HizPipelines {
     to_texture_bgl: crate::gpu::BindGroupLayout,
     reduce_bgl: crate::gpu::BindGroupLayout,
     family: crate::resources::pipeline_slot::LazyFamily<HizRecipe, 5, crate::gpu::ComputePipeline>,
+    /// Reduce each level into a texture of its own and copy it into the
+    /// pyramid, for a device without
+    /// [`independent_mip_views`](crate::capabilities::Capabilities::independent_mip_views).
+    separate_levels: bool,
 }
 
 /// What a HiZ compute build reads: a label, layout, module and entry point per
@@ -87,6 +91,7 @@ impl HizPipelines {
     pub(crate) fn new(
         device: &crate::gpu::Device,
         compiler: &std::sync::Arc<crate::resources::pipeline_slot::PipelineCompiler>,
+        separate_levels: bool,
     ) -> Self {
         let compute = crate::gpu::ShaderStages::COMPUTE;
         let storage_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
@@ -241,6 +246,7 @@ impl HizPipelines {
                 std::sync::Arc::clone(compiler),
                 build_hiz,
             ),
+            separate_levels,
         }
     }
 }
@@ -271,6 +277,10 @@ pub(crate) struct HizState {
     all_view: crate::gpu::TextureView,
     /// One single-mip storage view per level (reduction write targets).
     storage_views: Vec<crate::gpu::TextureView>,
+    /// With `HizPipelines::separate_levels`: the pyramid and a texture per
+    /// level above 0 that the reduction writes, copied into the pyramid after
+    /// it. `None` where the reduction writes the pyramid's own mips.
+    separate_levels: Option<(crate::gpu::Texture, Vec<crate::gpu::Texture>)>,
 
     /// The layouts and pipelines, shared by every pyramid size.
     pipelines: std::sync::Arc<HizPipelines>,
@@ -293,12 +303,13 @@ impl HizState {
         let h = h.max(1);
         let mips = mip_count(w, h);
 
-        let storage_texture = |label: &str, mip_levels: u32| {
+        let separate = pipelines.separate_levels;
+        let r32_texture = |label: &str, (width, height): (u32, u32), mip_levels: u32, extra| {
             device.create_texture(&crate::gpu::TextureDescriptor {
                 label: Some(label),
                 size: crate::gpu::Extent3d {
-                    width: w,
-                    height: h,
+                    width,
+                    height,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: mip_levels,
@@ -306,9 +317,18 @@ impl HizState {
                 dimension: crate::gpu::TextureDimension::D2,
                 format: crate::gpu::TextureFormat::R32Float,
                 usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-                    | crate::gpu::TextureUsages::STORAGE_BINDING,
+                    | crate::gpu::TextureUsages::STORAGE_BINDING
+                    | extra,
                 view_formats: &[],
             })
+        };
+        let storage_texture = |label: &str, mip_levels: u32| {
+            r32_texture(
+                label,
+                (w, h),
+                mip_levels,
+                crate::gpu::TextureUsages::empty(),
+            )
         };
 
         // Previous-frame depth (single mip): written by the depth copy, read by
@@ -324,16 +344,47 @@ impl HizState {
             ..Default::default()
         });
 
-        // Pyramid.
-        let pyramid = storage_texture("hiz_pyramid", mips);
+        // Pyramid. With separate levels, each level above 0 is reduced into a
+        // texture of its own, so no reduce samples and stores the same texture.
+        let pyramid = r32_texture(
+            "hiz_pyramid",
+            (w, h),
+            mips,
+            if separate {
+                crate::gpu::TextureUsages::COPY_DST
+            } else {
+                crate::gpu::TextureUsages::empty()
+            },
+        );
         let all_view = pyramid.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let levels: Vec<crate::gpu::Texture> = if separate {
+            (1..mips)
+                .map(|level| {
+                    r32_texture(
+                        "hiz_level",
+                        level_dims(w, h, level),
+                        1,
+                        crate::gpu::TextureUsages::COPY_SRC,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let single_mip_view = |level: u32| {
-            pyramid.create_view(&crate::gpu::TextureViewDescriptor {
-                label: Some("hiz_mip_view"),
-                base_mip_level: level,
-                mip_level_count: Some(1),
-                ..Default::default()
-            })
+            if separate && level > 0 {
+                levels[level as usize - 1].create_view(&crate::gpu::TextureViewDescriptor {
+                    label: Some("hiz_level_view"),
+                    ..Default::default()
+                })
+            } else {
+                pyramid.create_view(&crate::gpu::TextureViewDescriptor {
+                    label: Some("hiz_mip_view"),
+                    base_mip_level: level,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                })
+            }
         };
         let storage_views: Vec<_> = (0..mips).map(single_mip_view).collect();
         let sampled_views: Vec<_> = (0..mips).map(single_mip_view).collect();
@@ -416,6 +467,7 @@ impl HizState {
             reproj_uniform_buf,
             all_view,
             storage_views,
+            separate_levels: separate.then_some((pyramid, levels)),
             pipelines,
             reproj_bg,
             to_texture_bg,
@@ -574,6 +626,20 @@ impl HizState {
             pass.set_bind_group(0, &self.reduce_bind_groups[(level - 1) as usize], &[]);
             pass.dispatch_workgroups(lw.div_ceil(8), lh.div_ceil(8), 1);
         }
+        if let Some((pyramid, levels)) = &self.separate_levels {
+            for (i, level) in levels.iter().enumerate() {
+                encoder.copy_texture_to_texture(
+                    level.as_image_copy(),
+                    crate::gpu::TexelCopyTextureInfo {
+                        texture: pyramid,
+                        mip_level: i as u32 + 1,
+                        origin: crate::gpu::Origin3d::ZERO,
+                        aspect: crate::gpu::TextureAspect::All,
+                    },
+                    level.size(),
+                );
+            }
+        }
         true
     }
 }
@@ -651,7 +717,11 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
     ) -> std::sync::Arc<HizPipelines> {
         std::sync::Arc::clone(self.hiz_pipelines.get_or_init(|| {
-            std::sync::Arc::new(HizPipelines::new(device, &self.pipeline_compiler))
+            std::sync::Arc::new(HizPipelines::new(
+                device,
+                &self.pipeline_compiler,
+                !self.capabilities.independent_mip_views,
+            ))
         }))
     }
 
