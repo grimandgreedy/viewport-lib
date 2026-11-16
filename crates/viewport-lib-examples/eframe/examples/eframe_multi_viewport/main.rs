@@ -622,7 +622,7 @@ impl App {
 
                 // Quad dividers and labels.
                 let painter = ui.painter_at(rect);
-                let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(70));
+                let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(70));
                 let mx = rect.center().x;
                 let my = rect.center().y;
                 painter.line_segment(
@@ -649,7 +649,7 @@ impl App {
                     quads[hq].shrink(0.5),
                     0.0,
                     egui::Stroke::new(
-                        1.5,
+                        1.5_f32,
                         egui::Color32::from_rgba_unmultiplied(180, 180, 255, 60),
                     ),
                     egui::StrokeKind::Middle,

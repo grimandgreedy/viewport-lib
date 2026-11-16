@@ -2396,7 +2396,7 @@ pub(crate) fn overlay(
                 0.0,
                 egui::Color32::from_rgba_unmultiplied(255, 200, 50, 20),
                 egui::Stroke::new(
-                    1.5,
+                    1.5_f32,
                     egui::Color32::from_rgba_unmultiplied(255, 200, 50, 200),
                 ),
                 egui::StrokeKind::Outside,
