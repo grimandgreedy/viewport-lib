@@ -4,8 +4,8 @@ name: CI
 # GPU; `lavapipe` runs the headless renderer tests on Mesa's software Vulkan
 # driver in a pinned container, so the rasteriser, and with it the golden
 # images, only change when this file changes. The other software adapters
-# (WARP, llvmpipe GL) and the web and mobile checks run from the manual and
-# nightly workflow in software-adapters.yml.
+# (WARP, llvmpipe GL) and the web and mobile checks run from the manual
+# workflow in software-adapters.yml.
 #
 # It runs on pull requests, not on pushes. Started by hand, the workflow runs
 # `bless-lavapipe` instead: it renders a fresh lavapipe reference set and

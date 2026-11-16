@@ -4,15 +4,14 @@ name: Software adapters
 # workflow (ci.yml, which runs lavapipe and the wasm check) does not cover:
 # WARP (Direct3D 12) on Windows and llvmpipe (GL) on Linux run the headless
 # tests, beside the web smoke page in headless Chrome and the Android and iOS
-# compile checks. None of it gates anything: the workflow runs nightly and when
-# started by hand from the Actions tab, and a job or step that is expected to
+# compile checks. None of it gates anything: the workflow runs when started by
+# hand from the Actions tab (pick the branch to test there, or `gh workflow run
+# software-adapters.yml --ref <branch>`), and a job or step that is expected to
 # fail says so where it is declared. A platform with no job here or in ci.yml
 # is a platform nobody is testing, which is how a backend quietly stops
 # working.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"
 
 env:
   CARGO_TERM_COLOR: always
