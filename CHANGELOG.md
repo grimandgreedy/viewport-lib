@@ -14,6 +14,7 @@
 - **Sprite effects on wgpu's GL backend and 16-texture devices** - effect and material sprite pipelines bound 18 textures in the fragment stage, which panicked on wgpu's GL backend and failed validation on wgpu 29 and 30 there. Group 3 no longer binds the lit normal map a second time, and a material's layout declares only the textures it reads. `register_sprite_material` returns `MaterialPluginTextureBudget` for a material that cannot fit the device; on a device with 16 sampled textures per stage a sprite material can read three.
 - **Lit pipelines on WebGL2** - the mesh, implicit surface, tube, vector field and marching cubes pipelines failed to compile on WebGL2 and drew nothing. They compile again.
 - **Sprite pipelines on Windows** - a Windows git checkout of the shaders with CRLF line endings made sprite pipeline creation panic. Shaders now check out with LF line endings on every platform.
+- **Sprite masks on Direct3D 12** - the `SpriteMaskItem` pipeline failed to compile with FXC and raised a validation error. It compiles again.
 
 ## [0.24.0]
 
