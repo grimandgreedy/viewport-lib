@@ -271,7 +271,11 @@ fn cluster_next_light(c: ptr<function, ClusterLights>) -> u32 {
     }
     loop {
         if (*c).bits != 0u {
+            // GLSL ES 3.00 has no findLSB; without clusters `bits` stays 0.
+            // BEGIN_CLUSTER_INDEX
             let b = firstTrailingBit((*c).bits);
+            // ALT(UNCLUSTERED): let b = 0u;
+            // END_CLUSTER_INDEX
             (*c).bits = (*c).bits & ((*c).bits - 1u);
             return (*c).word * 32u + b;
         }
