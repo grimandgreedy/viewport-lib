@@ -6,6 +6,8 @@ viewport-lib is an embeddable 3D and 2D renderer for Rust. It is the rendering h
 
 [![crates.io](https://img.shields.io/crates/v/viewport-lib.svg)](https://crates.io/crates/viewport-lib) [![docs.rs](https://img.shields.io/docsrs/viewport-lib)](https://docs.rs/viewport-lib) [![licence](https://img.shields.io/crates/l/viewport-lib.svg)](LICENSE)
 
+Plugins, widgets and io crates built on and for viewport-lib are listed in [viewport-lib-hub](https://github.com/grimandgreedy/viewport-lib-hub).
+
 ## Features
 
 - **Surfaces and materials**: a full physically based material model matching glTF: textures and normal maps, glass with refraction and absorption, clear coat, sheen and brushed metal.
